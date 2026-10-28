@@ -47,7 +47,20 @@ describe('release check', () => {
     const check = createUpdateChecker({ current: '1.1.0', env: { WHERDR_INSTALL: 'native' }, fetch })
     const u = await check()
     expect(fetch).toHaveBeenCalledWith(RELEASES_URL)
-    expect(u).toEqual({ current: '1.1.0', latest: '1.2.0', url: 'https://example.test/releases/v1.2.0', checked: true, mode: 'native', command: 'git pull && npm ci && npm run build', oneTap: false })
+    expect(u).toEqual({ current: '1.1.0', latest: '1.2.0', url: 'https://example.test/releases/v1.2.0', checked: true, mode: 'native', command: 'git pull && npm ci && npm run build', oneTap: false, behind: 1, missed: ['1.2.0'], latestAt: null })
+  })
+
+  it('counts how far the build is behind and lists the skipped versions', async () => {
+    const releases = [
+      { tag_name: 'v1.4.0', published_at: '2026-10-01T00:00:00Z' },
+      { tag_name: 'v1.3.0' },
+      { tag_name: 'v1.2.0' },
+      { tag_name: 'v1.5.0-beta', prerelease: true },
+      { tag_name: 'v9.9.9', draft: true },
+    ]
+    const fetch = vi.fn(async () => ({ ok: true, json: async () => releases }))
+    const u = await createUpdateChecker({ current: '1.2.0', env: {}, fetch })()
+    expect(u).toMatchObject({ latest: '1.4.0', behind: 2, missed: ['1.4.0', '1.3.0'], latestAt: Date.parse('2026-10-01T00:00:00Z') })
   })
 
   it('says nothing when up to date or ahead', async () => {
