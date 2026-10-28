@@ -320,13 +320,29 @@ function onSbScroll() {
 }
 // Typing should land on the live terminal: pull the overlay back to the gap.
 watch(props.ctl.scrollInputVersion, () => { if (sbEl.value) sbEl.value.scrollTop = sbEl.value.scrollHeight })
-function onGapTap(e: MouseEvent) {
+function tapGap(x: number, y: number) {
   const el = sbEl.value
   // Only taps at the very bottom reach the pane; taps on history do nothing.
-  if (el && el.scrollHeight - el.scrollTop - el.clientHeight > 2) return
-  if (!props.ctl.tapLink(e.clientX, e.clientY)) props.ctl.tapMouse(e.clientX, e.clientY)
+  if (el && el.scrollHeight - el.scrollTop - el.clientHeight > 2) return false
+  if (!props.ctl.tapLink(x, y)) props.ctl.tapMouse(x, y)
   props.ctl.blur()
   ;(document.activeElement as HTMLElement | null)?.blur?.()
+  return true
+}
+function onGapTap(e: MouseEvent) { tapGap(e.clientX, e.clientY) }
+// Coarse-pointer: #scrollback sits above #touch with pointer-events auto,
+// so a rest-state tap never reaches onTouchEnd. A pan-y scroller also often
+// skips the compatibility click. Stationary touchend at the gap is the same
+// path as a tap on #touch; a drag keeps native momentum.
+let sbAX = 0, sbAY = 0
+function onSbTouchStart(e: TouchEvent) {
+  sbAX = e.touches[0]!.clientX
+  sbAY = e.touches[0]!.clientY
+}
+function onSbTouchEnd(e: TouchEvent) {
+  const t = e.changedTouches[0]
+  if (!t || Math.hypot(t.clientX - sbAX, t.clientY - sbAY) > 10) return
+  if (tapGap(t.clientX, t.clientY)) e.preventDefault()
 }
 
 let fitTimer: ReturnType<typeof setTimeout> | undefined
@@ -377,6 +393,8 @@ onUnmounted(() => {
       id="scrollback" ref="sbEl"
       :style="{ pointerEvents: sbInteractive ? 'auto' : 'none' }"
       @scroll.passive="onSbScroll"
+      @touchstart.passive="onSbTouchStart"
+      @touchend="onSbTouchEnd"
     >
       <div ref="sbBody" class="sb-body" />
       <div class="sb-gap" @click="onGapTap" />
