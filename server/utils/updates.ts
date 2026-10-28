@@ -64,7 +64,10 @@ export function createUpdateChecker(opts: {
   }
 
   return async function check(): Promise<UpdateInfo> {
-    const mode = installMode(opts.env.WHERDR_INSTALL)
+    // Local fork build: the release notice stays as a rebase reminder, but a
+    // one-tap update or a plugin/npm install would replace it with pristine
+    // upstream. Report native mode so the app shows the source-build command.
+    const mode: InstallMode = 'native'
     const base = { current: opts.current, mode, command: updateCommand(mode, REPO), oneTap: oneTapMode(mode) }
     if (String(opts.env.WHERDR_UPDATE_CHECK || '').toLowerCase() === 'off') return { ...base, latest: null, url: null, checked: false }
     if (now() >= nextAt) {
