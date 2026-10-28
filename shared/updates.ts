@@ -33,6 +33,12 @@ export interface UpdateInfo {
   command: string
   // wherdr can update itself from the app in this mode (button Update).
   oneTap: boolean
+  // How far behind upstream: published releases newer than `current`, and
+  // their version list (newest first, capped). 0 / [] when up to date.
+  behind: number
+  missed: string[]
+  // Latest release publish time (ms epoch), when a newer release exists.
+  latestAt: number | null
 }
 
 // "v1.2.3", "1.2.3-beta.1" -> [1, 2, 3]; null if unreadable. Pre-releases

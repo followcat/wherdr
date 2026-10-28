@@ -9,7 +9,7 @@ const DAY_MS = 24 * 60 * 60 * 1000
 // Failure (offline, API limit): new attempt in an hour.
 const RETRY_MS = 60 * 60 * 1000
 
-interface Release { version: string, url: string }
+interface Release { version: string, url: string, at: number | null, missed: string[] }
 type Fetcher = (url: string) => Promise<{ ok: boolean, json: () => Promise<unknown>, text?: () => Promise<string> }>
 
 export function createUpdateChecker(opts: {
@@ -27,11 +27,15 @@ export function createUpdateChecker(opts: {
     try {
       const res = await opts.fetch(RELEASES_URL)
       if (!res.ok) throw new Error('http')
-      const releases = await res.json() as { tag_name?: unknown, html_url?: unknown, draft?: boolean, prerelease?: boolean }[]
-      const body = releases.filter(r => !r.draft && !r.prerelease && /^v\d+\.\d+\.\d+$/.test(String(r.tag_name)))
-        .sort((a, b) => compareVersions(String(b.tag_name), String(a.tag_name)))[0]
+      const releases = await res.json() as { tag_name?: unknown, html_url?: unknown, draft?: boolean, prerelease?: boolean, published_at?: unknown }[]
+      const stable = releases.filter(r => !r.draft && !r.prerelease && /^v\d+\.\d+\.\d+$/.test(String(r.tag_name)))
+        .sort((a, b) => compareVersions(String(b.tag_name), String(a.tag_name)))
+      const body = stable[0]
       if (!body || typeof body.tag_name !== 'string') throw new Error('tag')
-      const candidate = { version: body.tag_name.replace(/^v/, ''), url: typeof body.html_url === 'string' ? body.html_url : '' }
+      const missed = stable.map(r => String(r.tag_name).replace(/^v/, '')).filter(v => compareVersions(v, opts.current) > 0)
+      const publishedAt = Date.parse(String(body.published_at || ''))
+      const candidate = { version: body.tag_name.replace(/^v/, ''), url: typeof body.html_url === 'string' ? body.html_url : '',
+        at: Number.isNaN(publishedAt) ? null : publishedAt, missed }
       const mode = installMode(opts.env.WHERDR_INSTALL)
       if (mode === 'plugin') {
         const archive = `https://github.com/${REPO}/releases/download/v${candidate.version}/wherdr-${candidate.version}.tgz`
@@ -69,13 +73,15 @@ export function createUpdateChecker(opts: {
     // upstream. Report native mode so the app shows the source-build command.
     const mode: InstallMode = 'native'
     const base = { current: opts.current, mode, command: updateCommand(mode, REPO), oneTap: oneTapMode(mode) }
-    if (String(opts.env.WHERDR_UPDATE_CHECK || '').toLowerCase() === 'off') return { ...base, latest: null, url: null, checked: false }
+    if (String(opts.env.WHERDR_UPDATE_CHECK || '').toLowerCase() === 'off') return { ...base, latest: null, url: null, checked: false, behind: 0, missed: [], latestAt: null }
     if (now() >= nextAt) {
       pending ??= refresh().finally(() => { pending = null })
       await pending
     }
     const newer = cached && compareVersions(cached.version, opts.current) > 0
-    return { ...base, latest: newer ? cached!.version : null, url: newer ? cached!.url || null : null, checked: !!cached }
+    const missed = newer ? cached!.missed : []
+    return { ...base, latest: newer ? cached!.version : null, url: newer ? cached!.url || null : null, checked: !!cached,
+      behind: missed.length, missed: missed.slice(0, 5), latestAt: newer ? cached!.at : null }
   }
 }
 
