@@ -252,6 +252,10 @@ function onWheel(e: WheelEvent) {
 const sbEl = ref<HTMLElement | null>(null)
 const sbBody = ref<HTMLElement | null>(null)
 const sbInteractive = typeof matchMedia !== 'undefined' && matchMedia('(hover: none) and (pointer: coarse)').matches
+// Distance from the bottom that still counts as the live gap. An empty
+// .sb-body keeps a few pixels of CSS padding, so a 2px slop would treat
+// rest as "into history" and drop taps on the transparent gap.
+const sbRestPx = 8
 let sbFetchedAt = 0
 let sbWant = 800
 function renderScrollback() {
@@ -295,7 +299,11 @@ function renderScrollback() {
   }
   // Keep the same distance from the bottom across refetches: the live view
   // stays anchored at the gap, a wider window only grows lines above it.
-  el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - distFromBottom)
+  // Near rest, snap to the gap so padding on an empty body cannot leave a
+  // few pixels of history peeking and blocking rest-state taps.
+  el.scrollTop = distFromBottom <= sbRestPx
+    ? el.scrollHeight
+    : Math.max(0, el.scrollHeight - el.clientHeight - distFromBottom)
 }
 watch(props.ctl.scrollbackVersion, renderScrollback)
 watch(props.ctl.frameTick, () => {
@@ -307,7 +315,7 @@ function onSbScroll() {
   if (!el) return
   const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
   // Into history with a stale dump: refresh it quietly once in a while.
-  if (distFromBottom > 8 && Date.now() - sbFetchedAt > 2500) {
+  if (distFromBottom > sbRestPx && Date.now() - sbFetchedAt > 2500) {
     sbFetchedAt = Date.now()
     props.ctl.requestScrollback(sbWant)
   }
@@ -320,29 +328,38 @@ function onSbScroll() {
 }
 // Typing should land on the live terminal: pull the overlay back to the gap.
 watch(props.ctl.scrollInputVersion, () => { if (sbEl.value) sbEl.value.scrollTop = sbEl.value.scrollHeight })
+// Coarse-pointer: #scrollback sits above #touch with pointer-events auto,
+// so a rest-state tap never reaches onTouchEnd. Stationary touchend on the
+// gap is the same path as a tap on #touch; a drag keeps native momentum.
+let sbAX = 0, sbAY = 0
+let sbTouchSent = false
 function tapGap(x: number, y: number) {
   const el = sbEl.value
   // Only taps at the very bottom reach the pane; taps on history do nothing.
-  if (el && el.scrollHeight - el.scrollTop - el.clientHeight > 2) return false
+  if (el && el.scrollHeight - el.scrollTop - el.clientHeight > sbRestPx) return false
   if (!props.ctl.tapLink(x, y)) props.ctl.tapMouse(x, y)
   props.ctl.blur()
   ;(document.activeElement as HTMLElement | null)?.blur?.()
   return true
 }
-function onGapTap(e: MouseEvent) { tapGap(e.clientX, e.clientY) }
-// Coarse-pointer: #scrollback sits above #touch with pointer-events auto,
-// so a rest-state tap never reaches onTouchEnd. A pan-y scroller also often
-// skips the compatibility click. Stationary touchend at the gap is the same
-// path as a tap on #touch; a drag keeps native momentum.
-let sbAX = 0, sbAY = 0
+function onGapTap(e: MouseEvent) {
+  if (sbTouchSent) { sbTouchSent = false; return }
+  tapGap(e.clientX, e.clientY)
+}
 function onSbTouchStart(e: TouchEvent) {
+  sbTouchSent = false
   sbAX = e.touches[0]!.clientX
   sbAY = e.touches[0]!.clientY
 }
 function onSbTouchEnd(e: TouchEvent) {
   const t = e.changedTouches[0]
   if (!t || Math.hypot(t.clientX - sbAX, t.clientY - sbAY) > 10) return
-  if (tapGap(t.clientX, t.clientY)) e.preventDefault()
+  // History rows sit in .sb-body; only the transparent gap is the live pane.
+  if (!(e.target as HTMLElement | null)?.closest?.('.sb-gap')) return
+  if (tapGap(t.clientX, t.clientY)) {
+    sbTouchSent = true
+    e.preventDefault()
+  }
 }
 
 let fitTimer: ReturnType<typeof setTimeout> | undefined
