@@ -29,6 +29,7 @@ import { dropMachineKey, shiftMachineKey } from '#shared/machineOrder'
 import { stateEntries, stateMachines } from '~/utils/homeGrouping'
 import { BAR_ALL } from '~/utils/machineBar'
 import type { AwakeState, SleepAssertion, AwakeMode } from '../../server/utils/awake'
+import { individualAgentRows } from '~/utils/homeAgentRows'
 const emit = defineEmits<{ search: [] }>()
 useQuotaLoader()
 onMounted(loadUpdate)
@@ -38,6 +39,10 @@ watch(eventsOpen, (v) => { if (v) everOpen.value = true })
 
 const st = herdrState
 const agents = computed(() => st.value.panes.filter(p => p.agent))
+const individualAgents = ref(true)
+onMounted(() => { individualAgents.value = localStorage.getItem('wherdrIndividualAgents') !== '0' })
+watch(individualAgents, value => localStorage.setItem('wherdrIndividualAgents', value ? '1' : '0'))
+const rowsFor = (machine?: string) => individualAgents.value ? individualAgentRows(st.value, machine) : spaceRows(st.value, machine)
 const boardLinks = useBoardLinks()
 // Old notification exceptions keyed by a coordinator's pane move to its identity.
 useNotificationRekey()
@@ -106,7 +111,7 @@ function coordinatorCard(level: CoordinatorLevel, local = true, machine = '', re
 const soloLocal = computed(() => machineInfo(machineBaseKeys.value[0] ?? '')?.local ?? true)
 const soloName = computed(() => machineName(machineBaseKeys.value[0] ?? '') || hostLabel.value)
 const soloSelected = computed(() => machineBarSelection.value === null || machineBarSelection.value.includes(machineBaseKeys.value[0] ?? ''))
-const solo = computed(() => listOf(soloSelected.value ? spaceRows(st.value) : []))
+const solo = computed(() => listOf(soloSelected.value ? rowsFor() : []))
 
 const topQuotas = computed(() => (showQuotas.value ? quotaRows(homeQuotas.value, hiddenAgents.value) : []))
 // Claude quotas to install or update on a machine: never a block in the list,
@@ -170,7 +175,7 @@ const sections = computed(() => {
       state: t(STATE_LABEL[m.status]),
       agents: a,
       counted: c,
-      ...listOf(spaceRows(st.value, m.key)),
+      ...listOf(rowsFor(m.key)),
       waiting: c.filter(p => p.status === 'blocked').length,
       collapsed: collapsedMachines.value.includes(m.key),
       quotas: showQuotas.value && m.status === 'online' ? machineQuotaRows(homeQuotas.value, m.baseKey ?? m.key, hiddenAgents.value) : [],
@@ -196,7 +201,7 @@ const stateAway = computed(() => stateShown.value.away.map(m => ({
 })))
 const stateCards = computed(() => {
   return stateShown.value.online.flatMap(m => {
-    const b = boardSections(spaceRows(st.value, m.key), st.value.workspaces, boardLinks.value, livePanes.value, k => machineInfo(k)?.baseKey ?? k)
+    const b = boardSections(rowsFor(m.key), st.value.workspaces, boardLinks.value, livePanes.value, k => machineInfo(k)?.baseKey ?? k)
     return stateEntries(b, showShells.value).map(e => ({
       ...e,
       machine: machineName(m.key) || m.label,
@@ -683,6 +688,11 @@ function resetListWidth() {
         </button>
       </UContextMenu>
     </nav>
+    <div class="agent-list-mode" role="group" aria-label="列表显示方式">
+      <button type="button" :class="{ on: individualAgents }" :aria-pressed="individualAgents" @click="individualAgents = true">Agents <b>{{ shownCounted.length }}</b></button>
+      <button type="button" :class="{ on: !individualAgents }" :aria-pressed="!individualAgents" @click="individualAgents = false">工作区</button>
+      <span>{{ individualAgents ? '每个 Agent 一行' : '按工作区汇总' }}</span>
+    </div>
     <div ref="homeScroll" class="scroll">
       <OfflineNote v-if="(offlineView && cachedAt) || netDown" class="home-offline" :label="offlineView && cachedAt ? t('Last known state') : undefined" :at="cachedAt" date-style="medium" />
       <div v-if="eventsOpen && !st.ok" class="notice">
@@ -928,3 +938,11 @@ function resetListWidth() {
     </Teleport>
   </section>
 </template>
+
+<style scoped>
+.agent-list-mode { display: flex; align-items: center; gap: 4px; flex: none; padding: 5px 16px 8px; }
+.agent-list-mode button { min-height: 40px; padding: 0 12px; border: 1px solid var(--line-soft); border-radius: 5px; font-size: 12px; color: var(--muted); }
+.agent-list-mode button.on { color: var(--text); background: var(--bg-2); border-color: var(--line); }
+.agent-list-mode button b { margin-left: 5px; font: 500 11px var(--mono); color: var(--mauve); }
+.agent-list-mode > span { margin-left: auto; font-size: 10px; color: var(--dim); }
+</style>

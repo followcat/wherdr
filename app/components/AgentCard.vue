@@ -21,6 +21,7 @@ import type { MenuItem } from '~/composables/useUi'
 import { longPress } from '~/utils/longPress'
 import { chatHoverIntent } from '~/utils/chatIntent'
 import { interactionWindowFor } from '~/utils/interactionWindow'
+import { individualAgentTitle, isIndividualAgentRow } from '~/utils/homeAgentRows'
 
 // `board`: the row is herdr-projects' (home list's project groups): named by
 // its role or its task (`tag`, `name`), with the board's progress, time on it
@@ -50,7 +51,7 @@ let touchMenuOpenedAt = 0
 
 const ws = computed(() => herdrState.value.workspaces.find(w => w.id === props.pane.workspace))
 const branch = computed(() => ws.value?.branch || null)
-const title = computed(() => props.board?.name || spaceTitle(props.pane, ws.value))
+const title = computed(() => props.board?.name || (isIndividualAgentRow(props.row) ? individualAgentTitle(props.pane) : spaceTitle(props.pane, ws.value)))
 // "42% 17m", as Herdr's sidebar shows a task.
 const boardNow = useBoardNow()
 const boardStats = computed(() => {
