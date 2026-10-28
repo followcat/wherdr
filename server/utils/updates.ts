@@ -1,7 +1,7 @@
 // Latest wherdr release on GitHub, checked at most once a day
 // (public API without a token, nothing is sent). WHERDR_UPDATE_CHECK=off disables the call.
 import pkg from '../../package.json'
-import { compareVersions, installMode, oneTapMode, updateCommand, type UpdateInfo } from '../../shared/updates'
+import { compareVersions, installMode, oneTapMode, updateCommand, type InstallMode, type UpdateInfo } from '../../shared/updates'
 
 export const REPO = 'afloury/wherdr'
 export const RELEASES_URL = `https://api.github.com/repos/${REPO}/releases?per_page=100`
