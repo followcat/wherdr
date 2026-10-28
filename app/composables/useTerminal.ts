@@ -17,6 +17,7 @@ import { uploadPhoto } from '~/utils/photoUpload'
 import { terminalClosedText, terminalUnavailableText } from '~/utils/terminalClosed'
 import { bindTerminalMouse, terminalCell } from '~/utils/terminalMouse'
 import { TERM_FONT, onFontsLoaded } from '~/utils/terminalFont'
+import { displayVirtualChord, toggleVirtualModifier, virtualChord, virtualInputAction, virtualNavigationBytes, type VirtualModifier } from '~/utils/virtualKeys'
 
 export interface Banner { text: string, btn: string, fn: () => void }
 
@@ -41,6 +42,10 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   // Cumulative signed rows acknowledged after xterm parses the next frame.
   const scrollAck = ref(0)
   let touchEpoch = 0
+  const virtualModifiers = ref<VirtualModifier[]>([])
+  const lastVirtualChord = ref('')
+  const toggleModifier = (key: VirtualModifier) => { virtualModifiers.value = toggleVirtualModifier(virtualModifiers.value, key) }
+  const clearVirtualModifiers = () => { virtualModifiers.value = []; lastVirtualChord.value = '' }
   const selectionHint = useTerminalSelectionHint()
   let unbindSelection: (() => void) | null = null
   let unbindPaste: (() => void) | null = null
@@ -135,8 +140,17 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     // utils/terminalWheel.ts); TerminalView converts it to terminal.scroll.
     term.attachCustomWheelEventHandler(() => false)
     // Shift+Enter as a named key; Ctrl+V (outside Apple) and F12 left to the browser.
-    bindTerminalKeys(term, key => sendKeys([key]))
-    term.onData(d => { if (opts.input?.() !== false) sendTerm({ type: 'terminal.input', text: d }) })
+    bindTerminalKeys(term, key => sendVirtualKey(key))
+    term.onData(d => {
+      if (opts.input?.() === false) return
+      if (virtualModifiers.value.length) {
+        const action = virtualInputAction(d)
+        if (action.kind === 'key') { void sendVirtualKey(action.key); return }
+        if (action.kind === 'blocked') { toast('组合键请选择面板按键，或切换英文输入单个字母', true); return }
+        clearVirtualModifiers() // A paste stays text, never a series of shortcuts.
+      }
+      sendTerm({ type: 'terminal.input', text: d })
+    })
     term.onBinary((d) => {
       if (opts.input?.() === false) return
       const bytes = Uint8Array.from(d, c => c.charCodeAt(0) & 0xff)
@@ -159,6 +173,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       scrollInputVersion.value++
       cancelTouchScroll()
     }
+    if ((obj as { type?: string })?.type === 'paste') clearVirtualModifiers()
     if (tws && tws.readyState === 1) {
       tws.send(JSON.stringify(obj))
       return true
@@ -175,6 +190,19 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       await api('/api/input', { pane_id: paneId, keys })
       haptic()
     } catch (err) { toast((err as Error).message, true) }
+  }
+
+  async function sendVirtualKey(key: string) {
+    if (opts.input?.() === false) return
+    const chord = virtualChord(key, virtualModifiers.value)
+    virtualModifiers.value = []
+    lastVirtualChord.value = displayVirtualChord(chord)
+    const navigation = virtualNavigationBytes(chord)
+    if (navigation) {
+      if (!sendTerm({ type: 'terminal.input', text: navigation })) toast('终端正在连接，请连接后重试', true)
+      return
+    }
+    await sendKeys([chord])
   }
 
   function fitNow(send: boolean) {
@@ -348,6 +376,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
 
   function disconnect() {
     if (smoothTouchScrolling.value) { scrollInputVersion.value++; touchEpoch++ }
+    clearVirtualModifiers()
     mouseSupported = false
     twsIntent = false
     clearTimeout(twsTimer)
@@ -435,6 +464,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     hasBanner: opts.hasBanner, selectionHint,
     cancelTouchScroll, scrollInputVersion, frameTick, scrollAck,
     scrollback, scrollbackVersion, requestScrollback,
+    virtualModifiers, lastVirtualChord, toggleVirtualModifier: toggleModifier, clearVirtualModifiers, sendVirtualKey,
   }
 }
 
