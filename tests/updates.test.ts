@@ -96,7 +96,8 @@ describe('independent release channels', () => {
   it('offers published releases to plugins even while npm is unavailable', async () => {
     const fetch = vi.fn(async () => ({ ok: true, json: async () => releases }))
     const check = createUpdateChecker({ current: '1.3.2', env: { WHERDR_INSTALL: 'plugin' }, fetch })
-    expect(await check()).toMatchObject({ latest: '1.3.3', oneTap: true })
+    // Fork build: the notice still arrives, but installs stay manual.
+    expect(await check()).toMatchObject({ latest: '1.3.3', oneTap: false, mode: 'native' })
     expect(fetch).toHaveBeenCalledTimes(3)
   })
   for (const mode of ['npm', 'npm-global']) {
