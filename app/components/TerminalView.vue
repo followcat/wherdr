@@ -4,6 +4,7 @@
 // sent to the agent; click = keyboard to the terminal).
 import '@xterm/xterm/css/xterm.css'
 import { createTerminalTouch, touchPreviewOffset } from '~/utils/terminalTouch'
+import { ansiToLines } from '~/utils/ansiToHtml'
 
 const props = defineProps<{ ctl: TerminalCtl }>()
 const host = ref<HTMLElement | null>(null)
@@ -240,6 +241,94 @@ function onWheel(e: WheelEvent) {
   legacyOnWheel(e)
 }
 
+// ---------------------------------------------------------------- scrollback
+// A native scroller stacked over the terminal: history lines at the top,
+// a one-viewport transparent gap at the bottom. At rest the gap fills the
+// view (the live terminal shows through); dragging up reveals local history
+// with the browser's own momentum -- the same mechanism as the chat view.
+// On touch this replaces the server scroll entirely: the history dump is
+// real transcript even for TUI agents. The wheel path (computers) still
+// goes through terminal.scroll so mouse-mode programs scroll in-app.
+const sbEl = ref<HTMLElement | null>(null)
+const sbBody = ref<HTMLElement | null>(null)
+const sbInteractive = typeof matchMedia !== 'undefined' && matchMedia('(hover: none) and (pointer: coarse)').matches
+let sbFetchedAt = 0
+let sbWant = 800
+function renderScrollback() {
+  const el = sbEl.value, body = sbBody.value
+  if (!el || !body) return
+  const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+  const holder = document.createDocumentFragment()
+  for (const spans of ansiToLines(props.ctl.scrollback.value)) {
+    const line = document.createElement('div')
+    for (const s of spans) {
+      const span = document.createElement('span')
+      span.textContent = s.text
+      if (s.color) span.style.color = s.color
+      if (s.background) span.style.backgroundColor = s.background
+      if (s.bold) span.style.fontWeight = '600'
+      if (s.dim) span.style.opacity = '.55'
+      if (s.italic) span.style.fontStyle = 'italic'
+      if (s.underline || s.strike) span.style.textDecoration = [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ')
+      line.appendChild(span)
+    }
+    holder.appendChild(line)
+  }
+  body.replaceChildren(holder)
+  // Match the terminal's metrics and geometry so history rows continue the
+  // live grid pixel-exactly (the term is centered/inset on phones).
+  const src = host.value?.querySelector('.xterm-screen')
+  if (src) {
+    const cs = getComputedStyle(src)
+    Object.assign(el.style, { fontFamily: cs.fontFamily, fontSize: cs.fontSize, lineHeight: cs.lineHeight, letterSpacing: cs.letterSpacing, color: cs.color })
+    // The screen canvas paints its own bg; the element itself is transparent,
+    // so take the page surface -- an opaque history region must hide the live
+    // grid behind it (the gap below stays transparent on purpose).
+    body.style.background = getComputedStyle(document.body).getPropertyValue('--bg') || 'black'
+    const wrap = el.getBoundingClientRect()
+    const sr = src.getBoundingClientRect()
+    Object.assign(body.style, {
+      paddingTop: `${Math.max(0, sr.top - wrap.top)}px`,
+      paddingLeft: `${Math.max(0, sr.left - wrap.left)}px`,
+      paddingRight: `${Math.max(0, wrap.right - sr.right)}px`,
+    })
+  }
+  // Keep the same distance from the bottom across refetches: the live view
+  // stays anchored at the gap, a wider window only grows lines above it.
+  el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - distFromBottom)
+}
+watch(props.ctl.scrollbackVersion, renderScrollback)
+watch(props.ctl.frameTick, () => {
+  // Prefetch once the pane is alive so the first upward drag has content.
+  if (!sbFetchedAt) { sbFetchedAt = Date.now(); props.ctl.requestScrollback(sbWant) }
+})
+function onSbScroll() {
+  const el = sbEl.value
+  if (!el) return
+  const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+  // Into history with a stale dump: refresh it quietly once in a while.
+  if (distFromBottom > 8 && Date.now() - sbFetchedAt > 2500) {
+    sbFetchedAt = Date.now()
+    props.ctl.requestScrollback(sbWant)
+  }
+  // Near the top of what we have: widen the window, older lines land above.
+  if (el.scrollTop < el.clientHeight && sbWant < 4000) {
+    sbWant = Math.min(4000, sbWant + 1000)
+    sbFetchedAt = Date.now()
+    props.ctl.requestScrollback(sbWant)
+  }
+}
+// Typing should land on the live terminal: pull the overlay back to the gap.
+watch(props.ctl.scrollInputVersion, () => { if (sbEl.value) sbEl.value.scrollTop = sbEl.value.scrollHeight })
+function onGapTap(e: MouseEvent) {
+  const el = sbEl.value
+  // Only taps at the very bottom reach the pane; taps on history do nothing.
+  if (el && el.scrollHeight - el.scrollTop - el.clientHeight > 2) return
+  if (!props.ctl.tapLink(e.clientX, e.clientY)) props.ctl.tapMouse(e.clientX, e.clientY)
+  props.ctl.blur()
+  ;(document.activeElement as HTMLElement | null)?.blur?.()
+}
+
 let fitTimer: ReturnType<typeof setTimeout> | undefined
 // Throttle rather than debounce: long divider drags must keep fitting while
 // the pointer moves, without sending every intermediate pixel to Herdr.
@@ -281,6 +370,17 @@ onUnmounted(() => {
       @touchstart.passive="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd" @touchcancel="cancelTouch"
       @mousedown.prevent="onMouseDown"
     />
+    <!-- Local scrollback: a real scroller like the chat view. Its lines fill
+         the top, a transparent one-viewport gap sits at the bottom over the
+         live terminal -- scrolling up just reveals history, natively. -->
+    <div
+      id="scrollback" ref="sbEl"
+      :style="{ pointerEvents: sbInteractive ? 'auto' : 'none' }"
+      @scroll.passive="onSbScroll"
+    >
+      <div ref="sbBody" class="sb-body" />
+      <div class="sb-gap" @click="onGapTap" />
+    </div>
     <div v-if="ctl.loading.value" class="term-loading"><span class="spinner" /></div>
     <div v-if="ctl.selectionHint.visible.value" class="terminal-selection-hint">
       {{ tl('Shift + drag to select', 'Shift + glisser pour sélectionner') }}

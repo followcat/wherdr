@@ -202,6 +202,7 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
     if (preview) scrollDelivered.set(epoch, (scrollDelivered.get(epoch) || 0) + (direction === 'up' ? lines : -lines))
     toChild({ type: 'terminal.scroll', direction, lines, ...cell })
   })
+  let scrollbackSeq = 0
 
   // The pane's size is read before the control session resizes it (see paneSizes.ts).
   paneSizes().hold(pane).then(async (h) => {
@@ -260,6 +261,15 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
           else touchScroll?.cancel()
           scrollDelivered.clear()
           break
+        // The client renders scrollback locally in a native scroller, so the
+        // terminal itself never leaves the bottom for history browsing.
+        case 'scrollback.read': {
+          const seq = ++scrollbackSeq
+          herdr('pane.read', { pane_id: pane, source: 'recent_unwrapped', lines: clampInt(m.lines, 1, 4000, 800), format: 'ansi' }, 8000)
+            .then(r => { if (seq === scrollbackSeq && ws.isOpen()) ws.send(JSON.stringify({ type: 'scrollback.chunk', text: String(r?.read?.text || '') })) })
+            .catch(() => { if (seq === scrollbackSeq && ws.isOpen()) ws.send(JSON.stringify({ type: 'scrollback.chunk', text: '' })) })
+          break
+        }
         case 'keys': // logical keys encoded by Herdr according to the terminal mode
           touchScroll?.cancel()
           if (Array.isArray(m.keys) && m.keys.length <= 32 && m.keys.every((k: unknown) => typeof k === 'string' && k.length <= 24)) {

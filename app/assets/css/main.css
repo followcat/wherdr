@@ -1154,6 +1154,15 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 #term { position: absolute; inset: 6px 4px 0 6px; z-index: 0; }
 #touch { position: absolute; inset: 0; z-index: 1; touch-action: none; pointer-events: none; }
 @media (hover: none) and (pointer: coarse) { #touch { pointer-events: auto; } }
+/* Local scrollback: a real scroller (chat-view feel). History lines fill the
+   top with the terminal's own font/background; a transparent one-viewport gap
+   at the bottom lets the live terminal show through at rest. */
+#scrollback { position: absolute; inset: 0; z-index: 2; overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y;
+  scrollbar-width: none; pointer-events: none; background: transparent; }
+#scrollback::-webkit-scrollbar { display: none; }
+#scrollback .sb-body { padding: 6px 4px 0 6px; white-space: pre-wrap; overflow-wrap: break-word; font-variant-ligatures: none; }
+#scrollback .sb-gap { height: 100%; }
 .term-loading { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
 .term-loading.static { position: static; padding: 30px; }
 .xterm .xterm-viewport { background: transparent !important; overflow-y: hidden !important; }

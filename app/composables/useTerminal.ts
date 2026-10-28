@@ -49,6 +49,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   let links: TerminalLinks | null = null
   let mouse: ReturnType<typeof bindTerminalMouse> | null = null
   let mouseSupported = false
+  // Local scrollback overlay state (scrollback.read / scrollback.chunk).
+  const scrollback = ref('')
+  const scrollbackVersion = ref(0)
 
   const wsBase = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`
 
@@ -299,6 +302,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
           const epoch = touchEpoch
           term.write('', () => { if (epoch === touchEpoch && smoothTouchScrolling.value) scrollAck.value += m.lines })
         }
+      } else if (m.type === 'scrollback.chunk') {
+        scrollback.value = typeof m.text === 'string' ? m.text : ''
+        scrollbackVersion.value++
       } else if (m.type === 'pong') {
         probe.pong(ws)
       } else if (m.type === 'terminal.closed') {
@@ -391,6 +397,10 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     if (wasEnabled) sendTerm({ type: 'touch.cancel', disabled: true })
   }, { flush: 'sync' })
 
+  // Local scrollback overlay: ask the server for the pane's recent history
+  // (Herdr's recent_unwrapped dump, ANSI-styled).
+  function requestScrollback(lines: number) { sendTerm({ type: 'scrollback.read', lines }) }
+
   function setVisible(visible: boolean) {
     if (!visible && smoothTouchScrolling.value) { scrollInputVersion.value++; cancelTouchScroll() }
     sendTerm({ type: 'visibility', visible })
@@ -424,6 +434,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     reset, scroll, focus, blur, tapLink, tapMouse: (x: number, y: number) => mouse?.tap(x, y), hasFocus, rowHeight, pageRows, setVisible, dispose, loading, kbdOn,
     hasBanner: opts.hasBanner, selectionHint,
     cancelTouchScroll, scrollInputVersion, frameTick, scrollAck,
+    scrollback, scrollbackVersion, requestScrollback,
   }
 }
 
