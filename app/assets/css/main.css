@@ -1151,7 +1151,7 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 #termWrap { position: relative; flex: 1; min-height: 0; padding: 6px 4px 0 6px; background: var(--bg); }
 /* The layer receives touch gestures; on a computer, the mouse must reach
    xterm for selection and the programs' mouse mode. */
-#term { position: absolute; inset: 6px 4px 0 6px; z-index: 0; }
+#term { position: absolute; inset: 6px 4px 0 6px; z-index: 0; overflow: hidden; }
 #touch { position: absolute; inset: 0; z-index: 1; touch-action: none; pointer-events: none; }
 @media (hover: none) and (pointer: coarse) { #touch { pointer-events: auto; } }
 /* Local scrollback: a real scroller (chat-view feel). History lines fill the
@@ -1164,6 +1164,10 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 #scrollback .sb-body { padding: 6px 4px 0 6px; white-space: pre-wrap; overflow-wrap: break-word; font-variant-ligatures: none; }
 #scrollback .sb-gap { height: 100%; }
 #scrollback .lt-line { white-space: pre; overflow: hidden; }
+/* Live-transcript mode: row containers and the pull spacer are opaque so
+   the real terminal only shows through the .lt-slot it is translated onto. */
+#scrollback .lt-spacer, #scrollback .sb-body, #scrollback .lt-lines { background: var(--bg); }
+#scrollback .lt-slot { background: transparent; }
 .term-loading { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
 .term-loading.static { position: static; padding: 30px; }
 .xterm .xterm-viewport { background: transparent !important; overflow-y: hidden !important; }
