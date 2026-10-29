@@ -246,12 +246,18 @@ function onWheel(e: WheelEvent) {
 // a one-viewport transparent gap at the bottom. At rest the gap fills the
 // view (the live terminal shows through); dragging up reveals local history
 // with the browser's own momentum -- the same mechanism as the chat view.
-// On touch this replaces the server scroll entirely: the history dump is
-// real transcript even for TUI agents. The wheel path (computers) still
-// goes through terminal.scroll so mouse-mode programs scroll in-app.
+// On touch this is the scroller for panes on old Herdr without mouse
+// capability; mouse-capable panes keep touches for ctl.scroll (see
+// sbInteractive). The wheel path (computers) always goes through
+// terminal.scroll.
 const sbEl = ref<HTMLElement | null>(null)
 const sbBody = ref<HTMLElement | null>(null)
-const sbInteractive = typeof matchMedia !== 'undefined' && matchMedia('(hover: none) and (pointer: coarse)').matches
+const sbCoarse = typeof matchMedia !== 'undefined' && matchMedia('(hover: none) and (pointer: coarse)').matches
+// Panes whose Herdr speaks terminal.mouse keep their touches: their drags
+// reach #touch -> ctl.scroll, so TUI programs scroll in-app and plain panes
+// scroll the server-side buffer. Overlaying the dump on those panes reads
+// as a copy of the screen sliding over the live one, with no real scroll.
+const sbInteractive = computed(() => sbCoarse && !props.ctl.mouseMode.value)
 // Distance from the bottom that still counts as the live gap. An empty
 // .sb-body keeps a few pixels of CSS padding, so a 2px slop would treat
 // rest as "into history" and drop taps on the transparent gap.
@@ -308,7 +314,14 @@ function renderScrollback() {
 watch(props.ctl.scrollbackVersion, renderScrollback)
 watch(props.ctl.frameTick, () => {
   // Prefetch once the pane is alive so the first upward drag has content.
-  if (!sbFetchedAt) { sbFetchedAt = Date.now(); props.ctl.requestScrollback(sbWant) }
+  if (!sbFetchedAt && !props.ctl.mouseMode.value) { sbFetchedAt = Date.now(); props.ctl.requestScrollback(sbWant) }
+})
+watch(props.ctl.mouseMode, mouseCapable => {
+  // Re-enter at the live view: a dump scrolled mid-history must not
+  // resurface over the terminal when the overlay turns interactive again.
+  const el = sbEl.value
+  if (el) el.scrollTop = el.scrollHeight
+  if (!mouseCapable && !sbFetchedAt) { sbFetchedAt = Date.now(); props.ctl.requestScrollback(sbWant) }
 })
 function onSbScroll() {
   const el = sbEl.value
@@ -408,7 +421,7 @@ onUnmounted(() => {
          live terminal -- scrolling up just reveals history, natively. -->
     <div
       id="scrollback" ref="sbEl"
-      :style="{ pointerEvents: sbInteractive ? 'auto' : 'none' }"
+      :style="{ pointerEvents: sbInteractive ? 'auto' : 'none', visibility: sbInteractive ? 'visible' : 'hidden' }"
       @scroll.passive="onSbScroll"
       @touchstart.passive="onSbTouchStart"
       @touchend="onSbTouchEnd"
