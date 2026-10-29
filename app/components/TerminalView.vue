@@ -185,6 +185,7 @@ function flush() {
 }
 watch(props.ctl.scrollAck, (value, previous) => {
   const n = value - previous
+  ltAppOff += n
   if (!n || !smoothTouchScrolling.value) return
   if (Math.sign(n) === Math.sign(unconfirmed)) {
     const pay = Math.min(Math.abs(n), Math.abs(unconfirmed))
@@ -316,13 +317,166 @@ const sbCoarse = typeof matchMedia !== 'undefined' && matchMedia('(hover: none) 
 // scroll the server-side buffer. Overlaying the dump on those panes reads
 // as a copy of the screen sliding over the live one, with no real scroll.
 const sbInteractive = computed(() => sbCoarse && !props.ctl.mouseMode.value)
+// Live transcript mode: on a touch screen over a mouse-capable pane, the
+// scroller itself is the scroll surface -- a DOM document of every row the
+// screen has painted, in transcript order. No predicted offsets, no strips:
+// rows are real styled content and the browser owns the physics, so nothing
+// can drift or flash. Server scrolls only prefetch content near the edges.
+const ltActive = computed(() => sbCoarse && smoothTouchScrolling.value && props.ctl.mouseMode.value)
 // Distance from the bottom that still counts as the live gap. An empty
 // .sb-body keeps a few pixels of CSS padding, so a 2px slop would treat
 // rest as "into history" and drop taps on the transparent gap.
 const sbRestPx = 8
 let sbFetchedAt = 0
 let sbWant = 800
+
+const ltSpacer = ref<HTMLElement | null>(null)
+const ltNodes = new Map<number, HTMLElement>()
+let ltFirst = Infinity, ltLast = -Infinity
+let ltAppOff = 0        // net acked scroll offset of the app's view from live
+let ltPrefetchAt = 0
+let ltNoGrow = 0        // prefetch sends since the last transcript growth
+let ltPrevMn = Infinity, ltPrevMx = -Infinity
+function ltRow(idx: number, h: number) {
+  const e = props.ctl.transcriptAt(idx)
+  const div = document.createElement('div') as HTMLElement & { _h?: string, _t?: string }
+  div.className = 'lt-line'
+  div.dataset.li = String(idx)
+  div.style.height = `${h}px`
+  div.style.lineHeight = `${h}px`
+  div._h = e?.html; div._t = e?.text || ' '
+  if (e?.html != null) div.innerHTML = e.html
+  else div.textContent = div._t
+  ltNodes.set(idx, div)
+  return div
+}
+function ltResetDom() {
+  ltNodes.clear(); ltFirst = Infinity; ltLast = -Infinity; ltAppOff = 0
+  sbBody.value?.replaceChildren()
+}
+function syncLT() {
+  const body = sbBody.value, el = sbEl.value
+  if (!body || !el) return
+  const h = props.ctl.rowHeight()
+  // Output appends at the document tail: keep following it while at rest.
+  const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < h * 2
+  const [mn, mx] = props.ctl.transcriptRange()
+  if (mn !== ltPrevMn || mx !== ltPrevMx) { ltNoGrow = 0; ltPrevMn = mn; ltPrevMx = mx }
+  let adj = 0 // px to add to scrollTop for content inserted above the view
+  if (mn > mx) {
+    if (ltNodes.size) { ltResetDom() }
+  } else if (ltNodes.size === 0) {
+    for (let i = mn; i <= mx; i++) if (props.ctl.transcriptHas(i)) body.appendChild(ltRow(i, h))
+    ltFirst = mn; ltLast = mx
+  } else {
+    // The document only extends outward: prepend older indices, append
+    // newer ones; interior indices are filled the frame they get painted.
+    for (let i = Math.min(ltFirst - 1, mx); i >= mn; i--) {
+      if (!props.ctl.transcriptHas(i)) continue
+      body.prepend(ltRow(i, h)); adj += h
+    }
+    for (let i = Math.max(ltLast + 1, mn); i <= mx; i++) {
+      if (!props.ctl.transcriptHas(i)) continue
+      body.appendChild(ltRow(i, h))
+    }
+    if (mn < ltFirst) ltFirst = mn
+    if (mx > ltLast) ltLast = mx
+    for (const [i, n] of ltNodes) {
+      if (i >= mn && i <= mx) continue
+      if (i < mn) adj -= h
+      n.remove(); ltNodes.delete(i)
+    }
+    if (ltNodes.size === 0) { ltFirst = Infinity; ltLast = -Infinity }
+    // In-place repaints refresh rows in the document -- the compare is a
+    // string-identity check against what was rendered.
+    for (const [i, n] of ltNodes) {
+      const e = props.ctl.transcriptAt(i)
+      const nn = n as HTMLElement & { _h?: string, _t?: string }
+      const nh = e?.html, nt = e?.text || ' '
+      if (nh !== nn._h || nt !== nn._t) {
+        nn._h = nh; nn._t = nt
+        if (nh != null) n.innerHTML = nh
+        else n.textContent = nt
+      }
+    }
+  }
+  if (!body.style.paddingLeft) ltApplyMetrics()
+  // Cold-start pull room: until the document outgrows the screen, keep a
+  // spacer so the first upward drag has somewhere to go (and prefetches).
+  const sp = ltSpacer.value
+  if (sp) {
+    const want = Math.max(0, Math.round(el.clientHeight - ltNodes.size * h + 4 * h))
+    const cur = parseFloat(sp.style.height || '0')
+    if (want !== cur) { sp.style.height = `${want}px`; adj += want - cur }
+  }
+  if (wasAtBottom) el.scrollTop = el.scrollHeight
+  else if (adj) el.scrollTop += adj
+}
+// Scrolls the app the same way a finger drag does -- positioned, paced --
+// used to prefetch history near the top and to pull the app back to live.
+function ltScrollSend(lines: number) {
+  const screen = host.value?.querySelector('.xterm-screen')
+  if (!screen) return
+  const r = screen.getBoundingClientRect()
+  props.ctl.scroll(lines, r.left + r.width / 2, r.top + r.height / 2, 0, true, true)
+}
+function ltOnScroll() {
+  const el = sbEl.value
+  if (!el) return
+  const now = performance.now()
+  if (now - ltPrefetchAt < 90) return
+  if (el.scrollTop < el.clientHeight && ltNoGrow < 3) {
+    ltPrefetchAt = now
+    ltNoGrow++
+    ltScrollSend(Math.ceil(el.clientHeight / props.ctl.rowHeight()))
+    return
+  }
+  const bot = el.scrollHeight - el.scrollTop - el.clientHeight
+  if (bot < props.ctl.rowHeight() && ltAppOff > 0) {
+    ltPrefetchAt = now
+    ltScrollSend(-Math.min(ltAppOff, props.ctl.pageRows()))
+  }
+}
+function ltApplyMetrics() {
+  const el = sbEl.value, body = sbBody.value
+  const src = host.value?.querySelector('.xterm-screen')
+  if (!el || !body || !src) return
+  const cs = getComputedStyle(src)
+  Object.assign(el.style, { fontFamily: cs.fontFamily, fontSize: cs.fontSize, lineHeight: cs.lineHeight, letterSpacing: cs.letterSpacing, color: cs.color })
+  const wrap = el.getBoundingClientRect()
+  const sr = src.getBoundingClientRect()
+  Object.assign(body.style, {
+    paddingTop: `${Math.max(0, sr.top - wrap.top)}px`,
+    paddingLeft: `${Math.max(0, sr.left - wrap.left)}px`,
+    paddingRight: `${Math.max(0, wrap.right - sr.right)}px`,
+    paddingBottom: '0',
+  })
+}
+// Taps on transcript rows inside the live window map back onto screen
+// cells; taps on history do nothing (the DOM is there to read).
+function onBodyTap(e: MouseEvent) {
+  if (!ltActive.value) return
+  const row = (e.target as HTMLElement | null)?.closest?.('[data-li]') as HTMLElement | null
+  if (!row) return
+  const idx = Number(row.dataset.li)
+  const w = props.ctl.transcriptWindow()
+  if (idx < w.top || idx >= w.top + w.rows) return
+  const screen = host.value?.querySelector('.xterm-screen') as HTMLElement | null
+  if (!screen) return
+  const r = screen.getBoundingClientRect()
+  const y = r.top + (idx - w.top + 0.5) * props.ctl.rowHeight()
+  if (!props.ctl.tapLink(e.clientX, y)) props.ctl.tapMouse(e.clientX, y)
+  props.ctl.blur()
+  ;(document.activeElement as HTMLElement | null)?.blur?.()
+}
+watch(ltActive, on => {
+  ltResetDom()
+  const el = sbEl.value
+  if (el) el.scrollTop = el.scrollHeight
+  if (on) { ltApplyMetrics(); syncLT() }
+})
 function renderScrollback() {
+  if (ltActive.value) return
   const el = sbEl.value, body = sbBody.value
   if (!el || !body) return
   const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
@@ -371,6 +525,7 @@ function renderScrollback() {
 }
 watch(props.ctl.scrollbackVersion, renderScrollback)
 watch(props.ctl.frameTick, () => {
+  if (ltActive.value) { syncLT(); return }
   // Prefetch once the pane is alive so the first upward drag has content.
   if (!sbFetchedAt && !props.ctl.mouseMode.value) { sbFetchedAt = Date.now(); props.ctl.requestScrollback(sbWant) }
 })
@@ -382,6 +537,7 @@ watch(props.ctl.mouseMode, mouseCapable => {
   if (!mouseCapable && !sbFetchedAt) { sbFetchedAt = Date.now(); props.ctl.requestScrollback(sbWant) }
 })
 function onSbScroll() {
+  if (ltActive.value) { ltOnScroll(); return }
   const el = sbEl.value
   if (!el) return
   const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
@@ -398,7 +554,11 @@ function onSbScroll() {
   }
 }
 // Typing should land on the live terminal: pull the overlay back to the gap.
-watch(props.ctl.scrollInputVersion, () => { if (sbEl.value) sbEl.value.scrollTop = sbEl.value.scrollHeight })
+watch(props.ctl.scrollInputVersion, () => {
+  ltAppOff = 0
+  ltApplyMetrics()
+  if (sbEl.value) sbEl.value.scrollTop = sbEl.value.scrollHeight
+})
 // Coarse-pointer: #scrollback sits above #touch with pointer-events auto,
 // so a rest-state tap never reaches onTouchEnd. Stationary touchend on the
 // gap is the same path as a tap on #touch; a drag keeps native momentum.
@@ -479,18 +639,20 @@ onUnmounted(() => {
       @touchstart.passive="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd" @touchcancel="cancelTouch"
       @mousedown.prevent="onMouseDown"
     />
-    <!-- Local scrollback: a real scroller like the chat view. Its lines fill
-         the top, a transparent one-viewport gap sits at the bottom over the
-         live terminal -- scrolling up just reveals history, natively. -->
+    <!-- Scrollback surfaces. Old Herdr panes show a static dump over a live
+         gap; mouse-capable panes get the live transcript: a DOM document of
+         every painted row, scrolled natively, with server scrolls only
+         prefetching at the edges (ltActive). -->
     <div
       id="scrollback" ref="sbEl"
-      :style="{ pointerEvents: sbInteractive ? 'auto' : 'none', visibility: sbInteractive ? 'visible' : 'hidden' }"
+      :style="{ pointerEvents: (sbInteractive || ltActive) ? 'auto' : 'none', visibility: (sbInteractive || ltActive) ? 'visible' : 'hidden', background: ltActive ? 'var(--bg)' : '' }"
       @scroll.passive="onSbScroll"
       @touchstart.passive="onSbTouchStart"
       @touchend="onSbTouchEnd"
     >
-      <div ref="sbBody" class="sb-body" />
-      <div class="sb-gap" @click="onGapTap" />
+      <div ref="ltSpacer" v-show="ltActive" />
+      <div ref="sbBody" class="sb-body" @click="onBodyTap" />
+      <div v-if="!ltActive" class="sb-gap" @click="onGapTap" />
     </div>
     <div v-if="ctl.loading.value" class="term-loading"><span class="spinner" /></div>
     <div v-if="ctl.selectionHint.visible.value" class="terminal-selection-hint">
