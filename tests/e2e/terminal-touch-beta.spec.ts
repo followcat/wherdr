@@ -35,7 +35,7 @@ async function touch(page: Page, type: string, y: number, startY?: number) {
 async function terminal(page: Page, enabled: boolean, offset = 0) {
   await page.addInitScript(enabled => {
     localStorage.setItem('terminalRenderer', 'html')
-    if (enabled) localStorage.setItem('smoothTouchScrolling', '1')
+    localStorage.setItem('smoothTouchScrolling', enabled ? '1' : '0')
   }, enabled)
   await page.goto(`/#/a/${pane}`)
   const tabs = page.locator('.view-tabs')
@@ -46,10 +46,58 @@ async function terminal(page: Page, enabled: boolean, offset = 0) {
 
 test.beforeEach(async () => {
   await expect.poll(async () => (await fakeHerdr('e2e.pane_size', { pane_id: pane }) as { attached: boolean }).attached).toBe(false)
+  // Exercise the mouse-capable transport used by opaque applications. The
+  // default fake version predates this capability and bypasses that route.
+  await fakeHerdr('e2e.terminal_version', { version: '0.9.5' })
 })
 
 test.afterEach(async () => {
   await fakeHerdr('e2e.touch_scroll', { pane_id: pane, clear: true })
+  await fakeHerdr('e2e.terminal_version', { version: '0.9.1' })
+})
+
+test('an opaque TUI receives a real swipe, and the next tap stops it without clicking', async ({ page, isMobile, browserName }) => {
+  test.skip(!isMobile || browserName !== 'chromium', 'Real touch swipes use Chromium CDP on the phone profile')
+  await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: true, offset: 20 })
+  const packets: Record<string, unknown>[] = []
+  page.on('websocket', socket => {
+    if (socket.url().includes('/ws/term?')) socket.on('framesent', ({ payload }) => {
+      if (typeof payload === 'string') packets.push(JSON.parse(payload))
+    })
+  })
+  await terminal(page, true, 20)
+  const box = (await page.locator('#touch').boundingBox())!
+  const x = box.x + box.width / 2, y = box.y + box.height / 3
+  // Hit-test before dispatching any events: a native history overlay must not
+  // intercept this application's gesture with a guessed transcript document.
+  expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.id, { x, y })).toBe('touch')
+  const input = await page.context().newCDPSession(page)
+  await input.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] })
+  for (const dy of [20, 40, 60, 80]) {
+    await input.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + dy }] })
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+  }
+  await input.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  await expect.poll(async () => (await state()).offset).toBeGreaterThan(20)
+  const before = packets.filter(p => p.type === 'touch.cancel').length
+  await page.touchscreen.tap(x, y + 80)
+  await expect.poll(() => packets.filter(p => p.type === 'touch.cancel').length).toBeGreaterThan(before)
+  await expect(page.locator('.xterm-helper-textarea')).not.toBeFocused()
+  expect(packets.filter(p => p.type === 'terminal.mouse')).toEqual([])
+  await expect.poll(() => page.locator('.xterm-screen').evaluate(el => (el as HTMLElement).style.transform)).toBe('')
+  await expect(page.locator('.lt-doc')).toHaveCount(0)
+  await input.detach()
+})
+
+test('a deliberate native tap focuses an opaque TUI once', { tag: '@webkit-phone' }, async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'Native touch input uses the phone profile')
+  await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: true })
+  await terminal(page, true)
+  await page.locator('#touch').tap()
+  await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+  const s = await fakeHerdr('e2e.terminal_mouse', { pane_id: pane }) as { events: { pane_id: string, event: { action: string } }[] }
+  expect(s.events.filter(e => e.pane_id === pane && e.event.action === 'down')).toHaveLength(1)
+  expect(s.events.filter(e => e.pane_id === pane && e.event.action === 'up')).toHaveLength(1)
 })
 
 for (const enabled of [false, true]) {
@@ -125,16 +173,17 @@ for (const edge of [0, 80]) {
   })
 }
 
-test('the beta preference is off by default and survives a reload on this device', { tag: '@webkit-phone' }, async ({ page }) => {
+test('the beta preference follows the device default and survives a reload', { tag: '@webkit-phone' }, async ({ page }) => {
   await page.goto('/#/settings?section=terminal')
+  const initial = await page.evaluate(() => matchMedia('(hover: none) and (pointer: coarse)').matches)
   const row = page.locator('.settings-toggle').filter({ hasText: 'Smooth touch scrolling (beta)' })
   const toggle = row.getByRole('switch')
-  await expect(toggle).toHaveAttribute('aria-checked', 'false')
+  await expect(toggle).toHaveAttribute('aria-checked', String(initial))
   await expect(row).toContainText('Experimental')
   await toggle.click()
-  await expect(toggle).toHaveAttribute('aria-checked', 'true')
+  await expect(toggle).toHaveAttribute('aria-checked', String(!initial))
   await page.reload()
-  await expect(toggle).toHaveAttribute('aria-checked', 'true')
+  await expect(toggle).toHaveAttribute('aria-checked', String(!initial))
 })
 
 for (const enabled of [false, true]) {

@@ -9,6 +9,11 @@ const screen = (text: string | null, agent = 'codex') => fakeHerdr('e2e.interact
 const original = { cols: 120, rows: 40, attached: false }
 const size = () => fakeHerdr('e2e.pane_size', { pane_id: pane })
 const sentKeys = async () => (await fakeHerdr('e2e.terminal_screen', { pane_id: pane }) as { keys: string[] }).keys
+async function escapeKey(page: Page) {
+  const window = page.getByRole('dialog', { name: 'Interactive terminal', exact: true })
+  await window.locator('.vk-more').click()
+  await window.getByRole('button', { name: 'Esc', exact: true }).click()
+}
 // What a tap at the middle of `selector` would reach: the window or its scrim, or the app.
 const coveredAt = (page: Page, selector: string) => page.locator(selector).first().evaluate((el) => {
   const r = el.getBoundingClientRect()
@@ -44,9 +49,9 @@ test('shows only the live TUI, sends real keys and closes when its field returns
   if (info.project.name === 'chromium-phone') expect(fitted.cols).toBeLessThan(60)
   await page.screenshot({ path: `.shots/interactive-terminal-${info.project.name}.png` })
   await window.getByRole('button', { name: '↓', exact: true }).click()
-  await window.getByRole('button', { name: '⏎', exact: true }).click()
+  await window.getByRole('button', { name: 'Enter', exact: true }).click()
   await expect.poll(async () => (await fakeHerdr('e2e.terminal_screen', { pane_id: pane }) as { keys: string[] }).keys).toEqual(['down', 'enter'])
-  await window.getByRole('button', { name: 'esc', exact: true }).click()
+  await escapeKey(page)
   await expect(window).toHaveCount(0)
   await expect(page.locator('.composer')).toBeVisible()
   // Closed by the agent: no scrim left, the app answers again.
@@ -85,7 +90,7 @@ test('the scrim covers the whole app; a click on it closes the window until it i
   await expect(reopen).toBeVisible()
   await reopen.click()
   await expect(window).toBeVisible()
-  await window.getByRole('button', { name: 'esc', exact: true }).click()
+  await escapeKey(page)
   await expect(window).toHaveCount(0)
 })
 
@@ -115,7 +120,7 @@ test('manual close releases the pane without Escape and does not reopen the same
   await expect(window).toHaveCount(0)
   await page.getByRole('button', { name: 'Open interactive terminal' }).click()
   await expect(window).toBeVisible()
-  await window.getByRole('button', { name: 'esc', exact: true }).click()
+  await escapeKey(page)
   await expect(window).toHaveCount(0)
 })
 
