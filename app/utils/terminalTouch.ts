@@ -1,15 +1,12 @@
 type Point = { x: number, y: number }
 
-// Predictive visual offset: the screen follows the finger 1:1 while sent
-// scrolls wait for their frames. Three rows of exact lead make the drag
-// read as continuous; cached rows (extraPx) extend the exact zone with real
-// content the transcript cache already painted, and past the zone a rubber
-// band damps toward the cap so a stalled server never drags the grid far
-// out of its frame.
-export function touchPreviewOffset(px: number, rowHeight: number, extraPx = 0) {
+// A visual hint for a remote viewport, never a guessed history coordinate.
+// Follow one row exactly, then damp toward a three-row cap. Snapshot caches
+// cannot safely extend the range for arbitrary full-screen applications.
+export function touchPreviewOffset(px: number, rowHeight: number) {
   const h = Math.max(1, rowHeight)
-  const lead = h * 3 + Math.max(0, extraPx)
-  const cap = lead + h * 3
+  const lead = h
+  const cap = h * 3
   const over = Math.abs(px) - lead
   if (over <= 0) return px
   return Math.sign(px) * Math.min(cap, lead + over * 0.25)

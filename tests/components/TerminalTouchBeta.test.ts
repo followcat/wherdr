@@ -14,8 +14,12 @@ beforeAll(async () => {
 let unmount: (() => void) | undefined
 const frames = new Map<number, FrameRequestCallback>()
 let id = 0
-async function mounted(enabled: boolean) {
+async function mounted(enabled: boolean, coarse = false) {
   smoothTouchScrolling.value = enabled
+  if (coarse) vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query.includes('pointer: coarse'), media: query,
+    addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
+  }))
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
   const ctl = {
     mount: vi.fn((el: HTMLElement) => { el.innerHTML = '<div class="xterm"><div class="xterm-screen">terminal grid</div></div>' }),
@@ -24,12 +28,10 @@ async function mounted(enabled: boolean) {
     focus: vi.fn(), blur: vi.fn(), tapLink: vi.fn(() => false), tapMouse: vi.fn(),
     cancelTouchScroll: vi.fn(), scrollInputVersion: ref(0), scrollAck: ref(0), frameTick: ref(0),
     loading: ref(false), selectionHint: { visible: ref(false), dismiss: vi.fn() },
-    // Live-transcript surface stays off under jsdom (no coarse pointer), but
-    // the component reads these regardless of ltActive.
-    mouseMode: ref(false), previewExtra: () => 0, previewRows: () => [],
+    mouseMode: ref(coarse),
     requestScrollback: vi.fn(), scrollback: ref(''), scrollbackVersion: ref(0),
     termTheme: () => undefined, transcriptAt: () => undefined,
-    transcriptInject: vi.fn(), transcriptRange: () => [0, 0],
+    transcriptInject: vi.fn(), transcriptRange: () => [0, 23],
     transcriptWindow: () => ({ top: 0, rows: 24 }),
   }
   const w = await mountSuspended(TerminalView, { props: { ctl: ctl as unknown as TerminalCtl } })
@@ -54,6 +56,36 @@ afterEach(() => {
 })
 
 describe('terminal beta switch', () => {
+  it('keeps an opaque application on the live touch surface without a guessed history document', async () => {
+    const r = await mounted(true, true)
+    expect(r.w.find('.lt-doc').exists()).toBe(false)
+    expect(r.w.get('#scrollback').attributes('style')).toContain('pointer-events: none')
+  })
+  it('sends only the distance dragged, without speculative read-ahead wheel ticks', async () => {
+    const r = await mounted(true)
+    let time = 1000
+    vi.spyOn(performance, 'now').mockImplementation(() => time)
+    await r.send('touchstart', 100)
+    time += 16
+    await r.send('touchmove', 132)
+    paint()
+    time += 16
+    await r.send('touchmove', 164)
+    paint()
+    expect(r.ctl.scroll.mock.calls.map(call => call[0])).toEqual([2, 2])
+  })
+  it('cancels an old direction even after its preview has been acknowledged', async () => {
+    const r = await mounted(true)
+    await r.send('touchstart', 100)
+    await r.send('touchmove', 132)
+    paint()
+    r.ctl.scrollAck.value = 2
+    r.ctl.cancelTouchScroll.mockClear()
+    await r.send('touchmove', 116)
+    paint()
+    expect(r.ctl.cancelTouchScroll).toHaveBeenCalledOnce()
+    expect(r.ctl.scroll.mock.calls.at(-1)?.[0]).toBe(-1)
+  })
   it('defaults to off and sends only legacy row scrolls without prediction or cancellation', async () => {
     expect(smoothTouchScrolling.value).toBe(false)
     const r = await mounted(false)
@@ -74,13 +106,12 @@ describe('terminal beta switch', () => {
     expect(r.screen()).toContain('translate3d')
     expect(r.w.get('#termWrap').attributes('style')).toBeUndefined()
     paint()
-    // Sends carry the finger's rows plus a velocity read-ahead (<=8 extra);
-    // only the finger's rows count as preview debt.
+    // A request carries only actual finger travel; acknowledgement retires
+    // its visual hint without claiming an application transcript position.
     expect(r.ctl.scroll).toHaveBeenCalledTimes(1)
     const call = r.ctl.scroll.mock.calls[0]!
     expect(call.slice(1)).toEqual([50, 140, 0, true])
-    expect(call[0]).toBeGreaterThanOrEqual(2)
-    expect(call[0]).toBeLessThanOrEqual(10)
+    expect(call[0]).toBe(2)
     r.ctl.scrollAck.value = 2
     paint()
     expect(r.screen()).toContain('8px')
