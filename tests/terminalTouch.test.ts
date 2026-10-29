@@ -141,6 +141,18 @@ describe('touch scroll backpressure', () => {
     expect(send).toHaveBeenCalledTimes(count)
     p.dispose()
   })
+  it('retains real drag rows across slow frames while expiring only momentum', () => {
+    vi.useFakeTimers(); vi.setSystemTime(0)
+    const send = vi.fn(), p = createTouchScrollPacer<string>(send)
+    p.push('up', 20, 'drag', 800)
+    vi.advanceTimersByTime(100)
+    p.push('up', 10, 'momentum', 240)
+    vi.advanceTimersByTime(300)
+    for (let i = 0; i < 5; i++) { p.frame(); vi.advanceTimersByTime(16) }
+    expect(send.mock.calls.filter(call => call[2] === 'drag')).toHaveLength(20)
+    expect(send.mock.calls.filter(call => call[2] === 'momentum')).toHaveLength(0)
+    p.dispose()
+  })
   it('responds immediately and keeps a bounded rate while following frames', () => {
     vi.useFakeTimers(); vi.setSystemTime(0)
     const times: number[] = []

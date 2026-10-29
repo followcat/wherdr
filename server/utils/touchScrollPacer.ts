@@ -2,15 +2,18 @@
 // wheel tick. Preserve every requested tick instead of merging a fast drag
 // into a single command. Small batches avoid a long queue in the agent's TTY.
 export function createTouchScrollPacer<T = undefined>(send: (direction: 'up' | 'down', lines: number, metadata?: T) => void) {
-  let metadata: (T | undefined)[] = []
-  let net = 0, inFlight = 0, last = -Infinity
-  let credit = 12, creditedAt = Date.now(), expiresAt = 0
+  let queue: { value: T | undefined, expiresAt: number }[] = []
+  let direction: 'up' | 'down' = 'up'
+  let inFlight = 0, last = -Infinity
+  let credit = 12, creditedAt = Date.now()
   let timer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
   const schedule = () => {
-    if (disposed || !net || timer) return
+    if (disposed || !queue.length || timer) return
     const now = Date.now()
-    if (now >= expiresAt) { net = 0; metadata = []; return }
+    queue = queue.filter(item => item.expiresAt > now)
+    if (!queue.length) return
+    const expiresAt = Math.min(...queue.map(item => item.expiresAt))
     credit = Math.min(12, credit + Math.max(0, now - creditedAt) * .1)
     creditedAt = now
     // A repaint is only a pacing opportunity, not proof of applied movement.
@@ -25,30 +28,31 @@ export function createTouchScrollPacer<T = undefined>(send: (direction: 'up' | '
       timer = setTimeout(() => { timer = null; schedule() }, Math.ceil(Math.min(wait, expiresAt - now)))
       return
     }
-    const count = Math.min(Math.abs(net), Math.floor(credit), 4, 8 - inFlight)
-    const direction = net > 0 ? 'up' : 'down'
-    net -= Math.sign(net) * count
+    const count = Math.min(queue.length, Math.floor(credit), 4, 8 - inFlight)
     credit -= count
     last = now
     inFlight += count
-    for (let i = 0; i < count; i++) send(direction, 1, metadata.shift())
+    for (let i = 0; i < count; i++) send(direction, 1, queue.shift()!.value)
     schedule()
   }
   const cancel = () => {
-    net = 0; metadata = []; inFlight = 0; last = -Infinity
+    queue = []; inFlight = 0; last = -Infinity
     if (timer) clearTimeout(timer)
     timer = null
   }
   return {
-    push(direction: 'up' | 'down', lines: number, value?: T) {
+    push(nextDirection: 'up' | 'down', lines: number, value?: T, maxAgeMs = 240) {
       if (disposed) return
-      const amount = direction === 'up' ? lines : -lines
-      // A reversal follows the finger now, rather than draining older input.
-      if (net && Math.sign(net) !== Math.sign(amount)) { net = 0; metadata = [] }
-      const accepted = Math.min(48 - Math.abs(net), Math.abs(amount))
-      net += Math.sign(amount) * accepted
-      for (let i = 0; i < accepted; i++) metadata.push(value)
-      expiresAt = Date.now() + 240
+      // Keep real drag requests longer than expendable momentum. Each request
+      // owns its deadline: a later flick must not shorten or renew older input.
+      if (direction !== nextDirection) queue = []
+      direction = nextDirection
+      queue = queue.filter(item => item.expiresAt > Date.now())
+      const accepted = Math.min(48 - queue.length, Math.abs(lines))
+      const expiresAt = Date.now() + Math.max(1, Math.min(800, maxAgeMs))
+      for (let i = 0; i < accepted; i++) queue.push({ value, expiresAt })
+      if (timer) clearTimeout(timer)
+      timer = null
       schedule()
     },
     frame() {

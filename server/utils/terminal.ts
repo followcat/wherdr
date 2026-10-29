@@ -191,7 +191,7 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
 
   // Scrolls merged and rate-limited (see scrollThrottle.ts).
   // Acknowledge sent rows after relaying the next frame. Herdr exposes no
-  // applied viewport delta or causal input sequence, so this is prediction.
+  // applied viewport delta or causal input sequence, so this acknowledges delivery only.
   const scrollDelivered = new Map<number, number>()
   type TouchPosition = ReturnType<typeof terminalScrollPosition> & { epoch: number, preview: boolean }
   let touchScroll: ReturnType<typeof createTouchScrollPacer<TouchPosition>> | undefined
@@ -206,7 +206,7 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
   // Panes without mouse-report need no per-tick wheel reports: Herdr honors
   // lines:N there, so merge touch drags into one command per repaint instead
   // of one frame per row. The merged batch still counts toward the gesture's
-  // epoch so the client's preview debt is retired by scroll.ack.
+  // epoch for compatibility with clients consuming scroll.ack.
   let mergedEpoch = 0, mergedPreview = true
   const touchMerged = createScrollThrottle((direction, lines) => {
     if (mergedPreview) scrollDelivered.set(mergedEpoch, (scrollDelivered.get(mergedEpoch) || 0) + (direction === 'up' ? lines : -lines))
@@ -269,7 +269,7 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
                 pacedTouch().push(m.direction, clampInt(m.lines, 1, 500, 3), {
                   ...terminalScrollPosition(m, size.cols, size.rows),
                   epoch: clampInt(m.epoch, 0, Number.MAX_SAFE_INTEGER, 0), preview: m.preview !== false,
-                })
+                }, m.phase === 'momentum' || m.preview === false ? 240 : 800)
               }
               else {
                 mergedEpoch = clampInt(m.epoch, 0, Number.MAX_SAFE_INTEGER, 0)
