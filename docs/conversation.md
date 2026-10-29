@@ -8,7 +8,6 @@
   A command the agent proposes (shell code block, or inline `! command`) can be copied without
   its prompt, or run in the agent's shell mode (`!`, Claude Code, Codex and omp) after you
   confirm the full command.
-<<<<<<< HEAD
 - **Devin conversations**: read the local CLI's SQLite history on the machine running
   the agent, including its current main branch, tool results and saved images. Python 3.7 or later
   is required on that machine. Install the Herdr integration with
@@ -32,12 +31,11 @@
   One SSE subscription per machine invalidates the cache; canonical HTTP pages are
   re-read on reconnect and regularly even when no event arrives. Revert, compaction
   and service changes discard old page anchors. Temporary read failures preserve
-  already displayed messages. Search scans at most 40 pages / 8 MB within the shared
-  deadline and reports incomplete results. Only session-referenced inline or local
+  already displayed messages. Search uses a 40-page / 8 MB scan budget within the shared deadline
+  and reports incomplete results; the last page may exceed the byte budget. Only session-referenced inline or local
   image files are served; remote image URLs are not fetched. Sending, stopping,
   questions and approvals retain the existing terminal controls. Version 1.x,
   `--standalone` and explicit `--server` instances are not supported by this reader.
->>>>>>> 8c8908ff (docs(chat): explain OpenCode service discovery and reading limits)
 - **Interactive agent screens**: in a conversation, an uncertain menu or panel opens the
   pane's real terminal in a modal window, with arrows, Enter, Escape, Tab, digits and y/n.
   The rest of the app waits behind a scrim (the window fills the screen on a phone); in a
