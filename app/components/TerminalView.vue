@@ -246,16 +246,15 @@ function onWheel(e: WheelEvent) {
 // a one-viewport transparent gap at the bottom. At rest the gap fills the
 // view (the live terminal shows through); dragging up reveals local history
 // with the browser's own momentum -- the same mechanism as the chat view.
-// On touch this is the scroller for panes on old Herdr without mouse
-// capability; mouse-capable panes keep touches for ctl.scroll (see
-// sbInteractive). The wheel path (computers) always goes through
-// terminal.scroll.
+// On touch this replaces the server scroll on plain panes; TUI panes keep
+// their touches for ctl.scroll (see sbInteractive). The wheel path
+// (computers) always goes through terminal.scroll.
 const sbEl = ref<HTMLElement | null>(null)
 const sbBody = ref<HTMLElement | null>(null)
 const sbCoarse = typeof matchMedia !== 'undefined' && matchMedia('(hover: none) and (pointer: coarse)').matches
-// Panes whose Herdr speaks terminal.mouse keep their touches: their drags
-// reach #touch -> ctl.scroll, so TUI programs scroll in-app and plain panes
-// scroll the server-side buffer. Overlaying the dump on those panes reads
+// TUI panes (mouse reporting or the alternate screen) keep their touches:
+// their drags reach #touch -> ctl.scroll and the program scrolls in-app.
+// Plain panes browse the local dump instead: overlaying it on a TUI reads
 // as a copy of the screen sliding over the live one, with no real scroll.
 const sbInteractive = computed(() => sbCoarse && !props.ctl.mouseMode.value)
 // Distance from the bottom that still counts as the live gap. An empty
@@ -316,12 +315,12 @@ watch(props.ctl.frameTick, () => {
   // Prefetch once the pane is alive so the first upward drag has content.
   if (!sbFetchedAt && !props.ctl.mouseMode.value) { sbFetchedAt = Date.now(); props.ctl.requestScrollback(sbWant) }
 })
-watch(props.ctl.mouseMode, mouseCapable => {
+watch(props.ctl.mouseMode, tui => {
   // Re-enter at the live view: a dump scrolled mid-history must not
-  // resurface over the terminal when the overlay turns interactive again.
+  // resurface over the terminal when the pane drops back out of its TUI.
   const el = sbEl.value
   if (el) el.scrollTop = el.scrollHeight
-  if (!mouseCapable && !sbFetchedAt) { sbFetchedAt = Date.now(); props.ctl.requestScrollback(sbWant) }
+  if (!tui && !sbFetchedAt) { sbFetchedAt = Date.now(); props.ctl.requestScrollback(sbWant) }
 })
 function onSbScroll() {
   const el = sbEl.value
