@@ -66,7 +66,7 @@ function legacyOnTouchEnd(e: TouchEvent) {
   const t = e.changedTouches[0]
   legacyLastY = null
   legacyLastX = null
-  if (!legacyMoved && t && Math.hypot(t.clientX - legacyStartX, t.clientY - legacyStartY) < 5) {
+  if (!legacyMoved && !lpEntered && t && Math.hypot(t.clientX - legacyStartX, t.clientY - legacyStartY) < 5) {
     if (!props.ctl.tapLink(t.clientX, t.clientY)) {
       props.ctl.tapMouse(t.clientX, t.clientY)
       props.ctl.focus()
@@ -150,7 +150,32 @@ const touch = createTerminalTouch({
   canHorizontal: () => { const el = scroller(); return !!el && el.scrollWidth > el.clientWidth },
   maxMomentum: () => props.ctl.rowHeight() * props.ctl.pageRows(),
 })
+// Long press on the gesture surface opens copy mode; it must not be mistaken
+// for a slow tap or leak into the tap->focus path on release.
+let lpTimer: ReturnType<typeof setTimeout> | undefined, lpX = 0, lpY = 0, lpEntered = false
+const armLongPress = () => { clearTimeout(lpTimer); lpTimer = setTimeout(enterCopyMode, 480) }
+function enterCopyMode() {
+  lpTimer = undefined
+  lpEntered = true
+  if (copyMode.value) return
+  copyMode.value = true
+  haptic()
+  // The finger may still be down: drop the gesture so it cannot scroll the
+  // live pane behind the copy surface.
+  cancelTouch()
+  if (!sbFetchedAt) { sbFetchedAt = Date.now(); props.ctl.requestScrollback(sbWant) }
+  nextTick(() => {
+    renderScrollback()
+    if (sbEl.value) sbEl.value.scrollTop = sbEl.value.scrollHeight
+  })
+}
+function exitCopyMode() {
+  if (!copyMode.value) return
+  copyMode.value = false
+  renderScrollback()
+}
 function cancelTouch() {
+  clearTimeout(lpTimer); lpTimer = undefined
   touch.cancel()
   touching = false
   cancelAnimationFrame(raf); raf = 0
@@ -186,29 +211,35 @@ function onTouchStart(e: TouchEvent) {
   // An intentional tap focuses synchronously from touchend instead.
   if (e.cancelable) e.preventDefault()
   if (e.touches.length !== 1) { cancelTouch(); legacyLastY = legacyLastX = null; return }
-  if (!smoothTouchScrolling.value) return legacyOnTouchStart(e)
+  lpEntered = false
+  lpX = e.touches[0]!.clientX; lpY = e.touches[0]!.clientY
+  if (!smoothTouchScrolling.value) { armLongPress(); return legacyOnTouchStart(e) }
   // pointerdown has already stopped local momentum; keep its recency so the
   // stopping tap cannot become a click or open the keyboard.
   stoppingScroll = lastTouchAt - lastScrollAt < 700
   cancelTouch()
   touching = true
   touch.start(e.touches[0]!.clientX, e.touches[0]!.clientY)
+  armLongPress()
 }
 function onTouchMove(e: TouchEvent) {
   e.preventDefault()
+  const tm = e.touches[0]
+  if (tm && Math.hypot(tm.clientX - lpX, tm.clientY - lpY) > 10) { clearTimeout(lpTimer); lpTimer = undefined }
   if (e.touches.length !== 1) { cancelTouch(); legacyLastX = legacyLastY = null; return }
   if (!smoothTouchScrolling.value) return legacyOnTouchMove(e)
   touch.move(e.touches[0]!.clientX, e.touches[0]!.clientY)
 }
 function onTouchEnd(e: TouchEvent) {
   lastTouchAt = performance.now()
+  clearTimeout(lpTimer); lpTimer = undefined
   if (!smoothTouchScrolling.value) return legacyOnTouchEnd(e)
   touching = false
   const t = e.changedTouches[0]
   const tapped = touch.end(t ? { x: t.clientX, y: t.clientY } : undefined)
   // Flush the drag before any momentum tick so both directions retain order.
   if (raf) { cancelAnimationFrame(raf); raf = 0; flush() }
-  if (tapped && !stoppingScroll && t) {
+  if (tapped && !stoppingScroll && !lpEntered && t) {
     if (!props.ctl.tapLink(t.clientX, t.clientY)) {
       props.ctl.tapMouse(t.clientX, t.clientY)
       props.ctl.focus()
@@ -234,27 +265,38 @@ const sbEl = ref<HTMLElement | null>(null)
 const sbBody = ref<HTMLElement | null>(null)
 const sbCoarse = typeof matchMedia !== 'undefined' && matchMedia('(hover: none) and (pointer: coarse)').matches
 const sbInteractive = computed(() => sbCoarse && !props.ctl.mouseMode.value)
+// Copy mode (long press): the overlay becomes an opaque, selectable snapshot
+// of history plus the live screen, so a selection can cross page boundaries.
+const copyMode = ref(false)
+const sbOpen = computed(() => sbInteractive.value || copyMode.value)
 const sbRestPx = 8
 let sbFetchedAt = 0, sbWant = 800
+function lineDiv(spans: { text: string, color?: string, background?: string, bold?: boolean, dim?: boolean, italic?: boolean, underline?: boolean, strike?: boolean }[]) {
+  const line = document.createElement('div')
+  for (const s of spans) {
+    const span = document.createElement('span')
+    span.textContent = s.text
+    if (s.color) span.style.color = s.color
+    if (s.background) span.style.backgroundColor = s.background
+    if (s.bold) span.style.fontWeight = '600'
+    if (s.dim) span.style.opacity = '.55'
+    if (s.italic) span.style.fontStyle = 'italic'
+    if (s.underline || s.strike) span.style.textDecoration = [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ')
+    line.appendChild(span)
+  }
+  return line
+}
 function renderScrollback() {
   const el = sbEl.value, body = sbBody.value
   if (!el || !body) return
   const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
   const holder = document.createDocumentFragment()
-  for (const spans of ansiToLines(props.ctl.scrollback.value)) {
-    const line = document.createElement('div')
-    for (const s of spans) {
-      const span = document.createElement('span')
-      span.textContent = s.text
-      if (s.color) span.style.color = s.color
-      if (s.background) span.style.backgroundColor = s.background
-      if (s.bold) span.style.fontWeight = '600'
-      if (s.dim) span.style.opacity = '.55'
-      if (s.italic) span.style.fontStyle = 'italic'
-      if (s.underline || s.strike) span.style.textDecoration = [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ')
-      line.appendChild(span)
-    }
-    holder.appendChild(line)
+  for (const spans of ansiToLines(props.ctl.scrollback.value)) holder.appendChild(lineDiv(spans))
+  if (copyMode.value) {
+    const live = document.createElement('div')
+    live.className = 'sb-live'
+    for (const spans of props.ctl.liveScreenSpans()) live.appendChild(lineDiv(spans))
+    holder.appendChild(live)
   }
   body.replaceChildren(holder)
   // Match the terminal's metrics and geometry so history rows continue the
@@ -265,8 +307,12 @@ function renderScrollback() {
     Object.assign(el.style, { fontFamily: cs.fontFamily, fontSize: cs.fontSize, lineHeight: cs.lineHeight, letterSpacing: cs.letterSpacing, color: cs.color })
     // The screen canvas paints its own bg; the element itself is transparent,
     // so take the page surface -- an opaque history region must hide the live
-    // grid behind it (the gap below stays transparent on purpose).
-    body.style.background = getComputedStyle(document.body).getPropertyValue('--bg') || 'black'
+    // grid behind it. In copy mode the gap is opaque too: the snapshot inside
+    // the body owns the live rows, the real grid stays hidden.
+    const bg = getComputedStyle(document.body).getPropertyValue('--bg') || 'black'
+    body.style.background = bg
+    const gap = el.querySelector('.sb-gap') as HTMLElement | null
+    if (gap) gap.style.background = copyMode.value ? bg : ''
     const wrap = el.getBoundingClientRect()
     const sr = src.getBoundingClientRect()
     Object.assign(body.style, {
@@ -300,9 +346,11 @@ watch(props.ctl.mouseMode, mouseCapable => {
 let sbLastMoveAt = -Infinity, sbLastTop = -1
 function onSbScroll() {
   const el = sbEl.value
-  if (!el || !sbInteractive.value) return
+  if (!el || !sbOpen.value) return
   if (sbLastTop >= 0 && Math.abs(el.scrollTop - sbLastTop) > 2) sbLastMoveAt = performance.now()
   sbLastTop = el.scrollTop
+  // A refetch rebuilds the text surface and would destroy a live selection.
+  if (copyMode.value) return
   const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
   if (distFromBottom > sbRestPx && Date.now() - sbFetchedAt > 2500) {
     sbFetchedAt = Date.now()
@@ -320,6 +368,7 @@ watch(props.ctl.scrollInputVersion, () => {
 let sbAX = 0, sbAY = 0, sbStartTop = 0
 let sbTouchSent = false, sbWasMoving = false
 function tapGap(x: number, y: number) {
+  if (copyMode.value) { exitCopyMode(); return true }
   const el = sbEl.value
   if (el && el.scrollHeight - el.scrollTop - el.clientHeight > sbRestPx) return false
   if (sbWasMoving || (el && Math.abs(el.scrollTop - sbStartTop) > 2)) return true
@@ -388,8 +437,8 @@ onUnmounted(() => {
       @mousedown.prevent="onMouseDown"
     />
     <div
-      id="scrollback" ref="sbEl"
-      :style="{ pointerEvents: sbInteractive ? 'auto' : 'none', visibility: sbInteractive ? 'visible' : 'hidden' }"
+      id="scrollback" ref="sbEl" :class="{ 'copy-mode': copyMode }"
+      :style="{ pointerEvents: sbOpen ? 'auto' : 'none', visibility: sbOpen ? 'visible' : 'hidden' }"
       @scroll.passive="onSbScroll"
       @touchstart.passive="onSbTouchStart"
       @touchend="onSbTouchEnd"
@@ -397,6 +446,7 @@ onUnmounted(() => {
       <div ref="sbBody" class="sb-body" />
       <div class="sb-gap" @click="onGapTap" />
     </div>
+    <button v-if="copyMode" type="button" class="cp-done" @click="exitCopyMode">{{ t('Done') }}</button>
     <div v-if="ctl.loading.value" class="term-loading"><span class="spinner" /></div>
     <div v-if="ctl.selectionHint.visible.value" class="terminal-selection-hint">
       {{ tl('Shift + drag to select', 'Shift + glisser pour sélectionner') }}
