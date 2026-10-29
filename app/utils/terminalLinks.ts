@@ -10,7 +10,8 @@
 //
 // Opening: ⌘+click (Mac) or Ctrl+click with a mouse, as in native terminals,
 // since a plain click starts a selection; a plain tap on a touch screen.
-// Only http and https open, in a new tab, without opener.
+// Only http and https open. Phone links within this app stay in its window;
+// external links and mouse modifier clicks open a new tab without an opener.
 import type { IBufferLine, ILink, ILinkHandler, Terminal } from '@xterm/xterm'
 
 const URL_RE = /https?:\/\/[^\s"'<>`─-▟]+/g
@@ -110,7 +111,14 @@ export function linkClickAllowed(e: Pick<MouseEvent, 'metaKey' | 'ctrlKey'>, mou
 export function openTerminalLink(uri: string): boolean {
   const url = safeLinkUrl(uri)
   if (!url) return false
-  window.open(url, '_blank', 'noopener,noreferrer')
+  const destination = new URL(url)
+  if (!finePointer() && destination.origin === window.location.origin) {
+    // Hash routes belong to this SPA. A root link also stays in this document
+    // instead of opening Chrome again or reloading the terminal's whole app.
+    if (destination.pathname === window.location.pathname && destination.search === window.location.search) {
+      window.location.hash = destination.hash || '#/'
+    } else window.location.assign(url)
+  } else window.open(url, '_blank', 'noopener,noreferrer')
   return true
 }
 

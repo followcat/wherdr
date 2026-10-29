@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { IBufferLine } from '@xterm/xterm'
-import { findUrls, linkClickAllowed, linksAtRow, rowContinues, rowText, safeLinkUrl } from '../app/utils/terminalLinks'
+import { findUrls, linkClickAllowed, openTerminalLink, linksAtRow, rowContinues, rowText, safeLinkUrl } from '../app/utils/terminalLinks'
 import { joinWrappedRows, trimSelection } from '../app/utils/terminalSelection'
 
 // Fictional login URL, wrapped by a TUI at 40 columns: each row is written
@@ -109,5 +109,40 @@ describe('copy of wrapped rows', () => {
 
   it('follows the terminal\'s wrap flag', () => {
     expect(joinWrappedRows('abc\ndef', [pad('abc'), pad('def')], i => i === 1)).toBe('abcdef')
+  })
+})
+
+
+describe('terminal link destinations', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  function browser(mouse = false) {
+    const assign = vi.fn(), open = vi.fn()
+    vi.stubGlobal('window', { location: { origin: 'https://app.example.com', pathname: '/', search: '', hash: '#/a/demo', assign }, open })
+    vi.stubGlobal('matchMedia', () => ({ matches: mouse }))
+    return { assign, open }
+  }
+  it('keeps a phone link to this app in the current window', () => {
+    const b = browser()
+    expect(openTerminalLink('https://app.example.com/#/settings')).toBe(true)
+    expect(window.location.hash).toBe('#/settings')
+    expect(b.assign).not.toHaveBeenCalled()
+    expect(b.open).not.toHaveBeenCalled()
+  })
+  it('handles an app root link without reloading its document', () => {
+    const b = browser()
+    expect(openTerminalLink('https://app.example.com/')).toBe(true)
+    expect(window.location.hash).toBe('#/')
+    expect(b.assign).not.toHaveBeenCalled()
+    expect(b.open).not.toHaveBeenCalled()
+  })
+  it('keeps external sites and mouse modifier clicks in a separate tab', () => {
+    const b = browser()
+    openTerminalLink('https://other.example.com/docs')
+    expect(b.open).toHaveBeenCalledWith('https://other.example.com/docs', '_blank', 'noopener,noreferrer')
+    expect(b.assign).not.toHaveBeenCalled()
+    browser(true)
+    expect(openTerminalLink('https://app.example.com/#/settings')).toBe(true)
+    expect(window.open).toHaveBeenCalledOnce()
+    expect(window.location.assign).not.toHaveBeenCalled()
   })
 })
