@@ -109,11 +109,11 @@ describe('terminal touch gestures', () => {
   })
   it('follows the finger 1:1 inside the lead and rubber-bands toward the cap', () => {
     expect(touchPreviewOffset(4, 16)).toBe(4)
-    expect(touchPreviewOffset(-48, 16)).toBe(-48)
-    expect(touchPreviewOffset(60, 16)).toBe(51)
-    expect(touchPreviewOffset(400, 16)).toBe(96)
-    expect(touchPreviewOffset(-400, 16)).toBe(-96)
-    expect(touchPreviewOffset(12, 0)).toBe(5.25)
+    expect(touchPreviewOffset(-16, 16)).toBe(-16)
+    expect(touchPreviewOffset(60, 16)).toBe(27)
+    expect(touchPreviewOffset(400, 16)).toBe(48)
+    expect(touchPreviewOffset(-400, 16)).toBe(-48)
+    expect(touchPreviewOffset(12, 0)).toBe(3)
   })
 })
 
