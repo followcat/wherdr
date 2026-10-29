@@ -45,7 +45,7 @@ function toggleKbd() {
     <div class="vk-strip" role="toolbar" aria-label="常用按键与修饰键">
       <button type="button" class="vk-escape" aria-label="Esc" @pointerdown.prevent @click="press('esc')">Esc</button>
       <button v-for="m in modifiers" :key="m.key" type="button" class="vk-mod" :class="{ selected: active.includes(m.key) }"
-        :aria-pressed="active.includes(m.key)" :aria-label="m.label" @pointerdown.prevent @click="modifier(m.key)">{{ m.key === 'shift' ? '⇧' : m.label }}</button>
+        :aria-pressed="active.includes(m.key)" :aria-label="t(m.label)" @pointerdown.prevent @click="modifier(m.key)">{{ m.key === 'shift' ? '⇧' : t(m.label) }}</button>
       <button v-for="k in nav" :key="k.key" type="button" class="vk-navigation" :aria-label="displayVirtualChord(k.key)" @pointerdown.prevent @click="press(k.key)">{{ k.label }}</button>
       <button type="button" class="vk-more" :class="{ selected: expanded }" :aria-expanded="expanded" aria-label="展开或收起功能键" @pointerdown.prevent @click="toggleMore"><UIcon :name="expanded ? 'i-lucide-chevron-down' : 'i-lucide-ellipsis'" /></button>
     </div>
@@ -53,7 +53,7 @@ function toggleKbd() {
       <button type="button" class="vk-system" :class="{ selected: ctl.kbdOn.value }" aria-label="打开或关闭手机键盘" @pointerdown.prevent @click="toggleKbd"><UIcon name="i-lucide-keyboard" /></button>
       <div class="vk-function-scroll" aria-label="左右滑动选择功能键">
         <button v-for="m in extraModifiers" :key="m.key" type="button" class="vk-mod" :class="{ selected: active.includes(m.key) }"
-          :aria-pressed="active.includes(m.key)" :aria-label="m.label" @pointerdown.prevent @click="modifier(m.key)">{{ m.label }}</button>
+          :aria-pressed="active.includes(m.key)" :aria-label="t(m.label)" @pointerdown.prevent @click="modifier(m.key)">{{ t(m.label) }}</button>
         <button v-for="k in functionKeys" :key="k.key" type="button" :aria-label="displayVirtualChord(k.key)" @pointerdown.prevent @click="press(k.key)">{{ k.label }}</button>
       </div>
     </div>

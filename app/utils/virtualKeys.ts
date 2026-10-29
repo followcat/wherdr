@@ -51,7 +51,13 @@ export function virtualInputAction(data: string): { kind: 'key', key: string } |
   if (data.startsWith('\x1b[200~')) return { kind: 'paste' }
   const named = INPUT_KEYS[data]
   if (named) return { kind: 'key', key: named }
-  if (/^[!-~]$/.test(data)) return { kind: 'key', key: data === '+' ? 'plus' : data.toLowerCase() }
+  if (/^[!-~]$/.test(data)) {
+    if (data === '+') return { kind: 'key', key: 'plus' }
+    // A typed capital carries the real keyboard's Shift, or Alt+A would be
+    // sent as Alt+a to applications that read modifiers separately.
+    const lower = data.toLowerCase()
+    return { kind: 'key', key: lower === data ? lower : `shift+${lower}` }
+  }
   if (data.length === 1) {
     const code = data.charCodeAt(0)
     if (code === 0) return { kind: 'key', key: 'ctrl+space' }
@@ -59,4 +65,24 @@ export function virtualInputAction(data: string): { kind: 'key', key: string } |
     if (code >= 28 && code <= 31) return { kind: 'key', key: `ctrl+${['backslash', ']', '^', '_'][code - 28]}` }
   }
   return { kind: 'blocked' }
+}
+
+// Committed IME text reaches onData exactly like a keystroke. Track the
+// composition so its output stays text and never spends an armed modifier
+// as a shortcut.
+export function createCompositionTracker() {
+  let active = false, ended = false
+  return {
+    start() { active = true; ended = false },
+    // compositionend fires before the committed text reaches onData: the
+    // next data event is composition output, whatever it looks like.
+    end() { active = false; ended = true },
+    // A keydown outside any composition is a real keystroke: drop a stale
+    // flag left behind by a cancelled composition that produced no text.
+    keydown() { if (!active) ended = false },
+    get active() { return active },
+    // The flag is consumed by the first data event after the end, so a
+    // cancelled composition cannot swallow a later real keystroke.
+    takeEnded() { const t = ended; ended = false; return t },
+  }
 }

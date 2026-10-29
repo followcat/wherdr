@@ -17,7 +17,7 @@ import { uploadPhoto } from '~/utils/photoUpload'
 import { terminalClosedText, terminalUnavailableText } from '~/utils/terminalClosed'
 import { bindTerminalMouse, terminalCell } from '~/utils/terminalMouse'
 import { TERM_FONT, onFontsLoaded } from '~/utils/terminalFont'
-import { displayVirtualChord, toggleVirtualModifier, virtualChord, virtualInputAction, virtualNavigationBytes, type VirtualModifier } from '~/utils/virtualKeys'
+import { createCompositionTracker, displayVirtualChord, toggleVirtualModifier, virtualChord, virtualInputAction, virtualNavigationBytes, type VirtualModifier } from '~/utils/virtualKeys'
 
 export interface Banner { text: string, btn: string, fn: () => void }
 
@@ -45,6 +45,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   let touchEpoch = 0
   const virtualModifiers = ref<VirtualModifier[]>([])
   const lastVirtualChord = ref('')
+  const composition = createCompositionTracker()
   const toggleModifier = (key: VirtualModifier) => { virtualModifiers.value = toggleVirtualModifier(virtualModifiers.value, key) }
   const clearVirtualModifiers = () => { virtualModifiers.value = []; lastVirtualChord.value = '' }
   const selectionHint = useTerminalSelectionHint()
@@ -69,6 +70,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
 
   function mount(host: HTMLElement) {
     el = host
+    // Clear before xterm handles paste, including a one-character paste.
+    host.addEventListener('paste', clearVirtualModifiers, true)
     disposed = false
     twsRetry = 0
     term = new Terminal({
@@ -142,6 +145,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       ta.setAttribute('spellcheck', 'false')
       ta.addEventListener('blur', () => { kbdOn.value = false })
       ta.addEventListener('focus', () => { kbdOn.value = true })
+      ta.addEventListener('compositionstart', composition.start)
+      ta.addEventListener('compositionend', composition.end)
+      ta.addEventListener('keydown', composition.keydown)
     }
     // Wheel: xterm does nothing with it (it would send ↑/↓ to the agent, see
     // utils/terminalWheel.ts); TerminalView converts it to terminal.scroll.
@@ -150,6 +156,13 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     bindTerminalKeys(term, key => sendVirtualKey(key))
     term.onData(d => {
       if (opts.input?.() === false) return
+      // IME-committed text is data, not a keystroke: a composed ASCII
+      // character must not spend an armed modifier as a shortcut.
+      if (composition.active || composition.takeEnded()) {
+        clearVirtualModifiers()
+        sendTerm({ type: 'terminal.input', text: d })
+        return
+      }
       if (virtualModifiers.value.length) {
         const action = virtualInputAction(d)
         if (action.kind === 'key') { void sendVirtualKey(action.key); return }
@@ -176,6 +189,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   })
 
   function sendTerm(obj: unknown): boolean {
+    if ((obj as { type?: string })?.type === 'paste') clearVirtualModifiers()
     if (smoothTouchScrolling.value && ['terminal.input', 'paste'].includes((obj as { type?: string })?.type || '')) {
       scrollInputVersion.value++
       cancelTouchScroll()
@@ -391,6 +405,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   }
 
   function disconnect() {
+    clearVirtualModifiers()
     if (smoothTouchScrolling.value) { scrollInputVersion.value++; touchEpoch++ }
     clearVirtualModifiers()
     mouseSupported = false
@@ -459,6 +474,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   }
 
   function dispose() {
+    el?.removeEventListener('paste', clearVirtualModifiers, true)
     disposed = true
     stopSmoothWatch()
     stopKeyboardWatch()
