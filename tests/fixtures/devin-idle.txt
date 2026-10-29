@@ -1,0 +1,19 @@
+
+ 提醒:bridge 没有开机自启——fvps 重启后要手动  nohup python3 ~/adb_bridge2.py & 。要的话我可以给它写个 systemd user unit 顺手配上。
+
+ ✱ Did you know
+   Use /clear to start a fresh conversation
+
+ ❭ 还能练吗？
+
+ ✓ export PATH=$PATH:/home/followcat/Android/Sdk/platform-tools && adb -P 5040 devices
+
+ 能连。当前状态：
+
+   •  100.126.239.27:2223 （桥）→  device ,shell 实测  OK  /  PKJ110
+   •  100.113.116.78:5555 （直连）也在线
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────── 继续 Codex 会话 01a17b2a-0088-79c3-bb49… ─
+❭ Guide Devin while it works
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+SWE-2 Max · bypass · 1 subagent · 2 shells ↓                                                                           Context: 88k / 262k tokens (33%)

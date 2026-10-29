@@ -30,9 +30,15 @@ describe('terminal fallback after native recognition', () => {
     expect(classifyScreen({ text, agent: 'codex', choices: parseChoices(text), screen: {} })).toBe('terminal')
     expect(confirmedInput(text)).toBe(false)
   })
-  it.each(['codex-idle.txt', 'claude-idle.txt', 'omp-fresh-nerd.txt', 'omp-idle-footer.txt'])(
+  it.each(['codex-idle.txt', 'claude-idle.txt', 'omp-fresh-nerd.txt', 'omp-idle-footer.txt', 'devin-idle.txt'])(
     'confirms the real message field in %s', name => expect(confirmedInput(fx(name))).toBe(true),
   )
+  it('classifies an idle Devin screen as its input field, not the terminal fallback', () => {
+    const text = fx('devin-idle.txt')
+    expect(classifyScreen({ text, agent: 'devin' })).toBe('input')
+    // An echoed user line shares the ❭ prefix; only the boxed prompt counts.
+    expect(text.indexOf('❭ 还能练吗')).toBeGreaterThanOrEqual(0)
+  })
   it.each(['claude', 'codex', 'omp'])('keeps long %s drafts and wrapped footers at the message field', agent => {
     const draft = Array.from({ length: 30 }, (_, i) => `  draft line ${i}`).join('\n')
     const text = agent === 'claude' ? `────────────────\n❯ draft\n${draft}\n────────────────\n  auto mode`
