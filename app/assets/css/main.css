@@ -1163,7 +1163,10 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 #scrollback::-webkit-scrollbar { display: none; }
 #scrollback .sb-body { padding: 6px 4px 0 6px; white-space: pre-wrap; overflow-wrap: break-word; font-variant-ligatures: none; }
 #scrollback .sb-gap { height: 100%; }
-#scrollback .lt-line { white-space: pre; overflow: hidden; }
+#scrollback .lt-line {
+  white-space: pre; overflow: hidden;
+  font-variant-ligatures: none; font-kerning: none;
+}
 /* Live-transcript mode: row containers and the pull spacer are opaque so
    the real terminal only shows through the .lt-slot it is translated onto. */
 #scrollback .lt-spacer, #scrollback .sb-body, #scrollback .lt-lines { background: var(--bg); }

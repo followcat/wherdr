@@ -290,7 +290,10 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
         // terminal itself never leaves the bottom for history browsing.
         case 'scrollback.read': {
           const seq = ++scrollbackSeq
-          herdr('pane.read', { pane_id: pane, source: 'recent_unwrapped', lines: clampInt(m.lines, 1, 4000, 800), format: 'ansi' }, 8000)
+          // 'recent' wraps at pane width (physical rows for the transcript
+          // scroller); 'recent_unwrapped' keeps logical lines (history dump).
+          const source = m.source === 'recent' ? 'recent' : 'recent_unwrapped'
+          herdr('pane.read', { pane_id: pane, source, lines: clampInt(m.lines, 1, 4000, 800), format: 'ansi' }, 8000)
             .then(r => { if (seq === scrollbackSeq && ws.isOpen()) ws.send(JSON.stringify({ type: 'scrollback.chunk', text: String(r?.read?.text || '') })) })
             .catch(() => { if (seq === scrollbackSeq && ws.isOpen()) ws.send(JSON.stringify({ type: 'scrollback.chunk', text: '' })) })
           break

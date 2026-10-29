@@ -459,7 +459,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
 
   // Local scrollback overlay: ask the server for the pane's recent history
   // (Herdr's recent_unwrapped dump, ANSI-styled).
-  function requestScrollback(lines: number) { sendTerm({ type: 'scrollback.read', lines }) }
+  function requestScrollback(lines: number, source?: string) { sendTerm({ type: 'scrollback.read', lines, source }) }
 
   function setVisible(visible: boolean) {
     if (!visible && smoothTouchScrolling.value) { scrollInputVersion.value++; cancelTouchScroll() }
@@ -498,6 +498,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     previewExtra: (dir: number) => transcript.available(dir), previewRows: (dir: number, count: number) => transcript.slice(dir, count), resetTranscript: () => transcript.reset(),
     transcriptRange: () => transcript.range(), transcriptAt: (idx: number) => transcript.at(idx), transcriptHas: (idx: number) => transcript.has(idx),
     transcriptWindow: () => ({ top: transcript.windowTop(), rows: transcript.windowRows() }),
+    transcriptInject: (idx: number, e: { t: string, h?: string }) => transcript.inject(idx, e),
+    termTheme: () => term?.options.theme,
     virtualModifiers, lastVirtualChord, toggleVirtualModifier: toggleModifier, clearVirtualModifiers, sendVirtualKey,
   }
 }
