@@ -347,8 +347,10 @@ let ltEdgeAcc = 0       // pending app-scroll lines (fractional)
 let ltScreenDy = 0      // transform currently applied to the screen element
 let ltTouchY = -1       // last finger Y, for pull-past-top forwarding
 let ltSamples: { t: number, y: number }[] = []  // trailing touch samples -> release velocity
-let ltTopSeen = -1      // last transcript window top observed
-let ltLastMoveAt = 0    // last scroll event: a tap that stops momentum is not a focus tap
+let ltTopSeen = NaN     // last transcript window top seen (NaN = none yet; -5 is a real index)
+let ltLastMoveAt = 0    // last real view movement or app scroll send, for tap checks
+let ltTouchStartTop = -1  // scrollTop at touchstart — view moved mid-touch = momentum-stop
+let ltTouchPrevMove = 0   // ltLastMoveAt at touchstart — view moving at touch = momentum-stop
 let ltDragging = false  // finger is on the scroller
 let ltSettling = false  // settle-glide in progress: not a user scroll
 let ltSettleTimer: ReturnType<typeof setTimeout> | undefined
@@ -368,7 +370,7 @@ function ltRow(idx: number, h: number) {
 function ltResetDom() {
   ltNodes.clear()
   ltAppOff = ltSentOff = ltEdgeAcc = 0; ltLastTop = -1; ltTouchY = -1
-  ltScreenDy = 0; ltTopSeen = -1; ltSettling = false; ltSamples = []
+  ltScreenDy = 0; ltTopSeen = NaN; ltSettling = false; ltSamples = []
   const screen = host.value?.querySelector('.xterm-screen') as HTMLElement | null
   if (screen) screen.style.transform = ''
   ltAbove.value?.replaceChildren()
@@ -414,7 +416,7 @@ function syncLT() {
     // Depth below live = accumulated window movement, not the cached range:
     // eviction lowers mx and would understate how far the pane still has to
     // chase back down.
-    if (ltTopSeen >= 0) ltAppOff = Math.max(0, ltAppOff + ltTopSeen - w.top)
+    if (!Number.isNaN(ltTopSeen)) ltAppOff = Math.max(0, ltAppOff + ltTopSeen - w.top)
     ltTopSeen = w.top
   }
   // Anchor: the transcript index under the view top, kept across the
@@ -481,6 +483,10 @@ function syncLT() {
 function ltScrollSend(lines: number) {
   const screen = host.value?.querySelector('.xterm-screen')
   if (!screen) return
+  // A send moves the pane under the pointer just like a view move does — a
+  // tap right after a pull pinned at the clamp must not forward stale
+  // coordinates, so sends feed the same recency clock as real movement.
+  ltLastMoveAt = performance.now()
   const r = screen.getBoundingClientRect()
   // ctl.scroll maps x/y against the untranslated rect: give it that frame.
   props.ctl.scroll(lines, r.left + r.width / 2, r.top - ltScreenDy + r.height / 2, 0, true, true)
@@ -510,7 +516,6 @@ function ltOnScroll() {
   ltTrack()
   const h = props.ctl.rowHeight()
   const now = performance.now()
-  ltLastMoveAt = now
   // The spacer is gesture runway, never visible content: the view may show
   // at most ~3 rows of it, always. Released momentum pins at the same wall —
   // its energy is thrown as a bounded app scroll on release instead, so a
@@ -520,6 +525,9 @@ function ltOnScroll() {
   if (ltLastTop < 0) ltLastTop = el.scrollTop
   const dy = el.scrollTop - ltLastTop
   ltLastTop = el.scrollTop
+  // Real view movement (not the settle glide, not a pinned no-op) is what a
+  // later tap check reads to recognize a momentum-stop.
+  if (dy && !ltSettling) ltLastMoveAt = now
   if (el.scrollTop >= sp.offsetHeight) ltSettling = false
   if (el.scrollTop < sp.offsetHeight) {
     if (ltSettling) { ltEdgeAcc = 0; return }
@@ -663,12 +671,12 @@ watch(props.ctl.scrollbackVersion, () => { if (ltActive.value) ltIngestDump(prop
 // Taps on the live slot are taps on the real screen -- it is translated
 // exactly under the pointer, so raw coordinates forward as-is.
 function onSlotTap(e: MouseEvent) {
-  // Same tap contract as tapGap: links don't raise the keyboard, a
-  // deliberate click focuses the terminal so typing reaches the pane.
+  // Same order-sensitive contract as tapGap: a momentum-stop click forwards
+  // nothing, a link opens quietly, a deliberate click forwards + focuses.
+  if (performance.now() - ltLastMoveAt <= 400) { props.ctl.blur(); return }
   if (!props.ctl.tapLink(e.clientX, e.clientY)) {
     props.ctl.tapMouse(e.clientX, e.clientY)
-    if (performance.now() - ltLastMoveAt > 400) props.ctl.focus()
-    else props.ctl.blur()
+    props.ctl.focus()
   } else {
     props.ctl.blur()
     ;(document.activeElement as HTMLElement | null)?.blur?.()
@@ -778,17 +786,25 @@ function tapGap(x: number, y: number) {
   // Only taps at the very bottom reach the pane; taps on history do nothing.
   // In live-transcript mode the slot is the live pane wherever it is.
   if (!ltActive.value && el && el.scrollHeight - el.scrollTop - el.clientHeight > sbRestPx) return false
+  // The tap contract from the predictive path, order-sensitive. A tap that
+  // merely stopped momentum forwards NOTHING (no click could reset the
+  // pane's view): the view was already moving when the finger landed, or it
+  // moved during the touch. A link opens without the keyboard, and an
+  // ordinary deliberate tap forwards the click and focuses for typing.
+  if (ltActive.value && el) {
+    const movedView = ltTouchStartTop >= 0 && Math.abs(el.scrollTop - ltTouchStartTop) > 2
+    const wasScrolling = ltTouchPrevMove > 0 && performance.now() - ltTouchPrevMove < 400
+    if (movedView || wasScrolling) { props.ctl.blur(); return true }
+  }
   const link = props.ctl.tapLink(x, y)
-  if (!link) props.ctl.tapMouse(x, y)
-  // The tap contract from the predictive path: a link opens without the
-  // keyboard, a tap that merely stopped momentum does not raise it either,
-  // and an ordinary deliberate tap focuses the terminal so typing works.
-  const quiet = performance.now() - ltLastMoveAt > 400
-  if (ltActive.value && !link && quiet) props.ctl.focus()
-  else {
+  if (link || !ltActive.value) {
+    if (!link) props.ctl.tapMouse(x, y)
     props.ctl.blur()
     ;(document.activeElement as HTMLElement | null)?.blur?.()
+    return true
   }
+  props.ctl.tapMouse(x, y)
+  props.ctl.focus()
   return true
 }
 function onGapTap(e: MouseEvent) {
@@ -801,6 +817,8 @@ function onSbTouchStart(e: TouchEvent) {
   sbAY = e.touches[0]!.clientY
   ltTouchY = sbAY
   ltSamples = [{ t: performance.now(), y: sbAY }]
+  ltTouchStartTop = sbEl.value?.scrollTop ?? -1
+  ltTouchPrevMove = ltLastMoveAt
   ltDragging = true
   ltSettling = false
 }
