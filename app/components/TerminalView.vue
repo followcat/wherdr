@@ -151,6 +151,7 @@ const renderPreview = (px: number) => {
 const applyOffset = () => {
   const el = screenEl()
   if (!el) return
+  if (ltActive.value) { ltTrack(); return }
   const h = props.ctl.rowHeight()
   const raw = acc + (pendingLines + unconfirmed - overAcked) * h
   const px = smoothTouchScrolling.value ? touchPreviewOffset(raw, h, props.ctl.previewExtra(Math.sign(raw)) * h) : 0
@@ -185,7 +186,7 @@ function flush() {
 }
 watch(props.ctl.scrollAck, (value, previous) => {
   const n = value - previous
-  ltAppOff += n
+  ltSentOff -= n
   if (!n || !smoothTouchScrolling.value) return
   if (Math.sign(n) === Math.sign(unconfirmed)) {
     const pay = Math.min(Math.abs(n), Math.abs(unconfirmed))
@@ -318,10 +319,11 @@ const sbCoarse = typeof matchMedia !== 'undefined' && matchMedia('(hover: none) 
 // as a copy of the screen sliding over the live one, with no real scroll.
 const sbInteractive = computed(() => sbCoarse && !props.ctl.mouseMode.value)
 // Live transcript mode: on a touch screen over a mouse-capable pane, the
-// scroller itself is the scroll surface -- a DOM document of every row the
-// screen has painted, in transcript order. No predicted offsets, no strips:
-// rows are real styled content and the browser owns the physics, so nothing
-// can drift or flash. Server scrolls only prefetch content near the edges.
+// scroller is a real document -- transcript rows above the live view plus a
+// transparent slot the REAL screen is translated onto. First-pass scrolls
+// ride the app's own repaints sliding through the document; revisits are
+// cached rows. Everything on screen is real content and the seam is always
+// transcript[top-1] | screen[top] -- adjacent by construction.
 const ltActive = computed(() => sbCoarse && smoothTouchScrolling.value && props.ctl.mouseMode.value)
 // Distance from the bottom that still counts as the live gap. An empty
 // .sb-body keeps a few pixels of CSS padding, so a 2px slop would treat
@@ -331,12 +333,18 @@ let sbFetchedAt = 0
 let sbWant = 800
 
 const ltSpacer = ref<HTMLElement | null>(null)
+const ltDoc = ref<HTMLElement | null>(null)
+const ltAbove = ref<HTMLElement | null>(null)
+const ltSlot = ref<HTMLElement | null>(null)
+const ltBelow = ref<HTMLElement | null>(null)
 const ltNodes = new Map<number, HTMLElement>()
-let ltFirst = Infinity, ltLast = -Infinity
-let ltAppOff = 0        // net acked scroll offset of the app's view from live
+let ltAppOff = 0        // app scrollback depth, derived from the transcript
+let ltSentOff = 0       // scroll lines in flight (sent, not yet acked)
 let ltPrefetchAt = 0
-let ltNoGrow = 0        // prefetch sends since the last transcript growth
-let ltPrevMn = Infinity, ltPrevMx = -Infinity
+let ltLastTop = -1      // last scrollTop, for delta->app scroll tracking
+let ltEdgeAcc = 0       // pending app-scroll lines (fractional)
+let ltScreenDy = 0      // transform currently applied to the screen element
+let ltTouchY = -1       // last finger Y, for pull-past-top forwarding
 function ltRow(idx: number, h: number) {
   const e = props.ctl.transcriptAt(idx)
   const div = document.createElement('div') as HTMLElement & { _h?: string, _t?: string }
@@ -351,129 +359,204 @@ function ltRow(idx: number, h: number) {
   return div
 }
 function ltResetDom() {
-  ltNodes.clear(); ltFirst = Infinity; ltLast = -Infinity; ltAppOff = 0
-  sbBody.value?.replaceChildren()
+  ltNodes.clear()
+  ltAppOff = ltSentOff = ltEdgeAcc = 0; ltLastTop = -1; ltTouchY = -1
+  ltScreenDy = 0
+  const screen = host.value?.querySelector('.xterm-screen') as HTMLElement | null
+  if (screen) screen.style.transform = ''
+  ltAbove.value?.replaceChildren()
+  ltBelow.value?.replaceChildren()
 }
+// Reconcile one side's children into ascending rows for [lo..hi]. Indices
+// enter only at the range edges and rows cross the window boundary as
+// contiguous runs, so the merge is O(children) edge work per frame. Rows
+// render even without content (placeholders keep positions dense; the
+// repaint pass fills them when the row actually lands in the cache).
+function ltSyncSide(c: HTMLElement, lo: number, hi: number, h: number) {
+  const kids = c.children
+  let ki = 0
+  for (let i = lo; i <= hi; i++) {
+    while (ki < kids.length) {
+      const k = kids[ki] as HTMLElement
+      const kk = Number(k.dataset.li)
+      if (kk >= i) break
+      ltNodes.delete(kk); k.remove()
+    }
+    const k = kids[ki] as HTMLElement | undefined
+    if (k && Number(k.dataset.li) === i) { ki++; continue }
+    c.insertBefore(ltRow(i, h), k ?? null)
+    ki++
+  }
+  while (ki < kids.length) {
+    const n = kids[ki] as HTMLElement
+    ltNodes.delete(Number(n.dataset.li)); n.remove()
+  }
+}
+// Document order (ascending index): spacer, rows older than the window,
+// the slot the real screen is translated onto, then the trail of rows
+// newer than the window. Every visible pixel is real content.
 function syncLT() {
-  const body = sbBody.value, el = sbEl.value
-  if (!body || !el) return
+  const el = sbEl.value, doc = ltDoc.value, slot = ltSlot.value
+  const A = ltAbove.value, B = ltBelow.value
+  if (!el || !doc || !slot || !A || !B) return
   const h = props.ctl.rowHeight()
-  // Output appends at the document tail: keep following it while at rest.
   const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < h * 2
+  const w = props.ctl.transcriptWindow()
   const [mn, mx] = props.ctl.transcriptRange()
-  if (mn !== ltPrevMn || mx !== ltPrevMx) { ltNoGrow = 0; ltPrevMn = mn; ltPrevMx = mx }
-  let adj = 0 // px to add to scrollTop for content inserted above the view
-  if (mn > mx) {
-    if (ltNodes.size) { ltResetDom() }
-  } else if (ltNodes.size === 0) {
-    for (let i = mn; i <= mx; i++) if (props.ctl.transcriptHas(i)) body.appendChild(ltRow(i, h))
-    ltFirst = mn; ltLast = mx
-  } else {
-    // The document only extends outward: prepend older indices, append
-    // newer ones; interior indices are filled the frame they get painted.
-    for (let i = Math.min(ltFirst - 1, mx); i >= mn; i--) {
-      if (!props.ctl.transcriptHas(i)) continue
-      body.prepend(ltRow(i, h)); adj += h
-    }
-    for (let i = Math.max(ltLast + 1, mn); i <= mx; i++) {
-      if (!props.ctl.transcriptHas(i)) continue
-      body.appendChild(ltRow(i, h))
-    }
-    if (mn < ltFirst) ltFirst = mn
-    if (mx > ltLast) ltLast = mx
-    for (const [i, n] of ltNodes) {
-      if (i >= mn && i <= mx) continue
-      if (i < mn) adj -= h
-      n.remove(); ltNodes.delete(i)
-    }
-    if (ltNodes.size === 0) { ltFirst = Infinity; ltLast = -Infinity }
-    // In-place repaints refresh rows in the document -- the compare is a
-    // string-identity check against what was rendered.
-    for (const [i, n] of ltNodes) {
-      const e = props.ctl.transcriptAt(i)
-      const nn = n as HTMLElement & { _h?: string, _t?: string }
-      const nh = e?.html, nt = e?.text || ' '
-      if (nh !== nn._h || nt !== nn._t) {
-        nn._h = nh; nn._t = nt
-        if (nh != null) n.innerHTML = nh
-        else n.textContent = nt
-      }
+  ltAppOff = Math.max(0, mx - (w.top + w.rows - 1))
+  // Anchor: the transcript index under the view top, kept across the
+  // reconcile so content shifts don't move what the user is reading.
+  const spH0 = ltSpacer.value?.offsetHeight ?? 0
+  const aFirst0 = A.firstElementChild ? Number((A.firstElementChild as HTMLElement).dataset.li) : w.top
+  const bFirst0 = B.firstElementChild ? Number((B.firstElementChild as HTMLElement).dataset.li) : w.top + w.rows
+  const slotH0 = w.rows * h
+  const y0 = el.scrollTop - spH0
+  let aIdx = Infinity, aFrac = 0
+  if (y0 >= 0) {
+    const aH0 = A.childElementCount * h
+    if (y0 < aH0) { aIdx = aFirst0 + y0 / h; aFrac = aIdx % 1; aIdx = Math.floor(aIdx) }
+    else if (y0 < aH0 + slotH0) { aIdx = w.top; aFrac = (y0 - aH0) / h }
+    else { const p = (y0 - aH0 - slotH0) / h; aIdx = bFirst0 + Math.floor(p); aFrac = p % 1 }
+  }
+  ltSyncSide(A, mn, w.top - 1, h)
+  ltSyncSide(B, w.top + w.rows, mx, h)
+  slot.style.height = `${w.rows * h}px`
+  // In-place repaints refresh rows in the document -- the compare is a
+  // string-identity check against what was rendered.
+  for (const [i, n] of ltNodes) {
+    const e = props.ctl.transcriptAt(i)
+    const nn = n as HTMLElement & { _h?: string, _t?: string }
+    const nh = e?.html, nt = e?.text || ' '
+    if (nh !== nn._h || nt !== nn._t) {
+      nn._h = nh; nn._t = nt
+      if (nh != null) n.innerHTML = nh
+      else n.textContent = nt
     }
   }
-  if (!body.style.paddingLeft) ltApplyMetrics()
-  // Cold-start pull room: until the document outgrows the screen, keep a
-  // spacer so the first upward drag has somewhere to go (and prefetches).
+  // Cold-start pull room: while the transcript is shorter than the screen,
+  // keep a spacer so the first upward drag has somewhere to go.
   const sp = ltSpacer.value
   if (sp) {
-    const want = Math.max(0, Math.round(el.clientHeight - ltNodes.size * h + 4 * h))
-    const cur = parseFloat(sp.style.height || '0')
-    if (want !== cur) { sp.style.height = `${want}px`; adj += want - cur }
+    const want = Math.max(4 * h, Math.round(el.clientHeight * 0.9 - (ltNodes.size + w.rows) * h))
+    if (Math.abs(sp.offsetHeight - want) > 1) sp.style.height = `${want}px`
   }
-  if (wasAtBottom) el.scrollTop = el.scrollHeight
-  else if (adj) el.scrollTop += adj
+  if (!doc.style.paddingLeft) ltApplyMetrics()
+  if (wasAtBottom && ltAppOff <= 0) el.scrollTop = el.scrollHeight
+  else if (aIdx !== Infinity) {
+    // Re-map the anchor index into the post-sync layout.
+    const spH = sp?.offsetHeight ?? 0
+    const aH = A.childElementCount * h
+    const i = Math.max(mn, Math.min(mx, aIdx))
+    const top = w.top
+    const rows = w.rows
+    const y = i < top
+      ? (i - mn) * h
+      : i < top + rows ? aH + (i - top) * h : aH + rows * h + (i - (top + rows)) * h
+    el.scrollTop = spH + y + aFrac * h
+  }
+  // The scroll event from the write above must not feed delta sends.
+  ltLastTop = el.scrollTop
+  ltTrack()
 }
-// Scrolls the app the same way a finger drag does -- positioned, paced --
-// used to prefetch history near the top and to pull the app back to live.
+// Scrolls the app the same way a finger drag does -- positioned, paced.
 function ltScrollSend(lines: number) {
   const screen = host.value?.querySelector('.xterm-screen')
   if (!screen) return
   const r = screen.getBoundingClientRect()
-  props.ctl.scroll(lines, r.left + r.width / 2, r.top + r.height / 2, 0, true, true)
+  // ctl.scroll maps x/y against the untranslated rect: give it that frame.
+  props.ctl.scroll(lines, r.left + r.width / 2, r.top - ltScreenDy + r.height / 2, 0, true, true)
 }
+// The screen element is translated onto the transcript slot: wherever the
+// live window sits in the document, the real canvas is exactly there.
+function ltTrack() {
+  const el = sbEl.value, slot = ltSlot.value
+  const screen = host.value?.querySelector('.xterm-screen') as HTMLElement | null
+  if (!el || !slot || !screen) return
+  const elR = el.getBoundingClientRect()
+  const target = elR.top + slot.offsetTop - el.scrollTop
+  const untransformed = screen.getBoundingClientRect().top - ltScreenDy
+  ltScreenDy = target - untransformed
+  screen.style.transform = ltScreenDy ? `translate3d(0, ${ltScreenDy}px, 0)` : ''
+}
+// Scroll deltas become app scroll deltas while the view is at/above the
+// slot zone (history direction); the trail below the slot is pure cached
+// browsing. At the document bottom a chase pulls the app back to live.
 function ltOnScroll() {
-  const el = sbEl.value
-  if (!el) return
+  const el = sbEl.value, slot = ltSlot.value
+  if (!el || !slot) return
+  ltTrack()
+  const h = props.ctl.rowHeight()
+  if (ltLastTop < 0) ltLastTop = el.scrollTop
+  const dy = el.scrollTop - ltLastTop
+  ltLastTop = el.scrollTop
   const now = performance.now()
-  if (now - ltPrefetchAt < 90) return
-  if (el.scrollTop < el.clientHeight && ltNoGrow < 3) {
+  const tracking = el.scrollTop <= slot.offsetTop + slot.offsetHeight + h * 4
+  ltEdgeAcc -= dy / h
+  const lines = Math.trunc(ltEdgeAcc)
+  ltEdgeAcc -= lines
+  if (lines && tracking && now - ltPrefetchAt > 60) {
     ltPrefetchAt = now
-    ltNoGrow++
-    ltScrollSend(Math.ceil(el.clientHeight / props.ctl.rowHeight()))
-    return
-  }
+    ltSentOff += lines
+    ltScrollSend(lines)
+  } else if (!tracking) ltEdgeAcc = 0
   const bot = el.scrollHeight - el.scrollTop - el.clientHeight
-  if (bot < props.ctl.rowHeight() && ltAppOff > 0) {
+  if (bot < h && ltAppOff + ltSentOff > 0 && now - ltPrefetchAt > 90) {
     ltPrefetchAt = now
-    ltScrollSend(-Math.min(ltAppOff, props.ctl.pageRows()))
+    const send = -Math.min(ltAppOff + ltSentOff, props.ctl.pageRows())
+    ltSentOff += send
+    ltScrollSend(send)
+  }
+}
+// Pulling down against the document top asks the app for older content:
+// the scrollTop is pinned, so finger deltas become the scroll sends and the
+// screen repaints inside the slot = the frontier itself.
+function onSbTouchMove(e: TouchEvent) {
+  if (!ltActive.value) return
+  const el = sbEl.value, t = e.touches[0]
+  if (!el || !t) return
+  const dyPx = ltTouchY - t.clientY
+  ltTouchY = t.clientY
+  if (el.scrollTop > 0 || dyPx >= 0) return
+  ltEdgeAcc += -dyPx / props.ctl.rowHeight()
+  const lines = Math.trunc(ltEdgeAcc)
+  ltEdgeAcc -= lines
+  const now = performance.now()
+  if (lines && now - ltPrefetchAt > 60) {
+    ltPrefetchAt = now
+    ltSentOff += lines
+    ltScrollSend(lines)
   }
 }
 function ltApplyMetrics() {
-  const el = sbEl.value, body = sbBody.value
+  const el = sbEl.value, doc = ltDoc.value
   const src = host.value?.querySelector('.xterm-screen')
-  if (!el || !body || !src) return
+  if (!el || !doc || !src) return
   const cs = getComputedStyle(src)
   Object.assign(el.style, { fontFamily: cs.fontFamily, fontSize: cs.fontSize, lineHeight: cs.lineHeight, letterSpacing: cs.letterSpacing, color: cs.color })
   const wrap = el.getBoundingClientRect()
   const sr = src.getBoundingClientRect()
-  Object.assign(body.style, {
+  Object.assign(doc.style, {
     paddingTop: `${Math.max(0, sr.top - wrap.top)}px`,
     paddingLeft: `${Math.max(0, sr.left - wrap.left)}px`,
     paddingRight: `${Math.max(0, wrap.right - sr.right)}px`,
     paddingBottom: '0',
   })
 }
-// Taps on transcript rows inside the live window map back onto screen
-// cells; taps on history do nothing (the DOM is there to read).
-function onBodyTap(e: MouseEvent) {
-  if (!ltActive.value) return
-  const row = (e.target as HTMLElement | null)?.closest?.('[data-li]') as HTMLElement | null
-  if (!row) return
-  const idx = Number(row.dataset.li)
-  const w = props.ctl.transcriptWindow()
-  if (idx < w.top || idx >= w.top + w.rows) return
-  const screen = host.value?.querySelector('.xterm-screen') as HTMLElement | null
-  if (!screen) return
-  const r = screen.getBoundingClientRect()
-  const y = r.top + (idx - w.top + 0.5) * props.ctl.rowHeight()
-  if (!props.ctl.tapLink(e.clientX, y)) props.ctl.tapMouse(e.clientX, y)
+// Taps on the live slot are taps on the real screen -- it is translated
+// exactly under the pointer, so raw coordinates forward as-is.
+function onSlotTap(e: MouseEvent) {
+  if (!props.ctl.tapLink(e.clientX, e.clientY)) props.ctl.tapMouse(e.clientX, e.clientY)
   props.ctl.blur()
   ;(document.activeElement as HTMLElement | null)?.blur?.()
 }
 watch(ltActive, on => {
   ltResetDom()
-  const el = sbEl.value
-  if (el) el.scrollTop = el.scrollHeight
-  if (on) { ltApplyMetrics(); syncLT() }
+  renderPreview(0)
+  if (on) nextTick(() => {
+    ltApplyMetrics(); syncLT()
+    const el = sbEl.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
 })
 function renderScrollback() {
   if (ltActive.value) return
@@ -555,7 +638,6 @@ function onSbScroll() {
 }
 // Typing should land on the live terminal: pull the overlay back to the gap.
 watch(props.ctl.scrollInputVersion, () => {
-  ltAppOff = 0
   ltApplyMetrics()
   if (sbEl.value) sbEl.value.scrollTop = sbEl.value.scrollHeight
 })
@@ -567,7 +649,8 @@ let sbTouchSent = false
 function tapGap(x: number, y: number) {
   const el = sbEl.value
   // Only taps at the very bottom reach the pane; taps on history do nothing.
-  if (el && el.scrollHeight - el.scrollTop - el.clientHeight > sbRestPx) return false
+  // In live-transcript mode the slot is the live pane wherever it is.
+  if (!ltActive.value && el && el.scrollHeight - el.scrollTop - el.clientHeight > sbRestPx) return false
   if (!props.ctl.tapLink(x, y)) props.ctl.tapMouse(x, y)
   props.ctl.blur()
   ;(document.activeElement as HTMLElement | null)?.blur?.()
@@ -581,12 +664,14 @@ function onSbTouchStart(e: TouchEvent) {
   sbTouchSent = false
   sbAX = e.touches[0]!.clientX
   sbAY = e.touches[0]!.clientY
+  ltTouchY = sbAY
 }
 function onSbTouchEnd(e: TouchEvent) {
+  ltTouchY = -1
   const t = e.changedTouches[0]
   if (!t || Math.hypot(t.clientX - sbAX, t.clientY - sbAY) > 10) return
-  // History rows sit in .sb-body; only the transparent gap is the live pane.
-  if (!(e.target as HTMLElement | null)?.closest?.('.sb-gap')) return
+  // History rows sit in .sb-body; only the transparent gap/slot is live.
+  if (!(e.target as HTMLElement | null)?.closest?.('.sb-gap, .lt-slot')) return
   if (tapGap(t.clientX, t.clientY)) {
     sbTouchSent = true
     e.preventDefault()
@@ -645,14 +730,22 @@ onUnmounted(() => {
          prefetching at the edges (ltActive). -->
     <div
       id="scrollback" ref="sbEl"
-      :style="{ pointerEvents: (sbInteractive || ltActive) ? 'auto' : 'none', visibility: (sbInteractive || ltActive) ? 'visible' : 'hidden', background: ltActive ? 'var(--bg)' : '' }"
+      :style="{ pointerEvents: (sbInteractive || ltActive) ? 'auto' : 'none', visibility: (sbInteractive || ltActive) ? 'visible' : 'hidden' }"
       @scroll.passive="onSbScroll"
       @touchstart.passive="onSbTouchStart"
+      @touchmove.passive="onSbTouchMove"
       @touchend="onSbTouchEnd"
     >
-      <div ref="ltSpacer" v-show="ltActive" />
-      <div ref="sbBody" class="sb-body" @click="onBodyTap" />
-      <div v-if="!ltActive" class="sb-gap" @click="onGapTap" />
+      <div ref="ltSpacer" v-show="ltActive" class="lt-spacer" />
+      <div ref="sbBody" v-show="!ltActive" class="sb-body" />
+      <!-- In live-transcript mode the document is real transcript rows
+           around a transparent slot the REAL screen is translated onto. -->
+      <div v-if="ltActive" ref="ltDoc" class="lt-doc">
+        <div ref="ltAbove" class="lt-lines" />
+        <div ref="ltSlot" class="lt-slot" @click="onSlotTap" />
+        <div ref="ltBelow" class="lt-lines" />
+      </div>
+      <div v-else class="sb-gap" @click="onGapTap" />
     </div>
     <div v-if="ctl.loading.value" class="term-loading"><span class="spinner" /></div>
     <div v-if="ctl.selectionHint.visible.value" class="terminal-selection-hint">

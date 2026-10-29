@@ -340,14 +340,17 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
           if (smoothTouchScrolling.value) {
             // Feed the painted screen to the transcript cache so the touch
             // preview can reveal real rows instead of void.
-            const buf = current.buffer.active, lines: string[] = [], styled: string[] = []
-            const theme = current.options.theme
-            for (let i = 0; i < current.rows; i++) {
-              const l = buf.getLine(buf.baseY + i)
-              lines.push(l?.translateToString(true) ?? '')
-              styled.push(l ? bufferLineToHtml(l, theme) : '')
+            const buf = current.buffer?.active
+            if (buf) {
+              const lines: string[] = [], styled: string[] = []
+              const theme = current.options.theme
+              for (let i = 0; i < current.rows; i++) {
+                const l = buf.getLine(buf.baseY + i)
+                lines.push(l?.translateToString(true) ?? '')
+                styled.push(l ? bufferLineToHtml(l, theme) : '')
+              }
+              transcript.frame(lines, styled)
             }
-            transcript.frame(lines, styled)
             frameTick.value++
           }
         })
