@@ -11,12 +11,10 @@ const extraModifiers: { key: VirtualModifier, label: string }[] = [
   { key: 'ctrl', label: 'Ctrl' }, { key: 'alt', label: 'Alt' },
 ]
 const nav = [
-  { key: 'tab', label: '⇥' },
   { key: 'left', label: '←' }, { key: 'up', label: '↑' }, { key: 'down', label: '↓' },
   { key: 'right', label: '→' }, { key: 'enter', label: '⏎' },
 ]
 const functionKeys = [
-  { key: 'tab', label: 'Tab' },
   { key: 'pageup', label: 'PgUp' }, { key: 'pagedown', label: 'PgDn' },
   { key: 'home', label: 'Home' }, { key: 'end', label: 'End' },
   { key: 'delete', label: 'Del' }, { key: 'insert', label: 'Ins' },
@@ -47,6 +45,7 @@ function toggleKbd() {
       <button type="button" class="vk-escape" aria-label="Esc" @pointerdown.prevent @click="press('esc')">Esc</button>
       <button v-for="m in modifiers" :key="m.key" type="button" class="vk-mod" :class="{ selected: active.includes(m.key) }"
         :aria-pressed="active.includes(m.key)" :aria-label="t(m.label)" @pointerdown.prevent @click="modifier(m.key)">{{ m.key === 'shift' ? '⇧' : t(m.label) }}</button>
+      <button type="button" class="vk-tab" :aria-label="displayVirtualChord('tab')" @pointerdown.prevent @click="press('tab')">Tab</button>
       <button v-for="k in nav" :key="k.key" type="button" class="vk-navigation" :aria-label="displayVirtualChord(k.key)" @pointerdown.prevent @click="press(k.key)">{{ k.label }}</button>
       <button type="button" class="vk-more" :class="{ selected: expanded }" :aria-expanded="expanded" aria-label="展开或收起功能键" @pointerdown.prevent @click="toggleMore"><UIcon :name="expanded ? 'i-lucide-chevron-down' : 'i-lucide-ellipsis'" /></button>
     </div>
@@ -69,7 +68,7 @@ function toggleKbd() {
 .virtual-keyboard button:active { filter: brightness(1.25); }
 .virtual-keyboard button:disabled { opacity: .35; }
 .vk-strip { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 3px; }
-.vk-strip .vk-escape { color: var(--text); border-color: var(--line); font-weight: 650; }
+.vk-strip .vk-escape, .vk-strip .vk-tab { color: var(--text); border-color: var(--line); font-weight: 650; }
 .vk-strip .vk-mod, .vk-strip .vk-navigation { font-size: 19px; }
 .vk-announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .vk-extra-row { display: flex; gap: 4px; margin-top: 4px; }
