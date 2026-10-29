@@ -2,12 +2,22 @@
 
 [Documentation](README.md) · [Project](../README.md)
 
-- **Conversation view**: the agent's real transcript (Claude Code, Codex and omp), rendered as
+- **Conversation view**: the agent's real transcript (Claude Code, Codex, omp and Devin), rendered as
   Markdown, with grouped tool calls, images (full-screen viewer with pinch / wheel zoom and pan), timestamps, search and infinite scroll back to the
   first message. Reading a conversation never touches the terminal, so it never resizes a pane.
   A command the agent proposes (shell code block, or inline `! command`) can be copied without
   its prompt, or run in the agent's shell mode (`!`, Claude Code, Codex and omp) after you
   confirm the full command.
+- **Devin conversations**: read the local CLI's SQLite history on the machine running
+  the agent, including its current main branch, tool results and saved images. Python 3.7 or later
+  is required on that machine. Install the Herdr integration with
+  `herdr integration install devin`, then start or resume Devin so it reports its session.
+  Same-directory sessions are never selected by recency. The reader follows
+  `DEVIN_SESSIONS_DIR`, then `XDG_DATA_HOME/devin/cli`, otherwise
+  `~/.local/share/devin/cli`. It opens `sessions.db` read-only, including committed WAL
+  data; no export flag or database copy is needed. New text appears when Devin saves
+  it, which may be less frequent than the terminal's streaming display. Cloud sessions
+  and the experimental file-based session store are not supported by this reader.
 - **Interactive agent screens**: in a conversation, an uncertain menu or panel opens the
   pane's real terminal in a modal window, with arrows, Enter, Escape, Tab, digits and y/n.
   The rest of the app waits behind a scrim (the window fills the screen on a phone); in a
