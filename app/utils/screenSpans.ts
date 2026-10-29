@@ -41,9 +41,9 @@ export function screenSpans(term: Terminal): AnsiSpan[][] {
       const bg = inverse ? color(cell, true, theme) : color(cell, false, theme)
       const style = {
         color: fg, background: bg,
-        bold: cell.isBold() || undefined, dim: cell.isDim() || undefined,
-        italic: cell.isItalic() || undefined, underline: cell.isUnderline() || undefined,
-        strike: cell.isStrikethrough() || undefined,
+        bold: Boolean(cell.isBold()) || undefined, dim: Boolean(cell.isDim()) || undefined,
+        italic: Boolean(cell.isItalic()) || undefined, underline: Boolean(cell.isUnderline()) || undefined,
+        strike: Boolean(cell.isStrikethrough()) || undefined,
       }
       const same = cur && cur.color === style.color && cur.background === style.background
         && cur.bold === style.bold && cur.dim === style.dim && cur.italic === style.italic
