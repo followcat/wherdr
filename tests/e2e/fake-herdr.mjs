@@ -4,6 +4,7 @@
 // and answers from a fixed in-memory session. No real Herdr is ever involved.
 import fs from 'node:fs'
 import net from 'node:net'
+import { writeDevinFixture } from '../helpers/devin-fixture.mjs'
 
 // Delay of agent.prompt, so the app's "sending…" state is observable.
 export const PROMPT_DELAY_MS = 1500
@@ -128,6 +129,20 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
   let integrations = {}
   let plugins = []
   const methods = {
+    'e2e.devin': params => {
+      const p = need(params.pane_id)
+      if (!p.devinHome) throw new Error('No isolated Devin fixture for this pane')
+      if (params.reset) {
+        if (p.devinOriginal) Object.assign(p, p.devinOriginal)
+        delete p.devinOriginal
+        return {}
+      }
+      p.devinOriginal ||= { agent: p.agent, session: p.session }
+      writeDevinFixture(p.devinHome, { session: 'e2e-devin', rows: params.rows || [], head: params.head, states: params.states || [] })
+      p.agent = 'devin'
+      p.session = 'e2e-devin'
+      return {}
+    },
     'e2e.terminal_version': params => {
       if (params.version) { terminalVersion = params.version; terminalMouse.length = 0 }
       return { version: terminalVersion }
