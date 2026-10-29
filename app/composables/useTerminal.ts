@@ -442,6 +442,13 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     return term?.rows && screen?.clientHeight ? screen.clientHeight / term.rows : 16
   }
   const pageRows = () => term?.rows || 24
+  // Font metrics from xterm's own options: the DOM renderer puts them on
+  // .xterm-rows but WebGL keeps them off the DOM entirely, so transcript
+  // rows must read the options rather than an element's computed style.
+  const termFont = () => {
+    const o = term?.options
+    return o ? { family: o.fontFamily, size: o.fontSize, weight: String(o.fontWeight ?? 400), letterSpacing: `${o.letterSpacing ?? 0}px`, lineHeight: String(o.lineHeight ?? 1), color: o.theme?.foreground } : null
+  }
   // Scrolling requested from Herdr (the history lives there).
   function scroll(lines: number, x?: number, y?: number, modifiers = 0, touch = false, preview = true): boolean {
     if (!smoothTouchScrolling.value || !touch) return sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines) })
@@ -504,7 +511,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     transcriptRange: () => transcript.range(), transcriptAt: (idx: number) => transcript.at(idx), transcriptHas: (idx: number) => transcript.has(idx),
     transcriptWindow: () => ({ top: transcript.windowTop(), rows: transcript.windowRows() }),
     transcriptInject: (idx: number, e: { t: string, h?: string }) => transcript.inject(idx, e),
-    termTheme: () => term?.options.theme,
+    termTheme: () => term?.options.theme, termFont,
     virtualModifiers, lastVirtualChord, toggleVirtualModifier: toggleModifier, clearVirtualModifiers, sendVirtualKey,
   }
 }
