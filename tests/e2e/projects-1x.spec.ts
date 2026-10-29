@@ -128,7 +128,7 @@ test('the Board shows the 1.x tasks in its five groups, and acts on them', { tag
   await panel.locator('.board-panel-tabs').getByRole('button', { name: 'Task', exact: true }).click()
   await expect(panel.locator('.task-sheet-text').first()).toContainText('The login page loops')
   await expect(panel.locator('.board-panel-note')).toContainText('Redirect fixed; a test covers the loop.')
-  await panel.locator('.board-panel-tabs').getByRole('button', { name: 'Conversation', exact: true }).click()
+  await panel.locator('.board-panel-tabs').getByRole('button', { name: 'Agent', exact: true }).click()
   await expect(panel.locator('.cell-view textarea')).toBeVisible()
   const box = (await panel.boundingBox())!
   const view = page.viewportSize()!
@@ -1122,10 +1122,10 @@ for (const lang of ['en', 'fr']) {
     await expect(panel.locator('.task-needs')).toContainText('Restore the lockfile')
     await expect(panel.locator('.agent-top')).toHaveCount(0)
     // A stale agent link must not make setup failure open a conversation.
-    await expect(panel.locator('.board-panel-tabs button')).toHaveText(['Conversation', 'Terminal', lang === 'fr' ? 'Tâche' : 'Task', lang === 'fr' ? 'Réglages' : 'Settings'])
+    await expect(panel.locator('.board-panel-tabs button')).toHaveText([lang === 'fr' ? 'Tâche' : 'Task', 'Agent', lang === 'fr' ? 'Réglages' : 'Settings'])
     await expect(panel.locator('.board-panel-name .task-state')).toHaveText(lang === 'fr' ? 'À toi' : 'Needs you')
     await page.screenshot({ path: `.shots/task-panel-${lang}-setup-${testInfo.project.name}.png` })
-    await panel.locator('.board-panel-tabs').getByRole('button', { name: 'Terminal', exact: true }).click()
+    await panel.locator('.task-needs').getByRole('button', { name: lang === 'fr' ? 'Ouvrir le terminal' : 'Open terminal', exact: true }).click()
     await expect(panel.locator('#term')).toBeVisible()
     // WHR-62: the banner never offers the tab already shown. From the
     // terminal it leads to the conversation, where the answer goes.
@@ -1139,7 +1139,7 @@ for (const lang of ['en', 'fr']) {
     await page.screenshot({ path: `.shots/needs-${lang}-term-desktop.png` })
     await page.setViewportSize(phoneSize)
     await answer.click()
-    await expect(panel.locator('.board-panel-tabs').getByRole('button', { name: 'Conversation', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await expect(panel.locator('.board-panel-tabs').getByRole('button', { name: 'Agent', exact: true })).toHaveAttribute('aria-pressed', 'true')
     await expect(panel.locator('.task-setup')).toBeVisible()
     await expect(answer).toHaveCount(0)
     await expect(openTerm).toBeVisible()

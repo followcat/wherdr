@@ -969,6 +969,14 @@ const queuedList = computed(() => {
     }
   })
 })
+const sendingNow = ref(false)
+async function sendNow() {
+  if (sendingNow.value) return
+  sendingNow.value = true
+  try { await api('/api/send-now', { pane_id: props.pane.id }) }
+  catch (err) { toast((err as Error).message, true) }
+  finally { sendingNow.value = false }
+}
 // Same parts as a message in the conversation: thumbnails above the bubble,
 // so nothing moves when it lands.
 const pendingParts = (q: { srcs: string[], missing: number, body: string, files: unknown[] }) => [
@@ -1365,11 +1373,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                 <UIcon :name="agentIcon(pane.agent) || 'i-lucide-bot'" /><span>{{ kindLabel(pane.agent) }}</span>
               </div>
 
-              <div v-else-if="b.k === 'autopilot'" class="msg-autopilot" :data-hit-key="b.key">
-                <div class="msg-system"><span>{{ t('Autopilot') }}</span></div>
-                <div class="msg-autopilot-body"><FoldText>{{ b.text }}</FoldText></div>
-                <UButton icon="i-lucide-copy" color="neutral" variant="ghost" size="xs" :aria-label="t('Copy message')" @click="copyText(b.text)" />
-              </div>
+              <AutopilotMessage v-else-if="b.k === 'autopilot'" :text="b.text" :data-hit-key="b.key" @copy="copyText" />
 
               <div v-else-if="b.k === 'user'" class="msg-user-wrap" :data-hit-key="b.key">
                 <button v-if="b.reply" type="button" class="msg-quote" :aria-label="t('Show original message')" @click="gotoOrigin(b.origin)">
@@ -1563,7 +1567,10 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
             <UIcon name="i-lucide-reply" /><span>{{ t('Reply') }}</span>
           </button>
         </Teleport>
-        <div v-if="queuedList.length || liveShell" class="queued-list">
+        <div v-if="queuedList.length || liveShell || screen?.sendNow" class="queued-list">
+          <div v-if="!readOnly && screen?.sendNow" class="queued-tag">
+            <button type="button" class="queued-cancel" :disabled="sendingNow" @click="sendNow">{{ t('Send now') }}</button>
+          </div>
           <!-- Already sent (visible as sent on screen), not yet in the transcript. -->
           <div v-for="q in queuedList.filter(x => x.phase === 'sent')" :key="q.id" class="msg-user-wrap">
             <button v-if="q.reply" type="button" class="msg-quote" :aria-label="t('Show original message')" @click="gotoOrigin(q.origin)">

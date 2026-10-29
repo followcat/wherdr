@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import { readBody } from 'h3'
 import BoardPanel from '~/components/BoardPanel.vue'
-import { herdrState } from '~/composables/useHerdr'
+import { defaultViewMode, herdrState } from '~/composables/useHerdr'
+import { setTaskPanelChoice } from '~/utils/taskPanelTab'
 import type { Pane } from '#shared/types'
 
 // What `coordinator status` says now, and how many times it was asked.
@@ -286,9 +287,10 @@ describe('the Board panel follows its coordinator', () => {
 
 // A task's agent with no pane: what its details say, and what `tell` received.
 const told: unknown[] = []
+let taskAgentPane: string | null = null
 registerEndpoint('/api/tasks/details', () => ({
   id: 'demo/3', title: 'Add dark mode', msg: '', description: '', agent: 'claude', pr: '', branch: '', worktree: '',
-  failure: '', failureStage: '', failureAuth: false, stage: 'working', summary: '', report: null, review: null, reviewRounds: 0, plan: '', research: false, pane: null,
+  failure: '', failureStage: '', failureAuth: false, stage: 'working', summary: '', report: null, review: null, reviewRounds: 0, plan: '', research: false, pane: taskAgentPane,
 }))
 registerEndpoint('/api/tasks/tell', { method: 'POST', handler: async (event) => {
   told.push(await readBody(event))
@@ -329,5 +331,55 @@ describe('the Board panel for a task whose agent has no pane', () => {
     expect(noAgent).toEqual([])
     expect(w.find('#board-panel-tell').exists()).toBe(true)
     w.unmount()
+  })
+})
+
+
+describe('the task Agent tab', () => {
+  beforeEach(() => { setTaskPanelChoice('far|demo/3', null) })
+  afterEach(() => {
+    taskAgentPane = null
+    defaultViewMode.value = 'chat'
+    herdrState.value = { ok: false, workspaces: [], panes: [] }
+  })
+
+  it('combines both modes and keeps the selection through Task and legacy destinations', async () => {
+    taskAgentPane = 'w1:p1'
+    setPanes(['w1:p1'])
+    const { w } = await taskPanel(true)
+    try {
+      await vi.waitFor(() => expect(w.find('.board-panel-agent-bar').exists()).toBe(true))
+      expect(w.findAll('.board-panel-tabs button').map(b => b.text())).toEqual(['Task', 'Agent', 'Settings'])
+      const view = () => w.findComponent({ name: 'AgentView' })
+      expect(view().props('selectedMode')).toBe('chat')
+      await w.get('.board-panel-agent-bar button').trigger('click')
+      expect(view().props('selectedMode')).toBe('term')
+      await w.findAll('.board-panel-tabs button')[0]!.trigger('click')
+      await w.findAll('.board-panel-tabs button')[1]!.trigger('click')
+      expect(view().props('selectedMode')).toBe('term')
+      await w.setProps({ target: { machine: 'far', kind: 'task', id: 'demo/3', mode: 'chat' } })
+      expect(view().props('selectedMode')).toBe('chat')
+      await w.setProps({ target: { machine: 'far', kind: 'task', id: 'demo/3', mode: 'term' } })
+      expect(view().props('selectedMode')).toBe('term')
+    } finally { w.unmount() }
+  })
+
+  it('follows Default pane view and offers only the terminal without a readable chat', async () => {
+    taskAgentPane = 'w1:p1'
+    setPanes(['w1:p1'])
+    defaultViewMode.value = 'term'
+    const { w } = await taskPanel(false)
+    try {
+      await vi.waitFor(() => expect(w.find('.board-panel-agent-bar').exists()).toBe(true))
+      const view = () => w.findComponent({ name: 'AgentView' })
+      expect(view().props('selectedMode')).toBe('term')
+      defaultViewMode.value = 'chat'
+      await flushPromises()
+      expect(view().props('selectedMode')).toBe('chat')
+      herdrState.value = { ...herdrState.value, panes: [{ ...herdrState.value.panes[0]!, agent: null }] }
+      await flushPromises()
+      expect(w.find('.board-panel-agent-bar button').exists()).toBe(false)
+      expect(view().props('selectedMode')).toBe('term')
+    } finally { w.unmount() }
   })
 })

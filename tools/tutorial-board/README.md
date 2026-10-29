@@ -15,6 +15,8 @@ and a separate Python 3.12 environment with `pip install -r requirements.txt` (l
 speech alignment and frame composition). Build with `flock /tmp/wherdr-heavy.lock npm run build`.
 Set `TUTORIAL_OUT` to a private folder (copy `storyboard.json` there) and `TUTORIAL_BUILD`
 to the built checkout. `TUTORIAL_BROWSER` optionally selects an installed Chromium.
+`TUTORIAL_CAPTURE` optionally selects another episode's capture script, using the
+same isolated-session lifecycle. See `../tutorial-intro/` for the introduction.
 
 ```sh
 flock /tmp/wherdr-heavy.lock python3 tools/tutorial-board/session.py   # captures
@@ -45,6 +47,10 @@ written). Captions break at phrases; no proportional word-count timing is used.
 burns `captions.ass` and encodes. Shot length follows the narration (`lead_in` + take +
 `tail`). Actions in `storyboard.json` are tied to spoken words (exact spelling):
 
+- `output`, `label` and `end_label` at the top level name the film file, the header
+  label and the end-card line (the Board episode's values are the defaults).
+- `screen` on a segment selects a capture at its start. Without it, the last
+  screen remains visible, as in the original Board episode.
 - `cursor`: `{to, at, then}` moves the pointer to a target when the word `at` starts,
   on a slight arc with a minimum-jerk speed profile and a Fitts-like duration, clicks
   (brief press and a small ring), then shows the screen `then`. The pointer is a black

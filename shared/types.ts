@@ -78,7 +78,7 @@ export interface ShellRun {
   // omp's "$ code" (Python) rather than a "!" shell command.
   python?: boolean
 }
-export interface ClaudeScreen { shell: ShellRun | null, sent: string | null, queued: string[] }
+export interface ClaudeScreen { sendNow?: boolean, shell: ShellRun | null, sent: string | null, queued: string[] }
 
 export interface Workspace {
   id: string

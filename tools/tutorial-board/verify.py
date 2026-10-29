@@ -1,6 +1,7 @@
 """Check the actual encoded artifact, its provenance and narration timing."""
 import array,hashlib,json,math,os,pathlib,subprocess
-root=pathlib.Path(os.environ['TUTORIAL_OUT']);movie=root/'wherdr-board-tutorial.mp4'
+root=pathlib.Path(os.environ['TUTORIAL_OUT'])
+plan=json.loads((root/'storyboard.json').read_text());movie=root/plan.get('output','wherdr-board-tutorial.mp4')
 probe=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_format','-show_streams','-of','json',str(movie)]))
 video=next(s for s in probe['streams'] if s['codec_type']=='video')
 audio=next(s for s in probe['streams'] if s['codec_type']=='audio')
@@ -10,7 +11,7 @@ assert video['r_frame_rate']=='60/1' and int(video['nb_frames'])==count
 assert 50<=timeline['duration']<=66, 'Keep the film about one minute'
 assert abs(float(probe['format']['duration'])-timeline['duration'])<.1 and audio['codec_name']=='aac'
 data=movie.read_bytes();assert data.index(b'moov')<data.index(b'mdat'), 'Missing fast-start metadata'
-plan=json.loads((root/'storyboard.json').read_text());assert plan['voice']=='matilda' and plan['pronunciation']=='where-der'
+assert plan['voice']=='matilda' and plan['pronunciation']=='where-der'
 end=0
 for shot in timeline['shots']:
     assert abs(shot['start']-end)<.002

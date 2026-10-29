@@ -54,6 +54,9 @@ async function fakeBoard(page: Page) {
 async function pickFolder(page: Page, name: string) {
   const sheet = page.getByRole('dialog')
   await sheet.locator('.dir-pick').click()
+  // Its first listing loads as it opens and would replace a path typed before it lands.
+  await expect(sheet.locator('.dir-list .term-loading')).toHaveCount(0)
+  await expect(sheet.getByRole('textbox', { name: /Folder path|Chemin du dossier/ })).not.toHaveValue('')
   await sheet.getByRole('textbox', { name: /Folder path|Chemin du dossier/ }).fill(`${CODE}/${name}`)
   await sheet.getByRole('button', { name: /^(Go|Aller)$/ }).click()
   await expect(sheet.getByRole('textbox', { name: /Folder path|Chemin du dossier/ })).toHaveValue(new RegExp(`/${name}$`))

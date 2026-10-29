@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { desk as desktop } from '~/composables/useHerdr'
-// Task panels own their compact header, three tabs and board failure banner.
+// Task panels own their compact header, role tabs and board failure banner.
 // The banner says where the task stands now: a failure it has moved on from
 // (failureStale) is history in the Task tab, never its title or its buttons.
 // Coordinators keep their own startup/delivery lifecycle.
@@ -12,11 +12,11 @@ import { limitStopOf } from '#shared/taskLimits'
 import { blockChoices, blockKind, blockKindLabel, offersAlways, permissionReply, questionMessage } from '~/utils/blockNotice'
 import { reviewerWait } from '~/utils/reviewerWait'
 import { taskActivity } from '#shared/taskActivity'
-import { type PaneViewMode, allSessionsState, chooseMachineSession } from '~/composables/useHerdr'
+import { defaultViewMode, type PaneViewMode, allSessionsState, chooseMachineSession } from '~/composables/useHerdr'
 import { useAutopilot } from '~/composables/useAutopilot'
 
 export type PanelTarget =
-  | { machine: string, kind: 'task', id: string, chat?: boolean }
+  | { machine: string, kind: 'task', id: string, chat?: boolean, mode?: PaneViewMode }
   | { machine: string, kind: 'coordinator', to: CoordinatorTarget, freshProject?: boolean }
 
 // `reachable`: its machine's board answers now (a message waits while it does not).
@@ -116,7 +116,7 @@ const activityClass = computed(() => (activity.value && activity.value.kind !== 
 const reviewing = computed(() => ['reviewing', 'reviewneeds'].includes(details.value?.stage || props.task?.stage || ''))
 const conversation = computed(() => Boolean(agentPane.value && hasChat(agentPane.value))
   && !(props.task?.stage === 'failed' && ['start', 'setup', 'attempts'].includes(details.value?.failureStage || '')))
-const agentHint = computed(() => agentPane.value ? tl(`Herdr agent: ${statusLabel(agentPane.value)}`, `Agent Herdr : ${statusLabel(agentPane.value)}`) : tl('Agent not running', 'Agent arrêté'))
+const agentHint = computed(() => agentPane.value ? tl(`Agent: ${statusLabel(agentPane.value)}`, `Agent : ${statusLabel(agentPane.value)}`) : tl('Agent not running', 'Agent arrêté'))
 const taskPermissions = computed(() => props.task ? taskActions(props.task, details.value) : null)
 const canFix = computed(() => props.task && taskCanFix(props.task, details.value))
 const canAnyway = computed(() => props.task && taskCanApproveAnyway(props.task, details.value))
@@ -218,7 +218,7 @@ function severityLabel(s: string) {
 }
 
 function tabLabel(tab: TaskPanelTab) {
-  return tab === 'settings' ? tl('Settings', 'Réglages') : tab === 'chat' ? t('Conversation') : tab === 'term' ? t('Terminal') : tab === 'reviewer' ? tl('Reviewer', 'Relecteur') : tl('Task', 'Tâche')
+  return tab === 'settings' ? tl('Settings', 'Réglages') : tab === 'chat' || tab === 'term' ? t('Agent') : tab === 'reviewer' ? tl('Reviewer', 'Relecteur') : tl('Task', 'Tâche')
 }
 
 // ------------------------------------------------- a reviewer that needs you
@@ -267,14 +267,14 @@ const rvWords = computed(() => {
     default: return ''
   }
 })
-// Its view: the conversation (where its dialog shows as choices) when one can
-// be read, else its terminal; switched by hand in its bar.
+// Each role follows Default pane view until its bar selects a mode.
+// Without a readable conversation, the terminal is the only mode.
 const reviewerChoice = ref<PaneViewMode | null>(null)
-const reviewerMode = computed<PaneViewMode>(() => reviewerChoice.value ?? (reviewerAgent.value && hasChat(reviewerAgent.value) ? 'chat' : 'term'))
+const reviewerMode = computed<PaneViewMode>(() => reviewerAgent.value && hasChat(reviewerAgent.value) ? reviewerChoice.value ?? defaultViewMode.value : 'term')
 watch(reviewerPane, () => { reviewerChoice.value = null })
 
-// The panel owns view selection so a setup shell never opens by default. A task
-// with nothing to talk to (never started, no pane) opens on the task, its other
+// The panel owns view selection. A task with nothing to talk to
+// (never started, no pane) opens on the task, its other
 // tabs hidden; a tab picked by hand stays while it is offered (taskPanelTab.ts).
 const choiceKey = computed(() => (props.target.kind === 'task' ? `${props.target.machine}|${props.target.id}` : ''))
 const choice = ref<TaskPanelTab | null>(taskPanelChoice(choiceKey.value))
@@ -287,16 +287,34 @@ const views = computed(() => ({
   settings: props.target.kind === 'task',
 }))
 const tabs = computed(() => taskPanelTabs(views.value))
-const selected = computed(() => taskPanelTab(views.value, choice.value))
+// Keep chat/term as internal destinations for existing links and shortcuts.
+// They share one visible Agent tab; its selection also remembers the mode.
+const agentChoice = ref<PaneViewMode | null>(choice.value === 'chat' || choice.value === 'term' ? choice.value : null)
+const agentMode = computed<PaneViewMode>(() => agentPane.value && !hasChat(agentPane.value) ? 'term' : agentChoice.value ?? defaultViewMode.value)
+const selected = computed(() => taskPanelTab(views.value, choice.value ?? (views.value.term ? agentMode.value : null)))
+const navigationTabs = computed<TaskPanelTab[]>(() => [
+  'task', ...(views.value.chat || views.value.term ? ['chat' as const] : []),
+  ...(views.value.reviewer ? ['reviewer' as const] : []), ...(views.value.settings ? ['settings' as const] : []),
+])
+function tabSelected(tab: TaskPanelTab) {
+  return tab === 'chat' ? selected.value === 'chat' || selected.value === 'term' : selected.value === tab
+}
+function chooseAgentMode(mode: PaneViewMode) {
+  agentChoice.value = mode
+  choose(mode, true)
+}
 // The banner's way to another tab, never to the one already shown.
-const jump = computed(() => needsJumpTab(tabs.value, selected.value))
+const jump = computed(() => agentPane.value && !hasChat(agentPane.value)
+  ? selected.value === 'term' || selected.value === 'chat' ? null : 'term'
+  : needsJumpTab(tabs.value, selected.value))
 function choose(tab: TaskPanelTab, force = false) {
   if (!force && tab === selected.value) return
+  if (tab === 'chat' || tab === 'term') agentChoice.value = tab
   choice.value = tab
   setTaskPanelChoice(choiceKey.value, tab)
 }
 // "Open the chat" from a task's sheet asks for its conversation.
-watch(() => props.target, (t) => { if (t.kind === 'task' && t.chat) choose('chat', true) }, { immediate: true })
+watch(() => props.target, (t) => { if (t.kind === 'task' && (t.mode || t.chat)) choose(t.mode ?? 'chat', true) }, { immediate: true })
 // A choice no longer offered (its agent gone) is dropped: once an agent starts
 // again, its conversation is the default view again.
 watch([tabs, settled], () => {
@@ -628,13 +646,13 @@ const style = computed(() => (!desk.value && kbOpen.value ? { height: `${vvHeigh
       <CoordinatorAutopilot :key="JSON.stringify(target)" :machine="target.machine" :to="target.to" :disabled="!reachable" />
     </div>
     <nav v-if="target.kind === 'task' && settled" class="board-panel-tabs" :aria-label="tl('Task views', 'Vues de la tâche')">
-      <button v-for="tab in tabs" :key="tab" type="button" :class="{ on: selected === tab, 'board-panel-tab-reviewer': tab === 'reviewer', asks: tab === 'reviewer' && rvWait === 'open' }" :aria-pressed="selected === tab" :aria-label="tabLabel(tab)" :aria-description="tab === 'task' && newNote ? tl('New task details', 'Nouveaux détails de la tâche') : undefined" :title="tab === 'task' || tab === 'settings' ? undefined : tab === 'reviewer' ? reviewerHint : agentHint" @click="choose(tab)">
+      <button v-for="tab in navigationTabs" :key="tab" type="button" :class="{ on: tabSelected(tab), 'board-panel-tab-reviewer': tab === 'reviewer', asks: tab === 'reviewer' && rvWait === 'open' }" :aria-pressed="tabSelected(tab)" :aria-label="tabLabel(tab)" :aria-description="tab === 'task' && newNote ? tl('New task details', 'Nouveaux détails de la tâche') : undefined" :title="tab === 'task' || tab === 'settings' ? undefined : tab === 'reviewer' ? reviewerHint : agentHint" @click="tab === 'chat' ? choose(agentChoice ?? agentMode) : choose(tab)">
         {{ tabLabel(tab) }}<i v-if="tab === 'task' && newNote" class="task-new" aria-hidden="true" />
       </button>
     </nav>
     <div v-else-if="target.kind === 'task' && skeleton" class="board-panel-tabs skel-tabs" aria-hidden="true"><i /><i /><i /></div>
-    <div v-if="target.kind === 'task' && reviewing && selected === 'chat'" class="task-review-context">
-      <span>{{ tl(`This is ${kindLabel(identity.agent)}’s conversation. The review runs separately.`, `Conversation de ${kindLabel(identity.agent)}. La relecture tourne séparément.`) }}</span>
+    <div v-if="target.kind === 'task' && reviewing && selected === 'chat' && agentMode === 'chat'" class="task-review-context">
+      <span>{{ tl(`Agent · ${kindLabel(identity.agent)}’s conversation. The review runs separately.`, `Agent · conversation de ${kindLabel(identity.agent)}. La relecture tourne séparément.`) }}</span>
       <button v-if="reviewerAgent && !offlineView" type="button" @click="reviewerChoice = 'term'; choose('reviewer')">{{ tl('Open reviewer terminal', 'Ouvrir le terminal du relecteur') }}</button>
       <button v-else-if="reviewerSession && !offlineView" type="button" @click="showReviewerSession">{{ tl('Switch to the reviewer session', 'Passer à la session du relecteur') }}</button>
     </div>
@@ -709,7 +727,14 @@ const style = computed(() => (!desk.value && kbOpen.value ? { height: `${vvHeigh
         </div>
         <AgentView :key="`reviewer-${reviewerPane}`" :pane-id="reviewerPane" cell active embedded :selected-mode="reviewerMode" @update:selected-mode="reviewerChoice = $event" />
       </template>
-      <AgentView v-else-if="paneId && (target.kind === 'coordinator' || selected === 'term' || conversation)" :key="paneId" :pane-id="paneId" cell active :embedded="target.kind === 'task'" @update:selected-mode="choose($event)" :selected-mode="target.kind === 'task' ? (selected === 'term' ? 'term' : 'chat') : undefined" />
+      <template v-else-if="target.kind === 'task' && paneId && (selected === 'term' || conversation || !agentPane || !hasChat(agentPane))">
+        <div class="board-panel-reviewer-bar board-panel-agent-bar">
+          <span class="board-panel-reviewer-who">{{ t('Agent') }}<template v-if="agentPane"> · {{ kindLabel(agentPane.agent) }} · {{ statusLabel(agentPane) }}</template></span>
+          <button v-if="agentPane && hasChat(agentPane)" type="button" class="board-panel-reviewer-mode" @click="chooseAgentMode(agentMode === 'chat' ? 'term' : 'chat')">{{ agentMode === 'chat' ? t('Terminal') : t('Conversation') }}</button>
+        </div>
+        <AgentView :key="paneId" :pane-id="paneId" cell active embedded :selected-mode="agentMode" @update:selected-mode="chooseAgentMode" />
+      </template>
+      <AgentView v-else-if="paneId && target.kind === 'coordinator'" :key="paneId" :pane-id="paneId" cell active />
       <div v-else-if="target.kind === 'task' && loading" class="chat-list skeleton board-panel-skel" role="status" :aria-label="t('Loading…')">
         <ChatSkeleton v-if="skeleton" :agent="identity.agent" />
       </div>

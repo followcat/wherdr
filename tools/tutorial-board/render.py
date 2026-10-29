@@ -72,6 +72,8 @@ def screen_at(t):
 moves, marks = [], []                         # pointer moves and tutorial marks
 pointer = (OX + 1380 * SCALE, OY + 760 * SCALE)
 for i, shot in enumerate(shots):
+    if shot.get('screen'):
+        switches.append((starts[i], shot['screen'])); switches.sort()
     for action in shot.get('cursor', []):
         t0 = anchor(i, action['at'])
         box = screens[screen_at(t0)]['targets'][action['to']]
@@ -206,7 +208,7 @@ def spotlight(frame, active):
 mono, title_font = font('jetbrainsmono', 19, 500), font('archivo', 23, 600)
 def header(shot):
     image = Image.new('RGB', (W, OY), BG); draw = ImageDraw.Draw(image)
-    draw.text((OX, 17), 'WHERDR / BOARD / 01', font=mono, fill=(154, 168, 181))
+    draw.text((OX, 17), plan.get('label', 'WHERDR / BOARD / 01'), font=mono, fill=(154, 168, 181))
     draw.text((W - OX, 15), shot['title'], font=title_font, fill='white', anchor='ra')
     return np.asarray(image)
 headers = [header(s) for s in shots]
@@ -216,7 +218,7 @@ def end_card():
     draw.text((SW / 2, SH / 2 - 70), 'WHERDR', font=end_label, fill=(154, 168, 181), anchor='mm')
     draw.text((SW / 2, SH / 2), shots[-1]['card'], font=end_title, fill='white', anchor='mm')
     draw.rectangle((SW / 2 - 100, SH / 2 + 66, SW / 2 + 100, SH / 2 + 68), fill=ACCENT)
-    draw.text((SW / 2, SH / 2 + 112), 'FOR HERDR AND HERDR-PROJECTS', font=end_label, fill=(154, 168, 181), anchor='mm')
+    draw.text((SW / 2, SH / 2 + 112), plan.get('end_label', 'FOR HERDR AND HERDR-PROJECTS'), font=end_label, fill=(154, 168, 181), anchor='mm')
     return np.asarray(image)
 ending = end_card()
 
@@ -288,7 +290,7 @@ with wave.open(str(root / 'narration.wav'), 'wb') as w:
     w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate); w.writeframes(np.clip(track, -32767, 32767).astype('<i2').tobytes())
 encoder = subprocess.Popen(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', f'{W}x{H}', '-r', str(FPS), '-i', '-',
     '-i', 'narration.wav', '-vf', f"ass=captions.ass:fontsdir='{fonts}',format=yuv420p", '-c:v', 'libx264', '-preset', 'medium', '-crf', '16', '-threads', '2',
-    '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-movflags', '+faststart', 'wherdr-board-tutorial.mp4'], stdin=subprocess.PIPE)
+    '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-movflags', '+faststart', plan.get('output', 'wherdr-board-tutorial.mp4')], stdin=subprocess.PIPE)
 for n in range(sum(counts)):
     encoder.stdin.write(compose(n / FPS).tobytes())
     if n % 600 == 0: print('frame', n, flush=True)

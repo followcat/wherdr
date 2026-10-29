@@ -35,7 +35,8 @@ try:
                 if json.load(response).get('session')==name:break
         except Exception:pass
         time.sleep(.2)
-    subprocess.run(['node',str(pathlib.Path(__file__).with_name('capture.mjs'))],env={**env,'TUTORIAL_URL':url},check=True)
+    capture=pathlib.Path(os.environ.get('TUTORIAL_CAPTURE',str(pathlib.Path(__file__).with_name('capture.mjs')))).resolve()
+    subprocess.run(['node',str(capture)],env={**env,'TUTORIAL_URL':url},check=True)
 finally:
     for child in reversed(children):
         if child.poll() is None:
