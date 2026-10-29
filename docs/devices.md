@@ -45,6 +45,12 @@
 - **Split tabs on a small screen**: a plan of the tab's panes in Herdr's proportions, then each
   pane full screen with a mini-map and swipe to its neighbours.
 - **Terminal key bar** (Esc, Enter, arrows, Shift+Tab, Ctrl+C…) and touch scrolling.
+- **Smooth touch scrolling (beta)**: drags scroll the running application directly,
+  with a small visual lead and a bounded glide after release. A new touch stops queued
+  scrolling; the stopping tap does not click the application or open the keyboard.
+  Full-screen applications keep their own viewport: screen snapshots are not stitched
+  into a separate history document. Reading an agent's structured conversation remains
+  available in the Conversation view when supported.
 - **Offline reading** of the last known state and of recently opened conversations.
 
 ### On an iPad
