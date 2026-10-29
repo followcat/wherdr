@@ -54,9 +54,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   let links: TerminalLinks | null = null
   let mouse: ReturnType<typeof bindTerminalMouse> | null = null
   let mouseSupported = false
-  // Reactive copy for the touch layer: mouse-capable panes scroll through
-  // the server (TUI programs scroll in-app, the pane scrollback via Herdr),
-  // panes on old Herdr (<0.9.2) browse their local scrollback overlay.
+  // The pane's real mode, refreshed on every written frame: TUI programs
+  // (mouse reporting or the alternate screen) scroll inside the program,
+  // plain panes browse their local scrollback overlay instead.
   const mouseMode = ref(false)
   // Local scrollback overlay state (scrollback.read / scrollback.chunk).
   const scrollback = ref('')
@@ -314,7 +314,6 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       catch { return }
       if (m.type === 'web.capabilities') {
         mouseSupported = m.mouse === true
-        mouseMode.value = mouseSupported
       } else if (m.type === 'terminal.frame') {
         if (!gotFrame) {
           gotFrame = true
@@ -327,7 +326,14 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
           term.resize(m.width, m.height)
         }
         const current = term
-        current.write(b64ToBytes(m.bytes || ''), () => { selectionHint.refresh(current, mouseSupported); if (smoothTouchScrolling.value) frameTick.value++ })
+        current.write(b64ToBytes(m.bytes || ''), () => {
+          selectionHint.refresh(current, mouseSupported)
+          // The pane's real mode, refreshed on every written frame: TUI
+          // programs (mouse reporting or the alternate screen) scroll inside
+          // the program, plain panes browse their local scrollback overlay.
+          mouseMode.value = current.modes.mouseTrackingMode !== 'none' || current.buffer.active.type === 'alternate'
+          if (smoothTouchScrolling.value) frameTick.value++
+        })
       } else if (m.type === 'scroll.ack') {
         if (smoothTouchScrolling.value && m.epoch === touchEpoch && Number.isFinite(m.lines) && term) {
           // Queue behind the covering frame, including when write's callback
@@ -419,7 +425,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     const offset = screen?.style.transform ? new DOMMatrixReadOnly(screen.style.transform).m42 : 0
     const fixedRect = rect ? { left: rect.left, top: rect.top - offset, width: rect.width, height: rect.height } : null
     const position = fixedRect && term && x !== undefined && y !== undefined ? terminalCell(x, y, fixedRect, term.cols, term.rows) : null
-    return sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), ...position, modifiers, source: 'touch', epoch: touchEpoch, preview })
+    return sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), ...position, modifiers, source: 'touch', epoch: touchEpoch, preview, tui: mouseMode.value })
   }
   function cancelTouchScroll() {
     touchEpoch++

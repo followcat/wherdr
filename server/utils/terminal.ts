@@ -205,8 +205,13 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
   })
   // Panes without mouse-report need no per-tick wheel reports: Herdr honors
   // lines:N there, so merge touch drags into one command per repaint instead
-  // of one frame per row.
-  const touchMerged = createScrollThrottle((direction, lines) => toChild({ type: 'terminal.scroll', direction, lines }), { intervalMs: 30 })
+  // of one frame per row. The merged batch still counts toward the gesture's
+  // epoch so the client's preview debt is retired by scroll.ack.
+  let mergedEpoch = 0, mergedPreview = true
+  const touchMerged = createScrollThrottle((direction, lines) => {
+    if (mergedPreview) scrollDelivered.set(mergedEpoch, (scrollDelivered.get(mergedEpoch) || 0) + (direction === 'up' ? lines : -lines))
+    toChild({ type: 'terminal.scroll', direction, lines })
+  }, { intervalMs: 30 })
   let scrollbackSeq = 0
 
   // The pane's size is read before the control session resizes it (see paneSizes.ts).
@@ -256,13 +261,21 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
         case 'terminal.scroll':
           if (m.direction === 'up' || m.direction === 'down') {
             if (m.source === 'touch') {
-              if (mouse) {
+              // tui = the pane's live mouse-report/alt-screen state as seen by
+              // the client's xterm. Older clients send no tui; fall back to
+              // the herdr capability flag.
+              const tui = m.tui === undefined ? mouse : m.tui === true
+              if (tui) {
                 pacedTouch().push(m.direction, clampInt(m.lines, 1, 500, 3), {
                   ...terminalScrollPosition(m, size.cols, size.rows),
                   epoch: clampInt(m.epoch, 0, Number.MAX_SAFE_INTEGER, 0), preview: m.preview !== false,
                 })
               }
-              else touchMerged.push(m.direction, clampInt(m.lines, 1, 500, 3))
+              else {
+                mergedEpoch = clampInt(m.epoch, 0, Number.MAX_SAFE_INTEGER, 0)
+                mergedPreview = m.preview !== false
+                touchMerged.push(m.direction, clampInt(m.lines, 1, 500, 3))
+              }
             }
             else { touchScroll?.cancel(); touchMerged.cancel(); scroll.push(m.direction, clampInt(m.lines, 1, 500, 3)) }
           }
