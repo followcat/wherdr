@@ -316,8 +316,14 @@ async function loadOlder() {
   const file = chat.value.file
   const before = chat.value.olderCursor
   try {
-    const r = await api<ChatResponse>(`/api/chat?pane=${encodeURIComponent(pane)}&before=${before}`)
+    const r = await api<ChatResponse>(`/api/chat?pane=${encodeURIComponent(pane)}&before=${before}&since=${encodeURIComponent(chat.value.token)}`)
     if (pane !== props.pane.id || r.file !== file || chat.value.olderCursor !== before) return
+    if (r.rewritten) {
+      chat.value = fresh()
+      synced = false
+      await loadChat()
+      return
+    }
     const b = box.value
     const fromBottom = b ? b.scrollHeight - b.scrollTop : 0
     await apply(() => {
@@ -1530,7 +1536,9 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                       :loading="b.live && j === b.list.length - 1" :streaming="b.live && j === b.list.length - 1"
                       :ui="{ root: 'tool', trigger: 'tool-trigger', label: 'tool-label', suffix: 'tool-suffix', leading: 'tool-leading' }"
                       :class="{ err: tool.error }"
-                    />
+                    >
+                      <template v-if="tool.out" #default><pre class="tool-result">{{ tool.out }}</pre></template>
+                    </UChatTool>
                     <MsgThumbs v-if="tool.images" class="tool-thumbs" :srcs="itemImageSrcs(tool)" :max="TOOL_THUMB_MAX" :offline="readOnly" :dupes="dupeSrcs" />
                   </template>
                 </template>
@@ -1545,6 +1553,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                     <div class="tool-row" :class="{ err: tool.error }">
                       <UIcon :name="toolIcon(tool)" /><b>{{ toolLabel(tool) }}</b><span>{{ toolText(tool) }}</span>
                     </div>
+                    <pre v-if="tool.out" class="tool-result">{{ tool.out }}</pre>
                     <MsgThumbs v-if="tool.images" class="tool-thumbs" :srcs="itemImageSrcs(tool)" :max="TOOL_THUMB_MAX" :offline="readOnly" :dupes="dupeSrcs" />
                   </template>
                 </UChatTool>
