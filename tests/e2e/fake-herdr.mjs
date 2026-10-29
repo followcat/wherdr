@@ -5,6 +5,7 @@
 import fs from 'node:fs'
 import net from 'node:net'
 import { writeDevinFixture } from '../helpers/devin-fixture.mjs'
+import { opencodeFixture } from '../helpers/opencode-fixture.mjs' 
 
 // Delay of agent.prompt, so the app's "sending…" state is observable.
 export const PROMPT_DELAY_MS = 1500
@@ -144,6 +145,29 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
       p.session = 'e2e-devin'
       return {}
     },
+    'e2e.opencode': async params => {
+      const p = need(params.pane_id)
+      if (!p.conversationHome) throw new Error('No isolated conversation fixture for this pane')
+      if (params.reset) {
+        await p.opencodeFixture?.close(); delete p.opencodeFixture
+        if (p.opencodeOriginal) Object.assign(p, p.opencodeOriginal)
+        delete p.opencodeOriginal
+        return {}
+      }
+      p.opencodeOriginal ||= { agent: p.agent, session: p.session }
+      p.opencodeFixture ||= await opencodeFixture(p.conversationHome)
+      const fixture = p.opencodeFixture
+      if (params.rows) fixture.state.messages = params.rows
+      if (params.revert !== undefined) fixture.state.revert = params.revert
+      if (params.fail !== undefined) fixture.state.fail = params.fail
+      if (params.restart) { fixture.state.pid++; fixture.save() }
+      if (params.rotate) { fixture.state.password += '-rotated'; fixture.save() }
+      if (params.disconnect) fixture.disconnect()
+      fixture.event(params.event || 'session.text.ended')
+      p.agent = 'opencode'; p.session = fixture.state.session
+      return { requests: fixture.state.requests, connections: fixture.state.connections, streams: fixture.state.streams.size }
+    },
+
     'e2e.terminal_version': params => {
       if (params.version) { terminalVersion = params.version; terminalMouse.length = 0 }
       return { version: terminalVersion }
