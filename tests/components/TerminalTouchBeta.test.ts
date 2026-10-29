@@ -30,9 +30,6 @@ async function mounted(enabled: boolean, coarse = false) {
     loading: ref(false), selectionHint: { visible: ref(false), dismiss: vi.fn() },
     mouseMode: ref(coarse),
     requestScrollback: vi.fn(), scrollback: ref(''), scrollbackVersion: ref(0),
-    termTheme: () => undefined, transcriptAt: () => undefined,
-    transcriptInject: vi.fn(), transcriptRange: () => [0, 23],
-    transcriptWindow: () => ({ top: 0, rows: 24 }),
   }
   const w = await mountSuspended(TerminalView, { props: { ctl: ctl as unknown as TerminalCtl } })
   vi.stubGlobal('requestAnimationFrame', (fn: FrameRequestCallback) => { frames.set(++id, fn); return id })

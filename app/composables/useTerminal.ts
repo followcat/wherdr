@@ -16,8 +16,6 @@ import { OSC52_MAX_BYTES, bindTerminalOsc52, copyAgentText } from '~/utils/termi
 import { uploadPhoto } from '~/utils/photoUpload'
 import { terminalClosedText, terminalUnavailableText } from '~/utils/terminalClosed'
 import { bindTerminalMouse, terminalCell } from '~/utils/terminalMouse'
-import { createTranscriptCache } from '~/utils/transcriptCache'
-import { bufferLineToHtml } from '~/utils/bufferLineHtml'
 import { TERM_FONT, onFontsLoaded } from '~/utils/terminalFont'
 import { displayVirtualChord, toggleVirtualModifier, virtualChord, virtualInputAction, virtualNavigationBytes, type VirtualModifier } from '~/utils/virtualKeys'
 
@@ -65,11 +63,6 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   // Local scrollback overlay state (scrollback.read / scrollback.chunk).
   const scrollback = ref('')
   const scrollbackVersion = ref(0)
-  // Painted-row cache feeding the touch preview's revealed edge.
-  const transcript = createTranscriptCache()
-  // Scroll lines sent since the last painted frame — nonzero tells the
-  // transcript matcher a shift is plausible this repaint.
-  let sentSinceFrame = 0
 
   const wsBase = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`
 
@@ -77,7 +70,6 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     el = host
     disposed = false
     twsRetry = 0
-    transcript.reset()
     term = new Terminal({
       fontFamily: TERM_FONT,
       fontSize: fontSize.value,
@@ -228,12 +220,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     const p = fit.proposeDimensions()
     if (!p || !p.cols || !p.rows) return
     const d = { cols: p.cols, rows: p.rows }
-    if (d.cols !== term.cols || d.rows !== term.rows) {
-      // Physical transcript rows wrap at the pane width: a client-side fit
-      // (rotation, split) invalidates them before the server echoes it back.
-      transcript.reset()
-      term.resize(d.cols, d.rows)
-    }
+    if (d.cols !== term.cols || d.rows !== term.rows) term.resize(d.cols, d.rows)
     if (send && (d.cols !== lastSize.cols || d.rows !== lastSize.rows)) {
       if (sendTerm({ type: 'terminal.resize', cols: d.cols, rows: d.rows })) lastSize = { cols: d.cols, rows: d.rows }
     }
@@ -339,29 +326,12 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
         if (!term) return
         if (m.width && m.height && (m.width !== term.cols || m.height !== term.rows)) {
           if (smoothTouchScrolling.value) { scrollInputVersion.value++; cancelTouchScroll() }
-          transcript.reset()
           term.resize(m.width, m.height)
         }
         const current = term
         current.write(b64ToBytes(m.bytes || ''), () => {
           selectionHint.refresh(current, mouseSupported)
-          if (smoothTouchScrolling.value) {
-            // Feed the painted screen to the transcript cache so the touch
-            // preview can reveal real rows instead of void.
-            const buf = current.buffer?.active
-            if (buf) {
-              const lines: string[] = [], styled: string[] = []
-              const theme = current.options.theme
-              for (let i = 0; i < current.rows; i++) {
-                const l = buf.getLine(buf.baseY + i)
-                lines.push(l?.translateToString(true) ?? '')
-                styled.push(l ? bufferLineToHtml(l, theme) : '')
-              }
-              transcript.frame(lines, styled, sentSinceFrame)
-              sentSinceFrame = 0
-            }
-            frameTick.value++
-          }
+          frameTick.value++
         })
       } else if (m.type === 'scroll.ack') {
         if (smoothTouchScrolling.value && m.epoch === touchEpoch && Number.isFinite(m.lines) && term) {
@@ -369,13 +339,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
           // ran before the separate ack packet arrived.
           const epoch = touchEpoch
           term.write('', () => {
-            if (epoch === touchEpoch && smoothTouchScrolling.value) {
-              scrollAck.value += m.lines
-              // Delivered rows are the ground truth for the frame they
-              // covered: the transcript cache re-anchors with them before
-              // matching the next frame.
-              transcript.ack(m.lines)
-            }
+            if (epoch === touchEpoch && smoothTouchScrolling.value) scrollAck.value += m.lines
           })
         }
       } else if (m.type === 'scrollback.chunk') {
@@ -454,24 +418,15 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     return term?.rows && screen?.clientHeight ? screen.clientHeight / term.rows : 16
   }
   const pageRows = () => term?.rows || 24
-  // Font metrics from xterm's own options: the DOM renderer puts them on
-  // .xterm-rows but WebGL keeps them off the DOM entirely, so transcript
-  // rows must read the options rather than an element's computed style.
-  const termFont = () => {
-    const o = term?.options
-    return o ? { family: o.fontFamily, size: o.fontSize, weight: String(o.fontWeight ?? 400), letterSpacing: `${o.letterSpacing ?? 0}px`, lineHeight: String(o.lineHeight ?? 1), color: o.theme?.foreground } : null
-  }
   // Scrolling requested from Herdr (the history lives there).
   function scroll(lines: number, x?: number, y?: number, modifiers = 0, touch = false, preview = true): boolean {
-    if (!smoothTouchScrolling.value || !touch) { const ok = sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines) }); if (ok) sentSinceFrame += lines; return ok }
+    if (!smoothTouchScrolling.value || !touch) return sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines) })
     const screen = term?.element?.querySelector('.xterm-screen') as HTMLElement | null
     const rect = screen?.getBoundingClientRect()
     const offset = screen?.style.transform ? new DOMMatrixReadOnly(screen.style.transform).m42 : 0
     const fixedRect = rect ? { left: rect.left, top: rect.top - offset, width: rect.width, height: rect.height } : null
     const position = fixedRect && term && x !== undefined && y !== undefined ? terminalCell(x, y, fixedRect, term.cols, term.rows) : null
-    const ok = sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), ...position, modifiers, source: 'touch', epoch: touchEpoch, preview })
-    if (ok) sentSinceFrame += lines
-    return ok
+    return sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), ...position, modifiers, source: 'touch', epoch: touchEpoch, preview })
   }
   function cancelTouchScroll() {
     touchEpoch++
@@ -521,11 +476,6 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     hasBanner: opts.hasBanner, selectionHint,
     cancelTouchScroll, scrollInputVersion, frameTick, scrollAck,
     scrollback, scrollbackVersion, requestScrollback, mouseMode,
-    previewExtra: (dir: number) => transcript.available(dir), previewRows: (dir: number, count: number) => transcript.slice(dir, count), resetTranscript: () => transcript.reset(),
-    transcriptRange: () => transcript.range(), transcriptAt: (idx: number) => transcript.at(idx), transcriptHas: (idx: number) => transcript.has(idx),
-    transcriptWindow: () => ({ top: transcript.windowTop(), rows: transcript.windowRows() }),
-    transcriptInject: (idx: number, e: { t: string, h?: string }) => transcript.inject(idx, e),
-    termTheme: () => term?.options.theme, termFont,
     virtualModifiers, lastVirtualChord, toggleVirtualModifier: toggleModifier, clearVirtualModifiers, sendVirtualKey,
   }
 }

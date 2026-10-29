@@ -1163,14 +1163,7 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 #scrollback::-webkit-scrollbar { display: none; }
 #scrollback .sb-body { padding: 6px 4px 0 6px; white-space: pre-wrap; overflow-wrap: break-word; font-variant-ligatures: none; }
 #scrollback .sb-gap { height: 100%; }
-#scrollback .lt-line {
-  white-space: pre; overflow: hidden;
-  font-variant-ligatures: none; font-kerning: none;
-}
-/* Live-transcript mode: row containers and the pull spacer are opaque so
-   the real terminal only shows through the .lt-slot it is translated onto. */
-#scrollback .lt-spacer, #scrollback .sb-body, #scrollback .lt-lines { background: var(--bg); }
-#scrollback .lt-slot { background: transparent; }
+#scrollback .sb-body { background: var(--bg); }
 .term-loading { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
 .term-loading.static { position: static; padding: 30px; }
 .xterm .xterm-viewport { background: transparent !important; overflow-y: hidden !important; }
@@ -4378,10 +4371,4 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
 /* Clip only the predicted grid; the terminal frame and composer stay fixed. */
 #termWrap.smooth-touch #term { overflow: hidden; }
 #termWrap.smooth-touch .xterm { overflow-y: hidden; overscroll-behavior: none; }
-/* Predicted-scroll edge strips: cached transcript rows revealed while the
-   translated screen waits for its covering frames. Plain text on the
-   terminal surface -- real styling arrives with the covering frame. */
-.pv-strip { position: absolute; overflow: hidden; pointer-events: none; display: flex; flex-direction: column; color: var(--text); }
-.pv-strip.pv-top { justify-content: flex-end; }
-.pv-strip.pv-bot { justify-content: flex-start; }
-.pv-line { white-space: pre; overflow: hidden; flex: none; }
+

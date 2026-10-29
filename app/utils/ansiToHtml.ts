@@ -97,25 +97,6 @@ const toSpan = (text: string, s: Style): AnsiSpan => ({
   strike: s.strike || undefined,
 })
 
-const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-
-// Spans -> inline-styled HTML using the same CSS properties the xterm-cell
-// renderer emits (bufferLineHtml), so dump-derived rows and painted rows
-// read identically in the transcript document. `theme` remaps the first 16
-// palette colors to the terminal theme, which is what the live cells use.
-export function ansiSpansToHtml(spans: AnsiSpan[], theme16?: (string | undefined)[]): string {
-  const remap = (c: string | undefined) => {
-    if (!c || !theme16) return c
-    const i = PALETTE.indexOf(c.slice(1))
-    return i >= 0 && i < 16 ? (theme16[i] ?? c) : c
-  }
-  return spans.map((s) => {
-    const fg = remap(s.color), bg = remap(s.background)
-    const st = `white-space:pre;${fg ? `color:${fg};` : ''}${bg ? `background-color:${bg};` : ''}${s.bold ? 'font-weight:700;' : ''}${s.italic ? 'font-style:italic;' : ''}${s.underline || s.strike ? `text-decoration:${s.underline ? 'underline' : ''}${s.strike ? ' line-through' : ''};` : ''}${s.dim ? 'opacity:.55;' : ''}`
-    return `<span style="${st}">${escHtml(s.text)}</span>`
-  }).join('')
-}
-
 // One rendered-ANSI dump -> an array of lines, each a list of styled spans.
 // SGR state carries across lines: a color opened on one line often closes
 // several later. Carriage returns and every non-SGR escape (OSC titles,
