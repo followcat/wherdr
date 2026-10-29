@@ -346,8 +346,9 @@ let ltLastTop = -1      // last scrollTop, for delta->app scroll tracking
 let ltEdgeAcc = 0       // pending app-scroll lines (fractional)
 let ltScreenDy = 0      // transform currently applied to the screen element
 let ltTouchY = -1       // last finger Y, for pull-past-top forwarding
+let ltSamples: { t: number, y: number }[] = []  // trailing touch samples -> release velocity
 let ltTopSeen = -1      // last transcript window top observed
-let ltMomentumSent = 0  // up-scrolls thrown by released momentum (budget: one page)
+let ltLastMoveAt = 0    // last scroll event: a tap that stops momentum is not a focus tap
 let ltDragging = false  // finger is on the scroller
 let ltSettling = false  // settle-glide in progress: not a user scroll
 let ltSettleTimer: ReturnType<typeof setTimeout> | undefined
@@ -367,7 +368,7 @@ function ltRow(idx: number, h: number) {
 function ltResetDom() {
   ltNodes.clear()
   ltAppOff = ltSentOff = ltEdgeAcc = 0; ltLastTop = -1; ltTouchY = -1
-  ltScreenDy = 0; ltTopSeen = -1; ltSettling = false; ltMomentumSent = 0
+  ltScreenDy = 0; ltTopSeen = -1; ltSettling = false; ltSamples = []
   const screen = host.value?.querySelector('.xterm-screen') as HTMLElement | null
   if (screen) screen.style.transform = ''
   ltAbove.value?.replaceChildren()
@@ -508,15 +509,18 @@ function ltOnScroll() {
   if (!el || !slot || !sp) return
   ltTrack()
   const h = props.ctl.rowHeight()
+  const now = performance.now()
+  ltLastMoveAt = now
+  // The spacer is gesture runway, never visible content: the view may show
+  // at most ~3 rows of it, always. Released momentum pins at the same wall —
+  // its energy is thrown as a bounded app scroll on release instead, so a
+  // flick can never park the viewport in black space.
   const clampTop = Math.max(0, sp.offsetHeight - 3 * h)
-  if (el.scrollTop < clampTop && (ltDragging || ltMomentumSent >= props.ctl.pageRows())) {
-    el.scrollTop = clampTop; ltLastTop = clampTop
-  }
+  if (el.scrollTop < clampTop) { el.scrollTop = clampTop; ltLastTop = clampTop }
   if (ltLastTop < 0) ltLastTop = el.scrollTop
   const dy = el.scrollTop - ltLastTop
   ltLastTop = el.scrollTop
-  const now = performance.now()
-  if (el.scrollTop >= sp.offsetHeight) { ltSettling = false; ltMomentumSent = 0 }
+  if (el.scrollTop >= sp.offsetHeight) ltSettling = false
   if (el.scrollTop < sp.offsetHeight) {
     if (ltSettling) { ltEdgeAcc = 0; return }
     ltEdgeAcc -= dy / h
@@ -527,7 +531,6 @@ function ltOnScroll() {
       ltEdgeAcc -= lines
       ltPrefetchAt = now
       ltSentOff += lines
-      if (lines > 0 && !ltDragging) ltMomentumSent += lines
       ltScrollSend(lines)
     }
   } else ltEdgeAcc = 0
@@ -557,10 +560,20 @@ function ltOnScroll() {
 // Pulling down against the document top asks the app for older content:
 // the scrollTop is pinned, so finger deltas become the scroll sends and the
 // screen repaints inside the slot = the frontier itself.
+// Trailing ~120ms of finger movement -> px/ms; positive = finger moving
+// down = the pull that asks the app for earlier content.
+function ltVelocity() {
+  const now = performance.now()
+  const s = ltSamples.filter(s => now - s.t < 120)
+  if (s.length < 2) return 0
+  return (s[s.length - 1]!.y - s[0]!.y) / Math.max(1, s[s.length - 1]!.t - s[0]!.t)
+}
 function onSbTouchMove(e: TouchEvent) {
   if (!ltActive.value) return
   const el = sbEl.value, t = e.touches[0]
   if (!el || !t) return
+  ltSamples.push({ t: performance.now(), y: t.clientY })
+  if (ltSamples.length > 12) ltSamples.shift()
   const dyPx = ltTouchY - t.clientY
   ltTouchY = t.clientY
   // The view pins ~3 rows into the spacer while dragging (see ltOnScroll);
@@ -573,8 +586,12 @@ function onSbTouchMove(e: TouchEvent) {
   if (lines && now - ltPrefetchAt > 60) {
     ltEdgeAcc -= lines
     ltPrefetchAt = now
-    ltSentOff += lines
-    ltScrollSend(lines)
+    // Read ~180ms ahead of the current velocity: a fast pull asks for more
+    // than the finger has covered yet, so the repaint keeps up with it.
+    const lead = Math.min(8, Math.trunc(Math.abs(ltVelocity()) * 180 / props.ctl.rowHeight()))
+    const send = lines + Math.sign(lines) * lead
+    ltSentOff += send
+    ltScrollSend(send)
   }
 }
 function ltApplyMetrics() {
@@ -646,9 +663,16 @@ watch(props.ctl.scrollbackVersion, () => { if (ltActive.value) ltIngestDump(prop
 // Taps on the live slot are taps on the real screen -- it is translated
 // exactly under the pointer, so raw coordinates forward as-is.
 function onSlotTap(e: MouseEvent) {
-  if (!props.ctl.tapLink(e.clientX, e.clientY)) props.ctl.tapMouse(e.clientX, e.clientY)
-  props.ctl.blur()
-  ;(document.activeElement as HTMLElement | null)?.blur?.()
+  // Same tap contract as tapGap: links don't raise the keyboard, a
+  // deliberate click focuses the terminal so typing reaches the pane.
+  if (!props.ctl.tapLink(e.clientX, e.clientY)) {
+    props.ctl.tapMouse(e.clientX, e.clientY)
+    if (performance.now() - ltLastMoveAt > 400) props.ctl.focus()
+    else props.ctl.blur()
+  } else {
+    props.ctl.blur()
+    ;(document.activeElement as HTMLElement | null)?.blur?.()
+  }
 }
 watch(ltActive, on => {
   ltResetDom()
@@ -754,9 +778,17 @@ function tapGap(x: number, y: number) {
   // Only taps at the very bottom reach the pane; taps on history do nothing.
   // In live-transcript mode the slot is the live pane wherever it is.
   if (!ltActive.value && el && el.scrollHeight - el.scrollTop - el.clientHeight > sbRestPx) return false
-  if (!props.ctl.tapLink(x, y)) props.ctl.tapMouse(x, y)
-  props.ctl.blur()
-  ;(document.activeElement as HTMLElement | null)?.blur?.()
+  const link = props.ctl.tapLink(x, y)
+  if (!link) props.ctl.tapMouse(x, y)
+  // The tap contract from the predictive path: a link opens without the
+  // keyboard, a tap that merely stopped momentum does not raise it either,
+  // and an ordinary deliberate tap focuses the terminal so typing works.
+  const quiet = performance.now() - ltLastMoveAt > 400
+  if (ltActive.value && !link && quiet) props.ctl.focus()
+  else {
+    props.ctl.blur()
+    ;(document.activeElement as HTMLElement | null)?.blur?.()
+  }
   return true
 }
 function onGapTap(e: MouseEvent) {
@@ -768,19 +800,34 @@ function onSbTouchStart(e: TouchEvent) {
   sbAX = e.touches[0]!.clientX
   sbAY = e.touches[0]!.clientY
   ltTouchY = sbAY
+  ltSamples = [{ t: performance.now(), y: sbAY }]
   ltDragging = true
   ltSettling = false
-  ltMomentumSent = 0
 }
 function onSbTouchEnd(e: TouchEvent) {
   ltTouchY = -1
   ltDragging = false
-  // Release with throttle-suppressed rows still pending: dispatch the tail so
-  // the gesture's full distance reaches the pane.
   if (ltActive.value) {
+    // Release with throttle-suppressed rows still pending: dispatch the tail
+    // so the gesture's full distance reaches the pane.
     const lines = Math.trunc(ltEdgeAcc)
     if (lines) { ltEdgeAcc -= lines; ltSentOff += lines; ltScrollSend(lines) }
+    // A released pull has nowhere to roam — the spacer is pinned — so the
+    // fling's leftover velocity becomes one bounded app scroll: the pane
+    // keeps moving (~the flick's worth, capped at two pages) while the view
+    // stays on the content edge.
+    const el = sbEl.value, sp = ltSpacer.value
+    const v = ltVelocity()
+    if (el && sp && v > 0.15) {
+      const h = props.ctl.rowHeight()
+      const clampTop = Math.max(0, sp.offsetHeight - 3 * h)
+      if (el.scrollTop <= clampTop + h) {
+        const lines = Math.min(2 * props.ctl.pageRows(), Math.trunc(v * 150 / h))
+        if (lines > 0) { ltSentOff += lines; ltScrollSend(lines) }
+      }
+    }
   }
+  ltSamples = []
   const t = e.changedTouches[0]
   if (!t || Math.hypot(t.clientX - sbAX, t.clientY - sbAY) > 10) return
   // History rows sit in .sb-body; only the transparent gap/slot is live.
