@@ -129,6 +129,19 @@ describe('bindTerminalKeys', () => {
     expect(send).toHaveBeenCalledWith('shift+enter')
   })
 
+  it('sends Ctrl+Enter and Apple Cmd+Enter once as a named key', () => {
+    for (const [apple, modifier] of [[false, 'ctrlKey'], [true, 'ctrlKey'], [true, 'metaKey']] as const) {
+      const { handler, send } = bind(apple)
+      for (const type of ['keydown', 'keypress', 'keyup']) {
+        expect(handler(key({ key: 'Enter', [modifier]: true }, type))).toBe(false)
+      }
+      expect(send).toHaveBeenCalledExactlyOnceWith('ctrl+enter')
+    }
+    expect(terminalKeyAction(key({ key: 'Enter', metaKey: true }), false)).toBe('xterm')
+    expect(terminalKeyAction(key({ key: 'Enter', ctrlKey: true, altKey: true }), false)).toBe('xterm')
+    expect(terminalKeyAction(key({ key: 'Enter', ctrlKey: true, isComposing: true }), false)).toBe('xterm')
+  })
+
   it('lets xterm handle ordinary keys', () => {
     const { handler } = bind(false)
     expect(handler(key({ key: 'a', code: 'KeyA' }))).toBe(true)

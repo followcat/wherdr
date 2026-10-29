@@ -12,7 +12,7 @@ registerEndpoint('/api/chat', () => ({ available: true, token: 'rendering', file
 describe('conversation rendering', () => {
   afterEach(() => { lightboxSrc.value = null; lightboxSet.value = []; herdrState.value = { ok: false, workspaces: [], panes: [] } })
 
-  it('attributes both wake formats to Autopilot and preserves their complete text and copy action', async () => {
+  it('attributes both wake formats to Autopilot and keeps their complete text and labelled copy action together', async () => {
     const wakes = ['Autopilot: Check ready work.\nBoard context: no pending replies.  ', 'Autopilot woke: Check older work.']
     const human = 'Please explain Autopilot: and Autopilot woke:.'
     items = [
@@ -32,7 +32,10 @@ describe('conversation rendering', () => {
         expect(block.find('.msg-system').text()).toBe('Autopilot')
         expect(block.find('.msg-fold').element.textContent).toBe(wakes[i])
         expect(block.find('.msg-user').exists()).toBe(false)
-        await block.find('button').trigger('click')
+        const copy = block.find('.msg-autopilot-body button')
+        expect(copy.exists()).toBe(true)
+        expect(copy.attributes('aria-label')).toBe('Copy message')
+        await copy.trigger('click')
         expect(writeText).toHaveBeenLastCalledWith(wakes[i])
       }
       expect(w.findAll('.msg-user')).toHaveLength(2)

@@ -139,7 +139,10 @@ test('the task panel never scrolls sideways with long paths, links and wide outp
   await tabs.getByRole('button', { name: 'Task', exact: true }).click()
   await expect(panel.locator('.task-sheet')).toContainText('see https://tracker.example.com')
   await check(page, `task-${name}`)
-  await tabs.getByRole('button', { name: 'Conversation', exact: true }).click()
+  // Back to the Agent tab, in conversation mode (its bar then offers the terminal).
+  await tabs.getByRole('button', { name: 'Agent', exact: true }).click()
+  await expect(panel.locator('.board-panel-agent-bar').getByRole('button', { name: 'Terminal', exact: true })).toBeVisible()
+  await expect(panel.locator('.chat').getByText(END)).toBeAttached()
 
   if (!phone) {
     await panel.getByRole('button', { name: 'Full screen' }).click()

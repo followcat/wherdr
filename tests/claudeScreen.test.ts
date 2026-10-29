@@ -56,6 +56,10 @@ describe('Claude Code screen', () => {
     expect(s.shell).toBeNull()
     expect(s.sent).toBe('Corrige le titre de la page\nd\'accueil, puis relance les tests')
     expect(s.queued).toEqual(['Ajoute aussi un test', 'Et mets à jour le changelog'])
+    expect(s.sendNow).toBe(true)
+    expect(parseClaudeScreen(fx('claude-queued-turn.txt').replace('ctrl+enter to send now', ''))?.sendNow).toBeUndefined()
+    // A hint quoted earlier in the conversation does not advertise a current action.
+    expect(parseClaudeScreen('  ctrl+enter to send now\n\n' + fx('claude-idle.txt'))?.sendNow).toBeUndefined()
   })
 
   it('existing screen without command or queue', () => {

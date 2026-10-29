@@ -1,0 +1,57 @@
+{
+  "voice": "matilda",
+  "model": "elevenlabs/eleven-v4-turbo",
+  "pronunciation": "where-der",
+  "spoken": { "where-der": "wherdr", "weirder": "wherdr", "wierder": "wherdr", "herder": "herdr", "herd": "herdr" },
+  "pause": 0.16,
+  "lead_in": 0.06,
+  "tail": 0.14,
+  "mark": "spotlight",
+  "label": "WHERDR / OVERVIEW / 01",
+  "output": "wherdr-in-one-minute.mp4",
+  "end_label": "YOUR HERDR AGENTS, WITHIN REACH",
+  "segments": [
+    {
+      "id": "intro", "title": "wherdr in one minute", "screen": "agents",
+      "narration": "Meet where-der, the web and mobile interface for Herder. Follow your coding agents and steer their work, from your computer or your phone.",
+      "caption": "Meet wherdr, the web and mobile interface for Herdr. Follow your coding agents and steer their work, from your computer or your phone."
+    },
+    {
+      "id": "agents", "title": "Your agents, across machines", "screen": "agents",
+      "narration": "See your agents across machines in one place. Spot who is working, who has finished, and who needs your attention. Open an agent to pick up the conversation.",
+      "caption": "See your agents across machines in one place. Spot who is working, who has finished, and who needs your attention. Open an agent to pick up the conversation.",
+      "marks": [{ "on": "machines", "at": "machines", "until": "Spot" }, { "on": "stats", "at": "Spot", "until": "Open" }],
+      "cursor": [{ "to": "agent", "at": "Open", "then": "conversation" }]
+    },
+    {
+      "id": "conversation", "title": "Read. Reply. Keep moving.", "screen": "conversation",
+      "narration": "Read a clear conversation, with the agent's updates and questions together. Send a reply to give direction and keep the work moving, without digging through terminal output.",
+      "caption": "Read a clear conversation, with the agent's updates and questions together. Send a reply to give direction and keep the work moving, without digging through terminal output.",
+      "cursor": [{ "to": "send", "at": "Send", "then": "replied" }]
+    },
+    {
+      "id": "terminal", "title": "The terminal is right here", "screen": "replied",
+      "narration": "Need the full picture? Switch to the terminal for a direct view of the same agent, right inside where-der.",
+      "caption": "Need the full picture? Switch to the terminal for a direct view of the same agent, right inside wherdr.",
+      "cursor": [{ "to": "terminal", "at": "Switch", "then": "terminal" }]
+    },
+    {
+      "id": "phone", "title": "The same work, on your phone", "screen": "phone",
+      "narration": "Away from your desk? Open where-der on your phone to check progress, read an update, and answer when an agent needs you.",
+      "caption": "Away from your desk? Open wherdr on your phone to check progress, read an update, and answer when an agent needs you.",
+      "marks": [{ "on": "phone", "at": "phone" }]
+    },
+    {
+      "id": "board", "title": "An optional board from herdr-projects", "screen": "board",
+      "narration": "Using herder-projects? where-der gives you a simple view of its board, tasks, and reviews. The board is optional: where-der works with Herder alone, too.",
+      "caption": "Using herdr-projects? wherdr gives you a simple view of its board, tasks, and reviews. The board is optional: wherdr works with Herdr alone, too.",
+      "marks": [{ "on": "task", "at": "tasks", "until": "reviews" }, { "on": "review", "at": "reviews", "until": "The" }]
+    },
+    {
+      "id": "outro", "title": "wherdr in one minute", "screen": "agents",
+      "narration": "Your agents. Your next decision. Wherever you are.",
+      "caption": "Your agents. Your next decision. Wherever you are.",
+      "card": "Keep your agents moving."
+    }
+  ]
+}

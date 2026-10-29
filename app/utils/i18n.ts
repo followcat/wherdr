@@ -268,6 +268,7 @@ const FR: Record<string, string> = {
   'Sort ready': 'Trier les prêts', 'Herdr order': 'Ordre de Herdr', 'Recent activity': 'Activité récente',
   'Open terminal': 'Ouvrir le terminal',
   'Queued': 'En attente', 'Clear and send': 'Vider et envoyer', 'agent stopped': 'agent arrêté', 'agent starting': 'démarrage de l’agent',
+  'Send now': 'Envoyer maintenant',
   'Queued · ': 'En attente · ', 'Sent · read by the agent': 'Envoyé · lu par l’agent', 'Running': 'En cours d’exécution', 'No output yet': 'Pas encore de sortie', 'Removed from the queue': 'Message retiré de la file',
   'Already read by the agent': 'Message déjà lu par l’agent', 'The agent’s input field is not empty': 'Le champ de saisie de l’agent n’est pas vide',
   'Agent is not ready': 'L’agent n’est pas au repos', 'Agent input changed': 'La saisie de l’agent a changé',

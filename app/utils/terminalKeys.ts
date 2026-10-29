@@ -3,6 +3,7 @@
 //   starting a new line. We pass the named key to Herdr, which encodes it
 //   according to the program's mode (kitty keyboard protocol, otherwise
 //   modifyOtherKeys), as from a real terminal.
+// - Ctrl+Enter (also Cmd+Enter on Apple): send the agent’s queued messages now.
 // - Ctrl+V outside Apple devices (Windows, Linux, ChromeOS, Android): xterm
 //   would send ^V to the program, and the browser would never fire its paste.
 //   The program's own Ctrl+V reads the clipboard of the machine it runs on, not
@@ -32,9 +33,10 @@ function isV(e: KeyLike) {
 
 // 'browser': xterm ignores the key, the browser does its default action.
 // 'shift+enter': sent as a named key. 'xterm': xterm handles it as usual.
-export function terminalKeyAction(e: KeyLike, apple: boolean): 'browser' | 'shift+enter' | 'xterm' {
+export function terminalKeyAction(e: KeyLike, apple: boolean): 'browser' | 'shift+enter' | 'ctrl+enter' | 'xterm' {
   if (e.isComposing) return 'xterm'
   const mods = e.ctrlKey || e.altKey || e.metaKey
+  if (e.key === 'Enter' && !e.shiftKey && !e.altKey && ((e.ctrlKey && !e.metaKey) || (apple && e.metaKey && !e.ctrlKey))) return 'ctrl+enter'
   if (e.key === 'Enter' && e.shiftKey && !mods) return 'shift+enter'
   if (e.key === 'F12' && !e.shiftKey && !mods) return 'browser'
   if (!apple && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && isV(e)) return 'browser'
@@ -42,13 +44,13 @@ export function terminalKeyAction(e: KeyLike, apple: boolean): 'browser' | 'shif
 }
 
 // `send` receives the named key; xterm emits nothing for this keystroke.
-export function bindTerminalKeys(term: Terminal, send: (key: 'shift+enter') => void, apple = isApplePlatform()) {
+export function bindTerminalKeys(term: Terminal, send: (key: 'shift+enter' | 'ctrl+enter') => void, apple = isApplePlatform()) {
   term.attachCustomKeyEventHandler((e) => {
     const action = terminalKeyAction(e, apple)
     if (action === 'xterm') return true
-    if (action === 'shift+enter' && e.type === 'keydown') {
+    if ((action === 'shift+enter' || action === 'ctrl+enter') && e.type === 'keydown') {
       e.preventDefault()
-      send('shift+enter')
+      send(action)
     }
     // false without preventDefault: the browser keeps its default action
     // (paste event, developer tools).

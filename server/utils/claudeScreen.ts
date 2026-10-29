@@ -71,10 +71,12 @@ export function parseClaudeScreen(text: string | null | undefined, now = Date.no
     } else i++
   }
 
+  const capability = queued.length && lines.slice(top, end).some(l => SEND_NOW.test(l.trim())) ? { sendNow: true } : {}
+
   // Dernier message parti, au-dessus de la file.
   let last = -1
   for (let i = top - 1; i >= 0; i--) if (/^(?:❯ \S|! +\S)/.test(lines[i]!)) { last = i; break }
-  if (last < 0) return { shell: null, sent: null, queued }
+  if (last < 0) return { shell: null, sent: null, queued, ...capability }
   const entry = entryAt(lines, last)
   const bash = lines[last]!.startsWith('! ')
   const sent = bash ? `!${entry.text}` : entry.text
@@ -105,7 +107,7 @@ export function parseClaudeScreen(text: string | null | undefined, now = Date.no
       shell = { command: entry.text, lines: out.slice(-12), hidden, since: ms === null ? null : now - ms }
     }
   }
-  return { shell, sent, queued }
+  return { shell, sent, queued, ...capability }
 }
 
 // Claude Code status next to the input field ("✔ Update installed ·

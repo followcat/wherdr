@@ -14,6 +14,8 @@ registerEndpoint('/api/chat', () => ({ available, reason: available ? undefined 
 const calls: unknown[] = []
 registerEndpoint('/api/menu-left', { method: 'POST', handler: async (event) => { calls.push(await readBody(event)); return { ok: true, closed: true, sent: 1 } } })
 
+registerEndpoint('/api/send-now', { method: 'POST', handler: async (event) => { calls.push(await readBody(event)); return { ok: true } } })
+
 registerEndpoint('/api/clear-queued-input', { method: 'POST', handler: async (event) => { calls.push(await readBody(event)); return { ok: true } } })
 
 const base: Pane = { id: 'w1:p1', workspace: 'w1', tab: 'w1:t1', tabLabel: null, agent: 'claude', name: null, label: null, status: 'working', title: null, cwd: '/tmp/demo', agentSession: null }
@@ -114,5 +116,25 @@ describe('terminal draft blocking a message', () => {
       expect(w.find('.queued-tag').text()).toContain('Queued')
       expect(w.find('.queued-tag').text()).not.toContain('ns')
     } finally { w.unmount() }
+  })
+})
+
+
+describe('native queue send now', () => {
+  it('offers one action for the whole native queue and sends the shortcut request', async () => {
+    calls.length = 0
+    const pane = { ...base, queued, claudeScreen: { shell: null, sent: null, queued: [queued[0]!.text], sendNow: true } }
+    const w = await mount(pane)
+    try {
+      const buttons = () => w.findAll('button').filter(b => b.text() === 'Send now')
+      expect(buttons()).toHaveLength(1)
+      await buttons()[0]!.trigger('click')
+      await expect.poll(() => calls.length).toBe(1)
+      expect(calls[0]).toEqual({ pane_id: base.id })
+      for (const p of [{ ...pane, claudeScreen: undefined }, { ...pane, agent: 'codex' }, { ...pane, status: 'idle' as const }]) {
+        await w.setProps({ pane: p })
+        expect(buttons()).toHaveLength(0)
+      }
+    } finally { w.unmount(); calls.length = 0 }
   })
 })
