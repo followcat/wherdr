@@ -321,6 +321,7 @@ const FR: Record<string, string> = {
   'Agents': 'Agents', 'Menu': 'Menu', 'No agents yet.': 'Aucun agent pour l’instant.',
   'Start one here, or from': 'Lance-en un ici, ou depuis', 'in a terminal.': 'dans un terminal.',
   'New': 'Nouveau', 'Options': 'Options', 'Conversation': 'Conversation',
+  'Ctrl': 'Ctrl', 'Alt': 'Alt', 'Shift': 'Maj',
   'Photo, file, paste, commands': 'Photo, fichier, collage, commandes',
   'Message to agent…': 'Message à l’agent…',
   'Choose an agent from the list': 'Choisis un agent dans la liste',

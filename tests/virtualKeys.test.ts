@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { displayVirtualChord, toggleVirtualModifier, virtualChord, virtualInputAction, virtualNavigationBytes } from '../app/utils/virtualKeys'
+import { createCompositionTracker, displayVirtualChord, toggleVirtualModifier, virtualChord, virtualInputAction, virtualNavigationBytes } from '../app/utils/virtualKeys'
 
 describe('virtual terminal key combinations', () => {
   it('supports answering and leaving a question, tab navigation and multiline input', () => {
@@ -23,7 +23,7 @@ describe('virtual terminal key combinations', () => {
   })
 
   it('understands keys emitted by Android text input and terminal input', () => {
-    expect(virtualInputAction('C')).toEqual({ kind: 'key', key: 'c' })
+    expect(virtualInputAction('c')).toEqual({ kind: 'key', key: 'c' })
     expect(virtualInputAction('\r')).toEqual({ kind: 'key', key: 'enter' })
     expect(virtualInputAction('\x1b[D')).toEqual({ kind: 'key', key: 'left' })
     expect(virtualInputAction('\x03')).toEqual({ kind: 'key', key: 'ctrl+c' })
@@ -35,6 +35,36 @@ describe('virtual terminal key combinations', () => {
     expect(virtualInputAction('hello')).toEqual({ kind: 'blocked' })
     expect(virtualInputAction('你好')).toEqual({ kind: 'blocked' })
     expect(virtualInputAction('你')).toEqual({ kind: 'blocked' })
+  })
+
+  it('keeps the real keyboard Shift in a typed capital', () => {
+    expect(virtualInputAction('A')).toEqual({ kind: 'key', key: 'shift+a' })
+    const key = virtualInputAction('A')
+    expect(key.kind === 'key' && virtualChord(key.key, ['alt'])).toBe('alt+shift+a')
+    // An armed Shift is not doubled by a typed capital.
+    expect(key.kind === 'key' && virtualChord(key.key, ['shift'])).toBe('shift+a')
+    expect(key.kind === 'key' && virtualChord(key.key, ['ctrl', 'alt'])).toBe('ctrl+alt+shift+a')
+  })
+
+  it('marks committed IME text as data across a real composition sequence', () => {
+    const composition = createCompositionTracker()
+    const action = (d: string, armed: string[]) => {
+      if (composition.active || composition.takeEnded()) return { text: d }
+      if (!armed.length) return { text: d }
+      const act = virtualInputAction(d)
+      return act.kind === 'key' ? { key: act.key } : { text: d }
+    }
+    composition.start()
+    expect(action('a', ['ctrl'])).toEqual({ text: 'a' }) // in-progress output
+    composition.end()
+    expect(action('a', ['ctrl'])).toEqual({ text: 'a' }) // committed 'a' stays text
+    expect(action('a', ['ctrl'])).toEqual({ key: 'a' })  // a real keystroke fires
+    // A cancelled composition produces no data; the next real keydown drops
+    // the stale flag before its keystroke can be eaten.
+    composition.start()
+    composition.end()
+    composition.keydown()
+    expect(action('c', ['ctrl'])).toEqual({ key: 'c' })
   })
 
   it('shows understandable feedback for the exact combination', () => {
