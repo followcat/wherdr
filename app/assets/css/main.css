@@ -4366,3 +4366,10 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
 /* Clip only the predicted grid; the terminal frame and composer stay fixed. */
 #termWrap.smooth-touch #term { overflow: hidden; }
 #termWrap.smooth-touch .xterm { overflow-y: hidden; overscroll-behavior: none; }
+/* Predicted-scroll edge strips: cached transcript rows revealed while the
+   translated screen waits for its covering frames. Plain text on the
+   terminal surface -- real styling arrives with the covering frame. */
+.pv-strip { position: absolute; overflow: hidden; pointer-events: none; display: flex; flex-direction: column; color: var(--text); }
+.pv-strip.pv-top { justify-content: flex-end; }
+.pv-strip.pv-bot { justify-content: flex-start; }
+.pv-line { white-space: pre; overflow: hidden; flex: none; }

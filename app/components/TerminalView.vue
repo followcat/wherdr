@@ -105,12 +105,52 @@ let stoppingScroll = false
 let allowTouchFocus = false
 let hadScroll = false
 const screenEl = () => host.value?.querySelector('.xterm-screen') as HTMLElement | null
+const pvTop = ref<HTMLElement | null>(null)
+const pvBot = ref<HTMLElement | null>(null)
+let pvKey = ''
+// Cached rows filling the edge the preview reveals: the strip sits in the
+// gap the translated screen leaves, painted from the transcript cache so a
+// lead wider than the frame rate still shows real content.
+const renderPreview = (px: number) => {
+  const screen = screenEl(), wrap = host.value
+  if (!screen || !wrap || !pvTop.value || !pvBot.value) return
+  const h = props.ctl.rowHeight()
+  const wrapRect = wrap.getBoundingClientRect()
+  const sRect = screen.getBoundingClientRect()
+  const top0 = sRect.top - wrapRect.top - px
+  for (const [el, dir] of [[pvTop.value, 1], [pvBot.value, -1]] as const) {
+    const show = Math.sign(px) === dir
+    const size = show ? Math.abs(px) : 0
+    const need = Math.ceil(size / h)
+    const key = show ? `${dir}:${need}:${props.ctl.frameTick.value}` : ''
+    el.style.top = `${dir > 0 ? top0 : top0 + sRect.height - size}px`
+    el.style.left = `${sRect.left - wrapRect.left}px`
+    el.style.width = `${sRect.width}px`
+    el.style.height = `${size}px`
+    if (show && key !== pvKey) {
+      pvKey = key
+      const cs = getComputedStyle(screen)
+      Object.assign(el.style, { fontFamily: cs.fontFamily, fontSize: cs.fontSize, letterSpacing: cs.letterSpacing, color: cs.color })
+      el.replaceChildren(...props.ctl.previewRows(dir, need).map(row => {
+        const div = document.createElement('div')
+        div.className = 'pv-line'
+        div.style.height = `${h}px`
+        div.style.lineHeight = `${h}px`
+        if (row) div.textContent = row
+        return div
+      }))
+    }
+  }
+}
 const applyOffset = () => {
   const el = screenEl()
   if (!el) return
-  const px = smoothTouchScrolling.value ? touchPreviewOffset(acc + (pendingLines + unconfirmed) * props.ctl.rowHeight(), props.ctl.rowHeight()) : 0
+  const h = props.ctl.rowHeight()
+  const raw = acc + (pendingLines + unconfirmed) * h
+  const px = smoothTouchScrolling.value ? touchPreviewOffset(raw, h, props.ctl.previewExtra(Math.sign(raw)) * h) : 0
   el.style.willChange = px ? 'transform' : ''
   el.style.transform = px ? `translate3d(0, ${px}px, 0)` : ''
+  renderPreview(px)
 }
 function expirePreview() {
   if (!hadScroll) return
@@ -410,7 +450,12 @@ onUnmounted(() => {
 
 <template>
   <div id="termWrap" :class="{ 'smooth-touch': smoothTouchScrolling }" @wheel.capture="onWheel">
-    <div id="term" ref="host" />
+    <div id="term" ref="host">
+      <!-- Predicted scroll edges: cached rows revealed by the translated
+           screen, filled from the transcript cache (see renderPreview). -->
+      <div ref="pvTop" class="pv-strip pv-top" />
+      <div ref="pvBot" class="pv-strip pv-bot" />
+    </div>
     <div
       id="touch" aria-hidden="true"
       @touchstart.passive="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd" @touchcancel="cancelTouch"

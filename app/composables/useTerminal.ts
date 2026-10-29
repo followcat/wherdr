@@ -16,6 +16,7 @@ import { OSC52_MAX_BYTES, bindTerminalOsc52, copyAgentText } from '~/utils/termi
 import { uploadPhoto } from '~/utils/photoUpload'
 import { terminalClosedText, terminalUnavailableText } from '~/utils/terminalClosed'
 import { bindTerminalMouse, terminalCell } from '~/utils/terminalMouse'
+import { createTranscriptCache } from '~/utils/transcriptCache'
 import { TERM_FONT, onFontsLoaded } from '~/utils/terminalFont'
 import { displayVirtualChord, toggleVirtualModifier, virtualChord, virtualInputAction, virtualNavigationBytes, type VirtualModifier } from '~/utils/virtualKeys'
 
@@ -63,6 +64,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   // Local scrollback overlay state (scrollback.read / scrollback.chunk).
   const scrollback = ref('')
   const scrollbackVersion = ref(0)
+  // Painted-row cache feeding the touch preview's revealed edge.
+  const transcript = createTranscriptCache()
 
   const wsBase = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`
 
@@ -70,6 +73,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     el = host
     disposed = false
     twsRetry = 0
+    transcript.reset()
     term = new Terminal({
       fontFamily: TERM_FONT,
       fontSize: fontSize.value,
@@ -326,10 +330,21 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
         if (!term) return
         if (m.width && m.height && (m.width !== term.cols || m.height !== term.rows)) {
           if (smoothTouchScrolling.value) { scrollInputVersion.value++; cancelTouchScroll() }
+          transcript.reset()
           term.resize(m.width, m.height)
         }
         const current = term
-        current.write(b64ToBytes(m.bytes || ''), () => { selectionHint.refresh(current, mouseSupported); if (smoothTouchScrolling.value) frameTick.value++ })
+        current.write(b64ToBytes(m.bytes || ''), () => {
+          selectionHint.refresh(current, mouseSupported)
+          if (smoothTouchScrolling.value) {
+            // Feed the painted screen to the transcript cache so the touch
+            // preview can reveal real rows instead of void.
+            const buf = current.buffer.active, lines: string[] = []
+            for (let i = 0; i < current.rows; i++) lines.push(buf.getLine(buf.baseY + i)?.translateToString(true) ?? '')
+            transcript.frame(lines)
+            frameTick.value++
+          }
+        })
       } else if (m.type === 'scroll.ack') {
         if (smoothTouchScrolling.value && m.epoch === touchEpoch && Number.isFinite(m.lines) && term) {
           // Queue behind the covering frame, including when write's callback
@@ -471,6 +486,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     hasBanner: opts.hasBanner, selectionHint,
     cancelTouchScroll, scrollInputVersion, frameTick, scrollAck,
     scrollback, scrollbackVersion, requestScrollback, mouseMode,
+    previewExtra: (dir: number) => transcript.available(dir), previewRows: (dir: number, count: number) => transcript.slice(dir, count), resetTranscript: () => transcript.reset(),
     virtualModifiers, lastVirtualChord, toggleVirtualModifier: toggleModifier, clearVirtualModifiers, sendVirtualKey,
   }
 }
