@@ -60,5 +60,17 @@ export function createTranscriptCache() {
   }
 
   function reset() { known.clear(); top = 0; prev = [] }
-  return { frame, available, slice, reset }
+
+  // Document-model accessors for the live transcript scroller: the whole
+  // known range rendered in index order.
+  function range(): [number, number] {
+    let mn = Infinity, mx = -Infinity
+    for (const k of known.keys()) { if (k < mn) mn = k; if (k > mx) mx = k }
+    return [mn, mx]
+  }
+  function at(idx: number) { const e = known.get(idx); return e ? { text: e.t, html: e.h } : null }
+  function has(idx: number) { return known.has(idx) }
+  function windowTop() { return top }
+  function windowRows() { return rows }
+  return { frame, available, slice, reset, range, at, has, windowTop, windowRows }
 }

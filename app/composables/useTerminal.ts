@@ -493,6 +493,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     cancelTouchScroll, scrollInputVersion, frameTick, scrollAck,
     scrollback, scrollbackVersion, requestScrollback, mouseMode,
     previewExtra: (dir: number) => transcript.available(dir), previewRows: (dir: number, count: number) => transcript.slice(dir, count), resetTranscript: () => transcript.reset(),
+    transcriptRange: () => transcript.range(), transcriptAt: (idx: number) => transcript.at(idx), transcriptHas: (idx: number) => transcript.has(idx),
+    transcriptWindow: () => ({ top: transcript.windowTop(), rows: transcript.windowRows() }),
     virtualModifiers, lastVirtualChord, toggleVirtualModifier: toggleModifier, clearVirtualModifiers, sendVirtualKey,
   }
 }

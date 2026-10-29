@@ -1157,12 +1157,13 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 /* Local scrollback: a real scroller (chat-view feel). History lines fill the
    top with the terminal's own font/background; a transparent one-viewport gap
    at the bottom lets the live terminal show through at rest. */
-#scrollback { position: absolute; inset: 0; z-index: 2; overflow-y: auto; overflow-x: hidden;
+#scrollback { position: absolute; inset: 0; z-index: 2; overflow-y: auto; overflow-x: hidden; overflow-anchor: none;
   overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y;
   scrollbar-width: none; pointer-events: none; background: transparent; }
 #scrollback::-webkit-scrollbar { display: none; }
 #scrollback .sb-body { padding: 6px 4px 0 6px; white-space: pre-wrap; overflow-wrap: break-word; font-variant-ligatures: none; }
 #scrollback .sb-gap { height: 100%; }
+#scrollback .lt-line { white-space: pre; overflow: hidden; }
 .term-loading { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
 .term-loading.static { position: static; padding: 30px; }
 .xterm .xterm-viewport { background: transparent !important; overflow-y: hidden !important; }
