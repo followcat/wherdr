@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createTerminalTouch, touchPreviewOffset } from '../app/utils/terminalTouch'
+import { createTerminalTouch } from '../app/utils/terminalTouch'
 import { createTouchScrollPacer } from '../server/utils/touchScrollPacer'
 
 function gesture(horizontal = false) {
@@ -22,6 +22,11 @@ describe('terminal touch gestures', () => {
     const g = gesture()
     g.touch.start(0, 0); g.move(1, 2); expect(g.touch.end()).toBe(true)
     g.touch.start(0, 0); g.move(0, 7); expect(g.touch.end()).toBe(false)
+  })
+  it('does not click when the browser coalesces a small drag into touchend', () => {
+    const g = gesture()
+    g.touch.start(0, 0)
+    expect(g.touch.end({ x: 0, y: 7 })).toBe(false)
   })
   it('preserves drag distance including the initial movement threshold', () => {
     const g = gesture()
@@ -107,14 +112,7 @@ describe('terminal touch gestures', () => {
       else expect(momentum).toBeLessThan(250) // bled to roughly a half
     }
   })
-  it('follows the finger 1:1 inside the lead and rubber-bands toward the cap', () => {
-    expect(touchPreviewOffset(4, 16)).toBe(4)
-    expect(touchPreviewOffset(-16, 16)).toBe(-16)
-    expect(touchPreviewOffset(60, 16)).toBe(27)
-    expect(touchPreviewOffset(400, 16)).toBe(48)
-    expect(touchPreviewOffset(-400, 16)).toBe(-48)
-    expect(touchPreviewOffset(12, 0)).toBe(3)
-  })
+
 })
 
 describe('touch scroll backpressure', () => {

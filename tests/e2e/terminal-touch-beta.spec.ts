@@ -16,18 +16,6 @@ async function touch(page: Page, type: string, y: number, startY?: number) {
     if (startY !== undefined) dispatch('touchstart', startY)
     dispatch(type, y)
     const screen = el.parentElement?.querySelector('.xterm-screen') as HTMLElement
-    if (screen?.style.transform) {
-      const clip = el.parentElement!.querySelector('#term')!.getBoundingClientRect()
-      const grid = screen.getBoundingClientRect()
-      const x = Math.max(clip.left, grid.left) + 5
-      // Hit-test the actual overflow strip while prediction is active. This
-      // fails if the grid paints outside #term even with an immobile frame.
-      const y = grid.top < clip.top - 2 ? clip.top - 2 : grid.bottom > clip.bottom + 2 ? clip.bottom + 2 : null
-      if (y !== null && document.elementsFromPoint(x, y).some(node => node === screen || screen.contains(node)))
-        throw new Error('Predicted terminal grid escapes its clipping boundary')
-      if (getComputedStyle(el.parentElement!.querySelector('#term')!).overflowY !== 'hidden')
-        throw new Error('Terminal prediction requires a clipped grid')
-    }
     return screen?.style.transform || ''
   }, { type, y, startY })
 }
@@ -71,11 +59,13 @@ test('an opaque TUI receives a real swipe, and the next tap stops it without cli
   // Hit-test before dispatching any events: a native history overlay must not
   // intercept this application's gesture with a guessed transcript document.
   expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.id, { x, y })).toBe('touch')
+  const grid = await page.locator('.xterm-screen').boundingBox()
   const input = await page.context().newCDPSession(page)
   await input.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] })
   for (const dy of [20, 40, 60, 80]) {
     await input.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + dy }] })
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+    expect(await page.locator('.xterm-screen').boundingBox()).toEqual(grid)
   }
   await input.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
   await expect.poll(async () => (await state()).offset).toBeGreaterThan(20)
@@ -87,6 +77,53 @@ test('an opaque TUI receives a real swipe, and the next tap stops it without cli
   await expect.poll(() => page.locator('.xterm-screen').evaluate(el => (el as HTMLElement).style.transform)).toBe('')
   await expect(page.locator('.lt-doc')).toHaveCount(0)
   await input.detach()
+})
+
+for (const enabled of [false, true]) {
+  test(`a native sub-row drag cannot reopen the keyboard with beta ${enabled ? 'on' : 'off'}`, async ({ page, isMobile, browserName }) => {
+    test.skip(!isMobile || browserName !== 'chromium', 'Native drag uses phone CDP')
+    await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: true })
+    await terminal(page, enabled)
+    const field = page.locator('.xterm-helper-textarea')
+    // The remote prompt remains focused after the local keyboard is dismissed.
+    await field.focus()
+    await field.evaluate(el => (el as HTMLElement).blur())
+    const box = (await page.locator('#touch').boundingBox())!
+    const x = box.x + box.width / 2, y = box.y + box.height * .8
+    const grid = await page.locator('.xterm-screen').boundingBox()
+    const input = await page.context().newCDPSession(page)
+    await input.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] })
+    await input.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + 7 }] })
+    await input.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await expect(field).not.toBeFocused()
+    expect(await page.locator('.xterm-screen').boundingBox()).toEqual(grid)
+    expect(await page.locator('.xterm-screen').evaluate(el => (el as HTMLElement).style.transform)).toBe('')
+    await touch(page, 'touchstart', 100)
+    await touch(page, 'touchend', 107)
+    await expect(field).not.toBeFocused()
+    await input.detach()
+  })
+}
+
+test('a drag continues after the phone viewport resizes', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'Viewport resizing exercises the phone layout')
+  await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: true, offset: 20 })
+  await terminal(page, true, 20)
+  await touch(page, 'touchmove', 120, 80)
+  await expect.poll(async () => (await state()).offset).toBeGreaterThan(20)
+  const beforeHeight = await page.locator('#touch').evaluate(el => el.clientHeight)
+  const beforeRows = (await fakeHerdr('e2e.pane_size', { pane_id: pane }) as { rows: number }).rows
+  const viewport = page.viewportSize()!
+  await page.setViewportSize({ ...viewport, height: viewport.height - 100 })
+  await expect.poll(() => page.locator('#touch').evaluate(el => el.clientHeight)).toBeLessThan(beforeHeight)
+  // Wait for the resize to cross the transport before continuing the same
+  // touch. Keyboard resize must not turn the remaining motion into a tap.
+  await expect.poll(async () => (await fakeHerdr('e2e.pane_size', { pane_id: pane }) as { rows: number }).rows).toBeLessThan(beforeRows)
+  const offset = (await state()).offset
+  await touch(page, 'touchmove', 180)
+  await expect.poll(async () => (await state()).offset).toBeGreaterThan(offset)
+  await touch(page, 'touchend', 180)
+  await expect(page.locator('.xterm-helper-textarea')).not.toBeFocused()
 })
 
 test('a deliberate native tap focuses an opaque TUI once', { tag: '@webkit-phone' }, async ({ page, isMobile }) => {
@@ -114,12 +151,10 @@ for (const enabled of [false, true]) {
       await terminal(page, enabled)
       const bounds = await page.locator('#termWrap').boundingBox()
       if (enabled) await expect(page.locator('#termWrap')).toHaveClass(/smooth-touch/)
-      // Inspect prediction in the gesture's own event turn, before a frame or
-      // the expiry timer is allowed to retire it on a busy worker.
+      // The grid must remain fixed before and after remote frames arrive.
       const transform = await touch(page, 'touchmove', 90, 50)
       expect(await page.locator('#termWrap').boundingBox()).toEqual(bounds)
-      if (enabled) expect(transform).toContain('translate3d')
-      else expect(transform).toBe('')
+      expect(transform).toBe('')
       await expect.poll(async () => (await state()).offset).toBeGreaterThan(0)
       await touch(page, 'touchend', 90)
       await expect.poll(() => page.locator('.xterm-screen').evaluate(el => (el as HTMLElement).style.transform)).toBe('')
@@ -154,14 +189,14 @@ for (const enabled of [false, true]) {
 // Give each edge a fresh session so a previous momentum tail cannot mutate
 // its initial fixture.
 for (const edge of [0, 80]) {
-  test(`beta prediction stays inside its frame at the ${edge ? 'upper' : 'lower'} edge`, { tag: '@webkit-phone' }, async ({ page, isMobile }, info) => {
+  test(`the grid stays stationary at the ${edge ? 'upper' : 'lower'} edge`, { tag: '@webkit-phone' }, async ({ page, isMobile }, info) => {
     test.skip(!isMobile, 'Touch gestures use the phone viewport')
     await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: edge === 80, offset: edge })
     await terminal(page, true, edge)
     const frame = await page.locator('#termWrap').boundingBox()
     const field = await page.locator('.composer').boundingBox()
     const transform = await touch(page, 'touchmove', edge ? 120 : 40, 80)
-    expect(transform).toContain('translate3d')
+    expect(transform).toBe('')
     expect(await page.locator('#termWrap').boundingBox()).toEqual(frame)
     expect(await page.locator('.composer').boundingBox()).toEqual(field)
     await touch(page, 'touchend', edge ? 120 : 40)

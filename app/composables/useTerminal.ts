@@ -37,6 +37,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   const loading = ref(false)
   const kbdOn = ref(false)
   const scrollInputVersion = ref(0)
+  const scrollGeometryVersion = ref(0)
   // Count parsed frames separately from the scroll rows they acknowledge.
   const frameTick = ref(0)
   // Cumulative signed rows acknowledged after xterm parses the next frame.
@@ -220,7 +221,10 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     const p = fit.proposeDimensions()
     if (!p || !p.cols || !p.rows) return
     const d = { cols: p.cols, rows: p.rows }
-    if (d.cols !== term.cols || d.rows !== term.rows) term.resize(d.cols, d.rows)
+    if (d.cols !== term.cols || d.rows !== term.rows) {
+      scrollGeometryVersion.value++
+      term.resize(d.cols, d.rows)
+    }
     if (send && (d.cols !== lastSize.cols || d.rows !== lastSize.rows)) {
       if (sendTerm({ type: 'terminal.resize', cols: d.cols, rows: d.rows })) lastSize = { cols: d.cols, rows: d.rows }
     }
@@ -325,7 +329,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
         loading.value = false
         if (!term) return
         if (m.width && m.height && (m.width !== term.cols || m.height !== term.rows)) {
-          if (smoothTouchScrolling.value) { scrollInputVersion.value++; cancelTouchScroll() }
+          if (smoothTouchScrolling.value) { scrollGeometryVersion.value++; cancelTouchScroll() }
           term.resize(m.width, m.height)
         }
         const current = term
@@ -423,10 +427,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     if (!smoothTouchScrolling.value || !touch) return sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines) })
     const screen = term?.element?.querySelector('.xterm-screen') as HTMLElement | null
     const rect = screen?.getBoundingClientRect()
-    const offset = screen?.style.transform ? new DOMMatrixReadOnly(screen.style.transform).m42 : 0
-    const fixedRect = rect ? { left: rect.left, top: rect.top - offset, width: rect.width, height: rect.height } : null
-    const position = fixedRect && term && x !== undefined && y !== undefined ? terminalCell(x, y, fixedRect, term.cols, term.rows) : null
-    return sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), ...position, modifiers, source: 'touch', epoch: touchEpoch, preview })
+    const position = rect && term && x !== undefined && y !== undefined ? terminalCell(x, y, rect, term.cols, term.rows) : null
+    return sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), ...position, modifiers, source: 'touch', epoch: touchEpoch, preview, phase: preview ? 'drag' : 'momentum' })
   }
   function cancelTouchScroll() {
     touchEpoch++
@@ -474,7 +476,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     mount, connect, disconnect, isConnected, sendTerm, sendKeys, fitNow, setFontSize,
     reset, scroll, focus, blur, tapLink, tapMouse: (x: number, y: number) => mouse?.tap(x, y), hasFocus, rowHeight, pageRows, setVisible, dispose, loading, kbdOn,
     hasBanner: opts.hasBanner, selectionHint,
-    cancelTouchScroll, scrollInputVersion, frameTick, scrollAck,
+    cancelTouchScroll, scrollInputVersion, scrollGeometryVersion, frameTick, scrollAck,
     scrollback, scrollbackVersion, requestScrollback, mouseMode,
     virtualModifiers, lastVirtualChord, toggleVirtualModifier: toggleModifier, clearVirtualModifiers, sendVirtualKey,
   }
