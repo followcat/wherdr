@@ -64,7 +64,7 @@ function toggleKbd() {
 <style scoped>
 .keybar.virtual-keyboard { display: block; flex: none; overflow: hidden; padding: 4px 8px; border-top: 1px solid var(--line-soft); background: var(--bg); background-image: none; }
 .keybar.virtual-keyboard::before { content: none; }
-.virtual-keyboard button { min-width: 0; height: 44px; margin: 0; padding: 0 3px; border: 1px solid var(--line-soft); border-radius: 4px; background: var(--bg-2); color: var(--text-2); font: 500 12px/1 var(--mono); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
+.virtual-keyboard button { min-width: 0; height: 36px; margin: 0; padding: 0 3px; border: 1px solid var(--line-soft); border-radius: 4px; background: var(--bg-2); color: var(--text-2); font: 500 12px/1 var(--mono); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
 .virtual-keyboard button.selected { background: var(--mauve); border-color: var(--mauve); color: var(--bg); }
 .virtual-keyboard button:active { filter: brightness(1.25); }
 .virtual-keyboard button:disabled { opacity: .35; }
