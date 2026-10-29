@@ -327,7 +327,6 @@ async function loadOlder() {
     const b = box.value
     const fromBottom = b ? b.scrollHeight - b.scrollTop : 0
     await apply(() => {
-      shown.value = Infinity
       chat.value = {
         ...chat.value,
         older: (r.items || []).concat(chat.value.older),
@@ -376,6 +375,15 @@ const toolLabel = (tool: ChatItem) => isOtherTool(tool) ? t('Tool') : TOOL_LABEL
 const toolIcon = (tool: ChatItem) => (tool.error ? 'i-lucide-circle-x' : isOtherTool(tool) ? 'i-lucide-wrench' : TOOL_ICON[tool.name || ''] || 'i-lucide-wrench')
 // Collapsed action block: its last action.
 const groupSuffix = (tool: ChatItem) => `${toolLabel(tool)} · ${tool.text}`
+// Tool outputs (Devin exec results can run to thousands of lines): shown
+// collapsed, expanded in place on tap — a nested scroller would trap the
+// chat's own scroll gesture. Display is capped like the server's MAX_OUT.
+const OUT_LIMIT = 8000
+const openOuts = reactive(new Set<string>())
+const outKey = (blockKey: string, j: number) => `${blockKey}:${j}`
+const isOutOpen = (blockKey: string, j: number) => openOuts.has(outKey(blockKey, j))
+const toggleOut = (blockKey: string, j: number) => { const k = outKey(blockKey, j); if (openOuts.has(k)) openOuts.delete(k); else openOuts.add(k) }
+const toolOutText = (tool: ChatItem) => { const o = tool.out || ''; return o.length > OUT_LIMIT ? `…\n${o.slice(-OUT_LIMIT)}` : o }
 // omp's calls: a console of the last ones, the earlier ones unfolded on demand.
 const ompRows = (b: { key: string, list: ChatItem[] }) => ompConsoleRows(b.list, isOpen(b.key))
 // omp notes (custom_message shown): [label, icon] per kind.
@@ -1537,7 +1545,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                       :ui="{ root: 'tool', trigger: 'tool-trigger', label: 'tool-label', suffix: 'tool-suffix', leading: 'tool-leading' }"
                       :class="{ err: tool.error }"
                     >
-                      <template v-if="tool.out" #default><pre class="tool-result">{{ tool.out }}</pre></template>
+                      <template v-if="tool.out" #default><pre class="tool-result" :class="{ open: isOutOpen(b.key, j) }" role="button" :aria-expanded="isOutOpen(b.key, j)" @click="toggleOut(b.key, j)">{{ toolOutText(tool) }}</pre></template>
                     </UChatTool>
                     <MsgThumbs v-if="tool.images" class="tool-thumbs" :srcs="itemImageSrcs(tool)" :max="TOOL_THUMB_MAX" :offline="readOnly" :dupes="dupeSrcs" />
                   </template>
@@ -1553,7 +1561,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                     <div class="tool-row" :class="{ err: tool.error }">
                       <UIcon :name="toolIcon(tool)" /><b>{{ toolLabel(tool) }}</b><span>{{ toolText(tool) }}</span>
                     </div>
-                    <pre v-if="tool.out" class="tool-result">{{ tool.out }}</pre>
+                    <pre v-if="tool.out" class="tool-result" :class="{ open: isOutOpen(b.key, j) }" role="button" :aria-expanded="isOutOpen(b.key, j)" @click="toggleOut(b.key, j)">{{ toolOutText(tool) }}</pre>
                     <MsgThumbs v-if="tool.images" class="tool-thumbs" :srcs="itemImageSrcs(tool)" :max="TOOL_THUMB_MAX" :offline="readOnly" :dupes="dupeSrcs" />
                   </template>
                 </UChatTool>
