@@ -71,6 +71,17 @@ describe('beta terminal relay', () => {
     expect(r.commands).toHaveLength(before)
     r.close()
   })
+  it('preserves real drag requests through a slow frame and expires momentum separately', async () => {
+    const r = await relay()
+    r.push({ ...scroll, lines: 20, source: 'touch', phase: 'drag' })
+    await vi.advanceTimersByTimeAsync(100)
+    r.push({ ...scroll, lines: 10, source: 'touch', phase: 'momentum', preview: false })
+    await vi.advanceTimersByTimeAsync(300)
+    for (let i = 0; i < 5; i++) { r.frame(); await vi.advanceTimersByTimeAsync(16) }
+    expect(r.commands).toHaveLength(20)
+    expect(r.commands.every(c => c.lines === 1)).toBe(true)
+    r.close()
+  })
   it('merges touch scrolls on non-TUI panes into lines:N and still acks the epoch', async () => {
     const r = await relay()
     r.push({ ...scroll, source: 'touch', epoch: 7, tui: false })
