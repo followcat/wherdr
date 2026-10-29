@@ -29,8 +29,8 @@ function toggleKbd() {
 
 <template>
   <div class="keybar" role="toolbar" :aria-label="t('Keys')">
-    <button v-for="m in VIRTUAL_MODIFIERS" :key="m" type="button" class="key-modifier" :aria-label="modifierLabels[m]"
-      :aria-pressed="selected.includes(m)" @pointerdown.prevent @click="modifier(m)">{{ modifierLabels[m] }}</button>
+    <button v-for="m in VIRTUAL_MODIFIERS" :key="m" type="button" class="key-modifier" :aria-label="t(modifierLabels[m])"
+      :aria-pressed="selected.includes(m)" @pointerdown.prevent @click="modifier(m)">{{ t(modifierLabels[m]) }}</button>
     <button v-for="k in keys" :key="k.key" type="button" :class="k.cls" @pointerdown.prevent @click="press(k.key)">{{ k.label }}</button>
     <button type="button" class="kbd" :class="{ on: ctl.kbdOn.value }" :aria-label="t('Type in terminal')" @pointerdown.prevent @click="toggleKbd">
       <UIcon name="i-lucide-keyboard" />

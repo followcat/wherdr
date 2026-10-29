@@ -17,7 +17,7 @@ import { uploadPhoto } from '~/utils/photoUpload'
 import { terminalClosedText, terminalUnavailableText } from '~/utils/terminalClosed'
 import { bindTerminalMouse, terminalCell } from '~/utils/terminalMouse'
 import { TERM_FONT, onFontsLoaded } from '~/utils/terminalFont'
-import { toggleVirtualModifier, virtualChord, virtualInputKey, type VirtualModifier } from '~/utils/terminalModifiers'
+import { createCompositionTracker, toggleVirtualModifier, virtualChord, virtualInputKey, type VirtualModifier } from '~/utils/terminalModifiers'
 
 export interface Banner { text: string, btn: string, fn: () => void }
 
@@ -43,6 +43,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   const scrollAck = ref(0)
   let touchEpoch = 0
   const virtualModifiers = ref<VirtualModifier[]>([])
+  const composition = createCompositionTracker()
   const toggleModifier = (key: VirtualModifier) => { virtualModifiers.value = toggleVirtualModifier(virtualModifiers.value, key) }
   const clearVirtualModifiers = () => { virtualModifiers.value = [] }
   const selectionHint = useTerminalSelectionHint()
@@ -133,6 +134,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       ta.setAttribute('spellcheck', 'false')
       ta.addEventListener('blur', () => { kbdOn.value = false })
       ta.addEventListener('focus', () => { kbdOn.value = true })
+      ta.addEventListener('compositionstart', composition.start)
+      ta.addEventListener('compositionend', composition.end)
+      ta.addEventListener('keydown', composition.keydown)
     }
     // Wheel: xterm does nothing with it (it would send ↑/↓ to the agent, see
     // utils/terminalWheel.ts); TerminalView converts it to terminal.scroll.
@@ -141,6 +145,13 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     bindTerminalKeys(term, key => sendVirtualKey(key))
     term.onData(d => {
       if (opts.input?.() === false) return
+      // IME-committed text is data, not a keystroke: a composed ASCII
+      // character must not spend an armed modifier as a shortcut.
+      if (composition.active || composition.takeEnded()) {
+        clearVirtualModifiers()
+        sendTerm({ type: 'terminal.input', text: d })
+        return
+      }
       if (virtualModifiers.value.length) {
         const key = virtualInputKey(d)
         if (key) { void sendVirtualKey(key); return }
