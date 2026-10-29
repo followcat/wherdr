@@ -13,12 +13,19 @@ export function createTouchScrollPacer<T = undefined>(send: (direction: 'up' | '
     if (now >= expiresAt) { net = 0; metadata = []; return }
     credit = Math.min(12, credit + Math.max(0, now - creditedAt) * .1)
     creditedAt = now
-    const wait = Math.max(0, last + (inFlight >= 8 ? 45 : 16) - now, (1 - credit) / .1)
+    // A repaint is only a pacing opportunity, not proof of applied movement.
+    // Keep an actual ceiling while the terminal is silent; a slower timer
+    // alone still fills its input queue after the user has stopped.
+    if (inFlight >= 8) {
+      timer = setTimeout(() => { timer = null; schedule() }, expiresAt - now)
+      return
+    }
+    const wait = Math.max(0, last + 16 - now, (1 - credit) / .1)
     if (wait > 0) {
       timer = setTimeout(() => { timer = null; schedule() }, Math.ceil(Math.min(wait, expiresAt - now)))
       return
     }
-    const count = Math.min(Math.abs(net), Math.floor(credit), inFlight >= 8 ? 2 : 4)
+    const count = Math.min(Math.abs(net), Math.floor(credit), 4, 8 - inFlight)
     const direction = net > 0 ? 'up' : 'down'
     net -= Math.sign(net) * count
     credit -= count
@@ -38,10 +45,10 @@ export function createTouchScrollPacer<T = undefined>(send: (direction: 'up' | '
       const amount = direction === 'up' ? lines : -lines
       // A reversal follows the finger now, rather than draining older input.
       if (net && Math.sign(net) !== Math.sign(amount)) { net = 0; metadata = [] }
-      const accepted = Math.min(80 - Math.abs(net), Math.abs(amount))
+      const accepted = Math.min(48 - Math.abs(net), Math.abs(amount))
       net += Math.sign(amount) * accepted
       for (let i = 0; i < accepted; i++) metadata.push(value)
-      expiresAt = Date.now() + 800
+      expiresAt = Date.now() + 240
       schedule()
     },
     frame() {
