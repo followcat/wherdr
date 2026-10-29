@@ -6,7 +6,8 @@ import { ompToolCall, ompToolResult, ompUserRun } from './ompTools'
 import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDetail'
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
 import { cleanModelName, lastModel, mergeOmpModel, ompLastModel, ompModelComplete, ompModelLabel, ompModelResult } from './models'
-import { type MachineFs, localFs } from './fsx'
+import { type MachineFs, type ShellExec, localFs } from './fsx'
+import { createDevinTranscripts } from './devinTranscripts'
 import { searchFile } from './conversationSearch'
 import { hasTranscript, transcriptKind } from '../../shared/agentKind'
 import { type CommandTemplate, ompCommandTemplates } from './slash'
@@ -809,7 +810,8 @@ export function isMissing(e: unknown): boolean {
   return err.code === 'remote' && /no such file|not a directory|introuvable/i.test(err.message || '')
 }
 
-export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number }) {
+export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, exec }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number, exec?: ShellExec }) {
+  const devin = createDevinTranscripts({ home, exec })
   // File -> state (size, generation) and when this server first saw it, for
   // whole-second mtimes (see SETTLE_MS); `file|size|gen` -> checksum of the
   // file at first sight (null: could not be taken).
@@ -1147,6 +1149,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
 
   // ------------------------------------------------------------ API
   async function search(pane: TranscriptPane, query: string, deadline: number) {
+    if (pane.agent === 'devin') return devin.search(pane, query, deadline)
     if (!hasTranscript(pane.agent)) return { hits: [], limited: false, kind: null }
     const loc = await locate(pane)
     if (!loc || Date.now() >= deadline) return { hits: [], limited: Date.now() >= deadline, kind: null }
@@ -1162,6 +1165,11 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   // opts.anchor: token as the client sent it, for the join check (anchorOf),
   //              when `since` was dropped (list the server no longer knows)
   async function chat(pane: TranscriptPane, opts: { since?: string, from?: number | null, before?: number | null, fresh?: boolean, anchor?: string } = {}): Promise<ChatResponse> {
+    if (pane.agent === 'devin') {
+      const r = await devin.chat(pane, opts)
+      for (const item of r.items || []) if (item.role === 'assistant' && item.ref) replyKeys.set(item, `devin:${r.session}:${item.ref}`)
+      return r
+    }
     if (!hasTranscript(pane.agent)) return { available: false, reason: 'unsupported' }
     const loc = await locate(pane, Boolean(opts.fresh))
     if (!loc) return { available: false, reason: 'not_found' }
@@ -1243,6 +1251,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   // Image no. `index` of the message at `ref` ("start:length"): we re-read
   // that single line and decode the image it contains (base64).
   async function image(pane: TranscriptPane, fileId: string | null, ref: string | null, index: number) {
+    if (pane.agent === 'devin') return devin.image(pane, fileId, ref, index)
     const loc = await locate(pane)
     if (!loc || path.basename(loc.file) !== fileId) return null
     const m = /^(\d+):(\d+)$/.exec(String(ref || ''))
@@ -1270,6 +1279,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   const MODEL_MAX_BYTES = 16 * 1024 * 1024
   const modelCache = new Map<string, { file: string, size: number, raw: ModelInfo | null, info: ModelInfo | null }>()
   async function model(pane: TranscriptPane): Promise<ModelInfo | null> {
+    if (pane.agent === 'devin') return devin.model(pane)
     if (!pane.agent || !['claude', 'codex', 'omp'].includes(pane.agent)) return null
     const loc = await locate(pane)
     if (!loc) return null
