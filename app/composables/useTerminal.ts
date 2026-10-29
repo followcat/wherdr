@@ -17,6 +17,7 @@ import { uploadPhoto } from '~/utils/photoUpload'
 import { terminalClosedText, terminalUnavailableText } from '~/utils/terminalClosed'
 import { bindTerminalMouse, terminalCell } from '~/utils/terminalMouse'
 import { createTranscriptCache } from '~/utils/transcriptCache'
+import { bufferLineToHtml } from '~/utils/bufferLineHtml'
 import { TERM_FONT, onFontsLoaded } from '~/utils/terminalFont'
 import { displayVirtualChord, toggleVirtualModifier, virtualChord, virtualInputAction, virtualNavigationBytes, type VirtualModifier } from '~/utils/virtualKeys'
 
@@ -339,9 +340,14 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
           if (smoothTouchScrolling.value) {
             // Feed the painted screen to the transcript cache so the touch
             // preview can reveal real rows instead of void.
-            const buf = current.buffer.active, lines: string[] = []
-            for (let i = 0; i < current.rows; i++) lines.push(buf.getLine(buf.baseY + i)?.translateToString(true) ?? '')
-            transcript.frame(lines)
+            const buf = current.buffer.active, lines: string[] = [], styled: string[] = []
+            const theme = current.options.theme
+            for (let i = 0; i < current.rows; i++) {
+              const l = buf.getLine(buf.baseY + i)
+              lines.push(l?.translateToString(true) ?? '')
+              styled.push(l ? bufferLineToHtml(l, theme) : '')
+            }
+            transcript.frame(lines, styled)
             frameTick.value++
           }
         })

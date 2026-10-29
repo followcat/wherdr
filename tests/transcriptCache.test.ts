@@ -12,11 +12,11 @@ describe('transcriptCache', () => {
     c.frame(screen(35))
     expect(c.available(-1)).toBe(5) // the rows that just scrolled off
     expect(c.available(1)).toBe(0)  // never-seen history stays unreachable
-    expect(c.slice(-1, 3)).toEqual(['row 45', 'row 46', 'row 47'])
+    expect(c.slice(-1, 3).map(r => r?.text)).toEqual(['row 45', 'row 46', 'row 47'])
     // Back down 3: rows 38-40 return to the top edge.
     c.frame(screen(38))
     expect(c.available(1)).toBe(3)
-    expect(c.slice(1, 3)).toEqual(['row 35', 'row 36', 'row 37'])
+    expect(c.slice(1, 3).map(r => r?.text)).toEqual(['row 35', 'row 36', 'row 37'])
   })
 
   it('does not drift on an unrelated full repaint', () => {
@@ -46,7 +46,7 @@ describe('transcriptCache', () => {
     expect(c.available(-1)).toBe(10)
     // And revisiting upward still has the region cached.
     expect(c.available(1)).toBe(5)
-    expect(c.slice(1, 4)).toEqual(['row 26', 'row 27', 'row 28', 'row 29'])
+    expect(c.slice(1, 4).map(r => r?.text)).toEqual(['row 26', 'row 27', 'row 28', 'row 29'])
   })
 
   it('treats a jump with no overlapping rows as an in-place repaint', () => {

@@ -9,14 +9,15 @@
 // edges where the program clamps the view and survives in-place repaints
 // (spinners, streaming output) that shift nothing.
 export function createTranscriptCache() {
-  const known = new Map<number, string>()
+  const known = new Map<number, { t: string, h?: string }>()
   let top = 0             // transcript index of screen row 0
   let prev: string[] = [] // last stored screen rows
   let rows = 24
   const RANGE = 40        // max shift searched per frame
   const KEEP = 400        // rows retained either side of the viewport
 
-  function frame(screen: string[]) {
+  // text rows realign the window; html rows (same indices) paint the strips.
+  function frame(screen: string[], styled?: string[]) {
     rows = screen.length
     let delta = 0
     if (prev.length === screen.length) {
@@ -34,7 +35,7 @@ export function createTranscriptCache() {
       if (best < screen.length * 0.3) delta = 0
     }
     top -= delta
-    for (let i = 0; i < screen.length; i++) known.set(top + i, screen[i]!)
+    for (let i = 0; i < screen.length; i++) known.set(top + i, { t: screen[i]!, h: styled?.[i] })
     prev = screen
     for (const k of known.keys()) if (k < top - KEEP || k > top + rows + KEEP) known.delete(k)
   }
@@ -49,11 +50,12 @@ export function createTranscriptCache() {
   }
 
   // The rows a reveal would show, oldest first for dir > 0 (so index 0 sits
-  // furthest from the live screen edge). Missing slots come back null.
-  function slice(dir: number, count: number): (string | null)[] {
-    const out: (string | null)[] = []
-    if (dir > 0) for (let i = count; i >= 1; i--) out.push(known.get(top - i) ?? null)
-    else for (let i = 0; i < count; i++) out.push(known.get(top + rows + i) ?? null)
+  // furthest from the live screen edge). Each entry is { text, html? }.
+  function slice(dir: number, count: number): ({ text: string, html?: string } | null)[] {
+    const out: ({ text: string, html?: string } | null)[] = []
+    const get = (idx: number) => { const e = known.get(idx); return e ? { text: e.t, html: e.h } : null }
+    if (dir > 0) for (let i = count; i >= 1; i--) out.push(get(top - i))
+    else for (let i = 0; i < count; i++) out.push(get(top + rows + i))
     return out
   }
 

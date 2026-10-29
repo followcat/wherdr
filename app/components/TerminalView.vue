@@ -141,7 +141,8 @@ const renderPreview = (px: number) => {
         div.className = 'pv-line'
         div.style.height = `${h}px`
         div.style.lineHeight = `${h}px`
-        if (row) div.textContent = row
+        if (row?.html) div.innerHTML = row.html
+        else if (row) div.textContent = row.text
         return div
       }))
     }
