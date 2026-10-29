@@ -15,6 +15,8 @@ const MAX_LINES = 500
 
 export interface ScrollThrottle {
   push: (direction: 'up' | 'down', lines: number) => void
+  // Drop queued lines without sending (touch interrupted by typing).
+  cancel: () => void
   dispose: () => void
 }
 
@@ -37,6 +39,11 @@ export function createScrollThrottle(
     net = 0
     last = now()
   }
+  const cancel = () => {
+    if (timer) clearTimer(timer as never)
+    timer = null
+    net = 0
+  }
   return {
     push(direction, lines) {
       net += direction === 'up' ? lines : -lines
@@ -45,10 +52,7 @@ export function createScrollThrottle(
       if (wait <= 0) flush()
       else timer = setTimer(flush, wait)
     },
-    dispose() {
-      if (timer) clearTimer(timer as never)
-      timer = null
-      net = 0
-    },
+    cancel,
+    dispose: cancel,
   }
 }

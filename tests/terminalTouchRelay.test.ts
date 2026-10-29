@@ -52,7 +52,7 @@ describe('beta terminal relay', () => {
     r.push({ ...scroll, source: 'touch', epoch: 4, column: 2, row: 3 })
     r.push({ ...scroll, lines: 1, source: 'touch', epoch: 5, column: 9, row: 10 })
     r.frame()
-    expect(r.messages.filter(m => m.type === 'scroll.ack')).toEqual([{ type: 'scroll.ack', epoch: 4, lines: 3 }])
+    expect(r.messages.filter(m => m.type === 'scroll.ack')).toEqual([{ type: 'scroll.ack', epoch: 4, lines: 4 }])
     await vi.advanceTimersByTimeAsync(16)
     r.frame()
     expect(r.commands.slice(0, 6)).toEqual(Array.from({ length: 6 }, () => ({ ...scroll, lines: 1, column: 2, row: 3, modifiers: 0 })))

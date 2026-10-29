@@ -4,21 +4,21 @@
 export function createTouchScrollPacer<T = undefined>(send: (direction: 'up' | 'down', lines: number, metadata?: T) => void) {
   let metadata: (T | undefined)[] = []
   let net = 0, inFlight = 0, last = -Infinity
-  let credit = 8, creditedAt = Date.now(), expiresAt = 0
+  let credit = 12, creditedAt = Date.now(), expiresAt = 0
   let timer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
   const schedule = () => {
     if (disposed || !net || timer) return
     const now = Date.now()
     if (now >= expiresAt) { net = 0; metadata = []; return }
-    credit = Math.min(8, credit + Math.max(0, now - creditedAt) * .064)
+    credit = Math.min(12, credit + Math.max(0, now - creditedAt) * .1)
     creditedAt = now
-    const wait = Math.max(0, last + (inFlight >= 6 ? 120 : 16) - now, (1 - credit) / .064)
+    const wait = Math.max(0, last + (inFlight >= 8 ? 45 : 16) - now, (1 - credit) / .1)
     if (wait > 0) {
       timer = setTimeout(() => { timer = null; schedule() }, Math.ceil(Math.min(wait, expiresAt - now)))
       return
     }
-    const count = Math.min(Math.abs(net), Math.floor(credit), inFlight >= 6 ? 1 : 3)
+    const count = Math.min(Math.abs(net), Math.floor(credit), inFlight >= 8 ? 2 : 4)
     const direction = net > 0 ? 'up' : 'down'
     net -= Math.sign(net) * count
     credit -= count
@@ -41,7 +41,7 @@ export function createTouchScrollPacer<T = undefined>(send: (direction: 'up' | '
       const accepted = Math.min(80 - Math.abs(net), Math.abs(amount))
       net += Math.sign(amount) * accepted
       for (let i = 0; i < accepted; i++) metadata.push(value)
-      expiresAt = Date.now() + 300
+      expiresAt = Date.now() + 800
       schedule()
     },
     frame() {
