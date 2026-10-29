@@ -44,7 +44,9 @@
 - **Quick replies**: answer permissions and questions in one tap from the agent list.
 - **Split tabs on a small screen**: a plan of the tab's panes in Herdr's proportions, then each
   pane full screen with a mini-map and swipe to its neighbours.
-- **Terminal key bar** (Esc, Enter, arrows, Shift+Tab, Ctrl+C…) and touch scrolling.
+- **Terminal key bar**: Esc, Shift, the four arrows and Enter stay in the main row.
+  More holds Tab, PgUp/PgDn, modifiers and function keys, plus the phone keyboard toggle.
+  Touch scrolling remains available in the terminal.
   Dismissing the phone keyboard releases terminal input focus; scrolling keeps
   it closed until an intentional tap. Links back to wherdr stay in the same window.
 - **Smooth touch scrolling (beta)**: drags scroll the running application directly,

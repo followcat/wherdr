@@ -11,8 +11,8 @@ const size = () => fakeHerdr('e2e.pane_size', { pane_id: pane })
 const sentKeys = async () => (await fakeHerdr('e2e.terminal_screen', { pane_id: pane }) as { keys: string[] }).keys
 async function escapeKey(page: Page) {
   const window = page.getByRole('dialog', { name: 'Interactive terminal', exact: true })
-  await window.locator('.vk-more').click()
-  await window.getByRole('button', { name: 'Esc', exact: true }).click()
+  await expect(window.locator('.vk-more')).toHaveAttribute('aria-expanded', 'false')
+  await window.locator('.vk-strip').getByRole('button', { name: 'Esc', exact: true }).click()
 }
 // What a tap at the middle of `selector` would reach: the window or its scrim, or the app.
 const coveredAt = (page: Page, selector: string) => page.locator(selector).first().evaluate((el) => {
@@ -59,6 +59,46 @@ test('shows only the live TUI, sends real keys and closes when its field returns
   await expect.poll(() => bodyBlocked(page)).toBe(false)
   expect(await coveredAt(page, '.agent-top')).toBe(false)
   await expect.poll(size, { timeout: 15_000 }).toEqual(original)
+})
+
+test('phone terminal keys keep Esc visible and fit the primary row on narrow screens', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'Checks the single-row phone layout')
+  const window = page.getByRole('dialog', { name: 'Interactive terminal', exact: true })
+  await expect(window).toBeVisible()
+  const bar = window.locator('.keybar')
+  const main = bar.locator('.vk-strip')
+  const more = bar.locator('.vk-more')
+  await expect(main.getByRole('button', { name: 'Esc', exact: true })).toBeVisible()
+  await expect(more).toHaveAttribute('aria-expanded', 'false')
+  await expect(bar.getByRole('button', { name: 'PgUp', exact: true })).toHaveCount(0)
+  const viewport = page.viewportSize()!
+  for (const width of [320, 360, 390]) {
+    await page.setViewportSize({ ...viewport, width })
+    const rects = await main.locator('button').evaluateAll(buttons => buttons.map(el => {
+      const r = el.getBoundingClientRect()
+      return { label: el.getAttribute('aria-label'), x: r.x, y: r.y, width: r.width, height: r.height, right: r.right }
+    }))
+    expect(rects.map(r => r.label)).toEqual(['Esc', 'Shift', '←', '↑', '↓', '→', 'Enter', '展开或收起功能键'])
+    for (const rect of rects) {
+      expect(Math.abs(rect.y - rects[0]!.y)).toBeLessThan(1)
+      expect(rect.height).toBeGreaterThanOrEqual(44)
+      expect(rect.width).toBeGreaterThanOrEqual(width >= 390 ? 44 : width >= 360 ? 40 : 35)
+      expect(rect.x).toBeGreaterThanOrEqual(0)
+      expect(rect.right).toBeLessThanOrEqual(width)
+    }
+    await bar.screenshot({ path: `.shots/terminal-keybar-${width}.png` })
+  }
+  await more.click()
+  await expect(bar.getByRole('button', { name: 'PgUp', exact: true })).toBeVisible()
+  await expect(bar.getByRole('button', { name: 'PgDn', exact: true })).toBeVisible()
+  await expect(bar.getByRole('button', { name: 'Tab', exact: true })).toBeVisible()
+  await expect(bar.getByRole('button', { name: 'Esc', exact: true })).toHaveCount(1)
+  await bar.screenshot({ path: '.shots/terminal-keybar-expanded.png' })
+  await more.click()
+  await escapeKey(page)
+  await expect.poll(sentKeys).toEqual(['esc'])
+  await expect(window).toHaveCount(0)
+  await expect(page.locator('.xterm-helper-textarea')).toHaveCount(0)
 })
 
 test('the scrim covers the whole app; a click on it closes the window until it is reopened', { tag: '@chromium-desktop' }, async ({ page, isMobile }, info) => {

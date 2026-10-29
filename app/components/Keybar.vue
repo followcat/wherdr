@@ -10,15 +10,13 @@ const modifiers: { key: VirtualModifier, label: string }[] = [
 const extraModifiers: { key: VirtualModifier, label: string }[] = [
   { key: 'ctrl', label: 'Ctrl' }, { key: 'alt', label: 'Alt' },
 ]
-const pageKeys = [
-  { key: 'pageup', label: 'PgUp' }, { key: 'pagedown', label: 'PgDn' },
-]
 const nav = [
   { key: 'left', label: '←' }, { key: 'up', label: '↑' }, { key: 'down', label: '↓' },
   { key: 'right', label: '→' }, { key: 'enter', label: '⏎' },
 ]
 const functionKeys = [
-  { key: 'esc', label: 'Esc' }, { key: 'tab', label: 'Tab' },
+  { key: 'tab', label: 'Tab' },
+  { key: 'pageup', label: 'PgUp' }, { key: 'pagedown', label: 'PgDn' },
   { key: 'home', label: 'Home' }, { key: 'end', label: 'End' },
   { key: 'delete', label: 'Del' }, { key: 'insert', label: 'Ins' },
   ...Array.from({ length: 12 }, (_, i) => ({ key: `f${i + 1}`, label: `F${i + 1}` })),
@@ -45,7 +43,7 @@ function toggleKbd() {
   <div class="keybar virtual-keyboard" role="group" aria-label="终端功能键">
     <output class="vk-announcement" aria-live="polite">{{ preview }}</output>
     <div class="vk-strip" role="toolbar" aria-label="常用按键与修饰键">
-      <button v-for="k in pageKeys" :key="k.key" type="button" class="vk-page" :aria-label="displayVirtualChord(k.key)" @pointerdown.prevent @click="press(k.key)">{{ k.label }}</button>
+      <button type="button" class="vk-escape" aria-label="Esc" @pointerdown.prevent @click="press('esc')">Esc</button>
       <button v-for="m in modifiers" :key="m.key" type="button" class="vk-mod" :class="{ selected: active.includes(m.key) }"
         :aria-pressed="active.includes(m.key)" :aria-label="m.label" @pointerdown.prevent @click="modifier(m.key)">{{ m.key === 'shift' ? '⇧' : m.label }}</button>
       <button v-for="k in nav" :key="k.key" type="button" class="vk-navigation" :aria-label="displayVirtualChord(k.key)" @pointerdown.prevent @click="press(k.key)">{{ k.label }}</button>
@@ -65,12 +63,12 @@ function toggleKbd() {
 <style scoped>
 .keybar.virtual-keyboard { display: block; flex: none; overflow: hidden; padding: 4px 8px; border-top: 1px solid var(--line-soft); background: var(--bg); background-image: none; }
 .keybar.virtual-keyboard::before { content: none; }
-.virtual-keyboard button { min-width: 0; height: 38px; margin: 0; padding: 0 3px; border: 1px solid var(--line-soft); border-radius: 4px; background: var(--bg-2); color: var(--text-2); font: 500 12px/1 var(--mono); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
+.virtual-keyboard button { min-width: 0; height: 44px; margin: 0; padding: 0 3px; border: 1px solid var(--line-soft); border-radius: 4px; background: var(--bg-2); color: var(--text-2); font: 500 12px/1 var(--mono); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
 .virtual-keyboard button.selected { background: var(--mauve); border-color: var(--mauve); color: var(--bg); }
 .virtual-keyboard button:active { filter: brightness(1.25); }
 .virtual-keyboard button:disabled { opacity: .35; }
-.vk-strip { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 3px; }
-.vk-strip .vk-page { font-size: 11px; }
+.vk-strip { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 3px; }
+.vk-strip .vk-escape { color: var(--text); border-color: var(--line); font-weight: 650; }
 .vk-strip .vk-mod, .vk-strip .vk-navigation { font-size: 19px; }
 .vk-announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .vk-extra-row { display: flex; gap: 4px; margin-top: 4px; }
