@@ -41,6 +41,7 @@ test.beforeEach(async () => {
 
 test.afterEach(async () => {
   await fakeHerdr('e2e.touch_scroll', { pane_id: pane, clear: true })
+  await fakeHerdr('e2e.interaction_screen', { pane_id: pane, text: null })
   await fakeHerdr('e2e.terminal_version', { version: '0.9.1' })
 })
 
@@ -104,6 +105,26 @@ for (const enabled of [false, true]) {
     await input.detach()
   })
 }
+
+test('a phone terminal link to this app stays in its existing window', async ({ page, context, isMobile, baseURL }) => {
+  test.skip(!isMobile, 'The phone opens internal links in place')
+  await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: true })
+  await terminal(page, true)
+  await fakeHerdr('e2e.touch_scroll', { pane_id: pane, clear: true })
+  const url = baseURL + '/'
+  await page.evaluate(() => { document.documentElement.dataset.terminalLinkDocument = 'keep' })
+  await fakeHerdr('e2e.interaction_screen', { pane_id: pane, text: '\x1b]8;;' + url + '\x07Open settings\x1b]8;;\x07' })
+  await expect(page.locator('.xterm-rows')).toContainText('Open settings')
+  const pages = context.pages().length
+  const screen = page.locator('.xterm-screen')
+  const box = (await screen.boundingBox())!
+  const rows = await page.locator('.xterm-rows > *').count()
+  await page.touchscreen.tap(box.x + 16, box.y + box.height / rows / 2)
+  await expect(page).toHaveURL(/#\/$/)
+  expect(await page.locator('html').getAttribute('data-terminal-link-document')).toBe('keep')
+  expect(context.pages()).toHaveLength(pages)
+  await fakeHerdr('e2e.interaction_screen', { pane_id: pane, text: null })
+})
 
 test('a drag continues after the phone viewport resizes', async ({ page, isMobile }) => {
   test.skip(!isMobile, 'Viewport resizing exercises the phone layout')
