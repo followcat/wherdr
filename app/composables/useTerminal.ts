@@ -67,6 +67,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   const scrollbackVersion = ref(0)
   // Painted-row cache feeding the touch preview's revealed edge.
   const transcript = createTranscriptCache()
+  // Scroll lines sent since the last painted frame — nonzero tells the
+  // transcript matcher a shift is plausible this repaint.
+  let sentSinceFrame = 0
 
   const wsBase = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`
 
@@ -354,7 +357,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
                 lines.push(l?.translateToString(true) ?? '')
                 styled.push(l ? bufferLineToHtml(l, theme) : '')
               }
-              transcript.frame(lines, styled)
+              transcript.frame(lines, styled, sentSinceFrame)
+              sentSinceFrame = 0
             }
             frameTick.value++
           }
@@ -364,7 +368,15 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
           // Queue behind the covering frame, including when write's callback
           // ran before the separate ack packet arrived.
           const epoch = touchEpoch
-          term.write('', () => { if (epoch === touchEpoch && smoothTouchScrolling.value) scrollAck.value += m.lines })
+          term.write('', () => {
+            if (epoch === touchEpoch && smoothTouchScrolling.value) {
+              scrollAck.value += m.lines
+              // Delivered rows are the ground truth for the frame they
+              // covered: the transcript cache re-anchors with them before
+              // matching the next frame.
+              transcript.ack(m.lines)
+            }
+          })
         }
       } else if (m.type === 'scrollback.chunk') {
         scrollback.value = typeof m.text === 'string' ? m.text : ''
@@ -451,13 +463,15 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   }
   // Scrolling requested from Herdr (the history lives there).
   function scroll(lines: number, x?: number, y?: number, modifiers = 0, touch = false, preview = true): boolean {
-    if (!smoothTouchScrolling.value || !touch) return sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines) })
+    if (!smoothTouchScrolling.value || !touch) { const ok = sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines) }); if (ok) sentSinceFrame += lines; return ok }
     const screen = term?.element?.querySelector('.xterm-screen') as HTMLElement | null
     const rect = screen?.getBoundingClientRect()
     const offset = screen?.style.transform ? new DOMMatrixReadOnly(screen.style.transform).m42 : 0
     const fixedRect = rect ? { left: rect.left, top: rect.top - offset, width: rect.width, height: rect.height } : null
     const position = fixedRect && term && x !== undefined && y !== undefined ? terminalCell(x, y, fixedRect, term.cols, term.rows) : null
-    return sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), ...position, modifiers, source: 'touch', epoch: touchEpoch, preview })
+    const ok = sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), ...position, modifiers, source: 'touch', epoch: touchEpoch, preview })
+    if (ok) sentSinceFrame += lines
+    return ok
   }
   function cancelTouchScroll() {
     touchEpoch++

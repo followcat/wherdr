@@ -57,6 +57,41 @@ describe('transcriptCache', () => {
     expect(c.available(-1)).toBe(0)
   })
 
+  it('ignores an acked shift when the repaint is identical (clamped sends inflate it)', () => {
+    const c = createTranscriptCache()
+    // A screen repeating with period 3: scrolling 3 rows repaints an
+    // identical screen. A real +3 scroll and sends clamped at the history
+    // edge are indistinguishable on screen — but the ack counts requested
+    // lines either way, so identical repaints must not move the anchor.
+    const periodic = (shift: number, rows = 10) => Array.from({ length: rows }, (_, i) => `p${(i + shift) % 3}`)
+    c.frame(periodic(0))
+    c.frame(periodic(3))
+    c.ack(3)
+    c.frame(periodic(6))
+    c.ack(3)
+    c.frame(periodic(9))
+    expect(c.windowTop()).toBe(0)
+  })
+
+  it('keeps the true shift when a redraw muddies only some rows', () => {
+    const c = createTranscriptCache()
+    // Real +3 with the bottom rows edited mid-scroll: the shifted band still
+    // out-fits the in-place hypothesis, so the anchor tracks the scroll.
+    c.frame(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'])
+    c.frame(['x', 'y', 'w', 'a', 'b', 'c', 'd', 'z', 'z', 'z'])
+    expect(c.windowTop()).toBe(-3)
+  })
+
+  it('keeps the matched delta when the pane clamped (ack overstates)', () => {
+    const c = createTranscriptCache()
+    c.frame(screen(40))
+    c.frame(screen(37)) // pane scrolled 3 — the true shift
+    c.ack(10)           // the client asked for 10; clamp delivered 3
+    c.frame(screen(34))
+    // d=10 scores 0 against the transition, d=3 scores perfectly: no re-anchor.
+    expect(c.windowTop()).toBe(-6)
+  })
+
   it('reset clears everything', () => {
     const c = createTranscriptCache()
     c.frame(screen(40))
