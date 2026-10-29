@@ -45,5 +45,14 @@ describe('one-shot terminal modifiers', () => {
     composition.end()
     composition.keydown()
     expect(action('c', ['ctrl'])).toEqual({ key: 'c' })
+    // Safari ends a composition with a keyCode 229 keydown before the
+    // committed text: that keydown must not drop the flag.
+    composition.start()
+    composition.end()
+    composition.keydown({ keyCode: 229 })
+    expect(action('a', ['ctrl'])).toEqual({ text: 'a' })
+    composition.keydown({ isComposing: true })
+    composition.keydown({ keyCode: 37 })
+    expect(action('\x1b[D', ['alt'])).toEqual({ key: virtualInputKey('\x1b[D') })
   })
 })
