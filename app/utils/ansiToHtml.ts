@@ -3,7 +3,7 @@
 // in plain Node, and no markup from pane output is ever injected.
 
 // xterm's 256-palette for the 38;5;n / 48;5;n escapes.
-const PALETTE = (() => {
+export const PALETTE = (() => {
   const base = [
     '000000', '800000', '008000', '808000', '000080', '800080', '008080', 'c0c0c0',
     '808080', 'ff0000', '00ff00', 'ffff00', '0000ff', 'ff00ff', '00ffff', 'ffffff',

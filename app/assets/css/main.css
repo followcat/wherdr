@@ -1152,7 +1152,7 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 /* The layer receives touch gestures; on a computer, the mouse must reach
    xterm for selection and the programs' mouse mode. */
 #term { position: absolute; inset: 6px 4px 0 6px; z-index: 0; overflow: hidden; }
-#touch { position: absolute; inset: 0; z-index: 1; touch-action: none; pointer-events: none; }
+#touch { position: absolute; inset: 0; z-index: 1; touch-action: none; pointer-events: none; -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
 @media (hover: none) and (pointer: coarse) { #touch { pointer-events: auto; } }
 /* Local scrollback: a real scroller (chat-view feel). History lines fill the
    top with the terminal's own font/background; a transparent one-viewport gap
@@ -1164,6 +1164,9 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 #scrollback .sb-body { padding: 6px 4px 0 6px; white-space: pre-wrap; overflow-wrap: break-word; font-variant-ligatures: none; }
 #scrollback .sb-gap { height: 100%; }
 #scrollback .sb-body { background: var(--bg); }
+/* Copy mode (long press): the snapshot surface is selectable text. */
+#scrollback.copy-mode .sb-body { user-select: text; -webkit-user-select: text; cursor: text; }
+.cp-done { position: absolute; top: 8px; right: 10px; z-index: 3; padding: 7px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg-2); color: var(--text); font: 500 13px/1 var(--mono); touch-action: manipulation; }
 .term-loading { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
 .term-loading.static { position: static; padding: 30px; }
 .xterm .xterm-viewport { background: transparent !important; overflow-y: hidden !important; }

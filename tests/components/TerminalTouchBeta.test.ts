@@ -32,7 +32,7 @@ async function mounted(enabled: boolean, coarse = false) {
     cancelTouchScroll: vi.fn(), scrollInputVersion: ref(0), scrollGeometryVersion: ref(0), scrollAck: ref(0), frameTick: ref(0),
     loading: ref(false), selectionHint: { visible: ref(false), dismiss: vi.fn() },
     mouseMode: ref(coarse),
-    requestScrollback: vi.fn(), scrollback: ref(''), scrollbackVersion: ref(0),
+    requestScrollback: vi.fn(), scrollback: ref(''), scrollbackVersion: ref(0), liveScreenSpans: () => [[{ text: 'live row' }]],
   }
   const w = await mountSuspended(TerminalView, { props: { ctl: ctl as unknown as TerminalCtl } })
   vi.stubGlobal('requestAnimationFrame', (fn: FrameRequestCallback) => { frames.set(++id, fn); return id })
@@ -264,5 +264,33 @@ describe('terminal beta switch', () => {
     r.w.unmount(); unmount = undefined
     expect(frames.size).toBe(0)
     expect(r.ctl.dispose).toHaveBeenCalledOnce()
+  })
+  it('opens a selectable copy surface on long press, even on mouse panes', async () => {
+    const r = await mounted(true, true)
+    vi.useFakeTimers()
+    await r.send('touchstart', 100)
+    vi.advanceTimersByTime(500)
+    await nextTick()
+    const sb = r.w.get('#scrollback')
+    expect(sb.classes()).toContain('copy-mode')
+    expect(sb.attributes('style')).toContain('pointer-events: auto')
+    expect(r.w.get('.sb-live').text()).toContain('live row')
+    expect(r.ctl.requestScrollback).toHaveBeenCalledOnce()
+    // The release after copy mode must not become a focusing tap.
+    await r.send('touchend', 100, 0)
+    expect(r.ctl.focus).not.toHaveBeenCalled()
+    await r.w.get('.cp-done').trigger('click')
+    expect(r.w.get('#scrollback').classes()).not.toContain('copy-mode')
+    expect(r.w.find('.sb-live').exists()).toBe(false)
+  })
+  it('cancels the long press once the finger moves', async () => {
+    const r = await mounted(true, true)
+    vi.useFakeTimers()
+    await r.send('touchstart', 100)
+    await r.send('touchmove', 120)
+    vi.advanceTimersByTime(600)
+    await nextTick()
+    expect(r.w.get('#scrollback').classes()).not.toContain('copy-mode')
+    expect(r.ctl.requestScrollback).not.toHaveBeenCalled()
   })
 })
