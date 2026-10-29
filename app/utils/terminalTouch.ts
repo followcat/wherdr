@@ -1,25 +1,12 @@
 type Point = { x: number, y: number }
 
-// A visual hint for a remote viewport, never a guessed history coordinate.
-// Follow one row exactly, then damp toward a three-row cap. Snapshot caches
-// cannot safely extend the range for arbitrary full-screen applications.
-export function touchPreviewOffset(px: number, rowHeight: number) {
-  const h = Math.max(1, rowHeight)
-  const lead = h
-  const cap = h * 3
-  const over = Math.abs(px) - lead
-  if (over <= 0) return px
-  return Math.sign(px) * Math.min(cap, lead + over * 0.25)
-}
-
 // Touch-only physics: preserve fractional pixels, lock the drag direction,
 // and keep momentum bounded. Scrolling never becomes arrow keys.
 export function createTerminalTouch({ vertical, momentum, horizontal, canHorizontal, maxMomentum,
   now = () => performance.now(), frame = fn => requestAnimationFrame(fn), cancelFrame = id => cancelAnimationFrame(id),
 }: {
   vertical: (pixels: number, point: Point) => void
-  // Momentum ticks may take a different path than the finger: nothing follows
-  // a finger anymore, so fabricated preview only shows as an afterimage.
+  // Momentum can use a shorter server queue lifetime than a direct drag.
   momentum?: (pixels: number, point: Point) => void
   horizontal: (pixels: number) => void
   canHorizontal: () => boolean
@@ -68,9 +55,11 @@ export function createTerminalTouch({ vertical, momentum, horizontal, canHorizon
       last = point
       at = t
     },
-    end() {
+    end(point?: Point) {
       if (!start) return false
-      const tap = axis === null
+      // Chrome can coalesce a sub-slop drag into touchend without delivering
+      // touchmove. Check its final displacement before treating it as a tap.
+      const tap = axis === null && (!point || Math.hypot(point.x - start.x, point.y - start.y) < 5)
       start = null
       const held = now() - at
       if (axis !== 'y' || held > 90) return tap
@@ -96,7 +85,7 @@ export function createTerminalTouch({ vertical, momentum, horizontal, canHorizon
     },
     stopMomentum,
     cancel,
-    // Trailing drag velocity in px/ms -- drives the read-ahead overshoot.
+    // Trailing drag velocity in px/ms.
     velocity: () => speed,
   }
 }

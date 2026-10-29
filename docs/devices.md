@@ -46,7 +46,8 @@
   pane full screen with a mini-map and swipe to its neighbours.
 - **Terminal key bar** (Esc, Enter, arrows, Shift+Tab, Ctrl+C…) and touch scrolling.
 - **Smooth touch scrolling (beta)**: drags scroll the running application directly,
-  with a small visual lead and a bounded glide after release. A new touch stops queued
+  with a bounded glide after release. The live grid stays fixed while waiting for
+  application frames, including at history boundaries. A new touch stops queued
   scrolling; the stopping tap does not click the application or open the keyboard.
   Full-screen applications keep their own viewport: screen snapshots are not stitched
   into a separate history document. Reading an agent's structured conversation remains

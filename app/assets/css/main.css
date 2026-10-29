@@ -4368,7 +4368,7 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
 .msg-autopilot-copy { display: inline-flex; flex: none; width: 24px; height: 24px; justify-content: center; color: var(--dim); }
 .msg-autopilot-copy:hover { color: var(--text); }
 
-/* Clip only the predicted grid; the terminal frame and composer stay fixed. */
+/* Contain the terminal grid; the terminal frame and composer stay fixed. */
 #termWrap.smooth-touch #term { overflow: hidden; }
 #termWrap.smooth-touch .xterm { overflow-y: hidden; overscroll-behavior: none; }
 
