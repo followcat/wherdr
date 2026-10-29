@@ -6,7 +6,9 @@ import { ompToolCall, ompToolResult, ompUserRun } from './ompTools'
 import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDetail'
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
 import { cleanModelName, lastModel, mergeOmpModel, ompLastModel, ompModelComplete, ompModelLabel, ompModelResult } from './models'
-import { type MachineFs, localFs } from './fsx'
+import { type MachineFs, type ShellExec, localFs } from './fsx'
+import { createOpenCodeTranscripts, type OpenCodeOptions } from './opencodeTranscripts'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { searchFile } from './conversationSearch'
 import { hasTranscript, transcriptKind } from '../../shared/agentKind'
 import { type CommandTemplate, ompCommandTemplates } from './slash'
@@ -931,7 +933,8 @@ export function isMissing(e: unknown): boolean {
   return err.code === 'remote' && /no such file|not a directory|introuvable/i.test(err.message || '')
 }
 
-export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number }) {
+export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, exec, stream }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number, exec?: ShellExec, stream?: (script: string, args: string[]) => ChildProcessWithoutNullStreams | null }) {
+  const opencode = createOpenCodeTranscripts({ home, exec, stream })
   // File -> state (size, generation) and when this server first saw it, for
   // whole-second mtimes (see SETTLE_MS); `file|size|gen` -> checksum of the
   // file at first sight (null: could not be taken).
@@ -1117,6 +1120,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   // Agents seen at work: they have a conversation (see shared/integrations.ts).
   const activity = createActivity()
   function observe(panes: TranscriptPane[]) {
+    opencode.observe(panes)
     codexPeers.clear()
     for (const p of panes) if (p.agent === 'codex') codexPeers.set(p.id, p)
     const live = new Set(panes.map(p => p.id))
@@ -1289,6 +1293,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
 
   // ------------------------------------------------------------ API
   async function search(pane: TranscriptPane, query: string, deadline: number) {
+    if (pane.agent === 'opencode') return opencode.search(pane, query, deadline)
     if (!hasTranscript(pane.agent)) return { hits: [], limited: false, kind: null }
     const loc = await locate(pane)
     if (!loc || Date.now() >= deadline) return { hits: [], limited: Date.now() >= deadline, kind: null }
@@ -1303,7 +1308,14 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   // opts.fresh : look for the file again if none was found lately (see locate)
   // opts.anchor: token as the client sent it, for the join check (anchorOf),
   //              when `since` was dropped (list the server no longer knows)
-  async function chat(pane: TranscriptPane, opts: { since?: string, from?: number | null, before?: number | null, fresh?: boolean, anchor?: string } = {}): Promise<ChatResponse> {
+  async function chat(pane: TranscriptPane, options: OpenCodeOptions & { fresh?: boolean } = {}): Promise<ChatResponse> {
+    if (pane.agent === 'opencode') {
+      const r = await opencode.chat(pane, options)
+      for (const item of r.items || []) if (item.role === 'assistant' && item.ref) replyKeys.set(item, `opencode:${r.session}:${item.ref}`)
+      return r
+    }
+    // Numeric offsets remain exclusive to the existing file-backed readers.
+    const opts = { ...options, from: typeof options.from === 'number' ? options.from : null, before: typeof options.before === 'number' ? options.before : null }
     if (!hasTranscript(pane.agent)) return { available: false, reason: 'unsupported' }
     const loc = await locate(pane, Boolean(opts.fresh))
     if (!loc) return { available: false, reason: 'not_found' }
@@ -1385,6 +1397,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   // Image no. `index` of the message at `ref` ("start:length"): we re-read
   // that single line and decode the image it contains (base64).
   async function image(pane: TranscriptPane, fileId: string | null, ref: string | null, index: number) {
+    if (pane.agent === 'opencode') return opencode.image(pane, fileId, ref, index)
     const loc = await locate(pane)
     if (!loc || path.basename(loc.file) !== fileId) return null
     const m = /^(\d+):(\d+)$/.exec(String(ref || ''))
@@ -1412,6 +1425,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   const MODEL_MAX_BYTES = 16 * 1024 * 1024
   const modelCache = new Map<string, { file: string, size: number, raw: ModelInfo | null, info: ModelInfo | null }>()
   async function model(pane: TranscriptPane): Promise<ModelInfo | null> {
+    if (pane.agent === 'opencode') return opencode.model(pane)
     if (!pane.agent || !['claude', 'codex', 'omp'].includes(pane.agent)) return null
     const loc = await locate(pane)
     if (!loc) return null
@@ -1530,7 +1544,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     claudeAskCache.delete(paneId)
   }
 
-  return { chat, preview, latestReply, image, forget, locate, model, observe, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions }
+  return { chat, preview, latestReply, image, forget, locate, model, observe, dispose: opencode.dispose, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions }
 }
 
 export type Transcripts = ReturnType<typeof createTranscripts>
