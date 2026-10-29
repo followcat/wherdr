@@ -119,7 +119,7 @@ async function chooseTask(task: TaskHit) {
 async function choose(hit: ConversationHit) {
   const q = query.value
   open.value = false
-  await navigateTo({ path: `/a/${encodeURIComponent(hit.pane)}`, query: { q, hit: String(hit.offset), ts: hit.ts || '', role: hit.role, prefix: hit.text } })
+  await navigateTo({ path: `/a/${encodeURIComponent(hit.pane)}`, query: { q, hit: String(hit.offset), ...(hit.ref ? { ref: hit.ref } : {}), ts: hit.ts || '', role: hit.role, prefix: hit.text } })
 }
 </script>
 
