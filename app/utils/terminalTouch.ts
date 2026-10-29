@@ -99,5 +99,7 @@ export function createTerminalTouch({ vertical, momentum, horizontal, canHorizon
     },
     stopMomentum,
     cancel,
+    // Trailing drag velocity in px/ms -- drives the read-ahead overshoot.
+    velocity: () => speed,
   }
 }

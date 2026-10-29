@@ -99,6 +99,11 @@ let acc = 0, pendingLines = 0, unconfirmed = 0, momentumAcc = 0
 let raf = 0, paintRaf = 0
 let settleTimer: ReturnType<typeof setTimeout> | undefined
 let scrollX = 0, scrollY = 0
+// Read-ahead overshoot: extra lines sent ahead of the finger so arriving
+// frames already hold the rows the reveal needs (the transcript cache picks
+// them up). overAcked tracks the confirmed part, which the preview offset
+// subtracts to hold the screen at the finger's position.
+let overSent = 0, overAcked = 0
 let lastTouchAt = -Infinity
 let lastScrollAt = -Infinity
 let stoppingScroll = false
@@ -146,7 +151,7 @@ const applyOffset = () => {
   const el = screenEl()
   if (!el) return
   const h = props.ctl.rowHeight()
-  const raw = acc + (pendingLines + unconfirmed) * h
+  const raw = acc + (pendingLines + unconfirmed - overAcked) * h
   const px = smoothTouchScrolling.value ? touchPreviewOffset(raw, h, props.ctl.previewExtra(Math.sign(raw)) * h) : 0
   el.style.willChange = px ? 'transform' : ''
   el.style.transform = px ? `translate3d(0, ${px}px, 0)` : ''
@@ -157,7 +162,7 @@ function expirePreview() {
   clearTimeout(settleTimer)
   // At an edge Herdr may send no frame. Clear once, never animate a spring.
   settleTimer = setTimeout(() => {
-    unconfirmed = pendingLines = acc = 0
+    unconfirmed = pendingLines = acc = overSent = overAcked = 0
     cancelAnimationFrame(raf); raf = 0
     props.ctl.cancelTouchScroll()
     applyOffset()
@@ -168,18 +173,27 @@ function flush() {
   if (!pendingLines) return
   const n = pendingLines
   pendingLines = 0
-  if (props.ctl.scroll(n, scrollX, scrollY, 0, true)) unconfirmed += n
-  else unconfirmed = acc = 0
+  // Read ahead ~180ms of the current velocity so the frames streaming back
+  // contain the rows the reveal is about to need, capped per flush.
+  const lead = Math.abs(touch.velocity()) * 180 / props.ctl.rowHeight()
+  const extra = Math.max(0, Math.min(8, Math.round(lead - overSent + overAcked)))
+  if (props.ctl.scroll(n + Math.sign(n) * extra, scrollX, scrollY, 0, true)) { unconfirmed += n; overSent += Math.sign(n) * extra }
+  else unconfirmed = acc = overSent = overAcked = 0
   applyOffset()
   expirePreview()
 }
 watch(props.ctl.scrollAck, (value, previous) => {
   const n = value - previous
   if (!n || !smoothTouchScrolling.value) return
-  if (Math.sign(n) === Math.sign(unconfirmed))
-    unconfirmed -= Math.sign(n) * Math.min(Math.abs(n), Math.abs(unconfirmed))
-  cancelAnimationFrame(paintRaf)
-  paintRaf = requestAnimationFrame(() => { paintRaf = 0; applyOffset() })
+  if (Math.sign(n) === Math.sign(unconfirmed)) {
+    const pay = Math.min(Math.abs(n), Math.abs(unconfirmed))
+    unconfirmed -= Math.sign(n) * pay
+    // Whatever the ack covers past the finger debt is confirmed overshoot.
+    overAcked += Math.sign(n) * (Math.abs(n) - pay)
+  }
+  // Apply in the same task as the covering repaint -- a deferred rAF let the
+  // stale offset ride one extra frame, which read as micro-jitter.
+  applyOffset()
 }, { flush: 'sync' })
 const scroller = () => host.value?.querySelector('.xterm') as HTMLElement | null
 const touch = createTerminalTouch({
@@ -188,7 +202,7 @@ const touch = createTerminalTouch({
     // Reversal abandons stale prediction and pending commands first.
     if (unconfirmed && Math.sign(pixels) !== Math.sign(unconfirmed)) {
       props.ctl.cancelTouchScroll()
-      unconfirmed = pendingLines = acc = 0
+      unconfirmed = pendingLines = acc = overSent = overAcked = 0
     }
     scrollX = point.x; scrollY = point.y
     acc += pixels
@@ -205,8 +219,11 @@ const touch = createTerminalTouch({
     momentumAcc += pixels
     const { lines, rest } = takeLines(momentumAcc, props.ctl.rowHeight())
     momentumAcc = rest
-    // Momentum has no visual prediction; its acks must not pay finger debt.
-    if (lines) props.ctl.scroll(lines, point.x, point.y, 0, true, false)
+    // Momentum predicts like the drag did: the offset keeps gliding while
+    // frames catch up -- the cache strips keep the revealed edge real.
+    if (lines && props.ctl.scroll(lines, point.x, point.y, 0, true, true)) unconfirmed += lines
+    applyOffset()
+    expirePreview()
   },
   horizontal(pixels) { lastScrollAt = performance.now(); const el = scroller(); if (el) el.scrollLeft -= pixels },
   canHorizontal: () => { const el = scroller(); return !!el && el.scrollWidth > el.clientWidth },
@@ -217,7 +234,7 @@ function cancelTouch() {
   cancelAnimationFrame(raf); raf = 0
   cancelAnimationFrame(paintRaf); paintRaf = 0
   clearTimeout(settleTimer)
-  pendingLines = unconfirmed = momentumAcc = acc = 0
+  pendingLines = unconfirmed = momentumAcc = acc = overSent = overAcked = 0
   if (hadScroll) props.ctl.cancelTouchScroll()
   hadScroll = false
   applyOffset()
