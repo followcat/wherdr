@@ -276,6 +276,7 @@ export interface ChatItem {
   // already shown higher up (see shared/imageDupes.ts).
   hashes?: string[]
   error?: boolean
+  toolStatus?: 'streaming' | 'running' | 'completed' | 'error'
   // omp reasoning and completed background jobs, read from its transcript.
   ms?: number
   job?: { id: string, tool: string, out: string }
@@ -307,6 +308,7 @@ export interface OmpToolView {
 // the entry is one of wherdr's messages with photos (see server/utils/sentHistory.ts).
 export interface ClaudeQueueEntry { text: string, ts: string | null, images?: number, sent?: string }
 
+export type ChatCursor = number | string
 export interface ChatResponse {
   available: boolean
   // 'no_integration': not found, and Herdr's integration of this agent is
@@ -326,9 +328,13 @@ export interface ChatResponse {
   // first `keep` items and `items` replace the rest. Absent: `items` is the
   // whole bottom of the conversation.
   keep?: number
-  // Source cursor: JSONL byte offset, or Devin main-chain node id + 1.
-  // Zero means the beginning; callers pass it back without interpreting it.
-  start?: number
+  // Tail anchor: a JSONL byte offset, an opaque API cursor, or Devin's
+  // main-chain node id + 1. Numeric zero means the beginning; opaque anchors
+  // are compared by equality.
+  start?: ChatCursor
+  // Native API pagination is independent of the tail anchor. null: no older page.
+  // Absent: legacy readers use their numeric start as the older-page boundary.
+  olderCursor?: ChatCursor | null
   // The transcript was rewritten above the client's cursor (same size or
   // shorter): the reply is a fresh bottom, the client starts again from it.
   rewritten?: boolean
@@ -347,7 +353,8 @@ export interface ConversationHit {
   text: string
   excerpt: string
   ts: string | null
-  offset: number
+  offset: ChatCursor
+  ref?: string
 }
 // `tasks`: the Board's tasks it matched (shared/taskSearch.ts), best first.
 export interface ConversationSearchResponse { hits: ConversationHit[], limited: boolean, tasks?: TaskHit[] }

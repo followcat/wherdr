@@ -79,6 +79,7 @@ export function forgetModel(paneId: string) {
 }
 
 export async function currentModel(p: Pane): Promise<ModelInfo | null> {
+  if (p.agent === 'opencode') return transcripts.model(p)
   if (!p.agent || !['claude', 'codex', 'omp'].includes(p.agent)) return null
   // A failed read throws: the state keeps the model it showed (refreshModel).
   let fromFile = await transcripts.model(p)

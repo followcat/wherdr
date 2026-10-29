@@ -4,7 +4,7 @@
 // replies "unchanged" as long as the file has not grown).
 // Shown = older pages loaded on demand (`older`, up to
 // byte `olderCursor`) + bottom re-read continuously from byte `tailStart`.
-import type { ChatItem, ChatResponse, ClaudeQueueEntry, ClaudeScreen, OmpToolView, Pane, QueuedMessage } from '#shared/types'
+import type { ChatCursor, ChatItem, ChatResponse, ClaudeQueueEntry, ClaudeScreen, OmpToolView, Pane, QueuedMessage } from '#shared/types'
 import { readChat, saveChat, touchChat } from '~/utils/offlineCache'
 import { mayReadOffline, readOfflineAccess } from '~/utils/offlineAccess'
 import { queueReason, canClearQueued } from '~/utils/queuedReason'
@@ -13,7 +13,7 @@ import { isUploadLine, uploadSrc } from '#shared/queuedMatch'
 import { pendingQueue, rememberSent } from '~/utils/pendingQueue'
 import { clampRange, createSelectionSettler, lastLineRect, selectionReplyPos } from '~/utils/selectionReply'
 import { addAnswer, addQuote, answerEnd, answerOf, forgetReply, isQuoted, replyTargets, rowOf, rowRef, rowSettled, tableRank, tableRef, tappedAnswer, toggleOkAll, unansweredCount, withQuestions, type Answer } from '~/utils/questionReply'
-import { CHAT_READ_MS, createTailLoader, nextTail, restartsTail, tailQuery } from '~/utils/chatTail'
+import { CHAT_READ_MS, createTailLoader, hasOlder, olderCursor, nextTail, restartsTail, tailQuery } from '~/utils/chatTail' 
 import { pickTyping, replyId } from '~/utils/typewriter'
 import { newestThought } from '~/utils/reasoningReveal'
 import { restoredScrollTop, saveReadingPosition } from '~/utils/readingPosition'
@@ -39,9 +39,9 @@ const listEl = ref<HTMLElement | null>(null)
 interface ChatData {
   file: string | null
   token: string
-  tailStart: number | null
+  tailStart: ChatCursor | null
   older: ChatItem[]
-  olderCursor: number
+  olderCursor: ChatCursor | null
   tail: ChatItem[]
   queue: ClaudeQueueEntry[]
 }
@@ -285,7 +285,7 @@ async function loadStep(current: () => boolean): Promise<boolean> {
       const c = { ...chat.value }
       if (c.tailStart === null) {
         c.tailStart = r.start ?? 0
-        c.olderCursor = r.start ?? 0
+        c.olderCursor = olderCursor(r)
       }
       c.file = r.file || null
       c.token = r.token || ''
@@ -310,20 +310,21 @@ watch(() => props.pane.id, () => tailLoader.invalidate())
 
 // Older slice, keeping on screen what we were reading.
 async function loadOlder() {
-  if (olderBusy.value || !(chat.value.olderCursor > 0)) return
+  if (olderBusy.value || !hasOlder(chat.value.olderCursor)) return
   olderBusy.value = true
   const pane = props.pane.id
   const file = chat.value.file
   const before = chat.value.olderCursor
   try {
-    const r = await api<ChatResponse>(`/api/chat?pane=${encodeURIComponent(pane)}&before=${before}&since=${encodeURIComponent(chat.value.token)}`, undefined, AbortSignal.timeout(CHAT_READ_MS))
-    if (pane !== props.pane.id || r.file !== file || chat.value.olderCursor !== before) return
+    const r = await api<ChatResponse>(`/api/chat?${new URLSearchParams({ pane, before: String(before), since: chat.value.token })}`, undefined, AbortSignal.timeout(CHAT_READ_MS))
+    if (pane !== props.pane.id || chat.value.file !== file || chat.value.olderCursor !== before) return
     if (r.rewritten) {
       chat.value = fresh()
       synced = false
       await loadChat()
       return
     }
+    if (r.file !== file) return
     const b = box.value
     const fromBottom = b ? b.scrollHeight - b.scrollTop : 0
     await apply(() => {
@@ -331,7 +332,7 @@ async function loadOlder() {
         ...chat.value,
         older: (r.items || []).concat(chat.value.older),
         // no progress: stop there
-        olderCursor: (r.start ?? 0) < before ? (r.start ?? 0) : 0,
+        olderCursor: olderCursor(r, before),
       }
     }, true)
     saveChat(pane, items.value)
@@ -364,10 +365,10 @@ const TOOL_COMMAND = tl('Command', 'Commande'), TOOL_EDIT = tl('Edit', 'Modif'),
 const TOOL_LABEL: Record<string, string> = {
   Bash: TOOL_COMMAND, Read: tl('Read', 'Lecture'), Write: tl('Write', 'Écriture'), Edit: TOOL_EDIT, MultiEdit: TOOL_EDIT, Grep: tl('Search', 'Recherche'),
   Glob: tl('Files', 'Fichiers'), WebFetch: 'Web', WebSearch: tl('Web search', 'Recherche web'), Task: TOOL_SUBAGENT, Agent: TOOL_SUBAGENT,
-  TodoWrite: tl('Tasks', 'Tâches'), exec: TOOL_COMMAND, shell: TOOL_COMMAND, apply_patch: TOOL_EDIT,
+  TodoWrite: tl('Tasks', 'Tâches'), exec: TOOL_COMMAND, shell: TOOL_COMMAND, bash: TOOL_COMMAND, read: tl('Read', 'Lecture'), write: tl('Write', 'Écriture'), edit: TOOL_EDIT, grep: tl('Search', 'Recherche'), glob: tl('Files', 'Fichiers'), apply_patch: TOOL_EDIT,
 }
 const TOOL_ICON: Record<string, string> = {
-  Bash: 'i-lucide-terminal', exec: 'i-lucide-terminal', shell: 'i-lucide-terminal',
+  Bash: 'i-lucide-terminal', exec: 'i-lucide-terminal', shell: 'i-lucide-terminal', bash: 'i-lucide-terminal',
   Read: 'i-lucide-file-text', Write: 'i-lucide-file-plus', Edit: 'i-lucide-file-pen', MultiEdit: 'i-lucide-file-pen',
   apply_patch: 'i-lucide-file-pen', NotebookEdit: 'i-lucide-file-pen', Grep: 'i-lucide-text-search', Glob: 'i-lucide-folder-search',
   WebFetch: 'i-lucide-globe', WebSearch: 'i-lucide-search', Task: 'i-lucide-bot', Agent: 'i-lucide-bot',
@@ -379,6 +380,8 @@ const toolText = (tool: ChatItem) => (tool.name === 'TodoWrite' ? t(tool.text ||
 const isOtherTool = (tool: ChatItem) => tool.name === 'exec' && /^\w+$/.test(tool.text || '')
 const toolLabel = (tool: ChatItem) => isOtherTool(tool) ? t('Tool') : TOOL_LABEL[tool.name || ''] || tool.name || ''
 const toolIcon = (tool: ChatItem) => (tool.error ? 'i-lucide-circle-x' : isOtherTool(tool) ? 'i-lucide-wrench' : TOOL_ICON[tool.name || ''] || 'i-lucide-wrench')
+const toolLive = (tool: ChatItem, fallback: boolean) => tool.toolStatus ? tool.toolStatus === 'streaming' || tool.toolStatus === 'running' : fallback
+const toolGroupLive = (b: { list: ChatItem[], live: boolean }) => b.list.some((tool, j) => toolLive(tool, b.live && j === b.list.length - 1))
 // Collapsed action block: its last action.
 const groupSuffix = (tool: ChatItem) => `${toolLabel(tool)} · ${tool.text}`
 // Tool outputs (Devin exec results can run to thousands of lines): shown
@@ -428,7 +431,7 @@ function itemImageSrcs(it: ChatItem): string[] {
   const srcs: string[] = []
   if (!it.ref || !it.images || !file) return srcs
   for (let k = 0; k < it.images; k++) {
-    srcs.push(`/api/chat/image?pane=${encodeURIComponent(props.pane.id)}&file=${encodeURIComponent(file)}&ref=${it.ref}&i=${(it.imageAt || 0) + k}`)
+    srcs.push(`/api/chat/image?pane=${encodeURIComponent(props.pane.id)}&file=${encodeURIComponent(file)}&ref=${encodeURIComponent(it.ref)}&i=${(it.imageAt || 0) + k}`)
   }
   return srcs
 }
@@ -1207,7 +1210,7 @@ function stepSearch(d: number) {
   focusHit()
 }
 async function loadAllOlder() {
-  while (chat.value.olderCursor > 0) {
+  while (hasOlder(chat.value.olderCursor)) {
     const before = chat.value.olderCursor
     await loadOlder()
     if (chat.value.olderCursor === before) break
@@ -1225,7 +1228,7 @@ async function runSearch() {
     search.cur = -1
     return
   }
-  if (chat.value.olderCursor > 0 && !readOnly.value) {
+  if (hasOlder(chat.value.olderCursor) && !readOnly.value) {
     search.loading = true
     await loadAllOlder()
     search.loading = false
@@ -1236,24 +1239,28 @@ async function runSearch() {
 async function jumpToResult() {
   const raw = route.query.hit
   const q = route.query.q
-  if (typeof raw !== 'string' || typeof q !== 'string' || !/^\d+$/.test(raw)) return
-  const offset = Number(raw)
+  if (typeof raw !== 'string' || typeof q !== 'string') return
+  const numeric = /^\d+$/.test(raw)
+  const ref = typeof route.query.ref === 'string' ? route.query.ref : ''
+  if (!numeric && !ref) return
+  const offset = numeric ? Number(raw) : null
   searchOpen.value = true
   search.q = q
   search.loading = true
   jumping = true
   try {
     // Each load goes up one slice until the one of the target message.
-    while (chat.value.olderCursor > offset && !readOnly.value) {
+    for (let page = 0; page < 40 && hasOlder(chat.value.olderCursor) && !readOnly.value; page++) {
+      if (ref ? items.value.some(i => i.ref === ref) : typeof chat.value.olderCursor === 'number' && offset !== null && chat.value.olderCursor <= offset) break
       const before = chat.value.olderCursor
       await loadOlder()
-      if (chat.value.olderCursor >= before) break
+      if (chat.value.olderCursor === before) break
     }
     await revealAll()
     const role = String(route.query.role || '')
     const ts = String(route.query.ts || '')
     const prefix = String(route.query.prefix || '')
-    const index = items.value.findIndex(i => i.role === role && i.ts === ts && i.text.startsWith(prefix))
+    const index = items.value.findIndex(i => ref ? i.ref === ref : i.role === role && i.ts === ts && i.text.startsWith(prefix))
     const key = index < 0 ? '' : `${role}:${ts}:${index}`
     const target = [...(listEl.value?.querySelectorAll<HTMLElement>('[data-hit-key]') || [])].find(el => el.dataset.hitKey === key)
     applySearchMarks(false, target)
@@ -1390,7 +1397,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
             <ChatSkeleton v-if="skeleton" :agent="pane.agent" />
             <!-- Blocks above not shown yet: no "Load earlier" before them. -->
             <template v-else-if="hiddenBlocks" />
-            <div v-else-if="chat.olderCursor > 0" class="chat-more">
+            <div v-else-if="hasOlder(chat.olderCursor)" class="chat-more">
               <UButton size="xs" color="neutral" variant="outline" class="mono-btn" :loading="olderBusy" icon="i-lucide-arrow-up" @click="loadOlder">
                 {{ t('Load earlier messages') }}
               </UButton>
@@ -1553,16 +1560,16 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                   <MsgThumbs v-if="tool.images" class="tool-thumbs" :srcs="itemImageSrcs(tool)" :max="TOOL_THUMB_MAX" :offline="readOnly" :dupes="dupeSrcs" />
                 </template>
               </div>
-              <div v-else-if="b.k === 'tools'" class="tools" :class="{ live: b.live }">
+              <div v-else-if="b.k === 'tools'" class="tools" :class="{ live: toolGroupLive(b) }">
                 <template v-if="b.list.length <= 3">
                   <template v-for="(tool, j) in b.list" :key="j">
                     <UChatTool
                       :text="toolLabel(tool)" :suffix="toolText(tool)" :icon="toolIcon(tool)"
-                      :loading="b.live && j === b.list.length - 1" :streaming="b.live && j === b.list.length - 1"
+                      :loading="toolLive(tool, b.live && j === b.list.length - 1)" :streaming="toolLive(tool, b.live && j === b.list.length - 1)"
                       :ui="{ root: 'tool', trigger: 'tool-trigger', label: 'tool-label', suffix: 'tool-suffix', leading: 'tool-leading' }"
                       :class="{ err: tool.error }"
                     >
-                      <template v-if="tool.out" #default><pre class="tool-result" :class="{ open: isOutOpen(b.key, j) }" role="button" :aria-expanded="isOutOpen(b.key, j)" @click="toggleOut(b.key, j)">{{ toolOutText(tool) }}</pre></template>
+                      <template v-if="tool.out" #default><pre class="tool-result" :class="{ open: isOutOpen(b.key, j) }" role="button" tabindex="0" :aria-expanded="isOutOpen(b.key, j)" @click="toggleOut(b.key, j)" @keydown.enter.prevent="toggleOut(b.key, j)" @keydown.space.prevent="toggleOut(b.key, j)">{{ toolOutText(tool) }}</pre></template>
                     </UChatTool>
                     <MsgThumbs v-if="tool.images" class="tool-thumbs" :srcs="itemImageSrcs(tool)" :max="TOOL_THUMB_MAX" :offline="readOnly" :dupes="dupeSrcs" />
                   </template>
@@ -1570,7 +1577,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                 <UChatTool
                   v-else :open="isOpen(b.key)" :text="`${b.list.length} ${t('actions')}`"
                   :suffix="groupSuffix(b.list[b.list.length - 1]!)"
-                  :icon="b.live ? undefined : 'i-lucide-layers'" :loading="b.live" :streaming="b.live" chevron="trailing"
+                  :icon="toolGroupLive(b) ? undefined : 'i-lucide-layers'" :loading="toolGroupLive(b)" :streaming="toolGroupLive(b)" chevron="trailing"
                   :ui="{ root: 'tool group', trigger: 'tool-trigger', label: 'tool-label', suffix: 'tool-suffix', leading: 'tool-leading', body: 'tool-body', trailingIcon: 'tool-chev' }"
                   @update:open="setOpen(b.key, $event)"
                 >
@@ -1578,7 +1585,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                     <div class="tool-row" :class="{ err: tool.error }">
                       <UIcon :name="toolIcon(tool)" /><b>{{ toolLabel(tool) }}</b><span>{{ toolText(tool) }}</span>
                     </div>
-                    <pre v-if="tool.out" class="tool-result" :class="{ open: isOutOpen(b.key, j) }" role="button" :aria-expanded="isOutOpen(b.key, j)" @click="toggleOut(b.key, j)">{{ toolOutText(tool) }}</pre>
+                    <pre v-if="tool.out" class="tool-result" :class="{ open: isOutOpen(b.key, j) }" role="button" tabindex="0" :aria-expanded="isOutOpen(b.key, j)" @click="toggleOut(b.key, j)" @keydown.enter.prevent="toggleOut(b.key, j)" @keydown.space.prevent="toggleOut(b.key, j)">{{ toolOutText(tool) }}</pre>
                     <MsgThumbs v-if="tool.images" class="tool-thumbs" :srcs="itemImageSrcs(tool)" :max="TOOL_THUMB_MAX" :offline="readOnly" :dupes="dupeSrcs" />
                   </template>
                 </UChatTool>

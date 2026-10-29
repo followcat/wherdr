@@ -22,12 +22,13 @@ export default defineApi(async (event) => {
   const sent = String(q.since || '')
   const count = num('n')
   const since = chatDelta.sinceOf(p.id, sent, count)
-  const from = num('from')
+  const cursor = (k: string) => p.agent === 'opencode' && typeof q[k] === 'string' ? String(q[k]).slice(0, 256) : num(k)
+  const from = cursor('from')
   const r = await transcripts.chat(p, {
     since: mark ? (since.endsWith(mark) ? since.slice(0, -mark.length) : '') : since,
     from, // re-read from this byte (bottom of the conversation already shown)
     anchor: sent, // join check above `from`, even for a list the server forgot
-    before: num('before'), // older slice, ending at this byte
+    before: cursor('before'), // native page cursor or legacy byte boundary
   })
   // Not found because Herdr's integration of this agent is missing: say so,
   // with the command (a fresh agent keeps "No conversation yet").

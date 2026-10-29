@@ -270,7 +270,7 @@ export class RemoteMachine implements Machine {
     this.fwdClient = path.join(RUNTIME_DIR, `${p.key}.client.sock`)
     this.exec = (script, args = [], opts = {}) => this.run(script, args, opts)
     this.fs = createShellFs(this.exec)
-    this.transcripts = createTranscripts({ home: '/', herdr, fs: this.fs, exec: this.exec })
+    this.transcripts = createTranscripts({ home: '/', herdr, fs: this.fs, exec: this.exec, stream: (script, args) => this.spawnShell(script, args) })
   }
 
   get session() { return this.baseKey ? this.profileSession : REMOTE_SESSION || this.profileSession }
@@ -417,6 +417,7 @@ export class RemoteMachine implements Machine {
   }
 
   stop() {
+    this.transcripts.dispose()
     this.stopped = true
     if (this.timer) clearTimeout(this.timer)
     if (this.purgeTimer) clearInterval(this.purgeTimer)
@@ -540,7 +541,8 @@ export class RemoteMachine implements Machine {
       }
       this.remoteSock = sock
       this.ident = `${kv('host').toLowerCase()}|${sock}`
-      this.transcripts = createTranscripts({ home: this.home, herdr, fs: this.fs, exec: this.exec })
+      this.transcripts.dispose()
+      this.transcripts = createTranscripts({ home: this.home, herdr, fs: this.fs, exec: this.exec, stream: (script, args) => this.spawnShell(script, args) })
       if (socketTransport(sock) === 'relay') {
         const check = await this.runOnce(bridgeCommand(this.bin, this.session, false, true), { timeoutMs: 10000 })
         if (check.code !== 0 || check.stdout.toString('utf8').trim() !== 'herdr-api-bridge-v1') {
@@ -825,7 +827,15 @@ export function startMachines() {
 }
 export function stopMachines() {
   if (refreshTimer) clearInterval(refreshTimer)
+  localMachine.transcripts.dispose()
+  for (const m of sessions.values()) m.transcripts.dispose()
   for (const m of remotes.values()) m.stop()
   for (const m of sessions.values()) if (m instanceof RemoteMachine) m.stop()
 }
-process.on('exit', () => { for (const m of [...remotes.values(), ...sessions.values()]) if (m instanceof RemoteMachine) m.stop() })
+process.on('exit', () => {
+  localMachine.transcripts.dispose()
+  for (const m of [...remotes.values(), ...sessions.values()]) {
+    m.transcripts.dispose()
+    if (m instanceof RemoteMachine) m.stop()
+  }
+})
