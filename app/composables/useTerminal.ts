@@ -54,6 +54,10 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   let links: TerminalLinks | null = null
   let mouse: ReturnType<typeof bindTerminalMouse> | null = null
   let mouseSupported = false
+  // Reactive copy for the touch layer: mouse-capable panes scroll through
+  // the server (TUI programs scroll in-app, the pane scrollback via Herdr),
+  // panes on old Herdr (<0.9.2) browse their local scrollback overlay.
+  const mouseMode = ref(false)
   // Local scrollback overlay state (scrollback.read / scrollback.chunk).
   const scrollback = ref('')
   const scrollbackVersion = ref(0)
@@ -310,6 +314,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       catch { return }
       if (m.type === 'web.capabilities') {
         mouseSupported = m.mouse === true
+        mouseMode.value = mouseSupported
       } else if (m.type === 'terminal.frame') {
         if (!gotFrame) {
           gotFrame = true
@@ -463,7 +468,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     reset, scroll, focus, blur, tapLink, tapMouse: (x: number, y: number) => mouse?.tap(x, y), hasFocus, rowHeight, pageRows, setVisible, dispose, loading, kbdOn,
     hasBanner: opts.hasBanner, selectionHint,
     cancelTouchScroll, scrollInputVersion, frameTick, scrollAck,
-    scrollback, scrollbackVersion, requestScrollback,
+    scrollback, scrollbackVersion, requestScrollback, mouseMode,
     virtualModifiers, lastVirtualChord, toggleVirtualModifier: toggleModifier, clearVirtualModifiers, sendVirtualKey,
   }
 }
