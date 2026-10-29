@@ -24,6 +24,13 @@ async function mounted(enabled: boolean) {
     focus: vi.fn(), blur: vi.fn(), tapLink: vi.fn(() => false), tapMouse: vi.fn(),
     cancelTouchScroll: vi.fn(), scrollInputVersion: ref(0), scrollAck: ref(0), frameTick: ref(0),
     loading: ref(false), selectionHint: { visible: ref(false), dismiss: vi.fn() },
+    // Live-transcript surface stays off under jsdom (no coarse pointer), but
+    // the component reads these regardless of ltActive.
+    mouseMode: ref(false), previewExtra: () => 0, previewRows: () => [],
+    requestScrollback: vi.fn(), scrollback: ref(''), scrollbackVersion: ref(0),
+    termTheme: () => undefined, transcriptAt: () => undefined,
+    transcriptInject: vi.fn(), transcriptRange: () => [0, 0],
+    transcriptWindow: () => ({ top: 0, rows: 24 }),
   }
   const w = await mountSuspended(TerminalView, { props: { ctl: ctl as unknown as TerminalCtl } })
   vi.stubGlobal('requestAnimationFrame', (fn: FrameRequestCallback) => { frames.set(++id, fn); return id })
@@ -67,7 +74,13 @@ describe('terminal beta switch', () => {
     expect(r.screen()).toContain('translate3d')
     expect(r.w.get('#termWrap').attributes('style')).toBeUndefined()
     paint()
-    expect(r.ctl.scroll).toHaveBeenCalledWith(2, 50, 140, 0, true)
+    // Sends carry the finger's rows plus a velocity read-ahead (<=8 extra);
+    // only the finger's rows count as preview debt.
+    expect(r.ctl.scroll).toHaveBeenCalledTimes(1)
+    const call = r.ctl.scroll.mock.calls[0]!
+    expect(call.slice(1)).toEqual([50, 140, 0, true])
+    expect(call[0]).toBeGreaterThanOrEqual(2)
+    expect(call[0]).toBeLessThanOrEqual(10)
     r.ctl.scrollAck.value = 2
     paint()
     expect(r.screen()).toContain('8px')
