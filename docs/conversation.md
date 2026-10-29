@@ -21,8 +21,8 @@
   One SSE subscription per machine invalidates the cache; canonical HTTP pages are
   re-read on reconnect and regularly even when no event arrives. Revert, compaction
   and service changes discard old page anchors. Temporary read failures preserve
-  already displayed messages. Search scans at most 40 pages / 8 MB within the shared
-  deadline and reports incomplete results. Only session-referenced inline or local
+  already displayed messages. Search uses a 40-page / 8 MB scan budget within the shared deadline
+  and reports incomplete results; the last page may exceed the byte budget. Only session-referenced inline or local
   image files are served; remote image URLs are not fetched. Sending, stopping,
   questions and approvals retain the existing terminal controls. Version 1.x,
   `--standalone` and explicit `--server` instances are not supported by this reader.
