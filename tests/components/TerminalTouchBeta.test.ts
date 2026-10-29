@@ -276,12 +276,16 @@ describe('terminal beta switch', () => {
     expect(sb.attributes('style')).toContain('pointer-events: auto')
     expect(r.w.get('.sb-live').text()).toContain('live row')
     expect(r.ctl.requestScrollback).toHaveBeenCalledOnce()
+    // A toolbar carries the actions: select all, copy, done.
+    expect(r.w.get('.cp-bar').text()).toContain('Copy mode')
+    expect(r.w.get('.cp-btn.done').exists()).toBe(true)
     // The release after copy mode must not become a focusing tap.
     await r.send('touchend', 100, 0)
     expect(r.ctl.focus).not.toHaveBeenCalled()
-    await r.w.get('.cp-done').trigger('click')
+    await r.w.get('.cp-btn.done').trigger('click')
     expect(r.w.get('#scrollback').classes()).not.toContain('copy-mode')
     expect(r.w.find('.sb-live').exists()).toBe(false)
+    expect(r.w.find('.cp-bar').exists()).toBe(false)
   })
   it('cancels the long press once the finger moves', async () => {
     const r = await mounted(true, true)

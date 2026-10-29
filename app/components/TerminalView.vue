@@ -154,15 +154,35 @@ const touch = createTerminalTouch({
 // for a slow tap or leak into the tap->focus path on release.
 let lpTimer: ReturnType<typeof setTimeout> | undefined, lpX = 0, lpY = 0, lpEntered = false
 const armLongPress = () => { clearTimeout(lpTimer); lpTimer = setTimeout(enterCopyMode, 480) }
+const cpSelLen = ref(0), cpCopied = ref(false)
+let cpCopiedTimer: ReturnType<typeof setTimeout> | undefined
+function onSelChange() {
+  const sel = document.getSelection()
+  cpSelLen.value = sel && !sel.isCollapsed ? sel.toString().length : 0
+}
+function selectAllCopy() {
+  const sel = document.getSelection()
+  if (sbBody.value && sel) sel.selectAllChildren(sbBody.value)
+}
+async function copySelection() {
+  const text = document.getSelection()?.toString() ?? ''
+  if (!text) return
+  try { await navigator.clipboard.writeText(text) } catch { try { document.execCommand('copy') } catch { /* no clipboard */ } }
+  cpCopied.value = true
+  clearTimeout(cpCopiedTimer); cpCopiedTimer = setTimeout(() => { cpCopied.value = false }, 1200)
+}
 function enterCopyMode() {
   lpTimer = undefined
   lpEntered = true
   if (copyMode.value) return
   copyMode.value = true
+  cpSelLen.value = 0
+  cpCopied.value = false
   haptic()
   // The finger may still be down: drop the gesture so it cannot scroll the
   // live pane behind the copy surface.
   cancelTouch()
+  document.addEventListener('selectionchange', onSelChange)
   if (!sbFetchedAt) { sbFetchedAt = Date.now(); props.ctl.requestScrollback(sbWant) }
   nextTick(() => {
     renderScrollback()
@@ -172,6 +192,11 @@ function enterCopyMode() {
 function exitCopyMode() {
   if (!copyMode.value) return
   copyMode.value = false
+  document.removeEventListener('selectionchange', onSelChange)
+  document.getSelection()?.removeAllRanges()
+  cpSelLen.value = 0
+  cpCopied.value = false
+  clearTimeout(cpCopiedTimer)
   renderScrollback()
 }
 function cancelTouch() {
@@ -295,6 +320,7 @@ function renderScrollback() {
   if (copyMode.value) {
     const live = document.createElement('div')
     live.className = 'sb-live'
+    live.dataset.label = t('current screen')
     for (const spans of props.ctl.liveScreenSpans()) live.appendChild(lineDiv(spans))
     holder.appendChild(live)
   }
@@ -307,8 +333,8 @@ function renderScrollback() {
     Object.assign(el.style, { fontFamily: cs.fontFamily, fontSize: cs.fontSize, lineHeight: cs.lineHeight, letterSpacing: cs.letterSpacing, color: cs.color })
     // The screen canvas paints its own bg; the element itself is transparent,
     // so take the page surface -- an opaque history region must hide the live
-    // grid behind it. In copy mode the gap is opaque too: the snapshot inside
-    // the body owns the live rows, the real grid stays hidden.
+    // grid behind it. In copy mode the snapshot inside the body owns the live
+    // rows and the gap is hidden, so the whole surface is one solid document.
     const bg = getComputedStyle(document.body).getPropertyValue('--bg') || 'black'
     body.style.background = bg
     const gap = el.querySelector('.sb-gap') as HTMLElement | null
@@ -316,7 +342,8 @@ function renderScrollback() {
     const wrap = el.getBoundingClientRect()
     const sr = src.getBoundingClientRect()
     Object.assign(body.style, {
-      paddingTop: `${Math.max(0, sr.top - wrap.top)}px`,
+      // In copy mode a fixed bar overlays the top of the snapshot surface.
+      paddingTop: `${Math.max(0, sr.top - wrap.top) + (copyMode.value ? 40 : 0)}px`,
       paddingLeft: `${Math.max(0, sr.left - wrap.left)}px`,
       paddingRight: `${Math.max(0, wrap.right - sr.right)}px`,
     })
@@ -329,7 +356,12 @@ function renderScrollback() {
     ? el.scrollHeight
     : Math.max(0, el.scrollHeight - el.clientHeight - distFromBottom)
 }
-watch(props.ctl.scrollbackVersion, renderScrollback)
+watch(props.ctl.scrollbackVersion, () => {
+  // A re-render rebuilds the snapshot DOM and would destroy a live selection;
+  // late history chunks still land while nothing is selected yet.
+  if (copyMode.value && cpSelLen.value > 0) return
+  renderScrollback()
+})
 watch(props.ctl.frameTick, () => {
   if (!sbFetchedAt && !props.ctl.mouseMode.value) {
     sbFetchedAt = Date.now()
@@ -337,7 +369,7 @@ watch(props.ctl.frameTick, () => {
   }
 })
 watch(props.ctl.mouseMode, mouseCapable => {
-  if (sbEl.value) sbEl.value.scrollTop = sbEl.value.scrollHeight
+  if (sbEl.value && !copyMode.value) sbEl.value.scrollTop = sbEl.value.scrollHeight
   if (!mouseCapable && !sbFetchedAt) {
     sbFetchedAt = Date.now()
     props.ctl.requestScrollback(sbWant)
@@ -363,7 +395,9 @@ function onSbScroll() {
   }
 }
 watch(props.ctl.scrollInputVersion, () => {
-  if (sbEl.value) sbEl.value.scrollTop = sbEl.value.scrollHeight
+  // Copy mode is a still document: inputs and reconnects must not yank the
+  // reading position out from under an in-progress selection.
+  if (sbEl.value && !copyMode.value) sbEl.value.scrollTop = sbEl.value.scrollHeight
 })
 let sbAX = 0, sbAY = 0, sbStartTop = 0
 let sbTouchSent = false, sbWasMoving = false
@@ -446,7 +480,16 @@ onUnmounted(() => {
       <div ref="sbBody" class="sb-body" />
       <div class="sb-gap" @click="onGapTap" />
     </div>
-    <button v-if="copyMode" type="button" class="cp-done" @click="exitCopyMode">{{ t('Done') }}</button>
+    <div v-if="copyMode" class="cp-bar">
+      <span class="cp-title">{{ t('Copy mode') }}</span>
+      <div class="cp-actions">
+        <button type="button" class="cp-btn" :disabled="!cpSelLen" @click="copySelection">
+          {{ cpCopied ? t('Copied') : cpSelLen ? `${t('Copy')} ${cpSelLen}` : t('Copy') }}
+        </button>
+        <button type="button" class="cp-btn" @click="selectAllCopy">{{ t('Select all') }}</button>
+        <button type="button" class="cp-btn done" @click="exitCopyMode">{{ t('Done') }}</button>
+      </div>
+    </div>
     <div v-if="ctl.loading.value" class="term-loading"><span class="spinner" /></div>
     <div v-if="ctl.selectionHint.visible.value" class="terminal-selection-hint">
       {{ tl('Shift + drag to select', 'Shift + glisser pour sélectionner') }}
