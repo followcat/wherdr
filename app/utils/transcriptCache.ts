@@ -70,12 +70,15 @@ export function createTranscriptCache() {
     if (!known.has(idx)) injected.set(idx, e)
   }
 
-  // Document-model accessors for the live transcript scroller: the whole
-  // known range rendered in index order.
+  // Document-model accessors for the live transcript scroller: the dense
+  // envelope around the window. A detached island (a dump tail far below the
+  // painted region after streaming evicts the overlap) must not open a hole
+  // of placeholder rows in the document, so the range only grows through
+  // indices that actually connect.
   function range(): [number, number] {
-    let mn = Infinity, mx = -Infinity
-    for (const k of known.keys()) { if (k < mn) mn = k; if (k > mx) mx = k }
-    for (const k of injected.keys()) { if (k < mn) mn = k; if (k > mx) mx = k }
+    let mn = top, mx = top + rows - 1
+    while (known.has(mn - 1) || injected.has(mn - 1)) mn--
+    while (known.has(mx + 1) || injected.has(mx + 1)) mx++
     return [mn, mx]
   }
   function at(idx: number) { const e = known.get(idx) ?? injected.get(idx); return e ? { text: e.t, html: e.h } : null }

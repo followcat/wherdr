@@ -225,7 +225,12 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     const p = fit.proposeDimensions()
     if (!p || !p.cols || !p.rows) return
     const d = { cols: p.cols, rows: p.rows }
-    if (d.cols !== term.cols || d.rows !== term.rows) term.resize(d.cols, d.rows)
+    if (d.cols !== term.cols || d.rows !== term.rows) {
+      // Physical transcript rows wrap at the pane width: a client-side fit
+      // (rotation, split) invalidates them before the server echoes it back.
+      transcript.reset()
+      term.resize(d.cols, d.rows)
+    }
     if (send && (d.cols !== lastSize.cols || d.rows !== lastSize.rows)) {
       if (sendTerm({ type: 'terminal.resize', cols: d.cols, rows: d.rows })) lastSize = { cols: d.cols, rows: d.rows }
     }

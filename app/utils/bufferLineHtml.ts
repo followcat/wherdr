@@ -31,14 +31,14 @@ export function bufferLineToHtml(line: IBufferLine, theme?: ITheme): string {
   for (let x = 0; x < line.length; x++) {
     const cell = line.getCell(x)
     if (!cell || cell.getWidth() === 0) continue
-    let fg: string | null = cell.isFgRGB() ? `#${hex(cell.getFgColor() >>> 0).slice(-6)}`
+    let fg: string | null = cell.isFgRGB() ? `#${(cell.getFgColor() >>> 0).toString(16).padStart(6, '0')}`
       : cell.isFgPalette() ? paletteCss(cell.getFgColor(), theme) : null
-    let bg: string | null = cell.isBgRGB() ? `#${hex(cell.getBgColor() >>> 0).slice(-6)}`
+    let bg: string | null = cell.isBgRGB() ? `#${(cell.getBgColor() >>> 0).toString(16).padStart(6, '0')}`
       : cell.isBgPalette() ? paletteCss(cell.getBgColor(), theme) : null
     if (cell.isInverse()) { const t = fg ?? theme?.foreground ?? null; fg = bg ?? theme?.background ?? null; bg = t }
     const style = `${fg ? `color:${fg};` : ''}${bg ? `background-color:${bg};` : ''}${cell.isBold() ? 'font-weight:700;' : ''}${cell.isItalic() ? 'font-style:italic;' : ''}${cell.isUnderline() || cell.isStrikethrough() ? `text-decoration:${cell.isUnderline() ? 'underline' : ''}${cell.isStrikethrough() ? ' line-through' : ''};` : ''}${cell.isDim() ? 'opacity:.55;' : ''}`
     if (style !== key) { flush(key); key = style }
-    run += cell.isInvisible() ? ' ' : cell.getChars()
+    run += cell.isInvisible() ? ' ' : cell.getChars() || ' '
   }
   flush(key)
   return html
