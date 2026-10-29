@@ -3,6 +3,8 @@
 // checks that every key used in the code has one). The choice is saved on the device.
 
 const FR: Record<string, string> = {
+  'Individual agents': 'Agents individuels',
+  'List standalone agents separately. Board tasks stay grouped. Follows you on every device.': 'Lister les agents indépendants séparément. Les tâches du board restent groupées. Ce réglage te suit sur tous tes appareils.',
   'Smooth touch scrolling (beta)': 'Défilement tactile fluide (bêta)',
   'Experimental finger tracking and inertia. Saved on this device.': 'Suivi du doigt et inertie expérimentaux. Enregistré sur cet appareil.',
   'Run in split terminal': 'Lancer dans un terminal partagé',

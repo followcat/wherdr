@@ -47,7 +47,7 @@ describe('release check', () => {
     const check = createUpdateChecker({ current: '1.1.0', env: { WHERDR_INSTALL: 'native' }, fetch })
     const u = await check()
     expect(fetch).toHaveBeenCalledWith(RELEASES_URL)
-    expect(u).toEqual({ current: '1.1.0', latest: '1.2.0', url: 'https://example.test/releases/v1.2.0', checked: true, mode: 'native', command: 'git pull && npm ci && npm run build', oneTap: false })
+    expect(u).toEqual({ current: '1.1.0', latest: '1.2.0', url: 'https://example.test/releases/v1.2.0', checked: true, mode: 'native', command: 'git pull && npm ci && npm run build', oneTap: false, behind: 1, missed: ['1.2.0'], behindAtLeast: false })
   })
 
   it('says nothing when up to date or ahead', async () => {

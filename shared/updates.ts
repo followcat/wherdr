@@ -33,6 +33,11 @@ export interface UpdateInfo {
   command: string
   // wherdr can update itself from the app in this mode (button Update).
   oneTap: boolean
+  // Stable releases newer than current, among the latest 100 API entries.
+  // Optional so cached state and older API responses remain usable.
+  behind?: number
+  missed?: string[] // newest first, at most five versions (including latest)
+  behindAtLeast?: boolean // the API page was full: the count is a lower bound
 }
 
 // "v1.2.3", "1.2.3-beta.1" -> [1, 2, 3]; null if unreadable. Pre-releases

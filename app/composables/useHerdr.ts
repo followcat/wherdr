@@ -114,6 +114,8 @@ export const showCounters = syncedRef('showCounters', flag.read(true), flag.writ
 export const showQuotas = syncedRef('showQuotas', flag.read(true), flag.write)
 // Existing devices keep Machine.
 export const homeGrouping = syncedRef('homeGrouping', readHomeGrouping, v => v)
+// Workspace cards remain the default; Board tasks keep their own grouping.
+export const individualAgentList = syncedRef('individualAgentList', flag.read(false), flag.write)
 
 // Compact list: one line per card (sidebar on a computer, home list on the phone).
 // Read before the first render, so the list never changes density after it.

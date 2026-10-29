@@ -172,3 +172,8 @@ and the app says so. Every step is logged in `~/wherdr/update.log`.
 | `wherdr` command (npm) | `npm install -g wherdr@latest && wherdr restart` (npx: stop it, then `npx wherdr@latest`) |
 | `wherdr` command (Homebrew) | `brew upgrade wherdr`, then `brew services restart wherdr` |
 | From source | `git pull && npm ci && npm run build`, then restart wherdr |
+
+Update notices also show the number of newer stable releases and up to four
+additional version numbers besides the latest. This measures published releases,
+not Git commits or whether a fork has merged develop. When GitHub returns a full
+100-entry page, the count is labelled as a lower bound.

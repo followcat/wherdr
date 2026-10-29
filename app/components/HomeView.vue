@@ -28,6 +28,7 @@ import pkg from '../../package.json'
 import { dropMachineKey, shiftMachineKey } from '#shared/machineOrder'
 import { stateEntries, stateMachines } from '~/utils/homeGrouping'
 import { BAR_ALL } from '~/utils/machineBar'
+import { individualAgentRows, individualAgentTitle, isIndividualAgentRow } from '~/utils/homeAgentRows'
 import type { AwakeState, SleepAssertion, AwakeMode } from '../../server/utils/awake'
 const emit = defineEmits<{ search: [] }>()
 useQuotaLoader()
@@ -73,7 +74,8 @@ function groupsOf(list: Row[], group = rowGroup) {
     { key: 'ready', title: tl('Ready', 'Prêts'), list: list.filter(r => group(r) === 'ready') },
   ] as const).filter(g => g.list.length).map(g => ({ ...g, lists: g.key === 'ready' ? readyLists(g.list, autoReorderReady.value).map(l => sortReady(l, readySort.value, rowTitle)) : [g.list] }))
 }
-const rowTitle = (r: Row) => spaceTitle(r.lead, st.value.workspaces.find(w => w.id === r.lead.workspace))
+const rowTitle = (r: Row) => isIndividualAgentRow(r) ? individualAgentTitle(r.lead) : spaceTitle(r.lead, st.value.workspaces.find(w => w.id === r.lead.workspace))
+const standaloneRows = (rows: Row[]) => individualAgentList.value ? individualAgentRows(rows) : rows
 // Sort menu of the Ready group; sorted other than in Herdr's order, the
 // list can no longer be reordered manually.
 const READY_SORT_LABELS: Record<ReadySort, [string, string]> = {
@@ -95,7 +97,7 @@ function listOf(rows: Row[]) {
   return {
     coordinators: b.coordinators,
     projects: b.projects,
-    groups: groupsOf(b.others.filter(r => r.lead.agent || showShells.value)),
+    groups: groupsOf(standaloneRows(b.others).filter(r => r.lead.agent || showShells.value)),
   }
 }
 // Each kind of coordinator with its own icon and label (coordinatorKind).
@@ -197,7 +199,7 @@ const stateAway = computed(() => stateShown.value.away.map(m => ({
 const stateCards = computed(() => {
   return stateShown.value.online.flatMap(m => {
     const b = boardSections(spaceRows(st.value, m.key), st.value.workspaces, boardLinks.value, livePanes.value, k => machineInfo(k)?.baseKey ?? k)
-    return stateEntries(b, showShells.value).map(e => ({
+    return stateEntries({ ...b, others: standaloneRows(b.others) }, showShells.value).map(e => ({
       ...e,
       machine: machineName(m.key) || m.label,
       board: e.member ? memberCard(e.member) : e.level ? coordinatorCard(e.level, m.local, machineName(m.key) || m.label, e.repo) : null,
@@ -511,6 +513,8 @@ async function saveMachine() {
 
 // Reorder: connected, and the machine online.
 function canReorder(machine: string) {
+  // Dragging a pane must not silently reorder its whole workspace.
+  if (individualAgentList.value) return false
   if (offlineView.value || !eventsOpen.value || !st.value.ok) return false
   return !multiMachine.value || machines.value.some(m => m.key === machine && m.status === 'online')
 }

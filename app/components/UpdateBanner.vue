@@ -24,7 +24,12 @@ function update() {
   <div class="update-banner">
     <UIcon name="i-lucide-circle-arrow-up" class="update-banner-icon" />
     <div class="update-banner-body">
-      <p>{{ tl(`wherdr ${info.latest} is available`, `wherdr ${info.latest} est disponible`) }}<small>{{ tl(`Installed: ${info.current}`, `Version installée : ${info.current}`) }}</small></p>
+      <p>{{ tl(`wherdr ${info.latest} is available`, `wherdr ${info.latest} est disponible`) }}
+        <small>{{ tl(`Installed: ${info.current}`, `Version installée : ${info.current}`) }}<template v-if="info.behind">
+          · {{ info.behindAtLeast ? tl(`At least ${info.behind} newer releases`, `Au moins ${info.behind} versions plus récentes`) : tl(`Newer releases: ${info.behind}`, `Versions plus récentes : ${info.behind}`) }}
+        </template></small>
+        <small v-if="info.missed && info.missed.length > 1">{{ tl(`Other newer releases: ${info.missed.slice(1).join(', ')}`, `Autres versions plus récentes : ${info.missed.slice(1).join(', ')}`) }}</small>
+      </p>
       <template v-if="!info.oneTap">
         <code>{{ info.command }}</code>
         <small v-if="info.mode === 'native'">{{ t('Then restart wherdr.') }}</small>
