@@ -38,12 +38,14 @@ export function usesTerminalException(o: { text: string, agent?: string | null, 
 // recognition runs first, so a recognized menu cursor never becomes a field.
 export function confirmedInput(text: string): boolean {
   const lines = text.trimEnd().split('\n')
-  const at = lines.findLastIndex(l => /^\s*[❯›](?:\s|$)/.test(l) || /^!(?:\s|$)/.test(l) || /^╰─(?:\s|$)/.test(l))
+  // Devin's prompt glyph is ❭ (U+276D), not the Claude ❯ (U+276F): without it
+  // every ready Devin screen fell through to the terminal fallback.
+  const at = lines.findLastIndex(l => /^\s*[❯›❭](?:\s|$)/.test(l) || /^!(?:\s|$)/.test(l) || /^╰─(?:\s|$)/.test(l))
   if (at < 0) return false
   const line = lines[at]!
   const below = lines.slice(at + 1).join('\n')
   if (/\b(?:enter|esc|escape)\s+(?:to\s+)?(?:select|open|back|cancel|confirm|close)\b/i.test(below)) return false
-  if (/^\s*[❯›]\s+\d{1,2}\.\s/.test(line)) return false
+  if (/^\s*[❯›❭]\s+\d{1,2}\.\s/.test(line)) return false
   if (/^╰─(?:\s|$)/.test(line)) return true
   if (/^\s*›(?:\s|$)/.test(line)) return /for shortcuts|context left|\b(?:gpt-[\w.-]+|o[1-9](?:-[\w.-]+)?)\b.*·/i.test(below)
   return /^\s*─{3,}/.test(lines[at - 1] || '')
