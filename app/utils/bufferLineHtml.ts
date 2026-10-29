@@ -3,8 +3,9 @@ import type { IBufferLine, ITheme } from '@xterm/xterm'
 // Render an xterm buffer line to styled HTML for the predicted-scroll edge
 // strips. Rows arriving unstyled made the covering frame's real colors pop
 // in -- that mismatch read as a flash on every settle.
-const NAMES = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
+export const THEME16_NAMES = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
   'brightBlack', 'brightRed', 'brightGreen', 'brightYellow', 'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite'] as const
+const NAMES = THEME16_NAMES
 const CUBE = [0, 95, 135, 175, 215, 255]
 const hex = (n: number) => n.toString(16).padStart(2, '0')
 

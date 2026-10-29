@@ -4,7 +4,8 @@
 // sent to the agent; click = keyboard to the terminal).
 import '@xterm/xterm/css/xterm.css'
 import { createTerminalTouch, touchPreviewOffset } from '~/utils/terminalTouch'
-import { ansiToLines } from '~/utils/ansiToHtml'
+import { ansiToLines, ansiSpansToHtml } from '~/utils/ansiToHtml'
+import { THEME16_NAMES } from '~/utils/bufferLineHtml'
 
 const props = defineProps<{ ctl: TerminalCtl }>()
 const host = ref<HTMLElement | null>(null)
@@ -506,6 +507,8 @@ function ltOnScroll() {
     ltSentOff += send
     ltScrollSend(send)
   }
+  // Approaching the top of what we have: pull more history into the doc.
+  if (el.scrollTop < el.clientHeight) ltPrefetch()
 }
 // Pulling down against the document top asks the app for older content:
 // the scrollTop is pinned, so finger deltas become the scroll sends and the
@@ -532,7 +535,7 @@ function ltApplyMetrics() {
   const src = host.value?.querySelector('.xterm-screen')
   if (!el || !doc || !src) return
   const cs = getComputedStyle(src)
-  Object.assign(el.style, { fontFamily: cs.fontFamily, fontSize: cs.fontSize, lineHeight: cs.lineHeight, letterSpacing: cs.letterSpacing, color: cs.color })
+  Object.assign(el.style, { fontFamily: cs.fontFamily, fontSize: cs.fontSize, fontWeight: cs.fontWeight, fontStyle: cs.fontStyle, lineHeight: cs.lineHeight, letterSpacing: cs.letterSpacing, color: cs.color })
   const wrap = el.getBoundingClientRect()
   const sr = src.getBoundingClientRect()
   Object.assign(doc.style, {
@@ -542,6 +545,52 @@ function ltApplyMetrics() {
     paddingBottom: '0',
   })
 }
+// ---- dump prefetch: real history rows merged above the transcript ----
+// `recent` (pane-width wrapped) ends with the pane's live screen; line its
+// tail up with the transcript's newest painted rows by content, then inject
+// everything below the known range. TUI snapshots align inside the window
+// and inject nothing; real scrollback extends the document upward, so the
+// first upward drag finds real rows instead of waiting on repaints.
+let ltDumpWant = 0
+let ltDumpAt = 0
+function ltTheme16() {
+  const t = props.ctl.termTheme()
+  return t ? THEME16_NAMES.map(n => (t as Record<string, string | undefined>)[n]) : undefined
+}
+function ltIngestDump(text: string) {
+  if (!text || !ltActive.value) return
+  const lines = ansiToLines(text)
+  const w = props.ctl.transcriptWindow()
+  const [mn, mx] = props.ctl.transcriptRange()
+  if (!(mx >= mn) || lines.length < w.rows) return
+  const k = w.rows
+  const texts = lines.map(l => l.map(s => s.text).join('').trimEnd())
+  let best = -1, bestScore = 0
+  for (let a = Math.max(mn, mx - lines.length); a <= mx - k + 1; a++) {
+    let s = 0
+    for (let j = 0; j < k; j++) {
+      const e = props.ctl.transcriptAt(a + j)
+      if (e && e.text.trimEnd() === texts[lines.length - k + j]!) s++
+    }
+    if (s > bestScore) { bestScore = s; best = a }
+  }
+  if (best < 0 || bestScore < Math.ceil(k * 0.6)) return
+  const base = best - (lines.length - k)
+  const theme = ltTheme16()
+  for (let j = 0; j < lines.length && base + j < mn; j++) {
+    props.ctl.transcriptInject(base + j, { t: texts[j]!, h: ansiSpansToHtml(lines[j]!, theme) })
+  }
+  syncLT()
+}
+// Ask for the wrapped history once when the document is short, and again
+// whenever the user scrolls near the top with a wider window available.
+function ltPrefetch() {
+  if (!ltActive.value || Date.now() - ltDumpAt < 2500) return
+  ltDumpAt = Date.now()
+  ltDumpWant = Math.min(4000, Math.max(1500, ltDumpWant * 2))
+  props.ctl.requestScrollback(ltDumpWant, 'recent')
+}
+watch(props.ctl.scrollbackVersion, () => { if (ltActive.value) ltIngestDump(props.ctl.scrollback.value) })
 // Taps on the live slot are taps on the real screen -- it is translated
 // exactly under the pointer, so raw coordinates forward as-is.
 function onSlotTap(e: MouseEvent) {
@@ -552,10 +601,12 @@ function onSlotTap(e: MouseEvent) {
 watch(ltActive, on => {
   ltResetDom()
   renderPreview(0)
+  ltDumpWant = 0
   if (on) nextTick(() => {
     ltApplyMetrics(); syncLT()
     const el = sbEl.value
     if (el) el.scrollTop = el.scrollHeight
+    ltPrefetch()
   })
 })
 function renderScrollback() {

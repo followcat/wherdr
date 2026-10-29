@@ -10,6 +10,9 @@
 // (spinners, streaming output) that shift nothing.
 export function createTranscriptCache() {
   const known = new Map<number, { t: string, h?: string }>()
+  // Rows injected from a scrollback dump (prefetched history): they live
+  // outside the frame-pruned window until the app repaints over them.
+  const injected = new Map<number, { t: string, h?: string }>()
   let top = 0             // transcript index of screen row 0
   let prev: string[] = [] // last stored screen rows
   let rows = 24
@@ -59,18 +62,25 @@ export function createTranscriptCache() {
     return out
   }
 
-  function reset() { known.clear(); top = 0; prev = [] }
+  function reset() { known.clear(); injected.clear(); top = 0; prev = [] }
+
+  // Prefetched history (a scrollback dump mapped into index space). Painted
+  // frames always win when they arrive at the same index.
+  function inject(idx: number, e: { t: string, h?: string }) {
+    if (!known.has(idx)) injected.set(idx, e)
+  }
 
   // Document-model accessors for the live transcript scroller: the whole
   // known range rendered in index order.
   function range(): [number, number] {
     let mn = Infinity, mx = -Infinity
     for (const k of known.keys()) { if (k < mn) mn = k; if (k > mx) mx = k }
+    for (const k of injected.keys()) { if (k < mn) mn = k; if (k > mx) mx = k }
     return [mn, mx]
   }
-  function at(idx: number) { const e = known.get(idx); return e ? { text: e.t, html: e.h } : null }
-  function has(idx: number) { return known.has(idx) }
+  function at(idx: number) { const e = known.get(idx) ?? injected.get(idx); return e ? { text: e.t, html: e.h } : null }
+  function has(idx: number) { return known.has(idx) || injected.has(idx) }
   function windowTop() { return top }
   function windowRows() { return rows }
-  return { frame, available, slice, reset, range, at, has, windowTop, windowRows }
+  return { frame, available, slice, reset, inject, range, at, has, windowTop, windowRows }
 }
