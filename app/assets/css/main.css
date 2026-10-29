@@ -1990,6 +1990,25 @@ body.kb .composer { padding-bottom: 8px; }
 /* Pressed by a touch (Composer's sendTap): its touchstart is cancelled, which can drop :active on iOS. */
 .prompt-send.pressed { opacity: .75; }
 
+/* Touch: the input bar is one row — +, the field, the send — instead of a
+   buttons row under the field. The footer's box melts away (display: contents)
+   so its children join the field's row; attachments stay on their own line. */
+@media (pointer: coarse) {
+  .prompt { display: flex; flex-direction: row; flex-wrap: wrap; align-items: flex-end; column-gap: 8px; }
+  .prompt .prompt-head { flex: 1 1 100%; }
+  .prompt .prompt-body { flex: 1 1 0%; min-width: 0; order: 2; }
+  .prompt .prompt-foot { display: contents; }
+  .prompt .prompt-plus { order: 1; }
+  .prompt .model-pick-wrap { order: 3; }
+  .prompt .prompt-hint { order: 3; }
+  .prompt .prompt-send { order: 4; margin-left: 0; }
+  .prompt .prompt-input { min-height: 34px; padding: 7px 4px 9px; }
+  /* The autoresize can measure while the row is still laying out: a wrapped
+     placeholder sticks the empty field at rows=2. An empty field (placeholder
+     showing) is always one line; typing drops the selector and rows rule. */
+  .prompt .prompt-input:placeholder-shown { height: 39px; height: calc(1lh + 16px); }
+}
+
 .prompt-head { padding: 4px 2px 2px; }
 .attachments { display: flex; gap: 8px; overflow-x: auto; }
 .attachments .att { position: relative; width: 60px; height: 60px; overflow: hidden; flex: none; background: var(--surface-2); border: 1px solid var(--line); cursor: zoom-in; }
