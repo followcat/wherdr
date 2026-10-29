@@ -347,7 +347,7 @@ let ltEdgeAcc = 0       // pending app-scroll lines (fractional)
 let ltScreenDy = 0      // transform currently applied to the screen element
 let ltTouchY = -1       // last finger Y, for pull-past-top forwarding
 let ltTopSeen = -1      // last transcript window top observed
-let ltTopMoveAt = 0     // when the top last decreased (app still yielding)
+let ltMomentumSent = 0  // up-scrolls thrown by released momentum (budget: one page)
 let ltDragging = false  // finger is on the scroller
 let ltSettling = false  // settle-glide in progress: not a user scroll
 let ltSettleTimer: ReturnType<typeof setTimeout> | undefined
@@ -367,7 +367,7 @@ function ltRow(idx: number, h: number) {
 function ltResetDom() {
   ltNodes.clear()
   ltAppOff = ltSentOff = ltEdgeAcc = 0; ltLastTop = -1; ltTouchY = -1
-  ltScreenDy = 0; ltTopSeen = -1; ltSettling = false
+  ltScreenDy = 0; ltTopSeen = -1; ltSettling = false; ltMomentumSent = 0
   const screen = host.value?.querySelector('.xterm-screen') as HTMLElement | null
   if (screen) screen.style.transform = ''
   ltAbove.value?.replaceChildren()
@@ -410,7 +410,6 @@ function syncLT() {
   const w = props.ctl.transcriptWindow()
   const [mn, mx] = props.ctl.transcriptRange()
   if (w.top !== ltTopSeen) {
-    if (w.top < ltTopSeen) ltTopMoveAt = performance.now()
     // Depth below live = accumulated window movement, not the cached range:
     // eviction lowers mx and would understate how far the pane still has to
     // chase back down.
@@ -498,48 +497,26 @@ function ltTrack() {
   screen.style.transform = ltScreenDy ? `translate3d(0, ${ltScreenDy}px, 0)` : ''
 }
 // Scroll deltas become app scroll deltas only while the view sits above the
-// live slot (p < 0): pulling into the spacer/painted history scrolls the app
-// up, pushing back down chases it toward live. The trail below the slot is
-// pure cached browsing. The spacer is virtual runway: as long as the app
-// still yields to upward scrolls it grows ahead of the finger, so the native
-// gesture never dead-ends on the document top; runway the user scrolls out
-// of is shed again. At the document bottom a chase pulls the app to live.
-function ltRunway(el: HTMLElement, sp: HTMLElement, h: number) {
-  if (el.scrollTop >= sp.offsetHeight) {
-    // In real content: shed runway that sits above the viewport.
-    const base = el.clientHeight
-    const cut = Math.min(sp.offsetHeight - base, el.scrollTop - sp.offsetHeight)
-    if (cut > h) { sp.style.height = `${sp.offsetHeight - cut}px`; el.scrollTop -= cut; ltLastTop = el.scrollTop }
-    return
-  }
-  // Inside the spacer: grow while the top still moves (app not at scrollback
-  // bottom). When it stalls, let scrollTop hit zero = the natural edge.
-  if (el.scrollTop > h * 2) return
-  if (performance.now() - ltTopMoveAt < 800 || ltSentOff <= 0) {
-    const add = el.clientHeight
-    sp.style.height = `${sp.offsetHeight + add}px`
-    el.scrollTop += add
-    ltLastTop = el.scrollTop
-  }
-}
+// live slot: pulling into the spacer drives the app up, pushing back down
+// chases it toward live. The trail below the slot is pure cached browsing.
+// The spacer is a fixed gesture runway: a finger may show ~3 rows of it, and
+// released momentum may roam until it has thrown a page of scrolls — then it
+// pins too, so a flick can never keep the pane scrolling on its own. At the
+// document bottom a chase pulls the app to live.
 function ltOnScroll() {
   const el = sbEl.value, slot = ltSlot.value, sp = ltSpacer.value
   if (!el || !slot || !sp) return
   ltTrack()
   const h = props.ctl.rowHeight()
-  // The spacer is gesture runway, not content: while a finger is down the
-  // view may roam at most ~3 rows into it, so the live slot (repainting with
-  // the rows the pull is asking for) stays pinned under the edge of blank.
   const clampTop = Math.max(0, sp.offsetHeight - 3 * h)
-  if (ltDragging && el.scrollTop < clampTop) { el.scrollTop = clampTop; ltLastTop = clampTop }
+  if (el.scrollTop < clampTop && (ltDragging || ltMomentumSent >= props.ctl.pageRows())) {
+    el.scrollTop = clampTop; ltLastTop = clampTop
+  }
   if (ltLastTop < 0) ltLastTop = el.scrollTop
   const dy = el.scrollTop - ltLastTop
   ltLastTop = el.scrollTop
   const now = performance.now()
-  // scrollTop inside the spacer = pulling into space no rows occupy yet: the
-  // deltas drive the app. Painted history above the slot and the trail below
-  // are local browsing; the bottom chase re-syncs the app on the way back.
-  if (el.scrollTop >= sp.offsetHeight) ltSettling = false
+  if (el.scrollTop >= sp.offsetHeight) { ltSettling = false; ltMomentumSent = 0 }
   if (el.scrollTop < sp.offsetHeight) {
     if (ltSettling) { ltEdgeAcc = 0; return }
     ltEdgeAcc -= dy / h
@@ -550,10 +527,10 @@ function ltOnScroll() {
       ltEdgeAcc -= lines
       ltPrefetchAt = now
       ltSentOff += lines
+      if (lines > 0 && !ltDragging) ltMomentumSent += lines
       ltScrollSend(lines)
     }
   } else ltEdgeAcc = 0
-  ltRunway(el, sp, h)
   const bot = el.scrollHeight - el.scrollTop - el.clientHeight
   if (bot < h && ltAppOff + ltSentOff > 0 && now - ltPrefetchAt > 90) {
     ltPrefetchAt = now
@@ -563,17 +540,17 @@ function ltOnScroll() {
   }
   // Approaching the top of what we have: pull more history into the doc.
   if (el.scrollTop < el.clientHeight) ltPrefetch()
-  // Momentum can strand the view deep inside blank spacer: once scrolling
-  // goes quiet with no finger down, glide back so real content is in view.
+  // Momentum can rest a few rows inside blank spacer: once scrolling goes
+  // quiet with no finger down, spring back to the content edge — a short
+  // ~3-row release, never a long glide to the slot.
   clearTimeout(ltSettleTimer)
   ltSettleTimer = setTimeout(() => {
     if (ltDragging || !sbEl.value || !ltSpacer.value) return
     const e = sbEl.value, s = ltSpacer.value
-    const aH = (ltAbove.value?.childElementCount ?? 0) * props.ctl.rowHeight()
-    if (e.scrollTop < s.offsetHeight - 4 * props.ctl.rowHeight()) {
+    if (e.scrollTop < s.offsetHeight) {
       ltSettling = true
-      ltLastTop = s.offsetHeight + aH
-      e.scrollTo({ top: s.offsetHeight + aH, behavior: 'smooth' })
+      ltLastTop = s.offsetHeight
+      e.scrollTo({ top: s.offsetHeight, behavior: 'smooth' })
     }
   }, 180)
 }
@@ -603,11 +580,12 @@ function onSbTouchMove(e: TouchEvent) {
 function ltApplyMetrics() {
   const el = sbEl.value, doc = ltDoc.value
   const src = host.value?.querySelector('.xterm-screen')
-  // The font lives on .xterm-rows; .xterm-screen only carries the app font.
-  const fontSrc = host.value?.querySelector('.xterm-rows') ?? src
-  if (!el || !doc || !src || !fontSrc) return
-  const cs = getComputedStyle(fontSrc)
-  Object.assign(el.style, { fontFamily: cs.fontFamily, fontSize: cs.fontSize, fontWeight: cs.fontWeight, fontStyle: cs.fontStyle, letterSpacing: cs.letterSpacing, color: cs.color })
+  if (!el || !doc || !src) return
+  // Options are the only reliable font source: the DOM renderer keeps them
+  // on .xterm-rows, WebGL keeps them off the DOM, and .xterm-screen itself
+  // reports the app font.
+  const f = props.ctl.termFont?.()
+  if (f) Object.assign(el.style, { fontFamily: f.family, fontSize: `${f.size}px`, fontWeight: f.weight, fontStyle: 'normal', letterSpacing: f.letterSpacing, color: f.color || 'inherit' })
   const wrap = el.getBoundingClientRect()
   const sr = src.getBoundingClientRect()
   Object.assign(doc.style, {
@@ -792,6 +770,7 @@ function onSbTouchStart(e: TouchEvent) {
   ltTouchY = sbAY
   ltDragging = true
   ltSettling = false
+  ltMomentumSent = 0
 }
 function onSbTouchEnd(e: TouchEvent) {
   ltTouchY = -1
