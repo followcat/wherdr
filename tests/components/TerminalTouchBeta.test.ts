@@ -3,6 +3,7 @@ import { mountSuspended } from '@nuxt/test-utils/runtime'
 import { nextTick, ref } from 'vue'
 import TerminalView from '~/components/TerminalView.vue'
 import { smoothTouchScrolling } from '~/composables/useHerdr'
+import { kbOpen } from '~/composables/useViewport'
 
 // Bootstrap Nuxt outside gesture assertions: its first app mount compiles the
 // test app and can exceed the per-test limit on a small CI worker.
@@ -22,11 +23,12 @@ async function mounted(enabled: boolean, coarse = false) {
   }))
   let resize = () => {}
   vi.stubGlobal('ResizeObserver', class { constructor(callback: () => void) { resize = callback } observe() {} disconnect() {} })
+  let focused = false
   const ctl = {
     mount: vi.fn((el: HTMLElement) => { el.innerHTML = '<div class="xterm"><div class="xterm-screen">terminal grid</div></div>' }),
     scroll: vi.fn(() => true), rowHeight: () => 16, pageRows: () => 24,
     fitNow: vi.fn(), hasBanner: () => true, connect: vi.fn(), dispose: vi.fn(),
-    focus: vi.fn(), blur: vi.fn(), tapLink: vi.fn(() => false), tapMouse: vi.fn(),
+    focus: vi.fn(() => { focused = true }), blur: vi.fn(() => { focused = false }), hasFocus: () => focused, tapLink: vi.fn(() => false), tapMouse: vi.fn(),
     cancelTouchScroll: vi.fn(), scrollInputVersion: ref(0), scrollGeometryVersion: ref(0), scrollAck: ref(0), frameTick: ref(0),
     loading: ref(false), selectionHint: { visible: ref(false), dismiss: vi.fn() },
     mouseMode: ref(coarse),
@@ -50,10 +52,20 @@ afterEach(() => {
   unmount?.(); unmount = undefined
   smoothTouchScrolling.value = false
   localStorage.removeItem('smoothTouchScrolling')
+  kbOpen.value = false
   frames.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers()
 })
 
 describe('terminal beta switch', () => {
+  it('releases any focus acquired by xterm while opening a link', async () => {
+    const r = await mounted(true)
+    r.ctl.tapLink.mockImplementation(() => { r.ctl.focus(); return true })
+    await r.send('touchstart', 100)
+    await r.send('touchend', 100, 0)
+    expect(r.ctl.hasFocus()).toBe(false)
+    expect(r.ctl.blur).toHaveBeenCalled()
+    expect(r.ctl.tapMouse).not.toHaveBeenCalled()
+  })
   it('keeps an opaque application on the live touch surface without a guessed history document', async () => {
     const r = await mounted(true, true)
     expect(r.w.find('.lt-doc').exists()).toBe(false)
@@ -71,6 +83,35 @@ describe('terminal beta switch', () => {
     await r.send('touchmove', 164)
     paint()
     expect(r.ctl.scroll.mock.calls.map(call => call[0])).toEqual([2, 2])
+  })
+  it.each([false, true])('releases the hidden keyboard focus before a drag with beta=%s', async enabled => {
+    const r = await mounted(enabled)
+    r.ctl.focus()
+    r.ctl.focus.mockClear()
+    kbOpen.value = false
+    await r.send('touchstart', 100)
+    await r.send('touchmove', 120)
+    expect(r.ctl.blur).toHaveBeenCalledOnce()
+    expect(r.ctl.hasFocus()).toBe(false)
+    await r.send('touchend', 120, 0)
+    expect(r.ctl.focus).not.toHaveBeenCalled()
+  })
+  it('sends the first small drag without waiting for a rendering frame', async () => {
+    const r = await mounted(true)
+    await r.send('touchstart', 100)
+    await r.send('touchmove', 110)
+    expect(r.ctl.scroll.mock.calls.map(call => call[0])).toEqual([1])
+    expect(r.screen()).not.toContain('translate')
+  })
+  it('keeps small finger backtracking from cancelling an intended wheel step', async () => {
+    const r = await mounted(true)
+    await r.send('touchstart', 100)
+    await r.send('touchmove', 110)
+    r.ctl.cancelTouchScroll.mockClear()
+    for (const y of [109, 110, 111]) await r.send('touchmove', y)
+    paint()
+    expect(r.ctl.cancelTouchScroll).not.toHaveBeenCalled()
+    expect(r.ctl.scroll.mock.calls.map(call => call[0])).toEqual([1])
   })
   it('cancels an old direction even after its preview has been acknowledged', async () => {
     const r = await mounted(true)
@@ -184,7 +225,7 @@ describe('terminal beta switch', () => {
     expect(r.ctl.tapMouse).toHaveBeenCalledOnce()
     expect(r.ctl.focus).toHaveBeenCalledOnce()
   })
-  it('waits for a full row without moving the screen at the gesture threshold', async () => {
+  it('keeps sub-threshold row motion without moving the screenshot', async () => {
     const r = await mounted(true)
     await r.send('touchstart', 100)
     await r.send('touchmove', 105)
@@ -196,23 +237,29 @@ describe('terminal beta switch', () => {
     const r = await mounted(true)
     await r.send('touchstart', 100)
     await r.send('touchmove', 140)
+    const alreadySent = r.ctl.scroll.mock.calls.length
+    await r.send('touchmove', 156) // still coalesced in the same frame
     smoothTouchScrolling.value = false
     await nextTick()
     paint()
     expect(r.screen()).not.toContain('translate')
-    expect(r.ctl.scroll).not.toHaveBeenCalled()
+    expect(r.ctl.scroll).toHaveBeenCalledTimes(alreadySent)
     await r.send('touchstart', 100)
     await r.send('touchmove', 140)
     paint()
-    expect(r.ctl.scroll.mock.calls).toEqual([[2]])
+    expect(r.ctl.scroll).toHaveBeenCalledTimes(alreadySent + 1)
+    expect(r.ctl.scroll.mock.calls.at(-1)).toEqual([2])
   })
   it('cancels multitouch and removes every scheduled frame on unmount', async () => {
     const r = await mounted(true)
     await r.send('touchstart', 100)
     await r.send('touchmove', 140)
+    const alreadySent = r.ctl.scroll.mock.calls.length
+    await r.send('touchmove', 156) // must not drain after multitouch cancels
     await r.send('touchmove', 160, 2)
     paint()
-    expect(r.ctl.scroll).not.toHaveBeenCalled()
+    expect(r.ctl.scroll).toHaveBeenCalledTimes(alreadySent)
+    expect(r.ctl.cancelTouchScroll).toHaveBeenCalled()
     expect(r.screen()).not.toContain('translate')
     r.w.unmount(); unmount = undefined
     expect(frames.size).toBe(0)

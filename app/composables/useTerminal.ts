@@ -91,7 +91,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     mouse = bindTerminalMouse(term, () => mouseSupported && opts.input?.() !== false, event => sendTerm(event))
     // Selection of the visible text, copied on release or with ⌘C.
     unbindSelection = bindTerminalSelection(term, () => toast(t('Copied')))
-    // OSC 8 hyperlinks and http(s) URLs, opened in a new tab.
+    // OSC 8 hyperlinks and http(s) URLs, with in-app navigation on phones.
     links = bindTerminalLinks(term, t)
     // Pasted image: its path on the agent's machine, pasted through Herdr,
     // which the agent attaches as an image.
@@ -412,7 +412,14 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     term?.focus()
     kbdOn.value = true
   }
-  function blur() { term?.textarea?.blur() }
+  function blur() { term?.textarea?.blur(); kbdOn.value = false }
+  // Native keyboard dismissal is a separate event from DOM blur on Android.
+  // Once the IME closes, release the hidden input rather than leaving a focus
+  // owner which the next scroll or browser resume can reactivate.
+  const stopKeyboardWatch = watch(kbOpen, (open, wasOpen) => {
+    if (wasOpen && !open && typeof matchMedia !== 'undefined'
+      && matchMedia('(hover: none) and (pointer: coarse)').matches && hasFocus()) blur()
+  })
   // Tap on the touch layer: opens the link under the finger, if any.
   const tapLink = (x: number, y: number) => links?.tap(x, y) ?? false
   const hasFocus = () => Boolean(term && document.activeElement === term.textarea)
@@ -454,6 +461,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   function dispose() {
     disposed = true
     stopSmoothWatch()
+    stopKeyboardWatch()
     disconnect()
     unbindSelection?.()
     unbindPaste?.()

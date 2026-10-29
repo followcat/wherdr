@@ -45,6 +45,8 @@
 - **Split tabs on a small screen**: a plan of the tab's panes in Herdr's proportions, then each
   pane full screen with a mini-map and swipe to its neighbours.
 - **Terminal key bar** (Esc, Enter, arrows, Shift+Tab, Ctrl+C…) and touch scrolling.
+  Dismissing the phone keyboard releases terminal input focus; scrolling keeps
+  it closed until an intentional tap. Links back to wherdr stay in the same window.
 - **Smooth touch scrolling (beta)**: drags scroll the running application directly,
   with a bounded glide after release. The live grid stays fixed while waiting for
   application frames, including at history boundaries. A new touch stops queued
