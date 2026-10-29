@@ -1209,7 +1209,7 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
    Conversation (UChatMessages, UChatMessage, UChatTool, UChatShimmer)
    ================================================================ */
 .chat-wrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.chat { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.chat { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; overflow-anchor: none; }
 .chat-msgs { padding: 0; gap: 0; min-height: 100%; }
 .chat-list { padding: 18px 16px 8px; display: flex; flex-direction: column; gap: 14px; }
 .chat-note {
@@ -1415,7 +1415,12 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 .tools .tool.err .tool-leading, .tools .tool.err .tool-label { color: var(--rose); }
 .tool-chev { width: 14px; height: 14px; margin-left: 2px; color: var(--dim); }
 .tool-body { padding: 4px 0 4px; white-space: normal; }
-.tool-result { max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0 8px; padding: 8px; border: 1px solid var(--line-soft); background: var(--bg-2); color: var(--text-2); font: 400 12px/1.5 var(--mono); }
+/* Collapsed preview: a nested scroller inside the chat would capture the
+   pan gesture until its edge — tap expands the output in place instead. */
+.tool-result { max-height: 220px; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0 8px; padding: 8px; border: 1px solid var(--line-soft); border-radius: 4px; background: var(--bg-2); color: var(--text-2); font: 400 12px/1.5 var(--mono); position: relative; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.tool-result::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 40px; background: linear-gradient(transparent, var(--bg-2)); pointer-events: none; }
+.tool-result.open { max-height: none; cursor: text; }
+.tool-result.open::after { content: none; }
 .tool-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; color: var(--text-3); min-width: 0; }
 .tool-row .iconify { width: 14px; height: 14px; color: var(--dim); }
 .tool-row b { font-weight: 500; flex: none; }
