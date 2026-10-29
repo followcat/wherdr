@@ -1618,6 +1618,22 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
    color when the theme defines one, otherwise the accent. */
 .chat-status .omp-step-line { --omp-color: var(--omp, var(--accent)); display: inline-flex; align-items: baseline; min-width: 0; font-family: var(--font-mono); font-size: 13px; }
 .chat-status .omp-step { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; --ui-text-muted: var(--muted); --ui-text-highlighted: color-mix(in srgb, var(--omp-color) 55%, var(--text)); }
+
+/* Phone density: the conversation spends its space on text, not air. */
+@media (pointer: coarse) {
+  .chat-list { padding: 10px 12px 6px; gap: 9px; }
+  .chat-note { padding: 3px 0; }
+  .msg-user-wrap { gap: 3px; margin-top: 2px; }
+  .msg-bubble { padding: 7px 10px; }
+  .msg-ai:has(.msg-actions) .msg-c { padding-bottom: 30px; }
+  .queued-list { gap: 8px; padding: 2px 12px 6px; }
+  .tools { padding-left: 8px; }
+  .omp-thinking .omp-thinking-head, .omp-job-head { min-height: 30px; }
+  .omp-thinking .omp-thinking-body { padding: 2px 0 5px; }
+  button.omp-tool-head { min-height: 28px; }
+  .chat-status { padding: 3px 12px 10px; }
+  .composer { padding: 5px 10px max(8px, calc(var(--safe-bottom) - 8px)); }
+}
 .chat-status .omp-spinner { display: inline-block; flex: none; width: 1.6em; margin-left: -.3em; text-align: center; color: var(--omp-color); }
 .chat-status .omp-elapsed { flex: none; margin-left: .75em; padding-left: .75em; border-left: 1px solid var(--line); color: var(--dim); font-variant-numeric: tabular-nums; }
 
