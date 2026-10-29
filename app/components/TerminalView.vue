@@ -411,9 +411,12 @@ function syncLT() {
   const [mn, mx] = props.ctl.transcriptRange()
   if (w.top !== ltTopSeen) {
     if (w.top < ltTopSeen) ltTopMoveAt = performance.now()
+    // Depth below live = accumulated window movement, not the cached range:
+    // eviction lowers mx and would understate how far the pane still has to
+    // chase back down.
+    if (ltTopSeen >= 0) ltAppOff = Math.max(0, ltAppOff + ltTopSeen - w.top)
     ltTopSeen = w.top
   }
-  ltAppOff = Math.max(0, mx - (w.top + w.rows - 1))
   // Anchor: the transcript index under the view top, kept across the
   // reconcile so content shifts don't move what the user is reading.
   const spH0 = ltSpacer.value?.offsetHeight ?? 0
@@ -464,6 +467,14 @@ function syncLT() {
   }
   // The scroll event from the write above must not feed delta sends.
   ltLastTop = el.scrollTop
+  // A chase deeper than one page still has distance after the covering
+  // frames land: keep walking the app down while the view rests at the edge.
+  if (wasAtBottom && ltAppOff + ltSentOff > 0 && performance.now() - ltPrefetchAt > 90) {
+    ltPrefetchAt = performance.now()
+    const send = -Math.min(ltAppOff + ltSentOff, props.ctl.pageRows())
+    ltSentOff += send
+    ltScrollSend(send)
+  }
   ltTrack()
 }
 // Scrolls the app the same way a finger drag does -- positioned, paced.
@@ -533,8 +544,10 @@ function ltOnScroll() {
     if (ltSettling) { ltEdgeAcc = 0; return }
     ltEdgeAcc -= dy / h
     const lines = Math.trunc(ltEdgeAcc)
-    ltEdgeAcc -= lines
+    // Suppressed lines stay pending: deducting before the gate drops the
+    // distance a fast drag covered inside a closed interval.
     if (lines && now - ltPrefetchAt > 60) {
+      ltEdgeAcc -= lines
       ltPrefetchAt = now
       ltSentOff += lines
       ltScrollSend(lines)
@@ -558,6 +571,7 @@ function ltOnScroll() {
     const e = sbEl.value, s = ltSpacer.value
     const aH = (ltAbove.value?.childElementCount ?? 0) * props.ctl.rowHeight()
     if (e.scrollTop < s.offsetHeight - 4 * props.ctl.rowHeight()) {
+      ltSettling = true
       ltLastTop = s.offsetHeight + aH
       e.scrollTo({ top: s.offsetHeight + aH, behavior: 'smooth' })
     }
@@ -578,9 +592,9 @@ function onSbTouchMove(e: TouchEvent) {
   if (el.scrollTop > clampTop + 0.5 || dyPx >= 0) return
   ltEdgeAcc += -dyPx / props.ctl.rowHeight()
   const lines = Math.trunc(ltEdgeAcc)
-  ltEdgeAcc -= lines
   const now = performance.now()
   if (lines && now - ltPrefetchAt > 60) {
+    ltEdgeAcc -= lines
     ltPrefetchAt = now
     ltSentOff += lines
     ltScrollSend(lines)
@@ -623,7 +637,7 @@ function ltIngestDump(text: string) {
   if (!(mx >= mn) || lines.length < w.rows) return
   const k = w.rows
   const texts = lines.map(l => l.map(s => s.text).join('').trimEnd())
-  let best = -1, bestScore = 0
+  let best = NaN, bestScore = 0
   for (let a = Math.max(mn, mx - lines.length); a <= mx - k + 1; a++) {
     let s = 0
     for (let j = 0; j < k; j++) {
@@ -632,7 +646,9 @@ function ltIngestDump(text: string) {
     }
     if (s > bestScore) { bestScore = s; best = a }
   }
-  if (best < 0 || bestScore < Math.ceil(k * 0.6)) return
+  // Scrolled-up transcripts sit at negative indices -- a valid alignment can
+  // be -5, so not-found has to be a separate signal from the index itself.
+  if (Number.isNaN(best) || bestScore < Math.ceil(k * 0.6)) return
   const base = best - (lines.length - k)
   const theme = ltTheme16()
   for (let j = 0; j < lines.length && base + j < mn; j++) {
@@ -780,6 +796,12 @@ function onSbTouchStart(e: TouchEvent) {
 function onSbTouchEnd(e: TouchEvent) {
   ltTouchY = -1
   ltDragging = false
+  // Release with throttle-suppressed rows still pending: dispatch the tail so
+  // the gesture's full distance reaches the pane.
+  if (ltActive.value) {
+    const lines = Math.trunc(ltEdgeAcc)
+    if (lines) { ltEdgeAcc -= lines; ltSentOff += lines; ltScrollSend(lines) }
+  }
   const t = e.changedTouches[0]
   if (!t || Math.hypot(t.clientX - sbAX, t.clientY - sbAY) > 10) return
   // History rows sit in .sb-body; only the transparent gap/slot is live.
