@@ -1391,6 +1391,7 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 .tools .tool.err .tool-leading, .tools .tool.err .tool-label { color: var(--rose); }
 .tool-chev { width: 14px; height: 14px; margin-left: 2px; color: var(--dim); }
 .tool-body { padding: 4px 0 4px; white-space: normal; }
+.tool-result { max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0 8px; padding: 8px; border: 1px solid var(--line-soft); background: var(--bg-2); color: var(--text-2); font: 400 12px/1.5 var(--mono); }
 .tool-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; color: var(--text-3); min-width: 0; }
 .tool-row .iconify { width: 14px; height: 14px; color: var(--dim); }
 .tool-row b { font-weight: 500; flex: none; }
