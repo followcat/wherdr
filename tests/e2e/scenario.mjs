@@ -91,7 +91,7 @@ export const LONG_END = 'End of the long build report.'
 const iso = ts => new Date(ts).toISOString()
 
 // A 240×150 gradient PNG: the image an omp `read` returns in the image scenario.
-function gradientPng(w = 240, h = 150) {
+export function gradientPng(w = 240, h = 150) {
   const crcTable = Array.from({ length: 256 }, (_, n) => {
     let c = n
     for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1
@@ -385,7 +385,7 @@ export function writeScenario(home) {
     { id: 'w10', label: 'codex-update', panes: [{ id: CODEX_UPDATE_PANE, agent: 'codex', status: 'idle', cwd: codex, session: CODEX_UPDATE_SESSION, pid: 3001 }] },
     { id: 'w1', label: 'acme-api', panes: [{ id: CLAUDE_PANE, agent: 'claude', status: 'idle', cwd: api, session: claudeSid }] },
     { id: 'w2', label: 'docs-site', panes: [{ id: OMP_LONG_PANE, agent: 'omp', status: 'idle', cwd: docs, session: longFile }] },
-    { id: 'w3', label: 'demo', panes: [{ id: OMP_CHAT_PANE, agent: 'omp', status: 'idle', cwd: demo, session: chatFile, transcript: chatFile, reply: 'Got it.' }] },
+    { id: 'w3', label: 'demo', panes: [{ id: OMP_CHAT_PANE, agent: 'omp', status: 'idle', cwd: demo, session: chatFile, transcript: chatFile, reply: 'Got it.', devinHome: home }] },
     { id: 'w4', label: 'screens', panes: [{ id: OMP_IMAGE_PANE, agent: 'omp', status: 'idle', cwd: screens, session: imageFile }] },
     { id: 'w5', label: 'approval', panes: [{ id: OMP_APPROVAL_PANE, agent: 'omp', status: 'blocked', cwd: approval, session: approvalFile }] },
     // A fresh omp (no transcript yet) that runs "!" commands.
