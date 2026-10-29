@@ -13,7 +13,7 @@ import { isUploadLine, uploadSrc } from '#shared/queuedMatch'
 import { pendingQueue, rememberSent } from '~/utils/pendingQueue'
 import { clampRange, createSelectionSettler, lastLineRect, selectionReplyPos } from '~/utils/selectionReply'
 import { addAnswer, addQuote, answerEnd, answerOf, forgetReply, isQuoted, replyTargets, rowOf, rowRef, rowSettled, tableRank, tableRef, tappedAnswer, toggleOkAll, unansweredCount, withQuestions, type Answer } from '~/utils/questionReply'
-import { CHAT_READ_MS, createTailLoader, hasOlder, olderCursor, nextTail, restartsTail, tailQuery } from '~/utils/chatTail' 
+import { CHAT_READ_MS, createTailLoader, hasOlder, needsOlderForHit, olderCursor, nextTail, restartsTail, tailQuery } from '~/utils/chatTail' 
 import { pickTyping, replyId } from '~/utils/typewriter'
 import { newestThought } from '~/utils/reasoningReveal'
 import { restoredScrollTop, saveReadingPosition } from '~/utils/readingPosition'
@@ -1250,8 +1250,7 @@ async function jumpToResult() {
   jumping = true
   try {
     // Each load goes up one slice until the one of the target message.
-    for (let page = 0; page < 40 && hasOlder(chat.value.olderCursor) && !readOnly.value; page++) {
-      if (ref ? items.value.some(i => i.ref === ref) : typeof chat.value.olderCursor === 'number' && offset !== null && chat.value.olderCursor <= offset) break
+    for (let page = 0; !readOnly.value && needsOlderForHit(chat.value.olderCursor, offset, Boolean(ref && items.value.some(i => i.ref === ref)), page); page++) {
       const before = chat.value.olderCursor
       await loadOlder()
       if (chat.value.olderCursor === before) break

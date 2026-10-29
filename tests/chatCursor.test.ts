@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { hasOlder, olderCursor, restartsTail, tailQuery } from '../app/utils/chatTail'
+import { hasOlder, olderCursor, restartsTail, tailQuery, needsOlderForHit } from '../app/utils/chatTail'
 
 it('keeps opaque older-page boundaries separate from the refreshed tail anchor', () => {
   expect(olderCursor({ start: 'tail-anchor', olderCursor: 'page+cursor/=' })).toBe('page+cursor/=')
@@ -18,4 +18,12 @@ it('preserves numeric pagination semantics for existing file readers', () => {
   expect(olderCursor({ start: 200 }, 100)).toBeNull()
   expect(olderCursor({ start: 0 }, 100)).toBeNull()
   expect(hasOlder(0)).toBe(false)
+})
+
+it('bounds opaque hit traversal without limiting numeric jumps in existing readers', () => {
+  expect(needsOlderForHit(1000, 100, false, 80)).toBe(true)
+  expect(needsOlderForHit(100, 100, false, 80)).toBe(false)
+  expect(needsOlderForHit('page', null, false, 39)).toBe(true)
+  expect(needsOlderForHit('page', null, false, 40)).toBe(false)
+  expect(needsOlderForHit('page', null, true, 0)).toBe(false)
 })

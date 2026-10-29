@@ -8,6 +8,11 @@ export function olderCursor(r: Pick<ChatResponse, 'olderCursor' | 'start'>, befo
   return next
 }
 
+export function needsOlderForHit(cursor: ChatCursor | null, offset: number | null, found: boolean, pages: number): boolean {
+  if (!hasOlder(cursor) || found) return false
+  return offset === null ? pages < 40 : typeof cursor === 'number' && cursor > offset
+}
+
 // Bottom of the conversation after a re-read. With `keep` (incremental reply,
 // see server/utils/chatDelta.ts) the first `keep` items stay as they are (same
 // objects, so Vue has nothing to redo for them) and the reply's items replace
