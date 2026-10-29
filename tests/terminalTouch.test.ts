@@ -119,6 +119,28 @@ describe('terminal touch gestures', () => {
 
 describe('touch scroll backpressure', () => {
   afterEach(() => { vi.useRealTimers() })
+  it('limits unframed wheel reports even when no terminal frame arrives', () => {
+    vi.useFakeTimers(); vi.setSystemTime(0)
+    const send = vi.fn(), p = createTouchScrollPacer(send)
+    p.push('up', 100)
+    vi.advanceTimersByTime(200)
+    expect(send.mock.calls.length).toBeLessThanOrEqual(8)
+    p.frame()
+    vi.advanceTimersByTime(16)
+    expect(send.mock.calls.length).toBeGreaterThan(8)
+    p.dispose()
+  })
+  it('does not replay a paused drag after the short queue lifetime', () => {
+    vi.useFakeTimers(); vi.setSystemTime(0)
+    const send = vi.fn(), p = createTouchScrollPacer(send)
+    p.push('up', 60)
+    vi.advanceTimersByTime(300)
+    const count = send.mock.calls.length
+    p.frame()
+    vi.advanceTimersByTime(100)
+    expect(send).toHaveBeenCalledTimes(count)
+    p.dispose()
+  })
   it('responds immediately and keeps a bounded rate while following frames', () => {
     vi.useFakeTimers(); vi.setSystemTime(0)
     const times: number[] = []
