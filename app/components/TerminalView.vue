@@ -41,7 +41,10 @@ function legacyOnTouchMove(e: TouchEvent) {
   const x = e.touches[0]!.clientX
   const dx = legacyLastX === null ? 0 : x - legacyLastX
   const dy = y - legacyLastY
-  if (Math.hypot(x - legacyStartX, y - legacyStartY) >= 5) legacyMoved = true
+  if (Math.hypot(x - legacyStartX, y - legacyStartY) >= 5) {
+    legacyMoved = true
+    if (props.ctl.hasFocus()) props.ctl.blur()
+  }
   legacyLastX = x
   const scroller = host.value?.querySelector('.xterm') as HTMLElement | null
   if (scroller && scroller.scrollWidth > scroller.clientWidth && Math.abs(dx) > Math.abs(dy)) {
@@ -67,7 +70,7 @@ function legacyOnTouchEnd(e: TouchEvent) {
     if (!props.ctl.tapLink(t.clientX, t.clientY)) {
       props.ctl.tapMouse(t.clientX, t.clientY)
       props.ctl.focus()
-    }
+    } else props.ctl.blur()
   }
   // Complete intentional taps here; suppress compatibility mouse events for
   // both taps and drags so they cannot reopen the keyboard afterward.
@@ -96,7 +99,7 @@ function legacyOnWheel(e: WheelEvent) {
 
 // The application owns the viewport. Only real frames move its contents:
 // translating a screenshot exposes missing rows and jumps when an ack arrives.
-let acc = 0, pendingLines = 0, momentumAcc = 0
+let acc = 0, pendingLines = 0
 let raf = 0
 let scrollX = 0, scrollY = 0, scrollDirection = 0
 let lastTouchAt = -Infinity, lastScrollAt = -Infinity
@@ -112,27 +115,33 @@ const scroller = () => host.value?.querySelector('.xterm') as HTMLElement | null
 const touch = createTerminalTouch({
   vertical(pixels, point) {
     if (!pixels) return
+    if (props.ctl.hasFocus()) props.ctl.blur()
     lastScrollAt = performance.now()
-    const direction = Math.sign(pixels)
-    // Cancel older wheel input immediately when the finger reverses.
-    if (scrollDirection && direction !== scrollDirection) {
-      props.ctl.cancelTouchScroll()
-      pendingLines = acc = momentumAcc = 0
-    }
-    scrollDirection = direction
     scrollX = point.x; scrollY = point.y
     acc += pixels
-    const { lines, rest } = takeLines(acc, props.ctl.rowHeight())
+    const { lines, rest } = takeTouchLines(acc, props.ctl.rowHeight(), scrollDirection)
     acc = rest
+    // Reverse on an actual wheel step, not sensor noise or sub-row motion.
+    if (lines && scrollDirection && Math.sign(lines) !== scrollDirection) {
+      props.ctl.cancelTouchScroll()
+      cancelAnimationFrame(raf); raf = 0
+      pendingLines = 0
+    }
+    if (lines) scrollDirection = Math.sign(lines)
     pendingLines += lines
     hadScroll = true
-    if (lines && !raf) raf = requestAnimationFrame(flush)
+    if (lines && !raf) {
+      // Send the first useful sample now. Subsequent motion in this rendering
+      // frame is coalesced; the server still owns wheel pacing/backpressure.
+      flush()
+      raf = requestAnimationFrame(flush)
+    }
   },
   momentum(pixels, point) {
     lastScrollAt = performance.now()
-    momentumAcc += pixels
-    const { lines, rest } = takeLines(momentumAcc, props.ctl.rowHeight())
-    momentumAcc = rest
+    acc += pixels
+    const { lines, rest } = takeTouchLines(acc, props.ctl.rowHeight(), scrollDirection)
+    acc = rest
     // After release there is no finger to follow. Let real application
     // frames show the glide instead of accumulating a translated afterimage.
     if (lines) props.ctl.scroll(lines, point.x, point.y, 0, true, false)
@@ -145,7 +154,7 @@ function cancelTouch() {
   touch.cancel()
   touching = false
   cancelAnimationFrame(raf); raf = 0
-  pendingLines = momentumAcc = acc = scrollDirection = 0
+  pendingLines = acc = scrollDirection = 0
   if (hadScroll) props.ctl.cancelTouchScroll()
   hadScroll = false
 }
@@ -155,7 +164,7 @@ function resizeTouch() {
   touch.stopMomentum()
   if (!touching) touch.cancel()
   cancelAnimationFrame(raf); raf = 0
-  pendingLines = momentumAcc = acc = scrollDirection = 0
+  pendingLines = acc = scrollDirection = 0
   if (hadScroll) props.ctl.cancelTouchScroll()
   hadScroll = false
 }
@@ -169,6 +178,9 @@ watch(smoothTouchScrolling, () => {
   legacyLastX = legacyLastY = null
 }, { flush: 'sync' })
 function onTouchStart(e: TouchEvent) {
+  // Android Back can hide the IME while leaving xterm's textarea focused.
+  // Release that stale focus before another touch can reactivate the IME.
+  if (!kbOpen.value && props.ctl.hasFocus()) props.ctl.blur()
   lastTouchAt = performance.now()
   // A scrolling finger must never trigger the browser's native focus action.
   // An intentional tap focuses synchronously from touchend instead.
@@ -200,7 +212,7 @@ function onTouchEnd(e: TouchEvent) {
     if (!props.ctl.tapLink(t.clientX, t.clientY)) {
       props.ctl.tapMouse(t.clientX, t.clientY)
       props.ctl.focus()
-    }
+    } else props.ctl.blur()
   }
   // The action has already run in this trusted touch event. Do not depend on
   // a compatibility mouse event, which can be absent or arrive twice on iOS.

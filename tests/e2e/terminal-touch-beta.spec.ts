@@ -86,9 +86,9 @@ for (const enabled of [false, true]) {
     await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: true })
     await terminal(page, enabled)
     const field = page.locator('.xterm-helper-textarea')
-    // The remote prompt remains focused after the local keyboard is dismissed.
+    // Android Back hides the IME without blurring this still-focused field.
     await field.focus()
-    await field.evaluate(el => (el as HTMLElement).blur())
+    await expect(field).toBeFocused()
     const box = (await page.locator('#touch').boundingBox())!
     const x = box.x + box.width / 2, y = box.y + box.height * .8
     const grid = await page.locator('.xterm-screen').boundingBox()
@@ -105,6 +105,24 @@ for (const enabled of [false, true]) {
     await input.detach()
   })
 }
+
+test('dismissing the phone keyboard releases terminal focus before the next scroll', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'Keyboard dismissal uses the phone viewport')
+  await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: true })
+  await terminal(page, true)
+  const field = page.locator('.xterm-helper-textarea')
+  await page.locator('#touch').tap()
+  await expect(field).toBeFocused()
+  const viewport = page.viewportSize()!
+  await page.setViewportSize({ ...viewport, height: viewport.height - 200 })
+  await expect(page.locator('body')).toHaveClass(/\bkb\b/)
+  await page.setViewportSize(viewport)
+  await expect(page.locator('body')).not.toHaveClass(/\bkb\b/)
+  await expect(field).not.toBeFocused()
+  await touch(page, 'touchmove', 130, 100)
+  await touch(page, 'touchend', 130)
+  await expect(field).not.toBeFocused()
+})
 
 test('a phone terminal link to this app stays in its existing window', async ({ page, context, isMobile, baseURL }) => {
   test.skip(!isMobile, 'The phone opens internal links in place')
@@ -124,6 +142,20 @@ test('a phone terminal link to this app stays in its existing window', async ({ 
   expect(await page.locator('html').getAttribute('data-terminal-link-document')).toBe('keep')
   expect(context.pages()).toHaveLength(pages)
   await fakeHerdr('e2e.interaction_screen', { pane_id: pane, text: null })
+})
+
+test('a short drag responds once without reversing on tiny finger backtracking', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'Fine touch movement uses the phone layout')
+  await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: true, offset: 20 })
+  await terminal(page, true, 20)
+  await page.evaluate(() => document.fonts.ready)
+  await touch(page, 'touchmove', 110, 100)
+  await expect.poll(async () => (await state()).offset).toBe(21)
+  for (const y of [109, 110, 111]) await touch(page, 'touchmove', y)
+  const result = await state()
+  expect(result.offset).toBe(21)
+  expect(result.events).toHaveLength(1)
+  await touch(page, 'touchend', 111)
 })
 
 test('a drag continues after the phone viewport resizes', async ({ page, isMobile }) => {

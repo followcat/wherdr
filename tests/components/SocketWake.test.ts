@@ -17,7 +17,7 @@ vi.mock('~/utils/terminalLinks', () => ({ bindTerminalLinks: () => ({ dispose() 
 vi.mock('~/utils/terminalOsc52', () => ({ OSC52_MAX_BYTES: 1000, bindTerminalOsc52: () => () => {} }))
 vi.mock('~/utils/terminalFont', () => ({ TERM_FONT: 'monospace', onFontsLoaded: () => () => {} }))
 
-it.each([false, true])('shares wake probes while preserving touch beta=%s frame accounting', async enabled => {
+it.each([false, true])('shares wake probes and counts painted frames with touch beta=%s', async enabled => {
   smoothTouchScrolling.value = enabled
   const sockets: Socket[] = []
   class Socket {
@@ -70,7 +70,8 @@ it.each([false, true])('shares wake probes while preserving touch beta=%s frame 
     expect(packet.source).toBe(enabled ? 'touch' : undefined)
     ws.onmessage!({ data: JSON.stringify({ type: 'terminal.frame', width: 80, height: 24, bytes: '' }) })
     ws.onmessage!({ data: JSON.stringify({ type: 'scroll.ack', epoch: packet.epoch, lines: 2 }) })
-    expect(ctl.frameTick.value).toBe(enabled ? 1 : 0)
+    // Every parsed frame counts, including when touch scrolling is disabled.
+    expect(ctl.frameTick.value).toBe(1)
     expect(ctl.scrollAck.value).toBe(enabled ? 2 : 0)
     const previousVersion = ctl.scrollInputVersion.value
     const staleClose = ws.onclose!
