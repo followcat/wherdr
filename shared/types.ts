@@ -322,6 +322,8 @@ export interface ChatResponse {
   // first `keep` items and `items` replace the rest. Absent: `items` is the
   // whole bottom of the conversation.
   keep?: number
+  // Source cursor: JSONL byte offset, or Devin main-chain node id + 1.
+  // Zero means the beginning; callers pass it back without interpreting it.
   start?: number
   // The transcript was rewritten above the client's cursor (same size or
   // shorter): the reply is a fresh bottom, the client starts again from it.
