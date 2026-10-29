@@ -172,7 +172,9 @@ export const homeQuotas = ref<Quotas | null>(null)
 export const fontSize = ref(Number(ls.get('fontSize')) || 12)
 watch(fontSize, v => ls.set('fontSize', String(v)))
 // Experimental touch physics is a device rendering preference, like the renderer.
-export const smoothTouchScrolling = ref(ls.get('smoothTouchScrolling') === '1')
+// On this fork it defaults on for touch devices: it is the point of the build.
+const smoothTouchDefault = typeof matchMedia !== 'undefined' && matchMedia('(hover: none) and (pointer: coarse)').matches
+export const smoothTouchScrolling = ref(ls.get('smoothTouchScrolling') ? ls.get('smoothTouchScrolling') === '1' : smoothTouchDefault)
 watch(smoothTouchScrolling, v => ls.set('smoothTouchScrolling', v ? '1' : '0'))
 
 export const terminalRenderer = ref(parseTerminalRenderer(ls.get('terminalRenderer')))
