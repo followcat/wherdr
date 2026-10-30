@@ -484,10 +484,17 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   // Tap on the touch layer: opens the link under the finger, if any.
   const tapLink = (x: number, y: number) => links?.tap(x, y) ?? false
   const hasFocus = () => Boolean(term && document.activeElement === term.textarea)
+  // Touch math asks for the row height every move/frame; measuring
+  // .xterm-screen forces a layout each call. Cache it per geometry version
+  // (bumped on resize/fit) — the scroller itself already depends on it.
+  let rowHeightCache = { version: -1, value: 16 }
   const rowHeight = () => {
     if (!smoothTouchScrolling.value) return term && term.rows && el ? el.clientHeight / term.rows : 16
+    if (rowHeightCache.version === scrollGeometryVersion.value) return rowHeightCache.value
     const screen = el?.querySelector('.xterm-screen') as HTMLElement | null
-    return term?.rows && screen?.clientHeight ? screen.clientHeight / term.rows : 16
+    const value = term?.rows && screen?.clientHeight ? screen.clientHeight / term.rows : 16
+    rowHeightCache = { version: scrollGeometryVersion.value, value }
+    return value
   }
   const pageRows = () => term?.rows || 24
   // Scrolling requested from Herdr (the history lives there).
