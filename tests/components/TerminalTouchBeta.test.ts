@@ -32,7 +32,7 @@ async function mounted(enabled: boolean, coarse = false) {
     cancelTouchScroll: vi.fn(), scrollInputVersion: ref(0), scrollGeometryVersion: ref(0), scrollAck: ref(0), frameTick: ref(0),
     loading: ref(false), selectionHint: { visible: ref(false), dismiss: vi.fn() },
     mouseMode: ref(coarse),
-    requestScrollback: vi.fn(), scrollback: ref(''), scrollbackVersion: ref(0), liveScreenSpans: () => [[{ text: 'live row' }]],
+    requestScrollback: vi.fn(), scrollback: ref(''), scrollbackVersion: ref(0), captureScreen: vi.fn(() => ({ lines: [[{ text: 'live row' }]], columns: 80 })),
   }
   const w = await mountSuspended(TerminalView, { props: { ctl: ctl as unknown as TerminalCtl } })
   vi.stubGlobal('requestAnimationFrame', (fn: FrameRequestCallback) => { frames.set(++id, fn); return id })
@@ -273,21 +273,29 @@ describe('terminal beta switch', () => {
     await r.send('touchstart', 100)
     vi.advanceTimersByTime(500)
     await nextTick()
-    const sb = r.w.get('#scrollback')
-    expect(sb.classes()).toContain('copy-mode')
-    expect(sb.attributes('style')).toContain('pointer-events: auto')
-    expect(r.w.get('.sb-live').text()).toContain('live row')
-    expect(r.ctl.requestScrollback).toHaveBeenCalledOnce()
-    // A toolbar carries the actions: select all, copy, done.
-    expect(r.w.get('.cp-bar').text()).toContain('Copy mode')
-    expect(r.w.get('.cp-btn.done').exists()).toBe(true)
-    // The release after copy mode must not become a focusing tap.
+    expect(r.w.find('.terminal-copy-layer').exists()).toBe(true)
+    expect(r.w.get('.terminal-copy-text').text()).toBe('live row')
+    expect(r.w.get('#scrollback').attributes('style')).toContain('pointer-events: none')
+    expect(r.ctl.requestScrollback).not.toHaveBeenCalled()
+    expect(r.ctl.captureScreen).toHaveBeenCalledOnce()
+    expect(r.w.findAll('.terminal-copy-tools button')).toHaveLength(2)
+    expect(r.w.get('.terminal-copy-tools').text()).not.toContain('Select all')
+    expect(r.w.emitted('copying')).toEqual([[true]])
+    // New data and geometry do not recapture or replace the frozen DOM.
+    const node = r.w.get('.terminal-copy-text').element.firstChild
+    r.ctl.frameTick.value++
+    r.ctl.scrollbackVersion.value++
+    r.ctl.scrollGeometryVersion.value++
+    await nextTick()
+    expect(r.w.get('.terminal-copy-text').element.firstChild).toBe(node)
+    expect(r.ctl.captureScreen).toHaveBeenCalledOnce()
     await r.send('touchend', 100, 0)
     expect(r.ctl.focus).not.toHaveBeenCalled()
-    await r.w.get('.cp-btn.done').trigger('click')
-    expect(r.w.get('#scrollback').classes()).not.toContain('copy-mode')
-    expect(r.w.find('.sb-live').exists()).toBe(false)
-    expect(r.w.find('.cp-bar').exists()).toBe(false)
+    expect(r.ctl.tapMouse).not.toHaveBeenCalled()
+    await r.w.get('.terminal-copy-tools button:last-child').trigger('click')
+    expect(r.w.find('.terminal-copy-layer').exists()).toBe(false)
+    expect(r.w.emitted('copying')).toEqual([[true], [false]])
+    expect(r.ctl.hasFocus()).toBe(false)
   })
   it('cancels the long press once the finger moves', async () => {
     const r = await mounted(true, true)
@@ -296,7 +304,20 @@ describe('terminal beta switch', () => {
     await r.send('touchmove', 120)
     vi.advanceTimersByTime(600)
     await nextTick()
-    expect(r.w.get('#scrollback').classes()).not.toContain('copy-mode')
+    expect(r.w.find('.terminal-copy-layer').exists()).toBe(false)
     expect(r.ctl.requestScrollback).not.toHaveBeenCalled()
   })
+  it.each(['touchcancel', 'multitouch', 'composition', 'zoom'])('cancels copy entry on %s', async reason => {
+    const r = await mounted(true, true)
+    vi.useFakeTimers()
+    await r.send('touchstart', 100)
+    if (reason === 'touchcancel') await r.send('touchcancel', 100, 0)
+    if (reason === 'multitouch') await r.send('touchstart', 100, 2)
+    if (reason === 'composition') document.dispatchEvent(new Event('compositionstart', { bubbles: true }))
+    if (reason === 'zoom') vi.stubGlobal('visualViewport', { scale: 2 })
+    vi.advanceTimersByTime(500)
+    await nextTick()
+    expect(r.w.find('.terminal-copy-layer').exists()).toBe(false)
+  })
+
 })
