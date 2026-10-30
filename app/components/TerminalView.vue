@@ -175,7 +175,7 @@ const touch = createTerminalTouch({
 // for a slow tap or leak into the tap->focus path on release.
 let lpTimer: ReturnType<typeof setTimeout> | undefined, lpX = 0, lpY = 0, lpEntered = false
 const armLongPress = () => { clearTimeout(lpTimer); lpTimer = setTimeout(enterCopyMode, 480) }
-const cpSelLen = ref(0), cpCopied = ref(false)
+const cpSelLen = ref(0), cpCopied = ref(false), cpFailed = ref(false)
 let cpCopiedTimer: ReturnType<typeof setTimeout> | undefined
 function onSelChange() {
   const sel = document.getSelection()
@@ -188,9 +188,14 @@ function selectAllCopy() {
 async function copySelection() {
   const text = document.getSelection()?.toString() ?? ''
   if (!text) return
-  try { await navigator.clipboard.writeText(text) } catch { try { document.execCommand('copy') } catch { /* no clipboard */ } }
-  cpCopied.value = true
-  clearTimeout(cpCopiedTimer); cpCopiedTimer = setTimeout(() => { cpCopied.value = false }, 1200)
+  let copied = false
+  try { await navigator.clipboard.writeText(text); copied = true }
+  catch { try { copied = document.execCommand('copy') } catch { /* no clipboard */ } }
+  // Report the real outcome: a flash saying "Copied" on a failed write is
+  // worse than silence.
+  cpCopied.value = copied
+  cpFailed.value = !copied
+  clearTimeout(cpCopiedTimer); cpCopiedTimer = setTimeout(() => { cpCopied.value = false; cpFailed.value = false }, 1200)
 }
 function enterCopyMode() {
   lpTimer = undefined
@@ -199,6 +204,7 @@ function enterCopyMode() {
   copyMode.value = true
   cpSelLen.value = 0
   cpCopied.value = false
+  cpFailed.value = false
   haptic()
   // The finger may still be down: drop the gesture so it cannot scroll the
   // live pane behind the copy surface.
@@ -217,6 +223,7 @@ function exitCopyMode() {
   document.getSelection()?.removeAllRanges()
   cpSelLen.value = 0
   cpCopied.value = false
+  cpFailed.value = false
   clearTimeout(cpCopiedTimer)
   renderScrollback()
 }
@@ -533,7 +540,7 @@ onUnmounted(() => {
       <span class="cp-title">{{ t('Copy mode') }}</span>
       <div class="cp-actions">
         <button type="button" class="cp-btn" :disabled="!cpSelLen" @click="copySelection">
-          {{ cpCopied ? t('Copied') : cpSelLen ? `${t('Copy')} ${cpSelLen}` : t('Copy') }}
+          {{ cpCopied ? t('Copied') : cpFailed ? t('Copy failed') : cpSelLen ? `${t('Copy')} ${cpSelLen}` : t('Copy') }}
         </button>
         <button type="button" class="cp-btn" @click="selectAllCopy">{{ t('Select all') }}</button>
         <button type="button" class="cp-btn done" @click="exitCopyMode">{{ t('Done') }}</button>
