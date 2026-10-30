@@ -288,21 +288,52 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
       p.readDelayMs = params.readDelayMs || 0
       return {}
     },
-    // Explicit scroll fixture: mouse apps consume one tick per command;
-    // ordinary history consumes `lines`, matching Herdr's two paths.
+    // Explicit scroll fixture: mouse apps consume `wheelRowsPerTick` rows per
+    // wheel report; ordinary history consumes `lines`, matching Herdr's two
+    // paths. Fault knobs (terminal scroll suite):
+    //   consumeDelayMs    events apply this late — a slow or stalled consumer
+    //   wheelRowsPerTick  a tick is not always one row (app-defined semantic)
+    //   noFrameAtBoundary scrolls clamped at an edge emit no movement frame
     'e2e.touch_scroll': params => {
       const p = need(params.pane_id)
-      if (params.reset) p.touchScroll = { offset: 0, events: [], mouse: !!params.mouse }
+      if (params.reset) p.touchScroll = { offset: 0, events: [], mouse: !!params.mouse, pending: [], wheelRowsPerTick: 1, consumeDelayMs: 0, noFrameAtBoundary: false }
       if (params.clear) { p.touchScroll = null; return {} }
       const state = p.touchScroll
       if (!state) return {}
+      for (const key of ['wheelRowsPerTick', 'consumeDelayMs', 'noFrameAtBoundary'])
+        if (typeof params[key] === 'number' || typeof params[key] === 'boolean') state[key] = params[key]
       if (typeof params.offset === 'number') state.offset = Math.max(0, Math.min(80, params.offset))
       if (params.event) {
         state.events.push(params.event)
-        const n = state.mouse ? 1 : params.event.lines
-        state.offset = Math.max(0, Math.min(80, state.offset + (params.event.direction === 'up' ? n : -n)))
+        state.pending.push({ event: params.event, at: Date.now() + state.consumeDelayMs })
       }
-      return { ...state, text: `History offset ${state.offset}\n` + Array.from({ length: Math.max(1, p.size.rows - 1) }, (_, i) => `History row ${100 - state.offset + i}`).join('\n') }
+      // The consumer (fake-herdr-cli) reports back whether it really wrote a
+      // frame for the last decision — lastFrame is the DECISION, this is the
+      // ACT: a spec can prove the CLI honored `frame: false` instead of only
+      // reading the flag it was told.
+      if (typeof params.frame_sent === 'boolean') state.lastFrameSent = params.frame_sent
+      // Apply whatever is due, strictly in order: a slow consumer serializes
+      // later input behind its head event rather than letting it overtake.
+      const now = Date.now()
+      let moved = false, clamped = false, applied = 0
+      while (state.pending.length && state.pending[0].at <= now) {
+        const { event } = state.pending.shift()
+        applied++
+        const n = state.mouse ? state.wheelRowsPerTick : event.lines
+        const next = state.offset + (event.direction === 'up' ? n : -n)
+        const clampedNext = Math.max(0, Math.min(80, next))
+        if (clampedNext !== next) clamped = true
+        if (clampedNext !== state.offset) moved = true
+        state.offset = clampedNext
+      }
+      // A scroll clamped at the boundary moves nothing: opaque apps may still
+      // repaint, history panes stay put. Specs read `applied` for causality.
+      // lastFrame records the flag for the latest CONSUMED event — a bare
+      // status read must not overwrite the evidence a spec is asserting on.
+      const frame = applied ? (moved || !(clamped && state.noFrameAtBoundary)) : true
+      if (applied) state.lastFrame = frame
+      return { ...state, pending: state.pending.length, applied, frame,
+        text: `History offset ${state.offset}\n` + Array.from({ length: Math.max(1, p.size.rows - 1) }, (_, i) => `History row ${100 - state.offset + i}`).join('\n') }
     },
     'e2e.terminal_screen': params => {
       const p = need(params.pane_id)

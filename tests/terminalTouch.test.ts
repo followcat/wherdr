@@ -2,6 +2,24 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createTerminalTouch } from '../app/utils/terminalTouch'
 import { createTouchScrollPacer } from '../server/utils/touchScrollPacer'
 
+describe('drag start notification', () => {
+  it('fires once when the axis locks, even below the long-press radius', () => {
+    let time = 0
+    const started = vi.fn()
+    const t = createTerminalTouch({ vertical: vi.fn(), horizontal: vi.fn(), canHorizontal: () => false,
+      maxMomentum: () => 150, dragStart: started, now: () => time,
+      frame: () => 0, cancelFrame: () => {} })
+    t.start(0, 0)
+    t.move(0, 3) // inside the 5px slop: still pending
+    expect(started).not.toHaveBeenCalled()
+    time = 100
+    t.move(0, 8) // axis locks here
+    expect(started).toHaveBeenCalledTimes(1)
+    t.move(0, 12)
+    expect(started).toHaveBeenCalledTimes(1)
+  })
+})
+
 function gesture(horizontal = false) {
   let time = 0, id = 0
   const frames = new Map<number, FrameRequestCallback>()
