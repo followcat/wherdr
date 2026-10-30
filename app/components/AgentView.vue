@@ -45,6 +45,9 @@ onUnmounted(() => {
 })
 
 const pane = computed(() => herdrState.value.panes.find(p => p.id === props.paneId))
+const compactPhone = computed(() => !desk.value && !tablet.value && !props.cell)
+const phoneKeysOpen = ref(false)
+watch(() => props.paneId, () => { phoneKeysOpen.value = false })
 // Remember this optional hint for the same agent on this device. A different
 // agent in a reused pane gets its own choice; hiding it never hides errors.
 const transcriptNoteKey = computed(() => {
@@ -364,6 +367,14 @@ useNotificationClock()
 const agentMenu = computed<MenuItem[]>(() => {
   const p = pane.value
   const items: MenuItem[] = p ? [notificationMenuItem(p)] : []
+  if (compactPhone.value && hasChat(p)) {
+    items.unshift(
+      { label: t(mode.value === 'term' ? 'Conversation' : 'Terminal'), icon: mode.value === 'term' ? 'i-lucide-message-square' : 'i-lucide-square-terminal', run: () => toggleMode('term') },
+      { label: t('Search'), icon: 'i-lucide-search', run: toggleSearch },
+      { kind: 'separator' },
+    )
+  }
+  if (compactPhone.value && inTab.value) items.push({ label: t('Tab overview'), icon: 'i-lucide-panels-top-left', run: openPlan })
   if (canAttachTerminal.value) items.push({ label: t('Attach a file…'), icon: 'i-lucide-paperclip', run: () => attachInput.value?.click() })
   if (p) items.push({ label: t('View changes'), icon: 'i-lucide-file-diff', run: () => { changesOpen.value = true } })
   if (p) items.push({ label: t('Browse files'), icon: 'i-lucide-folder-tree', run: () => { filesOpen.value = true } })
@@ -433,8 +444,17 @@ const tab = computed({
 })
 // Terminal keys: under the terminal, and in the active side-by-side cell on a
 // touch screen (iPad without a hardware keyboard: Esc, arrows, ^C).
-const keybarShown = computed(() => mode.value === 'term' && (!props.cell || Boolean(coarse.value && props.active))
-  && eventsOpen.value && !offlineView.value && !machineDown.value)
+const keysAvailable = computed(() => Boolean(pane.value) && live.value && eventsOpen.value && !offlineView.value && !machineDown.value)
+const keybarToggleShown = computed(() => compactPhone.value && keysAvailable.value && !interactionShown.value)
+const keybarId = computed(() => `pane-keys-${encodeURIComponent(props.paneId)}`)
+const keybarShown = computed(() => keysAvailable.value && (compactPhone.value ? phoneKeysOpen.value
+  : mode.value === 'term' && (!props.cell || Boolean(coarse.value && props.active))))
+watch(keybarToggleShown, on => { if (!on) phoneKeysOpen.value = false })
+watch(phoneKeysOpen, on => { if (!on) ctl.clearVirtualModifiers() })
+function togglePhoneKeys() {
+  haptic()
+  phoneKeysOpen.value = !phoneKeysOpen.value
+}
 const controls = computed(() => viewControls({ desk: desk.value, cell: Boolean(props.cell), chat: hasChat(pane.value), live: live.value }))
 const headerAdd = computed(() => !props.cell && pane.value && spaceTabControls(spaceTabs(pane.value.workspace).length).headerAdd)
 
@@ -542,7 +562,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
 
 <template>
   <section
-    :id="cell ? undefined : 'agent'" :class="cell ? ['cell-view', { active, gripped: grip }] : 'view'" :style="cell ? undefined : viewStyle" :data-pane="cell ? paneId : undefined"
+    :id="cell ? undefined : 'agent'" :class="[cell ? ['cell-view', { active, gripped: grip }] : 'view', { 'phone-chrome': compactPhone }]" :style="cell ? undefined : viewStyle" :data-pane="cell ? paneId : undefined"
     @touchstart="onSwipeStart" @touchmove="onSwipeMove" @touchend="onSwipeEnd" @touchcancel="onSwipeEnd"
     @pointerdown.capture="cell && emit('activate')" @focusin="cell && emit('activate')" @click="refocus"
     @dragenter="onDrag" @dragover="onDrag" @dragleave="onDrag" @drop="onDrop"
@@ -552,7 +572,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
       <span class="file-drop-label">{{ t('Drop to attach') }}</span>
       <small>{{ dropTarget === 'term' ? t('The file path is sent to the terminal') : dropHint }}</small>
     </div>
-    <SpaceTabs v-if="!cell && pane" :workspace="pane.workspace" :current="pane.tab" />
+    <SpaceTabs v-if="!cell && pane && !compactPhone" :workspace="pane.workspace" :current="pane.tab" />
     <HeaderMenu v-if="!embedded" :items="() => agentMenu" :disabled="!pane">
       <header class="top bar agent-top">
         <span v-if="cell && grip" class="cell-grip" role="button" :aria-label="t('Drag to move the pane')" :title="t('Drag to move the pane')">
@@ -562,10 +582,11 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
           v-if="!cell" id="btnBack" icon="i-lucide-chevron-left" color="neutral" variant="ghost" size="lg" class="icon-btn back"
           :aria-label="t('Back')" @click="goBack"
         />
+        <SpaceTabs v-if="compactPhone && pane" compact :workspace="pane.workspace" :current="pane.tab" />
         <div class="agent-head">
           <div class="agent-title">{{ headTitle }} <UIcon v-if="pane && paneNotificationsMuted(pane)" name="i-lucide-bell-off" class="notification-muted" :title="t('Muted')" /></div>
           <div class="agent-meta">
-            <StatusPill :pane="pane" kind />
+            <StatusPill :pane="pane" kind :compact="compactPhone" />
             <span v-if="subtitle" class="agent-subtitle">{{ subtitle }}</span>
             <span v-if="command" class="agent-subtitle agent-command">{{ command }}</span>
             <span v-if="tabName" class="agent-subtitle">{{ tabName }}</span>
@@ -585,13 +606,13 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
             class="view-tabs" :ui="tabsUi"
           />
           <UButton
-            v-if="headerAdd && pane" icon="i-lucide-plus" color="neutral" variant="ghost" size="lg" class="icon-btn"
+            v-if="headerAdd && pane && !compactPhone" icon="i-lucide-plus" color="neutral" variant="ghost" size="lg" class="icon-btn"
             :aria-label="t('New tab')" :title="t('New tab')" :disabled="offlineView" @click="newTab(pane.workspace)"
           />
           <UTooltip v-if="cell" :text="t('Open alone')">
             <UButton icon="i-lucide-maximize-2" color="neutral" variant="ghost" size="md" class="icon-btn cell-extra" :aria-label="t('Open alone')" :to="panePath(paneId)" />
           </UTooltip>
-          <UTooltip v-else-if="inTab && tabEnt" :text="t('Side by side')" :disabled="!desk">
+          <UTooltip v-else-if="inTab && tabEnt && !compactPhone" :text="t('Side by side')" :disabled="!desk">
             <button type="button" class="map-btn" :aria-label="desk ? t('Side by side') : t('Tab overview')" @click="openPlan">
               <TabMap :layout="tabEnt.layout" :panes="tabEnt.panes" :current="paneId" />
             </button>
@@ -600,7 +621,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
             v-if="controls.term" icon="i-lucide-square-terminal" color="neutral" variant="ghost" size="lg" class="icon-btn mode-btn"
             :class="{ on: mode === 'term' }" :aria-label="t('Terminal')" :aria-pressed="mode === 'term'" @click="toggleMode('term')"
           />
-          <UTooltip v-if="hasChat(pane) && (live || cell)" :text="t('Search')" :kbds="mode === 'chat' ? shortcutKbds('search-chat') : undefined" :disabled="!desk">
+          <UTooltip v-if="hasChat(pane) && (live || cell) && !compactPhone" :text="t('Search')" :kbds="mode === 'chat' ? shortcutKbds('search-chat') : undefined" :disabled="!desk">
             <UButton icon="i-lucide-search" color="neutral" variant="ghost" size="lg" class="icon-btn cell-extra" :class="{ on: searchOpen }" :aria-label="t('Search')" @click="toggleSearch" />
           </UTooltip>
           <UDropdownMenu v-if="!sheetMenus" :items="dropdownItems" :content="{ align: 'end', sideOffset: 6 }" :ui="{ content: 'hw-dropdown' }">
@@ -654,7 +675,11 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
     </button>
     <ChoicesPanel v-if="(prompt || screen) && !interactionOpen && !interactive && !termShown && eventsOpen && !offlineView && !machineDown" :pane-id="paneId" :prompt="prompt" :screen="screen" :keys="live" />
     <MenuPanel v-else-if="menu && !interactionOpen && !interactive && !termShown && eventsOpen && !offlineView && !machineDown" :pane-id="paneId" :menu="menu" :keys="live" @terminal="setMode('term')" />
-    <Keybar v-if="keybarShown" :ctl="ctl" />
+    <div v-if="keybarToggleShown" class="phone-keybar-controls">
+      <button type="button" class="phone-keybar-toggle" :class="{ on: phoneKeysOpen }" :aria-label="t('Show or hide terminal keys')" :aria-expanded="phoneKeysOpen" :aria-controls="keybarId"
+        @pointerdown.prevent @mousedown.prevent @click.stop="togglePhoneKeys"><UIcon name="i-lucide-keyboard" /></button>
+    </div>
+    <Keybar v-if="keybarShown" :id="keybarId" :ctl="ctl" :compact="compactPhone" />
     <Composer v-if="composerShown" ref="composer" :pane="pane" :pane-id="paneId" :send-keys="ctl.sendKeys" :conversation="mode === 'chat'" :term-shown="termShown" :esc-stops="!searchOpen" :take-back="mode === 'chat'" :unanswered="mode === 'chat' ? unanswered : 0" @sent="onSent" @show-terminal="setMode('term')" @show-unanswered="chatRef?.gotoUnanswered()" />
     </div>
     </div>
