@@ -245,7 +245,9 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
     // a chunk queued inside the writer under backpressure is not sent yet.
     toChild({ type: 'terminal.scroll', direction, lines, ...cell }, {
       onSubmit: () => { delivered(epoch, phase, signed); scrollCmd(epoch, id, phase, 'submitted') },
-      onFlush: () => scrollCmd(epoch, id, phase, 'flushed'),
+      // The stream callback carries an error on a failed write — 'flushed'
+      // means the kernel took the bytes; anything else is its own fact.
+      onFlush: err => scrollCmd(epoch, id, phase, err ? 'writeFailed' : 'flushed'),
     })
   })
   // Panes without mouse-report need no per-tick wheel reports: Herdr honors
@@ -253,25 +255,20 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
   // of one frame per row. The merged batch still counts toward the gesture's
   // epoch for compatibility with clients consuming scroll.ack. `mergedContrib`
   // attributes the merged total back to (epoch, phase) in send order.
-  // Contributions mirror the throttle's own netting: an opposite-direction
-  // push first cancels matching queued contributions, so the ledger only
-  // ever holds what the merged `net` would still send — signed, in order.
+  // Contributions are a raw signed append log — NO pre-netting. The
+  // throttle's tagged cancel must be able to remove a phase cleanly, which
+  // pre-netted entries would make unrecoverable. At flush the batch is
+  // attributed oldest-first over same-sign entries; opposite-sign leftovers
+  // simply wait (bounded by the epoch).
   const mergedContrib: { epoch: number, phase: string, lines: number }[] = []
   const addContrib = (epoch: number, phase: string, signed: number) => {
-    let rest = signed
-    // Opposite-direction input nets out the oldest queued contributions
-    // first — the same FIFO order a flushed batch is attributed in.
-    for (let i = 0; rest && i < mergedContrib.length;) {
-      const c = mergedContrib[i]!
-      if (Math.sign(c.lines) === Math.sign(rest)) { i++; continue }
-      const take = Math.min(Math.abs(c.lines), Math.abs(rest))
-      c.lines += Math.sign(rest) * take
-      rest -= Math.sign(rest) * take
-      if (!c.lines) mergedContrib.splice(i, 1); else i++
-    }
-    if (rest) mergedContrib.push({ epoch, phase, lines: rest })
+    mergedContrib.push({ epoch, phase, lines: signed })
   }
   const touchMerged = createScrollThrottle((direction, lines) => {
+    // Consume the contribution log now, report delivery when the bytes
+    // really enter the stream (onSubmit) — a chunk dropped by the bounded
+    // writer or stalled under backpressure is honestly never delivered.
+    const attrib: { epoch: number, phase: string, lines: number }[] = []
     let rest = lines
     const dirSign = direction === 'up' ? 1 : -1
     while (rest > 0 && mergedContrib.length) {
@@ -280,10 +277,12 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
       const take = Math.min(Math.abs(head.lines), rest)
       head.lines -= dirSign * take
       rest -= take
-      delivered(head.epoch, head.phase, dirSign * take)
+      attrib.push({ epoch: head.epoch, phase: head.phase, lines: dirSign * take })
       if (!head.lines) mergedContrib.shift()
     }
-    toChild({ type: 'terminal.scroll', direction, lines })
+    toChild({ type: 'terminal.scroll', direction, lines }, attrib.length
+      ? { onSubmit: () => attrib.forEach(a => delivered(a.epoch, a.phase, a.lines)) }
+      : undefined)
   }, { intervalMs: 30 })
   const cancelMerged = () => { touchMerged.cancel(); mergedContrib.length = 0 }
   let scrollbackSeq = 0

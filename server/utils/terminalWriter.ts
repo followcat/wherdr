@@ -10,7 +10,7 @@ import type { Writable } from 'node:stream'
 // A chunk still inside THIS queue has not been submitted: callers must not
 // advance delivery accounting for it.
 export function createTerminalWriter(stream: Writable, { maxPending = 256 }: { maxPending?: number } = {}) {
-  let pending: { data: string, onSubmit?: () => void, onFlush?: () => void }[] = []
+  let pending: { data: string, onSubmit?: () => void, onFlush?: (err?: Error | null) => void }[] = []
   let blocked = false
   let dead = false
   const pump = () => {
@@ -25,7 +25,7 @@ export function createTerminalWriter(stream: Writable, { maxPending = 256 }: { m
   const onDrain = () => { blocked = false; pump() }
   stream.on('drain', onDrain)
   return {
-    write(data: string, opts?: { onSubmit?: () => void, onFlush?: () => void } | (() => void)) {
+    write(data: string, opts?: { onSubmit?: () => void, onFlush?: (err?: Error | null) => void } | ((err?: Error | null) => void)) {
       if (dead) return
       const { onSubmit, onFlush } = typeof opts === 'function' ? { onSubmit: undefined, onFlush: opts } : (opts ?? {})
       // FIFO: anything already waiting must go first, even if this write
