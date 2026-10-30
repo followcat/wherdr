@@ -97,3 +97,24 @@ test('copy failure preserves native selection; Escape closes without sending a k
   await expect(page.locator('.terminal-copy-layer')).toHaveCount(0)
   await expect(page.locator('.xterm-helper-textarea')).not.toBeFocused()
 })
+
+test('system Select all copies only frozen text, excluding the header and underlying grid', async ({ page, isMobile, browserName }) => {
+  test.skip(!isMobile || browserName !== 'chromium', 'Trusted hold uses Chromium CDP')
+  await start(page)
+  await hold(page)
+  const frozen = (await page.locator('.terminal-copy-text').textContent())!
+  await page.evaluate(() => {
+    getSelection()!.selectAllChildren(document.body)
+    document.dispatchEvent(new Event('selectionchange'))
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (s: string) => { (window as any).__copied = s } } })
+  })
+  await expect(page.getByRole('button', { name: 'Copy', exact: true })).toBeEnabled()
+  const native = await page.evaluate(() => {
+    const clipboardData = new DataTransfer()
+    document.dispatchEvent(new ClipboardEvent('copy', { bubbles: true, cancelable: true, clipboardData }))
+    return clipboardData.getData('text/plain')
+  })
+  expect(native).toBe(frozen)
+  await page.getByRole('button', { name: 'Copy', exact: true }).click()
+  expect(await page.evaluate(() => (window as any).__copied)).toBe(frozen)
+})
