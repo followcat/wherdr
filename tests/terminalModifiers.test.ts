@@ -55,4 +55,13 @@ describe('one-shot terminal modifiers', () => {
     composition.keydown({ keyCode: 37 })
     expect(action('\x1b[D', ['alt'])).toEqual({ key: virtualInputKey('\x1b[D') })
   })
+
+  it.each([{ keyCode: 229 }, { isComposing: true }])('keeps the IME commit guard for a composition keydown: %o', event => {
+    const composition = createCompositionTracker()
+    composition.start()
+    composition.end()
+    composition.keydown(event)
+    expect(composition.takeEnded()).toBe(true)
+    expect(composition.takeEnded()).toBe(false)
+  })
 })
