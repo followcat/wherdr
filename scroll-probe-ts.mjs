@@ -1,7 +1,7 @@
 // Measure the touch-scroll pipeline against a live wherdr terminal ws.
 // Simulates a fast finger drag (source:'touch') and records when frames/acks
-// come back. Run ON fvps to isolate server+herdr+app speed from tailnet RTT.
-// usage: node scroll-probe.mjs <pane> [lines] [spanMs] [cols] [rows]
+// come back. Run on the server itself to isolate server+agent speed from network RTT.
+// usage: WHERDR=wss://host:port node scroll-probe-ts.mjs <pane> [lines] [spanMs] [cols] [rows]
 import WebSocket from 'ws'
 
 const pane = process.argv[2]
@@ -9,8 +9,13 @@ const LINES = Number(process.argv[3] || 120)
 const SPAN = Number(process.argv[4] || 500)
 const COLS = Number(process.argv[5] || 80)
 const ROWS = Number(process.argv[6] || 24)
-const url = `wss://fvps.tail22c958.ts.net:7683/ws/term?pane=${pane}&cols=${COLS}&rows=${ROWS}`
-const ws = new WebSocket(url, { rejectUnauthorized: false, headers: { origin: 'https://fvps.tail22c958.ts.net:7683' } })
+if (!pane || !process.env.WHERDR) {
+  console.error('usage: WHERDR=wss://host:port node scroll-probe-ts.mjs <pane> [lines] [spanMs] [cols] [rows]')
+  process.exit(64)
+}
+const base = process.env.WHERDR.replace(/\/$/, '')
+const url = `${base}/ws/term?pane=${pane}&cols=${COLS}&rows=${ROWS}`
+const ws = new WebSocket(url, { rejectUnauthorized: false, headers: { origin: base.replace(/^ws/, 'http') } })
 const t0 = Date.now()
 const t = () => Date.now() - t0
 let caps = null

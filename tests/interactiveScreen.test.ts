@@ -37,7 +37,7 @@ describe('terminal fallback after native recognition', () => {
     const text = fx('devin-idle.txt')
     expect(classifyScreen({ text, agent: 'devin' })).toBe('input')
     // An echoed user line shares the ❭ prefix; only the boxed prompt counts.
-    expect(text.indexOf('❭ 还能练吗')).toBeGreaterThanOrEqual(0)
+    expect(text.indexOf('❭ show me the docs')).toBeGreaterThanOrEqual(0)
   })
   it.each(['claude', 'codex', 'omp'])('keeps long %s drafts and wrapped footers at the message field', agent => {
     const draft = Array.from({ length: 30 }, (_, i) => `  draft line ${i}`).join('\n')
