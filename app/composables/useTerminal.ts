@@ -167,7 +167,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       if (virtualModifiers.value.length) {
         const action = virtualInputAction(d)
         if (action.kind === 'key') { void sendVirtualKey(action.key); return }
-        if (action.kind === 'blocked') { toast('组合键请选择面板按键，或切换英文输入单个字母', true); return }
+        // Text no chord maps to is still the user's text: warn that the
+        // modifier did not apply, then send it unchanged like a paste.
+        if (action.kind === 'blocked') toast(tl('Chord not applied — text sent as typed', 'Accord non appliqué — texte envoyé tel quel'), true)
         clearVirtualModifiers() // A paste stays text, never a series of shortcuts.
       }
       sendTerm({ type: 'terminal.input', text: d })
@@ -221,7 +223,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     lastVirtualChord.value = displayVirtualChord(chord)
     const navigation = virtualNavigationBytes(chord)
     if (navigation) {
-      if (!sendTerm({ type: 'terminal.input', text: navigation })) toast('终端正在连接，请连接后重试', true)
+      if (!sendTerm({ type: 'terminal.input', text: navigation })) toast(tl('Terminal is still connecting — try again', 'Le terminal se connecte encore — réessaie'), true)
       return
     }
     await sendKeys([chord])
@@ -451,7 +453,10 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     const screen = term?.element?.querySelector('.xterm-screen') as HTMLElement | null
     const rect = screen?.getBoundingClientRect()
     const position = rect && term && x !== undefined && y !== undefined ? terminalCell(x, y, rect, term.cols, term.rows) : null
-    return sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), ...position, modifiers, source: 'touch', epoch: touchEpoch, preview, phase: preview ? 'drag' : 'momentum' })
+    // The app's real mouse-report state, as this xterm decoded it — it can lag
+    // behind Herdr's capability flag by a frame, so the server prefers it.
+    const tui = term ? term.modes.mouseTrackingMode !== 'none' : undefined
+    return sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), ...position, modifiers, source: 'touch', tui, epoch: touchEpoch, preview, phase: preview ? 'drag' : 'momentum' })
   }
   function cancelTouchScroll() {
     touchEpoch++
