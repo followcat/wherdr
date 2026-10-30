@@ -990,6 +990,24 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
    Agent view
    ================================================================ */
 #agent { overflow: hidden; }
+/* Phone chrome: the tab picker, title and state share one row. Extra
+   actions remain in Options; the tab picker retains tab management. */
+.phone-chrome .agent-top { grid-template-columns: auto auto minmax(0, 1fr) auto; grid-template-areas: "back space head actions"; gap: 3px; padding: max(6px, var(--safe-top)) 6px 6px; min-height: 52px; }
+.space-tab-picker { grid-area: space; display: inline-flex; align-items: center; gap: 4px; height: 36px; max-width: 24vw; padding: 0 7px; border: 1px solid var(--line); color: var(--text-2); font: 12px/1 var(--mono); }
+.space-tab-picker span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.space-tab-picker .iconify { width: 12px; height: 12px; flex: none; }
+.phone-chrome .agent-head { display: flex; align-items: center; gap: 6px; padding: 0 2px; }
+.phone-chrome .agent-title { flex: 1 1 auto; min-width: 0; font-size: 14px; }
+.phone-chrome .agent-meta { flex: 0 1 auto; min-width: 0; max-width: 48%; margin: 0; max-height: none; flex-wrap: nowrap; }
+.phone-chrome .agent-meta .pill { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; font-size: 10px; }
+.phone-chrome .agent-meta .pill-kind { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.phone-chrome .agent-meta .pill-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.phone-chrome .agent-meta :is(.agent-subtitle, .agent-machine, .where) { display: none; }
+.phone-keybar-controls { position: relative; height: 0; flex: none; z-index: 5; }
+.phone-keybar-toggle { position: absolute; right: 12px; bottom: 8px; width: 40px; height: 36px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 18px; background: var(--bg-2); color: var(--muted); touch-action: manipulation; }
+.phone-keybar-toggle .iconify { width: 20px; height: 20px; }
+.phone-keybar-toggle.on { color: var(--accent); border-color: var(--accent); }
+.phone-keybar-toggle:focus-visible, .space-tab-picker:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* File dragged from the Finder / file explorer: drop zone over the whole view. */
 .file-drop {
   position: absolute; inset: 8px; z-index: 60; pointer-events: none;

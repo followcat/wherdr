@@ -327,6 +327,7 @@ const FR: Record<string, string> = {
   'Common keys and modifiers': 'Touches courantes et modificateurs',
   'More function keys': 'Plus de touches de fonction',
   'Show or hide function keys': 'Afficher ou masquer les touches de fonction',
+  'Show or hide terminal keys': 'Afficher ou masquer les touches du terminal',
   'Show or hide the phone keyboard': 'Afficher ou masquer le clavier du téléphone',
   'Swipe for more function keys': 'Glisser pour plus de touches',
   'Digits': 'Chiffres', 'One-shot chord': 'Accord à un coup',

@@ -28,7 +28,7 @@ const stripLabels = (w: Awaited<ReturnType<typeof mountSuspended>>) =>
 describe('Keybar', () => {
   it('sends named keys from the always-visible strip', async () => {
     const ctl = makeCtl()
-    const w = await mountSuspended(Keybar, { props: { ctl: ctl as never } })
+    const w = await mountSuspended(Keybar, { props: { ctl: ctl as never, compact: true } })
     expect(stripLabels(w)).toEqual(['Esc', '⇧', 'Tab', '←', '↑', '↓', '→', '⏎', ''])
     await w.findAll('.vk-strip button')[2]!.trigger('click')
     expect(ctl.sendVirtualKey).toHaveBeenCalledWith('tab')
@@ -39,11 +39,11 @@ describe('Keybar', () => {
 
   it('shows digits only when allDigits asks for them', async () => {
     const ctl = makeCtl()
-    const plain = await mountSuspended(Keybar, { props: { ctl: ctl as never } })
+    const plain = await mountSuspended(Keybar, { props: { ctl: ctl as never, compact: true } })
     expect(plain.find('.vk-digits').exists()).toBe(false)
     plain.unmount()
 
-    const w = await mountSuspended(Keybar, { props: { ctl: ctl as never, allDigits: true } })
+    const w = await mountSuspended(Keybar, { props: { ctl: ctl as never, compact: true, allDigits: true } })
     const buttons = w.findAll('.vk-digits button')
     expect(buttons.map(b => b.text())).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'])
     await buttons[4]!.trigger('click')
@@ -53,7 +53,7 @@ describe('Keybar', () => {
 
   it('expands to the function row without duplicating the strip Tab', async () => {
     const ctl = makeCtl()
-    const w = await mountSuspended(Keybar, { props: { ctl: ctl as never } })
+    const w = await mountSuspended(Keybar, { props: { ctl: ctl as never, compact: true } })
     expect(w.find('.vk-extra-row').exists()).toBe(false)
     await w.get('.vk-more').trigger('click')
     const row = w.findAll('.vk-function-scroll > button')
@@ -71,7 +71,7 @@ describe('Keybar', () => {
 
   it('arms modifiers and announces the pending chord', async () => {
     const ctl = makeCtl()
-    const w = await mountSuspended(Keybar, { props: { ctl: ctl as never } })
+    const w = await mountSuspended(Keybar, { props: { ctl: ctl as never, compact: true } })
     await w.get('.vk-more').trigger('click')
     const mods = w.findAll('.vk-extra-row .vk-mod')
     await mods[0]!.trigger('click')
@@ -84,7 +84,7 @@ describe('Keybar', () => {
 
   it('toggles the phone keyboard from the extra row', async () => {
     const ctl = makeCtl()
-    const w = await mountSuspended(Keybar, { props: { ctl: ctl as never } })
+    const w = await mountSuspended(Keybar, { props: { ctl: ctl as never, compact: true } })
     await w.get('.vk-more').trigger('click')
     await w.get('.vk-system').trigger('click')
     expect(ctl.focus).toHaveBeenCalled()
