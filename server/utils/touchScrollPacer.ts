@@ -32,7 +32,12 @@ export function createTouchScrollPacer<T = undefined>(send: (direction: 'up' | '
     credit -= count
     last = now
     inFlight += count
-    for (let i = 0; i < count; i++) send(direction, 1, queue.shift()!.value)
+    for (let i = 0; i < count; i++) {
+      // send() may synchronously cancel queued items — guard the shift.
+      const item = queue.shift()
+      if (!item) break
+      send(direction, 1, item.value)
+    }
     schedule()
   }
   const cancel = () => {

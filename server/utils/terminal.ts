@@ -157,17 +157,19 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
   let size = { cols, rows }
   let attached = false
   let mouse = false
-  // What the client sends before the control session is started.
-  const early: unknown[] = []
+  // What the client sends before the control session is started. Callbacks
+  // travel with the queued object so a scroll replayed on attach can still
+  // report its real submission and flush.
+  const early: { obj: unknown, cb?: { onSubmit?: () => void, onFlush?: () => void } }[] = []
 
   // Backpressure-aware writer: a full kernel buffer pauses the tail, it
   // never resends the chunk that reported `false`.
   let writer: ReturnType<typeof createTerminalWriter> | undefined
-  const toChild = (obj: unknown, onFlushed?: () => void) => {
+  const toChild = (obj: unknown, cb?: { onSubmit?: () => void, onFlush?: () => void }) => {
     if (!child) {
-      if (early.length < 64) early.push(obj)
+      if (early.length < 64) early.push({ obj, cb })
     } else if (child.stdin.writable) {
-      writer?.write(JSON.stringify(obj) + '\n', onFlushed)
+      writer?.write(JSON.stringify(obj) + '\n', cb)
     }
   }
 
@@ -211,7 +213,7 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
     })
     // No crash if the CLI closes while we write to it.
     c.stdin.on('error', () => {})
-    for (const m of early.splice(0)) toChild(m)
+    for (const { obj, cb } of early.splice(0)) toChild(obj, cb)
   }
 
   // Scrolls merged and rate-limited (see scrollThrottle.ts).
@@ -239,29 +241,51 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
     if (!position) return
     const { epoch, preview, phase, id, ...cell } = position
     const signed = direction === 'up' ? lines : -lines
-    toChild({ type: 'terminal.scroll', direction, lines, ...cell }, () => scrollCmd(epoch, id, phase, 'flushed'))
-    delivered(epoch, phase, signed)
-    scrollCmd(epoch, id, phase, 'submitted')
+    // submitted/delivered only when the bytes actually enter the stream —
+    // a chunk queued inside the writer under backpressure is not sent yet.
+    toChild({ type: 'terminal.scroll', direction, lines, ...cell }, {
+      onSubmit: () => { delivered(epoch, phase, signed); scrollCmd(epoch, id, phase, 'submitted') },
+      onFlush: () => scrollCmd(epoch, id, phase, 'flushed'),
+    })
   })
   // Panes without mouse-report need no per-tick wheel reports: Herdr honors
   // lines:N there, so merge touch drags into one command per repaint instead
   // of one frame per row. The merged batch still counts toward the gesture's
   // epoch for compatibility with clients consuming scroll.ack. `mergedContrib`
   // attributes the merged total back to (epoch, phase) in send order.
+  // Contributions mirror the throttle's own netting: an opposite-direction
+  // push first cancels matching queued contributions, so the ledger only
+  // ever holds what the merged `net` would still send — signed, in order.
   const mergedContrib: { epoch: number, phase: string, lines: number }[] = []
+  const addContrib = (epoch: number, phase: string, signed: number) => {
+    let rest = signed
+    // Opposite-direction input nets out the oldest queued contributions
+    // first — the same FIFO order a flushed batch is attributed in.
+    for (let i = 0; rest && i < mergedContrib.length;) {
+      const c = mergedContrib[i]!
+      if (Math.sign(c.lines) === Math.sign(rest)) { i++; continue }
+      const take = Math.min(Math.abs(c.lines), Math.abs(rest))
+      c.lines += Math.sign(rest) * take
+      rest -= Math.sign(rest) * take
+      if (!c.lines) mergedContrib.splice(i, 1); else i++
+    }
+    if (rest) mergedContrib.push({ epoch, phase, lines: rest })
+  }
   const touchMerged = createScrollThrottle((direction, lines) => {
     let rest = lines
+    const dirSign = direction === 'up' ? 1 : -1
     while (rest > 0 && mergedContrib.length) {
       const head = mergedContrib[0]!
-      if (Math.sign(head.lines) !== (direction === 'up' ? 1 : -1)) break
+      if (Math.sign(head.lines) !== dirSign) break
       const take = Math.min(Math.abs(head.lines), rest)
-      head.lines -= take
+      head.lines -= dirSign * take
       rest -= take
-      delivered(head.epoch, head.phase, direction === 'up' ? take : -take)
+      delivered(head.epoch, head.phase, dirSign * take)
       if (!head.lines) mergedContrib.shift()
     }
     toChild({ type: 'terminal.scroll', direction, lines })
   }, { intervalMs: 30 })
+  const cancelMerged = () => { touchMerged.cancel(); mergedContrib.length = 0 }
   let scrollbackSeq = 0
 
   // The pane's size is read before the control session resizes it (see paneSizes.ts).
@@ -293,20 +317,20 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
           break
         case 'terminal.input':
           touchScroll?.cancel()
-          touchMerged.cancel()
+          cancelMerged()
           if (typeof m.text === 'string' && m.text.length <= 65536) toChild({ type: 'terminal.input', text: m.text })
           else if (typeof m.bytes === 'string' && m.bytes.length <= 90000) toChild({ type: 'terminal.input', bytes: m.bytes })
           break
         case 'terminal.mouse': {
           touchScroll?.cancel()
-          touchMerged.cancel()
+          cancelMerged()
           const event = mouse && cleanTerminalMouse(m, size.cols, size.rows)
           if (event) toChild(event)
           break
         }
         case 'terminal.resize': {
           touchScroll?.cancel()
-          touchMerged.cancel()
+          cancelMerged()
           size = { cols: clampInt(m.cols, 10, 400, cols), rows: clampInt(m.rows, 5, 200, rows) }
           if (attached) hold?.resized(size.cols, size.rows)
           toChild({ type: 'terminal.resize', ...size })
@@ -330,11 +354,11 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
                 }, phase === 'momentum' ? 240 : 800)
               }
               else {
-                mergedContrib.push({ epoch, phase, lines: (m.direction === 'up' ? 1 : -1) * clampInt(m.lines, 1, 500, 3) })
+                addContrib(epoch, phase, (m.direction === 'up' ? 1 : -1) * clampInt(m.lines, 1, 500, 3))
                 touchMerged.push(m.direction, clampInt(m.lines, 1, 500, 3), phase)
               }
             }
-            else { touchScroll?.cancel(); touchMerged.cancel(); mergedContrib.length = 0; scroll.push(m.direction, clampInt(m.lines, 1, 500, 3)) }
+            else { touchScroll?.cancel(); cancelMerged(); scroll.push(m.direction, clampInt(m.lines, 1, 500, 3)) }
           }
           break
         case 'touch.cancel':
@@ -348,8 +372,7 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
           }
           if (m.disabled === true) { touchScroll?.dispose(); touchScroll = undefined }
           else touchScroll?.cancel()
-          touchMerged.cancel()
-          mergedContrib.length = 0
+          cancelMerged()
           scrollDelivered.clear()
           break
         // The client renders scrollback locally in a native scroller, so the
@@ -366,7 +389,7 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
         }
         case 'keys': // logical keys encoded by Herdr according to the terminal mode
           touchScroll?.cancel()
-          touchMerged.cancel()
+          cancelMerged()
           if (Array.isArray(m.keys) && m.keys.length <= 32 && m.keys.every((k: unknown) => typeof k === 'string' && k.length <= 24)) {
             herdr('pane.send_input', { pane_id: pane, keys: m.keys }).catch(e =>
               ws.isOpen() && ws.send(JSON.stringify({ type: 'web.error', code: e.code, message: e.message })))
@@ -377,7 +400,7 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
         // never learns the program's bracketed paste mode, it stays text).
         case 'paste':
           touchScroll?.cancel()
-          touchMerged.cancel()
+          cancelMerged()
           if (typeof m.text === 'string' && m.text && m.text.length <= 65536) {
             herdr('pane.send_input', { pane_id: pane, text: m.text }).catch(e =>
               ws.isOpen() && ws.send(JSON.stringify({ type: 'web.error', code: e.code, message: e.message })))
@@ -385,7 +408,7 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
           break
         case 'visibility':
           sess.visible = Boolean(m.visible)
-          if (!sess.visible) { touchScroll?.cancel(); touchMerged.cancel() }
+          if (!sess.visible) { touchScroll?.cancel(); cancelMerged() }
           break
       }
     },
@@ -394,11 +417,15 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
       scroll.dispose()
       touchScroll?.dispose()
       touchMerged.dispose()
+      mergedContrib.length = 0
       termSessions.delete(sess)
       const c = child
       if (c) {
         // Hand control back cleanly (the pane size goes back to the other clients).
-        toChild({ type: 'terminal.release' })
+        // Drop queued scroll chunks first: end() would cut them anyway, and
+        // release must not wait behind a backpressured tail.
+        writer?.dispose()
+        if (c.stdin.writable) c.stdin.write(JSON.stringify({ type: 'terminal.release' }) + '\n')
         c.stdin.end()
         setTimeout(() => {
           if (c.exitCode === null) c.kill('SIGTERM')
@@ -426,7 +453,8 @@ export function resizePane(pane: string, cols: number, rows: number): Promise<bo
     if (done) return
     done = true
     clearTimeout(timer)
-    toChild({ type: 'terminal.release' })
+    // A standalone control session — no shared writer here.
+    if (child.stdin.writable) child.stdin.write(JSON.stringify({ type: 'terminal.release' }) + '\n')
     child.stdin.end()
     setTimeout(() => {
       if (child.exitCode === null) child.kill('SIGTERM')
