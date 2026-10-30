@@ -1,0 +1,52 @@
+{
+  "upstreamBase": "249bc45",
+  "head": "83518dde224a50ee2d12a269614380eaa614cf5e",
+  "focusedUnit": {
+    "passed": 20,
+    "files": 4
+  },
+  "focusedComponents": {
+    "passed": 26,
+    "files": 3
+  },
+  "chromiumPhone": {
+    "uniquePassed": 18,
+    "desktopCasesSkipped": 4,
+    "specs": 7,
+    "lastHeaderSpecRerun": {
+      "passed": 3,
+      "skipped": 1
+    }
+  },
+  "chromiumDesktop": {
+    "passed": 3,
+    "skipped": 4
+  },
+  "typecheck": {
+    "exitCode": 0,
+    "warning": "Existing vue-router/volar plugin-path warning"
+  },
+  "productionBuild": "passed",
+  "documentationLinks": "passed",
+  "personalPatterns": "passed; gitleaks binary unavailable",
+  "fullVitest": {
+    "filesPassed": 365,
+    "passed": 4542,
+    "expectedFail": 1,
+    "skipped": 1,
+    "total": 4544,
+    "maxWorkers": 2
+  },
+  "PWA": {
+    "nativeScreenshots": 10,
+    "widths": [
+      360,
+      412
+    ],
+    "standalone": true,
+    "addressBar": false,
+    "fullscreenAPI": false,
+    "android": "16",
+    "chrome": "133.0.6943.137"
+  }
+}

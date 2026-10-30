@@ -1,0 +1,183 @@
+{
+  "synthetic": true,
+  "captureBuildCommit": "0ef08beb6636292a0cf13d189f9f1167d32d0eac",
+  "pullRequestHead": "83518dde224a50ee2d12a269614380eaa614cf5e",
+  "productSourcesMatchHead": true,
+  "device": {
+    "android": "16",
+    "chrome": "133.0.6943.137"
+  },
+  "launch": "Installed home-screen PWA, native launcher tap",
+  "screens": [
+    {
+      "name": "pwa-360.png",
+      "standalone": true,
+      "width": 360,
+      "height": 731,
+      "dpr": 3,
+      "addressBarVisible": false,
+      "fullscreenElement": false,
+      "imeShown": false,
+      "activity": "WebappActivity"
+    },
+    {
+      "name": "pwa-picker-360.png",
+      "standalone": true,
+      "width": 360,
+      "height": 731,
+      "dpr": 3,
+      "addressBarVisible": false,
+      "fullscreenElement": false,
+      "imeShown": false,
+      "activity": "WebappActivity"
+    },
+    {
+      "name": "pwa-412.png",
+      "standalone": true,
+      "width": 412,
+      "height": 839,
+      "dpr": 2.625,
+      "addressBarVisible": false,
+      "fullscreenElement": false,
+      "imeShown": false,
+      "activity": "WebappActivity"
+    },
+    {
+      "name": "pwa-picker-412.png",
+      "standalone": true,
+      "width": 412,
+      "height": 839,
+      "dpr": 2.625,
+      "addressBarVisible": false,
+      "fullscreenElement": false,
+      "imeShown": false,
+      "activity": "WebappActivity"
+    },
+    {
+      "name": "pwa-other-tab.png",
+      "standalone": true,
+      "width": 412,
+      "height": 839,
+      "dpr": 2.625,
+      "addressBarVisible": false,
+      "fullscreenElement": false,
+      "imeShown": false,
+      "activity": "WebappActivity"
+    },
+    {
+      "name": "pwa-large-text.png",
+      "standalone": true,
+      "width": 412,
+      "height": 839,
+      "dpr": 2.625,
+      "addressBarVisible": false,
+      "fullscreenElement": false,
+      "imeShown": false,
+      "activity": "WebappActivity"
+    },
+    {
+      "name": "pwa-keys.png",
+      "standalone": true,
+      "width": 412,
+      "height": 839,
+      "dpr": 2.625,
+      "addressBarVisible": false,
+      "fullscreenElement": false,
+      "imeShown": false,
+      "activity": "WebappActivity"
+    },
+    {
+      "name": "pwa-chat-closed.png",
+      "standalone": true,
+      "width": 412,
+      "height": 839,
+      "dpr": 2.625,
+      "addressBarVisible": false,
+      "fullscreenElement": false,
+      "imeShown": false,
+      "activity": "WebappActivity"
+    },
+    {
+      "name": "pwa-chat-open.png",
+      "standalone": true,
+      "width": 412,
+      "height": 839,
+      "dpr": 2.625,
+      "addressBarVisible": false,
+      "fullscreenElement": false,
+      "imeShown": false,
+      "activity": "WebappActivity"
+    },
+    {
+      "name": "pwa-more.png",
+      "standalone": true,
+      "width": 412,
+      "height": 839,
+      "dpr": 2.625,
+      "addressBarVisible": false,
+      "fullscreenElement": false,
+      "imeShown": false,
+      "activity": "WebappActivity"
+    }
+  ],
+  "checks": [
+    {
+      "name": "Real standalone PWA at 360px, full Agent label, 44px targets",
+      "layout": {
+        "width": 360,
+        "height": 53,
+        "overflow": false,
+        "targets": [
+          {
+            "width": 44,
+            "height": 44
+          },
+          {
+            "width": 44,
+            "height": 44
+          },
+          {
+            "width": 44,
+            "height": 44
+          }
+        ],
+        "kindFits": true
+      }
+    },
+    {
+      "name": "Real standalone PWA at 412px, full Agent label, 44px targets",
+      "layout": {
+        "width": 412.19049072265625,
+        "height": 52.761905670166016,
+        "overflow": false,
+        "targets": [
+          {
+            "width": 44,
+            "height": 44
+          },
+          {
+            "width": 44,
+            "height": 44
+          },
+          {
+            "width": 44,
+            "height": 44
+          }
+        ],
+        "kindFits": true
+      }
+    },
+    {
+      "name": "PWA touch switches to pane 2/2 without opening keyboard",
+      "passed": true
+    },
+    {
+      "name": "PWA Tab switching updates Agent and pane count",
+      "passed": true
+    },
+    {
+      "name": "PWA panel after Android Back preserves the closed keyboard",
+      "passed": true
+    }
+  ]
+}
