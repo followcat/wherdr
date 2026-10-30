@@ -40,6 +40,11 @@ export function createTouchScrollPacer<T = undefined>(send: (direction: 'up' | '
     if (timer) clearTimeout(timer)
     timer = null
   }
+  // Phase cancel: drop queued items matching the predicate (e.g. leftover
+  // momentum) without touching the drag phase or the send window.
+  const cancelWhere = (drop: (value: T | undefined) => boolean) => {
+    queue = queue.filter(item => !drop(item.value))
+  }
   return {
     push(nextDirection: 'up' | 'down', lines: number, value?: T, maxAgeMs = 240) {
       if (disposed) return
@@ -63,6 +68,7 @@ export function createTouchScrollPacer<T = undefined>(send: (direction: 'up' | '
       schedule()
     },
     cancel,
+    cancelWhere,
     dispose() { cancel(); disposed = true },
   }
 }
