@@ -71,8 +71,14 @@ const text = toRef(draft, 'text')
 const promptRef = ref<{ textareaRef?: HTMLTextAreaElement } | null>(null)
 const ta = computed(() => promptRef.value?.textareaRef || null)
 const fieldFocused = ref(false)
+// Stay expanded while focus is anywhere inside the composer — tabbing from
+// the field into the toolbar must not hide the selectors under the finger.
+const withinPrompt = (el: Element | null) => !!(el && ta.value?.closest('.prompt')?.contains(el))
 // Android can dismiss the keyboard while leaving the textarea focused.
-watch(kbOpen, open => { if (!open) fieldFocused.value = false })
+watch(kbOpen, open => { if (!open && !withinPrompt(document.activeElement)) fieldFocused.value = false })
+function onFocusOut(e: FocusEvent) {
+  if (!withinPrompt(e.relatedTarget as Element | null)) fieldFocused.value = false
+}
 const fileInput = ref<HTMLInputElement | null>(null)
 const anyFileInput = ref<HTMLInputElement | null>(null)
 const sending = ref(false)
@@ -705,7 +711,7 @@ defineExpose({
       :rows="1" :maxrows="7" :autofocus="false" :submit-on-enter="enterSends && !slashOpen"
       :enterkeyhint="enterSends ? 'send' : 'enter'" autocapitalize="sentences"
       class="prompt" :class="{ suggesting: suggestTap, expanded }" :style="suggestRoom ? { '--suggest-room': `${suggestRoom}px` } : undefined" :ui="{ header: 'prompt-head', body: 'prompt-body', base: 'prompt-input', footer: 'prompt-foot' }"
-      @focus="fieldFocused = true" @blur="fieldFocused = false"
+      @focusin="fieldFocused = true" @focusout="onFocusOut" @focus="fieldFocused = true" @blur="onFocusOut"
       @submit="submit" @keydown="onKeydown" @paste="onPaste" @beforeinput="onBeforeInput"
     >
       <template v-if="attachments.length" #header>
