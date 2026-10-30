@@ -323,7 +323,10 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
       }
       // A scroll clamped at the boundary moves nothing: opaque apps may still
       // repaint, history panes stay put. Specs read `applied` for causality.
-      const frame = moved || !(clamped && state.noFrameAtBoundary)
+      // lastFrame records the flag for the latest CONSUMED event — a bare
+      // status read must not overwrite the evidence a spec is asserting on.
+      const frame = applied ? (moved || !(clamped && state.noFrameAtBoundary)) : true
+      if (applied) state.lastFrame = frame
       return { ...state, pending: state.pending.length, applied, frame,
         text: `History offset ${state.offset}\n` + Array.from({ length: Math.max(1, p.size.rows - 1) }, (_, i) => `History row ${100 - state.offset + i}`).join('\n') }
     },

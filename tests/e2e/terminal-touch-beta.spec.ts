@@ -106,6 +106,32 @@ for (const enabled of [false, true]) {
   })
 }
 
+test('a stalled consumer applies the swipe late — delivery never means consumption', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'Touch gestures use the phone viewport')
+  await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: false, consumeDelayMs: 1500 })
+  await terminal(page, true)
+  // A real drag: scroll events are submitted to Herdr at once...
+  await touch(page, 'touchmove', 220, 60)
+  // ...queued at the consumer for ~1.5s. While pending, nothing has moved:
+  // delivery to Herdr is not application consumption.
+  await expect.poll(async () => (await state() as { pending: number }).pending, { timeout: 3000 }).toBeGreaterThan(0)
+  expect((await state() as { offset: number }).offset).toBe(0)
+  await touch(page, 'touchend', 220)
+  await expect.poll(async () => (await state() as { offset: number }).offset, { timeout: 5000 }).toBeGreaterThan(0)
+})
+
+test('a scroll clamped at the boundary emits no movement frame', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'Touch gestures use the phone viewport')
+  await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: false, noFrameAtBoundary: true })
+  await terminal(page, true)
+  // Already at the live edge (offset 0): scrolling down moves nothing.
+  await touch(page, 'touchmove', 100, 200)
+  await touch(page, 'touchend', 100)
+  const s = await state() as { offset: number, lastFrame: boolean | undefined }
+  expect(s.offset).toBe(0)
+  expect(s.lastFrame).toBe(false)
+})
+
 test('a short drag held still is a scroll, not a long press', async ({ page, isMobile }) => {
   test.skip(!isMobile, 'Touch gestures use the phone viewport')
   await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: false })
