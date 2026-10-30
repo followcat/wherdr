@@ -493,6 +493,11 @@ function normalize(s: HerdrState): HerdrState {
 
 const eventProbe = createSocketProbe(() => evWs)
 let evHandshake: ReturnType<typeof setTimeout> | undefined
+// OPEN but silent: the upgrade succeeded and no real packet followed. An
+// open pipe proves nothing (the first state goes out on connect); past this
+// window the socket is dead rather than slow, so it is closed for onclose's
+// retry path.
+let evFirst: ReturnType<typeof setTimeout> | undefined
 export function recoverEvents() {
   connectEvents()
   return eventProbe.recover(() => { if (!document.hidden && !locked.value) reconnectEvents() })
@@ -500,6 +505,7 @@ export function recoverEvents() {
 export function reconnectEvents() {
   eventProbe.cancel()
   clearTimeout(evHandshake)
+  clearTimeout(evFirst)
   clearTimeout(evTimer)
   if (evWs) { try { evWs.onclose = null; evWs.close() } catch { /* ignore */ } evWs = null }
   evRetry = 0
@@ -511,6 +517,7 @@ export function connectEvents() {
   if (locked.value) return
   if (evWs && evWs.readyState <= 1) return
   clearTimeout(evHandshake)
+  clearTimeout(evFirst)
   eventProbe.cancel()
   const ws = new WebSocket(`${wsBase()}/ws/events`)
   evWs = ws
@@ -525,6 +532,9 @@ export function connectEvents() {
     clearTimeout(evHandshake)
     evRetry = 0
     eventsOpen.value = true
+    evFirst = setTimeout(() => {
+      if (evWs === ws) { try { ws.close() } catch { /* ignore */ } }
+    }, 8000)
     if (everOpen) {
       settleUntil = Date.now() + SETTLE_MS
       // Reconnection = often a redeployment: we check right away whether
@@ -543,7 +553,8 @@ export function connectEvents() {
       if (evWs !== ws) return
       const data = JSON.parse(e.data)
       if (data?.type === 'pong') { eventProbe.pong(ws); return }
-      // Settings changed on another device (or another tab).
+      // Real traffic (state or settings): the socket proved itself live.
+      clearTimeout(evFirst)
       if (data?.type === 'settings') { settingsSync.receive(data.settings || {}); return }
       const got = normalize(data) as HerdrState
       // Server just restarted, state still partial: we keep the whole
@@ -568,6 +579,7 @@ export function connectEvents() {
   ws.onclose = () => {
     if (evWs !== ws) return
     clearTimeout(evHandshake)
+    clearTimeout(evFirst)
     evWs = null
     eventsOpen.value = false
     eventProbe.cancel()

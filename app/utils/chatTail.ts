@@ -38,6 +38,12 @@ export function tailQuery(pane: string, c: { token: string, tailStart: number | 
   return q
 }
 
+// A bottom read unanswered past this is dead (a black-holed fetch after the
+// server went away mid-request): aborting frees the one-at-a-time lock below
+// so the next poll can ask again, instead of every refresh waiting forever
+// behind a read that will never settle.
+export const CHAT_READ_MS = 8000
+
 // One re-read of the bottom at a time, for its whole life. `step` returns
 // true to run again at once (session changed, delta did not fit), up to `max`
 // steps, still holding the lock: a polling tick or a return to the app during
