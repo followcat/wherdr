@@ -511,7 +511,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     hasBanner: opts.hasBanner, selectionHint,
     cancelTouchScroll, scrollInputVersion, scrollGeometryVersion, frameTick, scrollAck,
     scrollback, scrollbackVersion, requestScrollback, mouseMode, liveScreenSpans,
-    virtualModifiers, lastVirtualChord, toggleVirtualModifier: toggleModifier, clearVirtualModifiers, sendVirtualKey,
+    virtualModifiers, lastVirtualChord, toggleModifier, toggleVirtualModifier: toggleModifier, clearVirtualModifiers, sendVirtualKey,
   }
 }
 

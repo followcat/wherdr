@@ -53,7 +53,7 @@ const ui = { overlay: 'hw-scrim interactive-terminal-scrim', content: 'interacti
         <UButton size="xs" color="warning" variant="outline" @click="banner.fn()">{{ banner.btn }}</UButton>
       </div>
       <TerminalView :ctl="ctl" @keydown.stop />
-      <Keybar :ctl="ctl" all-digits @keydown.stop />
+      <Keybar :ctl="ctl" :compact="!desk && !tablet" all-digits @keydown.stop />
     </template>
   </UModal>
 </template>
