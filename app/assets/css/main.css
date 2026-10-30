@@ -1187,20 +1187,9 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 #scrollback .sb-line { content-visibility: auto; contain-intrinsic-size: auto var(--sb-lh, 1em); }
 #scrollback .sb-gap { height: 100%; }
 #scrollback .sb-body { background: var(--bg); }
-/* Copy mode (long press): an opaque snapshot document under a toolbar —
-   selectable history plus the live screen. The passthrough gap is gone:
-   the live rows are DOM now, so the whole surface scrolls as one. */
-#scrollback.copy-mode .sb-body { user-select: text; -webkit-user-select: text; cursor: text; }
-#scrollback.copy-mode .sb-gap { display: none; }
-#scrollback.copy-mode .sb-live { border-top: 1px solid var(--line); margin-top: 2px; }
-#scrollback.copy-mode .sb-live::before { content: attr(data-label); display: block; padding: 3px 0 2px; font: 600 10px/1.2 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); user-select: none; -webkit-user-select: none; }
-.cp-bar { position: absolute; top: 0; left: 0; right: 0; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 40px; padding: 0 6px 0 12px; background: var(--bg-2); border-bottom: 1px solid var(--line); user-select: none; -webkit-user-select: none; touch-action: manipulation; }
-.cp-title { font: 600 11px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
-.cp-actions { display: flex; gap: 6px; align-items: center; }
-.cp-btn { padding: 7px 11px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: 500 12px/1 var(--mono); }
-.cp-btn:active { background: var(--line-soft); }
-.cp-btn:disabled { opacity: .4; }
-.cp-btn.done { background: var(--ochre); color: var(--bg); border-color: transparent; font-weight: 600; }
+/* The native selection surface needs selectable ancestors on Android too. */
+#termWrap.copying-screen { user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; }
+.agent-main:has(.copying-screen), #agent:has(.copying-screen), .cell-view:has(.copying-screen) { user-select: text; -webkit-user-select: text; }
 .term-loading { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
 .term-loading.static { position: static; padding: 30px; }
 .xterm .xterm-viewport { background: transparent !important; overflow-y: hidden !important; }

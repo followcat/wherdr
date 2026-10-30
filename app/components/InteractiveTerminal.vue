@@ -6,11 +6,12 @@
 const props = defineProps<{ paneId: string, active: boolean, title?: string }>()
 const emit = defineEmits<{ close: [] }>()
 const banner = shallowRef<Banner | null>(null)
+const copying = ref(false)
 const ctl = createTerminal(props.paneId, {
   setBanner: b => { banner.value = b },
   hasBanner: () => Boolean(banner.value),
   fill: () => true,
-  input: () => props.active,
+  input: () => props.active && !copying.value,
 })
 watch(pageVisible, v => ctl.setVisible(v))
 
@@ -18,7 +19,7 @@ watch(pageVisible, v => ctl.setVisible(v))
 // itself takes the focus, so the keyboard only opens on a tap in the terminal.
 let opened = false
 function focusTerminal() {
-  if (!opened || !desk.value || ctl.hasFocus()) return
+  if (copying.value || !opened || !desk.value || ctl.hasFocus()) return
   const el = document.activeElement
   if (el instanceof HTMLElement && el.closest('.interactive-terminal') && el.matches('button, input, textarea')) return
   ctl.focus()
@@ -52,8 +53,8 @@ const ui = { overlay: 'hw-scrim interactive-terminal-scrim', content: 'interacti
         <span>{{ banner.text }}</span>
         <UButton size="xs" color="warning" variant="outline" @click="banner.fn()">{{ banner.btn }}</UButton>
       </div>
-      <TerminalView :ctl="ctl" @keydown.stop />
-      <Keybar :ctl="ctl" :compact="!desk && !tablet" all-digits @keydown.stop />
+      <TerminalView :ctl="ctl" @copying="copying = $event" @keydown.stop />
+      <Keybar :ctl="ctl" :inert="copying" :compact="!desk && !tablet" all-digits @keydown.stop />
     </template>
   </UModal>
 </template>
