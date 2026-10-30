@@ -1180,6 +1180,10 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
   scrollbar-width: none; pointer-events: none; background: transparent; }
 #scrollback::-webkit-scrollbar { display: none; }
 #scrollback .sb-body { padding: 6px 4px 0 6px; white-space: pre-wrap; overflow-wrap: break-word; font-variant-ligatures: none; }
+/* Skip layout/paint for off-screen history rows: the snapshot can hold
+   thousands of lines. --sb-lh carries the terminal's line height so the
+   estimate matches real rows (wrapped lines re-resolve on approach). */
+#scrollback .sb-line { content-visibility: auto; contain-intrinsic-size: auto var(--sb-lh, 1em); }
 #scrollback .sb-gap { height: 100%; }
 #scrollback .sb-body { background: var(--bg); }
 /* Copy mode (long press): an opaque snapshot document under a toolbar —
