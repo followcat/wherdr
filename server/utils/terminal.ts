@@ -159,11 +159,11 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
   // What the client sends before the control session is started.
   const early: unknown[] = []
 
-  const toChild = (obj: unknown) => {
+  const toChild = (obj: unknown, onFlushed?: () => void) => {
     if (!child) {
       if (early.length < 64) early.push(obj)
     } else if (child.stdin.writable) {
-      child.stdin.write(JSON.stringify(obj) + '\n')
+      child.stdin.write(JSON.stringify(obj) + '\n', onFlushed)
     }
   }
 
@@ -181,8 +181,8 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
       if (ws.isOpen()) {
         ws.send(line)
         if (isFrame) {
-          for (const [epoch, lines] of scrollDelivered)
-            ws.send(JSON.stringify({ type: 'scroll.ack', epoch, lines }))
+          for (const { epoch, phase, lines } of scrollDelivered.values())
+            ws.send(JSON.stringify({ type: 'scroll.ack', epoch, phase, lines }))
           scrollDelivered.clear()
         }
       } else scrollDelivered.clear()
@@ -211,24 +211,49 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
   // Scrolls merged and rate-limited (see scrollThrottle.ts).
   // Acknowledge sent rows after relaying the next frame. Herdr exposes no
   // applied viewport delta or causal input sequence, so this acknowledges delivery only.
-  const scrollDelivered = new Map<number, number>()
-  type TouchPosition = ReturnType<typeof terminalScrollPosition> & { epoch: number, preview: boolean }
+  // Delivery ledger, keyed `${epoch}:${phase}`: drag and momentum stay
+  // separate accounts even inside one merged batch. A v2 client (scroll
+  // messages carrying `v:2`) additionally receives per-command stages.
+  const scrollDelivered = new Map<string, { epoch: number, phase: string, lines: number }>()
+  const delivered = (epoch: number, phase: string, lines: number) => {
+    const key = `${epoch}:${phase}`
+    const entry = scrollDelivered.get(key) || { epoch, phase, lines: 0 }
+    entry.lines += lines
+    scrollDelivered.set(key, entry)
+  }
+  let scrollV2 = false
+  const scrollCmd = (epoch: number, id: number, phase: string, stage: string) => {
+    if (scrollV2 && ws.isOpen()) ws.send(JSON.stringify({ type: 'scroll.cmd', epoch, id, phase, stage }))
+  }
+  type TouchPosition = ReturnType<typeof terminalScrollPosition> & { epoch: number, preview: boolean, phase: string, id: number }
   let touchScroll: ReturnType<typeof createTouchScrollPacer<TouchPosition>> | undefined
   // Preserve the legacy wire contract, and allocate no pacer for default clients.
   const scroll = createScrollThrottle((direction, lines) => toChild({ type: 'terminal.scroll', direction, lines }))
   const pacedTouch = () => touchScroll ||= createTouchScrollPacer<TouchPosition>((direction, lines, position) => {
     if (!position) return
-    const { epoch, preview, ...cell } = position
-    scrollDelivered.set(epoch, (scrollDelivered.get(epoch) || 0) + (direction === 'up' ? lines : -lines))
-    toChild({ type: 'terminal.scroll', direction, lines, ...cell })
+    const { epoch, preview, phase, id, ...cell } = position
+    const signed = direction === 'up' ? lines : -lines
+    toChild({ type: 'terminal.scroll', direction, lines, ...cell }, () => scrollCmd(epoch, id, phase, 'flushed'))
+    delivered(epoch, phase, signed)
+    scrollCmd(epoch, id, phase, 'submitted')
   })
   // Panes without mouse-report need no per-tick wheel reports: Herdr honors
   // lines:N there, so merge touch drags into one command per repaint instead
   // of one frame per row. The merged batch still counts toward the gesture's
-  // epoch for compatibility with clients consuming scroll.ack.
-  let mergedEpoch = 0
+  // epoch for compatibility with clients consuming scroll.ack. `mergedContrib`
+  // attributes the merged total back to (epoch, phase) in send order.
+  const mergedContrib: { epoch: number, phase: string, lines: number }[] = []
   const touchMerged = createScrollThrottle((direction, lines) => {
-    scrollDelivered.set(mergedEpoch, (scrollDelivered.get(mergedEpoch) || 0) + (direction === 'up' ? lines : -lines))
+    let rest = lines
+    while (rest > 0 && mergedContrib.length) {
+      const head = mergedContrib[0]!
+      if (Math.sign(head.lines) !== (direction === 'up' ? 1 : -1)) break
+      const take = Math.min(Math.abs(head.lines), rest)
+      head.lines -= take
+      rest -= take
+      delivered(head.epoch, head.phase, direction === 'up' ? take : -take)
+      if (!head.lines) mergedContrib.shift()
+    }
     toChild({ type: 'terminal.scroll', direction, lines })
   }, { intervalMs: 30 })
   let scrollbackSeq = 0
@@ -283,29 +308,42 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
         }
         case 'terminal.scroll':
           if (m.direction === 'up' || m.direction === 'down') {
+            if (m.v === 2) scrollV2 = true
             if (m.source === 'touch') {
               // tui = the pane's live mouse-report/alt-screen state as seen by
               // the client's xterm. Older clients send no tui; fall back to
               // the herdr capability flag.
               const tui = m.tui === undefined ? mouse : m.tui === true
+              const phase = m.phase === 'momentum' || m.preview === false ? 'momentum' : 'drag'
+              const epoch = clampInt(m.epoch, 0, Number.MAX_SAFE_INTEGER, 0)
               if (tui) {
                 pacedTouch().push(m.direction, clampInt(m.lines, 1, 500, 3), {
                   ...terminalScrollPosition(m, size.cols, size.rows),
-                  epoch: clampInt(m.epoch, 0, Number.MAX_SAFE_INTEGER, 0), preview: m.preview !== false,
-                }, m.phase === 'momentum' || m.preview === false ? 240 : 800)
+                  epoch, preview: m.preview !== false, phase,
+                  id: clampInt(m.id, 0, Number.MAX_SAFE_INTEGER, 0),
+                }, phase === 'momentum' ? 240 : 800)
               }
               else {
-                mergedEpoch = clampInt(m.epoch, 0, Number.MAX_SAFE_INTEGER, 0)
-                touchMerged.push(m.direction, clampInt(m.lines, 1, 500, 3))
+                mergedContrib.push({ epoch, phase, lines: (m.direction === 'up' ? 1 : -1) * clampInt(m.lines, 1, 500, 3) })
+                touchMerged.push(m.direction, clampInt(m.lines, 1, 500, 3), phase)
               }
             }
-            else { touchScroll?.cancel(); touchMerged.cancel(); scroll.push(m.direction, clampInt(m.lines, 1, 500, 3)) }
+            else { touchScroll?.cancel(); touchMerged.cancel(); mergedContrib.length = 0; scroll.push(m.direction, clampInt(m.lines, 1, 500, 3)) }
           }
           break
         case 'touch.cancel':
+          if (m.phase === 'momentum') {
+            // Phase cancel: drop expendable momentum only. Queued drags —
+            // which may still be owed to a finger that is down — survive.
+            touchScroll?.cancelWhere(position => position?.phase === 'momentum')
+            touchMerged.cancelTagged('momentum')
+            for (let i = mergedContrib.length - 1; i >= 0; i--) if (mergedContrib[i]!.phase === 'momentum') mergedContrib.splice(i, 1)
+            break
+          }
           if (m.disabled === true) { touchScroll?.dispose(); touchScroll = undefined }
           else touchScroll?.cancel()
           touchMerged.cancel()
+          mergedContrib.length = 0
           scrollDelivered.clear()
           break
         // The client renders scrollback locally in a native scroller, so the

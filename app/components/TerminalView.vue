@@ -157,6 +157,9 @@ const touch = createTerminalTouch({
     if (lastScrollAt - momStartAt > 140 && momSent >= 6
       && Math.abs(props.ctl.scrollAck.value - momAckBase) < momSent * .35) {
       momStartAt = 0
+      // The queued momentum tail is expendable; cancel that phase only —
+      // any drag still owed to a finger is untouched.
+      props.ctl.cancelTouchScroll('momentum')
       return false
     }
   },

@@ -44,6 +44,18 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   // Cumulative signed rows acknowledged after xterm parses the next frame.
   const scrollAck = ref(0)
   let touchEpoch = 0
+  // Scroll delivery ledger (v2): per-command stages reported by the server.
+  // `submitted` = written to the Herdr stdin, `flushed` = write callback.
+  // Neither means the application consumed the input; frames never prove
+  // consumption. Counters only — bounded by construction per epoch.
+  let scrollSeq = 0
+  const scrollLedger = ref({ submitted: 0, flushed: 0 })
+  let scrollCmdSeen = new Set<string>()
+  const bumpEpoch = () => {
+    touchEpoch++
+    scrollLedger.value = { submitted: 0, flushed: 0 }
+    scrollCmdSeen = new Set()
+  }
   const virtualModifiers = ref<VirtualModifier[]>([])
   const lastVirtualChord = ref('')
   const composition = createCompositionTracker()
@@ -320,7 +332,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     let closedReason: string | null = null
     let gotFrame = false
     let lastErr = ''
-    touchEpoch++
+    bumpEpoch()
     if (smoothTouchScrolling.value) scrollInputVersion.value++
     const ws = new WebSocket(`${wsBase()}/ws/term?${q}`)
     tws = ws
@@ -381,6 +393,17 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
             if (epoch === touchEpoch && smoothTouchScrolling.value) scrollAck.value += m.lines
           })
         }
+      } else if (m.type === 'scroll.cmd') {
+        // Per-command delivery stage (v2). Deduped by id+stage; a repeated or
+        // late packet must not double-count.
+        if (smoothTouchScrolling.value && m.epoch === touchEpoch && Number.isFinite(m.id)) {
+          const key = `${m.id}:${m.stage}`
+          if (!scrollCmdSeen.has(key)) {
+            scrollCmdSeen.add(key)
+            if (m.stage === 'submitted') scrollLedger.value = { ...scrollLedger.value, submitted: scrollLedger.value.submitted + 1 }
+            else if (m.stage === 'flushed') scrollLedger.value = { ...scrollLedger.value, flushed: scrollLedger.value.flushed + 1 }
+          }
+        }
       } else if (m.type === 'scrollback.chunk') {
         scrollback.value = typeof m.text === 'string' ? m.text : ''
         scrollbackVersion.value++
@@ -396,7 +419,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     }
     ws.onclose = () => {
       if (tws !== ws) return
-      if (smoothTouchScrolling.value) { scrollInputVersion.value++; touchEpoch++ }
+      if (smoothTouchScrolling.value) { scrollInputVersion.value++; bumpEpoch() }
       clearTimeout(handshake)
       clearTimeout(frameWait)
       tws = null
@@ -428,7 +451,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
 
   function disconnect() {
     clearVirtualModifiers()
-    if (smoothTouchScrolling.value) { scrollInputVersion.value++; touchEpoch++ }
+    if (smoothTouchScrolling.value) { scrollInputVersion.value++; bumpEpoch() }
     clearVirtualModifiers()
     mouseSupported = false
     twsIntent = false
@@ -477,14 +500,17 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     // replayed frame can lack the mode switch, so never claim `false` — the
     // server's own capability state is the better fallback.
     const tui = term && term.modes.mouseTrackingMode !== 'none' ? true : undefined
-    return sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), ...position, modifiers, source: 'touch', tui, epoch: touchEpoch, preview, phase: preview ? 'drag' : 'momentum' })
+    const phase = preview ? 'drag' : 'momentum'
+    return sendTerm({ type: 'terminal.scroll', v: 2, id: ++scrollSeq, direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), ...position, modifiers, source: 'touch', tui, epoch: touchEpoch, preview, phase })
   }
-  function cancelTouchScroll() {
-    touchEpoch++
-    if (smoothTouchScrolling.value) sendTerm({ type: 'touch.cancel' })
+  // A phase ('momentum') drops only that phase server-side; an omitted phase
+  // cancels everything queued for the touch source.
+  function cancelTouchScroll(phase?: 'momentum') {
+    bumpEpoch()
+    if (smoothTouchScrolling.value) sendTerm({ type: 'touch.cancel', ...(phase ? { phase } : {}) })
   }
   const stopSmoothWatch = watch(smoothTouchScrolling, (_, wasEnabled) => {
-    touchEpoch++
+    bumpEpoch()
     scrollInputVersion.value++
     if (wasEnabled) sendTerm({ type: 'touch.cancel', disabled: true })
   }, { flush: 'sync' })
@@ -529,7 +555,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     mount, connect, disconnect, isConnected, sendTerm, sendKeys, fitNow, setFontSize,
     reset, scroll, focus, blur, tapLink, tapMouse: (x: number, y: number) => mouse?.tap(x, y), hasFocus, rowHeight, pageRows, setVisible, dispose, loading, kbdOn,
     hasBanner: opts.hasBanner, selectionHint,
-    cancelTouchScroll, scrollInputVersion, scrollGeometryVersion, frameTick, scrollAck,
+    cancelTouchScroll, scrollInputVersion, scrollGeometryVersion, frameTick, scrollAck, scrollLedger,
     scrollback, scrollbackVersion, requestScrollback, mouseMode, liveScreenSpans,
     virtualModifiers, lastVirtualChord, toggleModifier, toggleVirtualModifier: toggleModifier, clearVirtualModifiers, sendVirtualKey,
   }
