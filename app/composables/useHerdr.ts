@@ -521,6 +521,8 @@ export function connectEvents() {
   eventProbe.cancel()
   const ws = new WebSocket(`${wsBase()}/ws/events`)
   evWs = ws
+  const t0 = Date.now() // staged timing: open, then first real packet
+  let proved = false
   // A CONNECTING socket fires nothing: no open, no close, no retry. If the
   // network is not actually back yet, the handshake hangs and the app would
   // sit offline forever -- close it on a deadline so onclose retries.
@@ -555,6 +557,7 @@ export function connectEvents() {
       if (data?.type === 'pong') { eventProbe.pong(ws); return }
       // Real traffic (state or settings): the socket proved itself live.
       clearTimeout(evFirst)
+      if (!proved) { proved = true; console.debug(`[events] first +${Date.now() - t0}ms`) }
       if (data?.type === 'settings') { settingsSync.receive(data.settings || {}); return }
       const got = normalize(data) as HerdrState
       // Server just restarted, state still partial: we keep the whole
@@ -629,7 +632,9 @@ watch(herdrState, (s) => {
 // the server end a session past its maximum duration (never in the middle of use).
 export async function confirmLock({ resume = false } = {}) {
   try {
-    const st = await api<AuthStatus>(resume ? '/api/auth/status?resume=1' : '/api/auth/status')
+    // A server that never answers is not a reason to lock: bound the read so
+    // the catch below (unreachable → leave the app as it is) still fires.
+    const st = await api<AuthStatus>(resume ? '/api/auth/status?resume=1' : '/api/auth/status', undefined, AbortSignal.timeout(STATUS_WAIT_MS))
     if (st.enabled && !st.unlocked) return showLock()
     const access = leaseFromStatus(st)
     setOfflineAccess(access)
@@ -697,7 +702,7 @@ export async function start({ resume = false } = {}) {
   try {
     const st = resume
       ? await api<AuthStatus>('/api/auth/status?resume=1', undefined, AbortSignal.timeout(STATUS_WAIT_MS))
-      : await api<AuthStatus>('/api/auth/status')
+      : await api<AuthStatus>('/api/auth/status', undefined, AbortSignal.timeout(STATUS_WAIT_MS))
     if (st.hostLabel !== undefined) hostLabel.value = st.hostLabel
     if (st.enabled && !st.unlocked) return showLock()
     access = leaseFromStatus(st)
