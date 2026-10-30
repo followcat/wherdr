@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { statSync } from 'node:fs'
+import { join } from 'node:path'
 import { DEVIN_QUERY } from './devinStore'
 import { boundedOutput, type ShellExec } from './fsx'
 import type { ChatItem, ChatResponse, ModelInfo } from '../../shared/types'
@@ -20,6 +22,12 @@ const clip = (s: unknown) => typeof s === 'string' ? s.slice(0, 20000) : ''
 const tokenParts = (token = '') => {
   const m = /^devin:(devin-[a-f0-9]{24}):(\d+):([a-f0-9]{24}):[a-f0-9]{24}(?=[~#]|$)/.exec(token)
   return m ? { file: m[1]!, start: Number(m[2]), prefix: m[3]! } : null
+}
+// Same resolution the query script uses (devinStore.ts).
+function sessionsDb(home: string): string {
+  const dir = process.env.DEVIN_SESSIONS_DIR
+    || (process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, 'devin/cli') : join(home, '.local/share/devin/cli'))
+  return join(dir, 'sessions.db')
 }
 
 function localQuery(home: string, request: Json, maxBytes: number): Promise<Buffer> {
@@ -113,11 +121,28 @@ export function parseDevin(snapshot: Snapshot): ChatItem[] {
   return items
 }
 
-export function createDevinTranscripts({ home, exec }: { home: string, exec?: ShellExec }) {
+export function createDevinTranscripts({ home, exec, cacheMs = 1500 }: { home: string, exec?: ShellExec, cacheMs?: number }) {
   const pending = new Map<string, Promise<Snapshot>>()
+  // Each query is a python3 spawn + a SQLite read; the chat view polls a few
+  // times a second. Local reads cache against the store's own signature —
+  // sessions.db and its WAL — so any committed write re-reads while quiet
+  // polls stay free. Remote reads (SSH exec) have no cheap signature and
+  // fall back to a short TTL.
+  const cached = new Map<string, { at: number, sig: string, snapshot: Snapshot }>()
+  const sigOf = (suffix: string) => { try { const s = statSync(sessionsDb(home) + suffix); return `${s.size}:${s.mtimeMs}` } catch { return 'x' } }
+  const dbSignature = () => `${sigOf('')}/${sigOf('-wal')}`
+  function cachedGet(key: string): Snapshot | null {
+    const hit = cached.get(key)
+    if (!hit) return null
+    if (exec ? Date.now() - hit.at < cacheMs : hit.sig === dbSignature()) return hit.snapshot
+    if (!exec) cached.delete(key)
+    return null
+  }
   async function query(session: string, op: string, options: Json = {}): Promise<Snapshot> {
     const request = { session, op, ...options }
     const key = JSON.stringify(request)
+    const hit = cachedGet(key)
+    if (hit) return hit
     const known = pending.get(key)
     if (known) return known
     const work = (async () => {
@@ -132,7 +157,11 @@ export function createDevinTranscripts({ home, exec }: { home: string, exec?: Sh
         }
         body = r.stdout
       } else body = await localQuery(home, request, maxBytes)
-      return JSON.parse(body.toString('utf8')) as Snapshot
+      const snapshot = JSON.parse(body.toString('utf8')) as Snapshot
+      // Errors are never cached: a transient SSH/runtime failure retries fast.
+      cached.set(key, { at: Date.now(), sig: exec ? '' : dbSignature(), snapshot })
+      if (cached.size > 64) cached.delete(cached.keys().next().value!)
+      return snapshot
     })()
     pending.set(key, work)
     try { return await work } finally { pending.delete(key) }

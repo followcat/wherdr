@@ -254,3 +254,23 @@ it('reports malformed schemas and broken chains instead of erasing the conversat
   execFileSync('python3', ['-c', 'import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute("DROP TABLE message_nodes");c.commit()', file])
   await expect(reader.chat(pane)).rejects.toThrow(/Unsupported Devin session database format/)
 })
+
+it('dedupes remote queries inside the TTL, expires them after, and never caches errors', async () => {
+  const { home } = fixture()
+  let calls = 0
+  const exec: ShellExec = async () => { calls++; return { code: 0, stdout: Buffer.from('{"available":false}'), stderr: '' } }
+  const remote = createDevinTranscripts({ home, exec, cacheMs: 60 })
+  const pane = { id: 'p1', agent: 'devin', cwd: '/x', agentSession: 's' }
+  // A burst of identical polls — concurrent and sequential — is one query.
+  await Promise.all([remote.chat(pane), remote.chat(pane)])
+  await remote.chat(pane)
+  expect(calls).toBe(1)
+  await new Promise(resolve => setTimeout(resolve, 80))
+  await remote.chat(pane)
+  expect(calls).toBe(2)
+  // A failure is retried, not replayed.
+  const failing = createDevinTranscripts({ home, exec: async () => { calls++; throw new Error('ssh down') }, cacheMs: 60000 })
+  await expect(failing.chat(pane)).rejects.toThrow('ssh down')
+  await expect(failing.chat(pane)).rejects.toThrow('ssh down')
+  expect(calls).toBe(4)
+})
