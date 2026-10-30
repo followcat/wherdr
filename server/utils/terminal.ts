@@ -16,7 +16,7 @@ import { DATA_DIR, PANE_RE, log } from './env'
 import { herdr } from './herdr'
 import { getState, termSessions, type TermView } from './state'
 import { cleanTerminalMouse, hasTerminalMouse } from '../../shared/herdrFeatures'
-import { machineOfPane, runHerdrCli } from './machines'
+import { machineOfPane, runHerdrCli, type Machine } from './machines'
 import { type PaneHold, type PaneSize, cleanSavedSizes, createPaneSizes, parseSttySize } from './paneSizes'
 import { splitId } from '../../shared/ids'
 import { createScrollThrottle } from './scrollThrottle'
@@ -57,11 +57,17 @@ function ttySize(pane: string, pid: number): Promise<string> {
 // agrees with the rows Herdr reports); otherwise the rows Herdr reports and
 // the width of the pane in Herdr's layout, the one Herdr would give it.
 export async function readPaneSize(pane: string): Promise<PaneSize | null> {
-  const p = (await herdr('pane.get', { pane_id: pane }, 3000).catch(() => null))?.pane
+  // Independent reads go together: on a remote machine each is a separate
+  // SSH round trip, and serializing them cost a whole extra hop.
+  const [g, pi] = await Promise.all([
+    herdr('pane.get', { pane_id: pane }, 3000).catch(() => null),
+    herdr('pane.process_info', { pane_id: pane }, 3000).catch(() => null),
+  ])
+  const p = g?.pane
   if (!p) return null
   const terminal = typeof p.terminal_id === 'string' ? { terminal: p.terminal_id as string } : {}
   const rows = Number(p.scroll?.viewport_rows) || 0
-  const pid = Number((await herdr('pane.process_info', { pane_id: pane }, 3000).catch(() => null))?.process_info?.shell_pid)
+  const pid = Number(pi?.process_info?.shell_pid)
   if (Number.isInteger(pid) && pid > 1) {
     const tty = parseSttySize(await ttySize(pane, pid))
     if (tty && (!rows || tty.rows === rows)) return { ...tty, exact: true, ...terminal }
@@ -72,6 +78,19 @@ export async function readPaneSize(pane: string): Promise<PaneSize | null> {
   const cols = Number(rect?.width) || 0
   if (!rows || !cols) return null
   return { cols, rows, exact: false, ...terminal }
+}
+
+// `herdr --version` changes only when the agent does: keep the answer a few
+// minutes so a reopened terminal (or a second pane on the same machine) does
+// not pay the CLI again -- an SSH round trip on a remote machine.
+const VERSION_TTL_MS = 5 * 60 * 1000
+const versionCache = new Map<string, { at: number, p: Promise<ExecResult | null> }>()
+function herdrVersion(m: Machine): Promise<ExecResult | null> {
+  const hit = versionCache.get(m.key)
+  if (hit && Date.now() - hit.at < VERSION_TTL_MS) return hit.p
+  const p = runHerdrCli(m, ['--version'], 4000).catch(() => null)
+  versionCache.set(m.key, { at: Date.now(), p })
+  return p
 }
 
 const sizesFile = () => path.join(DATA_DIR, 'term-sizes.json')
@@ -215,10 +234,14 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
   let scrollbackSeq = 0
 
   // The pane's size is read before the control session resizes it (see paneSizes.ts).
+  // `herdr --version` does not depend on it: fired alongside, so the CLI's
+  // own round trip (SSH on a remote machine) is not serialized after the
+  // size read. The answer is also cached -- it only changes with the agent.
+  const versionP = machine ? herdrVersion(machine) : Promise.resolve(null)
   paneSizes().hold(pane).then(async (h) => {
     if (closed) return h.release(true)
     hold = h
-    const version = await runHerdrCli(machine!, ['--version']).catch(() => null)
+    const version = await versionP
     if (closed) return
     const state = getState()
     const serverVersion = state.machines?.find(m => m.key === machine!.key)?.version ?? (machine!.key === '' ? state.version : '')
