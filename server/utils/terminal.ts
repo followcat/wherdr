@@ -177,8 +177,14 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
       writer?.write(JSON.stringify(obj) + '\n', { ...cb, expendable, tag, expiresAt })
     }
   }
-  // Every unsent scroll chunk — pacer, throttle and writer queue alike.
-  const cancelQueuedScrolls = () => writer?.cancelWhere(e => (e.tag as ScrollTag | undefined)?.scroll === true)
+  // Every unsubmitted scroll chunk — the early queue before spawn and the
+  // writer queue after. Without a predicate all scroll work goes; a phase
+  // or direction predicate revokes only its own kind.
+  const cancelQueuedScrolls = (drop?: (t: ScrollTag) => boolean) => {
+    const match = (t: ScrollTag | undefined) => t?.scroll === true && (drop?.(t) ?? true)
+    for (let i = early.length - 1; i >= 0; i--) if (match(early[i]!.tag)) early.splice(i, 1)
+    writer?.cancelWhere(e => match(e.tag as ScrollTag | undefined))
+  }
 
   function start() {
     const c = machine!.spawnHerdr(args)
@@ -300,16 +306,30 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
     // The throttle's post-flush net is zero: anything left in the log was
     // netting residue or clamped by its line cap — never sendable input.
     mergedContrib.length = 0
-    // The batch keeps a phase ledger in its tag: a phase-cancel may drop a
-    // pure-momentum batch, but never one holding real drag input. Lines
-    // without ledger credit count as drag — conservative against losing
-    // input to a stale tag.
-    const dragLines = attrib.filter(a => a.phase === 'drag').reduce((n, a) => n + Math.abs(a.lines), 0) + rest
-    const momentumLines = attrib.filter(a => a.phase === 'momentum').reduce((n, a) => n + Math.abs(a.lines), 0)
-    toChild({ type: 'terminal.scroll', direction, lines }, attrib.length
-      ? { onSubmit: () => attrib.forEach(a => delivered(a.epoch, a.phase, a.lines)) }
-      : undefined,
-      { scroll: true, direction, epoch: 0, dragLines, momentumLines })
+    // Phases never share a wire batch: each emitted chunk carries one
+    // phase's tag and deadline, so a momentum cancel — or its shorter TTL —
+    // drops a dead tail without ever taking real drag input down with it.
+    // Lines without ledger credit count as drag — conservative.
+    const groups = new Map<string, { attrib: typeof attrib, lines: number }>()
+    for (const a of attrib) {
+      const g = groups.get(a.phase) || { attrib: [], lines: 0 }
+      g.attrib.push(a)
+      g.lines += Math.abs(a.lines)
+      groups.set(a.phase, g)
+    }
+    const drag = groups.get('drag') || { attrib: [], lines: 0 }
+    drag.lines += rest
+    groups.set('drag', drag)
+    // Drag goes first: real input precedes its expendable tail.
+    for (const phase of ['drag', 'momentum'] as const) {
+      const g = groups.get(phase)
+      if (!g?.lines) continue
+      const phaseAttribs = g.attrib
+      toChild({ type: 'terminal.scroll', direction, lines: g.lines },
+        phaseAttribs.length ? { onSubmit: () => phaseAttribs.forEach(a => delivered(a.epoch, a.phase, a.lines)) } : undefined,
+        { scroll: true, direction, epoch: 0, dragLines: phase === 'drag' ? g.lines : 0, momentumLines: phase === 'drag' ? 0 : g.lines },
+        Date.now() + (phase === 'drag' ? 800 : 240))
+    }
   }, { intervalMs: 30 })
   const cancelMerged = () => { touchMerged.cancel(); mergedContrib.length = 0 }
   // Full touch cancellation clears every queue stage: pacer ticks, merged
@@ -373,11 +393,9 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
               const phase = m.phase === 'momentum' || m.preview === false ? 'momentum' : 'drag'
               const epoch = clampInt(m.epoch, 0, Number.MAX_SAFE_INTEGER, 0)
               // A reversed gesture supersedes opposite-direction work still
-              // waiting in the writer — the pacer already clears its side.
-              writer?.cancelWhere(e => {
-                const t = e.tag as ScrollTag | undefined
-                return t?.scroll === true && t.direction !== m.direction
-              })
+              // waiting in early or writer queues — the pacer already
+              // clears its side.
+              cancelQueuedScrolls(t => t.direction !== m.direction)
               if (tui) {
                 pacedTouch().push(m.direction, clampInt(m.lines, 1, 500, 3), {
                   ...terminalScrollPosition(m, size.cols, size.rows),
@@ -400,12 +418,10 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
             touchScroll?.cancelWhere(position => position?.phase === 'momentum')
             touchMerged.cancelTagged('momentum')
             for (let i = mergedContrib.length - 1; i >= 0; i--) if (mergedContrib[i]!.phase === 'momentum') mergedContrib.splice(i, 1)
-            // Pure-momentum chunks in the writer die too; a merged batch
-            // holding any drag input survives — that input is real.
-            writer?.cancelWhere(e => {
-              const t = e.tag as ScrollTag | undefined
-              return t?.scroll === true && t.momentumLines > 0 && t.dragLines === 0
-            })
+            // Momentum chunks in early/writer queues die too. Emitted
+            // batches are phase-pure (the merged flush splits per phase),
+            // so a drag-bearing batch is never taken down by this.
+            cancelQueuedScrolls(t => t.momentumLines > 0 && t.dragLines === 0)
             break
           }
           cancelTouchWork()
