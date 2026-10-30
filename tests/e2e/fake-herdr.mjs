@@ -288,21 +288,42 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
       p.readDelayMs = params.readDelayMs || 0
       return {}
     },
-    // Explicit scroll fixture: mouse apps consume one tick per command;
-    // ordinary history consumes `lines`, matching Herdr's two paths.
+    // Explicit scroll fixture: mouse apps consume `wheelRowsPerTick` rows per
+    // wheel report; ordinary history consumes `lines`, matching Herdr's two
+    // paths. Fault knobs (terminal scroll suite):
+    //   consumeDelayMs    events apply this late — a slow or stalled consumer
+    //   wheelRowsPerTick  a tick is not always one row (app-defined semantic)
+    //   noFrameAtBoundary scrolls clamped at an edge emit no movement frame
     'e2e.touch_scroll': params => {
       const p = need(params.pane_id)
-      if (params.reset) p.touchScroll = { offset: 0, events: [], mouse: !!params.mouse }
+      if (params.reset) p.touchScroll = { offset: 0, events: [], mouse: !!params.mouse, pending: [], wheelRowsPerTick: 1, consumeDelayMs: 0, noFrameAtBoundary: false }
       if (params.clear) { p.touchScroll = null; return {} }
       const state = p.touchScroll
       if (!state) return {}
+      for (const key of ['wheelRowsPerTick', 'consumeDelayMs', 'noFrameAtBoundary'])
+        if (typeof params[key] === 'number' || typeof params[key] === 'boolean') state[key] = params[key]
       if (typeof params.offset === 'number') state.offset = Math.max(0, Math.min(80, params.offset))
       if (params.event) {
         state.events.push(params.event)
-        const n = state.mouse ? 1 : params.event.lines
-        state.offset = Math.max(0, Math.min(80, state.offset + (params.event.direction === 'up' ? n : -n)))
+        state.pending.push({ event: params.event, at: Date.now() + state.consumeDelayMs })
       }
-      return { ...state, text: `History offset ${state.offset}\n` + Array.from({ length: Math.max(1, p.size.rows - 1) }, (_, i) => `History row ${100 - state.offset + i}`).join('\n') }
+      // Apply whatever is due: a delayed consumer answers late but in order.
+      const now = Date.now()
+      let moved = false, clamped = false
+      const due = state.pending.filter(e => e.at <= now)
+      state.pending = state.pending.filter(e => e.at > now)
+      for (const { event } of due) {
+        const n = state.mouse ? state.wheelRowsPerTick : event.lines
+        const next = state.offset + (event.direction === 'up' ? n : -n)
+        if (next < 0 || next > 80) clamped = true
+        else moved = true
+        state.offset = Math.max(0, Math.min(80, next))
+      }
+      // A scroll clamped at the boundary moves nothing: opaque apps may still
+      // repaint, history panes stay put. Specs read `applied` for causality.
+      const frame = moved || !(clamped && state.noFrameAtBoundary)
+      return { ...state, pending: state.pending.length, applied: due.length, frame,
+        text: `History offset ${state.offset}\n` + Array.from({ length: Math.max(1, p.size.rows - 1) }, (_, i) => `History row ${100 - state.offset + i}`).join('\n') }
     },
     'e2e.terminal_screen': params => {
       const p = need(params.pane_id)
