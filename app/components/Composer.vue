@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// Input bar (UChatPrompt): field on top, + · model and send below,
-// like Claude.ai. Agent working and field empty: send becomes "Stop" (Escape),
+// Input bar (UChatPrompt): on touch, one row at rest; while editing, the
+// model toolbar moves below the full-width field. Working and empty: "Stop" (Escape),
 // via UChatPromptSubmit ("streaming" state).
 // Photos shrunk in the browser (2048 px, JPEG) then stored on the server;
 // their path goes with the message. Other files the agent can read (PDF,
@@ -70,6 +70,9 @@ const draft = useDraft(props.paneId)
 const text = toRef(draft, 'text')
 const promptRef = ref<{ textareaRef?: HTMLTextAreaElement } | null>(null)
 const ta = computed(() => promptRef.value?.textareaRef || null)
+const fieldFocused = ref(false)
+// Android can dismiss the keyboard while leaving the textarea focused.
+watch(kbOpen, open => { if (!open) fieldFocused.value = false })
 const fileInput = ref<HTMLInputElement | null>(null)
 const anyFileInput = ref<HTMLInputElement | null>(null)
 const sending = ref(false)
@@ -79,6 +82,7 @@ const enterSends = computed(() => enterSendsFor({ desk: desk.value, touch: Boole
 
 type Att = DraftAtt
 const attachments = toRef(draft, 'atts')
+const expanded = computed(() => fieldFocused.value || kbOpen.value || text.value.length > 0 || attachments.value.length > 0)
 // What the text refers to ("↳ … —" lines, see shared/reference.ts): one chip
 // each above the field, to remove it.
 const quotes = computed(() => quotesIn(text.value))
@@ -700,7 +704,8 @@ defineExpose({
       ref="promptRef" v-model="text" :disabled="Boolean(pane?.stopped)" :placeholder="pane?.stopped ? t('Restart Codex before sending a message') : readOnly ? t('Draft saved — sending unavailable offline') : placeholder" variant="outline" color="neutral"
       :rows="1" :maxrows="7" :autofocus="false" :submit-on-enter="enterSends && !slashOpen"
       :enterkeyhint="enterSends ? 'send' : 'enter'" autocapitalize="sentences"
-      class="prompt" :class="{ suggesting: suggestTap }" :style="suggestRoom ? { '--suggest-room': `${suggestRoom}px` } : undefined" :ui="{ header: 'prompt-head', body: 'prompt-body', base: 'prompt-input', footer: 'prompt-foot' }"
+      class="prompt" :class="{ suggesting: suggestTap, expanded }" :style="suggestRoom ? { '--suggest-room': `${suggestRoom}px` } : undefined" :ui="{ header: 'prompt-head', body: 'prompt-body', base: 'prompt-input', footer: 'prompt-foot' }"
+      @focus="fieldFocused = true" @blur="fieldFocused = false"
       @submit="submit" @keydown="onKeydown" @paste="onPaste" @beforeinput="onBeforeInput"
     >
       <template v-if="attachments.length" #header>
@@ -740,7 +745,9 @@ defineExpose({
         />
         <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onFiles">
         <input ref="anyFileInput" type="file" multiple hidden data-testid="attach-any" @change="onFiles">
-        <ModelPicker v-if="pane && (pane.agent === 'claude' || pane.agent === 'codex' || pane.agent === 'omp')" :pane="pane" />
+        <div v-if="pane && (pane.agent === 'claude' || pane.agent === 'codex' || pane.agent === 'omp')" class="prompt-models">
+          <ModelPicker :pane="pane" />
+        </div>
         <span v-if="hint && suggestion" class="prompt-hint"><UKbd value="tab" size="sm" /> {{ t('suggestion') }} <span class="sep">·</span> <UKbd value="enter" size="sm" /> {{ t('send') }}</span>
         <span v-else-if="hint" class="prompt-hint"><UKbd value="enter" size="sm" /> {{ t('send') }} <span class="sep">·</span> <UKbd value="shift" size="sm" /><UKbd value="enter" size="sm" /> {{ t('new line') }}</span>
         <span v-else-if="desk && escStops && stopMode && interrupting !== 'running'" class="prompt-hint"><UKbd value="escape" size="sm" /> {{ tl('stop', 'arrêter') }}</span>

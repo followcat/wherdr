@@ -1862,7 +1862,8 @@ body.kb .composer { padding-bottom: 8px; }
 .slash-denied-label .iconify { width: 14px; height: 14px; color: var(--ochre); flex: none; }
 .slash-denied .dir-denied-path { font-size: 11.5px; }
 .prompt {
-  position: relative; padding: 4px 6px 6px; gap: 2px;
+  position: relative; display: flex; flex-direction: column; align-items: stretch; min-width: 0;
+  padding: 4px 6px 6px; gap: 2px;
   background: var(--bg-2); border: 1px solid var(--input-line); box-shadow: none; backdrop-filter: none;
   transition: border-color .15s ease;
 }
@@ -1937,7 +1938,7 @@ body.kb .composer { padding-bottom: 8px; }
   /* Still colored all around, frozen. */
   .fx-spin, :root:not([data-focus-border="off"]) .tools.omp-console.live .omp-ring .fx-spin { animation: none; transform: translate(-50%, -50%) rotate(135deg); }
 }
-.prompt-body { padding: 0; }
+.prompt-body { width: 100%; min-width: 0; padding: 0; }
 .prompt-input {
   padding: 8px 6px 4px; font-size: 16px; line-height: 1.45; color: var(--text);
   min-height: 38px; max-height: 40vh;
@@ -1945,8 +1946,12 @@ body.kb .composer { padding-bottom: 8px; }
   overflow-y: auto !important;
 }
 .prompt-input::placeholder { color: var(--dim); }
-.prompt-foot { gap: 8px; }
-.prompt-plus { width: 32px; height: 32px; justify-content: center; color: var(--text-2); border-color: var(--line); }
+.prompt-foot { display: flex; align-items: center; min-width: 0; gap: 8px; }
+.prompt-models { display: flex; align-items: center; min-width: 0; }
+.prompt-models .model-pick-wrap { flex: 0 1 auto; }
+.prompt-models .effort-pick-wrap { flex-shrink: 0; max-width: 130px; }
+.prompt-models .model-pick { max-width: 100%; }
+.prompt-plus { flex: none; width: 32px; height: 32px; justify-content: center; color: var(--text-2); border-color: var(--line); }
 .prompt-plus .iconify { width: 18px; height: 18px; }
 .prompt-hint {
   flex: 1; display: flex; align-items: center; gap: 4px; justify-content: flex-end;
@@ -1976,7 +1981,7 @@ body.kb .composer { padding-bottom: 8px; }
 .model-menu .model-hint { font-size: 11.5px; color: var(--dim); }
 .model-menu .model-menu-label { font: 500 10.5px/1.2 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
 .model-menu .model-loading .iconify { animation: spin 1s linear infinite; }
-.prompt-send { width: 32px; height: 32px; justify-content: center; margin-left: auto; position: relative; touch-action: manipulation; }
+.prompt-send { flex: none; width: 32px; height: 32px; justify-content: center; margin-left: auto; position: relative; touch-action: manipulation; }
 /* 48 px touch area (Apple: 44 minimum) without enlarging the button. The button does not
    take the focus (mousedown.prevent): the keyboard stays open, the bar does not move
    under the finger during the tap. */
@@ -1990,23 +1995,28 @@ body.kb .composer { padding-bottom: 8px; }
 /* Pressed by a touch (Composer's sendTap): its touchstart is cancelled, which can drop :active on iOS. */
 .prompt-send.pressed { opacity: .75; }
 
-/* Touch: the input bar is one row — +, the field, the send — instead of a
-   buttons row under the field. The footer's box melts away (display: contents)
-   so its children join the field's row; attachments stay on their own line. */
+/* Touch: one row at rest, a full-width editor over the toolbar while editing.
+   The compact row has only +, the field and send, so selectors cannot squeeze it. */
 @media (pointer: coarse) {
-  .prompt { display: flex; flex-direction: row; flex-wrap: wrap; align-items: flex-end; column-gap: 8px; }
-  .prompt .prompt-head { flex: 1 1 100%; }
-  .prompt .prompt-body { flex: 1 1 0%; min-width: 0; order: 2; }
+  .prompt { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; gap: 4px; }
+  .prompt .prompt-body { grid-column: 2; grid-row: 1; }
   .prompt .prompt-foot { display: contents; }
-  .prompt .prompt-plus { order: 1; }
-  .prompt .model-pick-wrap { order: 3; }
-  .prompt .prompt-hint { order: 3; }
-  .prompt .prompt-send { order: 4; margin-left: 0; }
-  .prompt .prompt-input { min-height: 34px; padding: 7px 4px 9px; }
-  /* The autoresize can measure while the row is still laying out: a wrapped
-     placeholder sticks the empty field at rows=2. An empty field (placeholder
-     showing) is always one line; typing drops the selector and rows rule. */
-  .prompt .prompt-input:placeholder-shown { height: 39px; height: calc(1lh + 16px); }
+  .prompt .prompt-plus { grid-column: 1; grid-row: 1; }
+  .prompt .prompt-send { grid-column: 3; grid-row: 1; margin-left: 0; }
+  .prompt .prompt-models, .prompt .prompt-hint { display: none; }
+  .prompt.expanded { display: flex; align-items: stretch; }
+  .prompt.expanded .prompt-foot, .prompt.expanded .prompt-models { display: flex; }
+  .prompt.expanded .prompt-send { margin-left: auto; }
+  .prompt .prompt-input {
+    min-height: 40px; padding: 8px 6px;
+    max-height: min(176px, calc(var(--vv-h, 100dvh) * .3));
+  }
+  .prompt .prompt-input:placeholder-shown { height: 40px; }
+  .prompt .prompt-foot { gap: 4px; }
+  .prompt .prompt-plus, .prompt .prompt-send { width: 44px; height: 44px; }
+  .prompt .prompt-plus::after, .prompt .prompt-send::after { inset: 0; }
+  .prompt .model-pick { height: 44px; }
+  .prompt:not(.expanded) .prompt-suggest { top: 12px; right: 58px; }
 }
 
 .prompt-head { padding: 4px 2px 2px; }
