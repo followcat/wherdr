@@ -336,6 +336,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     const q = new URLSearchParams({ pane: paneId, cols: String(term.cols), rows: String(term.rows) })
     if (takeover) q.set('takeover', '1')
     mouseSupported = false
+    // Capability evidence is per-connection: a v2 peer on the last socket
+    // proves nothing about the next one.
+    peerScrollV2 = false
     loading.value = true
     twsIntent = true
     let closedReason: string | null = null
