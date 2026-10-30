@@ -43,6 +43,10 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   const frameTick = ref(0)
   // Cumulative signed rows acknowledged after xterm parses the next frame.
   const scrollAck = ref(0)
+  // Non-reactive frame counters for perf measurement (T05): parsed frames,
+  // decoded bytes, cumulative xterm write-callback latency. Read, don't
+  // watch — a ref write per frame would be reactive churn.
+  const frameStats = { frames: 0, bytes: 0, parseMs: 0, lastAt: 0 }
   let touchEpoch = 0
   // Scroll delivery ledger (v2): per-command stages reported by the server.
   // `submitted` = written to the Herdr stdin, `flushed` = write callback.
@@ -380,9 +384,17 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
           term.resize(m.width, m.height)
         }
         const current = term
-        current.write(b64ToBytes(m.bytes || ''), () => {
+        const bytes = b64ToBytes(m.bytes || '')
+        const queuedAt = performance.now()
+        current.write(bytes, () => {
           selectionHint.refresh(current, mouseSupported)
           frameTick.value++
+          // Frame parse/paint cost, measured by xterm's write callback —
+          // liveness evidence only, never proof the app consumed input.
+          frameStats.frames++
+          frameStats.bytes += bytes.length
+          frameStats.parseMs += performance.now() - queuedAt
+          frameStats.lastAt = performance.now()
         })
       } else if (m.type === 'scroll.ack') {
         if (smoothTouchScrolling.value && m.epoch === touchEpoch && Number.isFinite(m.lines) && term) {
@@ -562,7 +574,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     mount, connect, disconnect, isConnected, sendTerm, sendKeys, fitNow, setFontSize,
     reset, scroll, focus, blur, tapLink, tapMouse: (x: number, y: number) => mouse?.tap(x, y), hasFocus, rowHeight, pageRows, setVisible, dispose, loading, kbdOn,
     hasBanner: opts.hasBanner, selectionHint,
-    cancelTouchScroll, scrollInputVersion, scrollGeometryVersion, frameTick, scrollAck, scrollLedger,
+    cancelTouchScroll, scrollInputVersion, scrollGeometryVersion, frameTick, scrollAck, scrollLedger, frameStats,
     scrollback, scrollbackVersion, requestScrollback, mouseMode, liveScreenSpans,
     virtualModifiers, lastVirtualChord, toggleModifier, toggleVirtualModifier: toggleModifier, clearVirtualModifiers, sendVirtualKey,
   }
