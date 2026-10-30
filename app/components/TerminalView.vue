@@ -383,6 +383,9 @@ function flushScrollback() {
   sbDeferTimer = undefined
   if (!sbDirty) return
   sbDirty = false
+  // Same guard as the watcher: a selection begun while the chunk waited
+  // must not be destroyed by the late rebuild.
+  if (copyMode.value && cpSelLen.value > 0) return
   renderScrollback()
 }
 function deferScrollback() {
