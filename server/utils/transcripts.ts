@@ -963,13 +963,33 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
       const f = await findSessionFile('codex', pane.agentSession)
       if (f) return { file: f, session: pane.agentSession }
     }
+    // `codex resume <uuid>` can keep writing a rollout created months ago.
+    // Missing hooks must not restrict that explicit session to the recent scan.
+    // Include it among candidates, rather than pinning it forever: /new can
+    // create a newer conversation without changing the process's launch args.
+    let resumed: string | null = null
+    try {
+      const proc = await paneProcess(pane.id, 'codex')
+      const args = Array.isArray(proc?.argv) ? proc.argv : []
+      const at = args.indexOf('resume')
+      const id = at >= 0 ? args[at + 1] : null
+      if (typeof id === 'string' && /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(id)) {
+        const file = await findSessionFile('codex', id)
+        const meta = file && await rolloutMeta(file)
+        const stat = file ? await fs.stat(file) : null
+        if (file && meta?.id === id && stat?.isFile) {
+          resumed = id
+          rolls.push({ file, id, ts: Date.parse(meta.timestamp || 0) || 0, mtimeMs: stat.mtimeMs })
+        }
+      }
+    } catch { /* process information is optional; retain the recent fallback */ }
     let best: CodexRollout | null = null
     for (const r of rolls) {
       if (taken.has(r.id)) continue
-      if (pane.bornAt && r.ts < pane.bornAt - 60000) continue
+      if (r.id !== resumed && pane.bornAt && r.ts < pane.bornAt - 60000) continue
       if (!best || r.mtimeMs > best.mtimeMs) best = r
     }
-    return best && { file: best.file, session: best.id, guessed: true }
+    return best && { file: best.file, session: best.id, ...(best.id !== resumed ? { guessed: true } : {}) }
   }
 
   // Codex panes of the machine (kept up to date by the state): for the claims.
