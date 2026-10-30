@@ -155,6 +155,15 @@ both change the account's default model. wherdr itself only uses "this session" 
   `app/utils/themes.ts`). Check the phone layout (iPhone size) and the desktop layout.
 - **iOS**: keep `apple-mobile-web-app-status-bar-style` on `black` (with `black-translucent`,
   iOS 26 shortens the installed app from the bottom), and mind the keyboard and safe areas.
+- **Terminal input and IME**: xterm's `onData` does not distinguish a keystroke from
+  committed composition text, even a single ASCII character. Preserve the composition
+  lifecycle and the guard for the first data event after `compositionend`; a keydown with
+  `isComposing` or `keyCode === 229` must not clear it. Handle ordinary keydown in capture
+  on the terminal element before xterm emits data, so cancelling composition does not
+  swallow the next shortcut. Composition output and paste clear virtual modifiers and
+  stay text; ordinary keys still consume one-shot modifiers and preserve real Shift.
+  Keybar layout changes must preserve input focus and these contracts. The browser
+  regressions are in `tests/e2e/terminal-ime.spec.ts` and `terminal-modifiers.spec.ts`.
 - Server code lives in `server/` (Nitro), shared types and pure helpers in `shared/`, the
   client in `app/`.
 

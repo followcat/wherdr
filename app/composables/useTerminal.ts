@@ -148,8 +148,10 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       ta.addEventListener('focus', () => { kbdOn.value = true })
       ta.addEventListener('compositionstart', composition.start)
       ta.addEventListener('compositionend', composition.end)
-      ta.addEventListener('keydown', composition.keydown)
     }
+    // Run before xterm's textarea listener emits data, so a cancelled
+    // composition cannot swallow the next real shortcut.
+    term.element?.addEventListener('keydown', composition.keydown, true)
     // Wheel: xterm does nothing with it (it would send ↑/↓ to the agent, see
     // utils/terminalWheel.ts); TerminalView converts it to terminal.scroll.
     term.attachCustomWheelEventHandler(() => false)
