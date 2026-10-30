@@ -36,9 +36,20 @@ describe('serverReady', () => {
 describe('settleState', () => {
   const prev = st(['w1:p1', `${REMOTE}~w1:p1`], { machines: machines('online') })
 
-  it('ignores a "not ready" state when a state is already shown', () => {
-    expect(settleState(prev, st([], { ready: false }), true)).toBeNull()
-    expect(settleState(prev, st([], { ready: false }), false)).toBeNull()
+  it('keeps the last state per machine while the server is not ready', () => {
+    // A restart still probing: nothing is answered for, so every pane and
+    // machine stays, marked connecting, until the probes land.
+    for (const settling of [true, false]) {
+      const r = settleState(prev, st([], { ready: false }), settling)!
+      expect(r.panes.map(p => p.id)).toEqual(['w1:p1', `${REMOTE}~w1:p1`])
+      expect(r.machines!.find(m => m.key === REMOTE)!.status).toBe('connecting')
+    }
+  })
+  it('a machine the "not ready" state answers for is authoritative', () => {
+    // The remote is already 'online' in the partial state: its (empty) pane
+    // list wins -- only the still-connecting machines keep their content.
+    const next = st(['w1:p1'], { ready: false, machines: machines('online') })
+    expect(settleState(prev, next, true)).toBe(next)
   })
   it('applies a "not ready" state on first load', () => {
     const next = st([], { ready: false })
