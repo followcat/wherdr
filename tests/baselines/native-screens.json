@@ -199,6 +199,12 @@
     "claude-bash.jsonl/codex/true": 0,
     "claude-bash.jsonl/omp/false": 0,
     "claude-bash.jsonl/omp/true": 0,
+    "claude-config-list.ansi/claude/false": 48,
+    "claude-config-list.ansi/claude/true": 48,
+    "claude-config-list.ansi/codex/false": 0,
+    "claude-config-list.ansi/codex/true": 0,
+    "claude-config-list.ansi/omp/false": 0,
+    "claude-config-list.ansi/omp/true": 0,
     "claude-done.txt/claude/false": 0,
     "claude-done.txt/claude/true": 0,
     "claude-done.txt/codex/false": 0,
@@ -259,6 +265,24 @@
     "claude-interrupt-restored.ansi/codex/true": 0,
     "claude-interrupt-restored.ansi/omp/false": 0,
     "claude-interrupt-restored.ansi/omp/true": 0,
+    "claude-limit-session.txt/claude/false": 84,
+    "claude-limit-session.txt/claude/true": 85,
+    "claude-limit-session.txt/codex/false": 86,
+    "claude-limit-session.txt/codex/true": 0,
+    "claude-limit-session.txt/omp/false": 0,
+    "claude-limit-session.txt/omp/true": 0,
+    "claude-limit-weekly.txt/claude/false": 87,
+    "claude-limit-weekly.txt/claude/true": 88,
+    "claude-limit-weekly.txt/codex/false": 89,
+    "claude-limit-weekly.txt/codex/true": 0,
+    "claude-limit-weekly.txt/omp/false": 0,
+    "claude-limit-weekly.txt/omp/true": 0,
+    "claude-mcp.ansi/claude/false": 97,
+    "claude-mcp.ansi/claude/true": 97,
+    "claude-mcp.ansi/codex/false": 97,
+    "claude-mcp.ansi/codex/true": 97,
+    "claude-mcp.ansi/omp/false": 98,
+    "claude-mcp.ansi/omp/true": 98,
     "claude-model-1.txt/claude/false": 36,
     "claude-model-1.txt/claude/true": 37,
     "claude-model-1.txt/codex/false": 36,
@@ -373,6 +397,12 @@
     "claude-working.txt/codex/true": 0,
     "claude-working.txt/omp/false": 0,
     "claude-working.txt/omp/true": 0,
+    "codex-approaching-limits.txt/claude/false": 92,
+    "codex-approaching-limits.txt/claude/true": 92,
+    "codex-approaching-limits.txt/codex/false": 92,
+    "codex-approaching-limits.txt/codex/true": 92,
+    "codex-approaching-limits.txt/omp/false": 93,
+    "codex-approaching-limits.txt/omp/true": 93,
     "codex-approve-command.txt/claude/false": 53,
     "codex-approve-command.txt/claude/true": 53,
     "codex-approve-command.txt/codex/false": 53,
@@ -427,6 +457,18 @@
     "codex-model-2.txt/codex/true": 65,
     "codex-model-2.txt/omp/false": 66,
     "codex-model-2.txt/omp/true": 66,
+    "codex-permissions.txt/claude/false": 99,
+    "codex-permissions.txt/claude/true": 99,
+    "codex-permissions.txt/codex/false": 99,
+    "codex-permissions.txt/codex/true": 99,
+    "codex-permissions.txt/omp/false": 100,
+    "codex-permissions.txt/omp/true": 100,
+    "codex-request-increase.txt/claude/false": 90,
+    "codex-request-increase.txt/claude/true": 90,
+    "codex-request-increase.txt/codex/false": 90,
+    "codex-request-increase.txt/codex/true": 90,
+    "codex-request-increase.txt/omp/false": 91,
+    "codex-request-increase.txt/omp/true": 91,
     "codex-rollout.jsonl/claude/false": 0,
     "codex-rollout.jsonl/claude/true": 0,
     "codex-rollout.jsonl/codex/false": 0,
@@ -451,6 +493,18 @@
     "codex-usage-menu.txt/codex/true": 71,
     "codex-usage-menu.txt/omp/false": 72,
     "codex-usage-menu.txt/omp/true": 72,
+    "codex-usage-subtitle.txt/claude/false": 94,
+    "codex-usage-subtitle.txt/claude/true": 94,
+    "codex-usage-subtitle.txt/codex/false": 95,
+    "codex-usage-subtitle.txt/codex/true": 95,
+    "codex-usage-subtitle.txt/omp/false": 96,
+    "codex-usage-subtitle.txt/omp/true": 96,
+    "devin-idle.txt/claude/false": 0,
+    "devin-idle.txt/claude/true": 0,
+    "devin-idle.txt/codex/false": 0,
+    "devin-idle.txt/codex/true": 0,
+    "devin-idle.txt/omp/false": 0,
+    "devin-idle.txt/omp/true": 0,
     "omp-approve-bash.txt/claude/false": 0,
     "omp-approve-bash.txt/claude/true": 0,
     "omp-approve-bash.txt/codex/false": 0,
@@ -619,62 +673,14 @@
     "omp-working.txt/codex/true": 0,
     "omp-working.txt/omp/false": 0,
     "omp-working.txt/omp/true": 0,
+    "push/claude": 82,
+    "push/omp": 83,
     "snapshot-layouts.json/claude/false": 0,
     "snapshot-layouts.json/claude/true": 0,
     "snapshot-layouts.json/codex/false": 0,
     "snapshot-layouts.json/codex/true": 0,
     "snapshot-layouts.json/omp/false": 0,
-    "snapshot-layouts.json/omp/true": 0,
-    "push/claude": 82,
-    "push/omp": 83,
-    "claude-limit-session.txt/claude/false": 84,
-    "claude-limit-session.txt/claude/true": 85,
-    "claude-limit-session.txt/codex/false": 86,
-    "claude-limit-session.txt/codex/true": 0,
-    "claude-limit-session.txt/omp/false": 0,
-    "claude-limit-session.txt/omp/true": 0,
-    "claude-limit-weekly.txt/claude/false": 87,
-    "claude-limit-weekly.txt/claude/true": 88,
-    "claude-limit-weekly.txt/codex/false": 89,
-    "claude-limit-weekly.txt/codex/true": 0,
-    "claude-limit-weekly.txt/omp/false": 0,
-    "claude-limit-weekly.txt/omp/true": 0,
-    "codex-request-increase.txt/claude/false": 90,
-    "codex-request-increase.txt/claude/true": 90,
-    "codex-request-increase.txt/codex/false": 90,
-    "codex-request-increase.txt/codex/true": 90,
-    "codex-request-increase.txt/omp/false": 91,
-    "codex-request-increase.txt/omp/true": 91,
-    "codex-approaching-limits.txt/claude/false": 92,
-    "codex-approaching-limits.txt/claude/true": 92,
-    "codex-approaching-limits.txt/codex/false": 92,
-    "codex-approaching-limits.txt/codex/true": 92,
-    "codex-approaching-limits.txt/omp/false": 93,
-    "codex-approaching-limits.txt/omp/true": 93,
-    "codex-usage-subtitle.txt/claude/false": 94,
-    "codex-usage-subtitle.txt/claude/true": 94,
-    "codex-usage-subtitle.txt/codex/false": 95,
-    "codex-usage-subtitle.txt/codex/true": 95,
-    "codex-usage-subtitle.txt/omp/false": 96,
-    "codex-usage-subtitle.txt/omp/true": 96,
-    "claude-config-list.ansi/claude/false": 48,
-    "claude-config-list.ansi/claude/true": 48,
-    "claude-config-list.ansi/codex/false": 0,
-    "claude-config-list.ansi/codex/true": 0,
-    "claude-config-list.ansi/omp/false": 0,
-    "claude-config-list.ansi/omp/true": 0,
-    "claude-mcp.ansi/claude/false": 97,
-    "claude-mcp.ansi/claude/true": 97,
-    "claude-mcp.ansi/codex/false": 97,
-    "claude-mcp.ansi/codex/true": 97,
-    "claude-mcp.ansi/omp/false": 98,
-    "claude-mcp.ansi/omp/true": 98,
-    "codex-permissions.txt/claude/false": 99,
-    "codex-permissions.txt/claude/true": 99,
-    "codex-permissions.txt/codex/false": 99,
-    "codex-permissions.txt/codex/true": 99,
-    "codex-permissions.txt/omp/false": 100,
-    "codex-permissions.txt/omp/true": 100
+    "snapshot-layouts.json/omp/true": 0
   },
   "values": [
     {
@@ -1065,9 +1071,9 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2502 approach best aligns with your project's needs and constraints?",
+            "│ approach best aligns with your project's needs and constraints?",
             "",
-            "\u276f 1. In-Memory Storage",
+            "❯ 1. In-Memory Storage",
             "     Data stored entirely in application memory. Fast access and performance, but no persistence between restarts.",
             "     Ideal for caching, temporary session data, or development/testing environments. Simple implementation with minimal",
             "     overhead.",
@@ -1079,7 +1085,7 @@
             "     transaction support, and excellent scalability. More complex setup but handles large datasets and concurrent",
             "     access reliably. Production-grade approach.",
             "  4. Type something.",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
             "  5. Chat about this"
           ],
           "actions": [
@@ -1101,9 +1107,9 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2502 approach best aligns with your project's needs and constraints?",
+            "│ approach best aligns with your project's needs and constraints?",
             "",
-            "\u276f 1. In-Memory Storage",
+            "❯ 1. In-Memory Storage",
             "     Data stored entirely in application memory. Fast access and performance, but no persistence between restarts.",
             "     Ideal for caching, temporary session data, or development/testing environments. Simple implementation with minimal",
             "     overhead.",
@@ -1115,7 +1121,7 @@
             "     transaction support, and excellent scalability. More complex setup but handles large datasets and concurrent",
             "     access reliably. Production-grade approach.",
             "  4. Type something.",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
             "  5. Chat about this"
           ],
           "actions": [
@@ -1189,7 +1195,7 @@
           "lines": [
             "  Ran 2 shell commands",
             "",
-            "\u25cf 1. Pick a sunny spot and loosen the soil, mixing in compost."
+            "● 1. Pick a sunny spot and loosen the soil, mixing in compost."
           ],
           "actions": [
             {
@@ -1259,7 +1265,7 @@
           "lines": [
             "  Ran 2 shell commands",
             "",
-            "\u25cf 1. Pick a sunny spot and loosen the soil, mixing in compost."
+            "● 1. Pick a sunny spot and loosen the soil, mixing in compost."
           ],
           "actions": [
             {
@@ -1283,11 +1289,11 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2190  \u2610 Fruits  \u2714 Submit  \u2192",
+            "←  ☐ Fruits  ✔ Submit  →",
             "",
             "Which fruits do you like?",
             "",
-            "\u276f 1. [ ] Apple",
+            "❯ 1. [ ] Apple",
             "         Test option 1",
             "  2. [ ] Banana",
             "         Test option 2",
@@ -1297,7 +1303,7 @@
             "         Test option 4",
             "  5. [ ] Type something",
             "     Submit",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "─────────────────────────────────────────────────────────────────────────────────────────────────────────",
             "  6. Chat about this"
           ],
           "actions": [
@@ -1319,11 +1325,11 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2190  \u2610 Fruits  \u2714 Submit  \u2192",
+            "←  ☐ Fruits  ✔ Submit  →",
             "",
             "Which fruits do you like?",
             "",
-            "\u276f 1. [ ] Apple",
+            "❯ 1. [ ] Apple",
             "         Test option 1",
             "  2. [ ] Banana",
             "         Test option 2",
@@ -1333,7 +1339,7 @@
             "         Test option 4",
             "  5. [ ] Type something",
             "     Submit",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "─────────────────────────────────────────────────────────────────────────────────────────────────────────",
             "  6. Chat about this"
           ],
           "actions": [
@@ -1353,7 +1359,7 @@
     {
       "recognized": {
         "choices": {
-          "question": "Test 1 (single choice): which colour do you prefer? Also try \u00ab Type something \u00bb for a free answer.",
+          "question": "Test 1 (single choice): which colour do you prefer? Also try « Type something » for a free answer.",
           "cursor": 0,
           "options": [
             {
@@ -1390,7 +1396,7 @@
       },
       "output": {
         "choices": {
-          "question": "Test 1 (single choice): which colour do you prefer? Also try \u00ab Type something \u00bb for a free answer.",
+          "question": "Test 1 (single choice): which colour do you prefer? Also try « Type something » for a free answer.",
           "cursor": 0,
           "options": [
             {
@@ -1464,13 +1470,13 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u25cf I have two ways to set this up. Let me ask which one you prefer.",
+            "● I have two ways to set this up. Let me ask which one you prefer.",
             "",
-            "\u25cf User answered Claude's questions:",
-            "  \u23bf  \u00b7 Earlier question? \u2192 Yes",
+            "● User answered Claude's questions:",
+            "  ⎿  · Earlier question? → Yes",
             "",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-            " \u2610 Next",
+            "────────────────────────────────────────────────────────────────────────────────",
+            " ☐ Next",
             "",
             "Which of these approaches should the next thread take for the storage layer, given",
             "that the cache already holds most of the data and the sync job runs every five",
@@ -1526,13 +1532,13 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u25cf I have two ways to set this up. Let me ask which one you prefer.",
+            "● I have two ways to set this up. Let me ask which one you prefer.",
             "",
-            "\u25cf User answered Claude's questions:",
-            "  \u23bf  \u00b7 Earlier question? \u2192 Yes",
+            "● User answered Claude's questions:",
+            "  ⎿  · Earlier question? → Yes",
             "",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-            " \u2610 Next",
+            "────────────────────────────────────────────────────────────────────────────────",
+            " ☐ Next",
             "",
             "Which of these approaches should the next thread take for the storage layer, given",
             "that the cache already holds most of the data and the sync job runs every five",
@@ -1565,7 +1571,7 @@
             "that the cache already holds most of the data and the sync job runs every five",
             "minutes?",
             "",
-            "\u276f 1. Keep the current cache (Recommended)",
+            "❯ 1. Keep the current cache (Recommended)",
             "     Smallest change: the cache stays the single source of truth and the sync job",
             "     only fills the gaps it finds.",
             "  2. Move everything to the database",
@@ -1574,7 +1580,7 @@
             "  3. Split by data type",
             "     Settings in the database, transcripts in the cache.",
             "  4. Type something.",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "────────────────────────────────────────────────────────────────────────────────",
             "  5. Chat about this"
           ],
           "actions": [
@@ -1601,7 +1607,7 @@
             "that the cache already holds most of the data and the sync job runs every five",
             "minutes?",
             "",
-            "\u276f 1. Keep the current cache (Recommended)",
+            "❯ 1. Keep the current cache (Recommended)",
             "     Smallest change: the cache stays the single source of truth and the sync job",
             "     only fills the gaps it finds.",
             "  2. Move everything to the database",
@@ -1610,7 +1616,7 @@
             "  3. Split by data type",
             "     Settings in the database, transcripts in the cache.",
             "  4. Type something.",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "────────────────────────────────────────────────────────────────────────────────",
             "  5. Chat about this"
           ],
           "actions": [
@@ -1725,8 +1731,8 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-            "\u2190  \u2612 Snacks  \u2714 Submit  \u2192",
+            "─────────────────────────────────────────────────────────────",
+            "←  ☒ Snacks  ✔ Submit  →",
             "",
             "Which snacks should we bring?"
           ],
@@ -1796,8 +1802,8 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-            "\u2190  \u2612 Snacks  \u2714 Submit  \u2192",
+            "─────────────────────────────────────────────────────────────",
+            "←  ☒ Snacks  ✔ Submit  →",
             "",
             "Which snacks should we bring?"
           ],
@@ -1823,7 +1829,7 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2190  \u2612 Snacks  \u2714 Submit  \u2192",
+            "←  ☒ Snacks  ✔ Submit  →",
             "",
             "Which snacks should we bring?",
             "",
@@ -1835,9 +1841,9 @@
             "         Light and fresh",
             "  4. [ ] Cookies",
             "         Sweet treat",
-            "\u276f 5. [\u2714] Pretzels",
+            "❯ 5. [✔] Pretzels",
             "     Submit",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "─────────────────────────────────────────────────────────────",
             "  6. Chat about this"
           ],
           "actions": [
@@ -1859,7 +1865,7 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2190  \u2612 Snacks  \u2714 Submit  \u2192",
+            "←  ☒ Snacks  ✔ Submit  →",
             "",
             "Which snacks should we bring?",
             "",
@@ -1871,9 +1877,9 @@
             "         Light and fresh",
             "  4. [ ] Cookies",
             "         Sweet treat",
-            "\u276f 5. [\u2714] Pretzels",
+            "❯ 5. [✔] Pretzels",
             "     Submit",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "─────────────────────────────────────────────────────────────",
             "  6. Chat about this"
           ],
           "actions": [
@@ -1933,11 +1939,11 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2190  \u2610 Fruits  \u2714 Submit  \u2192",
+            "←  ☐ Fruits  ✔ Submit  →",
             "",
             "Which fruits should go in the salad?",
             "",
-            "\u2191 3. [ ] Mango",
+            "↑ 3. [ ] Mango",
             "         Tropical and juicy"
           ],
           "actions": [
@@ -1994,11 +2000,11 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2190  \u2610 Fruits  \u2714 Submit  \u2192",
+            "←  ☐ Fruits  ✔ Submit  →",
             "",
             "Which fruits should go in the salad?",
             "",
-            "\u2191 3. [ ] Mango",
+            "↑ 3. [ ] Mango",
             "         Tropical and juicy"
           ],
           "actions": [
@@ -2023,17 +2029,17 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2190  \u2610 Fruits  \u2714 Submit  \u2192",
+            "←  ☐ Fruits  ✔ Submit  →",
             "",
             "Which fruits should go in the salad?",
             "",
-            "\u2191 3. [ ] Mango",
+            "↑ 3. [ ] Mango",
             "         Tropical and juicy",
             "  4. [ ] Kiwi",
             "         Tangy and bright",
-            "\u276f 5. [ ] Type something",
+            "❯ 5. [ ] Type something",
             "     Submit",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "─────────────────────────────────────────────────────────────",
             "  6. Chat about this"
           ],
           "actions": [
@@ -2055,17 +2061,17 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2190  \u2610 Fruits  \u2714 Submit  \u2192",
+            "←  ☐ Fruits  ✔ Submit  →",
             "",
             "Which fruits should go in the salad?",
             "",
-            "\u2191 3. [ ] Mango",
+            "↑ 3. [ ] Mango",
             "         Tropical and juicy",
             "  4. [ ] Kiwi",
             "         Tangy and bright",
-            "\u276f 5. [ ] Type something",
+            "❯ 5. [ ] Type something",
             "     Submit",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "─────────────────────────────────────────────────────────────",
             "  6. Chat about this"
           ],
           "actions": [
@@ -2193,12 +2199,12 @@
           "lines": [
             "Which fruits should go in the salad?",
             "",
-            "\u276f 1. [ ] Apple",
+            "❯ 1. [ ] Apple",
             "         Crisp and sweet",
-            "\u2193 2. [ ] Banana",
+            "↓ 2. [ ] Banana",
             "         Soft and creamy",
             "     Submit",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "─────────────────────────────────────────────────────────────",
             "  6. Chat about this"
           ],
           "actions": [
@@ -2222,12 +2228,12 @@
           "lines": [
             "Which fruits should go in the salad?",
             "",
-            "\u276f 1. [ ] Apple",
+            "❯ 1. [ ] Apple",
             "         Crisp and sweet",
-            "\u2193 2. [ ] Banana",
+            "↓ 2. [ ] Banana",
             "         Soft and creamy",
             "     Submit",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "─────────────────────────────────────────────────────────────",
             "  6. Chat about this"
           ],
           "actions": [
@@ -2299,8 +2305,8 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-            "\u2190  \u2610 Fruits  \u2714 Submit  \u2192",
+            "───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+            "←  ☐ Fruits  ✔ Submit  →",
             "",
             "Which fruits should go in the salad?"
           ],
@@ -2370,8 +2376,8 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-            "\u2190  \u2610 Fruits  \u2714 Submit  \u2192",
+            "───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+            "←  ☐ Fruits  ✔ Submit  →",
             "",
             "Which fruits should go in the salad?"
           ],
@@ -2397,11 +2403,11 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2190  \u2610 Fruits  \u2714 Submit  \u2192",
+            "←  ☐ Fruits  ✔ Submit  →",
             "",
             "Which fruits should go in the salad?",
             "",
-            "\u276f 1. [ ] Apple",
+            "❯ 1. [ ] Apple",
             "         Crisp and sweet",
             "  2. [ ] Banana",
             "         Soft and creamy",
@@ -2411,7 +2417,7 @@
             "         Tangy and bright",
             "  5. [ ] Type something",
             "     Submit",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
             "  6. Chat about this"
           ],
           "actions": [
@@ -2433,11 +2439,11 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2190  \u2610 Fruits  \u2714 Submit  \u2192",
+            "←  ☐ Fruits  ✔ Submit  →",
             "",
             "Which fruits should go in the salad?",
             "",
-            "\u276f 1. [ ] Apple",
+            "❯ 1. [ ] Apple",
             "         Crisp and sweet",
             "  2. [ ] Banana",
             "         Soft and creamy",
@@ -2447,7 +2453,7 @@
             "         Tangy and bright",
             "  5. [ ] Type something",
             "     Submit",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
             "  6. Chat about this"
           ],
           "actions": [
@@ -2642,7 +2648,7 @@
           "options": [
             {
               "label": "Submit answers",
-              "hint": "Green \u00b7 Cat, Dog, Fish",
+              "hint": "Green · Cat, Dog, Fish",
               "n": 1
             },
             {
@@ -2663,7 +2669,7 @@
           "options": [
             {
               "label": "Submit answers",
-              "hint": "Green \u00b7 Cat, Dog, Fish",
+              "hint": "Green · Cat, Dog, Fish",
               "n": 1
             },
             {
@@ -2806,7 +2812,7 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2191 2. File-Based Storage",
+            "↑ 2. File-Based Storage",
             "     Persist data to files on disk in formats like JSON, CSV, or plain text. Offers",
             "     a good balance between simplicity and data persistence. Suitable for small to",
             "     medium datasets. Slower than in-memory but data survives restarts."
@@ -2856,7 +2862,7 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2191 2. File-Based Storage",
+            "↑ 2. File-Based Storage",
             "     Persist data to files on disk in formats like JSON, CSV, or plain text. Offers",
             "     a good balance between simplicity and data persistence. Suitable for small to",
             "     medium datasets. Slower than in-memory but data survives restarts."
@@ -2883,7 +2889,7 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2191 2. File-Based Storage",
+            "↑ 2. File-Based Storage",
             "     Persist data to files on disk in formats like JSON, CSV, or plain text. Offers",
             "     a good balance between simplicity and data persistence. Suitable for small to",
             "     medium datasets. Slower than in-memory but data survives restarts.",
@@ -2892,8 +2898,8 @@
             "     advanced querying capabilities, transaction support, and excellent scalability.",
             "     More complex setup but handles large datasets and concurrent access reliably.",
             "     Production-grade approach.",
-            "\u276f 4. Mixed approach",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "❯ 4. Mixed approach",
+            "────────────────────────────────────────────────────────────────────────────────────",
             "  5. Chat about this"
           ],
           "actions": [
@@ -2915,7 +2921,7 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2191 2. File-Based Storage",
+            "↑ 2. File-Based Storage",
             "     Persist data to files on disk in formats like JSON, CSV, or plain text. Offers",
             "     a good balance between simplicity and data persistence. Suitable for small to",
             "     medium datasets. Slower than in-memory but data survives restarts.",
@@ -2924,8 +2930,8 @@
             "     advanced querying capabilities, transaction support, and excellent scalability.",
             "     More complex setup but handles large datasets and concurrent access reliably.",
             "     Production-grade approach.",
-            "\u276f 4. Mixed approach",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "❯ 4. Mixed approach",
+            "────────────────────────────────────────────────────────────────────────────────────",
             "  5. Chat about this"
           ],
           "actions": [
@@ -2965,8 +2971,8 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2502 implementation, scalability requirements, and maintenance overhead. Which approach",
-            "\u2502 best aligns with your project's needs and constraints?"
+            "│ implementation, scalability requirements, and maintenance overhead. Which approach",
+            "│ best aligns with your project's needs and constraints?"
           ],
           "actions": [
             {
@@ -3002,8 +3008,8 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2502 implementation, scalability requirements, and maintenance overhead. Which approach",
-            "\u2502 best aligns with your project's needs and constraints?"
+            "│ implementation, scalability requirements, and maintenance overhead. Which approach",
+            "│ best aligns with your project's needs and constraints?"
           ],
           "actions": [
             {
@@ -3027,14 +3033,14 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2502 implementation, scalability requirements, and maintenance overhead. Which approach",
-            "\u2502 best aligns with your project's needs and constraints?",
+            "│ implementation, scalability requirements, and maintenance overhead. Which approach",
+            "│ best aligns with your project's needs and constraints?",
             "",
-            "\u276f 1. In-Memory Storage",
+            "❯ 1. In-Memory Storage",
             "     Data stored entirely in application memory. Fast access and performance, but no",
             "     persistence between restarts. Ideal for caching, temporary session data, or",
             "     development/testing environments. Simple implementation with minimal overhead.",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "────────────────────────────────────────────────────────────────────────────────────",
             "  5. Chat about this"
           ],
           "actions": [
@@ -3056,14 +3062,14 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2502 implementation, scalability requirements, and maintenance overhead. Which approach",
-            "\u2502 best aligns with your project's needs and constraints?",
+            "│ implementation, scalability requirements, and maintenance overhead. Which approach",
+            "│ best aligns with your project's needs and constraints?",
             "",
-            "\u276f 1. In-Memory Storage",
+            "❯ 1. In-Memory Storage",
             "     Data stored entirely in application memory. Fast access and performance, but no",
             "     persistence between restarts. Ideal for caching, temporary session data, or",
             "     development/testing environments. Simple implementation with minimal overhead.",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "────────────────────────────────────────────────────────────────────────────────────",
             "  5. Chat about this"
           ],
           "actions": [
@@ -3083,12 +3089,12 @@
     {
       "recognized": {
         "choices": {
-          "question": "Quel fruit pr\u00e9f\u00e8res-tu ?",
+          "question": "Quel fruit préfères-tu ?",
           "cursor": 0,
           "options": [
             {
               "label": "Pomme",
-              "hint": "Croquante et acidul\u00e9e",
+              "hint": "Croquante et acidulée",
               "n": 1
             },
             {
@@ -3098,7 +3104,7 @@
             },
             {
               "label": "Banane",
-              "hint": "Douce et \u00e9nerg\u00e9tique",
+              "hint": "Douce et énergétique",
               "n": 3
             },
             {
@@ -3121,11 +3127,11 @@
           "lines": [
             "Auto-compact window: 1m tokens",
             "",
-            "MCP tools \u00b7 /mcp (loaded on-demand)",
-            "\u2514 74 tools \u00b7 0 tokens",
+            "MCP tools · /mcp (loaded on-demand)",
+            "└ 74 tools · 0 tokens",
             "",
-            "Skills \u00b7 /skills",
-            "\u2514 25 skills \u00b7 4.4k tokens",
+            "Skills · /skills",
+            "└ 25 skills · 4.4k tokens",
             "",
             "/context all to expand"
           ],
@@ -3144,12 +3150,12 @@
       },
       "output": {
         "choices": {
-          "question": "Quel fruit pr\u00e9f\u00e8res-tu ?",
+          "question": "Quel fruit préfères-tu ?",
           "cursor": 0,
           "options": [
             {
               "label": "Pomme",
-              "hint": "Croquante et acidul\u00e9e",
+              "hint": "Croquante et acidulée",
               "n": 1
             },
             {
@@ -3159,7 +3165,7 @@
             },
             {
               "label": "Banane",
-              "hint": "Douce et \u00e9nerg\u00e9tique",
+              "hint": "Douce et énergétique",
               "n": 3
             },
             {
@@ -3181,11 +3187,11 @@
           "lines": [
             "Auto-compact window: 1m tokens",
             "",
-            "MCP tools \u00b7 /mcp (loaded on-demand)",
-            "\u2514 74 tools \u00b7 0 tokens",
+            "MCP tools · /mcp (loaded on-demand)",
+            "└ 74 tools · 0 tokens",
             "",
-            "Skills \u00b7 /skills",
-            "\u2514 25 skills \u00b7 4.4k tokens",
+            "Skills · /skills",
+            "└ 25 skills · 4.4k tokens",
             "",
             "/context all to expand"
           ],
@@ -3212,20 +3218,20 @@
           "title": null,
           "lines": [
             "  Banane), avec une courte description pour chaque.",
-            "  Puis r\u00e9ponds juste avec le fruit.",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-            " \u2610 Fruit",
+            "  Puis réponds juste avec le fruit.",
+            "────────────────────────────────────────────────────",
+            " ☐ Fruit",
             "",
-            "Quel fruit pr\u00e9f\u00e8res-tu ?",
+            "Quel fruit préfères-tu ?",
             "",
-            "\u276f 1. Pomme",
-            "     Croquante et acidul\u00e9e",
+            "❯ 1. Pomme",
+            "     Croquante et acidulée",
             "  2. Poire",
             "     Juteuse et fondante",
             "  3. Banane",
-            "     Douce et \u00e9nerg\u00e9tique",
+            "     Douce et énergétique",
             "  4. Type something.",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "────────────────────────────────────────────────────",
             "  5. Chat about this"
           ],
           "actions": [
@@ -3248,20 +3254,20 @@
           "title": null,
           "lines": [
             "  Banane), avec une courte description pour chaque.",
-            "  Puis r\u00e9ponds juste avec le fruit.",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-            " \u2610 Fruit",
+            "  Puis réponds juste avec le fruit.",
+            "────────────────────────────────────────────────────",
+            " ☐ Fruit",
             "",
-            "Quel fruit pr\u00e9f\u00e8res-tu ?",
+            "Quel fruit préfères-tu ?",
             "",
-            "\u276f 1. Pomme",
-            "     Croquante et acidul\u00e9e",
+            "❯ 1. Pomme",
+            "     Croquante et acidulée",
             "  2. Poire",
             "     Juteuse et fondante",
             "  3. Banane",
-            "     Douce et \u00e9nerg\u00e9tique",
+            "     Douce et énergétique",
             "  4. Type something.",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "────────────────────────────────────────────────────",
             "  5. Chat about this"
           ],
           "actions": [
@@ -3286,16 +3292,16 @@
           "kind": "other",
           "title": null,
           "lines": [
-            " \u2590\u259b\u2588\u2588\u2588\u259c\u258c   Claude Code v2.1.283",
-            "\u259d\u259c\u2588\u2588\u2588\u2588\u2588\u259b\u2598  Opus 5.5 with medium effort \u00b7 Claude Pro",
-            "  \u2598\u2598 \u259d\u259d    ~/dev/project",
+            " ▐▛███▜▌   Claude Code v2.1.283",
+            "▝▜█████▛▘  Opus 5.5 with medium effort · Claude Pro",
+            "  ▘▘ ▝▝    ~/dev/project",
             "",
-            "\u276f /effort",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "❯ /effort",
+            "──────────────────────────────────────────────────────────────────────────────────────────",
             " Effort",
             "",
             "          Faster                                                 Smarter",
-            "          \u2500\u25b2\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u250a\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "          ─▲───────────────────────────────────────────┊───────────────",
             "          low     medium     high     xhigh     max        ultracode",
             "                                                         xhigh + workflows"
           ],
@@ -3322,16 +3328,16 @@
           "kind": "other",
           "title": null,
           "lines": [
-            " \u2590\u259b\u2588\u2588\u2588\u259c\u258c   Claude Code v2.1.283",
-            "\u259d\u259c\u2588\u2588\u2588\u2588\u2588\u259b\u2598  Opus 5.5 with medium effort \u00b7 Claude Pro",
-            "  \u2598\u2598 \u259d\u259d    ~/dev/project",
+            " ▐▛███▜▌   Claude Code v2.1.283",
+            "▝▜█████▛▘  Opus 5.5 with medium effort · Claude Pro",
+            "  ▘▘ ▝▝    ~/dev/project",
             "",
-            "\u276f /effort",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "❯ /effort",
+            "──────────────────────────────────────────────────────────────────────────────────────────",
             " Effort",
             "",
             "          Faster                                                 Smarter",
-            "          \u2500\u25b2\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u250a\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "          ─▲───────────────────────────────────────────┊───────────────",
             "          low     medium     high     xhigh     max        ultracode",
             "                                                         xhigh + workflows"
           ],
@@ -3361,16 +3367,16 @@
           "kind": "other",
           "title": null,
           "lines": [
-            " \u2590\u259b\u2588\u2588\u2588\u259c\u258c   Claude Code v2.1.283",
-            "\u259d\u259c\u2588\u2588\u2588\u2588\u2588\u259b\u2598  Opus 5.5 with medium effort \u00b7 Claude Pro",
-            "  \u2598\u2598 \u259d\u259d    ~/dev/project",
+            " ▐▛███▜▌   Claude Code v2.1.283",
+            "▝▜█████▛▘  Opus 5.5 with medium effort · Claude Pro",
+            "  ▘▘ ▝▝    ~/dev/project",
             "",
-            "\u276f /effort",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "❯ /effort",
+            "──────────────────────────────────────────────────────────────────────────────────────────",
             " Effort",
             "",
             "          Faster                                                 Smarter",
-            "          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b2\u2500\u2500\u2500\u2500\u2500\u250a\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "          ───────────────────────────────────────▲─────┊───────────────",
             "          low     medium     high     xhigh     max        ultracode",
             "                                                         xhigh + workflows"
           ],
@@ -3397,16 +3403,16 @@
           "kind": "other",
           "title": null,
           "lines": [
-            " \u2590\u259b\u2588\u2588\u2588\u259c\u258c   Claude Code v2.1.283",
-            "\u259d\u259c\u2588\u2588\u2588\u2588\u2588\u259b\u2598  Opus 5.5 with medium effort \u00b7 Claude Pro",
-            "  \u2598\u2598 \u259d\u259d    ~/dev/project",
+            " ▐▛███▜▌   Claude Code v2.1.283",
+            "▝▜█████▛▘  Opus 5.5 with medium effort · Claude Pro",
+            "  ▘▘ ▝▝    ~/dev/project",
             "",
-            "\u276f /effort",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "❯ /effort",
+            "──────────────────────────────────────────────────────────────────────────────────────────",
             " Effort",
             "",
             "          Faster                                                 Smarter",
-            "          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b2\u2500\u2500\u2500\u2500\u2500\u250a\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "          ───────────────────────────────────────▲─────┊───────────────",
             "          low     medium     high     xhigh     max        ultracode",
             "                                                         xhigh + workflows"
           ],
@@ -3436,16 +3442,16 @@
           "kind": "other",
           "title": null,
           "lines": [
-            " \u2590\u259b\u2588\u2588\u2588\u259c\u258c   Claude Code v2.1.283",
-            "\u259d\u259c\u2588\u2588\u2588\u2588\u2588\u259b\u2598  Opus 5.5 with medium effort \u00b7 Claude Pro",
-            "  \u2598\u2598 \u259d\u259d    ~/dev/project",
+            " ▐▛███▜▌   Claude Code v2.1.283",
+            "▝▜█████▛▘  Opus 5.5 with medium effort · Claude Pro",
+            "  ▘▘ ▝▝    ~/dev/project",
             "",
-            "\u276f /effort",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "❯ /effort",
+            "──────────────────────────────────────────────────────────────────────────────────────────",
             " Effort",
             "",
             "          Faster                                                 Smarter",
-            "          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b2\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u250a\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "          ───────▲─────────────────────────────────────┊───────────────",
             "          low     medium     high     xhigh     max        ultracode",
             "                                                         xhigh + workflows"
           ],
@@ -3472,16 +3478,16 @@
           "kind": "other",
           "title": null,
           "lines": [
-            " \u2590\u259b\u2588\u2588\u2588\u259c\u258c   Claude Code v2.1.283",
-            "\u259d\u259c\u2588\u2588\u2588\u2588\u2588\u259b\u2598  Opus 5.5 with medium effort \u00b7 Claude Pro",
-            "  \u2598\u2598 \u259d\u259d    ~/dev/project",
+            " ▐▛███▜▌   Claude Code v2.1.283",
+            "▝▜█████▛▘  Opus 5.5 with medium effort · Claude Pro",
+            "  ▘▘ ▝▝    ~/dev/project",
             "",
-            "\u276f /effort",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "❯ /effort",
+            "──────────────────────────────────────────────────────────────────────────────────────────",
             " Effort",
             "",
             "          Faster                                                 Smarter",
-            "          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b2\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u250a\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "          ───────▲─────────────────────────────────────┊───────────────",
             "          low     medium     high     xhigh     max        ultracode",
             "                                                         xhigh + workflows"
           ],
@@ -3511,16 +3517,16 @@
           "kind": "other",
           "title": null,
           "lines": [
-            " \u2590\u259b\u2588\u2588\u2588\u259c\u258c   Claude Code v2.1.283",
-            "\u259d\u259c\u2588\u2588\u2588\u2588\u2588\u259b\u2598  Opus 5.5 with medium effort \u00b7 Claude Pro",
-            "  \u2598\u2598 \u259d\u259d    ~/dev/project",
+            " ▐▛███▜▌   Claude Code v2.1.283",
+            "▝▜█████▛▘  Opus 5.5 with medium effort · Claude Pro",
+            "  ▘▘ ▝▝    ~/dev/project",
             "",
-            "\u276f /effort",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "❯ /effort",
+            "──────────────────────────────────────────────────────────────────────────────────────────",
             " Effort",
             "",
             "          Faster                                                 Smarter",
-            "          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u250a\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b2\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "          ─────────────────────────────────────────────┊───────▲───────",
             "          low     medium     high     xhigh     max        ultracode",
             "                                                         xhigh + workflows"
           ],
@@ -3547,16 +3553,16 @@
           "kind": "other",
           "title": null,
           "lines": [
-            " \u2590\u259b\u2588\u2588\u2588\u259c\u258c   Claude Code v2.1.283",
-            "\u259d\u259c\u2588\u2588\u2588\u2588\u2588\u259b\u2598  Opus 5.5 with medium effort \u00b7 Claude Pro",
-            "  \u2598\u2598 \u259d\u259d    ~/dev/project",
+            " ▐▛███▜▌   Claude Code v2.1.283",
+            "▝▜█████▛▘  Opus 5.5 with medium effort · Claude Pro",
+            "  ▘▘ ▝▝    ~/dev/project",
             "",
-            "\u276f /effort",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "❯ /effort",
+            "──────────────────────────────────────────────────────────────────────────────────────────",
             " Effort",
             "",
             "          Faster                                                 Smarter",
-            "          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u250a\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b2\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            "          ─────────────────────────────────────────────┊───────▲───────",
             "          low     medium     high     xhigh     max        ultracode",
             "                                                         xhigh + workflows"
           ],
@@ -3589,7 +3595,7 @@
               "hint": null
             },
             {
-              "label": "\u23bf  Context Usage",
+              "label": "⎿  Context Usage",
               "hint": null
             }
           ]
@@ -3608,7 +3614,7 @@
               "hint": null
             },
             {
-              "label": "\u23bf  Context Usage",
+              "label": "⎿  Context Usage",
               "hint": null
             }
           ]
@@ -3624,7 +3630,7 @@
           "cursor": 0,
           "options": [
             {
-              "label": "Default (recommended) \u2714  Sonnet 5 \u00b7 Efficient for routine tasks",
+              "label": "Default (recommended) ✔  Sonnet 5 · Efficient for routine tasks",
               "hint": null,
               "n": 1
             },
@@ -3670,7 +3676,7 @@
             },
             {
               "label": "Opus 4.6                 Best for everyday, complex tasks",
-              "hint": "\u2026 +1 model",
+              "hint": "… +1 model",
               "n": 10
             }
           ]
@@ -3680,11 +3686,11 @@
           "kind": "other",
           "title": null,
           "lines": [
-            " \u2590\u259b\u2588\u2588\u2588\u259b\u2588   Claude Code v2.1.282",
-            "\u259d\u259c\u2588\u2588\u2588\u2588\u2588\u2588\u2580  Sonnet 5 \u00b7 Claude Max",
-            " \u259d\u259d   \u259d\u259d   ~/hwtest-sandbox",
+            " ▐▛███▛█   Claude Code v2.1.282",
+            "▝▜██████▀  Sonnet 5 · Claude Max",
+            " ▝▝   ▝▝   ~/hwtest-sandbox",
             "",
-            "\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594",
+            "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔",
             "   Select model",
             "   Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names,",
             "   specify with --model."
@@ -3712,7 +3718,7 @@
           "cursor": 0,
           "options": [
             {
-              "label": "Default (recommended) \u2714  Sonnet 5 \u00b7 Efficient for routine tasks",
+              "label": "Default (recommended) ✔  Sonnet 5 · Efficient for routine tasks",
               "hint": null,
               "n": 1
             },
@@ -3758,7 +3764,7 @@
             },
             {
               "label": "Opus 4.6                 Best for everyday, complex tasks",
-              "hint": "\u2026 +1 model",
+              "hint": "… +1 model",
               "n": 10
             }
           ]
@@ -3767,11 +3773,11 @@
           "kind": "other",
           "title": null,
           "lines": [
-            " \u2590\u259b\u2588\u2588\u2588\u259b\u2588   Claude Code v2.1.282",
-            "\u259d\u259c\u2588\u2588\u2588\u2588\u2588\u2588\u2580  Sonnet 5 \u00b7 Claude Max",
-            " \u259d\u259d   \u259d\u259d   ~/hwtest-sandbox",
+            " ▐▛███▛█   Claude Code v2.1.282",
+            "▝▜██████▀  Sonnet 5 · Claude Max",
+            " ▝▝   ▝▝   ~/hwtest-sandbox",
             "",
-            "\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594",
+            "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔",
             "   Select model",
             "   Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names,",
             "   specify with --model."
@@ -3804,8 +3810,8 @@
           ],
           "items": [
             {
-              "label": "Default (recommended) \u2714",
-              "hint": "Sonnet 5 \u00b7 Efficient for routine tasks",
+              "label": "Default (recommended) ✔",
+              "hint": "Sonnet 5 · Efficient for routine tasks",
               "cursor": true
             },
             {
@@ -3861,7 +3867,7 @@
               "label": "cancel"
             }
           ],
-          "more": "\u2026 +1 model"
+          "more": "… +1 model"
         },
         "screen": null,
         "settings": false
@@ -3876,8 +3882,8 @@
           ],
           "items": [
             {
-              "label": "Default (recommended) \u2714",
-              "hint": "Sonnet 5 \u00b7 Efficient for routine tasks",
+              "label": "Default (recommended) ✔",
+              "hint": "Sonnet 5 · Efficient for routine tasks",
               "cursor": true
             },
             {
@@ -3933,7 +3939,7 @@
               "label": "cancel"
             }
           ],
-          "more": "\u2026 +1 model"
+          "more": "… +1 model"
         }
       }
     },
@@ -3948,7 +3954,7 @@
             "   Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names,",
             "   specify with --model.",
             "",
-            "   \u276f 1.  Default (recommended) \u2714  Sonnet 5 \u00b7 Efficient for routine tasks",
+            "   ❯ 1.  Default (recommended) ✔  Sonnet 5 · Efficient for routine tasks",
             "     2.  Opus 5.5                 Most capable for ambitious work",
             "     3.  Fable 5.1                For your toughest challenges",
             "     4.  Sonnet 5                 Most efficient for everyday tasks",
@@ -3957,10 +3963,10 @@
             "     7.  Fable 5                  Most capable for your hardest and longest-running tasks",
             "     8.  Opus 4.8                 Best for everyday, complex tasks",
             "     9.  Opus 4.7                 Best for everyday, complex tasks",
-            "   \u2193 10. Opus 4.6                 Best for everyday, complex tasks",
-            "      \u2026 +1 model",
+            "   ↓ 10. Opus 4.6                 Best for everyday, complex tasks",
+            "      … +1 model",
             "",
-            "   \u25cf High effort (default) \u2190/\u2192 to adjust"
+            "   ● High effort (default) ←/→ to adjust"
           ],
           "actions": [
             {
@@ -3988,7 +3994,7 @@
             "   Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names,",
             "   specify with --model.",
             "",
-            "   \u276f 1.  Default (recommended) \u2714  Sonnet 5 \u00b7 Efficient for routine tasks",
+            "   ❯ 1.  Default (recommended) ✔  Sonnet 5 · Efficient for routine tasks",
             "     2.  Opus 5.5                 Most capable for ambitious work",
             "     3.  Fable 5.1                For your toughest challenges",
             "     4.  Sonnet 5                 Most efficient for everyday tasks",
@@ -3997,10 +4003,10 @@
             "     7.  Fable 5                  Most capable for your hardest and longest-running tasks",
             "     8.  Opus 4.8                 Best for everyday, complex tasks",
             "     9.  Opus 4.7                 Best for everyday, complex tasks",
-            "   \u2193 10. Opus 4.6                 Best for everyday, complex tasks",
-            "      \u2026 +1 model",
+            "   ↓ 10. Opus 4.6                 Best for everyday, complex tasks",
+            "      … +1 model",
             "",
-            "   \u25cf High effort (default) \u2190/\u2192 to adjust"
+            "   ● High effort (default) ←/→ to adjust"
           ],
           "actions": [
             {
@@ -4073,7 +4079,7 @@
             },
             {
               "label": "Sonnet 4.6               Efficient for routine tasks",
-              "hint": "\u2026 +1 model",
+              "hint": "… +1 model",
               "n": 11
             }
           ]
@@ -4083,16 +4089,16 @@
           "kind": "other",
           "title": null,
           "lines": [
-            " \u2590\u259b\u2588\u2588\u2588\u259b\u2588   Claude Code v2.1.282",
-            "\u259d\u259c\u2588\u2588\u2588\u2588\u2588\u2588\u2580  Sonnet 5 \u00b7 Claude Max",
-            " \u259d\u259d   \u259d\u259d   ~/hwtest-sandbox",
+            " ▐▛███▛█   Claude Code v2.1.282",
+            "▝▜██████▀  Sonnet 5 · Claude Max",
+            " ▝▝   ▝▝   ~/hwtest-sandbox",
             "",
-            "\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594 Scroll wheel is sending arrow keys \u00b7 use PgUp/PgDn to scroll \u2594",
+            "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ Scroll wheel is sending arrow keys · use PgUp/PgDn to scroll ▔",
             "   Select model",
             "   Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names,",
             "   specify with --model.",
             "",
-            "   \u2191 2.  Opus 5.5                 Most capable for ambitious work"
+            "   ↑ 2.  Opus 5.5                 Most capable for ambitious work"
           ],
           "actions": [
             {
@@ -4163,7 +4169,7 @@
             },
             {
               "label": "Sonnet 4.6               Efficient for routine tasks",
-              "hint": "\u2026 +1 model",
+              "hint": "… +1 model",
               "n": 11
             }
           ]
@@ -4172,16 +4178,16 @@
           "kind": "other",
           "title": null,
           "lines": [
-            " \u2590\u259b\u2588\u2588\u2588\u259b\u2588   Claude Code v2.1.282",
-            "\u259d\u259c\u2588\u2588\u2588\u2588\u2588\u2588\u2580  Sonnet 5 \u00b7 Claude Max",
-            " \u259d\u259d   \u259d\u259d   ~/hwtest-sandbox",
+            " ▐▛███▛█   Claude Code v2.1.282",
+            "▝▜██████▀  Sonnet 5 · Claude Max",
+            " ▝▝   ▝▝   ~/hwtest-sandbox",
             "",
-            "\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594 Scroll wheel is sending arrow keys \u00b7 use PgUp/PgDn to scroll \u2594",
+            "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ Scroll wheel is sending arrow keys · use PgUp/PgDn to scroll ▔",
             "   Select model",
             "   Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names,",
             "   specify with --model.",
             "",
-            "   \u2191 2.  Opus 5.5                 Most capable for ambitious work"
+            "   ↑ 2.  Opus 5.5                 Most capable for ambitious work"
           ],
           "actions": [
             {
@@ -4268,7 +4274,7 @@
               "label": "cancel"
             }
           ],
-          "more": "\u2026 +1 model"
+          "more": "… +1 model"
         },
         "screen": null,
         "settings": false
@@ -4340,7 +4346,7 @@
               "label": "cancel"
             }
           ],
-          "more": "\u2026 +1 model"
+          "more": "… +1 model"
         }
       }
     },
@@ -4355,7 +4361,7 @@
             "   Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names,",
             "   specify with --model.",
             "",
-            "   \u2191 2.  Opus 5.5                 Most capable for ambitious work",
+            "   ↑ 2.  Opus 5.5                 Most capable for ambitious work",
             "     3.  Fable 5.1                For your toughest challenges",
             "     4.  Sonnet 5                 Most efficient for everyday tasks",
             "     5.  Haiku 4.5                Fastest for quick answers",
@@ -4364,10 +4370,10 @@
             "     8.  Opus 4.8                 Best for everyday, complex tasks",
             "     9.  Opus 4.7                 Best for everyday, complex tasks",
             "     10. Opus 4.6                 Best for everyday, complex tasks",
-            "   \u276f 11. Sonnet 4.6               Efficient for routine tasks",
-            "      \u2026 +1 model",
+            "   ❯ 11. Sonnet 4.6               Efficient for routine tasks",
+            "      … +1 model",
             "",
-            "   \u25cf High effort (default) \u2190/\u2192 to adjust"
+            "   ● High effort (default) ←/→ to adjust"
           ],
           "actions": [
             {
@@ -4395,7 +4401,7 @@
             "   Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names,",
             "   specify with --model.",
             "",
-            "   \u2191 2.  Opus 5.5                 Most capable for ambitious work",
+            "   ↑ 2.  Opus 5.5                 Most capable for ambitious work",
             "     3.  Fable 5.1                For your toughest challenges",
             "     4.  Sonnet 5                 Most efficient for everyday tasks",
             "     5.  Haiku 4.5                Fastest for quick answers",
@@ -4404,10 +4410,10 @@
             "     8.  Opus 4.8                 Best for everyday, complex tasks",
             "     9.  Opus 4.7                 Best for everyday, complex tasks",
             "     10. Opus 4.6                 Best for everyday, complex tasks",
-            "   \u276f 11. Sonnet 4.6               Efficient for routine tasks",
-            "      \u2026 +1 model",
+            "   ❯ 11. Sonnet 4.6               Efficient for routine tasks",
+            "      … +1 model",
             "",
-            "   \u25cf High effort (default) \u2190/\u2192 to adjust"
+            "   ● High effort (default) ←/→ to adjust"
           ],
           "actions": [
             {
@@ -4537,12 +4543,12 @@
             },
             {
               "label": "Review the module",
-              "hint": "3 seconds ago \u00b7 main \u00b7 244KB",
+              "hint": "3 seconds ago · main · 244KB",
               "cursor": true
             },
             {
               "label": "Fix the tests",
-              "hint": "19 minutes ago \u00b7 main \u00b7 45KB"
+              "hint": "19 minutes ago · main · 45KB"
             }
           ],
           "cursor": 1,
@@ -4580,12 +4586,12 @@
             },
             {
               "label": "Review the module",
-              "hint": "3 seconds ago \u00b7 main \u00b7 244KB",
+              "hint": "3 seconds ago · main · 244KB",
               "cursor": true
             },
             {
               "label": "Fix the tests",
-              "hint": "19 minutes ago \u00b7 main \u00b7 45KB"
+              "hint": "19 minutes ago · main · 45KB"
             }
           ],
           "cursor": 1,
@@ -4622,12 +4628,12 @@
             },
             {
               "label": "Review the module",
-              "hint": "3 seconds ago \u00b7 main \u00b7 244KB",
+              "hint": "3 seconds ago · main · 244KB",
               "cursor": true
             },
             {
               "label": "Fix the tests",
-              "hint": "19 minutes ago \u00b7 main \u00b7 45KB"
+              "hint": "19 minutes ago · main · 45KB"
             }
           ],
           "cursor": 1,
@@ -4665,12 +4671,12 @@
             },
             {
               "label": "Review the module",
-              "hint": "3 seconds ago \u00b7 main \u00b7 244KB",
+              "hint": "3 seconds ago · main · 244KB",
               "cursor": true
             },
             {
               "label": "Fix the tests",
-              "hint": "19 minutes ago \u00b7 main \u00b7 45KB"
+              "hint": "19 minutes ago · main · 45KB"
             }
           ],
           "cursor": 1,
@@ -4774,7 +4780,7 @@
           "lines": [
             "Security guide",
             "",
-            "\u276f No, exit",
+            "❯ No, exit",
             "  Yes, I trust this folder"
           ],
           "actions": [
@@ -4798,7 +4804,7 @@
           "lines": [
             "Security guide",
             "",
-            "\u276f No, exit",
+            "❯ No, exit",
             "  Yes, I trust this folder"
           ],
           "actions": [
@@ -4849,7 +4855,7 @@
             "   Cloud sessions:    GitHub connected",
             "",
             "   Model:             sonnet (claude-sonnet-demo)",
-            "   MCP servers:       4 connected, 2 need auth \u00b7 /mcp",
+            "   MCP servers:       4 connected, 2 need auth · /mcp",
             "   Setting sources:   User settings",
             "   Auto mode server:  Enabled"
           ],
@@ -4881,7 +4887,7 @@
             "   Cloud sessions:    GitHub connected",
             "",
             "   Model:             sonnet (claude-sonnet-demo)",
-            "   MCP servers:       4 connected, 2 need auth \u00b7 /mcp",
+            "   MCP servers:       4 connected, 2 need auth · /mcp",
             "   Setting sources:   User settings",
             "   Auto mode server:  Enabled"
           ],
@@ -4913,12 +4919,12 @@
             "    when switching to new tasks.",
             "",
             "   Skills, subagents, plugins, and MCP servers",
-            "   No attribution data yet \u00b7 accumulates as you use Claude",
+            "   No attribution data yet · accumulates as you use Claude",
             "",
-            "   d to day \u00b7 w to week",
+            "   d to day · w to week",
             "",
             "   Usage credits",
-            "   Usage credits are off \u00b7 /usage-credits to turn them on"
+            "   Usage credits are off · /usage-credits to turn them on"
           ],
           "actions": [
             {
@@ -4945,12 +4951,12 @@
             "    when switching to new tasks.",
             "",
             "   Skills, subagents, plugins, and MCP servers",
-            "   No attribution data yet \u00b7 accumulates as you use Claude",
+            "   No attribution data yet · accumulates as you use Claude",
             "",
-            "   d to day \u00b7 w to week",
+            "   d to day · w to week",
             "",
             "   Usage credits",
-            "   Usage credits are off \u00b7 /usage-credits to turn them on"
+            "   Usage credits are off · /usage-credits to turn them on"
           ],
           "actions": [
             {
@@ -5062,7 +5068,7 @@
             "",
             "Learn more",
             "",
-            "\u276f 1. Yes, proceed",
+            "❯ 1. Yes, proceed",
             "  2. No, exit"
           ],
           "actions": [
@@ -5091,7 +5097,7 @@
             "",
             "Learn more",
             "",
-            "\u276f 1. Yes, proceed",
+            "❯ 1. Yes, proceed",
             "  2. No, exit"
           ],
           "actions": [
@@ -5248,7 +5254,7 @@
           "lines": [
             "Would you like to make the following edits?",
             "",
-            "\u203a 1. Yes, proceed",
+            "› 1. Yes, proceed",
             "  2. No, and tell Codex what to do differently"
           ],
           "actions": [
@@ -5268,7 +5274,7 @@
           "lines": [
             "Would you like to make the following edits?",
             "",
-            "\u203a 1. Yes, proceed",
+            "› 1. Yes, proceed",
             "  2. No, and tell Codex what to do differently"
           ],
           "actions": [
@@ -5367,7 +5373,7 @@
           "lines": [
             "Lifecycle hooks from config and enabled plugins.",
             "",
-            "\u26a0 4 hooks need review before they can run.",
+            "⚠ 4 hooks need review before they can run.",
             "",
             "Event                 Installed   Active      Review      Description"
           ],
@@ -5433,7 +5439,7 @@
           "lines": [
             "Lifecycle hooks from config and enabled plugins.",
             "",
-            "\u26a0 4 hooks need review before they can run.",
+            "⚠ 4 hooks need review before they can run.",
             "",
             "Event                 Installed   Active      Review      Description"
           ],
@@ -5465,11 +5471,11 @@
           "lines": [
             "  Lifecycle hooks from config and enabled plugins.",
             "",
-            "  \u26a0 4 hooks need review before they can run.",
+            "  ⚠ 4 hooks need review before they can run.",
             "",
             "  Event                 Installed   Active      Review      Description",
             "",
-            "\u203a PreToolUse            1           0           1           Before a tool executes",
+            "› PreToolUse            1           0           1           Before a tool executes",
             "  PermissionRequest     0           0           0           When permission is requested",
             "  PostToolUse           1           0           1           After a tool executes",
             "  PreCompact            0           0           0           Before context compaction",
@@ -5503,11 +5509,11 @@
           "lines": [
             "  Lifecycle hooks from config and enabled plugins.",
             "",
-            "  \u26a0 4 hooks need review before they can run.",
+            "  ⚠ 4 hooks need review before they can run.",
             "",
             "  Event                 Installed   Active      Review      Description",
             "",
-            "\u203a PreToolUse            1           0           1           Before a tool executes",
+            "› PreToolUse            1           0           1           Before a tool executes",
             "  PermissionRequest     0           0           0           When permission is requested",
             "  PostToolUse           1           0           1           After a tool executes",
             "  PreCompact            0           0           0           Before context compaction",
@@ -5632,7 +5638,7 @@
             "  4 hooks are new or changed.",
             "  Hooks can run outside the sandbox after you trust them.",
             "",
-            "\u203a 1. Review hooks",
+            "› 1. Review hooks",
             "  2. Trust all and continue",
             "  3. Continue without trusting (hooks won't run)"
           ],
@@ -5658,7 +5664,7 @@
             "  4 hooks are new or changed.",
             "  Hooks can run outside the sandbox after you trust them.",
             "",
-            "\u203a 1. Review hooks",
+            "› 1. Review hooks",
             "  2. Trust all and continue",
             "  3. Continue without trusting (hooks won't run)"
           ],
@@ -5863,12 +5869,12 @@
             "user@host:~/hwtest-sandbox$ codex",
             "user@host:~/hwtest-sandbox$ cd ~",
             "user@host:~$ codex",
-            "\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e",
-            "\u2502 >_ OpenAI Codex (v0.156.1)                     \u2502",
-            "\u2502                                                \u2502",
-            "\u2502 model:     GPT-6-Sol medium   /model to change \u2502",
-            "\u2502 directory: ~                                   \u2502",
-            "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f",
+            "╭────────────────────────────────────────────────╮",
+            "│ >_ OpenAI Codex (v0.156.1)                     │",
+            "│                                                │",
+            "│ model:     GPT-6-Sol medium   /model to change │",
+            "│ directory: ~                                   │",
+            "╰────────────────────────────────────────────────╯",
             "",
             "  Tip: Use /fork to branch the current chat into a new thread.",
             "",
@@ -5936,12 +5942,12 @@
             "user@host:~/hwtest-sandbox$ codex",
             "user@host:~/hwtest-sandbox$ cd ~",
             "user@host:~$ codex",
-            "\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e",
-            "\u2502 >_ OpenAI Codex (v0.156.1)                     \u2502",
-            "\u2502                                                \u2502",
-            "\u2502 model:     GPT-6-Sol medium   /model to change \u2502",
-            "\u2502 directory: ~                                   \u2502",
-            "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f",
+            "╭────────────────────────────────────────────────╮",
+            "│ >_ OpenAI Codex (v0.156.1)                     │",
+            "│                                                │",
+            "│ model:     GPT-6-Sol medium   /model to change │",
+            "│ directory: ~                                   │",
+            "╰────────────────────────────────────────────────╯",
             "",
             "  Tip: Use /fork to branch the current chat into a new thread.",
             "",
@@ -5969,17 +5975,17 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2502                                                \u2502",
-            "\u2502 model:     GPT-6-Sol medium   /model to change \u2502",
-            "\u2502 directory: ~                                   \u2502",
-            "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f",
+            "│                                                │",
+            "│ model:     GPT-6-Sol medium   /model to change │",
+            "│ directory: ~                                   │",
+            "╰────────────────────────────────────────────────╯",
             "",
             "  Tip: Use /fork to branch the current chat into a new thread.",
             "",
             "  Select Model and Effort",
             "",
             "  1. GPT-6-Astra (default)  Frontier intelligence for the most demanding work.",
-            "\u203a 2. GPT-6-Sol (current)    Workhorse model for coding and everyday work.",
+            "› 2. GPT-6-Sol (current)    Workhorse model for coding and everyday work.",
             "  3. GPT-6-Luna             Fast and affordable model for easier tasks.",
             "  4. GPT-5.6-Sol            Older coding model for complex work.",
             "  5. GPT-5.6-Terra          Older balanced model for straightforward work.",
@@ -6005,17 +6011,17 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u2502                                                \u2502",
-            "\u2502 model:     GPT-6-Sol medium   /model to change \u2502",
-            "\u2502 directory: ~                                   \u2502",
-            "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f",
+            "│                                                │",
+            "│ model:     GPT-6-Sol medium   /model to change │",
+            "│ directory: ~                                   │",
+            "╰────────────────────────────────────────────────╯",
             "",
             "  Tip: Use /fork to branch the current chat into a new thread.",
             "",
             "  Select Model and Effort",
             "",
             "  1. GPT-6-Astra (default)  Frontier intelligence for the most demanding work.",
-            "\u203a 2. GPT-6-Sol (current)    Workhorse model for coding and everyday work.",
+            "› 2. GPT-6-Sol (current)    Workhorse model for coding and everyday work.",
             "  3. GPT-6-Luna             Fast and affordable model for easier tasks.",
             "  4. GPT-5.6-Sol            Older coding model for complex work.",
             "  5. GPT-5.6-Terra          Older balanced model for straightforward work.",
@@ -6063,7 +6069,7 @@
               "n": 4
             },
             {
-              "label": "More reasoning\u2026   Max consumes usage limits faster",
+              "label": "More reasoning…   Max consumes usage limits faster",
               "hint": null,
               "n": 5
             }
@@ -6077,12 +6083,12 @@
             "user@host:~/hwtest-sandbox$ codex",
             "user@host:~/hwtest-sandbox$ cd ~",
             "user@host:~$ codex",
-            "\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e",
-            "\u2502 >_ OpenAI Codex (v0.156.1)                     \u2502",
-            "\u2502                                                \u2502",
-            "\u2502 model:     GPT-6-Sol medium   /model to change \u2502",
-            "\u2502 directory: ~                                   \u2502",
-            "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f",
+            "╭────────────────────────────────────────────────╮",
+            "│ >_ OpenAI Codex (v0.156.1)                     │",
+            "│                                                │",
+            "│ model:     GPT-6-Sol medium   /model to change │",
+            "│ directory: ~                                   │",
+            "╰────────────────────────────────────────────────╯",
             "",
             "  Tip: Use /fork to branch the current chat into a new thread.",
             "",
@@ -6131,7 +6137,7 @@
               "n": 4
             },
             {
-              "label": "More reasoning\u2026   Max consumes usage limits faster",
+              "label": "More reasoning…   Max consumes usage limits faster",
               "hint": null,
               "n": 5
             }
@@ -6144,12 +6150,12 @@
             "user@host:~/hwtest-sandbox$ codex",
             "user@host:~/hwtest-sandbox$ cd ~",
             "user@host:~$ codex",
-            "\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e",
-            "\u2502 >_ OpenAI Codex (v0.156.1)                     \u2502",
-            "\u2502                                                \u2502",
-            "\u2502 model:     GPT-6-Sol medium   /model to change \u2502",
-            "\u2502 directory: ~                                   \u2502",
-            "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f",
+            "╭────────────────────────────────────────────────╮",
+            "│ >_ OpenAI Codex (v0.156.1)                     │",
+            "│                                                │",
+            "│ model:     GPT-6-Sol medium   /model to change │",
+            "│ directory: ~                                   │",
+            "╰────────────────────────────────────────────────╯",
             "",
             "  Tip: Use /fork to branch the current chat into a new thread.",
             "",
@@ -6181,22 +6187,22 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e",
-            "\u2502 >_ OpenAI Codex (v0.156.1)                     \u2502",
-            "\u2502                                                \u2502",
-            "\u2502 model:     GPT-6-Sol medium   /model to change \u2502",
-            "\u2502 directory: ~                                   \u2502",
-            "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f",
+            "╭────────────────────────────────────────────────╮",
+            "│ >_ OpenAI Codex (v0.156.1)                     │",
+            "│                                                │",
+            "│ model:     GPT-6-Sol medium   /model to change │",
+            "│ directory: ~                                   │",
+            "╰────────────────────────────────────────────────╯",
             "",
             "  Tip: Use /fork to branch the current chat into a new thread.",
             "",
             "  Select Reasoning Level for GPT-6-Luna",
             "",
             "  1. Low               Fast responses with lighter reasoning",
-            "\u203a 2. Medium (default)  Balances speed and reasoning depth for everyday tasks",
+            "› 2. Medium (default)  Balances speed and reasoning depth for everyday tasks",
             "  3. High              Greater reasoning depth for complex problems",
             "  4. Extra high        Extra high reasoning depth for complex problems",
-            "  5. More reasoning\u2026   Max consumes usage limits faster"
+            "  5. More reasoning…   Max consumes usage limits faster"
           ],
           "actions": [
             {
@@ -6221,22 +6227,22 @@
           "kind": "other",
           "title": null,
           "lines": [
-            "\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e",
-            "\u2502 >_ OpenAI Codex (v0.156.1)                     \u2502",
-            "\u2502                                                \u2502",
-            "\u2502 model:     GPT-6-Sol medium   /model to change \u2502",
-            "\u2502 directory: ~                                   \u2502",
-            "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f",
+            "╭────────────────────────────────────────────────╮",
+            "│ >_ OpenAI Codex (v0.156.1)                     │",
+            "│                                                │",
+            "│ model:     GPT-6-Sol medium   /model to change │",
+            "│ directory: ~                                   │",
+            "╰────────────────────────────────────────────────╯",
             "",
             "  Tip: Use /fork to branch the current chat into a new thread.",
             "",
             "  Select Reasoning Level for GPT-6-Luna",
             "",
             "  1. Low               Fast responses with lighter reasoning",
-            "\u203a 2. Medium (default)  Balances speed and reasoning depth for everyday tasks",
+            "› 2. Medium (default)  Balances speed and reasoning depth for everyday tasks",
             "  3. High              Greater reasoning depth for complex problems",
             "  4. Extra high        Extra high reasoning depth for complex problems",
-            "  5. More reasoning\u2026   Max consumes usage limits faster"
+            "  5. More reasoning…   Max consumes usage limits faster"
           ],
           "actions": [
             {
@@ -6353,7 +6359,7 @@
             "  can run code automatically, even without a model request. Continue only if you trust these files. Your trust",
             "  decision will be saved.",
             "",
-            "\u203a 1. Trust and continue",
+            "› 1. Trust and continue",
             "  2. Back to Agent Command Center"
           ],
           "actions": [
@@ -6381,7 +6387,7 @@
             "  can run code automatically, even without a model request. Continue only if you trust these files. Your trust",
             "  decision will be saved.",
             "",
-            "\u203a 1. Trust and continue",
+            "› 1. Trust and continue",
             "  2. Back to Agent Command Center"
           ],
           "actions": [
@@ -6475,7 +6481,7 @@
           "lines": [
             "  comes with higher risk of prompt injection.",
             "",
-            "\u203a 1. Yes, continue",
+            "› 1. Yes, continue",
             "  2. No, quit"
           ],
           "actions": [
@@ -6495,7 +6501,7 @@
           "lines": [
             "  comes with higher risk of prompt injection.",
             "",
-            "\u203a 1. Yes, continue",
+            "› 1. Yes, continue",
             "  2. No, quit"
           ],
           "actions": [
@@ -6593,7 +6599,7 @@
           "lines": [
             "  Usage",
             "",
-            "\u203a 1. View analytics  Usage history",
+            "› 1. View analytics  Usage history",
             "  2. Redeem reset    Check availability"
           ],
           "actions": [
@@ -6617,7 +6623,7 @@
           "lines": [
             "  Usage",
             "",
-            "\u203a 1. View analytics  Usage history",
+            "› 1. View analytics  Usage history",
             "  2. Redeem reset    Check availability"
           ],
           "actions": [
@@ -6855,7 +6861,7 @@
           "options": [
             {
               "label": "Submit",
-              "hint": "color: Red \u00b7 size: Small, Large"
+              "hint": "color: Red · size: Small, Large"
             }
           ],
           "tabs": [
@@ -6876,7 +6882,7 @@
           "options": [
             {
               "label": "Submit",
-              "hint": "color: Red \u00b7 size: Small, Large"
+              "hint": "color: Red · size: Small, Large"
             }
           ],
           "tabs": [
@@ -6960,7 +6966,7 @@
           "options": [
             {
               "label": "Submit",
-              "hint": "color: unanswered \u00b7 size: unanswered \u00b7 Pet: unanswered"
+              "hint": "color: unanswered · size: unanswered · Pet: unanswered"
             }
           ],
           "tabs": [
@@ -6982,7 +6988,7 @@
           "options": [
             {
               "label": "Submit",
-              "hint": "color: unanswered \u00b7 size: unanswered \u00b7 Pet: unanswered"
+              "hint": "color: unanswered · size: unanswered · Pet: unanswered"
             }
           ],
           "tabs": [
@@ -7125,7 +7131,7 @@
     {
       "title": "Question",
       "titleFr": "Question",
-      "body": "Which of these approaches should the next thread take for the storage layer, given that the cache already holds most of the data and the sync job runs every five minutes?\nKeep the current cache (Recommended) \u00b7 Move everything to the database \u00b7 Split by data type \u00b7 Chat about this\nNeutral",
+      "body": "Which of these approaches should the next thread take for the storage layer, given that the cache already holds most of the data and the sync job runs every five minutes?\nKeep the current cache (Recommended) · Move everything to the database · Split by data type · Chat about this\nNeutral",
       "tag": "pane-neutral",
       "url": "/#/a/neutral",
       "badge": 1
@@ -7133,7 +7139,7 @@
     {
       "title": "Question",
       "titleFr": "Question",
-      "body": "Favourite colour?\nRed \u00b7 Green \u00b7 Blue\nNeutral",
+      "body": "Favourite colour?\nRed · Green · Blue\nNeutral",
       "tag": "pane-neutral",
       "url": "/#/a/neutral",
       "badge": 1
@@ -7149,7 +7155,7 @@
               "hint": null
             },
             {
-              "label": "\u23bf You've hit your session limit \u00b7 resets 3pm (UTC)",
+              "label": "⎿ You've hit your session limit · resets 3pm (UTC)",
               "hint": null
             }
           ]
@@ -7200,7 +7206,7 @@
               "hint": null
             },
             {
-              "label": "\u23bf You've hit your session limit \u00b7 resets 3pm (UTC)",
+              "label": "⎿ You've hit your session limit · resets 3pm (UTC)",
               "hint": null
             }
           ]
@@ -7219,7 +7225,7 @@
               "hint": null
             },
             {
-              "label": "\u23bf You've hit your session limit \u00b7 resets 3pm (UTC)",
+              "label": "⎿ You've hit your session limit · resets 3pm (UTC)",
               "hint": null
             }
           ]
@@ -7239,7 +7245,7 @@
               "hint": null
             },
             {
-              "label": "\u23bf You've hit your weekly limit \u00b7 resets 11pm (UTC)",
+              "label": "⎿ You've hit your weekly limit · resets 11pm (UTC)",
               "hint": null
             }
           ]
@@ -7290,7 +7296,7 @@
               "hint": null
             },
             {
-              "label": "\u23bf You've hit your weekly limit \u00b7 resets 11pm (UTC)",
+              "label": "⎿ You've hit your weekly limit · resets 11pm (UTC)",
               "hint": null
             }
           ]
@@ -7309,7 +7315,7 @@
               "hint": null
             },
             {
-              "label": "\u23bf You've hit your weekly limit \u00b7 resets 11pm (UTC)",
+              "label": "⎿ You've hit your weekly limit · resets 11pm (UTC)",
               "hint": null
             }
           ]
