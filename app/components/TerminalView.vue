@@ -169,7 +169,7 @@ const touch = createTerminalTouch({
   maxMomentum: (speed) => props.ctl.rowHeight() * props.ctl.pageRows() * Math.min(3, 1 + Math.abs(speed) * 1.5),
   // Axis lock means a drag exists — however small the total displacement
   // ends up — so a held finger can no longer become a long press.
-  dragStart: () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null } },
+  dragStart: () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = undefined } },
 })
 // Long press on the gesture surface opens copy mode; it must not be mistaken
 // for a slow tap or leak into the tap->focus path on release.
