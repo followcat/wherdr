@@ -11,12 +11,20 @@ export type TerminalCopySnapshot = ReturnType<typeof captureTerminalScreen>
 
 export function selectedCopyText(root: HTMLElement, selection = document.getSelection()): string {
   if (!selection?.rangeCount || selection.isCollapsed) return ''
-  // Ignore selections in the composer, another pane, and the toolbar.
+  // Android's system Select all can cover the entire page, including the
+  // hidden xterm grid. Intersect ranges with the snapshot without rewriting
+  // the browser selection or disturbing its native handles.
+  const bounds = document.createRange()
+  bounds.selectNodeContents(root)
+  const pieces: string[] = []
   for (let i = 0; i < selection.rangeCount; i++) {
-    const range = selection.getRangeAt(i)
-    if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return ''
+    const range = selection.getRangeAt(i).cloneRange()
+    if (!range.intersectsNode(root)) continue
+    if (range.compareBoundaryPoints(Range.START_TO_START, bounds) < 0) range.setStart(bounds.startContainer, bounds.startOffset)
+    if (range.compareBoundaryPoints(Range.END_TO_END, bounds) > 0) range.setEnd(bounds.endContainer, bounds.endOffset)
+    pieces.push(range.toString())
   }
-  return trimSelection(selection.toString())
+  return trimSelection(pieces.join('\n'))
 }
 
 // The fallback acts on the existing native selection: never create/focus an
