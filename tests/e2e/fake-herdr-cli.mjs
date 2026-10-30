@@ -109,7 +109,7 @@ readline.createInterface({ input: process.stdin }).on('line', async (line) => {
     leave(0)
   } else if (m.type === 'terminal.scroll') {
     const state = await call('e2e.touch_scroll', { pane_id: pane, event: m }).catch(() => null)
-    if (state?.text) { currentText = state.text; frame(currentSize, currentText) }
+    if (state?.text && state.frame !== false) { currentText = state.text; frame(currentSize, currentText) }
   } else if (m.type === 'terminal.mouse') {
     await call('e2e.terminal_mouse', { pane_id: pane, event: m }).catch(() => {})
   } else if (m.type === 'terminal.input') {
