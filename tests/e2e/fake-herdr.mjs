@@ -307,6 +307,11 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
         state.events.push(params.event)
         state.pending.push({ event: params.event, at: Date.now() + state.consumeDelayMs })
       }
+      // The consumer (fake-herdr-cli) reports back whether it really wrote a
+      // frame for the last decision — lastFrame is the DECISION, this is the
+      // ACT: a spec can prove the CLI honored `frame: false` instead of only
+      // reading the flag it was told.
+      if (typeof params.frame_sent === 'boolean') state.lastFrameSent = params.frame_sent
       // Apply whatever is due, strictly in order: a slow consumer serializes
       // later input behind its head event rather than letting it overtake.
       const now = Date.now()

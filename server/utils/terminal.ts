@@ -169,7 +169,10 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
     if (!child) {
       if (early.length < 64) early.push({ obj, cb })
     } else if (child.stdin.writable) {
-      writer?.write(JSON.stringify(obj) + '\n', cb)
+      // Scroll commands are superseded by the next gesture — under a stalled
+      // pipe they are the only chunks the writer is allowed to shed.
+      const expendable = (obj as { type?: string }).type === 'terminal.scroll'
+      writer?.write(JSON.stringify(obj) + '\n', { ...cb, expendable })
     }
   }
 
@@ -271,15 +274,18 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
     const attrib: { epoch: number, phase: string, lines: number }[] = []
     let rest = lines
     const dirSign = direction === 'up' ? 1 : -1
-    while (rest > 0 && mergedContrib.length) {
-      const head = mergedContrib[0]!
-      if (Math.sign(head.lines) !== dirSign) break
-      const take = Math.min(Math.abs(head.lines), rest)
-      head.lines -= dirSign * take
+    for (let i = 0; rest > 0 && i < mergedContrib.length;) {
+      const c = mergedContrib[i]!
+      if (Math.sign(c.lines) !== dirSign) { i++; continue }
+      const take = Math.min(Math.abs(c.lines), rest)
+      c.lines -= dirSign * take
       rest -= take
-      attrib.push({ epoch: head.epoch, phase: head.phase, lines: dirSign * take })
-      if (!head.lines) mergedContrib.shift()
+      attrib.push({ epoch: c.epoch, phase: c.phase, lines: dirSign * take })
+      if (!c.lines) mergedContrib.splice(i, 1); else i++
     }
+    // The throttle's post-flush net is zero: anything left in the log was
+    // netting residue or clamped by its line cap — never sendable input.
+    mergedContrib.length = 0
     toChild({ type: 'terminal.scroll', direction, lines }, attrib.length
       ? { onSubmit: () => attrib.forEach(a => delivered(a.epoch, a.phase, a.lines)) }
       : undefined)
