@@ -2,7 +2,7 @@ type Point = { x: number, y: number }
 
 // Touch-only physics: preserve fractional pixels, lock the drag direction,
 // and keep momentum bounded. Scrolling never becomes arrow keys.
-export function createTerminalTouch({ vertical, momentum, horizontal, canHorizontal, maxMomentum,
+export function createTerminalTouch({ vertical, momentum, horizontal, canHorizontal, maxMomentum, dragStart,
   now = () => performance.now(), frame = fn => requestAnimationFrame(fn), cancelFrame = id => cancelAnimationFrame(id),
 }: {
   vertical: (pixels: number, point: Point) => void
@@ -15,6 +15,10 @@ export function createTerminalTouch({ vertical, momentum, horizontal, canHorizon
   // Called with the release velocity (px/ms) so a harder flick may
   // be allowed a longer glide.
   maxMomentum: (speed: number) => number
+  // Fired exactly once when the gesture leaves pending for a drag axis:
+  // the caller can cancel anything that was only armed for a stationary
+  // finger (long press), even when the total movement stays small.
+  dragStart?: () => void
   now?: () => number
   frame?: (fn: FrameRequestCallback) => number
   cancelFrame?: (id: number) => void
@@ -44,6 +48,7 @@ export function createTerminalTouch({ vertical, momentum, horizontal, canHorizon
         const totalX = x - start.x, totalY = y - start.y
         if (Math.hypot(totalX, totalY) < 5) return
         axis = canHorizontal() && Math.abs(totalX) > Math.abs(totalY) * 1.25 ? 'x' : 'y'
+        dragStart?.()
       }
       if (axis === 'x') horizontal(dx)
       else {
