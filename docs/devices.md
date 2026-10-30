@@ -43,6 +43,7 @@
 - **Terminal function keys** start closed. The small keyboard button above Send shows or hides
   them in both Conversation and Terminal. The common row is Esc, Shift, Tab, arrows and Enter;
   More holds Ctrl, Alt, paging, navigation and function keys, plus the phone-keyboard toggle.
+  Select Shift then Tab for Shift+Tab; the extra row does not repeat that shortcut.
   Closing the bar clears any armed modifier. The input stays on one row at rest and expands
   while editing. Desktop and tablet layouts keep their existing controls.
 - **Installable app (PWA)** on iPhone and Android, with safe-area and keyboard handling.
