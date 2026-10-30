@@ -219,16 +219,16 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
   const pacedTouch = () => touchScroll ||= createTouchScrollPacer<TouchPosition>((direction, lines, position) => {
     if (!position) return
     const { epoch, preview, ...cell } = position
-    if (preview) scrollDelivered.set(epoch, (scrollDelivered.get(epoch) || 0) + (direction === 'up' ? lines : -lines))
+    scrollDelivered.set(epoch, (scrollDelivered.get(epoch) || 0) + (direction === 'up' ? lines : -lines))
     toChild({ type: 'terminal.scroll', direction, lines, ...cell })
   })
   // Panes without mouse-report need no per-tick wheel reports: Herdr honors
   // lines:N there, so merge touch drags into one command per repaint instead
   // of one frame per row. The merged batch still counts toward the gesture's
   // epoch for compatibility with clients consuming scroll.ack.
-  let mergedEpoch = 0, mergedPreview = true
+  let mergedEpoch = 0
   const touchMerged = createScrollThrottle((direction, lines) => {
-    if (mergedPreview) scrollDelivered.set(mergedEpoch, (scrollDelivered.get(mergedEpoch) || 0) + (direction === 'up' ? lines : -lines))
+    scrollDelivered.set(mergedEpoch, (scrollDelivered.get(mergedEpoch) || 0) + (direction === 'up' ? lines : -lines))
     toChild({ type: 'terminal.scroll', direction, lines })
   }, { intervalMs: 30 })
   let scrollbackSeq = 0
@@ -296,7 +296,6 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
               }
               else {
                 mergedEpoch = clampInt(m.epoch, 0, Number.MAX_SAFE_INTEGER, 0)
-                mergedPreview = m.preview !== false
                 touchMerged.push(m.direction, clampInt(m.lines, 1, 500, 3))
               }
             }

@@ -7,10 +7,14 @@ export function createTerminalTouch({ vertical, momentum, horizontal, canHorizon
 }: {
   vertical: (pixels: number, point: Point) => void
   // Momentum can use a shorter server queue lifetime than a direct drag.
-  momentum?: (pixels: number, point: Point) => void
+  // Returning false ends the glide early (e.g. the terminal stopped
+  // acknowledging movement: the rest is only expiring queue noise).
+  momentum?: (pixels: number, point: Point) => boolean | void
   horizontal: (pixels: number) => void
   canHorizontal: () => boolean
-  maxMomentum: () => number
+  // Called with the release velocity (px/ms) so a harder flick may
+  // be allowed a longer glide.
+  maxMomentum: (speed: number) => number
   now?: () => number
   frame?: (fn: FrameRequestCallback) => number
   cancelFrame?: (id: number) => void
@@ -69,15 +73,18 @@ export function createTerminalTouch({ vertical, momentum, horizontal, canHorizon
       if (Math.abs(speed) < .16) return tap
       const began = now()
       let previous = began, distance = 0
-      const limit = Math.max(0, maxMomentum())
+      const limit = Math.max(0, maxMomentum(speed))
       const step: FrameRequestCallback = () => {
         raf = 0
         const t = now(), dt = Math.min(40, Math.max(0, t - previous))
         previous = t
-        speed *= Math.exp(-dt / 170)
+        speed *= Math.exp(-dt / 240)
         const pixels = Math.sign(speed) * Math.min(Math.abs(speed * dt), Math.max(0, limit - distance))
         distance += Math.abs(pixels)
-        if (pixels) (momentum ?? vertical)(pixels, last)
+        if (pixels) {
+          if (momentum) { if (momentum(pixels, last) === false) speed = 0 }
+          else vertical(pixels, last)
+        }
         if (Math.abs(speed) > .045 && t - began < 750 && distance < limit) raf = frame(step)
       }
       raf = frame(step)

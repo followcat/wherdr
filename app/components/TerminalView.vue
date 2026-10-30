@@ -104,6 +104,9 @@ let raf = 0
 let scrollX = 0, scrollY = 0, scrollDirection = 0
 let lastTouchAt = -Infinity, lastScrollAt = -Infinity
 let stoppingScroll = false, hadScroll = false, touching = false
+// Momentum clip bookkeeping: the glide is only worth frames while the pane
+// keeps up; scroll.ack (delivered lines, drag + momentum) is the feedback.
+let momStartAt = 0, momAckBase = 0, momSent = 0
 function flush() {
   raf = 0
   if (!pendingLines) return
@@ -128,6 +131,7 @@ const touch = createTerminalTouch({
       pendingLines = 0
     }
     if (lines) scrollDirection = Math.sign(lines)
+    momStartAt = 0 // a new drag re-arms the momentum clip baseline
     pendingLines += lines
     hadScroll = true
     if (lines && !raf) {
@@ -139,16 +143,27 @@ const touch = createTerminalTouch({
   },
   momentum(pixels, point) {
     lastScrollAt = performance.now()
+    if (!momStartAt) { momStartAt = lastScrollAt; momAckBase = props.ctl.scrollAck.value; momSent = 0 }
     acc += pixels
     const { lines, rest } = takeTouchLines(acc, props.ctl.rowHeight(), scrollDirection)
     acc = rest
     // After release there is no finger to follow. Let real application
     // frames show the glide instead of accumulating a translated afterimage.
-    if (lines) props.ctl.scroll(lines, point.x, point.y, 0, true, false)
+    if (!lines) return
+    props.ctl.scroll(lines, point.x, point.y, 0, true, false)
+    momSent += Math.abs(lines)
+    // A delivered share far below what we sent means the tail is only
+    // queue noise expiring server-side: end the glide instead of ghosting.
+    if (lastScrollAt - momStartAt > 140 && momSent >= 6
+      && Math.abs(props.ctl.scrollAck.value - momAckBase) < momSent * .35) {
+      momStartAt = 0
+      return false
+    }
   },
   horizontal(pixels) { lastScrollAt = performance.now(); const el = scroller(); if (el) el.scrollLeft -= pixels },
   canHorizontal: () => { const el = scroller(); return !!el && el.scrollWidth > el.clientWidth },
-  maxMomentum: () => props.ctl.rowHeight() * props.ctl.pageRows(),
+  // A harder flick earns a longer glide: one page minimum, up to three.
+  maxMomentum: (speed) => props.ctl.rowHeight() * props.ctl.pageRows() * Math.min(3, 1 + Math.abs(speed) * 1.5),
 })
 // Long press on the gesture surface opens copy mode; it must not be mistaken
 // for a slow tap or leak into the tap->focus path on release.
@@ -299,6 +314,7 @@ const sbRestPx = 8
 let sbFetchedAt = 0, sbWant = 800
 function lineDiv(spans: { text: string, color?: string, background?: string, bold?: boolean, dim?: boolean, italic?: boolean, underline?: boolean, strike?: boolean }[]) {
   const line = document.createElement('div')
+  line.className = 'sb-line'
   for (const s of spans) {
     const span = document.createElement('span')
     span.textContent = s.text
@@ -332,6 +348,7 @@ function renderScrollback() {
   if (src) {
     const cs = getComputedStyle(src)
     Object.assign(el.style, { fontFamily: cs.fontFamily, fontSize: cs.fontSize, lineHeight: cs.lineHeight, letterSpacing: cs.letterSpacing, color: cs.color })
+    el.style.setProperty('--sb-lh', cs.lineHeight)
     // The screen canvas paints its own bg; the element itself is transparent,
     // so take the page surface -- an opaque history region must hide the live
     // grid behind it. In copy mode the snapshot inside the body owns the live
@@ -357,10 +374,26 @@ function renderScrollback() {
     ? el.scrollHeight
     : Math.max(0, el.scrollHeight - el.clientHeight - distFromBottom)
 }
+// A chunk that lands mid-gesture rebuilds the DOM under a tracking finger
+// (or a native fling) and its scrollTop write fights the scroller. Hold it
+// until the gesture settles, bounded so a long read is not starved.
+let sbHeld = false, sbDirty = false
+let sbDeferTimer: ReturnType<typeof setTimeout> | undefined
+function flushScrollback() {
+  sbDeferTimer = undefined
+  if (!sbDirty) return
+  sbDirty = false
+  renderScrollback()
+}
+function deferScrollback() {
+  sbDirty = true
+  if (!sbDeferTimer) sbDeferTimer = setTimeout(flushScrollback, 600)
+}
 watch(props.ctl.scrollbackVersion, () => {
   // A re-render rebuilds the snapshot DOM and would destroy a live selection;
   // late history chunks still land while nothing is selected yet.
   if (copyMode.value && cpSelLen.value > 0) return
+  if (sbHeld || performance.now() - sbLastMoveAt < 500) return deferScrollback()
   renderScrollback()
 })
 watch(props.ctl.frameTick, () => {
@@ -418,12 +451,15 @@ function onGapTap(e: MouseEvent) {
 }
 function onSbTouchStart(e: TouchEvent) {
   sbTouchSent = false
+  sbHeld = true
   sbAX = e.touches[0]!.clientX
   sbAY = e.touches[0]!.clientY
   sbStartTop = sbEl.value?.scrollTop ?? 0
   sbWasMoving = performance.now() - sbLastMoveAt < 400
 }
 function onSbTouchEnd(e: TouchEvent) {
+  sbHeld = false
+  if (sbDirty && !sbDeferTimer) sbDeferTimer = setTimeout(flushScrollback, 300)
   const t = e.changedTouches[0]
   if (!t || Math.hypot(t.clientX - sbAX, t.clientY - sbAY) > 10) return
   if (!(e.target as HTMLElement | null)?.closest?.('.sb-gap')) return
@@ -459,6 +495,7 @@ onUnmounted(() => {
   cancelTouch()
   ro?.disconnect()
   clearTimeout(fitTimer)
+  clearTimeout(sbDeferTimer)
   cancelAnimationFrame(legacyRaf)
   props.ctl.dispose()
 })
@@ -478,6 +515,7 @@ onUnmounted(() => {
       @scroll.passive="onSbScroll"
       @touchstart.passive="onSbTouchStart"
       @touchend="onSbTouchEnd"
+      @touchcancel.passive="sbHeld = false"
     >
       <div ref="sbBody" class="sb-body" />
       <div class="sb-gap" @click="onGapTap" />

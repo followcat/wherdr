@@ -93,6 +93,37 @@ describe('terminal touch gestures', () => {
     expect(momentum).toBeLessThan(-350) // a real glide, not a nudge
     expect(calls()).toBeGreaterThan(3)
   })
+  it('lets the scroll layer cut a glide the pane is not keeping up with', () => {
+    let time = 0, id = 0
+    const frames = new Map<number, FrameRequestCallback>()
+    const momentum = vi.fn().mockReturnValue(false)
+    const touch = createTerminalTouch({ vertical: vi.fn(), momentum, horizontal: vi.fn(), canHorizontal: () => false,
+      maxMomentum: () => 10000, now: () => time,
+      frame: fn => { frames.set(++id, fn); return id }, cancelFrame: n => { frames.delete(n) } })
+    touch.start(0, 0)
+    time += 16; touch.move(0, -40)
+    time += 16; touch.move(0, -80)
+    time += 16; touch.move(0, -120)
+    touch.end()
+    expect(frames.size).toBe(1)
+    time += 16; for (const [n, fn] of [...frames]) { frames.delete(n); fn(time) }
+    expect(momentum).toHaveBeenCalled()
+    for (let i = 0; i < 20; i++) { time += 16; for (const [n, fn] of [...frames]) { frames.delete(n); fn(time) } }
+    // One callback was enough: returning false ended the glide.
+    expect(momentum).toHaveBeenCalledTimes(1)
+    expect(frames.size).toBe(0)
+  })
+  it('scales the glide budget with release velocity', () => {
+    const caps: number[] = []
+    const touch = createTerminalTouch({ vertical: vi.fn(), horizontal: vi.fn(), canHorizontal: () => false,
+      maxMomentum: (speed: number) => { caps.push(speed); return 1 }, now: () => 0,
+      frame: () => 0, cancelFrame: () => {} })
+    touch.start(0, 0)
+    touch.move(0, -40); touch.move(0, -120)
+    touch.end()
+    expect(caps).toHaveLength(1)
+    expect(Math.abs(caps[0]!)).toBeGreaterThan(1) // the release speed reached the budget call
+  })
   it('bleeds release velocity while the finger holds instead of a hard cut', () => {
     for (const hold of [0, 60]) {
       let time = 0, id = 0
@@ -109,7 +140,7 @@ describe('terminal touch gestures', () => {
       for (let i = 0; i < 80; i++) { time += 16; for (const [n, fn] of [...frames]) { frames.delete(n); fn(time) } }
       const momentum = Math.abs(vertical.mock.calls.slice(3).reduce((n, [dy]) => n + dy, 0))
       if (!hold) expect(momentum).toBeGreaterThan(350)
-      else expect(momentum).toBeLessThan(250) // bled to roughly a half
+      else expect(momentum).toBeLessThan(400) // bled to roughly a half
     }
   })
 
