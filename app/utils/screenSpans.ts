@@ -26,7 +26,7 @@ export function screenSpans(term: Terminal): AnsiSpan[][] {
   const buf = term.buffer.active
   const theme = (term.options.theme ?? {}) as Record<string, string | undefined>
   const lines: AnsiSpan[][] = []
-  for (let y = 0; y < buf.length; y++) {
+  for (let y = buf.viewportY; y < Math.min(buf.length, buf.viewportY + term.rows); y++) {
     const line = buf.getLine(y)
     // A wrapped row continues the previous logical line: join it so a copied
     // long line stays in one piece, like desktop selection copy.
@@ -52,6 +52,14 @@ export function screenSpans(term: Terminal): AnsiSpan[][] {
       else { cur = { text: ch, ...style }; spans.push(cur) }
     }
     lines.push(spans.length ? spans : [{ text: '' }])
+  }
+  // Keep indentation and blank rows, but not renderer padding on the right.
+  for (const spans of lines) {
+    for (let i = spans.length - 1; i >= 0; i--) {
+      spans[i]!.text = spans[i]!.text.replace(/[ \t]+$/, '')
+      if (spans[i]!.text) break
+      if (i > 0) spans.pop()
+    }
   }
   return lines
 }

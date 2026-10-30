@@ -5,9 +5,14 @@
 import '@xterm/xterm/css/xterm.css'
 import { createTerminalTouch } from '~/utils/terminalTouch'
 import { ansiToLines } from '~/utils/ansiToHtml'
+import type { TerminalCopySnapshot } from '~/utils/terminalCopy'
 
 const props = defineProps<{ ctl: TerminalCtl }>()
+const emit = defineEmits<{ copying: [active: boolean] }>()
 const host = ref<HTMLElement | null>(null)
+const copySnapshot = shallowRef<TerminalCopySnapshot | null>(null)
+const copyMetrics = shallowRef<Record<string, string>>({})
+const copyMode = computed(() => copySnapshot.value !== null)
 
 let legacyLastY: number | null = null
 let legacyLastX: number | null = null
@@ -169,51 +174,56 @@ const touch = createTerminalTouch({
 // for a slow tap or leak into the tap->focus path on release.
 let lpTimer: ReturnType<typeof setTimeout> | undefined, lpX = 0, lpY = 0, lpEntered = false
 const armLongPress = () => { clearTimeout(lpTimer); lpTimer = setTimeout(enterCopyMode, 480) }
-const cpSelLen = ref(0), cpCopied = ref(false)
-let cpCopiedTimer: ReturnType<typeof setTimeout> | undefined
-function onSelChange() {
-  const sel = document.getSelection()
-  cpSelLen.value = sel && !sel.isCollapsed ? sel.toString().length : 0
-}
-function selectAllCopy() {
-  const sel = document.getSelection()
-  if (sbBody.value && sel) sel.selectAllChildren(sbBody.value)
-}
-async function copySelection() {
-  const text = document.getSelection()?.toString() ?? ''
-  if (!text) return
-  try { await navigator.clipboard.writeText(text) } catch { try { document.execCommand('copy') } catch { /* no clipboard */ } }
-  cpCopied.value = true
-  clearTimeout(cpCopiedTimer); cpCopiedTimer = setTimeout(() => { cpCopied.value = false }, 1200)
-}
+let entryFinger = false
+let composing = false
+const compositionStart = () => { composing = true; clearTimeout(lpTimer) }
+const compositionEnd = () => { composing = false }
+let suppressCopyContextUntil = 0
 function enterCopyMode() {
   lpTimer = undefined
-  lpEntered = true
-  if (copyMode.value) return
-  copyMode.value = true
-  cpSelLen.value = 0
-  cpCopied.value = false
-  haptic()
-  // The finger may still be down: drop the gesture so it cannot scroll the
-  // live pane behind the copy surface.
+  if (copyMode.value || composing || (window.visualViewport?.scale ?? 1) !== lpScale) return
+  const snapshot = props.ctl.captureScreen()
+  const screen = host.value?.querySelector('.xterm-screen')
+  if (!snapshot || !screen) return
+  const cs = getComputedStyle(screen)
+  copyMetrics.value = {
+    fontFamily: snapshot.fontFamily || cs.fontFamily, fontSize: snapshot.fontSize ? `${snapshot.fontSize}px` : cs.fontSize, lineHeight: `${props.ctl.rowHeight()}px`,
+    letterSpacing: cs.letterSpacing, color: cs.color, width: `${screen.getBoundingClientRect().width}px`,
+  }
+  lpEntered = entryFinger = true
+  suppressCopyContextUntil = performance.now() + 1000
+  // Cancel both input paths and the remote queue, even if the last drag was
+  // already acknowledged. Capture before blur can resize the live terminal.
   cancelTouch()
-  document.addEventListener('selectionchange', onSelChange)
-  if (!sbFetchedAt) { sbFetchedAt = Date.now(); props.ctl.requestScrollback(sbWant) }
-  nextTick(() => {
-    renderScrollback()
-    if (sbEl.value) sbEl.value.scrollTop = sbEl.value.scrollHeight
-  })
+  sbHeld = false
+  cancelAnimationFrame(legacyRaf); legacyRaf = 0
+  legacyPendingLines = legacyAcc = 0
+  legacyLastX = legacyLastY = null
+  props.ctl.cancelTouchScroll()
+  props.ctl.blur()
+  ;(document.activeElement as HTMLElement | null)?.blur?.()
+  copySnapshot.value = snapshot
+  emit('copying', true)
+  haptic()
 }
 function exitCopyMode() {
   if (!copyMode.value) return
-  copyMode.value = false
-  document.removeEventListener('selectionchange', onSelChange)
-  document.getSelection()?.removeAllRanges()
-  cpSelLen.value = 0
-  cpCopied.value = false
-  clearTimeout(cpCopiedTimer)
-  renderScrollback()
+  copySnapshot.value = null
+  emit('copying', false)
+  // Deliberately leave focus with the user: Done never opens the IME.
 }
+function releaseEntryFinger(e: TouchEvent) {
+  if (!entryFinger) return
+  entryFinger = false
+  lastTouchAt = performance.now()
+  suppressCopyContextUntil = lastTouchAt + 250
+  e.preventDefault()
+  e.stopImmediatePropagation()
+}
+function copyContextMenu(e: Event) {
+  if (entryFinger || performance.now() < suppressCopyContextUntil) e.preventDefault()
+}
+let lpScale = 1
 function cancelTouch() {
   clearTimeout(lpTimer); lpTimer = undefined
   touch.cancel()
@@ -243,6 +253,7 @@ watch(smoothTouchScrolling, () => {
   legacyLastX = legacyLastY = null
 }, { flush: 'sync' })
 function onTouchStart(e: TouchEvent) {
+  if (copyMode.value) return
   // Android Back can hide the IME while leaving xterm's textarea focused.
   // Release that stale focus before another touch can reactivate the IME.
   if (!kbOpen.value && props.ctl.hasFocus()) props.ctl.blur()
@@ -252,6 +263,7 @@ function onTouchStart(e: TouchEvent) {
   if (e.cancelable) e.preventDefault()
   if (e.touches.length !== 1) { cancelTouch(); legacyLastY = legacyLastX = null; return }
   lpEntered = false
+  lpScale = window.visualViewport?.scale ?? 1
   lpX = e.touches[0]!.clientX; lpY = e.touches[0]!.clientY
   if (!smoothTouchScrolling.value) { armLongPress(); return legacyOnTouchStart(e) }
   // pointerdown has already stopped local momentum; keep its recency so the
@@ -263,14 +275,16 @@ function onTouchStart(e: TouchEvent) {
   armLongPress()
 }
 function onTouchMove(e: TouchEvent) {
+  if (copyMode.value) return
   e.preventDefault()
   const tm = e.touches[0]
-  if (tm && Math.hypot(tm.clientX - lpX, tm.clientY - lpY) > 10) { clearTimeout(lpTimer); lpTimer = undefined }
+  if (tm && Math.hypot(tm.clientX - lpX, tm.clientY - lpY) > 8) { clearTimeout(lpTimer); lpTimer = undefined }
   if (e.touches.length !== 1) { cancelTouch(); legacyLastX = legacyLastY = null; return }
   if (!smoothTouchScrolling.value) return legacyOnTouchMove(e)
   touch.move(e.touches[0]!.clientX, e.touches[0]!.clientY)
 }
 function onTouchEnd(e: TouchEvent) {
+  if (copyMode.value || lpEntered) { e.preventDefault(); return }
   lastTouchAt = performance.now()
   clearTimeout(lpTimer); lpTimer = undefined
   if (!smoothTouchScrolling.value) return legacyOnTouchEnd(e)
@@ -296,6 +310,7 @@ function onMouseDown(e: MouseEvent) {
   props.ctl.focus()
 }
 function onWheel(e: WheelEvent) {
+  if (copyMode.value) return
   if (smoothTouchScrolling.value) cancelTouch()
   legacyOnWheel(e)
 }
@@ -306,10 +321,7 @@ const sbEl = ref<HTMLElement | null>(null)
 const sbBody = ref<HTMLElement | null>(null)
 const sbCoarse = typeof matchMedia !== 'undefined' && matchMedia('(hover: none) and (pointer: coarse)').matches
 const sbInteractive = computed(() => sbCoarse && !props.ctl.mouseMode.value)
-// Copy mode (long press): the overlay becomes an opaque, selectable snapshot
-// of history plus the live screen, so a selection can cross page boundaries.
-const copyMode = ref(false)
-const sbOpen = computed(() => sbInteractive.value || copyMode.value)
+const sbOpen = sbInteractive
 const sbRestPx = 8
 let sbFetchedAt = 0, sbWant = 800
 function lineDiv(spans: { text: string, color?: string, background?: string, bold?: boolean, dim?: boolean, italic?: boolean, underline?: boolean, strike?: boolean }[]) {
@@ -334,13 +346,6 @@ function renderScrollback() {
   const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
   const holder = document.createDocumentFragment()
   for (const spans of ansiToLines(props.ctl.scrollback.value)) holder.appendChild(lineDiv(spans))
-  if (copyMode.value) {
-    const live = document.createElement('div')
-    live.className = 'sb-live'
-    live.dataset.label = t('current screen')
-    for (const spans of props.ctl.liveScreenSpans()) live.appendChild(lineDiv(spans))
-    holder.appendChild(live)
-  }
   body.replaceChildren(holder)
   // Match the terminal's metrics and geometry so history rows continue the
   // live grid pixel-exactly (the term is centered/inset on phones).
@@ -350,18 +355,15 @@ function renderScrollback() {
     Object.assign(el.style, { fontFamily: cs.fontFamily, fontSize: cs.fontSize, lineHeight: cs.lineHeight, letterSpacing: cs.letterSpacing, color: cs.color })
     el.style.setProperty('--sb-lh', cs.lineHeight)
     // The screen canvas paints its own bg; the element itself is transparent,
-    // so take the page surface -- an opaque history region must hide the live
-    // grid behind it. In copy mode the snapshot inside the body owns the live
-    // rows and the gap is hidden, so the whole surface is one solid document.
+    // so take the page surface to hide the live grid behind history.
     const bg = getComputedStyle(document.body).getPropertyValue('--bg') || 'black'
     body.style.background = bg
     const gap = el.querySelector('.sb-gap') as HTMLElement | null
-    if (gap) gap.style.background = copyMode.value ? bg : ''
+    if (gap) gap.style.background = ''
     const wrap = el.getBoundingClientRect()
     const sr = src.getBoundingClientRect()
     Object.assign(body.style, {
-      // In copy mode a fixed bar overlays the top of the snapshot surface.
-      paddingTop: `${Math.max(0, sr.top - wrap.top) + (copyMode.value ? 40 : 0)}px`,
+      paddingTop: `${Math.max(0, sr.top - wrap.top)}px`,
       paddingLeft: `${Math.max(0, sr.left - wrap.left)}px`,
       paddingRight: `${Math.max(0, wrap.right - sr.right)}px`,
     })
@@ -383,9 +385,6 @@ function flushScrollback() {
   sbDeferTimer = undefined
   if (!sbDirty) return
   sbDirty = false
-  // Same guard as the watcher: a selection begun while the chunk waited
-  // must not be destroyed by the late rebuild.
-  if (copyMode.value && cpSelLen.value > 0) return
   renderScrollback()
 }
 function deferScrollback() {
@@ -393,9 +392,6 @@ function deferScrollback() {
   if (!sbDeferTimer) sbDeferTimer = setTimeout(flushScrollback, 600)
 }
 watch(props.ctl.scrollbackVersion, () => {
-  // A re-render rebuilds the snapshot DOM and would destroy a live selection;
-  // late history chunks still land while nothing is selected yet.
-  if (copyMode.value && cpSelLen.value > 0) return
   if (sbHeld || performance.now() - sbLastMoveAt < 500) return deferScrollback()
   renderScrollback()
 })
@@ -439,7 +435,6 @@ watch(props.ctl.scrollInputVersion, () => {
 let sbAX = 0, sbAY = 0, sbStartTop = 0
 let sbTouchSent = false, sbWasMoving = false
 function tapGap(x: number, y: number) {
-  if (copyMode.value) { exitCopyMode(); return true }
   const el = sbEl.value
   if (el && el.scrollHeight - el.scrollTop - el.clientHeight > sbRestPx) return false
   if (sbWasMoving || (el && Math.abs(el.scrollTop - sbStartTop) > 2)) return true
@@ -453,6 +448,13 @@ function onGapTap(e: MouseEvent) {
   tapGap(e.clientX, e.clientY)
 }
 function onSbTouchStart(e: TouchEvent) {
+  if (e.touches.length !== 1) { cancelTouch(); return }
+  lpEntered = false
+  lpX = e.touches[0]!.clientX; lpY = e.touches[0]!.clientY
+  lpScale = window.visualViewport?.scale ?? 1
+  // Only the live gap enters screen-copy. History above it retains ordinary
+  // native scrolling/selection; it must never be mislabelled as a live capture.
+  if ((e.target as HTMLElement)?.closest('.sb-gap')) armLongPress()
   sbTouchSent = false
   sbHeld = true
   sbAX = e.touches[0]!.clientX
@@ -460,7 +462,14 @@ function onSbTouchStart(e: TouchEvent) {
   sbStartTop = sbEl.value?.scrollTop ?? 0
   sbWasMoving = performance.now() - sbLastMoveAt < 400
 }
+function onSbTouchMove(e: TouchEvent) {
+  if (e.touches.length !== 1 || Math.hypot(e.touches[0]!.clientX - lpX, e.touches[0]!.clientY - lpY) > 8) {
+    clearTimeout(lpTimer); lpTimer = undefined
+  }
+}
 function onSbTouchEnd(e: TouchEvent) {
+  clearTimeout(lpTimer); lpTimer = undefined
+  if (copyMode.value || lpEntered) { e.preventDefault(); return }
   sbHeld = false
   if (sbDirty && !sbDeferTimer) sbDeferTimer = setTimeout(flushScrollback, 300)
   const t = e.changedTouches[0]
@@ -484,6 +493,11 @@ watch(layoutTick, scheduleFit)
 let ro: ResizeObserver | null = null
 onMounted(() => {
   document.addEventListener('pointerdown', cancelTouch, true)
+  document.addEventListener('touchend', releaseEntryFinger, { capture: true, passive: false })
+  document.addEventListener('touchcancel', releaseEntryFinger, { capture: true, passive: false })
+  document.addEventListener('contextmenu', copyContextMenu, true)
+  document.addEventListener('compositionstart', compositionStart, true)
+  document.addEventListener('compositionend', compositionEnd, true)
   props.ctl.mount(host.value!)
   nextTick(() => {
     props.ctl.fitNow(false)
@@ -494,7 +508,12 @@ onMounted(() => {
 })
 onUnmounted(() => {
   document.removeEventListener('pointerdown', cancelTouch, true)
-  exitCopyMode() // drops the document selectionchange listener and the copied flash timer
+  document.removeEventListener('touchend', releaseEntryFinger, true)
+  document.removeEventListener('touchcancel', releaseEntryFinger, true)
+  document.removeEventListener('contextmenu', copyContextMenu, true)
+  document.removeEventListener('compositionstart', compositionStart, true)
+  document.removeEventListener('compositionend', compositionEnd, true)
+  exitCopyMode()
   cancelTouch()
   ro?.disconnect()
   clearTimeout(fitTimer)
@@ -505,34 +524,25 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div id="termWrap" :class="{ 'smooth-touch': smoothTouchScrolling }" @wheel.capture="onWheel">
-    <div id="term" ref="host" />
+  <div id="termWrap" :class="{ 'smooth-touch': smoothTouchScrolling, 'copying-screen': copyMode }" @wheel.capture="onWheel">
+    <div id="term" ref="host" :inert="copyMode" />
     <div
-      id="touch" aria-hidden="true"
+      id="touch" aria-hidden="true" :inert="copyMode"
       @touchstart="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd" @touchcancel="cancelTouch"
       @mousedown.prevent="onMouseDown"
     />
     <div
-      id="scrollback" ref="sbEl" :class="{ 'copy-mode': copyMode }"
+      id="scrollback" ref="sbEl" :inert="copyMode"
       :style="{ pointerEvents: sbOpen ? 'auto' : 'none', visibility: sbOpen ? 'visible' : 'hidden' }"
       @scroll.passive="onSbScroll"
-      @touchstart.passive="onSbTouchStart"
+      @touchstart.passive="onSbTouchStart" @touchmove.passive="onSbTouchMove"
       @touchend="onSbTouchEnd"
-      @touchcancel.passive="sbHeld = false"
+      @touchcancel.passive="sbHeld = false; cancelTouch()"
     >
       <div ref="sbBody" class="sb-body" />
       <div class="sb-gap" @click="onGapTap" />
     </div>
-    <div v-if="copyMode" class="cp-bar">
-      <span class="cp-title">{{ t('Copy mode') }}</span>
-      <div class="cp-actions">
-        <button type="button" class="cp-btn" :disabled="!cpSelLen" @click="copySelection">
-          {{ cpCopied ? t('Copied') : cpSelLen ? `${t('Copy')} ${cpSelLen}` : t('Copy') }}
-        </button>
-        <button type="button" class="cp-btn" @click="selectAllCopy">{{ t('Select all') }}</button>
-        <button type="button" class="cp-btn done" @click="exitCopyMode">{{ t('Done') }}</button>
-      </div>
-    </div>
+    <TerminalCopyLayer v-if="copySnapshot" :snapshot="copySnapshot" :metrics="copyMetrics" @close="exitCopyMode" />
     <div v-if="ctl.loading.value" class="term-loading"><span class="spinner" /></div>
     <div v-if="ctl.selectionHint.visible.value" class="terminal-selection-hint">
       {{ tl('Shift + drag to select', 'Shift + glisser pour sélectionner') }}

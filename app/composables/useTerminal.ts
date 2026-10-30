@@ -9,7 +9,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { terminalPixelWidth } from '~/utils/terminalSize'
 import { bindTerminalSelection } from '~/utils/terminalSelection'
 import { bindTerminalLinks, type TerminalLinks } from '~/utils/terminalLinks'
-import { screenSpans } from '~/utils/screenSpans'
+import { captureTerminalScreen } from '~/utils/terminalCopy'
 import { bindTerminalKeys } from '~/utils/terminalKeys'
 import { bindTerminalImagePaste } from '~/utils/terminalPaste'
 import { fmtBytes } from '~/utils/bytes'
@@ -493,7 +493,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   // (Herdr's recent_unwrapped dump, ANSI-styled).
   function requestScrollback(lines: number, source?: string) { sendTerm({ type: 'scrollback.read', lines, source }) }
   // Styled spans of the live viewport, for the selectable copy-mode overlay.
-  const liveScreenSpans = () => (term ? screenSpans(term) : [])
+  const captureScreen = () => term && !composition.active ? captureTerminalScreen(term) : null
 
   function setVisible(visible: boolean) {
     if (!visible && smoothTouchScrolling.value) { scrollInputVersion.value++; cancelTouchScroll() }
@@ -530,7 +530,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     reset, scroll, focus, blur, tapLink, tapMouse: (x: number, y: number) => mouse?.tap(x, y), hasFocus, rowHeight, pageRows, setVisible, dispose, loading, kbdOn,
     hasBanner: opts.hasBanner, selectionHint,
     cancelTouchScroll, scrollInputVersion, scrollGeometryVersion, frameTick, scrollAck,
-    scrollback, scrollbackVersion, requestScrollback, mouseMode, liveScreenSpans,
+    scrollback, scrollbackVersion, requestScrollback, mouseMode, captureScreen,
     virtualModifiers, lastVirtualChord, toggleModifier, toggleVirtualModifier: toggleModifier, clearVirtualModifiers, sendVirtualKey,
   }
 }

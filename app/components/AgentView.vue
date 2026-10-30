@@ -47,6 +47,7 @@ onUnmounted(() => {
 const pane = computed(() => herdrState.value.panes.find(p => p.id === props.paneId))
 const compactPhone = computed(() => !desk.value && !tablet.value && !props.cell)
 const phoneKeysOpen = ref(false)
+const terminalCopying = ref(false)
 watch(() => props.paneId, () => { phoneKeysOpen.value = false })
 // Remember this optional hint for the same agent on this device. A different
 // agent in a reused pane gets its own choice; hiding it never hides errors.
@@ -102,7 +103,7 @@ const ctl = createTerminal(props.paneId, {
   setBanner: (b) => { banner.value = b },
   hasBanner: () => Boolean(banner.value),
   fill: () => Boolean(props.cell),
-  input: () => live.value,
+  input: () => live.value && !terminalCopying.value,
 })
 const chatRef = ref<{ scrollToEnd: (force: boolean) => void, reload: () => void, focusSearch: () => void, gotoUnanswered: () => void } | null>(null)
 // Questions of the agent's last message the draft does not answer yet (ChatView): the composer's reminder.
@@ -502,7 +503,7 @@ function scrollsSideways(el: EventTarget | null, root: HTMLElement) {
 function onSwipeStart(e: TouchEvent) {
   axis = 'off'
   // A cell (side by side, the Board's panel) never swipes to its neighbours.
-  if (props.cell || desk.value || !inTab.value || e.touches.length !== 1) return
+  if (terminalCopying.value || props.cell || desk.value || !inTab.value || e.touches.length !== 1) return
   const zone = (e.target as HTMLElement | null)?.closest?.('.swipe-area, .choices, #termWrap') as HTMLElement | null
   if (!zone || scrollsSideways(e.target, zone)) return
   sx = e.touches[0]!.clientX
@@ -661,7 +662,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
     </div>
     <div v-else-if="mode === 'term' && (!eventsOpen || offlineView || machineDown)" class="chat-empty offline-terminal"><UIcon name="i-lucide-wifi-off" class="chat-empty-icon" /><p>{{ t('Terminal unavailable offline') }}</p></div>
     <TerminalView
-      v-else-if="mode === 'term'" :ctl="ctl" :class="enter ? (enter > 0 ? 'enter-next' : 'enter-prev') : undefined" :style="swipeStyle"
+      v-else-if="mode === 'term'" :ctl="ctl" @copying="terminalCopying = $event" :class="enter ? (enter > 0 ? 'enter-next' : 'enter-prev') : undefined" :style="swipeStyle"
     />
     <div v-else class="chat" />
     <div v-if="pane?.agent && !hasChat(pane) && mode === 'term' && !cell && !transcriptNoteHidden" class="terminal-transcript-note dismissible-transcript-note">
@@ -675,12 +676,12 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
     </button>
     <ChoicesPanel v-if="(prompt || screen) && !interactionOpen && !interactive && !termShown && eventsOpen && !offlineView && !machineDown" :pane-id="paneId" :prompt="prompt" :screen="screen" :keys="live" />
     <MenuPanel v-else-if="menu && !interactionOpen && !interactive && !termShown && eventsOpen && !offlineView && !machineDown" :pane-id="paneId" :menu="menu" :keys="live" @terminal="setMode('term')" />
-    <div v-if="keybarToggleShown" class="phone-keybar-controls">
+    <div v-if="keybarToggleShown" class="phone-keybar-controls" :inert="terminalCopying">
       <button type="button" class="phone-keybar-toggle" :class="{ on: phoneKeysOpen }" :aria-label="t('Show or hide terminal keys')" :aria-expanded="phoneKeysOpen" :aria-controls="keybarId"
         @pointerdown.prevent @mousedown.prevent @click.stop="togglePhoneKeys"><UIcon name="i-lucide-keyboard" /></button>
     </div>
-    <Keybar v-if="keybarShown" :id="keybarId" :ctl="ctl" :compact="compactPhone" />
-    <Composer v-if="composerShown" ref="composer" :pane="pane" :pane-id="paneId" :send-keys="ctl.sendKeys" :conversation="mode === 'chat'" :term-shown="termShown" :esc-stops="!searchOpen" :take-back="mode === 'chat'" :unanswered="mode === 'chat' ? unanswered : 0" @sent="onSent" @show-terminal="setMode('term')" @show-unanswered="chatRef?.gotoUnanswered()" />
+    <Keybar v-if="keybarShown" :id="keybarId" :inert="terminalCopying" :ctl="ctl" :compact="compactPhone" />
+    <Composer v-if="composerShown" ref="composer" :inert="terminalCopying" :pane="pane" :pane-id="paneId" :send-keys="ctl.sendKeys" :conversation="mode === 'chat'" :term-shown="termShown" :esc-stops="!searchOpen && !terminalCopying" :take-back="mode === 'chat'" :unanswered="mode === 'chat' ? unanswered : 0" @sent="onSent" @show-terminal="setMode('term')" @show-unanswered="chatRef?.gotoUnanswered()" />
     </div>
     </div>
     <AppSheet v-model:open="changesOpen" :title="t('Changes')" wide full screen>
