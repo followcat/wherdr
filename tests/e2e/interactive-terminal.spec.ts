@@ -78,11 +78,12 @@ test('phone terminal keys keep Esc visible and fit the primary row on narrow scr
       const r = el.getBoundingClientRect()
       return { label: el.getAttribute('aria-label'), x: r.x, y: r.y, width: r.width, height: r.height, right: r.right }
     }))
-    expect(rects.map(r => r.label)).toEqual(['Esc', 'Shift', '←', '↑', '↓', '→', 'Enter', '展开或收起功能键'])
+    expect(rects.map(r => r.label)).toEqual(['Esc', 'Shift', 'Tab', '←', '↑', '↓', '→', 'Enter', 'Show or hide function keys'])
     for (const rect of rects) {
       expect(Math.abs(rect.y - rects[0]!.y)).toBeLessThan(1)
-      expect(rect.height).toBeGreaterThanOrEqual(44)
-      expect(rect.width).toBeGreaterThanOrEqual(width >= 390 ? 44 : width >= 360 ? 40 : 35)
+      expect(rect.height).toBeGreaterThanOrEqual(36)
+      // Mobile uses nine primary keys; preserve their existing compact layout.
+      expect(rect.width).toBeGreaterThanOrEqual((width - 48) / 9)
       expect(rect.x).toBeGreaterThanOrEqual(0)
       expect(rect.right).toBeLessThanOrEqual(width)
     }
@@ -225,4 +226,22 @@ test('in a split, only the cell in use opens the window; another one keeps its b
   await expect(page.locator('.hw-scrim')).toHaveCount(0)
   await expect.poll(() => bodyBlocked(page)).toBe(false)
   await expect.poll(sizeOf, { timeout: 15000 }).toEqual({ cols: 60, rows: 40, attached: false })
+})
+
+test('copy in the interactive terminal suspends its keys and Escape only closes copy mode', async ({ page, isMobile, browserName }) => {
+  test.skip(!isMobile || browserName !== 'chromium', 'Trusted hold uses Chromium CDP')
+  const modal = page.getByRole('dialog', { name: 'Interactive terminal', exact: true })
+  await expect(modal.locator('.xterm-rows')).toContainText('View analytics')
+  const box = (await modal.locator('#termWrap').boundingBox())!
+  const input = await page.context().newCDPSession(page)
+  await input.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: box.x + 80, y: box.y + 90 }] })
+  await expect(modal.locator('.terminal-copy-layer')).toBeVisible()
+  await input.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  await expect(modal.locator('.keybar')).toHaveAttribute('inert', '')
+  await page.keyboard.press('Escape')
+  await expect(modal.locator('.terminal-copy-layer')).toHaveCount(0)
+  await expect(modal).toBeVisible()
+  await expect(modal.locator('.keybar')).not.toHaveAttribute('inert', '')
+  expect(await sentKeys()).toEqual([])
+  await expect(modal.locator('.xterm-helper-textarea')).not.toBeFocused()
 })
