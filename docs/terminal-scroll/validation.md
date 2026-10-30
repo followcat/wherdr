@@ -90,6 +90,17 @@ Two rounds ran per the task contract:
    phase-cancel, and a phase cancel no longer bumps the gesture epoch.
    New `tests/scrollWriterCancel.test.ts` pins all of it: relay+writer
    suites 35/35, chromium-phone e2e 21/21.
+5. Follow-up review of `5fabf73` (`followup-29db92b/`): the same probes
+   passed, but three queue boundaries were still open. Fixed in this
+   branch: the pre-start `early` queue now honors the same cancel/phase/
+   direction predicates as the writer (a full cancel before spawn no
+   longer replays scrolls on attach); the merged flush emits phase-pure
+   sub-batches, each tagged with its own deadline (momentum 240 ms, drag
+   800 ms) — a phase cancel drops the momentum share without taking drag
+   lines, and a stalled writer expires the tail itself; and
+   `peerScrollV2` resets on every `connect()` — capability evidence is
+   per-connection. Three new relay probes cover all of it: 33/33 unit,
+   21/21 chromium-phone e2e.
 
 ## NOT RUN / limitations
 
