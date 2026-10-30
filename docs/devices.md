@@ -43,6 +43,7 @@
 - **Terminal function keys** start closed. The small keyboard button above Send shows or hides
   them in both Conversation and Terminal. The common row is Esc, Shift, Tab, arrows and Enter;
   More holds Ctrl, Alt, paging, navigation and function keys, plus the phone-keyboard toggle.
+  Select Shift then Tab for Shift+Tab; the extra row does not repeat that shortcut.
   Closing the bar clears any armed modifier. The input stays on one row at rest and expands
   while editing. Desktop and tablet layouts keep their existing controls.
 - **Installable app (PWA)** on iPhone and Android, with safe-area and keyboard handling.
@@ -51,8 +52,8 @@
 - **Quick replies**: answer permissions and questions in one tap from the agent list.
 - **Split tabs on a small screen**: a plan of the tab's panes in Herdr's proportions, then each
   pane full screen with a mini-map and swipe to its neighbours.
-- **Terminal key bar**: Esc, Shift, the four arrows and Enter stay in the main row.
-  More holds Tab, PgUp/PgDn, modifiers and function keys, plus the phone keyboard toggle.
+- **Terminal key bar**: Esc, Shift, Tab, the four arrows and Enter stay in the main row.
+  More holds Ctrl/Alt, PgUp/PgDn and function keys, plus the phone keyboard toggle.
   Touch scrolling remains available in the terminal.
   Dismissing the phone keyboard releases terminal input focus; scrolling keeps
   it closed until an intentional tap. Links back to wherdr stay in the same window.
