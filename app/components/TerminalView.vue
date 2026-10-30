@@ -162,6 +162,9 @@ const touch = createTerminalTouch({
     if (lastScrollAt - momStartAt > 140 && momSent >= 6
       && Math.abs(props.ctl.scrollAck.value - momAckBase) < momSent * .35) {
       momStartAt = 0
+      // The queued momentum tail is expendable; cancel that phase only —
+      // any drag still owed to a finger is untouched.
+      props.ctl.cancelTouchScroll('momentum')
       return false
     }
   },
@@ -169,6 +172,9 @@ const touch = createTerminalTouch({
   canHorizontal: () => { const el = scroller(); return !!el && el.scrollWidth > el.clientWidth },
   // A harder flick earns a longer glide: one page minimum, up to three.
   maxMomentum: (speed) => props.ctl.rowHeight() * props.ctl.pageRows() * Math.min(3, 1 + Math.abs(speed) * 1.5),
+  // Axis lock means a drag exists — however small the total displacement
+  // ends up — so a held finger can no longer become a long press.
+  dragStart: () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = undefined } },
 })
 // Long press on the gesture surface opens copy mode; it must not be mistaken
 // for a slow tap or leak into the tap->focus path on release.
@@ -463,7 +469,9 @@ function onSbTouchStart(e: TouchEvent) {
   sbWasMoving = performance.now() - sbLastMoveAt < 400
 }
 function onSbTouchMove(e: TouchEvent) {
-  if (e.touches.length !== 1 || Math.hypot(e.touches[0]!.clientX - lpX, e.touches[0]!.clientY - lpY) > 8) {
+  // Same contract as the xterm axis lock: past the 5px slop it is a drag,
+  // not a hold — a short move must not become a long press.
+  if (e.touches.length !== 1 || Math.hypot(e.touches[0]!.clientX - lpX, e.touches[0]!.clientY - lpY) > 5) {
     clearTimeout(lpTimer); lpTimer = undefined
   }
 }

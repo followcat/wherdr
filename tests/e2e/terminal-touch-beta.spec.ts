@@ -106,12 +106,72 @@ for (const enabled of [false, true]) {
   })
 }
 
+test('a stalled consumer applies the swipe late — delivery never means consumption', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'Touch gestures use the phone viewport')
+  await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: false, consumeDelayMs: 1500 })
+  await terminal(page, true)
+  // A real drag: scroll events are submitted to Herdr at once...
+  await touch(page, 'touchmove', 220, 60)
+  // ...queued at the consumer for ~1.5s. While pending, nothing has moved:
+  // delivery to Herdr is not application consumption. One snapshot — two
+  // reads would let a delayed consume slip between them.
+  await expect.poll(async () => {
+    const s = await state() as { pending: number, offset: number }
+    return s.pending > 0 && s.offset === 0
+  }, { timeout: 3000 }).toBe(true)
+  await touch(page, 'touchend', 220)
+  await expect.poll(async () => (await state() as { offset: number }).offset, { timeout: 5000 }).toBeGreaterThan(0)
+})
+
+test('a scroll clamped at the boundary emits no movement frame', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'Touch gestures use the phone viewport')
+  await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: false, noFrameAtBoundary: true })
+  await terminal(page, true)
+  // Already at the live edge (offset 0): scrolling down moves nothing.
+  await touch(page, 'touchmove', 100, 200)
+  await touch(page, 'touchend', 100)
+  // Wait for the consumer's report-back: it actually skipped the frame,
+  // not merely returned `frame: false` nobody honored.
+  await expect.poll(async () => (await state() as { lastFrameSent?: boolean }).lastFrameSent, { timeout: 3000 }).toBe(false)
+  const s = await state() as { offset: number, lastFrame: boolean | undefined }
+  expect(s.offset).toBe(0)
+  expect(s.lastFrame).toBe(false)
+})
+
+test('a short drag held still is a scroll, not a long press', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'Touch gestures use the phone viewport')
+  await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: false })
+  await terminal(page, true)
+  // 8px: past the 5px axis slop but inside the old 10px long-press cancel
+  // radius — previously this fired copy mode mid-gesture.
+  await touch(page, 'touchstart', 100)
+  await touch(page, 'touchmove', 108)
+  await page.waitForTimeout(600) // past the 480ms long-press timer
+  await expect(page.locator('.terminal-copy-layer')).toHaveCount(0)
+  await touch(page, 'touchend', 108)
+  await expect(page.locator('.terminal-copy-layer')).toHaveCount(0)
+})
+
+test('a held finger still enters copy mode when it never moves', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'Touch gestures use the phone viewport')
+  await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: false })
+  await terminal(page, true)
+  await touch(page, 'touchstart', 100)
+  await page.waitForTimeout(600)
+  await expect(page.locator('.terminal-copy-layer')).toHaveCount(1)
+})
+
 test('dismissing the phone keyboard releases terminal focus before the next scroll', async ({ page, isMobile }) => {
   test.skip(!isMobile, 'Keyboard dismissal uses the phone viewport')
   await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: true })
   await terminal(page, true)
   const field = page.locator('.xterm-helper-textarea')
-  await page.locator('#touch').tap()
+  // Focus arrives through the explicit keyboard button — never a terminal tap.
+  // The keybar is collapsed by default on the phone layout, and the
+  // keyboard button sits in its second row.
+  await page.getByRole('button', { name: 'Show or hide terminal keys' }).tap()
+  await page.locator('.vk-more').tap()
+  await page.locator('.vk-system').tap()
   await expect(field).toBeFocused()
   const viewport = page.viewportSize()!
   await page.setViewportSize({ ...viewport, height: viewport.height - 200 })
@@ -179,12 +239,14 @@ test('a drag continues after the phone viewport resizes', async ({ page, isMobil
   await expect(page.locator('.xterm-helper-textarea')).not.toBeFocused()
 })
 
-test('a deliberate native tap focuses an opaque TUI once', { tag: '@webkit-phone' }, async ({ page, isMobile }) => {
+test('a deliberate native tap reaches an opaque TUI without focusing', { tag: '@webkit-phone' }, async ({ page, isMobile }) => {
   test.skip(!isMobile, 'Native touch input uses the phone profile')
   await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: true })
   await terminal(page, true)
   await page.locator('#touch').tap()
-  await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+  // The tap still reaches the app as mouse down/up — it just never raises
+  // the keyboard.
+  await expect(page.locator('.xterm-helper-textarea')).not.toBeFocused()
   const s = await fakeHerdr('e2e.terminal_mouse', { pane_id: pane }) as { events: { pane_id: string, event: { action: string } }[] }
   expect(s.events.filter(e => e.pane_id === pane && e.event.action === 'down')).toHaveLength(1)
   expect(s.events.filter(e => e.pane_id === pane && e.event.action === 'up')).toHaveLength(1)
@@ -275,11 +337,11 @@ test('the beta preference follows the device default and survives a reload', { t
 })
 
 for (const enabled of [false, true]) {
-  test(`a normal terminal tap opens the keyboard with beta ${enabled ? 'on' : 'off'}`, { tag: '@webkit-phone' }, async ({ page, isMobile }) => {
+  test(`a normal terminal tap never opens the keyboard with beta ${enabled ? 'on' : 'off'}`, { tag: '@webkit-phone' }, async ({ page, isMobile }) => {
     test.skip(!isMobile, 'Touch gestures use the phone viewport')
     await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: false })
     await terminal(page, enabled)
     await page.locator('#touch').tap()
-    await expect(page.locator('.xterm-helper-textarea')).toBeFocused()
+    await expect(page.locator('.xterm-helper-textarea')).not.toBeFocused()
   })
 }

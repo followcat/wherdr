@@ -52,7 +52,7 @@ describe('beta terminal relay', () => {
     r.push({ ...scroll, source: 'touch', epoch: 4, column: 2, row: 3 })
     r.push({ ...scroll, lines: 1, source: 'touch', epoch: 5, column: 9, row: 10 })
     r.frame()
-    expect(r.messages.filter(m => m.type === 'scroll.ack')).toEqual([{ type: 'scroll.ack', epoch: 4, lines: 4 }])
+    expect(r.messages.filter(m => m.type === 'scroll.ack')).toEqual([{ type: 'scroll.ack', epoch: 4, phase: 'drag', lines: 4 }])
     await vi.advanceTimersByTimeAsync(16)
     r.frame()
     expect(r.commands.slice(0, 6)).toEqual(Array.from({ length: 6 }, () => ({ ...scroll, lines: 1, column: 2, row: 3, modifiers: 0 })))
@@ -89,7 +89,7 @@ describe('beta terminal relay', () => {
     r.frame()
     expect(r.commands).toEqual([scroll])
     expect(mocks.pacer).not.toHaveBeenCalled()
-    expect(r.messages.filter(m => m.type === 'scroll.ack')).toEqual([{ type: 'scroll.ack', epoch: 7, lines: 8 }])
+    expect(r.messages.filter(m => m.type === 'scroll.ack')).toEqual([{ type: 'scroll.ack', epoch: 7, phase: 'drag', lines: 8 }])
     r.close()
   })
   it('paces per-tick on TUI panes flagged live by the client', async () => {
@@ -120,18 +120,64 @@ describe('beta terminal relay', () => {
     r.push({ ...scroll, source: 'touch', phase: 'momentum', preview: false, epoch: 9 })
     expect(r.messages.some(m => m.type === 'scroll.ack')).toBe(false)
     r.frame()
-    expect(r.messages.filter(m => m.type === 'scroll.ack')).toEqual([{ type: 'scroll.ack', epoch: 9, lines: 4 }])
+    expect(r.messages.filter(m => m.type === 'scroll.ack')).toEqual([{ type: 'scroll.ack', epoch: 9, phase: 'momentum', lines: 4 }])
     await vi.advanceTimersByTimeAsync(16)
     r.frame()
     r.frame()
     expect(r.messages.filter(m => m.type === 'scroll.ack')).toEqual([
-      { type: 'scroll.ack', epoch: 9, lines: 4 },
-      { type: 'scroll.ack', epoch: 9, lines: 4 },
+      { type: 'scroll.ack', epoch: 9, phase: 'momentum', lines: 4 },
+      { type: 'scroll.ack', epoch: 9, phase: 'momentum', lines: 4 },
     ])
     r.push({ ...scroll, source: 'touch', phase: 'momentum', preview: false, epoch: 9 })
     r.close()
     const count = r.commands.length
     await vi.advanceTimersByTimeAsync(2000)
     expect(r.commands).toHaveLength(count)
+  })
+
+  it('reports per-command stages to a v2 client and dedupes nothing', async () => {
+    const r = await relay()
+    // Without v:2 the connection stays on the legacy contract.
+    r.push({ ...scroll, source: 'touch', epoch: 2 })
+    await vi.advanceTimersByTimeAsync(200)
+    expect(r.messages.some(m => m.type === 'scroll.cmd')).toBe(false)
+    // With v:2 each submitted wheel tick gets submitted + flushed marks.
+    // A frame first: the send window from the earlier push must reopen.
+    r.frame()
+    r.push({ ...scroll, v: 2, id: 41, lines: 2, source: 'touch', epoch: 3 })
+    await vi.advanceTimersByTimeAsync(50)
+    const cmds = r.messages.filter(m => m.type === 'scroll.cmd')
+    const submitted = cmds.filter(c => c.stage === 'submitted')
+    expect(submitted.length).toBeGreaterThanOrEqual(1)
+    expect(submitted.every(c => c.id === 41 && c.epoch === 3 && c.phase === 'drag')).toBe(true)
+    await vi.advanceTimersByTimeAsync(50)
+    expect(r.messages.some(m => m.type === 'scroll.cmd' && m.stage === 'flushed')).toBe(true)
+    r.close()
+  })
+
+  it('a momentum phase-cancel drops the expendable tail but keeps drag work', async () => {
+    const r = await relay()
+    // Momentum ticks with a short TTL queue behind; a phase cancel removes
+    // exactly those without touching the pacer's other accounting.
+    r.push({ ...scroll, v: 2, id: 1, lines: 30, source: 'touch', phase: 'momentum', preview: false, epoch: 5 })
+    await vi.advanceTimersByTimeAsync(16)
+    const before = r.commands.length
+    r.push({ type: 'touch.cancel', phase: 'momentum' })
+    await vi.advanceTimersByTimeAsync(200)
+    r.frame()
+    await vi.advanceTimersByTimeAsync(200)
+    // No further momentum ticks leave the queue after the phase cancel.
+    expect(r.commands.length).toBe(before)
+    r.close()
+  })
+
+  it('a full touch.cancel still clears both phases and the delivery ledger', async () => {
+    const r = await relay()
+    r.push({ ...scroll, v: 2, id: 1, lines: 10, source: 'touch', epoch: 6 })
+    r.push({ type: 'touch.cancel' })
+    await vi.advanceTimersByTimeAsync(200)
+    r.frame()
+    expect(r.messages.some(m => m.type === 'scroll.ack')).toBe(false)
+    r.close()
   })
 })

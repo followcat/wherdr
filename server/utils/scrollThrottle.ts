@@ -14,9 +14,12 @@ export const SCROLL_MS = 75
 const MAX_LINES = 500
 
 export interface ScrollThrottle {
-  push: (direction: 'up' | 'down', lines: number) => void
+  push: (direction: 'up' | 'down', lines: number, tag?: string) => void
   // Drop queued lines without sending (touch interrupted by typing).
   cancel: () => void
+  // Phase cancel: remove only the net contribution made under `tag`
+  // (e.g. 'momentum'), leaving other contributions queued.
+  cancelTagged: (tag: string) => void
   dispose: () => void
 }
 
@@ -32,27 +35,38 @@ export function createScrollThrottle(
   let net = 0 // lines, positive = up
   let last = -Infinity
   let timer: unknown = null
+  const tagged = new Map<string, number>()
   const flush = () => {
     timer = null
     if (!net) return
     send(net > 0 ? 'up' : 'down', Math.min(Math.abs(net), MAX_LINES))
     net = 0
+    tagged.clear()
     last = now()
   }
   const cancel = () => {
     if (timer) clearTimer(timer as never)
     timer = null
     net = 0
+    tagged.clear()
   }
   return {
-    push(direction, lines) {
-      net += direction === 'up' ? lines : -lines
+    push(direction, lines, tag) {
+      const signed = direction === 'up' ? lines : -lines
+      net += signed
+      if (tag !== undefined) tagged.set(tag, (tagged.get(tag) || 0) + signed)
       if (timer) return
       const wait = last + intervalMs - now()
       if (wait <= 0) flush()
       else timer = setTimer(flush, wait)
     },
     cancel,
+    cancelTagged(tag) {
+      const contribution = tagged.get(tag)
+      if (contribution === undefined) return
+      tagged.delete(tag)
+      net -= contribution
+    },
     dispose: cancel,
   }
 }
