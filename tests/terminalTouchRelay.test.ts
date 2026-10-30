@@ -115,11 +115,20 @@ describe('beta terminal relay', () => {
     expect(mocks.pacer).toHaveBeenCalledTimes(2)
     r.close()
   })
-  it('does not acknowledge momentum as finger prediction and stops all timers on close', async () => {
+  it('acknowledges delivered momentum after each frame and stops all timers on close', async () => {
     const r = await relay()
-    r.push({ ...scroll, source: 'touch', preview: false })
-    r.frame()
+    r.push({ ...scroll, source: 'touch', phase: 'momentum', preview: false, epoch: 9 })
     expect(r.messages.some(m => m.type === 'scroll.ack')).toBe(false)
+    r.frame()
+    expect(r.messages.filter(m => m.type === 'scroll.ack')).toEqual([{ type: 'scroll.ack', epoch: 9, lines: 4 }])
+    await vi.advanceTimersByTimeAsync(16)
+    r.frame()
+    r.frame()
+    expect(r.messages.filter(m => m.type === 'scroll.ack')).toEqual([
+      { type: 'scroll.ack', epoch: 9, lines: 4 },
+      { type: 'scroll.ack', epoch: 9, lines: 4 },
+    ])
+    r.push({ ...scroll, source: 'touch', phase: 'momentum', preview: false, epoch: 9 })
     r.close()
     const count = r.commands.length
     await vi.advanceTimersByTimeAsync(2000)
