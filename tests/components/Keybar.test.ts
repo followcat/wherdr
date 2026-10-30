@@ -23,13 +23,13 @@ function makeCtl() {
   }
 }
 const stripLabels = (w: Awaited<ReturnType<typeof mountSuspended>>) =>
-  w.findAll('.vk-strip button').map(b => b.text())
+  w.findAll('.vk-strip button').map(b => b.attributes('aria-label'))
 
 describe('Keybar', () => {
   it('sends named keys from the always-visible strip', async () => {
     const ctl = makeCtl()
     const w = await mountSuspended(Keybar, { props: { ctl: ctl as never, compact: true } })
-    expect(stripLabels(w)).toEqual(['Esc', '⇧', 'Tab', '←', '↑', '↓', '→', '⏎', ''])
+    expect(stripLabels(w)).toEqual(['Esc', 'Shift', 'Tab', '←', '↑', '↓', '→', 'Enter', 'Show or hide function keys'])
     await w.findAll('.vk-strip button')[2]!.trigger('click')
     expect(ctl.sendVirtualKey).toHaveBeenCalledWith('tab')
     await w.findAll('.vk-strip button')[0]!.trigger('click')
@@ -57,14 +57,14 @@ describe('Keybar', () => {
     expect(w.find('.vk-extra-row').exists()).toBe(false)
     await w.get('.vk-more').trigger('click')
     const row = w.findAll('.vk-function-scroll > button')
-    const labels = row.map(b => b.text())
+    const labels = row.map(b => b.attributes('aria-label'))
     expect(labels.slice(0, 2)).toEqual(['Ctrl', 'Alt'])
-    expect(labels.slice(2, 13)).toEqual(['^C', '⇧Tab', '⌫', 'y', 'n', 'PgUp', 'PgDn', 'Home', 'End', 'Del', 'Ins'])
-    expect(labels.slice(13)).toEqual(Array.from({ length: 12 }, (_, i) => `F${i + 1}`))
+    expect(labels.slice(2, 12)).toEqual(['Ctrl + C', '⌫', 'Y', 'N', 'PgUp', 'PgDn', 'Home', 'End', 'Del', 'INSERT'])
+    expect(labels.slice(12)).toEqual(Array.from({ length: 12 }, (_, i) => `F${i + 1}`))
     expect(labels).not.toContain('Tab')
     await row[2]!.trigger('click')
     expect(ctl.sendVirtualKey).toHaveBeenCalledWith('ctrl+c')
-    await row[4]!.trigger('click')
+    await row[3]!.trigger('click')
     expect(ctl.sendVirtualKey).toHaveBeenCalledWith('backspace')
     w.unmount()
   })

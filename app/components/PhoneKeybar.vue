@@ -11,13 +11,14 @@ const extraModifiers: { key: VirtualModifier, label: string }[] = [
   { key: 'ctrl', label: 'Ctrl' }, { key: 'alt', label: 'Alt' },
 ]
 const nav = [
-  { key: 'left', label: '←' }, { key: 'up', label: '↑' }, { key: 'down', label: '↓' },
-  { key: 'right', label: '→' }, { key: 'enter', label: '⏎' },
+  { key: 'left', icon: 'i-lucide-arrow-left' }, { key: 'up', icon: 'i-lucide-arrow-up' },
+  { key: 'down', icon: 'i-lucide-arrow-down' }, { key: 'right', icon: 'i-lucide-arrow-right' },
+  { key: 'enter', icon: 'i-lucide-corner-down-left' },
 ]
 const digits = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0']
-const functionKeys: { key: string, label: string, danger?: boolean }[] = [
-  { key: 'ctrl+c', label: '^C', danger: true }, { key: 'shift+tab', label: '⇧Tab' },
-  { key: 'backspace', label: '⌫' }, { key: 'y', label: 'y' }, { key: 'n', label: 'n' },
+const functionKeys: { key: string, label: string, icon?: string, danger?: boolean }[] = [
+  { key: 'ctrl+c', label: '^C', danger: true },
+  { key: 'backspace', label: '⌫', icon: 'i-lucide-delete' }, { key: 'y', label: 'y' }, { key: 'n', label: 'n' },
   { key: 'pageup', label: 'PgUp' }, { key: 'pagedown', label: 'PgDn' },
   { key: 'home', label: 'Home' }, { key: 'end', label: 'End' },
   { key: 'delete', label: 'Del' }, { key: 'insert', label: 'Ins' },
@@ -50,17 +51,17 @@ function toggleKbd() {
     <div class="vk-strip" role="toolbar" :aria-label="t('Common keys and modifiers')">
       <button type="button" class="vk-escape" aria-label="Esc" @pointerdown.prevent @click="press('esc')">Esc</button>
       <button v-for="m in modifiers" :key="m.key" type="button" class="vk-mod" :class="{ selected: active.includes(m.key) }"
-        :aria-pressed="active.includes(m.key)" :aria-label="t(m.label)" @pointerdown.prevent @click="modifier(m.key)">{{ m.key === 'shift' ? '⇧' : t(m.label) }}</button>
+        :aria-pressed="active.includes(m.key)" :aria-label="t(m.label)" @pointerdown.prevent @click="modifier(m.key)"><UIcon name="i-lucide-arrow-big-up" mode="svg" class="vk-key-icon" aria-hidden="true" /></button>
       <button type="button" class="vk-tab" :aria-label="displayVirtualChord('tab')" @pointerdown.prevent @click="press('tab')">Tab</button>
-      <button v-for="k in nav" :key="k.key" type="button" class="vk-navigation" :aria-label="displayVirtualChord(k.key)" @pointerdown.prevent @click="press(k.key)">{{ k.label }}</button>
-      <button type="button" class="vk-more" :class="{ selected: expanded }" :aria-expanded="expanded" :aria-label="t('Show or hide function keys')" @pointerdown.prevent @click="toggleMore"><UIcon :name="expanded ? 'i-lucide-chevron-down' : 'i-lucide-ellipsis'" /></button>
+      <button v-for="k in nav" :key="k.key" type="button" class="vk-navigation" :aria-label="displayVirtualChord(k.key)" @pointerdown.prevent @click="press(k.key)"><UIcon :name="k.icon" mode="svg" class="vk-key-icon" aria-hidden="true" /></button>
+      <button type="button" class="vk-more" :class="{ selected: expanded }" :aria-expanded="expanded" :aria-label="t('Show or hide function keys')" @pointerdown.prevent @click="toggleMore"><UIcon :name="expanded ? 'i-lucide-chevron-down' : 'i-lucide-ellipsis'" mode="svg" /></button>
     </div>
     <div v-if="expanded" class="vk-extra-row" role="toolbar" :aria-label="t('More function keys')">
-      <button type="button" class="vk-system" :class="{ selected: ctl.kbdOn.value }" :aria-label="t('Show or hide the phone keyboard')" @pointerdown.prevent @click="toggleKbd"><UIcon name="i-lucide-keyboard" /></button>
+      <button type="button" class="vk-system" :class="{ selected: ctl.kbdOn.value }" :aria-label="t('Show or hide the phone keyboard')" @pointerdown.prevent @click="toggleKbd"><UIcon name="i-lucide-keyboard" mode="svg" /></button>
       <div class="vk-function-scroll" :aria-label="t('Swipe for more function keys')">
         <button v-for="m in extraModifiers" :key="m.key" type="button" class="vk-mod" :class="{ selected: active.includes(m.key) }"
           :aria-pressed="active.includes(m.key)" :aria-label="t(m.label)" @pointerdown.prevent @click="modifier(m.key)">{{ t(m.label) }}</button>
-        <button v-for="k in functionKeys" :key="k.key" type="button" :class="{ danger: k.danger }" :aria-label="displayVirtualChord(k.key)" @pointerdown.prevent @click="press(k.key)">{{ k.label }}</button>
+        <button v-for="k in functionKeys" :key="k.key" type="button" :class="{ danger: k.danger }" :aria-label="displayVirtualChord(k.key)" @pointerdown.prevent @click="press(k.key)"><UIcon v-if="k.icon" :name="k.icon" mode="svg" class="vk-key-icon" aria-hidden="true" /><template v-else>{{ k.label }}</template></button>
       </div>
     </div>
   </div>
@@ -77,7 +78,7 @@ function toggleKbd() {
 .vk-digits { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 3px; margin-bottom: 3px; }
 .virtual-keyboard button.danger { color: var(--rose); border-color: color-mix(in srgb, var(--rose) 55%, var(--line-soft)); }
 .vk-strip .vk-escape, .vk-strip .vk-tab { color: var(--text); border-color: var(--line); font-weight: 650; }
-.vk-strip .vk-mod, .vk-strip .vk-navigation { font-size: 19px; }
+.virtual-keyboard .vk-key-icon { width: 19px; height: 19px; flex: none; }
 .vk-announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .vk-extra-row { display: flex; gap: 4px; margin-top: 4px; }
 .vk-extra-row > button { flex: 0 0 40px; }
