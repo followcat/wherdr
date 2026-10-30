@@ -13,7 +13,7 @@ import { isUploadLine, uploadSrc } from '#shared/queuedMatch'
 import { pendingQueue, rememberSent } from '~/utils/pendingQueue'
 import { clampRange, createSelectionSettler, lastLineRect, selectionReplyPos } from '~/utils/selectionReply'
 import { addAnswer, addQuote, answerEnd, answerOf, forgetReply, isQuoted, replyTargets, rowOf, rowRef, rowSettled, tableRank, tableRef, tappedAnswer, toggleOkAll, unansweredCount, withQuestions, type Answer } from '~/utils/questionReply'
-import { createTailLoader, nextTail, restartsTail, tailQuery } from '~/utils/chatTail'
+import { CHAT_READ_MS, createTailLoader, nextTail, restartsTail, tailQuery } from '~/utils/chatTail'
 import { pickTyping, replyId } from '~/utils/typewriter'
 import { newestThought } from '~/utils/reasoningReveal'
 import { restoredScrollTop, saveReadingPosition } from '~/utils/readingPosition'
@@ -249,7 +249,7 @@ async function loadStep(current: () => boolean): Promise<boolean> {
   try {
     const ready = chat.value.tailStart === null ? await chatIntent.take(props.pane) : undefined
     if (stale()) return false
-    const r = ready || await api<ChatResponse>(`/api/chat?${tailQuery(pane, chat.value)}`)
+    const r = ready || await api<ChatResponse>(`/api/chat?${tailQuery(pane, chat.value)}`, undefined, AbortSignal.timeout(CHAT_READ_MS))
     if (stale()) return false
     if (!r.available) {
       const m = onUnavailable(misses.value, Boolean(chat.value.file) && items.value.length > 0)
@@ -316,7 +316,7 @@ async function loadOlder() {
   const file = chat.value.file
   const before = chat.value.olderCursor
   try {
-    const r = await api<ChatResponse>(`/api/chat?pane=${encodeURIComponent(pane)}&before=${before}&since=${encodeURIComponent(chat.value.token)}`)
+    const r = await api<ChatResponse>(`/api/chat?pane=${encodeURIComponent(pane)}&before=${before}&since=${encodeURIComponent(chat.value.token)}`, undefined, AbortSignal.timeout(CHAT_READ_MS))
     if (pane !== props.pane.id || r.file !== file || chat.value.olderCursor !== before) return
     if (r.rewritten) {
       chat.value = fresh()
@@ -351,6 +351,12 @@ onMounted(() => {
 })
 onUnmounted(() => clearInterval(timer))
 watch(pageVisible, (v) => { if (v) loadChat() })
+// Live events socket + a fresh state accepted: the server answers again.
+// Invalidate the loader so a read still in flight (possibly black-holed,
+// holding the one-at-a-time lock) drops its reply, and re-read the tail at
+// once rather than waiting out the poll interval.
+watch(() => eventsOpen.value && herdrState.value.ok && !netDown.value && !offlineView.value,
+  (ok) => { if (ok) { tailLoader.invalidate(); loadChat() } })
 
 // ------------------------------------------------------------ rendu
 // Short tool nouns: written as pairs because "Read" or "Search" mean something else elsewhere.
