@@ -67,10 +67,10 @@ function legacyOnTouchEnd(e: TouchEvent) {
   legacyLastY = null
   legacyLastX = null
   if (!legacyMoved && !lpEntered && t && Math.hypot(t.clientX - legacyStartX, t.clientY - legacyStartY) < 5) {
-    if (!props.ctl.tapLink(t.clientX, t.clientY)) {
-      props.ctl.tapMouse(t.clientX, t.clientY)
-      props.ctl.focus()
-    } else props.ctl.blur()
+    if (!props.ctl.tapLink(t.clientX, t.clientY)) props.ctl.tapMouse(t.clientX, t.clientY)
+    // Same as the smooth path: taps close the keyboard, never reopen it.
+    props.ctl.blur()
+    ;(document.activeElement as HTMLElement | null)?.blur?.()
   }
   // Complete intentional taps here; suppress compatibility mouse events for
   // both taps and drags so they cannot reopen the keyboard afterward.
@@ -265,10 +265,11 @@ function onTouchEnd(e: TouchEvent) {
   // Flush the drag before any momentum tick so both directions retain order.
   if (raf) { cancelAnimationFrame(raf); raf = 0; flush() }
   if (tapped && !stoppingScroll && !lpEntered && t) {
-    if (!props.ctl.tapLink(t.clientX, t.clientY)) {
-      props.ctl.tapMouse(t.clientX, t.clientY)
-      props.ctl.focus()
-    } else props.ctl.blur()
+    if (!props.ctl.tapLink(t.clientX, t.clientY)) props.ctl.tapMouse(t.clientX, t.clientY)
+    // A simple tap never opens the keyboard — scroll-adjacent taps would
+    // keep reopening it. Typing starts from the keybar ⌨ instead.
+    props.ctl.blur()
+    ;(document.activeElement as HTMLElement | null)?.blur?.()
   }
   // The action has already run in this trusted touch event. Do not depend on
   // a compatibility mouse event, which can be absent or arrive twice on iOS.
@@ -454,6 +455,7 @@ onMounted(() => {
 })
 onUnmounted(() => {
   document.removeEventListener('pointerdown', cancelTouch, true)
+  exitCopyMode() // drops the document selectionchange listener and the copied flash timer
   cancelTouch()
   ro?.disconnect()
   clearTimeout(fitTimer)
