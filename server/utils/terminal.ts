@@ -158,23 +158,27 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
   let attached = false
   let mouse = false
   // What the client sends before the control session is started. Callbacks
-  // travel with the queued object so a scroll replayed on attach can still
-  // report its real submission and flush.
-  const early: { obj: unknown, cb?: { onSubmit?: () => void, onFlush?: () => void } }[] = []
+  // and lifecycle metadata travel with the queued object: a scroll replayed
+  // on attach still honors its own deadline and cancel tag.
+  type ScrollTag = { scroll: true, direction: string, epoch: number, dragLines: number, momentumLines: number }
+  const early: { obj: unknown, cb?: { onSubmit?: () => void, onFlush?: () => void }, tag?: ScrollTag, expiresAt?: number }[] = []
 
   // Backpressure-aware writer: a full kernel buffer pauses the tail, it
-  // never resends the chunk that reported `false`.
+  // never resends the chunk that reported `false`. Queued scroll work keeps
+  // its tag and deadline so cancels and TTL reach it until submission.
   let writer: ReturnType<typeof createTerminalWriter> | undefined
-  const toChild = (obj: unknown, cb?: { onSubmit?: () => void, onFlush?: () => void }) => {
+  const toChild = (obj: unknown, cb?: { onSubmit?: () => void, onFlush?: () => void }, tag?: ScrollTag, expiresAt?: number) => {
     if (!child) {
-      if (early.length < 64) early.push({ obj, cb })
+      if (early.length < 64) early.push({ obj, cb, tag, expiresAt })
     } else if (child.stdin.writable) {
       // Scroll commands are superseded by the next gesture — under a stalled
       // pipe they are the only chunks the writer is allowed to shed.
       const expendable = (obj as { type?: string }).type === 'terminal.scroll'
-      writer?.write(JSON.stringify(obj) + '\n', { ...cb, expendable })
+      writer?.write(JSON.stringify(obj) + '\n', { ...cb, expendable, tag, expiresAt })
     }
   }
+  // Every unsent scroll chunk — pacer, throttle and writer queue alike.
+  const cancelQueuedScrolls = () => writer?.cancelWhere(e => (e.tag as ScrollTag | undefined)?.scroll === true)
 
   function start() {
     const c = machine!.spawnHerdr(args)
@@ -216,7 +220,12 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
     })
     // No crash if the CLI closes while we write to it.
     c.stdin.on('error', () => {})
-    for (const { obj, cb } of early.splice(0)) toChild(obj, cb)
+    for (const { obj, cb, tag, expiresAt } of early.splice(0)) {
+      // A scroll that expired while the child was still starting is stale —
+      // replay only work still inside its own deadline.
+      if (expiresAt !== undefined && expiresAt <= Date.now()) continue
+      toChild(obj, cb, tag, expiresAt)
+    }
   }
 
   // Scrolls merged and rate-limited (see scrollThrottle.ts).
@@ -240,18 +249,23 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
   let touchScroll: ReturnType<typeof createTouchScrollPacer<TouchPosition>> | undefined
   // Preserve the legacy wire contract, and allocate no pacer for default clients.
   const scroll = createScrollThrottle((direction, lines) => toChild({ type: 'terminal.scroll', direction, lines }))
-  const pacedTouch = () => touchScroll ||= createTouchScrollPacer<TouchPosition>((direction, lines, position) => {
+  const pacedTouch = () => touchScroll ||= createTouchScrollPacer<TouchPosition>((direction, lines, position, expiresAt) => {
     if (!position) return
     const { epoch, preview, phase, id, ...cell } = position
     const signed = direction === 'up' ? lines : -lines
     // submitted/delivered only when the bytes actually enter the stream —
     // a chunk queued inside the writer under backpressure is not sent yet.
+    // Its tag and deadline ride along so cancels and TTL reach it there too.
     toChild({ type: 'terminal.scroll', direction, lines, ...cell }, {
       onSubmit: () => { delivered(epoch, phase, signed); scrollCmd(epoch, id, phase, 'submitted') },
       // The stream callback carries an error on a failed write — 'flushed'
       // means the kernel took the bytes; anything else is its own fact.
       onFlush: err => scrollCmd(epoch, id, phase, err ? 'writeFailed' : 'flushed'),
-    })
+    }, {
+      scroll: true, direction, epoch,
+      dragLines: phase === 'drag' ? Math.abs(signed) : 0,
+      momentumLines: phase === 'momentum' ? Math.abs(signed) : 0,
+    }, expiresAt)
   })
   // Panes without mouse-report need no per-tick wheel reports: Herdr honors
   // lines:N there, so merge touch drags into one command per repaint instead
@@ -286,11 +300,21 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
     // The throttle's post-flush net is zero: anything left in the log was
     // netting residue or clamped by its line cap — never sendable input.
     mergedContrib.length = 0
+    // The batch keeps a phase ledger in its tag: a phase-cancel may drop a
+    // pure-momentum batch, but never one holding real drag input. Lines
+    // without ledger credit count as drag — conservative against losing
+    // input to a stale tag.
+    const dragLines = attrib.filter(a => a.phase === 'drag').reduce((n, a) => n + Math.abs(a.lines), 0) + rest
+    const momentumLines = attrib.filter(a => a.phase === 'momentum').reduce((n, a) => n + Math.abs(a.lines), 0)
     toChild({ type: 'terminal.scroll', direction, lines }, attrib.length
       ? { onSubmit: () => attrib.forEach(a => delivered(a.epoch, a.phase, a.lines)) }
-      : undefined)
+      : undefined,
+      { scroll: true, direction, epoch: 0, dragLines, momentumLines })
   }, { intervalMs: 30 })
   const cancelMerged = () => { touchMerged.cancel(); mergedContrib.length = 0 }
+  // Full touch cancellation clears every queue stage: pacer ticks, merged
+  // net, contribution ledger, and scroll chunks still waiting in the writer.
+  const cancelTouchWork = () => { touchScroll?.cancel(); cancelMerged(); cancelQueuedScrolls() }
   let scrollbackSeq = 0
 
   // The pane's size is read before the control session resizes it (see paneSizes.ts).
@@ -306,7 +330,7 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
     const state = getState()
     const serverVersion = state.machines?.find(m => m.key === machine!.key)?.version ?? (machine!.key === '' ? state.version : '')
     mouse = version?.code === 0 && hasTerminalMouse(version.stdout.toString('utf8')) && hasTerminalMouse(serverVersion || '')
-    if (ws.isOpen()) ws.send(JSON.stringify({ type: 'web.capabilities', mouse }))
+    if (ws.isOpen()) ws.send(JSON.stringify({ type: 'web.capabilities', mouse, scroll: 2 }))
     start()
   })
 
@@ -321,21 +345,18 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
           if (ws.isOpen()) ws.send(JSON.stringify({ type: 'pong' }))
           break
         case 'terminal.input':
-          touchScroll?.cancel()
-          cancelMerged()
+          cancelTouchWork()
           if (typeof m.text === 'string' && m.text.length <= 65536) toChild({ type: 'terminal.input', text: m.text })
           else if (typeof m.bytes === 'string' && m.bytes.length <= 90000) toChild({ type: 'terminal.input', bytes: m.bytes })
           break
         case 'terminal.mouse': {
-          touchScroll?.cancel()
-          cancelMerged()
+          cancelTouchWork()
           const event = mouse && cleanTerminalMouse(m, size.cols, size.rows)
           if (event) toChild(event)
           break
         }
         case 'terminal.resize': {
-          touchScroll?.cancel()
-          cancelMerged()
+          cancelTouchWork()
           size = { cols: clampInt(m.cols, 10, 400, cols), rows: clampInt(m.rows, 5, 200, rows) }
           if (attached) hold?.resized(size.cols, size.rows)
           toChild({ type: 'terminal.resize', ...size })
@@ -351,6 +372,12 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
               const tui = m.tui === undefined ? mouse : m.tui === true
               const phase = m.phase === 'momentum' || m.preview === false ? 'momentum' : 'drag'
               const epoch = clampInt(m.epoch, 0, Number.MAX_SAFE_INTEGER, 0)
+              // A reversed gesture supersedes opposite-direction work still
+              // waiting in the writer — the pacer already clears its side.
+              writer?.cancelWhere(e => {
+                const t = e.tag as ScrollTag | undefined
+                return t?.scroll === true && t.direction !== m.direction
+              })
               if (tui) {
                 pacedTouch().push(m.direction, clampInt(m.lines, 1, 500, 3), {
                   ...terminalScrollPosition(m, size.cols, size.rows),
@@ -363,7 +390,7 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
                 touchMerged.push(m.direction, clampInt(m.lines, 1, 500, 3), phase)
               }
             }
-            else { touchScroll?.cancel(); cancelMerged(); scroll.push(m.direction, clampInt(m.lines, 1, 500, 3)) }
+            else { cancelTouchWork(); scroll.push(m.direction, clampInt(m.lines, 1, 500, 3)) }
           }
           break
         case 'touch.cancel':
@@ -373,11 +400,16 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
             touchScroll?.cancelWhere(position => position?.phase === 'momentum')
             touchMerged.cancelTagged('momentum')
             for (let i = mergedContrib.length - 1; i >= 0; i--) if (mergedContrib[i]!.phase === 'momentum') mergedContrib.splice(i, 1)
+            // Pure-momentum chunks in the writer die too; a merged batch
+            // holding any drag input survives — that input is real.
+            writer?.cancelWhere(e => {
+              const t = e.tag as ScrollTag | undefined
+              return t?.scroll === true && t.momentumLines > 0 && t.dragLines === 0
+            })
             break
           }
+          cancelTouchWork()
           if (m.disabled === true) { touchScroll?.dispose(); touchScroll = undefined }
-          else touchScroll?.cancel()
-          cancelMerged()
           scrollDelivered.clear()
           break
         // The client renders scrollback locally in a native scroller, so the
@@ -393,8 +425,7 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
           break
         }
         case 'keys': // logical keys encoded by Herdr according to the terminal mode
-          touchScroll?.cancel()
-          cancelMerged()
+          cancelTouchWork()
           if (Array.isArray(m.keys) && m.keys.length <= 32 && m.keys.every((k: unknown) => typeof k === 'string' && k.length <= 24)) {
             herdr('pane.send_input', { pane_id: pane, keys: m.keys }).catch(e =>
               ws.isOpen() && ws.send(JSON.stringify({ type: 'web.error', code: e.code, message: e.message })))
@@ -404,8 +435,7 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
         // turns an image path into an image (typed through wherdr's xterm, which
         // never learns the program's bracketed paste mode, it stays text).
         case 'paste':
-          touchScroll?.cancel()
-          cancelMerged()
+          cancelTouchWork()
           if (typeof m.text === 'string' && m.text && m.text.length <= 65536) {
             herdr('pane.send_input', { pane_id: pane, text: m.text }).catch(e =>
               ws.isOpen() && ws.send(JSON.stringify({ type: 'web.error', code: e.code, message: e.message })))
@@ -413,7 +443,7 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
           break
         case 'visibility':
           sess.visible = Boolean(m.visible)
-          if (!sess.visible) { touchScroll?.cancel(); cancelMerged() }
+          if (!sess.visible) cancelTouchWork()
           break
       }
     },
