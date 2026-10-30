@@ -9,7 +9,7 @@ async function openTerminal(page: Page) {
   })
   await page.addInitScript(() => localStorage.setItem('terminalRenderer', 'html'))
   await page.goto(`/#/a/${OMP_CHAT_PANE}`)
-  await expect(page.locator('#agent .agent-title')).not.toHaveText('—')
+  await expect(page.locator('#agent .agent-title, #agent .phone-identity-title')).not.toHaveText('—')
   const tabs = page.locator('.view-tabs')
   if (await tabs.count()) await tabs.getByRole('tab', { name: 'Terminal', exact: true }).click()
   else await page.getByRole('button', { name: 'Terminal', exact: true }).click()

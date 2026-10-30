@@ -1,5 +1,5 @@
 import { expect, test } from './test'
-import { OMP_CHAT_PANE } from './scenario.mjs'
+import { OMP_CHAT_PANE, SPLIT_CHAT_PANE, SPLIT_SHELL_PANE } from './scenario.mjs'
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('terminalRenderer', 'html'))
@@ -58,32 +58,81 @@ test('phone keys default closed, preserve mobile keys, and work in conversation 
   await expect(strip.getByRole('button', { name: 'Shift', exact: true })).toHaveAttribute('aria-pressed', 'false')
 })
 
-test('long phone headers fit on one row at 320, 390 and 430 px', { tag: '@webkit-phone' }, async ({ page }, info) => {
+test('phone identity preserves agent and touch targets at 320, 360 and 412 px, including large text', { tag: '@webkit-phone' }, async ({ page }, info) => {
   test.skip(!info.project.name.endsWith('phone'), 'Phone-only chrome')
   const state = await (await page.request.get('/api/state')).json()
   const pane = state.panes.find((p: { id: string }) => p.id === OMP_CHAT_PANE)
-  state.workspaces.find((w: { id: string }) => w.id === pane.workspace).label = 'A very long project and workspace name for the compact header'
+  state.workspaces.find((w: { id: string }) => w.id === pane.workspace).label = 'phone'
+  state.tabs.find((tab: { id: string }) => tab.id === pane.tab).label = 'phone-scrolling-多个智能体的长标题'
+  pane.label = null
+  pane.agent = 'devin'
   pane.status = 'blocked'
-  await page.routeWebSocket('**/ws/events', ws => ws.send(JSON.stringify(state)))
+  let update = () => {}
+  await page.routeWebSocket('**/ws/events', ws => { update = () => ws.send(JSON.stringify(state)); update() })
   await page.reload()
-  for (const width of [320, 390, 430]) {
+  const identity = page.locator('.phone-identity')
+  await expect(identity.locator('.phone-identity-kind')).toHaveText('Devin')
+  await expect(identity.locator('.phone-identity-title')).toHaveText('phone-scrolling-多个智能体的长标题')
+  for (const width of [320, 360, 412]) {
     await page.setViewportSize({ width, height: 844 })
+    for (const scale of [1, 1.3]) {
+    await page.evaluate(scale => { document.documentElement.style.fontSize = `${16 * scale}px` }, scale)
     const boxes = await page.locator('#agent .agent-top').evaluate(el => {
-      const selectors = ['.back', '.space-tab-picker', '.agent-head', '.agent-actions']
-      return { width: document.documentElement.clientWidth, boxes: selectors.map(s => {
+      const selectors = ['.back', '.phone-identity', '.mode-btn', '.agent-actions > button:last-child']
+      const kind = el.querySelector('.phone-identity-kind')!
+      return { width: document.documentElement.clientWidth, kindFits: kind.scrollWidth <= kind.clientWidth, boxes: selectors.map(s => {
         const r = el.querySelector(s)!.getBoundingClientRect()
-        return { x: r.x, y: r.y, right: r.right, bottom: r.bottom }
+        return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height }
       }) }
     })
     expect(Math.max(...boxes.boxes.map(b => b.y))).toBeLessThan(Math.min(...boxes.boxes.map(b => b.bottom)))
-    for (const box of boxes.boxes) { expect(box.x).toBeGreaterThanOrEqual(0); expect(box.right).toBeLessThanOrEqual(boxes.width) }
-    const title = page.locator('#agent .agent-title')
-    await expect(title).toHaveCSS('text-overflow', 'ellipsis')
+    expect(boxes.kindFits).toBe(true)
+    for (const [i, box] of boxes.boxes.entries()) {
+      expect(box.x).toBeGreaterThanOrEqual(0); expect(box.right).toBeLessThanOrEqual(boxes.width)
+      expect(box.height).toBeGreaterThanOrEqual(44)
+      if (i !== 1) expect(box.width).toBeGreaterThanOrEqual(44)
+      if (i) expect(box.x).toBeGreaterThanOrEqual(boxes.boxes[i - 1]!.right)
+    }
+    await expect(identity.locator('.phone-identity-title')).toHaveCSS('text-overflow', 'ellipsis')
     await expect(page.locator('#agent > .space-tabs')).toHaveCount(0)
+    }
   }
-  await page.getByRole('button', { name: /^Tabs:/ }).click()
+  const before = await identity.locator('.phone-identity-title').boundingBox()
+  pane.status = 'working'; update()
+  await expect(identity).toHaveAccessibleName(/Working/)
+  expect(await identity.locator('.phone-identity-title').boundingBox()).toEqual(before)
+  // A sibling tab changes neither the selected identity nor its routing.
+  const original = state.tabs.find((tab: { id: string }) => tab.id === pane.tab)
+  state.tabs.push({ ...original, id: 'w3:t2', label: 'phone-review', number: 2, layout: null })
+  state.panes.push({ ...pane, id: 'w3:p2', tab: 'w3:t2', label: 'Review Login' })
+  update()
+  await expect(identity.locator('.phone-identity-title')).toHaveText('phone-scrolling-多个智能体的长标题')
+  await identity.click()
+  const details = page.locator('.phone-identity-details')
+  await expect(details).toContainText('phone-scrolling-多个智能体的长标题')
+  await expect(details).toContainText('Devin')
+  await expect(details.getByRole('button', { name: /^phone-review/ })).toBeVisible()
   await expect(page.getByText('Rename tab', { exact: true })).toBeVisible()
   await expect(page.getByText('New tab', { exact: true })).toBeVisible()
+  await details.getByRole('button', { name: /^phone-review/ }).click()
+  await expect(page).toHaveURL(/w3:p2$/)
+  await expect(identity.locator('.phone-identity-title')).toHaveText('Review Login')
+})
+
+test('phone identity opens panes before tabs and switches in reading order without opening the keyboard', { tag: '@webkit-phone' }, async ({ page }, info) => {
+  test.skip(!info.project.name.endsWith('phone'), 'Phone-only chrome')
+  await page.goto(`/#/a/${SPLIT_CHAT_PANE}`)
+  const identity = page.locator('.phone-identity')
+  await expect(identity.locator('.phone-identity-position')).toHaveText('1/2')
+  await identity.click()
+  const details = page.locator('.phone-identity-details')
+  await expect(details.getByText('Panes in this tab', { exact: true })).toBeVisible()
+  await expect(details.getByRole('button', { name: 'Tab overview', exact: true })).toBeVisible()
+  await details.getByRole('button').filter({ hasText: '2/2' }).click()
+  await expect(page).toHaveURL(new RegExp(`${SPLIT_SHELL_PANE}$`))
+  await expect(identity.locator('.phone-identity-position')).toHaveText('2/2')
+  await expect(identity.locator('.phone-identity-kind')).toHaveText('Shell')
+  expect(await page.locator('textarea:focus,input:focus').count()).toBe(0)
 })
 
 test('desktop retains its header tabs and terminal key bar', { tag: ['@chromium-desktop', '@webkit-desktop'] }, async ({ page }, info) => {
