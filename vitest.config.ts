@@ -21,6 +21,9 @@ export default defineConfig({
           name: 'unit',
           include: ['tests/*.test.ts'],
           environment: 'node',
+          // Some tests spawn real subprocesses (plugin installs, socket
+          // responders); under a full parallel run 5s is not enough.
+          testTimeout: 30000,
         },
       },
       await defineVitestProject({
