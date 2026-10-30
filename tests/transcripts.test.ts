@@ -1,6 +1,6 @@
 // Transcripts: Claude (real lines from a test session + a few synthetic
 // lines) and Codex (reduced test rollout + synthetic tool calls).
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -377,6 +377,58 @@ describe('Codex with a shared daemon (session hook reported to the wrong pane)',
     roll('rnew', born.c + 600000)
     t.forget(a.id)
     expect((await t.locate({ ...a, agentSession: 'rnew' }))?.session).toBe('rnew')
+  })
+})
+
+describe('Codex resumed conversations without a session hook', () => {
+  const oldId = '01a15c41-b7d5-74d3-97e2-dff010dfdda8'
+  const newId = '01a18706-8e7e-7063-8a6d-0ca13e80f862'
+  function setup(args = ['codex', 'resume', oldId]) {
+    const home = mkdtempSync(path.join(tmpdir(), 'hw-codex-resume-'))
+    const now = Date.now()
+    const write = (id: string, ts: number, mtime: number, text: string) => {
+      const date = new Date(ts)
+      const dir = path.join(home, '.codex/sessions', String(date.getFullYear()), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0'))
+      mkdirSync(dir, { recursive: true })
+      const file = path.join(dir, `rollout-test-${id}.jsonl`)
+      writeFileSync(file, [
+        { type: 'session_meta', payload: { id, cwd: '/repo', timestamp: date.toISOString(), thread_source: 'user' } },
+        { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } },
+      ].map(v => JSON.stringify(v)).join('\n') + '\n')
+      utimesSync(file, new Date(mtime), new Date(mtime))
+      return file
+    }
+    const old = write(oldId, now - 9 * 86400000, now - 1000, 'Existing conversation is still here.')
+    const pane = { id: 'w1:p1', agent: 'codex', cwd: '/repo', agentSession: null, bornAt: now - 120000 }
+    const herdr = async () => ({ process_info: { foreground_processes: [{ name: 'codex', argv: args }] } })
+    const t = createTranscripts({ home, herdr })
+    return { t, pane, old, write, now }
+  }
+
+  it('reads the explicit resumed transcript even when it predates the pane and recent directories', async () => {
+    const { t, pane, old } = setup()
+    expect(await t.locate(pane)).toEqual({ file: old, session: oldId })
+    const response = await t.chat(pane, {})
+    expect(response.available).toBe(true)
+    expect(response.items?.map(i => i.text)).toEqual(['Existing conversation is still here.'])
+  })
+
+  it('keeps the recent conversation claimed by another pane separate', async () => {
+    const { t, pane, old, write, now } = setup()
+    write(newId, now - 60000, now, 'Another pane.')
+    t.observe([pane, { ...pane, id: 'w1:p2', bornAt: now - 60000 }])
+    expect(await t.locate(pane)).toEqual({ file: old, session: oldId })
+  })
+
+  it('can follow /new instead of permanently pinning the resumed launch session', async () => {
+    const { t, pane, write, now } = setup()
+    const file = write(newId, now - 5000, now, 'A new conversation.')
+    expect(await t.locate(pane)).toEqual({ file, session: newId, guessed: true })
+  })
+
+  it('does not treat the prompt after --last as an explicit session id', async () => {
+    const { t, pane } = setup(['codex', 'resume', '--last', oldId])
+    expect(await t.locate(pane)).toBeNull()
   })
 })
 
