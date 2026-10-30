@@ -12,28 +12,68 @@
 
 ### Existing failures / contradictions at baseline
 
-- `tests/e2e/terminal-touch-beta.spec.ts` asserts tap→focus in three places
-  (lines ~115, ~187, ~283): contradicts the mobile contract "a simple tap never
-  opens the keyboard" (component tests assert `blur`). F07 — aligned in T01.
-- Unit/component baseline green: `terminalTouch` 21, `terminalTouchRelay` 13,
-  `terminalScrollPosition` (mixed file), `stateReady`, `TerminalTouchBeta`,
-  `SocketWake`, `touchTap` — 70 passed, 0 failed.
+- `tests/e2e/terminal-touch-beta.spec.ts` asserted tap→focus in three places:
+  contradicted the mobile contract "a simple tap never opens the keyboard".
+  Aligned in T01.
+- Unit/component baseline green: 70 passed, 0 failed.
 
-### Momentum integrator baseline (tests/bench/momentum.mjs, n=30 each)
+## Commits
 
-| Rate | Momentum distance |
+| SHA | Scope |
 |---|---|
-| 60 Hz | 555.7 px |
-| 90 Hz | 561.1 px |
-| 120 Hz | 563.7 px |
+| `c2b4da1` | T00 baseline docs, fault knobs, momentum bench |
+| `7a9c1dc` | T01 gesture contracts: dragStart cancels long-press; tap never focuses |
+| `839df12` | codex fix: boundary frame flag, FIFO consume ordering, lpTimer type |
+| `19eb855` | T02 v2 ledger: scroll.cmd stages, phase cancel, per-phase acks |
+| `090e5f0` | T03 backpressure-aware stdin writer |
+| `2f5402e` | T04 analytic momentum integral |
+| `1aff59e` | T04 rowHeight cached per geometry version |
+| `dd4d05b` | T05 frameStats (frames/bytes/parseMs, non-reactive) |
+| `980abdc` | T06 honest copy failure reporting |
+| `db380e1` | T07 consumeDelayMs / noFrameAtBoundary e2e coverage |
+| `78e0d20` | codex fix: honest ledger under backpressure, bounded writer, contrib netting |
 
-Euler stepping undercounts at lower refresh rates (~1.4% spread). T04 replaces
-it with analytic integration; the acceptance gate is ≤1 final quantized unit
-(≤1% continuous) across rates.
+## Results
 
-### Fault fixture (fake Herdr)
+- Unit/relay: `terminalTouch` 22, `terminalTouchRelay` 14, `scrollPhaseCancel` 5,
+  `terminalWriter` 4, `touchTap` 7 — all green after every change.
+- E2E `terminal-touch-beta` on chromium-phone: **21/21** (includes the new
+  copy-mode gap, native-tap, delayed-consume and boundary-frame cases).
+- `vue-tsc --noEmit` clean; `npm run build` clean.
 
-`e2e.touch_scroll` gained the §10.3 knobs used by later tasks:
-`consumeDelayMs`, `wheelRowsPerTick`, `noFrameAtBoundary`, plus `applied`/
-`pending`/`frame` in the response so specs can separate submission from
-consumption. With `consumeDelayMs=0` behavior is unchanged.
+## Momentum integrator A/B (tests/bench/momentum.mjs, n=30 each)
+
+| Rate | Before (Euler) | After (analytic) |
+|---|---|---|
+| 60 Hz | 555.7 px | 575.4 px |
+| 90 Hz | 561.1 px | 574.2 px |
+| 120 Hz | 563.7 px | 573.6 px |
+| spread | 8.0 px (1.4%) | 1.8 px (0.31%) |
+
+Gate was ≤1% continuous: met. No parameter change — τ still 240ms.
+
+## Codex review
+
+Two rounds ran per the task contract:
+
+1. After `7a9c1dc`: 3 findings (typecheck regression `lpTimer = null`,
+   partial boundary movement flagged as no-frame, delayed events could
+   overtake the pending head). All fixed in `839df12`.
+2. After `090e5f0`: 2×P1 + 5×P2 + 1×P3 — out-of-scope `toChild` in
+   `resizePane`, unbounded writer queue, `submitted`/`delivered` advanced
+   before the real stream write, FIFO attribution broken on direction
+   reversal and on non-scroll cancels, early queue dropped callbacks,
+   release stranded behind a backpressured tail, drain-listener leak,
+   reentrant `cancelWhere`. All fixed in `78e0d20`.
+
+## NOT RUN / limitations
+
+- **webkit-phone, iOS Safari, Android real devices**: not executed. The tap/
+  focus contract was verified only under Chromium's synthetic + CDP touch.
+- Frame-silence simulation is partial: the fake CLI repaints on a 150 ms
+  ticker regardless, so "frames arriving but nothing applied" is modeled
+  only through `consumeDelayMs`/`noFrameAtBoundary`, not a dead stream.
+- `scroll.ack` phase attribution on the merged path follows FIFO netting —
+  exact for typical bursts, approximate across interleaved reversals.
+- Performance deltas other than the integrator spread were not A/B'd
+  against a real device; `frameStats` exists for that follow-up.
