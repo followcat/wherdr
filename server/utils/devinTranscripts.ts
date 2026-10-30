@@ -146,6 +146,9 @@ export function createDevinTranscripts({ home, exec, cacheMs = 1500 }: { home: s
     const known = pending.get(key)
     if (known) return known
     const work = (async () => {
+      // Sampled before the read: a write landing mid-query mismatches the
+      // entry instead of caching a stale snapshot under a fresh signature.
+      const sig = exec ? '' : dbSignature()
       const maxBytes = op === 'image' ? 84 * 1024 * 1024 : 24 * 1024 * 1024
       let body: Buffer
       if (exec) {
@@ -159,8 +162,12 @@ export function createDevinTranscripts({ home, exec, cacheMs = 1500 }: { home: s
       } else body = await localQuery(home, request, maxBytes)
       const snapshot = JSON.parse(body.toString('utf8')) as Snapshot
       // Errors are never cached: a transient SSH/runtime failure retries fast.
-      cached.set(key, { at: Date.now(), sig: exec ? '' : dbSignature(), snapshot })
-      if (cached.size > 64) cached.delete(cached.keys().next().value!)
+      // Image payloads (up to 84 MiB) stay out — the 64-entry cap counts
+      // requests, not bytes.
+      if (op !== 'image') {
+        cached.set(key, { at: Date.now(), sig, snapshot })
+        if (cached.size > 64) cached.delete(cached.keys().next().value!)
+      }
       return snapshot
     })()
     pending.set(key, work)
