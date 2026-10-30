@@ -215,15 +215,17 @@ describe('terminal beta switch', () => {
     await r.send('touchend', 160, 0)
     await r.w.get('#touch').trigger('mousedown')
     expect(r.ctl.tapMouse).toHaveBeenCalledOnce()
-    expect(r.ctl.focus).toHaveBeenCalledOnce()
+    expect(r.ctl.focus).not.toHaveBeenCalled()
+    expect(r.ctl.blur).toHaveBeenCalled()
   })
-  it.each([false, true])('allows a normal tap to focus the terminal with beta=%s', async enabled => {
+  it.each([false, true])('sends a normal tap to the agent without opening the keyboard with beta=%s', async enabled => {
     const r = await mounted(enabled)
     await r.send('touchstart', 100)
     await r.send('touchend', 100, 0)
     await r.w.get('#touch').trigger('mousedown')
     expect(r.ctl.tapMouse).toHaveBeenCalledOnce()
-    expect(r.ctl.focus).toHaveBeenCalledOnce()
+    expect(r.ctl.focus).not.toHaveBeenCalled()
+    expect(r.ctl.blur).toHaveBeenCalled()
   })
   it('keeps sub-threshold row motion without moving the screenshot', async () => {
     const r = await mounted(true)
