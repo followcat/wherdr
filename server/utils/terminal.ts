@@ -22,6 +22,7 @@ import { splitId } from '../../shared/ids'
 import { createScrollThrottle } from './scrollThrottle'
 import { terminalScrollPosition } from './scrollPosition'
 import { createTouchScrollPacer } from './touchScrollPacer'
+import { createTerminalWriter } from './terminalWriter'
 import { fmt } from '../../shared/message'
 
 export const clampInt = (v: unknown, lo: number, hi: number, dflt: number) => {
@@ -159,17 +160,21 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
   // What the client sends before the control session is started.
   const early: unknown[] = []
 
+  // Backpressure-aware writer: a full kernel buffer pauses the tail, it
+  // never resends the chunk that reported `false`.
+  let writer: ReturnType<typeof createTerminalWriter> | undefined
   const toChild = (obj: unknown, onFlushed?: () => void) => {
     if (!child) {
       if (early.length < 64) early.push(obj)
     } else if (child.stdin.writable) {
-      child.stdin.write(JSON.stringify(obj) + '\n', onFlushed)
+      writer?.write(JSON.stringify(obj) + '\n', onFlushed)
     }
   }
 
   function start() {
     const c = machine!.spawnHerdr(args)
     child = c
+    writer = createTerminalWriter(c.stdin)
     log(`term ${pane} opened ${cols}x${rows}${args.includes('--takeover') ? ' (takeover)' : ''}${machine!.local ? '' : ` on ${machine!.label}`}`)
 
     readline.createInterface({ input: c.stdout }).on('line', (line) => {
@@ -197,6 +202,7 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
       ws.close(4500, 'herdr error')
     })
     c.on('exit', (code) => {
+      writer?.dispose()
       scroll.dispose()
       touchScroll?.dispose()
       touchMerged.dispose()
@@ -420,7 +426,7 @@ export function resizePane(pane: string, cols: number, rows: number): Promise<bo
     if (done) return
     done = true
     clearTimeout(timer)
-    if (child.stdin.writable) child.stdin.write(JSON.stringify({ type: 'terminal.release' }) + '\n')
+    toChild({ type: 'terminal.release' })
     child.stdin.end()
     setTimeout(() => {
       if (child.exitCode === null) child.kill('SIGTERM')
