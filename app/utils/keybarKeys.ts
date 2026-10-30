@@ -20,4 +20,3 @@ export function virtualNavigationBytes(chord: string): string | null {
   if (modifier === 1) return `\x1b[${code}`
   return code.endsWith('~') ? `\x1b[${code.slice(0, -1)};${modifier}~` : `\x1b[1;${modifier}${code}`
 }
-
