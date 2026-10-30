@@ -56,3 +56,8 @@
   pane has the key bar; with the keyboard open the tab fits the visible area above it.
 - **Hardware keyboard**: Enter sends (Shift+Enter adds a line) once a key only a hardware
   keyboard sends (arrows, Esc, a ⌘ chord) has been typed.
+
+The terminal key bar also has **Ctrl**, **Alt** and **Shift** toggles. Select one or
+several, then tap a key or type one ASCII character on the phone keyboard. The
+modifiers reset after that key; tapping a selected modifier cancels it. Pasting
+or entering composed text clears the selection and keeps the text unchanged.
