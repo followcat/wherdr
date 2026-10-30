@@ -453,9 +453,10 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     const screen = term?.element?.querySelector('.xterm-screen') as HTMLElement | null
     const rect = screen?.getBoundingClientRect()
     const position = rect && term && x !== undefined && y !== undefined ? terminalCell(x, y, rect, term.cols, term.rows) : null
-    // The app's real mouse-report state, as this xterm decoded it — it can lag
-    // behind Herdr's capability flag by a frame, so the server prefers it.
-    const tui = term ? term.modes.mouseTrackingMode !== 'none' : undefined
+    // Assert mouse reporting only when this xterm actually decoded it: a
+    // replayed frame can lack the mode switch, so never claim `false` — the
+    // server's own capability state is the better fallback.
+    const tui = term && term.modes.mouseTrackingMode !== 'none' ? true : undefined
     return sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), ...position, modifiers, source: 'touch', tui, epoch: touchEpoch, preview, phase: preview ? 'drag' : 'momentum' })
   }
   function cancelTouchScroll() {
