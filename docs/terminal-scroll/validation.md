@@ -78,6 +78,18 @@ Two rounds ran per the task contract:
    cleared at flush (post-flush net is zero), `frame_sent` report-back in
    the fixture, atomic pending+offset read. E2E re-run: 21/21 green;
    unit suites 26/26 (writer incl. eviction cases).
+4. Upstream-readiness review (external, `wherdr-prs/scroll-v2-review/`):
+   four real-PassThrough probes reproduced three gaps — cancels and TTL
+   could not revoke scroll chunks already queued in the writer; a full
+   queue silently deleted protected input; phased cancels were sent
+   without capability negotiation (an older server full-cancels and
+   wipes drag work). Fixed in `5fabf73`: queued chunks carry tag+deadline
+   (`cancelWhere`, expiry on pump and on early replay), protected input
+   is never dropped (a pipe stalled past `maxProtected` dies loudly),
+   `web.capabilities` advertises `scroll:2`, unproven peers get no
+   phase-cancel, and a phase cancel no longer bumps the gesture epoch.
+   New `tests/scrollWriterCancel.test.ts` pins all of it: relay+writer
+   suites 35/35, chromium-phone e2e 21/21.
 
 ## NOT RUN / limitations
 

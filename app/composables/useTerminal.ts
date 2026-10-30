@@ -55,6 +55,11 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   let scrollSeq = 0
   const scrollLedger = ref({ submitted: 0, flushed: 0 })
   let scrollCmdSeen = new Set<string>()
+  // Whether the peer honors phased cancels. Never assumed: a server that
+  // has not proven v2 treats touch.cancel{phase} as a FULL cancel and would
+  // wipe drag work. Evidence: the advertised capability, or any v2-stage
+  // message actually received.
+  let peerScrollV2 = false
   const bumpEpoch = () => {
     touchEpoch++
     scrollLedger.value = { submitted: 0, flushed: 0 }
@@ -370,6 +375,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       if (m.type === 'web.capabilities') {
         mouseSupported = m.mouse === true
         mouseMode.value = mouseSupported
+        if (m.scroll >= 2) peerScrollV2 = true
       } else if (m.type === 'terminal.frame') {
         if (!gotFrame) {
           gotFrame = true
@@ -397,6 +403,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
           frameStats.lastAt = performance.now()
         })
       } else if (m.type === 'scroll.ack') {
+        if (m.phase !== undefined) peerScrollV2 = true
         if (smoothTouchScrolling.value && m.epoch === touchEpoch && Number.isFinite(m.lines) && term) {
           // Queue behind the covering frame, including when write's callback
           // ran before the separate ack packet arrived.
@@ -407,7 +414,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
         }
       } else if (m.type === 'scroll.cmd') {
         // Per-command delivery stage (v2). Deduped by id+stage; a repeated or
-        // late packet must not double-count.
+        // late packet must not double-count. Receiving one at all proves the
+        // peer speaks v2.
+        peerScrollV2 = true
         if (smoothTouchScrolling.value && m.epoch === touchEpoch && Number.isFinite(m.id)) {
           const key = `${m.id}:${m.stage}`
           if (!scrollCmdSeen.has(key)) {
@@ -523,10 +532,18 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     return sendTerm({ type: 'terminal.scroll', v: 2, id: ++scrollSeq, direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), ...position, modifiers, source: 'touch', tui, epoch: touchEpoch, preview, phase })
   }
   // A phase ('momentum') drops only that phase server-side; an omitted phase
-  // cancels everything queued for the touch source.
+  // cancels everything queued for the touch source. A phase cancel keeps the
+  // epoch — drag work keeps its ledger; a peer without proven v2 gets no
+  // command at all (its handler would full-cancel, and momentum tails are
+  // already bounded by their own TTL).
   function cancelTouchScroll(phase?: 'momentum') {
+    if (!smoothTouchScrolling.value) return
+    if (phase) {
+      if (peerScrollV2) sendTerm({ type: 'touch.cancel', phase })
+      return
+    }
     bumpEpoch()
-    if (smoothTouchScrolling.value) sendTerm({ type: 'touch.cancel', ...(phase ? { phase } : {}) })
+    sendTerm({ type: 'touch.cancel' })
   }
   const stopSmoothWatch = watch(smoothTouchScrolling, (_, wasEnabled) => {
     bumpEpoch()

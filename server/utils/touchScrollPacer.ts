@@ -1,7 +1,7 @@
 // Herdr 0.9.5 ignores `lines` in mouse-report mode: one command is one
 // wheel tick. Preserve every requested tick instead of merging a fast drag
 // into a single command. Small batches avoid a long queue in the agent's TTY.
-export function createTouchScrollPacer<T = undefined>(send: (direction: 'up' | 'down', lines: number, metadata?: T) => void) {
+export function createTouchScrollPacer<T = undefined>(send: (direction: 'up' | 'down', lines: number, metadata: T | undefined, expiresAt: number) => void) {
   let queue: { value: T | undefined, expiresAt: number }[] = []
   let direction: 'up' | 'down' = 'up'
   let inFlight = 0, last = -Infinity
@@ -38,7 +38,9 @@ export function createTouchScrollPacer<T = undefined>(send: (direction: 'up' | '
       if (!item) break
       inFlight++
       credit -= 1
-      send(direction, 1, item.value)
+      // The item's own deadline travels with the send: downstream queues
+      // must honor the same TTL rather than deliver stale ticks late.
+      send(direction, 1, item.value, item.expiresAt)
     }
     schedule()
   }

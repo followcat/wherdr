@@ -83,14 +83,54 @@ describe('terminal writer', () => {
     s.on('data', c => received.push(c.toString()))
     await vi.waitFor(() => { expect(received.join('')).toBe('aaaaaaaa\nkey-a\nkey-b\n') })
   })
-  it('a queue of only protected input still bounds: oldest is dropped', async () => {
+  it('protected input is never silently dropped, however full the queue', async () => {
     const s = pipe()
     const received: string[] = []
     const w = createTerminalWriter(s, { maxPending: 1 })
     w.write('aaaaaaaa\n')
     w.write('one\n')
     w.write('two\n')
+    w.write('three\n')
     s.on('data', c => received.push(c.toString()))
-    await vi.waitFor(() => { expect(received.join('')).toBe('aaaaaaaa\ntwo\n') })
+    await vi.waitFor(() => { expect(received.join('')).toBe('aaaaaaaa\none\ntwo\nthree\n') })
+  })
+  it('a pipe stalled past maxProtected fails loudly instead of eating input', async () => {
+    const s = pipe()
+    const received: string[] = []
+    const w = createTerminalWriter(s, { maxPending: 1, maxProtected: 3 })
+    w.write('aaaaaaaa\n')
+    w.write('one\n')
+    w.write('two\n')
+    w.write('three\n')
+    w.write('four\n') // queue depth 4 > maxProtected 3: dead pipe declared
+    s.on('data', c => received.push(c.toString()))
+    await vi.waitFor(() => { expect(s.destroyed).toBe(true) })
+    // The failure is loud — the session dies with its buffer — rather than
+    // silently swallowing keystrokes while pretending the pipe lives.
+    w.write('after-death\n')
+    expect(w.pendingCount()).toBe(0)
+  })
+  it('cancelWhere revokes only matching never-submitted chunks', async () => {
+    const s = pipe()
+    const received: string[] = []
+    const w = createTerminalWriter(s)
+    w.write('aaaaaaaa\n')
+    w.write('scroll-up\n', { expendable: true, tag: { scroll: true, direction: 'up' } })
+    w.write('key\n')
+    w.write('scroll-down\n', { expendable: true, tag: { scroll: true, direction: 'down' } })
+    w.cancelWhere(e => (e.tag as { direction?: string })?.direction === 'up')
+    s.on('data', c => received.push(c.toString()))
+    await vi.waitFor(() => { expect(received.join('')).toBe('aaaaaaaa\nkey\nscroll-down\n') })
+  })
+  it('an expired chunk is never written, queued or direct', async () => {
+    const s = pipe()
+    const received: string[] = []
+    const w = createTerminalWriter(s)
+    w.write('stale\n', { expiresAt: Date.now() - 1 })
+    w.write('aaaaaaaa\n')
+    w.write('expired\n', { expiresAt: Date.now() - 1 })
+    w.write('fresh\n', { expiresAt: Date.now() + 60000 })
+    s.on('data', c => received.push(c.toString()))
+    await vi.waitFor(() => { expect(received.join('')).toBe('aaaaaaaa\nfresh\n') })
   })
 })
