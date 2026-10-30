@@ -29,13 +29,15 @@ export function createTouchScrollPacer<T = undefined>(send: (direction: 'up' | '
       return
     }
     const count = Math.min(queue.length, Math.floor(credit), 4, 8 - inFlight)
-    credit -= count
     last = now
-    inFlight += count
     for (let i = 0; i < count; i++) {
-      // send() may synchronously cancel queued items — guard the shift.
+      // send() may synchronously cancel queued items — guard the shift, and
+      // reserve credit/in-flight only for a tick that actually went out:
+      // items dropped mid-batch must not leave phantom in-flight behind.
       const item = queue.shift()
       if (!item) break
+      inFlight++
+      credit -= 1
       send(direction, 1, item.value)
     }
     schedule()

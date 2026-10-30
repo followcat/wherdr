@@ -53,4 +53,44 @@ describe('terminal writer', () => {
     w.write('zzzz\n')
     await vi.waitFor(() => { expect(received.join('')).toBe('xxxx\nyyyy\nzzzz\n') })
   })
+  it('a full queue sheds expendable scroll chunks, never protected input', async () => {
+    const s = pipe()
+    const received: string[] = []
+    const w = createTerminalWriter(s, { maxPending: 3 })
+    w.write('aaaaaaaa\n') // stalls the 4-byte buffer
+    // Queue: input, then scrolls — the bound must drop scrolls, not typing.
+    w.write('key-a\n')
+    w.write('scroll-1\n', { expendable: true })
+    w.write('scroll-2\n', { expendable: true })
+    w.write('key-b\n') // pushes past the bound: a scroll goes, not a key
+    w.write('key-c\n')
+    s.on('data', c => received.push(c.toString()))
+    await vi.waitFor(() => { expect(received.join('')).toContain('key-c\n') })
+    const got = received.join('')
+    expect(got).toContain('key-a\n')
+    expect(got).toContain('key-b\n')
+    expect(got).not.toContain('scroll-1\n')
+    expect(got).not.toContain('scroll-2\n')
+  })
+  it('an incoming scroll is dropped rather than evicting protected input', async () => {
+    const s = pipe()
+    const received: string[] = []
+    const w = createTerminalWriter(s, { maxPending: 2 })
+    w.write('aaaaaaaa\n')
+    w.write('key-a\n')
+    w.write('key-b\n') // queue full of protected input
+    w.write('scroll\n', { expendable: true }) // incoming expendable: dropped
+    s.on('data', c => received.push(c.toString()))
+    await vi.waitFor(() => { expect(received.join('')).toBe('aaaaaaaa\nkey-a\nkey-b\n') })
+  })
+  it('a queue of only protected input still bounds: oldest is dropped', async () => {
+    const s = pipe()
+    const received: string[] = []
+    const w = createTerminalWriter(s, { maxPending: 1 })
+    w.write('aaaaaaaa\n')
+    w.write('one\n')
+    w.write('two\n')
+    s.on('data', c => received.push(c.toString()))
+    await vi.waitFor(() => { expect(received.join('')).toBe('aaaaaaaa\ntwo\n') })
+  })
 })

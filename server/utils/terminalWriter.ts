@@ -10,7 +10,7 @@ import type { Writable } from 'node:stream'
 // A chunk still inside THIS queue has not been submitted: callers must not
 // advance delivery accounting for it.
 export function createTerminalWriter(stream: Writable, { maxPending = 256 }: { maxPending?: number } = {}) {
-  let pending: { data: string, onSubmit?: () => void, onFlush?: (err?: Error | null) => void }[] = []
+  let pending: { data: string, expendable?: boolean, onSubmit?: () => void, onFlush?: (err?: Error | null) => void }[] = []
   let blocked = false
   let dead = false
   const pump = () => {
@@ -25,16 +25,23 @@ export function createTerminalWriter(stream: Writable, { maxPending = 256 }: { m
   const onDrain = () => { blocked = false; pump() }
   stream.on('drain', onDrain)
   return {
-    write(data: string, opts?: { onSubmit?: () => void, onFlush?: (err?: Error | null) => void } | ((err?: Error | null) => void)) {
+    write(data: string, opts?: { expendable?: boolean, onSubmit?: () => void, onFlush?: (err?: Error | null) => void } | ((err?: Error | null) => void)) {
       if (dead) return
-      const { onSubmit, onFlush } = typeof opts === 'function' ? { onSubmit: undefined, onFlush: opts } : (opts ?? {})
+      const { expendable, onSubmit, onFlush } = typeof opts === 'function' ? { expendable: undefined, onSubmit: undefined, onFlush: opts } : (opts ?? {})
       // FIFO: anything already waiting must go first, even if this write
       // would still fit.
       if (blocked || pending.length) {
-        // A stalled child must not grow memory without bound. Drop the
-        // oldest queued chunk — unsent input, never resent bytes.
-        if (pending.length >= maxPending) pending.shift()
-        pending.push({ data, onSubmit, onFlush })
+        // A stalled child must not grow memory without bound. When the
+        // bound hits, shed what is safe to lose first — scroll commands are
+        // superseded by the next gesture; typed input, resizes and mouse
+        // releases are not.
+        if (pending.length >= maxPending) {
+          const expendableAt = pending.findIndex(p => p.expendable)
+          if (expendableAt >= 0) pending.splice(expendableAt, 1)
+          else if (expendable) return // drop the incoming scroll, keep input
+          else pending.shift() // hard bound: everything queued is protected
+        }
+        pending.push({ data, expendable, onSubmit, onFlush })
         return
       }
       const ok = stream.write(data, onFlush)
