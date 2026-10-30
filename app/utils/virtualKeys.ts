@@ -79,7 +79,10 @@ export function createCompositionTracker() {
     end() { active = false; ended = true },
     // A keydown outside any composition is a real keystroke: drop a stale
     // flag left behind by a cancelled composition that produced no text.
-    keydown() { if (!active) ended = false },
+    // Safari's keyCode 229 keydown still belongs to the composition.
+    keydown(e?: { isComposing?: boolean, keyCode?: number }) {
+      if (!active && !e?.isComposing && e?.keyCode !== 229) ended = false
+    },
     get active() { return active },
     // The flag is consumed by the first data event after the end, so a
     // cancelled composition cannot swallow a later real keystroke.
