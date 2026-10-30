@@ -15,6 +15,13 @@ export function spaceTitle(p: Pane, workspace?: Workspace | null): string {
   return (!p.label && coordinatorTitle(p)) || workspace?.label?.trim() || paneTitle(p)
 }
 
+// One identity on a narrow header. Never replace a useful name with a
+// generated tab number, or change it when a neighbouring tab opens/closes.
+export function phoneHeaderTitle(p: Pane, workspace: Workspace | null | undefined, tabLabel: string | null | undefined, paneCount: number): string {
+  return p.label?.trim() || coordinatorTitle(p) || cleanLabel(tabLabel)
+    || (paneCount > 1 ? paneTitle(p) : spaceTitle(p, workspace))
+}
+
 export function conversationSubtitle(p: Pane, workspace?: Workspace | null): string {
   const title = cleanTitle(p.title).replace(/\s*\|\s*\S+$/, '').trim()
   if (!title || /^\S+@\S+:/.test(title)) return ''

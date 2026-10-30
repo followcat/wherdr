@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Pane, Workspace } from '../shared/types'
-import { cleanLabel, conversationSubtitle, spaceTitle } from '../shared/displayTitles'
+import { cleanLabel, conversationSubtitle, phoneHeaderTitle, spaceTitle } from '../shared/displayTitles'
 
 const p: Pane = { id: 'w1:p1', workspace: 'w1', tab: 'w1:t1', tabLabel: 'agent', agent: 'claude', name: 'claude', label: null, status: 'idle', title: 'Customer portal brief', cwd: '/tmp/demo', agentSession: null }
 const w: Workspace = { id: 'w1', label: 'Customer Portal 2', number: 1, status: null, worktree: false }
@@ -45,3 +45,20 @@ describe('cleanLabel', () => {
   })
 })
 
+describe('phone header identity', () => {
+  it('keeps explicit pane names and coordinator roles ahead of tab names', () => {
+    expect(phoneHeaderTitle({ ...p, label: 'Login review' }, w, 'Build', 2)).toBe('Login review')
+    expect(phoneHeaderTitle({ ...p, name: 'sw-coordinator' }, w, 'Notes', 1)).toBe('Coordinator')
+  })
+  it('uses a custom tab name without dropping its workspace prefix', () => {
+    expect(phoneHeaderTitle(p, w, 'Customer Portal 2-scrolling', 1)).toBe('Customer Portal 2-scrolling')
+    expect(phoneHeaderTitle(p, w, 'Customer Portal 2-scrolling', 2)).toBe('Customer Portal 2-scrolling')
+  })
+  it('falls back to the workspace or pane instead of a generated tab number', () => {
+    expect(phoneHeaderTitle(p, w, '', 1)).toBe(w.label)
+    expect(phoneHeaderTitle(p, w, '', 2)).toBe('Customer portal brief')
+    expect(phoneHeaderTitle(p, undefined, null, 1)).toBe('Customer portal brief')
+    // A deliberately named numeric tab still counts as an explicit name.
+    expect(phoneHeaderTitle(p, w, '1', 1)).toBe('1')
+  })
+})

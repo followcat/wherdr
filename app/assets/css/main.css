@@ -992,7 +992,8 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 #agent { overflow: hidden; }
 /* Phone chrome: the tab picker, title and state share one row. Extra
    actions remain in Options; the tab picker retains tab management. */
-.phone-chrome .agent-top { grid-template-columns: auto auto minmax(0, 1fr) auto; grid-template-areas: "back space head actions"; gap: 3px; padding: max(6px, var(--safe-top)) 6px 6px; min-height: 52px; }
+.phone-chrome .agent-top { container: phone-header / inline-size; grid-template-columns: 44px minmax(0, 1fr) auto; grid-template-areas: "back head actions"; gap: 2px; padding: max(4px, var(--safe-top)) 4px 4px; min-height: 52px; }
+.phone-chrome .agent-top :is(.back, .agent-actions .icon-btn) { width: 44px; height: 44px; flex: none; }
 .space-tab-picker { grid-area: space; display: inline-flex; align-items: center; gap: 4px; height: 36px; max-width: 24vw; padding: 0 7px; border: 1px solid var(--line); color: var(--text-2); font: 12px/1 var(--mono); }
 .space-tab-picker span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .space-tab-picker .iconify { width: 12px; height: 12px; flex: none; }

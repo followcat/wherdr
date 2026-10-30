@@ -582,8 +582,8 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
           v-if="!cell" id="btnBack" icon="i-lucide-chevron-left" color="neutral" variant="ghost" size="lg" class="icon-btn back"
           :aria-label="t('Back')" @click="goBack"
         />
-        <SpaceTabs v-if="compactPhone && pane" compact :workspace="pane.workspace" :current="pane.tab" />
-        <div class="agent-head">
+        <PhoneIdentity v-if="compactPhone && pane" :pane="pane" :workspace="workspace" @overview="openPlan" />
+        <div v-else class="agent-head">
           <div class="agent-title">{{ headTitle }} <UIcon v-if="pane && paneNotificationsMuted(pane)" name="i-lucide-bell-off" class="notification-muted" :title="t('Muted')" /></div>
           <div class="agent-meta">
             <StatusPill :pane="pane" kind :compact="compactPhone" />
