@@ -307,22 +307,24 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
         state.events.push(params.event)
         state.pending.push({ event: params.event, at: Date.now() + state.consumeDelayMs })
       }
-      // Apply whatever is due: a delayed consumer answers late but in order.
+      // Apply whatever is due, strictly in order: a slow consumer serializes
+      // later input behind its head event rather than letting it overtake.
       const now = Date.now()
-      let moved = false, clamped = false
-      const due = state.pending.filter(e => e.at <= now)
-      state.pending = state.pending.filter(e => e.at > now)
-      for (const { event } of due) {
+      let moved = false, clamped = false, applied = 0
+      while (state.pending.length && state.pending[0].at <= now) {
+        const { event } = state.pending.shift()
+        applied++
         const n = state.mouse ? state.wheelRowsPerTick : event.lines
         const next = state.offset + (event.direction === 'up' ? n : -n)
-        if (next < 0 || next > 80) clamped = true
-        else moved = true
-        state.offset = Math.max(0, Math.min(80, next))
+        const clampedNext = Math.max(0, Math.min(80, next))
+        if (clampedNext !== next) clamped = true
+        if (clampedNext !== state.offset) moved = true
+        state.offset = clampedNext
       }
       // A scroll clamped at the boundary moves nothing: opaque apps may still
       // repaint, history panes stay put. Specs read `applied` for causality.
       const frame = moved || !(clamped && state.noFrameAtBoundary)
-      return { ...state, pending: state.pending.length, applied: due.length, frame,
+      return { ...state, pending: state.pending.length, applied, frame,
         text: `History offset ${state.offset}\n` + Array.from({ length: Math.max(1, p.size.rows - 1) }, (_, i) => `History row ${100 - state.offset + i}`).join('\n') }
     },
     'e2e.terminal_screen': params => {
