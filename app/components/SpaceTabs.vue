@@ -7,7 +7,7 @@
 import { leadPane } from '#shared/spaces'
 import { longPress } from '~/utils/longPress'
 
-const props = defineProps<{ workspace: string, current: string }>()
+const props = defineProps<{ workspace: string, current: string, compact?: boolean }>()
 const tabs = computed(() => spaceTabs(props.workspace).map((e) => {
   const lead = leadPane(e.panes)
   return {
@@ -38,10 +38,21 @@ function pick(id: string) {
   if (lp.swallowClick() || id === props.current) return
   switchSpaceTab(id)
 }
+const currentLabel = computed(() => tabs.value.find(e => e.tab.id === props.current)?.label || t('Tabs'))
+function openPicker() {
+  openMenu([
+    ...tabs.value.map(e => ({ label: e.label, icon: e.tab.id === props.current ? 'i-lucide-check' : 'i-lucide-layers', run: () => pick(e.tab.id) })),
+    { kind: 'separator' },
+    ...tabItems(props.current),
+  ], t('Tabs'))
+}
 </script>
 
 <template>
-  <nav v-if="spaceTabControls(tabs.length).row" class="tab-chips space-tabs" :aria-label="t('Tabs')">
+  <button v-if="compact" type="button" class="space-tab-picker" :aria-label="`${t('Tabs')}: ${currentLabel}`" aria-haspopup="dialog" @click="openPicker">
+    <span>{{ currentLabel }}</span><UIcon name="i-lucide-chevron-down" />
+  </button>
+  <nav v-else-if="spaceTabControls(tabs.length).row" class="tab-chips space-tabs" :aria-label="t('Tabs')">
     <UContextMenu v-for="e in tabs" :key="e.tab.id" :disabled="sheetMenus" :items="sheetMenus ? [] : toDropdown(tabItems(e.tab.id))" :ui="{ content: 'hw-dropdown' }">
       <button
         type="button" class="tab-chip" :class="e.tone" :title="e.title" :data-tab="e.tab.id"
