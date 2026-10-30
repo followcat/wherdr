@@ -125,7 +125,10 @@ wherdr checks the latest GitHub release at most once a day (an anonymous request
 `api.github.com`, nothing is sent) and shows a small **“wherdr X.Y.Z is available”** banner on the
 home screen and in Settings › About, with the release notes and the exact command for your setup.
 Hide it until the next version with ×. Set `WHERDR_UPDATE_CHECK=off` to disable the check. The
-installed version is shown in Settings › About.
+installed version is shown in Settings › About. The installer marks its service
+with `WHERDR_INSTALL` (`native`, `npm`, `npm-global`, `brew`, `plugin`) so the
+banner offers the right one-tap command; a source build without it stays native
+and only shows the rebuild instructions.
 
 GitHub release packages (including the bundled agent skill) and Homebrew
 updates are published without waiting for npm moderation. Native plugin installs and updates
