@@ -83,8 +83,12 @@ export function createTerminalTouch({ vertical, momentum, horizontal, canHorizon
         raf = 0
         const t = now(), dt = Math.min(40, Math.max(0, t - previous))
         previous = t
-        speed *= Math.exp(-dt / 240)
-        const pixels = Math.sign(speed) * Math.min(Math.abs(speed * dt), Math.max(0, limit - distance))
+        // Analytic decay over the whole frame interval: the integrated
+        // distance is speed·τ·(1−e^(−dt/τ)), identical at any refresh rate.
+        // A per-frame Euler rectangle under-counts low rates instead.
+        const decay = Math.exp(-dt / 240)
+        const pixels = Math.sign(speed) * Math.min(Math.abs(speed) * 240 * (1 - decay), Math.max(0, limit - distance))
+        speed *= decay
         distance += Math.abs(pixels)
         if (pixels) {
           if (momentum) { if (momentum(pixels, last) === false) speed = 0 }
