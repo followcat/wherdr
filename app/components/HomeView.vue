@@ -688,10 +688,10 @@ function resetListWidth() {
         </button>
       </UContextMenu>
     </nav>
-    <div class="agent-list-mode" role="group" aria-label="列表显示方式">
+    <div class="agent-list-mode" role="group" :aria-label="t('List layout')">
       <button type="button" :class="{ on: individualAgents }" :aria-pressed="individualAgents" @click="individualAgents = true">Agents <b>{{ shownCounted.length }}</b></button>
-      <button type="button" :class="{ on: !individualAgents }" :aria-pressed="!individualAgents" @click="individualAgents = false">工作区</button>
-      <span>{{ individualAgents ? '每个 Agent 一行' : '按工作区汇总' }}</span>
+      <button type="button" :class="{ on: !individualAgents }" :aria-pressed="!individualAgents" @click="individualAgents = false">{{ t('Spaces') }}</button>
+      <span>{{ individualAgents ? t('One row per agent') : t('Grouped by space') }}</span>
     </div>
     <div ref="homeScroll" class="scroll">
       <OfflineNote v-if="(offlineView && cachedAt) || netDown" class="home-offline" :label="offlineView && cachedAt ? t('Last known state') : undefined" :at="cachedAt" date-style="medium" />
