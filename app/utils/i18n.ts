@@ -324,6 +324,7 @@ const FR: Record<string, string> = {
   'Start one here, or from': 'Lance-en un ici, ou depuis', 'in a terminal.': 'dans un terminal.',
   'New': 'Nouveau', 'Options': 'Options', 'Conversation': 'Conversation',
   'Keys': 'Touches',
+  'Ctrl': 'Ctrl', 'Alt': 'Alt', 'Shift': 'Maj',
   'Type in terminal': 'Taper dans le terminal', 'Photo, file, paste, commands': 'Photo, fichier, collage, commandes',
   'Message to agent…': 'Message à l’agent…',
   'Choose an agent from the list': 'Choisis un agent dans la liste',
