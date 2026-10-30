@@ -65,15 +65,34 @@ Two rounds ran per the task contract:
    reversal and on non-scroll cancels, early queue dropped callbacks,
    release stranded behind a backpressured tail, drain-listener leak,
    reentrant `cancelWhere`. All fixed in `78e0d20`.
+3. Final review after `ddd3020` (in-memory reproductions): contribution log
+   pre-netting broke phase-cancel accounting (`+5 drag, -3 momentum, cancel
+   → wrote 5, acked 2`), merged-path delivery still advanced before stream
+   submission, a failed write reported `flushed`, writer overflow could
+   evict protected input, pacer left phantom in-flight ticks on reentrant
+   cancel, contribution log ignored the throttle's line cap, and the
+   boundary spec asserted a decision flag rather than the emitted act.
+   Fixed in `cef8e80` + `c81b38b`: raw signed contribution log with
+   flush-time attribution reported at `onSubmit`, `writeFailed` stage,
+   expendable-vs-protected eviction, per-tick in-flight accounting, log
+   cleared at flush (post-flush net is zero), `frame_sent` report-back in
+   the fixture, atomic pending+offset read. E2E re-run: 21/21 green;
+   unit suites 26/26 (writer incl. eviction cases).
 
 ## NOT RUN / limitations
 
 - **webkit-phone, iOS Safari, Android real devices**: not executed. The tap/
   focus contract was verified only under Chromium's synthetic + CDP touch.
+  (The 21-case spec contains `@webkit-phone`-tagged cases but only the
+  chromium-phone project was run.)
 - Frame-silence simulation is partial: the fake CLI repaints on a 150 ms
   ticker regardless, so "frames arriving but nothing applied" is modeled
   only through `consumeDelayMs`/`noFrameAtBoundary`, not a dead stream.
-- `scroll.ack` phase attribution on the merged path follows FIFO netting —
-  exact for typical bursts, approximate across interleaved reversals.
+- `scroll.ack` phase attribution on the merged path is FIFO over same-sign
+  contributions — exact for typical bursts, approximate across interleaved
+  reversals (opposite-sign residue is dropped at flush, matching the
+  throttle's own discard).
+- A write stalled past the 1500 ms child-kill window can still lose the
+  `terminal.release` line; bounded and documented, not solved.
 - Performance deltas other than the integrator spread were not A/B'd
   against a real device; `frameStats` exists for that follow-up.
