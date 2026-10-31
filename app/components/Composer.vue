@@ -815,9 +815,10 @@ defineExpose({
           :aria-label="t('Photo, file, paste, commands')" @click="openPlus"
         />
         <UButton
-          :icon="asrRecording ? 'i-lucide-square' : 'i-lucide-mic'" color="neutral" variant="outline" size="sm"
+          :icon="asrRecording ? 'i-lucide-square' : asrInstalled ? 'i-lucide-mic' : 'i-lucide-mic-off'" color="neutral" variant="outline" size="sm"
           class="prompt-mic" :class="{ dim: !asrInstalled, rec: asrRecording }" :disabled="readOnly || asrBusy"
-          :aria-label="t('Voice input')" :aria-pressed="asrRecording" @click="onMic"
+          :title="asrInstalled ? t('Voice input') : tl('Voice input not installed — Settings › Conversation', 'Saisie vocale non installée — Réglages › Conversation')"
+          :aria-label="asrInstalled ? t('Voice input') : tl('Voice input not installed', 'Saisie vocale non installée')" :aria-pressed="asrRecording" @click="onMic"
         />
         <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onFiles">
         <input ref="anyFileInput" type="file" multiple hidden data-testid="attach-any" @change="onFiles">
