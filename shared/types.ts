@@ -62,7 +62,7 @@ export interface InteractiveMenu {
 // `pasted`: the long pasted texts its text holds (see server/utils/pastes.ts).
 // `back`: no agent will take it (see server/utils/queued.ts giveBackHeld): the
 // app puts its text back into the message field.
-export interface QueuedMessage { inputText?: string, id: string, text: string, at?: number, state?: 'held' | 'failed', reason?: 'busy' | 'no_input' | 'turn' | 'lost' | 'unseen', pasted?: string[], back?: boolean }
+export interface QueuedMessage { inputText?: string, id: string, text: string, at?: number, state?: 'held' | 'failed', reason?: 'busy' | 'no_input' | 'turn' | 'lost' | 'unseen', pasted?: string[], back?: boolean, submitKey?: string }
 
 // Claude Code's screen while working (see server/utils/claudeScreen.ts): the
 // "!" command running, the last message sent, the messages

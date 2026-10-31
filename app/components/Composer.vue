@@ -12,6 +12,7 @@ import { quotesIn, removeQuote } from '~/utils/questionReply'
 import { attachQuoteMirror } from '~/utils/quoteMirror'
 import { isAgentCommand } from '#shared/commandScreen'
 import { isSlashCommand } from '#shared/queuedMatch'
+import { isSubmitKey, submitKeysFor } from '#shared/submitKeys'
 import { viaPrompt } from '#shared/sendRoute'
 import type { AttachKind } from '#shared/attachments'
 import { refusalText, sortForAgent } from '~/utils/fileDrop'
@@ -163,6 +164,19 @@ function onKeydown(e: KeyboardEvent) {
     useSuggestion()
     return
   }
+  // A verified terminator of this agent ends the draft with that key
+  // ("Send with Tab"), like the same press in the terminal. Plain Tab only:
+  // on an empty field it keeps moving the focus, and Shift+Tab always does.
+  if (!e.isComposing && canSend.value) {
+    const chord = e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey ? 'tab'
+      : e.key === 'Enter' && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey ? 'ctrl+enter'
+        : null
+    if (chord && isSubmitKey(props.pane?.agent, chord, { working: props.pane?.status === 'working' })) {
+      e.preventDefault()
+      submitWith(chord)
+      return
+    }
+  }
   if (enterSends.value && e.key === 'Enter' && !e.shiftKey && !e.isComposing && !text.value.trim()) {
     e.preventDefault()
     submit()
@@ -219,7 +233,17 @@ const sendTap = createTouchTap({
 })
 const hint = computed(() => desk.value && !stopMode.value)
 
-async function submit() {
+// The keys that end the draft instead of typing into the field ("Send with
+// Tab"): the verified terminators of this agent (shared/submitKeys.ts). None
+// without a draft — the same key then stays a literal terminal key.
+const sendWithKeys = computed(() => canSend.value ? submitKeysFor(props.pane?.agent, { working: props.pane?.status === 'working' }) : [])
+function submitWith(key: string) {
+  if (!sendWithKeys.value.includes(key) || readOnly.value || sending.value) return
+  haptic()
+  void submit(key)
+}
+async function submit(submitKey?: string) {
+  if (typeof submitKey !== 'string' || !submitKey) submitKey = undefined
   if (readOnly.value) return toast(t('Sending unavailable offline'), true)
   if (stopMode.value) return interrupt()
   if (attachments.value.some(a => !a.paste && !a.path)) return toast(t(attachments.value.some(a => !a.path && a.file) ? 'File is uploading…' : 'Photo is uploading…'))
@@ -246,7 +270,7 @@ async function submit() {
     rememberPastes(pastes)
     haptic()
     emit('sent', null)
-    outboxSend(p, props.paneId, msg).then(() => emit('sent', null), (err: Error) => toast(err.message, true))
+    outboxSend(p, props.paneId, msg, submitKey).then(() => emit('sent', null), (err: Error) => toast(err.message, true))
     return
   }
   sending.value = true
@@ -256,7 +280,7 @@ async function submit() {
     let queued: QueuedMessage | null = null
     if (prompt && free >= 0) {
       if (!(await choose(props.paneId, free, prompt.options[free]!.label, prompt.identity, { text: msg, question: prompt.question }))) return
-    } else queued = await sendMessage(p, props.paneId, msg)
+    } else queued = await sendMessage(p, props.paneId, msg, undefined, submitKey)
     rememberSent(typed)
     text.value = ''
     clearAttachments()
@@ -620,7 +644,7 @@ defineExpose({
   focusEnd,
   focusAnswer,
   blur: () => ta.value?.blur(),
-  addImages, addFiles, stop,
+  addImages, addFiles, stop, submitWith,
 })
 </script>
 
@@ -712,7 +736,7 @@ defineExpose({
       :enterkeyhint="enterSends ? 'send' : 'enter'" autocapitalize="sentences"
       class="prompt" :class="{ suggesting: suggestTap, expanded }" :style="suggestRoom ? { '--suggest-room': `${suggestRoom}px` } : undefined" :ui="{ header: 'prompt-head', body: 'prompt-body', base: 'prompt-input', footer: 'prompt-foot' }"
       @focusin="fieldFocused = true" @focusout="onFocusOut" @focus="fieldFocused = true" @blur="onFocusOut"
-      @submit="submit" @keydown="onKeydown" @paste="onPaste" @beforeinput="onBeforeInput"
+      @submit="submit()" @keydown="onKeydown" @paste="onPaste" @beforeinput="onBeforeInput"
     >
       <template v-if="attachments.length" #header>
         <div class="attachments">

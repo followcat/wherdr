@@ -61,6 +61,14 @@ describe('outbox: a send that fails', () => {
     const box = resend(failLocal(addSending([], 'w-a', 'hi', T0), 'w-a'), 'w-a')
     expect(box).toEqual([{ id: 'w-a', text: 'hi', at: T0, state: 'sending' }])
   })
+
+  it('keeps the terminator through failure and Retry: not sent back as a plain Enter', () => {
+    let box = addSending([], 'w-a', 'Summarize the diff', T0, 'tab')
+    box = failLocal(box, 'w-a')
+    expect(box[0]).toMatchObject({ state: 'failed', local: true, submitKey: 'tab' })
+    box = resend(box, 'w-a')
+    expect(box).toEqual([{ id: 'w-a', text: 'Summarize the diff', at: T0, state: 'sending', submitKey: 'tab' }])
+  })
 })
 
 describe('outbox: prune on a new server state', () => {

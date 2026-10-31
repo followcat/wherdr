@@ -119,6 +119,32 @@ export function codexFieldLine(ansi: string): string | null {
   return undimmed(line).replace(/^›\s?/, '').replace(/\u00a0/g, ' ').trim()
 }
 
+// First line of Devin's input field (v3000.x), read from the ANSI screen.
+// '' empty, null: field not found. Its marker "❭" (U+276D — a different
+// glyph from Claude's "❯") also leads every sent message in the history,
+// so the field is anchored on position, never on the glyph alone:
+// - it is the LAST line starting with "❭" (followed by a space or nothing);
+// - below it come only the box's bottom rule, blanks, and the status footer
+//   (Context: … tokens), never history or queued rows.
+// Its hint lines ("Ask Devin to build…", "Guide Devin while it works",
+// "Press Enter to send queued messages now") read as empty. Checked on
+// v3000.11.234: idle, working with a queued message, after a turn.
+const DEVIN_FIELD = /^❭(?: |$)/
+const DEVIN_FOOTER = /^(?:─|\s*$|.*\bContext:.*\btokens\b)/
+const DEVIN_HINTS = /^(?:Ask Devin to build|Guide Devin while it works|Press Enter to send queued messages)/
+export function devinFieldLine(ansi: string): string | null {
+  const lines = String(ansi || '').split('\n').map(l => l.replace(/\r$/, ''))
+  let at = -1
+  for (let i = lines.length - 1; i >= 0 && at < 0; i--) if (DEVIN_FIELD.test(lines[i]!.replace(SGR, ''))) at = i
+  if (at < 0) return null
+  for (const below of lines.slice(at + 1)) {
+    const plain = below.replace(SGR, '')
+    if (!DEVIN_FOOTER.test(plain)) return null
+  }
+  const line = undimmed(lines[at]!).replace(/^❭\s?/, '').replace(/\u00a0/g, ' ').trim()
+  return DEVIN_HINTS.test(line) ? '' : line
+}
+
 // Dim and reverse video in effect at the end of `prefix` (SGR sequences only).
 function sgrState(prefix: string): { dim: boolean, reverse: boolean } {
   let dim = false

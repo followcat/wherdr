@@ -124,6 +124,13 @@ export const INPUT_STATES = new Set(['idle', 'done', 'unknown'])
 export interface QueueEntry {
   id: string
   text: string
+  // The whole message when `text` had to be cut (display/record bound):
+  // delivery and give-back use it, never the truncated preview.
+  full?: string
+  // The terminator this message was submitted with ("send with Tab"…):
+  // preserved through holds, retries and restarts — delivery must not
+  // silently turn it back into Enter.
+  submitKey?: string
   at: number
   held?: boolean
   failed?: boolean
@@ -287,6 +294,7 @@ export const leftForGood = (p: Pick<Pane, 'agent' | 'leaving'>, before: Pick<Pan
 // Fields the app sees.
 export const publicEntry = (q: QueueEntry): QueuedMessage => ({
   id: q.id, text: q.text, at: q.at,
+  ...(q.submitKey ? { submitKey: q.submitKey } : {}),
   ...(q.held && !q.failed ? { state: 'held' as const } : {}),
   ...(q.failed ? { state: 'failed' as const } : {}),
   ...((q.held || q.failed) && q.busy ? { reason: 'busy' as const } : q.failed && q.noInput ? { reason: 'no_input' as const }
@@ -313,7 +321,7 @@ export function loadQueued(raw: unknown, now: number): [string, QueueEntry[]][] 
         // resume those automatically after upgrading or restarting.
         if (q.delivering || (q.held && q.typedAt)) q = { ...q, held: false, failed: true }
         const old = !q.failed && !(q.held && q.busy) && now - q.at >= QUEUED_TTL_MS
-        return { id: q.id, text: q.text, at: q.at, ...(q.held && !old ? { held: true } : {}), ...(q.failed || old ? { failed: true } : {}), ...(q.busy ? { busy: true } : {}), ...(q.back ? { back: true } : {}),
+        return { id: q.id, text: q.text, ...(typeof q.full === 'string' ? { full: q.full } : {}), ...(typeof q.submitKey === 'string' ? { submitKey: q.submitKey } : {}), at: q.at, ...(q.held && !old ? { held: true } : {}), ...(q.failed || old ? { failed: true } : {}), ...(q.busy ? { busy: true } : {}), ...(q.back ? { back: true } : {}),
           ...(typeof q.typedAt === 'number' ? { typedAt: q.typedAt } : {}), ...(q.turn && !old ? { turn: true } : {}),
           ...(q.noInput ? { noInput: true } : {}), ...(q.lost ? { lost: true } : {}), ...(q.unseen || (old && !q.held) ? { unseen: true } : {}) }
       })

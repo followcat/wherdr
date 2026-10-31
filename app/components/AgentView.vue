@@ -19,6 +19,7 @@ let curPaneOwner: symbol | null = null
 import type { QueuedMessage } from '#shared/types'
 import type { PaneViewMode } from '~/composables/useHerdr'
 import { neighborPane } from '#shared/layout'
+import { submitKeysFor } from '#shared/submitKeys'
 import { swipeAxis, swipeOffset, swipeStep } from '~/utils/swipe'
 import { cellMode, showComposer, terminalAttachment } from '~/utils/viewMode'
 import { carriesFiles, dragDepth } from '~/utils/fileDrop'
@@ -104,11 +105,14 @@ const ctl = createTerminal(props.paneId, {
   hasBanner: () => Boolean(banner.value),
   fill: () => Boolean(props.cell),
   input: () => live.value && !terminalCopying.value,
+  // The same key language as the terminal: a verified terminator ends the
+  // conversation draft ("Send with Tab"); every other key stays literal.
+  submitKey: chord => sendWithChord(chord),
 })
 const chatRef = ref<{ scrollToEnd: (force: boolean) => void, reload: () => void, focusSearch: () => void, gotoUnanswered: () => void } | null>(null)
 // Questions of the agent's last message the draft does not answer yet (ChatView): the composer's reminder.
 const unanswered = ref(0)
-const composer = ref<{ focus: () => void, focusEnd: () => void, focusAnswer: (at: number) => void, blur: () => void, addImages: (files: File[]) => Promise<void>, addFiles: (files: File[]) => Promise<number>, stop: () => boolean } | null>(null)
+const composer = ref<{ focus: () => void, focusEnd: () => void, focusAnswer: (at: number) => void, blur: () => void, addImages: (files: File[]) => Promise<void>, addFiles: (files: File[]) => Promise<number>, stop: () => boolean, submitWith: (key: string) => void } | null>(null)
 const searchOpen = ref(typeof route.query.q === 'string' && typeof route.query.hit === 'string')
 
 // Pane closed while being viewed. A pane just created may be missing
@@ -221,6 +225,17 @@ watch(() => closed.value && !replacement.value, (waiting) => {
 }, { immediate: true })
 onUnmounted(() => clearInterval(linksTimer))
 const hasDraft = computed(() => draftFilled(draft))
+// The keys that end the draft ("Send with Tab"): the verified terminators of
+// this agent, only in the conversation and only with something to send. The
+// keybar shows them, sendVirtualKey routes them to the composer.
+const sendWithKeys = computed(() => mode.value === 'chat' && hasDraft.value
+  ? submitKeysFor(pane.value?.agent, { working: pane.value?.status === 'working' })
+  : [])
+function sendWithChord(chord: string): boolean {
+  if (!sendWithKeys.value.includes(chord) || !composer.value) return false
+  composer.value.submitWith(chord)
+  return true
+}
 async function copyDraft() {
   try {
     await navigator.clipboard.writeText(draftAsText(draft))
@@ -680,7 +695,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
       <button type="button" class="phone-keybar-toggle" :class="{ on: phoneKeysOpen }" :aria-label="t('Show or hide terminal keys')" :aria-expanded="phoneKeysOpen" :aria-controls="keybarId"
         @pointerdown.prevent @mousedown.prevent @click.stop="togglePhoneKeys"><UIcon name="i-lucide-keyboard" /></button>
     </div>
-    <Keybar v-if="keybarShown" :id="keybarId" :inert="terminalCopying" :ctl="ctl" :compact="compactPhone" />
+    <Keybar v-if="keybarShown" :id="keybarId" :inert="terminalCopying" :ctl="ctl" :compact="compactPhone" :send-with="sendWithKeys" />
     <Composer v-if="composerShown" ref="composer" :inert="terminalCopying" :pane="pane" :pane-id="paneId" :send-keys="ctl.sendKeys" :conversation="mode === 'chat'" :term-shown="termShown" :esc-stops="!searchOpen && !terminalCopying" :take-back="mode === 'chat'" :unanswered="mode === 'chat' ? unanswered : 0" @sent="onSent" @show-terminal="setMode('term')" @show-unanswered="chatRef?.gotoUnanswered()" />
     </div>
     </div>

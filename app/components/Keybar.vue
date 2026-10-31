@@ -2,10 +2,14 @@
 // Key bar: logical keys, encoded by Herdr according to the terminal
 // mode (application cursor, etc.). Does not steal the focus from the input field.
 import type { VirtualModifier } from '~/utils/virtualKeys'
+import { displayVirtualChord, virtualChord } from '~/utils/virtualKeys'
 const VIRTUAL_MODIFIERS = ['ctrl', 'alt', 'shift'] as const
-const props = defineProps<{ ctl: TerminalCtl, allDigits?: boolean, compact?: boolean }>()
+// `sendWith`: chords that end the conversation draft ("Send with Tab"),
+// annotated on their key instead of reaching the terminal.
+const props = defineProps<{ ctl: TerminalCtl, allDigits?: boolean, compact?: boolean, sendWith?: string[] }>()
 const modifierLabels = { ctrl: 'Ctrl', alt: 'Alt', shift: 'Shift' }
 const selected = computed(() => props.ctl.virtualModifiers.value)
+const withKey = (key: string) => props.sendWith?.includes(virtualChord(key, selected.value)) || false
 function modifier(key: VirtualModifier) { haptic(); props.ctl.toggleModifier(key) }
 
 const KEYS: { key: string, label: string, cls?: string }[] = [
@@ -29,11 +33,11 @@ function toggleKbd() {
 </script>
 
 <template>
-  <PhoneKeybar v-if="compact" :ctl="ctl" :all-digits="allDigits" />
+  <PhoneKeybar v-if="compact" :ctl="ctl" :all-digits="allDigits" :send-with="sendWith" />
   <div v-else class="keybar" role="toolbar" :aria-label="t('Keys')">
     <button v-for="m in VIRTUAL_MODIFIERS" :key="m" type="button" class="key-modifier" :aria-label="t(modifierLabels[m])"
       :aria-pressed="selected.includes(m)" @pointerdown.prevent @click="modifier(m)">{{ t(modifierLabels[m]) }}</button>
-    <button v-for="k in keys" :key="k.key" type="button" :class="k.cls" @pointerdown.prevent @click="press(k.key)">{{ k.label }}</button>
+    <button v-for="k in keys" :key="k.key" type="button" :class="[k.cls, { 'send-with': withKey(k.key) }]" :title="withKey(k.key) ? tl(`Send with ${displayVirtualChord(virtualChord(k.key, selected))}`, `Envoyer avec ${displayVirtualChord(virtualChord(k.key, selected))}`) : undefined" @pointerdown.prevent @click="press(k.key)">{{ k.label }}</button>
     <button type="button" class="kbd" :class="{ on: ctl.kbdOn.value }" :aria-label="t('Type in terminal')" @pointerdown.prevent @click="toggleKbd">
       <UIcon name="i-lucide-keyboard" />
     </button>
@@ -42,4 +46,5 @@ function toggleKbd() {
 
 <style scoped>
 .key-modifier[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.keybar button.send-with { border-color: var(--accent); color: var(--accent); font-weight: 650; }
 </style>

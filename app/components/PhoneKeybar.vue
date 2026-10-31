@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import type { VirtualModifier } from '~/utils/virtualKeys'
-import { displayVirtualChord } from '~/utils/virtualKeys'
+import { displayVirtualChord, virtualChord } from '~/utils/virtualKeys'
 
-const props = defineProps<{ ctl: TerminalCtl, allDigits?: boolean }>()
+// `sendWith`: chords that end the conversation draft ("Send with Tab"),
+// annotated on their key instead of reaching the terminal.
+const props = defineProps<{ ctl: TerminalCtl, allDigits?: boolean, sendWith?: string[] }>()
 const expanded = ref(false)
 const modifiers: { key: VirtualModifier, label: string }[] = [
   { key: 'shift', label: 'Shift' },
@@ -25,6 +27,7 @@ const functionKeys: { key: string, label: string, icon?: string, danger?: boolea
   ...Array.from({ length: 12 }, (_, i) => ({ key: `f${i + 1}`, label: `F${i + 1}` })),
 ]
 const active = computed(() => props.ctl.virtualModifiers.value)
+const withKey = (key: string) => props.sendWith?.includes(virtualChord(key, active.value)) || false
 const preview = computed(() => active.value.length
   ? `${displayVirtualChord(active.value.join('+'))} + …`
   : props.ctl.lastVirtualChord.value || t('One-shot chord'))
@@ -52,8 +55,8 @@ function toggleKbd() {
       <button type="button" class="vk-escape" aria-label="Esc" @pointerdown.prevent @click="press('esc')">Esc</button>
       <button v-for="m in modifiers" :key="m.key" type="button" class="vk-mod" :class="{ selected: active.includes(m.key) }"
         :aria-pressed="active.includes(m.key)" :aria-label="t(m.label)" @pointerdown.prevent @click="modifier(m.key)"><UIcon name="i-lucide-arrow-big-up" mode="svg" class="vk-key-icon" aria-hidden="true" /></button>
-      <button type="button" class="vk-tab" :aria-label="displayVirtualChord('tab')" @pointerdown.prevent @click="press('tab')">Tab</button>
-      <button v-for="k in nav" :key="k.key" type="button" class="vk-navigation" :aria-label="displayVirtualChord(k.key)" @pointerdown.prevent @click="press(k.key)"><UIcon :name="k.icon" mode="svg" class="vk-key-icon" aria-hidden="true" /></button>
+      <button type="button" class="vk-tab" :class="{ 'send-with': withKey('tab') }" :aria-label="displayVirtualChord('tab')" @pointerdown.prevent @click="press('tab')">Tab</button>
+      <button v-for="k in nav" :key="k.key" type="button" class="vk-navigation" :class="{ 'send-with': withKey(k.key) }" :aria-label="displayVirtualChord(k.key)" @pointerdown.prevent @click="press(k.key)"><UIcon :name="k.icon" mode="svg" class="vk-key-icon" aria-hidden="true" /></button>
       <button type="button" class="vk-more" :class="{ selected: expanded }" :aria-expanded="expanded" :aria-label="t('Show or hide function keys')" @pointerdown.prevent @click="toggleMore"><UIcon :name="expanded ? 'i-lucide-chevron-down' : 'i-lucide-ellipsis'" mode="svg" /></button>
     </div>
     <div v-if="expanded" class="vk-extra-row" role="toolbar" :aria-label="t('More function keys')">
@@ -61,7 +64,7 @@ function toggleKbd() {
       <div class="vk-function-scroll" :aria-label="t('Swipe for more function keys')">
         <button v-for="m in extraModifiers" :key="m.key" type="button" class="vk-mod" :class="{ selected: active.includes(m.key) }"
           :aria-pressed="active.includes(m.key)" :aria-label="t(m.label)" @pointerdown.prevent @click="modifier(m.key)">{{ t(m.label) }}</button>
-        <button v-for="k in functionKeys" :key="k.key" type="button" :class="{ danger: k.danger }" :aria-label="displayVirtualChord(k.key)" @pointerdown.prevent @click="press(k.key)"><UIcon v-if="k.icon" :name="k.icon" mode="svg" class="vk-key-icon" aria-hidden="true" /><template v-else>{{ k.label }}</template></button>
+        <button v-for="k in functionKeys" :key="k.key" type="button" :class="{ danger: k.danger, 'send-with': withKey(k.key) }" :aria-label="displayVirtualChord(k.key)" @pointerdown.prevent @click="press(k.key)"><UIcon v-if="k.icon" :name="k.icon" mode="svg" class="vk-key-icon" aria-hidden="true" /><template v-else>{{ k.label }}</template></button>
       </div>
     </div>
   </div>
@@ -72,6 +75,7 @@ function toggleKbd() {
 .keybar.virtual-keyboard::before { content: none; }
 .virtual-keyboard button { min-width: 0; height: 36px; margin: 0; padding: 0 3px; border: 1px solid var(--line-soft); border-radius: 4px; background: var(--bg-2); color: var(--text-2); font: 500 12px/1 var(--mono); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
 .virtual-keyboard button.selected { background: var(--mauve); border-color: var(--mauve); color: var(--bg); }
+.virtual-keyboard button.send-with { border-color: var(--accent); color: var(--accent); font-weight: 650; }
 .virtual-keyboard button:active { filter: brightness(1.25); }
 .virtual-keyboard button:disabled { opacity: .35; }
 .vk-strip { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 3px; }
