@@ -88,6 +88,34 @@ const quoteItems = computed(() => [
 ])
 // How questions and points offer to be quoted (utils/questionReply.ts).
 const replyStyleChoice = replyStyle
+
+// Voice input: the on-device speech model (utils/asrModel.ts) lives in Cache
+// Storage; the composer's microphone stays dim until `asrInstalled` is true.
+const asrInstalling = ref(false)
+const asrRemoving = ref(false)
+const asrDlFile = ref('')
+const asrDlGot = ref(0)
+const asrDlTotal = ref(0)
+const asrDlDone = ref(0)
+const asrDlCount = ref(0)
+const asrError = ref('')
+function fmtMb(n: number) { return `${Math.round(n / 1048576)} MB` }
+const asr = {
+  installing: asrInstalling, removing: asrRemoving, error: asrError,
+  dlFile: asrDlFile, dlGot: asrDlGot, dlTotal: asrDlTotal, dlDone: asrDlDone, dlCount: asrDlCount,
+  async install() {
+    asrInstalling.value = true; asrError.value = ''
+    try {
+      await installAsr((p) => { asrDlFile.value = p.file; asrDlGot.value = p.got; asrDlTotal.value = p.total; asrDlDone.value = p.done; asrDlCount.value = p.count })
+    } catch (err) { asrError.value = (err as Error).message }
+    finally { asrInstalling.value = false }
+  },
+  async remove() {
+    asrRemoving.value = true
+    try { await removeAsr() } finally { asrRemoving.value = false }
+  },
+}
+onMounted(() => { refreshAsrInstalled() })
 const replyStyleItems = computed(() => [
   { label: tl('Icon', 'Icône'), description: tl('A small ↳ after each question, and a grey one after each point (on hover on a computer). Default.', 'Un petit ↳ après chaque question, et un gris après chaque point (au survol sur ordinateur). Par défaut.'), value: 'icon' },
   { label: tl('Tap the text', 'Toucher le texte'), description: tl('No button: a question is underlined, tap it. A point: click it on a computer; on a phone, tap it, then “↳ Discuss”.', 'Aucun bouton : une question est soulignée, touche-la. Un point : clique-le sur ordinateur ; sur téléphone, touche-le, puis « ↳ Discuter ».'), value: 'text' },
@@ -426,6 +454,23 @@ onMounted(() => {
             <QuoteTokensPreview v-if="activeSection === 'conversation'" :mode="quoteChoice" />
             <URadioGroup v-model="quoteChoice" :items="quoteItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio quote-mode-radio" />
             <p class="muted settings-hint">{{ tl('Saved on this device.', 'Enregistré sur cet appareil.') }}</p>
+          </div>
+          <div class="settings-group">
+            <h3>{{ tl('Voice input', 'Saisie vocale') }}</h3>
+            <p class="muted settings-lead">{{ tl('Dictate into the message field on this device: the speech model (about 200 MB) downloads once into the browser and stays here — recognition runs on the phone, no server or account. The microphone button in the field turns on once the model is downloaded.', 'Dicte dans le champ de message sur cet appareil : le modèle vocal (environ 200 Mo) se télécharge une fois dans le navigateur et y reste — la reconnaissance tourne sur le téléphone, sans serveur ni compte. Le bouton micro du champ s’active une fois le modèle téléchargé.') }}</p>
+            <div v-if="asrInstalling" class="asr-progress">
+              <progress :value="asrDlDone" :max="asrDlCount || 1" />
+              <p class="muted settings-hint">{{ asrDlFile }}<template v-if="asrDlGot"> · {{ fmtMb(asrDlGot) }}<template v-if="asrDlTotal"> / {{ fmtMb(asrDlTotal) }}</template></template></p>
+            </div>
+            <p v-if="asrError" class="settings-hint asr-error">{{ asrError }}</p>
+            <div class="settings-row">
+              <UButton v-if="!asrInstalled" :loading="asrInstalling" color="primary" variant="soft" icon="i-lucide-download" @click="asr.install">{{ tl('Download the model', 'Télécharger le modèle') }}</UButton>
+              <template v-else>
+                <UBadge color="success" variant="soft"><UIcon name="i-lucide-check" /> {{ tl('Installed on this device', 'Installé sur cet appareil') }}</UBadge>
+                <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-trash-2" :loading="asrRemoving" @click="asr.remove">{{ tl('Remove', 'Supprimer') }}</UButton>
+              </template>
+            </div>
+            <p class="muted settings-hint">{{ tl('Kept on this device across app updates.', 'Conservé sur cet appareil entre les mises à jour de l’app.') }}</p>
           </div>
         </div>
 

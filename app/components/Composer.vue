@@ -215,6 +215,35 @@ onBeforeUnmount(() => {
   // Leaving the pane while browsing must keep the original unsent draft.
   if (history.draft) text.value = history.draft.text
 })
+
+// Voice input (utils/asrModel.ts): the mic stays dim until the model is
+// cached on this device. A recording belongs to this pane's draft — leaving
+// the pane disposes the worker, so a result never lands in another draft.
+const sp = useSpeech()
+onMounted(() => { refreshAsrInstalled() })
+onBeforeUnmount(() => sp.dispose())
+const asrRecording = computed(() => sp.status.value === 'recording')
+const asrBusy = computed(() => ['downloading', 'loading', 'flushing'].includes(sp.status.value))
+let asrDiscard = false
+watch(sp.finalText, (t) => {
+  if (!t) return
+  sp.finalText.value = ''
+  if (asrDiscard) { asrDiscard = false; sp.reset(); return }
+  text.value = text.value + (text.value && !/\s$/.test(text.value) ? ' ' : '') + t
+})
+watch(sp.error, (e) => {
+  if (!e) return
+  sp.error.value = ''
+  toast(tl('Voice input failed', 'La saisie vocale a échoué'), true, e)
+})
+function onMic() {
+  haptic()
+  if (!asrInstalled.value) return toast(tl('Voice input is not installed — download the model in Settings › Conversation', 'Saisie vocale non installée — télécharge le modèle dans Réglages › Conversation'))
+  if (asrBusy.value) return
+  if (asrRecording.value) { sp.stopMic(); return }
+  sp.startMic().catch((err: Error) => toast(err.message, true))
+}
+function cancelAsr() { haptic(); asrDiscard = true; sp.stopMic() }
 function rememberSent(typed: string) {
   rememberPrompt(props.paneId, typed)
   history.reset()
@@ -737,6 +766,11 @@ defineExpose({
         </button>
       </span>
     </div>
+    <div v-if="asrRecording || asrBusy" class="prompt-asr" role="status">
+      <span class="asr-dot" />
+      <span class="asr-live">{{ asrRecording ? (sp.partial.value || tl('Listening…', 'Écoute…')) : sp.status.value === 'flushing' ? tl('Recognizing…', 'Reconnaissance…') : tl('Loading the speech model…', 'Chargement du modèle vocal…') }}</span>
+      <button v-if="asrRecording" type="button" class="asr-x" :aria-label="t('Cancel recording')" @click="cancelAsr"><UIcon name="i-lucide-x" /></button>
+    </div>
     <UChatPrompt
       ref="promptRef" v-model="text" :disabled="Boolean(pane?.stopped)" :placeholder="pane?.stopped ? t('Restart Codex before sending a message') : readOnly ? t('Draft saved — sending unavailable offline') : placeholder" variant="outline" color="neutral"
       :rows="1" :maxrows="7" :autofocus="false" :submit-on-enter="enterSends && !slashOpen"
@@ -779,6 +813,11 @@ defineExpose({
         <UButton
           icon="i-lucide-plus" color="neutral" variant="outline" size="sm" class="prompt-plus" :disabled="readOnly"
           :aria-label="t('Photo, file, paste, commands')" @click="openPlus"
+        />
+        <UButton
+          :icon="asrRecording ? 'i-lucide-square' : 'i-lucide-mic'" color="neutral" variant="outline" size="sm"
+          class="prompt-mic" :class="{ dim: !asrInstalled, rec: asrRecording }" :disabled="readOnly || asrBusy"
+          :aria-label="t('Voice input')" :aria-pressed="asrRecording" @click="onMic"
         />
         <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onFiles">
         <input ref="anyFileInput" type="file" multiple hidden data-testid="attach-any" @change="onFiles">

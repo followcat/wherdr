@@ -5,10 +5,10 @@ export type SpeechStatus = 'idle' | 'downloading' | 'loading' | 'ready' | 'recor
 
 interface DlProgress { file: string; got: number; total: number }
 
-const MODEL = {
-  base: '/models/asr-zipformer-zh-en',
-  files: { encoder: 'encoder.int8.onnx', decoder: 'decoder.int8.onnx', joiner: 'joiner.int8.onnx', tokens: 'tokens.txt' },
-}
+const MODEL = ASR_MODEL
+// A single take is capped — the transducer is streaming, but a forgotten
+// recording should still end somewhere on a phone.
+const MAX_RECORD_MS = 120_000
 
 export function useSpeech() {
   const status = ref<SpeechStatus>('idle')
@@ -26,6 +26,7 @@ export function useSpeech() {
   let node: ScriptProcessorNode | null = null
   let src: MediaStreamAudioSourceNode | null = null
   let media: MediaStream | null = null
+  let capTimer: ReturnType<typeof setTimeout> | null = null
 
   function onMsg(e: MessageEvent) {
     const m = e.data
@@ -63,9 +64,11 @@ export function useSpeech() {
     finalText.value = ''
     segments.value = []
     status.value = 'recording'
+    capTimer = setTimeout(() => stopMic(), MAX_RECORD_MS)
   }
 
   function stopMic() {
+    if (capTimer) { clearTimeout(capTimer); capTimer = null }
     node?.disconnect(); src?.disconnect()
     node = null; src = null
     media?.getTracks().forEach(t => t.stop()); media = null
@@ -100,5 +103,5 @@ export function useSpeech() {
     status.value = 'idle'
   }
 
-  return { status, error, phase, dl, partial, segments, finalText, loadMs, decodeMs, ensure, startMic, stopMic, reset, decodeBlob, dispose }
+  return { status, error, phase, dl, partial, segments, finalText, loadMs, decodeMs, installed: asrInstalled, ensure, startMic, stopMic, reset, decodeBlob, dispose }
 }

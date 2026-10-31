@@ -2023,6 +2023,17 @@ body.kb .composer { padding-bottom: 8px; }
 .prompt-models .model-pick { max-width: 100%; }
 .prompt-plus { flex: none; width: 32px; height: 32px; justify-content: center; color: var(--text-2); border-color: var(--line); }
 .prompt-plus .iconify { width: 18px; height: 18px; }
+.prompt-mic { flex: none; width: 32px; height: 32px; justify-content: center; color: var(--text-2); border-color: var(--line); }
+.prompt-mic .iconify { width: 18px; height: 18px; }
+.prompt-mic.dim { opacity: .38; }
+.prompt-mic.rec { color: var(--danger); border-color: var(--danger); }
+.prompt-asr { display: flex; align-items: center; gap: 8px; margin: 0 2px 6px; font-size: 12px; color: var(--muted); }
+.prompt-asr .asr-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); animation: asr-pulse 1.1s ease-in-out infinite; }
+.prompt-asr .asr-live { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-asr .asr-x { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 0; background: transparent; color: var(--muted); padding: 0; }
+.prompt-asr .asr-x .iconify { width: 14px; height: 14px; }
+@keyframes asr-pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .prompt-asr .asr-dot { animation: none; } }
 .prompt-hint {
   flex: 1; display: flex; align-items: center; gap: 4px; justify-content: flex-end;
   font: 400 11px/1 var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden;
@@ -2446,6 +2457,9 @@ body.kb .composer { padding-bottom: 8px; }
 .settings-group h3::before, .theme-section-title::before { content: ''; width: 18px; height: 1px; background: var(--line); }
 .settings-hint { font-size: 13px; margin: -20px 2px 30px; }
 .settings-group .settings-hint { margin: 9px 2px 0; }
+.settings-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.asr-progress progress { width: 100%; }
+.settings-hint.asr-error { color: var(--danger); }
 /* Sub-section of a settings section shown only on a computer (Appearance › Desktop). */
 .settings-subhead { margin: 6px 0 22px; padding-top: 22px; border-top: 1px solid var(--line); }
 .projects-plugin-intro { margin: 0 0 12px; color: var(--text-2); font-size: 14px; line-height: 1.55; }
