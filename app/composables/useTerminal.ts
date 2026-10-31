@@ -246,13 +246,19 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   }
 
   async function sendVirtualKey(key: string) {
-    if (opts.input?.() === false) return
     const chord = virtualChord(key, virtualModifiers.value)
+    // A draft terminator of the conversation ("Send with Ctrl+Enter") resolves
+    // before the terminal-input gate: it is a composer action, and the pane's
+    // terminal is not necessarily connected in conversation mode — the gate
+    // would swallow the chord silently.
+    if (opts.submitKey?.(chord)) {
+      virtualModifiers.value = []
+      lastVirtualChord.value = displayVirtualChord(chord)
+      return
+    }
+    if (opts.input?.() === false) return
     virtualModifiers.value = []
     lastVirtualChord.value = displayVirtualChord(chord)
-    // A draft terminator of the conversation ("Send with Tab"): the resolved
-    // chord ends the draft, the terminal never sees the key.
-    if (opts.submitKey?.(chord)) return
     const navigation = virtualNavigationBytes(chord)
     if (navigation) {
       if (!sendTerm({ type: 'terminal.input', text: navigation })) toast(tl('Terminal is still connecting — try again', 'Le terminal se connecte encore — réessaie'), true)
