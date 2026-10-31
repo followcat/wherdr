@@ -161,34 +161,56 @@ async function fsWriteStreamed(path, res) {
   } finally { Module.FS.close(fd) }
 }
 
-function recognizerConfig(kind, providers) {
-  if (kind === 'qwen3Asr') {
-    return providers.map(p => () => new OfflineRecognizer({
-      modelConfig: {
-        qwen3Asr: {
-          convFrontend: `${MODEL_DIR}/conv_frontend.onnx`,
-          encoder: `${MODEL_DIR}/encoder.int8.onnx`,
-          decoder: `${MODEL_DIR}/decoder.int8.onnx`,
-          tokenizer: `${MODEL_DIR}/tokenizer`,
-          // ~13 audio tokens/s: 2048 covers a 120 s take with headroom.
-          maxTotalLen: 2048,
-          maxNewTokens: 512,
-        },
-        tokens: '',
-        numThreads: 1,
-        provider: p,
-        debug: 0,
-      },
-    }, Module))
+// Per-engine modelConfig bodies — field names are the JS binding's
+// camelCase (useItn, not useInverseTextNormalization; a wrong name is
+// ignored silently and SenseVoice then never emits punctuation).
+function engineBody(kind) {
+  const M = MODEL_DIR
+  switch (kind) {
+    case 'qwen3Asr': return {
+      convFrontend: `${M}/conv_frontend.onnx`,
+      encoder: `${M}/encoder.int8.onnx`,
+      decoder: `${M}/decoder.int8.onnx`,
+      tokenizer: `${M}/tokenizer`,
+      // ~13 audio tokens/s: 2048 covers a 120 s take with headroom.
+      maxTotalLen: 2048,
+      maxNewTokens: 512,
+    }
+    case 'funasrNano': return {
+      encoderAdaptor: `${M}/encoder_adaptor.int8.onnx`,
+      llm: `${M}/llm.int8.onnx`,
+      embedding: `${M}/embedding.int8.onnx`,
+      tokenizer: `${M}/Qwen3-0.6B`,
+      language: '',
+      itn: 1,
+      userPrompt: '语音转写:',
+      maxNewTokens: 512,
+    }
+    case 'cohereTranscribe': return {
+      encoder: `${M}/encoder.int8.onnx`,
+      decoder: `${M}/decoder.int8.onnx`,
+      language: '',
+    }
+    case 'senseVoice': return {
+      model: `${M}/model.int8.onnx`,
+      language: '',
+      useItn: 1,
+    }
+    // wenetCtc / omnilingual / dolphin / fireRedAsrCtc and any other
+    // single-file CTC engine take just {model}.
+    default: return { model: `${M}/model.int8.onnx` }
   }
+}
+
+function recognizerConfig(kind, providers) {
+  const body = engineBody(kind)
+  // The LLM-style engines carry their own tokenizer dir; the rest read
+  // modelConfig.tokens.
+  const tokens = (kind === 'qwen3Asr' || kind === 'funasrNano') ? '' : `${MODEL_DIR}/tokens.txt`
   return providers.map(p => () => new OfflineRecognizer({
     modelConfig: {
-      senseVoice: {
-        model: `${MODEL_DIR}/model.int8.onnx`,
-        language: '',
-        useInverseTextNormalization: 1,
-      },
-      tokens: `${MODEL_DIR}/tokens.txt`,
+      [kind]: body,
+      tokens,
       numThreads: 1,
       provider: p,
       debug: 0,

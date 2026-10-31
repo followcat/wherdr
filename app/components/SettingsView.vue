@@ -92,36 +92,44 @@ const replyStyleChoice = replyStyle
 // Voice input: the on-device speech model (utils/asrModel.ts) lives in Cache
 // Storage; the composer's microphone stays dim until `asrInstalled` is true.
 // `asrModelId` picks which of ASR_MODELS the mic loads.
-const asrInstalling = ref(false)
-const asrRemoving = ref(false)
 const asrDlFile = ref('')
 const asrDlGot = ref(0)
 const asrDlTotal = ref(0)
 const asrDlDone = ref(0)
 const asrDlCount = ref(0)
 const asrError = ref('')
+const asrInstallingId = ref('')
+const asrRemovingId = ref('')
 function fmtMb(n: number) { return `${Math.round(n / 1048576)} MB` }
+const ASR_MODEL_INFO: Record<string, { label: string, en: string, fr: string }> = {
+  sensevoice: { label: 'SenseVoice-small', en: 'Fast, light (~230 MB): zh/en/ja/ko/廣東話 auto-detected, punctuation. The everyday pick.', fr: 'Rapide, léger (~230 Mo) : zh/en/ja/ko/廣東話 détectés tout seuls, ponctuation. Le choix quotidien.' },
+  qwen3: { label: 'Qwen3-ASR 0.6B', en: 'Sharpest Cantonese — real 廣東話 characters and full punctuation; ~980 MB, decodes slowly.', fr: 'Cantonais le plus net — vrais caractères 廣東話 et ponctuation ; ~980 Mo, décodage lent.' },
+  funasr: { label: 'FunASR-Nano', en: 'LLM-based (~970 MB): zh/en/ja/ko, 廣東話 and dialects, with punctuation. Heavy like Qwen3.', fr: 'Basé LLM (~970 Mo) : zh/en/ja/ko, 廣東話 et dialectes, avec ponctuation. Lourd comme Qwen3.' },
+  wsyue: { label: 'Wenetspeech-Yue', en: 'Cantonese specialist (~130 MB), zh/en/廣東話, fastest — no other languages, no punctuation.', fr: 'Spécialiste cantonais (~130 Mo), zh/en/廣東話, le plus rapide — pas d’autres langues, pas de ponctuation.' },
+  firered2: { label: 'FireRedASR2 CTC', en: 'Cantonese + 20 dialects (~740 MB), zh/en; heavy and unpunctuated.', fr: 'Cantonais + 20 dialectes (~740 Mo), zh/en ; lourd et sans ponctuation.' },
+  omnilingual: { label: 'Omnilingual 300M', en: '1600+ languages (~350 MB); its Cantonese came out garbled in our tests — pick for rare languages only.', fr: '1600+ langues (~350 Mo) ; son cantonais sortait illisible à nos tests — pour les langues rares seulement.' },
+  dolphin: { label: 'Dolphin-base', en: 'Smallest (~100 MB), 40 languages + Chinese dialects; weak on Cantonese.', fr: 'Le plus petit (~100 Mo), 40 langues + dialectes chinois ; faible en cantonais.' },
+}
 const asrModelItems = computed(() => ASR_MODEL_IDS.map(id => ({
-  label: id === 'qwen3' ? 'Qwen3-ASR 0.6B' : 'SenseVoice-small',
-  description: id === 'qwen3'
-    ? tl('Clearest Cantonese — real 廣東話 characters and punctuation; ~980 MB, decodes slower. Also strong in zh/en/ja/ko.', 'Cantonais le plus net — vrais caractères 廣東話 et ponctuation ; ~980 Mo, décodage plus lent. Fort aussi en zh/en/ja/ko.')
-    : tl('Fast and light (~230 MB): zh/en/ja/ko/廣東話 auto-detected, no punctuation. The safe everyday pick.', 'Rapide et léger (~230 Mo) : zh/en/ja/ko/廣東話 détectés tout seuls, sans ponctuation. Le choix quotidien sûr.'),
+  label: ASR_MODEL_INFO[id]?.label || id,
+  description: ASR_MODEL_INFO[id] ? tl(ASR_MODEL_INFO[id]!.en, ASR_MODEL_INFO[id]!.fr) : '',
+  size: fmtMb(ASR_MODELS[id]!.bytes),
   value: id,
 })))
 const asrInstalled = computed(() => Boolean(asrInstalledBy.value[asrModelId.value]))
 const asr = {
-  installing: asrInstalling, removing: asrRemoving, error: asrError,
+  installingId: asrInstallingId, removingId: asrRemovingId, error: asrError,
   dlFile: asrDlFile, dlGot: asrDlGot, dlTotal: asrDlTotal, dlDone: asrDlDone, dlCount: asrDlCount,
-  async install() {
-    asrInstalling.value = true; asrError.value = ''
+  async install(id: string) {
+    asrInstallingId.value = id; asrError.value = ''
     try {
-      await installAsr((p) => { asrDlFile.value = p.file; asrDlGot.value = p.got; asrDlTotal.value = p.total; asrDlDone.value = p.done; asrDlCount.value = p.count })
+      await installAsr((p) => { asrDlFile.value = p.file; asrDlGot.value = p.got; asrDlTotal.value = p.total; asrDlDone.value = p.done; asrDlCount.value = p.count }, undefined, id)
     } catch (err) { asrError.value = (err as Error).message }
-    finally { asrInstalling.value = false }
+    finally { asrInstallingId.value = '' }
   },
-  async remove() {
-    asrRemoving.value = true
-    try { await removeAsr() } finally { asrRemoving.value = false }
+  async remove(id: string) {
+    asrRemovingId.value = id
+    try { await removeAsr(undefined, id) } finally { asrRemovingId.value = '' }
   },
 }
 onMounted(() => { refreshAsrInstalled() })
@@ -467,20 +475,23 @@ onMounted(() => {
           <div class="settings-group">
             <h3>{{ tl('Voice input', 'Saisie vocale') }}</h3>
             <p class="muted settings-lead">{{ tl('Dictate into the message field on this device: the speech model downloads once into the browser and stays here — recognition runs on the phone, no server or account. The microphone button in the field turns on once the model is downloaded.', 'Dicte dans le champ de message sur cet appareil : le modèle vocal se télécharge une fois dans le navigateur et y reste — la reconnaissance tourne sur le téléphone, sans serveur ni compte. Le bouton micro du champ s’active une fois le modèle téléchargé.') }}</p>
-            <URadioGroup :model-value="asrModelId" :items="asrModelItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" @update:model-value="selectAsrModel" />
-            <div v-if="asrInstalling" class="asr-progress">
+            <div class="asr-model-list">
+              <div v-for="m in asrModelItems" :key="m.value" class="asr-model-row" :class="{ 'asr-model-on': asrModelId === m.value }">
+                <button type="button" class="asr-model-pick" @click="selectAsrModel(m.value)">
+                  <UIcon :name="asrModelId === m.value ? 'i-lucide-circle-dot' : 'i-lucide-circle'" class="asr-model-dot" />
+                  <span class="asr-model-text"><b>{{ m.label }}</b><small>{{ m.description }}</small></span>
+                </button>
+                <UBadge v-if="asrInstalledBy[m.value]" color="success" variant="soft"><UIcon name="i-lucide-check" /> {{ tl('Installed', 'Installé') }}</UBadge>
+                <UButton v-if="!asrInstalledBy[m.value]" color="primary" variant="soft" size="sm" icon="i-lucide-download" :loading="asr.installingId.value === m.value" :disabled="Boolean(asr.installingId.value) || Boolean(asr.removingId.value)" @click="asr.install(m.value)">{{ m.size }}</UButton>
+                <UButton v-else color="neutral" variant="ghost" size="sm" icon="i-lucide-trash-2" :loading="asr.removingId.value === m.value" :disabled="Boolean(asr.installingId.value)" @click="asr.remove(m.value)">{{ tl('Remove', 'Supprimer') }}</UButton>
+              </div>
+            </div>
+            <div v-if="asr.installingId.value" class="asr-progress">
               <progress :value="asrDlDone" :max="asrDlCount || 1" />
               <p class="muted settings-hint">{{ asrDlFile }}<template v-if="asrDlGot"> · {{ fmtMb(asrDlGot) }}<template v-if="asrDlTotal"> / {{ fmtMb(asrDlTotal) }}</template></template></p>
             </div>
             <p v-if="asrError" class="settings-hint asr-error">{{ asrError }}</p>
-            <div class="settings-row">
-              <UButton v-if="!asrInstalled" :loading="asrInstalling" color="primary" variant="soft" icon="i-lucide-download" @click="asr.install">{{ tl('Download the model', 'Télécharger le modèle') }}</UButton>
-              <template v-else>
-                <UBadge color="success" variant="soft"><UIcon name="i-lucide-check" /> {{ tl('Installed on this device', 'Installé sur cet appareil') }}</UBadge>
-                <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-trash-2" :loading="asrRemoving" @click="asr.remove">{{ tl('Remove', 'Supprimer') }}</UButton>
-              </template>
-            </div>
-            <p class="muted settings-hint">{{ tl('Kept on this device across app updates.', 'Conservé sur cet appareil entre les mises à jour de l’app.') }}</p>
+            <p class="muted settings-hint">{{ tl('Tap a name to pick the mic\'s model; install or remove each independently. Kept on this device across app updates.', 'Touche un nom pour choisir le modèle du micro ; installe ou supprime chacun indépendamment. Conservés sur cet appareil entre les mises à jour de l’app.') }}</p>
           </div>
         </div>
 
