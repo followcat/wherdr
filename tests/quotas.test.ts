@@ -186,7 +186,7 @@ describe('impossible reset time', () => {
 
 describe('Claude status line set up?', () => {
   const status = { rate_limits: { five_hour: { used_percentage: 1, resets_at: 1 } } }
-  const ours = '#!/bin/sh\n# … claude-account …'
+  const ours = '#!/bin/sh\n# … claude-account … total_api_duration_ms …'
   const wired = '{ "statusLine": { "command": "sh /home/x/.claude/wherdr-statusline.sh" } }'
   it('complete reading, or account without quotas: ok', () => {
     expect(claudeSetupState({ status, account: true, statusline: null, settings: null })).toBe('ok')

@@ -7,6 +7,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { terminalPixelWidth } from '~/utils/terminalSize'
+import { guardWebglCanvasSize } from '~/utils/terminalRenderer'
 import { bindTerminalSelection } from '~/utils/terminalSelection'
 import { bindTerminalLinks, type TerminalLinks } from '~/utils/terminalLinks'
 import { captureTerminalScreen } from '~/utils/terminalCopy'
@@ -170,8 +171,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       ta.addEventListener('compositionstart', composition.start)
       ta.addEventListener('compositionend', composition.end)
     }
-    // Run before xterm's textarea listener emits data, so a cancelled
-    // composition cannot swallow the next real shortcut.
+    // Capture on the terminal's element runs before xterm's own keydown
+    // listener on the textarea, so the stale flag is dropped before xterm
+    // emits the keystroke's data (cancelled IME, then Alt + ←).
     term.element?.addEventListener('keydown', composition.keydown, true)
     // Wheel: xterm does nothing with it (it would send ↑/↓ to the agent, see
     // utils/terminalWheel.ts); TerminalView converts it to terminal.scroll.
@@ -302,6 +304,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
           fitNow(true)
         })
         term.loadAddon(addon)
+        // Backing store at CSS size × devicePixelRatio, whatever the browser reports.
+        guardWebglCanvasSize(addon)
         webgl = addon
         reportTerminalRenderer('webgl')
       } catch {

@@ -3,9 +3,13 @@
 // Fixtures: real omp 18.4 screens captured in a throwaway session
 // (--approval-mode always-ask): bash and eval approvals, an eval whose long
 // code scrolls the title off the screen, the idle input field.
+// omp-approve-1814-*: real omp 18.14.0 screens (120 columns, a stub model
+// calling the tool; the project path replaced by ~/demo): the dialog in the
+// composer's place, with a summarized detail row. omp-approve-inline.txt: the
+// same dialog without its frame, reconstructed from a user report.
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { inputVisible, keysFor, parseOmpPrompt, screenChoices } from '../server/utils/choices'
+import { inputVisible, keysFor, parseOmpPrompt, promptIdentity, screenChoices } from '../server/utils/choices'
 import { pendingOmpTool } from '../server/utils/promptDetail'
 import { shouldHold } from '../server/utils/queued'
 import { viaPrompt } from '../shared/sendRoute'
@@ -48,6 +52,104 @@ describe('omp approval dialog on screen', () => {
     expect(parseOmpPrompt(fx('omp-idle-powerline.txt'))).toBeNull()
     expect(parseOmpPrompt(fx('omp-idle-footer.txt'))).toBeNull()
     expect(parseOmpPrompt(fx('omp-ask-single.txt'))!.question).toBe('Favourite colour?')
+  })
+})
+
+describe('omp 18.14 approval prompt (in the composer\'s place)', () => {
+  const labels = (c: Choices | null) => c?.options.map(o => o.label)
+  it('reads the tool, its summarized input and every choice, for each tool', () => {
+    expect(screenChoices(fx('omp-approve-1814-eval.txt'), 'omp')).toEqual({
+      identity: expect.any(String),
+      question: 'Allow tool: eval',
+      cursor: 0,
+      options: [{ label: 'Approve', hint: null }, { label: 'Approve eval for this session', hint: null }, { label: 'Deny', hint: null }],
+      detail: { tool: 'eval', command: 'Language: python · Code: print(6*7)' },
+    })
+    expect(parseOmpPrompt(fx('omp-approve-1814-eval-long.txt'))!.detail).toEqual({ tool: 'eval', command: 'Language: python · Code: import os …' })
+    expect(parseOmpPrompt(fx('omp-approve-1814-bash.txt'))).toMatchObject({ question: 'Allow tool: bash', cursor: 1, detail: { tool: 'bash', command: 'Command: echo hello > out.txt' } })
+    expect(parseOmpPrompt(fx('omp-approve-1814-edit.txt'))).toMatchObject({ question: 'Allow tool: edit', cursor: 0, detail: { tool: 'edit', command: 'File: notes.txt' } })
+    expect(labels(parseOmpPrompt(fx('omp-approve-1814-edit.txt')))).toEqual(['Approve', 'Approve edit for this session', 'Deny'])
+  })
+  it('symbol presets and a narrow pane (footer cut)', () => {
+    expect(parseOmpPrompt(fx('omp-approve-1814-ascii.txt'))).toMatchObject({ question: 'Allow tool: bash', cursor: 0, detail: { command: 'Command: ls -la' } })
+    expect(parseOmpPrompt(fx('omp-approve-1814-nerd-write.txt'))).toMatchObject({ question: 'Allow tool: write', cursor: 0, detail: { tool: 'write', command: 'Path: notes.txt · Content: line one …' } })
+    expect(parseOmpPrompt(fx('omp-approve-1814-narrow.txt'))).toMatchObject({ question: 'Allow tool: bash', cursor: 2 })
+  })
+  it('Ctrl+O details: every row on show, without the scrollbar column', () => {
+    const c = parseOmpPrompt(fx('omp-approve-1814-eval-details.txt'))!
+    expect(c.detail!.command).toBe('Language: python\nCode:\nimport os\nprint(1)\nprint(2)\nprint(3)\nprint(4)\nprint(5)')
+    expect(labels(c)).toEqual(['Approve', 'Approve eval for this session', 'Deny'])
+  })
+  it('grants: the choices start at the "Remember" toggle, the folder listing stays in the details', () => {
+    const c = parseOmpPrompt(fx('omp-approve-1814-write-grants.txt'))!
+    expect(labels(c)).toEqual(['☐ Remember across sessions', 'Approve Directory: ~/demo', 'Approve File', 'Approve Once', 'Deny'])
+    expect(c.cursor).toBe(3)
+    expect(c.detail!.command).toMatch(/^Reason: target not yet approved\n[\s\S]*\n {2}- \.git\/\n {2}- notes\.txt$/)
+  })
+  it('answers with arrows then Enter, from the cursor shown', () => {
+    const bash = parseOmpPrompt(fx('omp-approve-1814-bash.txt'))!
+    expect(keysFor(bash, 0)).toEqual(['up', 'enter'])
+    expect(keysFor(bash, 2)).toEqual(['down', 'enter'])
+    const evalc = parseOmpPrompt(fx('omp-approve-1814-eval.txt'))!
+    expect(keysFor(evalc, 0)).toEqual(['enter'])
+    expect(keysFor(evalc, 1)).toEqual(['down', 'enter'])
+  })
+  it('a draft in the composer: only "Deny and send message" (the arrows would edit the draft)', () => {
+    const c = parseOmpPrompt(fx('omp-approve-1814-draft.txt'))!
+    expect(c).toMatchObject({ question: 'Allow tool: eval', cursor: 0, options: [{ label: 'Deny and send message' }] })
+    expect(keysFor(c, 0)).toEqual(['enter'])
+  })
+  it('a countdown in the title neither shows nor changes the question', () => {
+    const text = fx('omp-approve-1814-eval.txt')
+    const timed = text.replace('╭─ Allow tool: eval ──────', '╭─ Allow tool: eval (12s) ')
+    expect(timed).not.toBe(text)
+    expect(parseOmpPrompt(timed)!.question).toBe('Allow tool: eval')
+    expect(promptIdentity(timed, 'omp')).toBe(promptIdentity(text, 'omp'))
+  })
+  it('without the frame: title, details, choices and footer at one indent', () => {
+    const text = fx('omp-approve-inline.txt')
+    expect(screenChoices(text, 'omp')).toEqual({
+      identity: expect.any(String),
+      question: 'Allow tool: eval',
+      cursor: 0,
+      options: [{ label: 'Approve', hint: null }, { label: 'Deny', hint: null }],
+      detail: { tool: 'eval', command: 'Language: python · Code: import os …' },
+    })
+    for (const cursor of ['❯', '>', '']) expect(parseOmpPrompt(text.replace('› Approve', `${cursor} Approve`))!.cursor).toBe(0)
+    const moved = parseOmpPrompt(text.replace('   › Approve', '     Approve').replace('     Deny', '   › Deny'))!
+    expect(moved.cursor).toBe(1)
+    expect(keysFor(moved, 0)).toEqual(['up', 'enter'])
+    const unicode = text.replace('↵ select · ^↵/^Q approve · ⌫ deny · ^O', '⏎ select · Ctrl+⏎/Ctrl+Q approve · ⎋ deny · Ctrl+O')
+    expect(parseOmpPrompt(unicode)!.question).toBe('Allow tool: eval')
+    expect(inputVisible(text)).toBe(false)
+  })
+  it('gone once omp moves on, and the composer is seen again', () => {
+    expect(parseOmpPrompt(fx('omp-approve-1814-answered.txt'))).toBeNull()
+    expect(inputVisible(fx('omp-approve-1814-answered.txt'))).toBe(true)
+    for (const f of ['eval', 'bash', 'draft', 'write-grants', 'narrow']) expect(inputVisible(fx(`omp-approve-1814-${f}.txt`))).toBe(false)
+  })
+  it('never reads the dialog from transcript text', () => {
+    const idle = fx('omp-approve-1814-answered.txt').split('\n')
+    const at = idle.findIndex(l => l.startsWith(' Done.'))
+    const quote = (rows: string[]) => [...idle.slice(0, at), ...rows, ...idle.slice(at)].join('\n')
+    // A reply quoting the prompt, above the idle composer: no footer.
+    expect(parseOmpPrompt(quote([' Allow tool: eval', ' > Approve', '   Deny']))).toBeNull()
+    // Quoting it with its footer, then more of the conversation below.
+    const dialog = [' Allow tool: eval', ' Language: python', ' > Approve', '   Deny', ' ↑/↓ choose · ⏎ select · Ctrl+⏎/Ctrl+Q approve · ⎋ deny']
+    expect(parseOmpPrompt(quote([...dialog, ' and then', ' some', ' more', ' lines', ' of', ' the', ' reply']))).toBeNull()
+    // Unframed, without the "Allow tool:" title.
+    expect(parseOmpPrompt(fx('omp-approve-inline.txt').replace('   Allow tool: eval', '   Something else'))).toBeNull()
+    // Framed, but no rule above the footer.
+    expect(parseOmpPrompt(fx('omp-approve-1814-eval.txt').replace(/├─+┤\n/, ''))).toBeNull()
+    // No Deny row: not an approval.
+    expect(parseOmpPrompt(fx('omp-approve-1814-eval.txt').replace('│   Deny  ', '│   Later '))).toBeNull()
+  })
+  it('the ask box keeps its layout in 18.14', () => {
+    expect(parseOmpPrompt(fx('omp-ask-1814-single.txt'))).toEqual({
+      question: 'Favourite colour?',
+      cursor: 0,
+      options: [{ label: 'Red', hint: 'warm' }, { label: 'Green', hint: 'calm' }, { label: 'Blue', hint: 'cool' }, { label: 'Other (type your own)', hint: null, free: true }],
+    })
   })
 })
 

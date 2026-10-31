@@ -125,6 +125,7 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
   }
 
   let terminalVersion = '0.9.1'
+  let splitLagMs = 0
   const terminalMouse = []
   let integrations = {}
   let plugins = []
@@ -207,6 +208,8 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
     // installed unless a spec says otherwise): { codex: 'missing' }…
     'e2e.integrations': params => { integrations = { ...(params.states || {}) }; return {} },
     'e2e.integration_states': () => ({ states: integrations }),
+    // Herdr renames a workspace (the real `workspace.rename` above leaves it intact).
+    'e2e.workspace_label': params => { allWorkspaces.find(w => w.id === params.workspace_id).label = params.label; return {} },
     'e2e.pane_status': params => { need(params.pane_id).status = params.status; return {} },
     // Herdr closes the pane and opens another one for the same agent (same
     // conversation, as herdr-projects restarting a coordinator): a new id.
@@ -347,6 +350,22 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
       ;(p.osc ||= []).push(params.data)
       return {}
     },
+    // "Split": a new plain-shell pane in the target's workspace. `splitLagMs`
+    // (e2e.split_lag): the new pane stays out of session snapshots for that
+    // long, as when wherdr's pane list has not seen it yet.
+    'pane.split': (params) => {
+      const t = need(params.target_pane_id)
+      const w = allWorkspaces.find(x => x.id === t.workspace)
+      let n = 2
+      while (paneById(`${t.workspace}:p${n}`)) n++
+      const id = `${t.workspace}:p${n}`
+      const p = { id, agent: null, status: 'unknown', cwd: params.cwd || t.cwd, workspace: t.workspace, size: { ...t.size }, control: null, hidden: splitLagMs > 0 }
+      allPanes.push(p)
+      w.panes.push(p)
+      if (splitLagMs > 0) setTimeout(() => { p.hidden = false }, splitLagMs)
+      return { pane: { pane_id: id, tab_id: `${t.workspace}:t1`, workspace_id: t.workspace } }
+    },
+    'e2e.split_lag': (params) => { splitLagMs = Number(params.ms) || 0; return { ms: splitLagMs } },
     'pane.layout': (params) => {
       const p = need(params.pane_id)
       return { layout: snapshot().layouts.find(l => l.workspace_id === p.workspace) }

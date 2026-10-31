@@ -1,5 +1,7 @@
 # Documentation
 
+**Updating to 2.4.0?** Read the [2.4.0 release notes](release-notes-2.4.0.md) for Shepherdr 2 protection, Board search, terminal controls and wake reconnection fixes.
+
 **Updating to 2.3.0?** Read the [2.3.0 release notes](release-notes-2.3.0.md) for grouped worktrees, project headers, notification menus and agent naming fixes.
 
 **Updating to 2.2.0?** Read the [2.2.0 release notes](release-notes-2.2.0.md) for task types, plan approval, faster conversation opening and paste fixes.
@@ -29,6 +31,7 @@ Read only the page relevant to your task. Start with [Installation and updates](
 - [Notifications](notifications.md) — Enable Web Push, relay Herdr notifications and configure Do not disturb.
 - [Board and coordinators](board.md) — Work with herdr-projects tasks, reviews, approvals and coordinators across machines.
 - [Security](security.md) — Understand remote-shell access, passkeys and network restrictions. Read this before enabling remote access.
+- [Design rules](design.md) — The single reference for interface styling, state indicators, controls and responsive checks.
 - [Development and tests](development.md) — Run from source and follow the contribution and agent test rules.
 - [Troubleshooting](troubleshooting.md) — Resolve startup, permissions, network, SSH and conversation problems.
 

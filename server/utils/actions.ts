@@ -5,7 +5,8 @@ import crypto from 'node:crypto'
 import { AGENT_KINDS, DATA_DIR, HOME, RESUME_ARGS, UPLOAD_DIR, UPLOAD_TTL_MS, log } from './env'
 import { HerdrError, herdr, herdrOn, sleep } from './herdr'
 import { panelOpen } from './choices'
-import { addQueued, findPane, pendingPrompts, poll } from './state'
+import { addQueued, findPane, pendingPrompts, poll, pollFresh } from './state'
+import { findNewPane } from './newPane'
 import { type Machine, RemoteMachine, allMachines, getMachine, machineOfPane } from './machines'
 import { type DirDenied, type DirEntryRaw, LIST_DIRS_SCRIPT, dirDeniedFromCode, dirDeniedFromError, listDirsLocal, parseDirList } from './fsx'
 import { PANE_RE, joinId, toAgentName } from '../../shared/ids'
@@ -50,11 +51,17 @@ export async function createAgent(body: Json) {
   if (kind !== 'shell' && !AGENT_KINDS.includes(kind)) throw new HerdrError('bad_kind', fmt('Unknown agent: {kind}', { kind }))
   // Existing pane (terminal just created by "Split"): the agent starts there,
   // on its machine and in its folder, without a new workspace.
-  let target = body.pane_id ? findPane(String(body.pane_id)) : null
-  // Pane of a tab just created ("New tab"): not in the state yet.
+  let target = body.pane_id ? findPane(String(body.pane_id)) || null : null
+  // Pane just created ("Split", "New tab"): wherdr's pane list may not have
+  // seen it yet. Its machine is in its id: fresh polls of that machine, for a
+  // short while. Machine offline: said as such, not "Pane not found".
   if (body.pane_id && !target && PANE_RE.test(String(body.pane_id))) {
-    await poll()
-    target = findPane(String(body.pane_id))
+    const id = String(body.pane_id)
+    const pm = machineOfPane(id)
+    if (pm) {
+      machineFor(pm.key)
+      target = (await findNewPane(id, { find: findPane, refresh: () => pollFresh(pm), sleep })) || null
+    }
   }
   if (body.pane_id) {
     if (!PANE_RE.test(String(body.pane_id)) || !target) throw new HerdrError('bad_pane', 'Pane not found')

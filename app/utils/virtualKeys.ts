@@ -49,7 +49,7 @@ const INPUT_KEYS: Record<string, string> = {
 // a composed word must never turn into a sequence of terminal shortcuts.
 export function virtualInputAction(data: string): { kind: 'key', key: string } | { kind: 'paste' } | { kind: 'blocked' } {
   if (data.startsWith('\x1b[200~')) return { kind: 'paste' }
-  const named = INPUT_KEYS[data]
+  const named = Object.hasOwn(INPUT_KEYS, data) ? INPUT_KEYS[data] : undefined
   if (named) return { kind: 'key', key: named }
   if (/^[!-~]$/.test(data)) {
     if (data === '+') return { kind: 'key', key: 'plus' }

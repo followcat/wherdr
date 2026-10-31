@@ -1,6 +1,6 @@
 id = "afloury.wherdr"
 name = "wherdr"
-version = "2.3.0"
+version = "2.4.0"
 min_herdr_version = "0.9.1"
 description = "Your Herdr agents from your phone and browser: live conversations, real terminals, push notifications and one-tap answers. Self-hosted, private network only."
 platforms = ["linux", "macos"]

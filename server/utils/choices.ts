@@ -464,6 +464,9 @@ const OMP_SELECT_OPTION = new RegExp(`^ (?:(${ompAlt(OMP_CURSOR)})|\\s)\\s(\\S.*
 export function parseOmpSelect(text: string | null | undefined, full = false): Choices | null {
   if (!text) return null
   const lines = text.replace(/\s+$/, '').split('\n')
+  return readOmpSelect(lines, full) || readOmpApproval(lines, full)
+}
+function readOmpSelect(lines: string[], full: boolean): Choices | null {
   const legend = lastMatch(lines, OMP_SELECT_LEGEND)
   if (legend < 0) return null
   // Only the box's margin and bottom below the legend: the dialog is open.
@@ -500,6 +503,104 @@ export function parseOmpSelect(text: string | null | undefined, full = false): C
     ? { tool: tool || 'tool', ...(body.length ? { command: body.join('\n') } : {}) }
     : undefined
   return { question: title, cursor, options, ...(detail ? { detail } : {}) }
+}
+
+// omp 18.14+: the approval prompt takes the composer's place (the composer
+// stays below it), one row per detail, a rule, then a footer:
+//
+//   ╭─ Allow tool: eval ─────────────────────────────╮   " (12s)" while a timeout runs
+//   │ Language: python · Code: import os …           │   details summarized (Ctrl+O: in full, scrolled)
+//   │ ❯ Approve                                      │   choices: Approve, "Approve eval for this
+//   │   Approve eval for this session                │   session", Deny ("Approve Once" under the
+//   │   Deny                                         │   grants and their "Remember" toggle)
+//   ├────────────────────────────────────────────────┤
+//   │ ↑/↓ choose · ⏎ select · Ctrl+⏎/Ctrl+Q approve · ⎋ deny · Ctrl+O details · … │
+//   ╰────────────────────────────────────────────────╯
+//    π > Opus > ~/demo ▶──────────────────────────────
+//   ╰─
+//
+// Also read without the frame (title, details, choices and footer at the
+// same indent). Only at the bottom of the screen: the footer is among its
+// last rows, with only the frame's bottom and the composer below it.
+// While the composer holds a draft, the arrows and Enter edit and send it:
+// the only choice then is the highlighted "Deny and send message".
+const OMP_APPROVAL_FOOTER = /^\S+ choose · \S+ select\b|^\S+ deny and send\b/
+const OMP_APPROVAL_DRAFT = /^\S+ deny and send\b/
+const OMP_APPROVAL_TITLE = /^(Allow tool: (\S+))(?: \(\d+s\))?$/
+const OMP_APPROVAL_OPTION = new RegExp(`^(?:(${ompAlt([...OMP_CURSOR, '›'])}) | {2})(\\S.*)$`)
+const OMP_APPROVAL_RULE = /^\s*[├+][─-]+[┤+]\s*$/
+const OMP_APPROVAL_BOTTOM = /^\s*[╰+][─-]+[╯+]\s*$/
+const OMP_APPROVAL_SCROLLBAR = /\s[█│|▐▌]$/
+function ompApprovalFooter(lines: string[]): { at: number, boxed: boolean } | null {
+  let rows = 0
+  for (let i = lines.length - 1; i >= 0 && rows < 8; i--) {
+    if (!lines[i]!.trim()) continue
+    rows++
+    const boxed = ompBoxText(lines[i]!)
+    if (!OMP_APPROVAL_FOOTER.test(boxed ?? lines[i]!.trim())) continue
+    const below = lines.slice(i + 1).filter(l => l.trim())
+    if (boxed !== null && !OMP_APPROVAL_BOTTOM.test(below.shift() || '')) return null
+    return below.length <= 6 ? { at: i, boxed: boxed !== null } : null
+  }
+  return null
+}
+function readOmpApproval(lines: string[], full: boolean): Choices | null {
+  const footer = ompApprovalFooter(lines)
+  if (!footer) return null
+  let i = footer.at - 1
+  if (footer.boxed) {
+    if (!OMP_APPROVAL_RULE.test(lines[i] || '')) return null
+    i--
+  } else {
+    while (i >= 0 && (!lines[i]!.trim() || /^\s*[─-]{3,}\s*$/.test(lines[i]!))) i--
+  }
+  // Unframed: rows at the footer's indent.
+  const pad = /^\s*/.exec(lines[footer.at]!)![0]
+  const row = (line: string) => footer.boxed ? ompBoxText(line) : line.startsWith(pad) ? line.slice(pad.length).trimEnd() : null
+  // Choices, up from Deny to Approve (or to the grants' "Remember" toggle
+  // above "Approve Once"): detail rows above may look like choices ("  - src/").
+  const options: ChoiceOption[] = []
+  let cursor = -1
+  let once = false
+  for (; i >= 0; i--) {
+    const s = row(lines[i]!)
+    const m = s === null ? null : OMP_APPROVAL_OPTION.exec(s)
+    if (!m) break
+    const label = m[2]!.trim()
+    if (m[1]) cursor = options.length
+    options.unshift({ label: label.slice(0, full ? undefined : 200), hint: null })
+    once ||= label === 'Approve Once'
+    if (once ? / Remember across sessions$/.test(label) : label === 'Approve') { i--; break }
+  }
+  if (cursor < 0 || !/^Deny\b/.test(options[options.length - 1]!.label) || !options.some(o => /^Approve\b/.test(o.label))) return null
+  cursor = options.length - 1 - cursor
+  // Details up to the title (framed: in the top border).
+  const body: string[] = []
+  let title: RegExpExecArray | null = null
+  for (; i >= 0 && body.length < 40; i--) {
+    const top = footer.boxed ? OMP_SELECT_TOP.exec(lines[i]!) : null
+    const s = top ? top[1]!.trim() : row(lines[i]!)
+    if (s === null) break
+    title = OMP_APPROVAL_TITLE.exec(s)
+    if (title || top) break
+    body.unshift(s)
+  }
+  // Unframed, the title is the only sign this is omp's dialog.
+  if (!footer.boxed && !title) return null
+  while (body.length && !body[0]!.trim()) body.shift()
+  while (body.length && !body[body.length - 1]!.trim()) body.pop()
+  // Details scrolled (Ctrl+O): the scrollbar's column ends every row.
+  const details = body.length > 1 && body.every(l => OMP_APPROVAL_SCROLLBAR.test(l)) ? body.map(l => l.slice(0, -1).trimEnd()) : body
+  const tool = title?.[2]
+  const detail: PromptDetail = { tool: tool || 'tool', ...(details.length ? { command: details.join('\n') } : {}) }
+  const drafting = OMP_APPROVAL_DRAFT.test(row(lines[footer.at]!) ?? '')
+  return drafting
+    ? { question: title?.[1] ?? null, cursor: 0, options: [options[cursor]!], detail }
+    : { question: title?.[1] ?? null, cursor, options, detail }
+}
+// omp 18.14's approval prompt open at the bottom of the screen, over its composer.
+export function ompApprovalOpen(text: string | null | undefined): boolean {
+  return Boolean(text && readOmpApproval(text.replace(/\s+$/, '').split('\n'), false))
 }
 
 // omp's blocking prompt on screen: an open select dialog (its legend is at the
@@ -754,6 +855,7 @@ const bashInput = (line: string, above: string | undefined) => /^!(\s|$)/.test(l
 // ends with a "╰─" line followed by the text typed, under its status line
 // ("π > Opus > ~/demo ▶─1%────1M─"); a box's bottom is a longer rule.
 export function inputVisible(text: string | null | undefined): boolean {
+  if (ompApprovalOpen(text)) return false
   const lines = String(text || '').replace(/\s+$/, '').split('\n').slice(-12)
   return lines.some((l, i) => /^\s*›(\s|$)/.test(l)
     || (/^\s*❯(\s|$)/.test(l) && /^\s*─{3,}/.test(lines[i - 1] || ''))

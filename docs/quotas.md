@@ -60,6 +60,12 @@ week, with reset times), for every online machine.
   with Claude to produce the new snapshot. The status line also requires `python3` in Claude’s
   `PATH` at runtime.
 
+  **API billing** (API key or Anthropic Console credits): Claude Code passes no rate limits, so
+  once a session has had an API response the status line keeps its snapshot without them, and
+  the machine reads **API usage (no quota)** in Settings and *Claude · API usage, no quota* on the
+  home screen (no gauge, no setup prompt); switching back to a subscription shows the gauges
+  again after the next exchange. Status lines installed before this need **Update**.
+
   **New machine**: run `sh scripts/install-claude-statusline.sh` on it once (or **Install** in
   Settings › Agents › Claude quotas), then send a message to any Claude agent there; its quotas
   appear on the home screen.

@@ -1,6 +1,7 @@
 import { parseTaskSettings } from '../../shared/taskSettings'
 import { type BoardSettings, parseBoardSettings, settingArgs } from '../../shared/boardSettings'
 import { readSessionTimers } from './scheduledTranscript'
+import type { SearchableBoard } from '../../shared/taskSearch'
 // herdr-projects 1.x on every machine: its tasks (GET /api/tasks), one task's
 // details, and what the Board can do on a task (tell, approve, open its pane).
 //
@@ -184,7 +185,8 @@ function linkedPane(base: Machine, t: Record<string, unknown> | null): { pane: s
 }
 
 // ---------------------------------------------------------------- the list
-interface Cached { tasks: TaskRow[], at: number, readAt: number, error?: string }
+interface Cached { tasks: TaskRow[], at: number, readAt: number, error?: string, descriptions?: Map<string, string> }
+const DESCRIPTION_MAX = 4000
 const lists = new Map<string, Cached>()
 const reading = new Map<string, Promise<Cached>>()
 
@@ -217,17 +219,21 @@ function readList(m: Machine): Promise<Cached> {
   const now = reading.get(m.key)
   if (now) return now
   const started = Date.now()
+  const descriptions = new Map<string, string>()
   const read = command(m, ['list', '--json'], LIST_TIMEOUT_MS).then(async (text): Promise<Cached> => ({ tasks: await withCreated(m, await Promise.all(parseTaskList(text).map(async row => {
     // The CLI list omits worker identity, handovers and approval blockers.
     // Read the file without extra upkeep commands, as Home and the panel do.
     const file = await readTaskFile(m, row.id).catch(() => null)
     if (file) row = { ...row, identity: taskAgentIdentity(file) }
+    // Its description, from the same file, for the global search only.
+    const description = typeof file?.description === 'string' ? file.description.slice(0, DESCRIPTION_MAX) : ''
+    if (description) descriptions.set(row.id, description)
     return file?.stage === 'approval' && rowFromTaskFile(file, null)?.approvalBlocked
       ? { ...row, approvalBlocked: true, group: 'needs' as const } : row
-  }))), at: Date.now(), readAt: Date.now() }))
+  }))), descriptions, at: Date.now(), readAt: Date.now() }))
     .catch((e: Error) => {
       const last = lists.get(m.key)
-      return { tasks: last?.tasks || [], at: Date.now(), readAt: last?.readAt ?? 0, error: e.message }
+      return { tasks: last?.tasks || [], descriptions: last?.descriptions, at: Date.now(), readAt: last?.readAt ?? 0, error: e.message }
     })
     .then((c: Cached) => {
       lists.set(m.key, c)
@@ -334,6 +340,21 @@ export async function readTasksBoard(since?: string): Promise<TasksBoard | { sam
   // What the Board shows, without when it was read: the same tasks read again are the same version.
   const version = createHash('sha1').update(JSON.stringify(machines, (k, v) => (k === 'at' || k === 'readAt' ? undefined : v))).digest('hex').slice(0, 16)
   return since === version ? { same: true, version } : { version, machines }
+}
+
+// The Board's tasks for the global search (shared/taskSearch.ts): the same
+// list and cache as the Board, read once per search, with each task's
+// description. A machine still read past `deadlineMs` gives its last list.
+export async function searchableBoards(deadlineMs: number): Promise<SearchableBoard[]> {
+  const machines = baseMachines()
+  const answered = new Map<string, TaskRow[]>()
+  const read = Promise.all(machines.map(m => machineTasks(m).then((r) => { answered.set(m.key, r?.tasks || []) }, () => {})))
+  await Promise.race([read, after(deadlineMs)])
+  return machines.map((m) => {
+    const c = lists.get(m.key)
+    const tasks = answered.get(m.key) ?? (c ? withKeys(m.key, c.tasks) : [])
+    return { machine: m.key, tasks: tasks.map(row => ({ row, description: c?.descriptions?.get(row.id) || '' })) }
+  })
 }
 
 // ---------------------------------------------------------------- one task

@@ -7,10 +7,12 @@
 // Reading older than an hour: age in ochre, numbers dimmed; window
 // reset since the reading: "reset", 100 % assumed; window (5 h or
 // week) missing from Claude's reading (it just restarted): "fresh window".
+// `api`: Claude Code runs on API billing there (no rate limits): a muted
+// label in place of the gauges, never a warning colour.
 import type { QuotaWindow } from '#shared/types'
 import { type QuotaRow, quotaLevel, quotaShown, resetText, STALE_MS } from '~/utils/quotas'
 
-defineProps<{ rows: QuotaRow[] }>()
+defineProps<{ rows: QuotaRow[], api?: boolean }>()
 
 const now = quotaNow
 const shown = (w: QuotaWindow) => quotaShown(w, now.value, quotaDisplay.value)
@@ -39,7 +41,13 @@ function ago(at: number) {
 </script>
 
 <template>
-  <section v-if="rows.length" class="quotas" :aria-label="t(quotaDisplay === 'used' ? 'Used quotas' : 'Remaining quotas')">
+  <section v-if="rows.length || api" class="quotas" :aria-label="t(quotaDisplay === 'used' ? 'Used quotas' : 'Remaining quotas')">
+    <div v-if="api" class="quota-row quota-api" data-testid="quota-claude-api">
+      <div class="quota-who" :title="kindLabel('claude')">
+        <AgentAvatar agent="claude" />
+      </div>
+      <p class="quota-api-label">{{ tl('Claude · API usage, no quota', 'Claude · usage API, pas de quota') }}</p>
+    </div>
     <div v-for="r in rows" :key="r.key" class="quota-row" :class="{ stale: stale(r) }">
       <div class="quota-who" :title="`${kindLabel(r.agent)} · ${t('updated')} ${ago(r.q.at)}`">
         <AgentAvatar :agent="r.agent" />
