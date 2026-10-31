@@ -15,10 +15,30 @@ export default defineEventHandler(async (event) => {
   const st = await stat(file).catch(() => null)
   if (!st?.isFile()) throw createError({ statusCode: 404 })
 
-  setResponseHeaders(event, {
+  const headers = {
     'content-type': file.endsWith('.onnx') ? 'application/octet-stream' : 'text/plain; charset=utf-8',
-    'content-length': st.size,
     'cache-control': 'public, max-age=31536000, immutable',
-  })
+    'accept-ranges': 'bytes',
+  }
+
+  // Single byte ranges only. The ~230 MB model crosses tunnels that drop long
+  // transfers, so the browser downloads it in resumable slices.
+  const range = /^bytes=(\d+)-(\d*)$/.exec(getRequestHeader(event, 'range') || '')
+  if (range) {
+    const start = Number(range[1])
+    const end = Math.min(range[2] ? Number(range[2]) : st.size - 1, st.size - 1)
+    if (start > end || start >= st.size) {
+      setResponseHeader(event, 'content-range', `bytes */${st.size}`)
+      throw createError({ statusCode: 416 })
+    }
+    setResponseStatus(event, 206)
+    setResponseHeaders(event, { ...headers,
+      'content-range': `bytes ${start}-${end}/${st.size}`,
+      'content-length': end - start + 1,
+    })
+    return sendStream(event, createReadStream(file, { start, end }))
+  }
+
+  setResponseHeaders(event, { ...headers, 'content-length': st.size })
   return sendStream(event, createReadStream(file))
 })
