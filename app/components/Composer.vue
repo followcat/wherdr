@@ -224,11 +224,9 @@ onMounted(() => { refreshAsrInstalled() })
 onBeforeUnmount(() => sp.dispose())
 const asrRecording = computed(() => sp.status.value === 'recording')
 const asrBusy = computed(() => ['downloading', 'loading', 'flushing'].includes(sp.status.value))
-let asrDiscard = false
 watch(sp.finalText, (t) => {
   if (!t) return
   sp.finalText.value = ''
-  if (asrDiscard) { asrDiscard = false; sp.reset(); return }
   text.value = text.value + (text.value && !/\s$/.test(text.value) ? ' ' : '') + t
 })
 watch(sp.error, (e) => {
@@ -243,7 +241,7 @@ function onMic() {
   if (asrRecording.value) { sp.stopMic(); return }
   sp.startMic().catch((err: Error) => toast(err.message, true))
 }
-function cancelAsr() { haptic(); asrDiscard = true; sp.stopMic() }
+function cancelAsr() { haptic(); sp.cancelMic() }
 function rememberSent(typed: string) {
   rememberPrompt(props.paneId, typed)
   history.reset()

@@ -68,6 +68,13 @@ async function readProgress(res, file, total) {
 async function load(msg) {
   postMessage({ t: 'phase', phase: 'fetch' })
 
+  // If the wasm binary failed to fetch/instantiate, no HEAP views exist and
+  // every FS call throws a cryptic `reading 'buffer'` TypeError — check for
+  // the engine up front and report something actionable instead.
+  if (typeof OnlineRecognizer !== 'function' || !Module.FS || !Module.HEAPU8) {
+    throw new Error('speech engine failed to initialize (wasm not loaded) — check the connection and try again')
+  }
+
   // Emscripten FS paths come from the official wasm example layout: one dir
   // with encoder.onnx / decoder.onnx / joiner.onnx / tokens.txt.
   try { Module.FS.mkdir(MODEL_DIR) } catch (e) {}
@@ -125,7 +132,9 @@ self.onmessage = async (e) => {
       stream.acceptWaveform(16000, new Float32Array(m.pcm))
       pump()
     } else if (m.t === 'flush') {
-      if (!stream) return
+      // Always answer a flush — with no stream there is simply nothing to
+      // decode; a silent return leaves the composer stuck in "Recognizing…".
+      if (!stream || !recognizer) { postMessage({ t: 'final', text: '', decodeMs: 0 }); return }
       const t0 = performance.now()
       stream.inputFinished()
       while (recognizer.isReady(stream)) recognizer.decode(stream)
@@ -137,7 +146,7 @@ self.onmessage = async (e) => {
       stream.free()
       stream = recognizer.createStream()
     } else if (m.t === 'reset') {
-      if (stream) { stream.free(); stream = recognizer.createStream() }
+      if (stream && recognizer) { stream.free(); stream = recognizer.createStream() }
       utterance = ''
       postMessage({ t: 'partial', text: '' })
     }

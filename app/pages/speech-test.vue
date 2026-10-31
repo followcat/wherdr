@@ -28,9 +28,9 @@ async function onFile(e: Event) {
     <p class="dim">sherpa-onnx WASM · streaming zipformer zh-en int8 · 16 kHz mono · runs in a worker</p>
 
     <div class="row">
-      <button v-if="sp.status.value === 'idle' || sp.status.value === 'error'" @click="sp.ensure()">Load model</button>
+      <button v-if="sp.status.value === 'idle' || sp.status.value === 'error'" @click="sp.ensure().catch(() => {})">Load model</button>
       <template v-else>
-        <button v-if="sp.status.value !== 'recording'" :disabled="sp.status.value !== 'ready'" @click="sp.startMic()">🎙 Record</button>
+        <button v-if="sp.status.value !== 'recording'" :disabled="sp.status.value !== 'ready'" @click="sp.startMic().catch(() => {})">🎙 Record</button>
         <button v-else class="stop" @click="sp.stopMic()">■ Stop</button>
         <button :disabled="sp.status.value !== 'ready'" @click="sp.reset()">Reset</button>
       </template>
