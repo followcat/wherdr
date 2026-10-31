@@ -35,6 +35,9 @@ Read only the page relevant to your task. Start with [Installation and updates](
 Also see [herdr-projects 1.x migration](herdr-projects-1x.md), [Releasing](RELEASING.md),
 [keyboard shortcut specification](product/keyboard-shortcuts.md) and [Contributing](../CONTRIBUTING.md).
 
+The touch-scrolling work has its own notes: [implementation](terminal-scroll/implementation.md),
+[validation](terminal-scroll/validation.md) and the [Herdr protocol proposal](terminal-scroll/herdr-rfc.md).
+
 ## Section reference
 
 - [Quick start](quick-start.md#quick-start)
