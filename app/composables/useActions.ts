@@ -2,7 +2,6 @@
 import type { Pane, QueuedMessage, WaitAction } from '#shared/types'
 import { type RestartPreview, RESTARTABLE, restartNotice } from '#shared/restart'
 import { viaPrompt } from '#shared/sendRoute'
-import { defaultSubmitKey } from '#shared/submitKeys'
 import { pasteRanges, splitPasted } from '#shared/pastedText'
 import { sentPastes } from '~/utils/sentPastes'
 
@@ -105,7 +104,6 @@ export function navKey(paneId: string, key: 'up' | 'down' | 'enter' | 'esc' | 'l
 // `submitKey`: a verified terminator ("Send with Tab", see shared/submitKeys.ts):
 // the server ends the message with that key instead of Enter.
 export async function sendMessage(p: Pane | undefined, paneId: string, text: string, clientId?: string, submitKey?: string): Promise<QueuedMessage | null> {
-  submitKey = submitKey ?? defaultSubmitKey(p?.agent, { working: p?.status === 'working' })
   const pastes = pasteRanges(text, splitPasted(text, [], sentPastes.value).pastes)
   const r = viaPrompt(p)
     ? await api<{ queued?: QueuedMessage }>('/api/prompt', { pane_id: paneId, text, ...(clientId ? { client_id: clientId } : {}), ...(pastes.length ? { pastes } : {}), ...(submitKey ? { submit_key: submitKey } : {}) })
