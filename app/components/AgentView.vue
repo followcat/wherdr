@@ -370,7 +370,7 @@ const agentMenu = computed<MenuItem[]>(() => {
   const items: MenuItem[] = p ? [notificationMenuItem(p)] : []
   if (compactPhone.value && hasChat(p)) {
     items.unshift(
-      { label: t(mode.value === 'term' ? 'Conversation' : 'Terminal'), icon: mode.value === 'term' ? 'i-lucide-message-square' : 'i-lucide-square-terminal', run: () => toggleMode('term') },
+      { label: mode.value === 'term' ? t('Conversation') : t('Terminal'), icon: mode.value === 'term' ? 'i-lucide-message-square' : 'i-lucide-square-terminal', run: () => toggleMode('term') },
       { label: t('Search'), icon: 'i-lucide-search', run: toggleSearch },
       { kind: 'separator' },
     )
