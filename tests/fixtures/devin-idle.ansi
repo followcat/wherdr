@@ -1,0 +1,31 @@
+🐱 Welcome to CatEnv! Type 'help' for available commands.
+[0m[1m[38;5;2m➜  [0m[1m[38;5;6mphone[0m [0m[38;5;2mdevin[0m
+
+⠀⣴⣾⣶⡄⠀⠀⠀⠀
+⠀⠛⠿⠟⠻⣶⣾⣶⡄  Devin CLI
+⠀⣤⣶⣦⣴⠿⢿⠿⠃  [0m[38;2;124;124;124mv3000.11.234[0m
+⠀⠻⢿⠿⠃⠀⠀⠀⠀
+
+ [0m[38;2;124;124;124mPro · 10% remaining (resets in 1d 4h)[0m
+
+[0m[38;2;255;255;255m[48;2;42;42;42m❭[0m[48;2;42;42;42m [0m[38;2;255;255;255m[48;2;42;42;42mDEVINCHECK-beta: reply with the single word BETA[0m[48;2;42;42;42m                       [0m
+
+ BETA
+
+[0m[38;2;255;255;255m[48;2;42;42;42m❭[0m[48;2;42;42;42m [0m[38;2;255;255;255m[48;2;42;42;42mRun the shell command 'sleep 50' and wait for it, then reply with just [0m
+[0m[48;2;42;42;42m  [0m[38;2;255;255;255m[48;2;42;42;42mDONE[0m[48;2;42;42;42m                                                                   [0m
+
+ [0m[38;2;74;222;128m✓[0m sleep 50[0m[38;2;124;124;124m Running in background shell aec5ce[0m
+ [0m[38;2;74;222;128m✓[0m Read shell [0m[38;2;124;124;124maec5ce[0m
+
+ DONE
+
+[0m[38;2;255;255;255m[48;2;42;42;42m❭[0m[48;2;42;42;42m [0m[38;2;255;255;255m[48;2;42;42;42mDEVINCHECK-gamma: reply with the single word GAMMA[0m[48;2;42;42;42m                     [0m
+
+ GAMMA
+
+ [0m[38;2;245;142;58m⏺[0m [0m[38;2;124;124;124m~/AIcontrol/phone[0m
+[0m[38;2;68;68;68m──────────────────────────────[0m[48;2;42;42;42m [0m[38;2;176;176;176m[48;2;42;42;42mDEVINCHECK-beta: reply with the single …[0m[48;2;42;42;42m [0m[38;2;68;68;68m─[0m
+❭ [0m[38;2;124;124;124mAsk Devin to build features, fix bugs, or work on your code[0m
+[0m[38;2;68;68;68m─────────────────────────────────────────────────────────────────────────[0m
+SWE-2 Max                                 [0m[38;2;124;124;124mContext: 15k / 262k tokens (5%)[0m

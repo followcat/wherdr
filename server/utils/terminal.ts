@@ -161,13 +161,13 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
   // and lifecycle metadata travel with the queued object: a scroll replayed
   // on attach still honors its own deadline and cancel tag.
   type ScrollTag = { scroll: true, direction: string, epoch: number, dragLines: number, momentumLines: number }
-  const early: { obj: unknown, cb?: { onSubmit?: () => void, onFlush?: () => void }, tag?: ScrollTag, expiresAt?: number }[] = []
+  const early: { obj: unknown, cb?: { onSubmit?: () => void, onFlush?: (err?: Error | null) => void }, tag?: ScrollTag, expiresAt?: number }[] = []
 
   // Backpressure-aware writer: a full kernel buffer pauses the tail, it
   // never resends the chunk that reported `false`. Queued scroll work keeps
   // its tag and deadline so cancels and TTL reach it until submission.
   let writer: ReturnType<typeof createTerminalWriter> | undefined
-  const toChild = (obj: unknown, cb?: { onSubmit?: () => void, onFlush?: () => void }, tag?: ScrollTag, expiresAt?: number) => {
+  const toChild = (obj: unknown, cb?: { onSubmit?: () => void, onFlush?: (err?: Error | null) => void }, tag?: ScrollTag, expiresAt?: number) => {
     if (!child) {
       if (early.length < 64) early.push({ obj, cb, tag, expiresAt })
     } else if (child.stdin.writable) {

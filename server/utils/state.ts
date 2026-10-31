@@ -30,7 +30,8 @@ import { parseClaudeNotice, parseClaudeScreen, parseClaudeSuggestion } from './c
 import { type QueueEntry, HOLD_AGENTS, INPUT_STATES, checkQueue, checkSent, giveBackHeld, isUploadLine, landed, leftForGood, lookForLeftMenu, QUEUED_TEXT_MAX, loadQueued, nextHeld, ompRunShown, publicEntry, queuedDone } from './queued'
 import { inputVisible } from './choices'
 import { isSlashCommand, photosOnly } from '../../shared/queuedMatch'
-import { clearKeys, codexFieldLine, findQueued, inputBox, msgText, unqueueClaude } from './unqueue'
+import { isSubmitKey } from '../../shared/submitKeys'
+import { clearKeys, codexFieldLine, devinFieldLine, findQueued, inputBox, msgText, unqueueClaude } from './unqueue'
 import { takeBackInterrupted, unansweredTurn } from './interruptRestore'
 import { interruptAgent } from './interruptSeq'
 import { queuedPasted } from './pastes'
@@ -416,13 +417,19 @@ export function promptOnce(paneId: string, id: string, text: string, send: () =>
 // kept when well-formed and unused, so the bubble keeps its identity.
 // `typedAt`: when wherdr began typing it (see QueueEntry). `turn`: held until
 // the agent's turn ends.
-export function addQueued(paneId: string, text: string, opts: { held?: boolean, busy?: boolean, failed?: boolean, id?: string, typedAt?: number, turn?: boolean } = {}): QueuedMessage {
+// The complete payload kept for delivery, bounded far above the display
+// preview: a long paste must not lose its tail (attachment paths sit at the
+// end of a message).
+const QUEUED_FULL_MAX = 256 * 1024
+export function addQueued(paneId: string, text: string, opts: { held?: boolean, busy?: boolean, failed?: boolean, id?: string, typedAt?: number, turn?: boolean, submitKey?: string } = {}): QueuedMessage {
   const list = queued.get(paneId) || []
   const own = opts.id && /^w-[a-z0-9]{1,32}$/.test(opts.id) && !list.some(q => q.id === opts.id) ? opts.id : null
   // Typed during a turn (see isOmpRun).
   const turn = !opts.held && !opts.failed && TURN.has(findPane(paneId)?.status || '')
+  const raw = String(text).slice(0, QUEUED_FULL_MAX)
   const e: QueueEntry = {
-    id: own || crypto.randomBytes(4).toString('hex'), text: String(text).slice(0, QUEUED_TEXT_MAX), at: Date.now(),
+    id: own || crypto.randomBytes(4).toString('hex'), text: raw.slice(0, QUEUED_TEXT_MAX), at: Date.now(),
+    ...(raw.length > QUEUED_TEXT_MAX ? { full: raw } : {}), ...(opts.submitKey ? { submitKey: opts.submitKey } : {}),
     ...(opts.held ? { held: true } : {}), ...(opts.busy ? { busy: true } : {}), ...(opts.failed ? { failed: true } : {}),
     ...(turn ? { turnSeen: true } : {}),
     ...(opts.typedAt ? { typedAt: opts.typedAt } : {}), ...(opts.held && opts.turn ? { turn: true } : {}),
@@ -466,9 +473,17 @@ export const restarting = (paneId: string) => { const r = restarts.get(paneId); 
 const GUARD_STATES = new Set(['idle', 'done', 'working'])
 // What agent.prompt must type for the agent to submit `text` (see guardedSend.ts).
 const typedFor = (p: Pane, text: string) => (p.agent === 'claude' ? submittable(text) : text)
+// Field readers for the manual text-then-key delivery of an alternate
+// terminator (herdr's agent.prompt only knows Enter).
+const FIELD_READERS: Record<string, (ansi: string) => string | null> = { codex: codexFieldLine, claude: inputBox, devin: devinFieldLine }
 // `retry`: a later attempt of a message whose earlier send was given up (its
 // text, if still in the field, is ours: see guardedSend.ts).
-export function sendPrompt(p: Pane, text: string, opts: { retry?: boolean } = {}): Promise<void> {
+// `submitKey`: the verified terminator this message was sent with (see
+// shared/submitKeys.ts). Re-checked here at delivery time: an entry whose
+// context passed (the turn ended while it was held) is sent normally — the
+// message matters more than the key.
+export function sendPrompt(p: Pane, text: string, opts: { retry?: boolean, submitKey?: string } = {}): Promise<void> {
+  const submitKey = opts.submitKey && isSubmitKey(p.agent, opts.submitKey, { working: p.status === 'working' }) ? opts.submitKey : undefined
   return withPaneLock(p.id, async () => {
     // Re-check after waiting for another writer/restart's lock. The Pane
     // passed by a request or a held-message delivery can already be stale.
@@ -476,9 +491,20 @@ export function sendPrompt(p: Pane, text: string, opts: { retry?: boolean } = {}
     if (now?.stopped || now?.leaving) {
       throw new HerdrError(isSlashCommand(text) ? 'stale' : 'no_input', 'Restart Codex before sending a command.')
     }
+    if (opts.submitKey && !submitKey) log(`send ${p.id}: submit key ${opts.submitKey} not applicable on ${p.agent || 'pane'} ${p.status || ''}, sent normally`)
     // Herdr may still call a quota wait blocked. Its visible field also takes
     // slash commands, using the same checked send rather than agent.prompt.
     if (p.agent !== 'claude' || !GUARD_STATES.has(p.status || '') || (isSlashCommand(text) && !p.usageLimit)) {
+      // An alternate terminator goes text then key (as /api/input does),
+      // then the same "field must not keep our text" check — with the
+      // terminator, never Enter, as the retry.
+      const field = submitKey && FIELD_READERS[p.agent || '']
+      if (field) {
+        await herdr('pane.send_input', { pane_id: p.id, text })
+        await herdr('pane.send_input', { pane_id: p.id, keys: [submitKey!] })
+        await confirmSubmitted(fieldDeps(p, field), text, { submitKey })
+        return
+      }
       await agentPrompt(p.id, typedFor(p, text))
       // Codex: its field must not keep our text (see confirmSubmitted).
       if (p.agent === 'codex' && !isSlashCommand(text)) await confirmSubmitted(fieldDeps(p, codexFieldLine), text)
@@ -494,7 +520,7 @@ export function sendPrompt(p: Pane, text: string, opts: { retry?: boolean } = {}
       const r = await guardedSend({
         ...fieldDeps(p, inputBox),
         type: async (t) => { await herdr('pane.send_input', { pane_id: p.id, text: t }) },
-      }, text, { retry: opts.retry })
+      }, text, { retry: opts.retry, ...(submitKey ? { submitKey } : {}) })
       keep(r.unsent)
     } catch (e) {
       keep((e as GuardError).unsent)
@@ -567,7 +593,7 @@ async function typeHeld(p: Pane, q: QueueEntry): Promise<boolean> {
   q.delivering = true
   q.typedAt = at
   saveQueued()
-  try { await sendPrompt(p, q.text, { retry }) }
+  try { await sendPrompt(p, q.full ?? q.text, { retry, submitKey: q.submitKey }) }
   catch (e) {
     delete q.delivering
     q.failed = true
@@ -655,7 +681,7 @@ export function takeBack(paneId: string, item: { text: string, ts?: string | nul
   // The original text, photo paths included, goes back into wherdr's field:
   // wherdr's record, usually already gone (the message is in the transcript),
   // otherwise the sent history.
-  const text = mine ? mine.text : sentText(paneId, item) || item.text
+  const text = mine ? (mine.full ?? mine.text) : sentText(paneId, item) || item.text
   return { text, lost: lostPhotos(item.images, text) }
 }
 
@@ -815,7 +841,7 @@ export async function cancelQueued(paneId: string, text: string, id?: string): P
   if (mine && (mine.held || mine.failed) && !deliverBusy.has(p.id)) {
     drop()
     setTimeout(poll, 50)
-    return { text: mine.text }
+    return { text: mine.full ?? mine.text }
   }
   // Only wherdr's own held or failed record (above) outlives its agent.
   if (!p.agent) throw new HerdrError('not_found', 'agent not found')
@@ -865,7 +891,7 @@ export async function cancelQueued(paneId: string, text: string, id?: string): P
     // The app only had Claude's record of the message (no paths): the sent
     // history may still know them.
     const known = !mine && r.images > 0 && !hasAttachments(text) ? sentText(p.id, { text: msgText(text), images: r.images }, taken) : null
-    const restored = mine ? mine.text : known || text
+    const restored = mine ? (mine.full ?? mine.text) : known || text
     const lost = lostPhotos(r.images, restored) + r.lost
     return { text: restored, ...(lost ? { lost } : {}) }
   } catch (e) {
@@ -879,7 +905,7 @@ export async function cancelQueued(paneId: string, text: string, id?: string): P
 
 // Queued messages of an agent that is ready: the first given at creation (see
 // createAgent), or a send refused by Herdr during startup (see prompt.post).
-export const pendingPrompts = new Map<string, { text: string, at: number }>()
+export const pendingPrompts = new Map<string, { text: string, at: number, submitKey?: string }>()
 const PENDING_TTL_MS = 15 * 60 * 1000
 const pendingBusy = new Set<string>()
 export const READY = new Set(['done', 'idle'])
@@ -922,7 +948,9 @@ function flushPending(p: Pane) {
   }
   if (!p.agent || !READY.has(p.status || '')) return
   pendingBusy.add(p.id)
-  withPaneLock(p.id, () => agentPrompt(p.id, typedFor(p, pend.text)))
+  withPaneLock(p.id, () => pend.submitKey
+    ? sendPrompt(p, pend.text, { submitKey: pend.submitKey })
+    : agentPrompt(p.id, typedFor(p, pend.text)))
     .then(() => {
       pendingPrompts.delete(p.id)
       log(`initial prompt ${p.id} sent`)

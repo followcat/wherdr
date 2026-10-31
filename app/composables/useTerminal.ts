@@ -24,7 +24,7 @@ export interface Banner { text: string, btn: string, fn: () => void }
 
 // `fill`: side-by-side cell, the terminal takes the whole cell instead of the
 // reading column of a pane opened alone.
-export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | null) => void, hasBanner: () => boolean, fill?: () => boolean, input?: () => boolean }) {
+export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | null) => void, hasBanner: () => boolean, fill?: () => boolean, input?: () => boolean, submitKey?: (chord: string) => boolean }) {
   let term: Terminal | null = null
   let fit: FitAddon | null = null
   let webgl: WebglAddon | null = null
@@ -248,6 +248,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     const chord = virtualChord(key, virtualModifiers.value)
     virtualModifiers.value = []
     lastVirtualChord.value = displayVirtualChord(chord)
+    // A draft terminator of the conversation ("Send with Tab"): the resolved
+    // chord ends the draft, the terminal never sees the key.
+    if (opts.submitKey?.(chord)) return
     const navigation = virtualNavigationBytes(chord)
     if (navigation) {
       if (!sendTerm({ type: 'terminal.input', text: navigation })) toast(tl('Terminal is still connecting — try again', 'Le terminal se connecte encore — réessaie'), true)

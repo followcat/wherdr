@@ -20,8 +20,8 @@ export const outboxFor = (paneId: string): OutboxItem[] => boxes.get(paneId) || 
 
 // Send after the earlier sends of this conversation; the bubble moves to the
 // server's record, or to "Not sent" if the request fails (error rethrown).
-function deliver(p: Pane | undefined, paneId: string, id: string, text: string): Promise<QueuedMessage | null> {
-  const run = (chains.get(paneId) || Promise.resolve()).catch(() => {}).then(() => sendMessage(p, paneId, text, id))
+function deliver(p: Pane | undefined, paneId: string, id: string, text: string, submitKey?: string): Promise<QueuedMessage | null> {
+  const run = (chains.get(paneId) || Promise.resolve()).catch(() => {}).then(() => sendMessage(p, paneId, text, id, submitKey))
   chains.set(paneId, run)
   return run.then(
     (q) => { update(paneId, l => settle(l, id, q, Date.now())); return q },
@@ -30,10 +30,10 @@ function deliver(p: Pane | undefined, paneId: string, id: string, text: string):
 }
 
 // A message: its bubble at once ("Queued · sending…"), then the send.
-export function outboxSend(p: Pane | undefined, paneId: string, text: string): Promise<QueuedMessage | null> {
+export function outboxSend(p: Pane | undefined, paneId: string, text: string, submitKey?: string): Promise<QueuedMessage | null> {
   const id = newOutboxId()
-  update(paneId, l => addSending(l, id, text, Date.now()))
-  return deliver(p, paneId, id, text)
+  update(paneId, l => addSending(l, id, text, Date.now(), submitKey))
+  return deliver(p, paneId, id, text, submitKey)
 }
 
 // Retry of a message the server never got.
@@ -41,7 +41,7 @@ export function outboxRetry(p: Pane | undefined, paneId: string, id: string): Pr
   const q = outboxFor(paneId).find(x => x.id === id)
   if (!q) return Promise.resolve(null)
   update(paneId, l => resend(l, id))
-  return deliver(p, paneId, id, q.text)
+  return deliver(p, paneId, id, q.text, q.submitKey)
 }
 
 // Cancel of a message the server never got: its text (photo paths included).

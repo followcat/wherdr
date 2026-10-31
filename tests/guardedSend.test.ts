@@ -62,6 +62,28 @@ type Fake = ReturnType<typeof field>['f']
 const fast = { freeWaitMs: 500, quietMs: 0, showWaitMs: 500, submitWaitMs: 600, pollMs: 100 }
 
 describe('guarded send to Claude Code', () => {
+  it('an alternate terminator replaces Enter everywhere, its single retry included', async () => {
+    const { f, deps } = field()
+    const inner = deps.keys
+    let lostTab = true
+    deps.keys = async (ks) => {
+      for (const k of ks) {
+        if (k === 'tab') {
+          f.keys.push(k)
+          // First Tab lost (a lagging agent): the one retry presses it again.
+          if (lostTab) { lostTab = false; continue }
+          f.enter()
+          continue
+        }
+        await inner([k])
+      }
+    }
+    await guardedSend(deps, OURS, { ...fast, submitKey: 'tab' })
+    expect(f.submitted).toEqual([OURS])
+    expect(f.keys).toEqual(['tab', 'tab'])
+    expect(f.keys).not.toContain('enter')
+  })
+
   it('empty field: typed, checked, submitted once', async () => {
     const { f, deps } = field()
     expect(await guardedSend(deps, OURS, fast)).toEqual({ foreign: [], unsent: [] })
