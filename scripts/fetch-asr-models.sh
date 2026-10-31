@@ -14,7 +14,12 @@ mkdir -p "$DEST"
 dl() { # $1 remote name, $2 local name
   if [ -s "$DEST/$2" ]; then echo "have $2"; return; fi
   echo "fetch $1 -> $2"
-  curl -fL --retry 3 -o "$DEST/$2.tmp" "${BASE}$1" && mv "$DEST/$2.tmp" "$DEST/$2"
+  # -C - resumes the .tmp; --retry alone would restart from zero.
+  for try in 1 2 3 4 5; do
+    curl -fL -C - --retry 3 -o "$DEST/$2.tmp" "${BASE}$1" && { mv "$DEST/$2.tmp" "$DEST/$2"; return; }
+    echo "retry $try for $2"; sleep 2
+  done
+  echo "FAILED $2" >&2; return 1
 }
 dl "encoder-epoch-99-avg-1.int8.onnx"  "encoder.int8.onnx"
 dl "decoder-epoch-99-avg-1.int8.onnx"  "decoder.int8.onnx"
