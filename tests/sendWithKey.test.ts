@@ -111,6 +111,15 @@ describe('devinFieldLine: the Devin input field from its screen', () => {
     expect(devinFieldLine(screen('Press Enter to send queued messages now'))).toBe('')
   })
 
+  it('newer Devin status blocks do not reject the field', () => {
+    // v3000.12+ footer: model line + key hints / bare token gauge, no
+    // "Context:" wording. Only the box separator proves the field.
+    const newFooter = ['─'.repeat(73), 'SWE-2 Max · bypass', 'ctrl+o details · alt+t thinking']
+    expect(devinFieldLine([...history, '❭ Guide Devin while it works', ...newFooter].join('\n'))).toBe('')
+    const gaugeFooter = ['─'.repeat(73), 'SWE-2 Max · bypass · 1 subagent · 4 shells', '114k / 262k (43%)']
+    expect(devinFieldLine([...history, '❭ DELTA field', ...gaugeFooter].join('\n'))).toBe('DELTA field')
+  })
+
   it('a "❭" that is only history is not the field', () => {
     // Sent messages keep the marker; without a box under them the read must
     // refuse rather than mistake the last sent message for field content.

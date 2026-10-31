@@ -130,17 +130,20 @@ export function codexFieldLine(ansi: string): string | null {
 // "Press Enter to send queued messages now") read as empty. Checked on
 // v3000.11.234: idle, working with a queued message, after a turn.
 const DEVIN_FIELD = /^❭(?: |$)/
-const DEVIN_FOOTER = /^(?:─|\s*$|.*\bContext:.*\btokens\b)/
+const DEVIN_BOX = /^─{2,}/
 const DEVIN_HINTS = /^(?:Ask Devin to build|Guide Devin while it works|Press Enter to send queued messages)/
 export function devinFieldLine(ansi: string): string | null {
   const lines = String(ansi || '').split('\n').map(l => l.replace(/\r$/, ''))
   let at = -1
   for (let i = lines.length - 1; i >= 0 && at < 0; i--) if (DEVIN_FIELD.test(lines[i]!.replace(SGR, ''))) at = i
   if (at < 0) return null
-  for (const below of lines.slice(at + 1)) {
-    const plain = below.replace(SGR, '')
-    if (!DEVIN_FOOTER.test(plain)) return null
-  }
+  // The prompt is boxed: a ─ separator closes it. Below it sits whatever
+  // status block the running Devin draws (model line, token gauge, key
+  // hints) — its wording changes between versions, so only the box's own
+  // separator proves the ❭ line is the field and not a replayed message.
+  const below = lines.slice(at + 1).map(l => l.replace(SGR, ''))
+  const border = below.find(l => l.trim() !== '')
+  if (!border || !DEVIN_BOX.test(border)) return null
   const line = undimmed(lines[at]!).replace(/^❭\s?/, '').replace(/\u00a0/g, ' ').trim()
   return DEVIN_HINTS.test(line) ? '' : line
 }
