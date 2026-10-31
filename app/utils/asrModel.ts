@@ -28,9 +28,13 @@ export const asrInstalled = ref(false)
 export async function refreshAsrInstalled(cacheProvider: CacheStorage | undefined = globalThis.caches): Promise<boolean> {
   if (!cacheProvider) { asrInstalled.value = false; return false }
   try {
-    const cache = await cacheProvider.open(ASR_CACHE)
-    for (const f of ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt']) {
-      await cache.delete(`${LEGACY_BASE}/${f}`).catch(() => {})
+    // The retired files may sit in any cache — the service worker's
+    // network-first cache also stored them when they were fetched.
+    for (const name of await cacheProvider.keys()) {
+      const cache = await cacheProvider.open(name)
+      for (const f of ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt']) {
+        await cache.delete(`${LEGACY_BASE}/${f}`).catch(() => {})
+      }
     }
   } catch {}
   const hits = await Promise.all(asrUrls().map(u => cacheProvider.match(u)))
