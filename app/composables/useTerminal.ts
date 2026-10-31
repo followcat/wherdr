@@ -514,6 +514,16 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   })
   // Tap on the touch layer: opens the link under the finger, if any.
   const tapLink = (x: number, y: number) => links?.tap(x, y) ?? false
+  // A tap on the row the cursor sits on is a request to type at the agent's
+  // input field — TUIs keep the cursor there. Compare buffer rows (not
+  // viewport rows) so a scrolled-back viewport can never produce a hit.
+  const tapOnCursor = (x: number, y: number): boolean => {
+    const screen = term?.element?.querySelector('.xterm-screen') as HTMLElement | null
+    const rect = screen?.getBoundingClientRect()
+    const cell = rect && term ? terminalCell(x, y, rect, term.cols, term.rows) : null
+    const buf = term?.buffer.active
+    return Boolean(cell && buf && buf.baseY + buf.cursorY === buf.viewportY + cell.row)
+  }
   const hasFocus = () => Boolean(term && document.activeElement === term.textarea)
   // Touch math asks for the row height every move/frame; measuring
   // .xterm-screen forces a layout each call. Cache it per geometry version
@@ -599,7 +609,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
 
   return {
     mount, connect, disconnect, isConnected, sendTerm, sendKeys, fitNow, setFontSize,
-    reset, scroll, focus, blur, tapLink, tapMouse: (x: number, y: number) => mouse?.tap(x, y), hasFocus, rowHeight, pageRows, setVisible, dispose, loading, kbdOn,
+    reset, scroll, focus, blur, tapLink, tapMouse: (x: number, y: number) => mouse?.tap(x, y), tapOnCursor, hasFocus, rowHeight, pageRows, setVisible, dispose, loading, kbdOn,
     hasBanner: opts.hasBanner, selectionHint,
     cancelTouchScroll, scrollInputVersion, scrollGeometryVersion, frameTick, scrollAck, scrollLedger, frameStats,
     scrollback, scrollbackVersion, requestScrollback, mouseMode, captureScreen,
