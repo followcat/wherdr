@@ -73,9 +73,13 @@ function legacyOnTouchEnd(e: TouchEvent) {
   legacyLastX = null
   if (!legacyMoved && !lpEntered && t && Math.hypot(t.clientX - legacyStartX, t.clientY - legacyStartY) < 5) {
     if (!props.ctl.tapLink(t.clientX, t.clientY)) props.ctl.tapMouse(t.clientX, t.clientY)
-    // Same as the smooth path: taps close the keyboard, never reopen it.
-    props.ctl.blur()
-    ;(document.activeElement as HTMLElement | null)?.blur?.()
+    // Same as the smooth path: the cursor's own row asks for the keyboard,
+    // other taps close it.
+    if (props.ctl.tapOnCursor(t.clientX, t.clientY)) props.ctl.focus()
+    else {
+      props.ctl.blur()
+      ;(document.activeElement as HTMLElement | null)?.blur?.()
+    }
   }
   // Complete intentional taps here; suppress compatibility mouse events for
   // both taps and drags so they cannot reopen the keyboard afterward.
@@ -301,10 +305,14 @@ function onTouchEnd(e: TouchEvent) {
   if (raf) { cancelAnimationFrame(raf); raf = 0; flush() }
   if (tapped && !stoppingScroll && !lpEntered && t) {
     if (!props.ctl.tapLink(t.clientX, t.clientY)) props.ctl.tapMouse(t.clientX, t.clientY)
-    // A simple tap never opens the keyboard — scroll-adjacent taps would
-    // keep reopening it. Typing starts from the keybar ⌨ instead.
-    props.ctl.blur()
-    ;(document.activeElement as HTMLElement | null)?.blur?.()
+    // A tap on the cursor's own row is a request to type at the field —
+    // focus it. Taps anywhere else act on the pane only: scroll-adjacent
+    // taps must not keep reopening the keyboard.
+    if (props.ctl.tapOnCursor(t.clientX, t.clientY)) props.ctl.focus()
+    else {
+      props.ctl.blur()
+      ;(document.activeElement as HTMLElement | null)?.blur?.()
+    }
   }
   // The action has already run in this trusted touch event. Do not depend on
   // a compatibility mouse event, which can be absent or arrive twice on iOS.

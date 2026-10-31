@@ -28,7 +28,7 @@ async function mounted(enabled: boolean, coarse = false) {
     mount: vi.fn((el: HTMLElement) => { el.innerHTML = '<div class="xterm"><div class="xterm-screen">terminal grid</div></div>' }),
     scroll: vi.fn(() => true), rowHeight: () => 16, pageRows: () => 24,
     fitNow: vi.fn(), hasBanner: () => true, connect: vi.fn(), dispose: vi.fn(),
-    focus: vi.fn(() => { focused = true }), blur: vi.fn(() => { focused = false }), hasFocus: () => focused, tapLink: vi.fn(() => false), tapMouse: vi.fn(),
+    focus: vi.fn(() => { focused = true }), blur: vi.fn(() => { focused = false }), hasFocus: () => focused, tapLink: vi.fn(() => false), tapMouse: vi.fn(), tapOnCursor: vi.fn(() => false),
     cancelTouchScroll: vi.fn(), scrollInputVersion: ref(0), scrollGeometryVersion: ref(0), scrollAck: ref(0), frameTick: ref(0),
     loading: ref(false), selectionHint: { visible: ref(false), dismiss: vi.fn() },
     mouseMode: ref(coarse),
@@ -225,6 +225,21 @@ describe('terminal beta switch', () => {
     await r.w.get('#touch').trigger('mousedown')
     expect(r.ctl.tapMouse).toHaveBeenCalledOnce()
     expect(r.ctl.focus).not.toHaveBeenCalled()
+    expect(r.ctl.blur).toHaveBeenCalled()
+  })
+  it.each([false, true])('opens the keyboard on a tap on the cursor row with beta=%s', async enabled => {
+    const r = await mounted(enabled)
+    r.ctl.tapOnCursor.mockReturnValue(true)
+    await r.send('touchstart', 100)
+    await r.send('touchend', 100, 0)
+    expect(r.ctl.tapOnCursor).toHaveBeenCalledWith(50, 100)
+    expect(r.ctl.tapMouse).toHaveBeenCalledOnce()
+    expect(r.ctl.focus).toHaveBeenCalledOnce()
+    expect(r.ctl.blur).not.toHaveBeenCalled()
+    // The next tap off the field closes it again.
+    r.ctl.tapOnCursor.mockReturnValue(false)
+    await r.send('touchstart', 140)
+    await r.send('touchend', 140, 0)
     expect(r.ctl.blur).toHaveBeenCalled()
   })
   it('keeps sub-threshold row motion without moving the screenshot', async () => {
