@@ -176,16 +176,31 @@ function onResize() {
 // iOS: Safari's own pinch (page zoom) must not start on top of ours.
 function stopGesture(e: Event) { if (lightboxSrc.value) e.preventDefault() }
 
-watch(lightboxSrc, () => { img.value = null; pointers.clear(); gesture = null; lastTap = null })
+// The system back gesture / edge swipe should dismiss the viewer, not leave
+// the pane: opening pushes a same-URL history entry, and popping it closes
+// the viewer instead of navigating. Closing from the UI pops that entry back.
+let historyArmed = false
+watch(lightboxSrc, (src) => {
+  img.value = null; pointers.clear(); gesture = null; lastTap = null
+  if (src && !historyArmed) { history.pushState({ wherdrLightbox: true }, ''); historyArmed = true }
+  else if (!src && historyArmed) { historyArmed = false; history.back() }
+})
+function onPopState() {
+  if (!lightboxSrc.value) return
+  historyArmed = false // the pop consumed our entry — no back() on this close
+  close()
+}
 
 onMounted(() => {
   document.addEventListener('keydown', onKey)
   window.addEventListener('resize', onResize)
+  window.addEventListener('popstate', onPopState)
   document.addEventListener('gesturestart', stopGesture)
 })
 onUnmounted(() => {
   document.removeEventListener('keydown', onKey)
   window.removeEventListener('resize', onResize)
+  window.removeEventListener('popstate', onPopState)
   document.removeEventListener('gesturestart', stopGesture)
 })
 </script>
