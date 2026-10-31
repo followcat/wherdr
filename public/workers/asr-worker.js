@@ -1,22 +1,26 @@
-// ASR worker: loads the sherpa-onnx WASM engine + a SenseVoice model, then
+// ASR worker: loads the sherpa-onnx WASM engine + an offline model, then
 // turns accumulated Float32 PCM (16 kHz mono) into final text on flush.
 // All messages are plain objects; PCM frames travel as transferred
 // ArrayBuffers.
 //
-//   in : {t:'load', wasmBase, modelBase, files, cache}
+//   in : {t:'load', wasmBase, modelBase, kind, files[], providers[], cache}
 //   in : {t:'push', pcm:ArrayBuffer}        Float32, 16kHz
 //   in : {t:'flush'}                         end of speech: decode the take
 //   in : {t:'reset'}                         drop the buffered take
 //   out: {t:'phase', phase, detail}          'wasm'|'fetch'|'create'|'decode'
 //   out: {t:'dl', file, got, total}
-//   out: {t:'ready', loadMs}
+//   out: {t:'ready', loadMs, provider}
 //   out: {t:'partial', text}                 '' (kept for the composable)
 //   out: {t:'final', text, decodeMs}
 //   out: {t:'error', error}
 //
-// SenseVoice is an offline model: there are no streaming partials. The whole
-// take is buffered and decoded once, in one shot, which is also what makes it
-// comfortable with code-switched zh/en/yue.
+// kind 'senseVoice': auto zh/en/ja/ko/yue, ITN punctuation.
+// kind 'qwen3Asr':   best Cantonese quality; ~940 MB of weights the FS must
+//                    hold — files are STREAMED in slices so the transient JS
+//                    buffer never doubles the wasm heap (a whole-file
+//                    writeFile OOM-killed the phone tab).
+// providers: tried in order at recognizer creation (e.g. 'webgpu' then
+// 'cpu'); the first that constructs wins and is reported in 'ready'.
 
 'use strict'
 
@@ -31,6 +35,7 @@ const SAMPLE_RATE = 16000
 const MAX_SAMPLES = SAMPLE_RATE * 180
 
 let recognizer = null
+let activeProvider = 'cpu'
 const pending = []      // Float32Array chunks of the current take
 let pendingLen = 0
 
@@ -58,50 +63,69 @@ self.Module = {
 const CHUNK = 8 * 1024 * 1024
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
+// A Response for `url`: the cache hit if stored, else a streamed download
+// (also stored for next time). The body is never assembled in JS — slices
+// feed a ReadableStream straight through, so a 750 MB file stays ~flat.
 async function fetchCached(url, file, cache) {
   if (cache && self.caches) {
     const hit = await caches.match(url)
-    if (hit) return hit.arrayBuffer()
+    if (hit) return hit
   }
-  const buf = await fetchChunked(url, file)
+  const gen = streamFile(url, file)
+  const res = new Response(new ReadableStream({
+    async pull(ctrl) {
+      const { done, value } = await gen.next()
+      if (done) ctrl.close()
+      else ctrl.enqueue(value)
+    },
+  }), { headers: { 'content-type': 'application/octet-stream' } })
   if (cache && self.caches) {
-    (await caches.open('wherdr-asr-v1'))
-      .put(url, new Response(buf.slice(0), { headers: { 'content-type': 'application/octet-stream', 'content-length': String(buf.byteLength) } }))
-      .catch(() => {})
+    // Tee: one copy to disk, one to the caller. A tee'd body cannot be read
+    // twice — the put consumes its own branch.
+    const [forCache, forFs] = res.body ? res.body.tee() : [null, null]
+    if (!forFs) throw new Error(`fetch ${file}: no body`)
+    const cached = new Response(forCache, { headers: res.headers })
+    ;(await caches.open('wherdr-asr-v1')).put(url, cached).catch(() => {})
+    return new Response(forFs, { headers: res.headers })
   }
-  return buf
+  return res
 }
 
 // The first request doubles as slice 0 and a range probe: a 206 means the
 // server slices, a 200 means it streams whole files (older deploy) and the
 // body is drained monolithically.
-async function fetchChunked(url, file) {
+async function* streamFile(url, file) {
   const first = await refetch(() => fetch(url, { headers: { range: `bytes=0-${CHUNK - 1}` } }))
   if (first.status !== 206) {
     if (!first.ok) throw new Error(`fetch ${file}: HTTP ${first.status}`)
     const total = Number(first.headers.get('content-length')) || 0
-    return first.body && first.body.getReader ? await readProgress(first, file, total) : await first.arrayBuffer()
+    const reader = first.body.getReader()
+    let got = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      got += value.length
+      postMessage({ t: 'dl', file, got, total })
+      yield value
+    }
+    return
   }
   const total = Number((first.headers.get('content-range') || '').split('/')[1]) || 0
   if (!total) throw new Error(`fetch ${file}: bad content-range`)
-  const parts = [new Uint8Array(await first.arrayBuffer())]
-  let got = parts[0].byteLength
+  const firstPart = new Uint8Array(await first.arrayBuffer())
+  yield firstPart
+  let got = firstPart.byteLength
   postMessage({ t: 'dl', file, got, total })
   while (got < total) {
     const end = Math.min(got + CHUNK - 1, total - 1)
-    const want = end - got + 1
     const res = await refetch(() => fetch(url, { headers: { range: `bytes=${got}-${end}` } }))
     if (res.status !== 206) throw new Error(`fetch ${file}: HTTP ${res.status} at byte ${got}`)
     const part = new Uint8Array(await res.arrayBuffer())
-    if (part.byteLength !== want) throw new Error(`fetch ${file}: short slice at byte ${got}`)
-    parts.push(part)
-    got += part.byteLength
+    if (part.byteLength !== end - got + 1) throw new Error(`fetch ${file}: short slice at byte ${got}`)
+    yield part
+    got = end + 1
     postMessage({ t: 'dl', file, got, total })
   }
-  const out = new Uint8Array(total)
-  let at = 0
-  for (const p of parts) { out.set(p, at); at += p.byteLength }
-  return out.buffer
 }
 
 async function refetch(doFetch) {
@@ -117,21 +141,59 @@ async function refetch(doFetch) {
   throw lastErr
 }
 
-async function readProgress(res, file, total) {
+// A file into the emscripten FS in reader-sized slices: the model weights
+// must live in the wasm heap anyway, but the JS-side buffer stays ~1 MB
+// instead of holding a second full copy (the phone tab was OOM-killed at a
+// ~1.9 GB transient doing writeFile(whole ArrayBuffer)).
+async function fsWriteStreamed(path, res) {
+  const dir = path.slice(0, path.lastIndexOf('/'))
+  if (dir) { try { Module.FS.mkdir(dir) } catch (e) {} }
+  const fd = Module.FS.open(path, 'w')
   const reader = res.body.getReader()
-  const chunks = []
-  let got = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    chunks.push(value)
-    got += value.length
-    postMessage({ t: 'dl', file, got, total })
+  let off = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      Module.FS.write(fd, value, 0, value.length, off)
+      off += value.length
+    }
+  } finally { Module.FS.close(fd) }
+}
+
+function recognizerConfig(kind, providers) {
+  if (kind === 'qwen3Asr') {
+    return providers.map(p => () => new OfflineRecognizer({
+      modelConfig: {
+        qwen3Asr: {
+          convFrontend: `${MODEL_DIR}/conv_frontend.onnx`,
+          encoder: `${MODEL_DIR}/encoder.int8.onnx`,
+          decoder: `${MODEL_DIR}/decoder.int8.onnx`,
+          tokenizer: `${MODEL_DIR}/tokenizer`,
+          // ~13 audio tokens/s: 2048 covers a 120 s take with headroom.
+          maxTotalLen: 2048,
+          maxNewTokens: 512,
+        },
+        tokens: '',
+        numThreads: 1,
+        provider: p,
+        debug: 0,
+      },
+    }, Module))
   }
-  const out = new Uint8Array(got)
-  let at = 0
-  for (const c of chunks) { out.set(c, at); at += c.length }
-  return out.buffer
+  return providers.map(p => () => new OfflineRecognizer({
+    modelConfig: {
+      senseVoice: {
+        model: `${MODEL_DIR}/model.int8.onnx`,
+        language: '',
+        useInverseTextNormalization: 1,
+      },
+      tokens: `${MODEL_DIR}/tokens.txt`,
+      numThreads: 1,
+      provider: p,
+      debug: 0,
+    },
+  }, Module))
 }
 
 async function load(msg) {
@@ -151,27 +213,21 @@ async function load(msg) {
   postMessage({ t: 'phase', phase: 'fetch' })
 
   try { Module.FS.mkdir(MODEL_DIR) } catch (e) {}
-  for (const file of Object.values(msg.files)) {
-    const buf = await fetchCached(`${msg.modelBase}/${file}`, file, msg.cache)
-    Module.FS.writeFile(`${MODEL_DIR}/${file}`, new Uint8Array(buf))
+  const files = Array.isArray(msg.files) ? msg.files : Object.values(msg.files)
+  for (const file of files) {
+    const res = await fetchCached(`${msg.modelBase}/${file}`, file, msg.cache)
+    await fsWriteStreamed(`${MODEL_DIR}/${file}`, res)
   }
 
   postMessage({ t: 'phase', phase: 'create' })
-  // SenseVoice: '' = auto language (zh/en/ja/ko/yue); ITN gives punctuation
-  // and normalized numbers in the output text.
-  recognizer = new OfflineRecognizer({
-    modelConfig: {
-      senseVoice: {
-        model: `${MODEL_DIR}/model.int8.onnx`,
-        language: '',
-        useInverseTextNormalization: 1,
-      },
-      tokens: `${MODEL_DIR}/tokens.txt`,
-      numThreads: 1,
-      provider: 'cpu',
-      debug: 0,
-    },
-  }, Module)
+  const providers = msg.providers && msg.providers.length ? msg.providers : ['cpu']
+  const tries = recognizerConfig(msg.kind || 'senseVoice', providers)
+  let lastErr = null
+  for (let i = 0; i < tries.length; i++) {
+    try { recognizer = tries[i](); activeProvider = providers[i]; return }
+    catch (e) { lastErr = e; postMessage({ t: 'phase', phase: 'create', detail: `provider ${providers[i]} failed, retrying: ${String(e).slice(0, 120)}` }) }
+  }
+  throw lastErr || new Error('recognizer creation failed')
 }
 
 self.onmessage = async (e) => {
@@ -180,7 +236,7 @@ self.onmessage = async (e) => {
     if (m.t === 'load') {
       const t0 = performance.now()
       await load(m)
-      postMessage({ t: 'ready', loadMs: Math.round(performance.now() - t0) })
+      postMessage({ t: 'ready', loadMs: Math.round(performance.now() - t0), provider: activeProvider })
     } else if (m.t === 'push') {
       if (pendingLen >= MAX_SAMPLES) return
       const pcm = new Float32Array(m.pcm)
