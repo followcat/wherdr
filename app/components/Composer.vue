@@ -75,8 +75,15 @@ const fieldFocused = ref(false)
 // Stay expanded while focus is anywhere inside the composer — tabbing from
 // the field into the toolbar must not hide the selectors under the finger.
 const withinPrompt = (el: Element | null) => !!(el && ta.value?.closest('.prompt')?.contains(el))
-// Android can dismiss the keyboard while leaving the textarea focused.
-watch(kbOpen, open => { if (!open && !withinPrompt(document.activeElement)) fieldFocused.value = false })
+// Android can dismiss the keyboard while leaving the textarea focused:
+// the composer would stay expanded over a field nothing can type into —
+// drop that focus so it collapses back to one row. A hardware keyboard
+// keeps typing with the soft one hidden, so it keeps the composer open.
+watch(kbOpen, open => {
+  if (open || hardwareKeyboard.value) return
+  if (document.activeElement === ta.value) { ta.value?.blur(); fieldFocused.value = false }
+  else if (!withinPrompt(document.activeElement)) fieldFocused.value = false
+})
 function onFocusOut(e: FocusEvent) {
   if (!withinPrompt(e.relatedTarget as Element | null)) fieldFocused.value = false
 }
