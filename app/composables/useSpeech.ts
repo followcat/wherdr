@@ -81,12 +81,18 @@ export function useSpeech() {
 
   async function startMic() {
     await ensure()
-    media = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } })
+    // Dictation, not a call: hardware echo cancellation and noise suppression
+    // are tuned to kill anything that isn't a loud near-field voice — on
+    // Android they gate/distort quiet speech badly enough to break ASR.
+    media = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false } })
     ctx = new AudioContext({ sampleRate: 16000 })
     src = ctx.createMediaStreamSource(media)
     node = ctx.createScriptProcessor(4096, 1, 1)
+    // Not every device honors the requested context rate — resample the
+    // captured rate rather than feeding the engine a wrong-speed stream.
+    const inRate = ctx.sampleRate
     node.onaudioprocess = (e) => {
-      const buf = e.inputBuffer.getChannelData(0).slice(0)
+      const buf = resampleTo16k(e.inputBuffer.getChannelData(0).slice(0), inRate)
       worker?.postMessage({ t: 'push', pcm: buf.buffer }, [buf.buffer])
     }
     src.connect(node)
