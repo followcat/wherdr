@@ -812,12 +812,6 @@ defineExpose({
           icon="i-lucide-plus" color="neutral" variant="outline" size="sm" class="prompt-plus" :disabled="readOnly"
           :aria-label="t('Photo, file, paste, commands')" @click="openPlus"
         />
-        <UButton
-          :icon="asrRecording ? 'i-lucide-square' : asrInstalled ? 'i-lucide-mic' : 'i-lucide-mic-off'" color="neutral" variant="outline" size="sm"
-          class="prompt-mic" :class="{ dim: !asrInstalled, rec: asrRecording }" :disabled="readOnly || asrBusy"
-          :title="asrInstalled ? t('Voice input') : tl('Voice input not installed — Settings › Conversation', 'Saisie vocale non installée — Réglages › Conversation')"
-          :aria-label="asrInstalled ? t('Voice input') : tl('Voice input not installed', 'Saisie vocale non installée')" :aria-pressed="asrRecording" @click="onMic"
-        />
         <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onFiles">
         <input ref="anyFileInput" type="file" multiple hidden data-testid="attach-any" @change="onFiles">
         <div v-if="pane && (pane.agent === 'claude' || pane.agent === 'codex' || pane.agent === 'omp')" class="prompt-models">
@@ -826,6 +820,12 @@ defineExpose({
         <span v-if="hint && suggestion" class="prompt-hint"><UKbd value="tab" size="sm" /> {{ t('suggestion') }} <span class="sep">·</span> <UKbd value="enter" size="sm" /> {{ t('send') }}</span>
         <span v-else-if="hint" class="prompt-hint"><UKbd value="enter" size="sm" /> {{ t('send') }} <span class="sep">·</span> <UKbd value="shift" size="sm" /><UKbd value="enter" size="sm" /> {{ t('new line') }}</span>
         <span v-else-if="desk && escStops && stopMode && interrupting !== 'running'" class="prompt-hint"><UKbd value="escape" size="sm" /> {{ tl('stop', 'arrêter') }}</span>
+        <UButton
+          :icon="asrRecording ? 'i-lucide-square' : asrInstalled ? 'i-lucide-mic' : 'i-lucide-mic-off'" color="neutral" variant="outline" size="sm"
+          class="prompt-mic" :class="{ dim: !asrInstalled, rec: asrRecording }" :disabled="readOnly || asrBusy"
+          :title="asrInstalled ? t('Voice input') : tl('Voice input not installed — Settings › Conversation', 'Saisie vocale non installée — Réglages › Conversation')"
+          :aria-label="asrInstalled ? t('Voice input') : tl('Voice input not installed', 'Saisie vocale non installée')" :aria-pressed="asrRecording" @click="onMic"
+        />
         <UChatPromptSubmit
           :status="stopMode ? 'streaming' : 'ready'" :disabled="sendDisabled"
           color="primary" variant="solid" streaming-color="neutral" streaming-variant="solid" streaming-icon="i-herdr-stop" size="sm"
