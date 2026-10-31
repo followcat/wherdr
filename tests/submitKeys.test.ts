@@ -1,7 +1,7 @@
 // Alternate submission keys ("Send with <key>"): only verified agent keys are
 // offered, under the context they were verified in (shared/submitKeys.ts).
 import { describe, expect, it } from 'vitest'
-import { isSubmitKey, possibleSubmitKey, submitKeysFor } from '../shared/submitKeys'
+import { defaultSubmitKey, isSubmitKey, possibleSubmitKey, submitKeysFor } from '../shared/submitKeys'
 
 describe('submit keys: the verified terminators of each agent', () => {
   it('Codex takes Tab to queue a draft, only while it works', () => {
@@ -22,6 +22,15 @@ describe('submit keys: the verified terminators of each agent', () => {
     expect(submitKeysFor('devin', { working: true })).toEqual(['ctrl+enter'])
     expect(submitKeysFor('devin', { working: false })).toEqual(['ctrl+enter'])
     expect(isSubmitKey('devin', 'ctrl+enter', { working: true })).toBe(true)
+  })
+
+  it('a working Devin defaults its sends to Ctrl+Enter — Enter would steer, not queue', () => {
+    expect(defaultSubmitKey('devin', { working: true })).toBe('ctrl+enter')
+    expect(defaultSubmitKey('devin', { working: false })).toBeUndefined()
+    expect(defaultSubmitKey('devin')).toBeUndefined()
+    expect(defaultSubmitKey('claude', { working: true })).toBeUndefined()
+    expect(defaultSubmitKey('codex', { working: true })).toBeUndefined()
+    expect(defaultSubmitKey(undefined, { working: true })).toBeUndefined()
   })
 
   it('agents without a verified key only have the implicit Enter', () => {

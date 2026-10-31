@@ -34,6 +34,15 @@ export function submitKeysFor(agent: string | null | undefined, ctx: { working?:
 
 export const isSubmitKey = (agent: string | null | undefined, key: string, ctx: { working?: boolean } = {}) => submitKeysFor(agent, ctx).includes(key)
 
+// The terminator the plain Send delivers when nothing else is asked for —
+// undefined keeps the pane's usual Enter. Devin working is the exception:
+// its field hands an Enter-message to the running turn as a steer, while
+// Ctrl+Enter is the queue (verified: v3000.11 steering release notes). An
+// idle Devin submits on Enter like everywhere else.
+export function defaultSubmitKey(agent: string | null | undefined, ctx: { working?: boolean } = {}): string | undefined {
+  return agent === 'devin' && ctx.working ? 'ctrl+enter' : undefined
+}
+
 // The key is a terminator for `agent` under some context. What a submission
 // asks for is stored so a held message can still get its key at delivery —
 // where the context is checked again (isSubmitKey).
