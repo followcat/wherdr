@@ -123,7 +123,7 @@ describe('devinFieldLine: the Devin input field from its screen', () => {
   })
 
   it('real ANSI screens (v3000.11.234): colors and hints do not fool it', () => {
-    const fx = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
+    const fx = (name: string) => readFileSync(new URL(`./captures/${name}`, import.meta.url), 'utf8')
     expect(devinFieldLine(fx('devin-idle.ansi'))).toBe('')
     expect(devinFieldLine(fx('devin-draft.ansi'))).toBe('ZETA draft for reader check')
   })
