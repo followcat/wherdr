@@ -2096,7 +2096,7 @@ body.kb .composer { padding-bottom: 8px; }
   .prompt .prompt-body { grid-column: 2; grid-row: 1; }
   .prompt .prompt-foot { display: contents; }
   .prompt .prompt-plus { grid-column: 1; grid-row: 1; }
-  .prompt .prompt-mic { grid-column: 3; grid-row: 1; margin-left: 0; }
+  .prompt .prompt-mic { grid-column: 3; grid-row: 1; }
   .prompt .prompt-send { grid-column: 4; grid-row: 1; margin-left: 0; }
   .prompt .prompt-models, .prompt .prompt-hint { display: none; }
   .prompt.expanded { display: flex; align-items: stretch; }
