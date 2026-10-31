@@ -22,7 +22,9 @@ const TABLE: Record<string, (ctx: { working: boolean }) => string[]> = {
   claude: () => ['ctrl+enter'],
   // Devin: Ctrl+Enter submits a draft idle and queues it while working —
   // verified on v3000.11.234 ("1 queued · ↵ send now"), delivered at the
-  // turn's end.
+  // turn's end. Plain Send stays Enter: on a working Devin it steers the
+  // running turn, which is what Send means — the queue is never the
+  // default, only this explicit chord.
   devin: () => ['ctrl+enter'],
 }
 
@@ -33,15 +35,6 @@ export function submitKeysFor(agent: string | null | undefined, ctx: { working?:
 }
 
 export const isSubmitKey = (agent: string | null | undefined, key: string, ctx: { working?: boolean } = {}) => submitKeysFor(agent, ctx).includes(key)
-
-// The terminator the plain Send delivers when nothing else is asked for —
-// undefined keeps the pane's usual Enter. Devin working is the exception:
-// its field hands an Enter-message to the running turn as a steer, while
-// Ctrl+Enter is the queue (verified: v3000.11 steering release notes). An
-// idle Devin submits on Enter like everywhere else.
-export function defaultSubmitKey(agent: string | null | undefined, ctx: { working?: boolean } = {}): string | undefined {
-  return agent === 'devin' && ctx.working ? 'ctrl+enter' : undefined
-}
 
 // The key is a terminator for `agent` under some context. What a submission
 // asks for is stored so a held message can still get its key at delivery —

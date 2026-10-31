@@ -9,6 +9,7 @@ All notable changes to this project are documented here. The format follows
 ### Added and improved
 
 - **On-device dictation hears Cantonese, Japanese and Korean too.** The microphone's speech model is now SenseVoice-small (int8): the language — 中文, English, 廣東話, 日本語 or 한국어 — is detected automatically, and the take is transcribed when you stop, with punctuation. The first launch after the update downloads the new model (~230 MB) once in resumable slices, so a dropped connection no longer restarts it; the retired bilingual model is evicted from the browser cache.
+- **Plain Send steers a working Devin again.** The white button ends the draft with Enter everywhere, so a message reaches a running Devin at once instead of sitting in its queue; queueing for the turn's end stays available as "Send with Ctrl+Enter" on the key bar.
 
 ## [2.4.0] — 2026-10-31
 
