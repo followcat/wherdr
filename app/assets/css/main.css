@@ -2473,6 +2473,18 @@ body.kb .composer { padding-bottom: 8px; }
 .settings-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .asr-progress progress { width: 100%; }
 .settings-hint.asr-error { color: var(--danger); }
+/* Voice model list — one row per model: pick area, badge or size/remove. */
+.asr-model-list { margin: 0 0 10px; }
+.asr-model-row { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); background: var(--bg-2); }
+.asr-model-row + .asr-model-row { border-top: 0; }
+.asr-model-on { border-color: var(--accent); }
+.asr-model-on + .asr-model-row, .asr-model-row:has(+ .asr-model-on) { border-top-color: var(--accent); }
+.asr-model-pick { flex: 1; display: flex; align-items: flex-start; gap: 10px; min-width: 0; text-align: left; padding: 0; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+.asr-model-dot { flex: none; width: 18px; height: 18px; margin-top: 2px; color: var(--text-3); }
+.asr-model-on .asr-model-dot { color: var(--accent); }
+.asr-model-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.asr-model-text b { font-size: 14px; font-weight: 500; }
+.asr-model-text small { font-size: 12.5px; color: var(--text-3); line-height: 1.4; }
 /* Sub-section of a settings section shown only on a computer (Appearance › Desktop). */
 .settings-subhead { margin: 6px 0 22px; padding-top: 22px; border-top: 1px solid var(--line); }
 .projects-plugin-intro { margin: 0 0 12px; color: var(--text-2); font-size: 14px; line-height: 1.55; }

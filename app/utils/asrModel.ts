@@ -27,9 +27,9 @@ export interface AsrModelDef {
 
 export const ASR_MODELS: Record<string, AsrModelDef> = {
   sensevoice: {
-    base: '/models/sensevoice-zh-en-ja-ko-yue',
+    base: '/models/sensevoice-zh-en-ja-ko-yue-2025-09',
     files: ['model.int8.onnx', 'tokens.txt'],
-    bytes: 234 * 1048576,
+    bytes: 227 * 1048576,
     kind: 'senseVoice',
     providers: ['cpu'],
   },
@@ -41,8 +41,46 @@ export const ASR_MODELS: Record<string, AsrModelDef> = {
     // webgpu first — falls back to cpu if the engine rejects it.
     providers: ['webgpu', 'cpu'],
   },
+  funasr: {
+    base: '/models/funasr-nano-int8',
+    files: ['encoder_adaptor.int8.onnx', 'llm.int8.onnx', 'embedding.int8.onnx', 'Qwen3-0.6B/vocab.json', 'Qwen3-0.6B/merges.txt', 'Qwen3-0.6B/tokenizer.json'],
+    bytes: 964 * 1048576,
+    kind: 'funasrNano',
+    providers: ['webgpu', 'cpu'],
+  },
+  wsyue: {
+    base: '/models/wenetspeech-yue-u2pp-int8',
+    files: ['model.int8.onnx', 'tokens.txt'],
+    bytes: 129 * 1048576,
+    kind: 'wenetCtc',
+    providers: ['cpu'],
+  },
+  firered2: {
+    base: '/models/fire-red-asr2-ctc-int8',
+    files: ['model.int8.onnx', 'tokens.txt'],
+    bytes: 741 * 1048576,
+    kind: 'fireRedAsrCtc',
+    providers: ['webgpu', 'cpu'],
+  },
+  omnilingual: {
+    base: '/models/omnilingual-300m-ctc-int8',
+    files: ['model.int8.onnx', 'tokens.txt'],
+    bytes: 349 * 1048576,
+    kind: 'omnilingual',
+    providers: ['cpu'],
+  },
+  dolphin: {
+    base: '/models/dolphin-base-ctc-int8',
+    files: ['model.int8.onnx', 'tokens.txt'],
+    bytes: 100 * 1048576,
+    kind: 'dolphin',
+    providers: ['cpu'],
+  },
 }
 export const ASR_MODEL_IDS = Object.keys(ASR_MODELS)
+
+// Cohere Transcribe is registered once its tarball layout is confirmed —
+// the engine needs encoder/decoder/tokens and supports 14 languages.
 
 const STORAGE_KEY = 'wherdr-asr-model'
 export const asrModelId = ref<string>(ASR_MODEL_IDS[0]!)
@@ -59,9 +97,13 @@ export function selectAsrModel(id: string) {
 export const asrModel = computed(() => ASR_MODELS[asrModelId.value]!)
 export const asrUrls = (id: string = asrModelId.value) => (ASR_MODELS[id]?.files || []).map(f => `${ASR_MODELS[id]!.base}/${f}`)
 
-// The retired streaming-zipformer set — evicted on refresh so a leftover
-// install doesn't squat ~200 MB of Cache Storage after the SenseVoice switch.
-const LEGACY_BASE = '/models/asr-zipformer-zh-en'
+// Retired model sets — evicted on refresh so leftovers don't squat Cache
+// Storage: the streaming zipformer (~200 MB) and the 2024 SenseVoice export
+// the 2025-09 one replaces (~230 MB).
+const LEGACY_FILES: Record<string, string[]> = {
+  '/models/asr-zipformer-zh-en': ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt'],
+  '/models/sensevoice-zh-en-ja-ko-yue': ['model.int8.onnx', 'tokens.txt'],
+}
 
 // Per-model install state — Settings shows each, the mic reads the selected.
 export const asrInstalledBy = ref<Record<string, boolean>>({})
@@ -74,8 +116,8 @@ export async function refreshAsrInstalled(cacheProvider: CacheStorage | undefine
     // network-first cache also stored them when they were fetched.
     for (const name of await cacheProvider.keys()) {
       const cache = await cacheProvider.open(name)
-      for (const f of ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt']) {
-        await cache.delete(`${LEGACY_BASE}/${f}`).catch(() => {})
+      for (const [base, files] of Object.entries(LEGACY_FILES)) {
+        for (const f of files) await cache.delete(`${base}/${f}`).catch(() => {})
       }
     }
   } catch {}
