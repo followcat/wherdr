@@ -4,7 +4,8 @@ import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import { defineComponent, h, nextTick, ref } from 'vue'
 import { UApp } from '#components'
 import Composer from '~/components/Composer.vue'
-import { eventsOpen } from '~/composables/useHerdr'
+import { eventsOpen, hardwareKeyboard } from '~/composables/useHerdr'
+import { kbOpen } from '~/composables/useViewport'
 import { outboxFor } from '~/composables/useOutbox'
 import type { Pane } from '#shared/types'
 
@@ -116,6 +117,40 @@ describe('Composer send', () => {
 })
 
 // References in the field (shared/reference.ts): the text is the only state.
+describe('Composer expansion', () => {
+  afterEach(() => { kbOpen.value = false; hardwareKeyboard.value = false })
+
+  it('collapses to one row when Android dismisses the keyboard but keeps the field focused', async () => {
+    const { w, field } = await mount('w1:p6')
+    await field.setValue('')
+    kbOpen.value = true
+    field.element.focus()
+    await field.trigger('focusin')
+    await nextTick()
+    expect(w.find('.prompt').classes()).toContain('expanded')
+    // Android drops the soft keyboard without blurring the textarea.
+    kbOpen.value = false
+    await nextTick()
+    expect(w.find('.prompt').classes()).not.toContain('expanded')
+    expect(document.activeElement).not.toBe(field.element)
+    w.unmount()
+  })
+
+  it('stays expanded after the soft keyboard hides when a hardware keyboard is present', async () => {
+    hardwareKeyboard.value = true
+    const { w, field } = await mount('w1:p7')
+    await field.setValue('')
+    kbOpen.value = true
+    field.element.focus()
+    await field.trigger('focusin')
+    await nextTick()
+    kbOpen.value = false
+    await nextTick()
+    expect(w.find('.prompt').classes()).toContain('expanded')
+    w.unmount()
+  })
+})
+
 describe('Composer references', () => {
   beforeEach(() => { eventsOpen.value = true })
   afterEach(() => { eventsOpen.value = false })
