@@ -27,9 +27,19 @@ let recognizer = null
 let stream = null
 let utterance = ''   // accumulated text for the current utterance (survives endpoint resets)
 
+// Emscripten instantiates the .wasm asynchronously: importScripts returns as
+// soon as the loader kicks it off, and the 'load' message is handled while
+// compilation is still in flight. Wait on these callbacks instead of probing
+// HEAP views at message time — on a phone that probe fires several seconds
+// too early and reports a healthy engine as broken.
+let _engineResolve = null
+let _engineError = null
+const engineReady = new Promise((res) => { _engineResolve = res })
+
 self.Module = {
   locateFile: (f) => WASM_BASE + f,
-  onRuntimeInitialized() { postMessage({ t: 'phase', phase: 'wasm', detail: 'runtime ready' }) },
+  onRuntimeInitialized() { postMessage({ t: 'phase', phase: 'wasm', detail: 'runtime ready' }); _engineResolve && _engineResolve() },
+  onAbort(what) { _engineError = new Error('speech engine aborted: ' + what); _engineResolve && _engineResolve() },
   print: () => {},
   printErr: (m) => console.warn('[wasm]', m),
   noInitialRun: true,
@@ -66,14 +76,20 @@ async function readProgress(res, file, total) {
 }
 
 async function load(msg) {
-  postMessage({ t: 'phase', phase: 'fetch' })
+  postMessage({ t: 'phase', phase: 'wasm', detail: 'engine loading' })
 
-  // If the wasm binary failed to fetch/instantiate, no HEAP views exist and
-  // every FS call throws a cryptic `reading 'buffer'` TypeError — check for
-  // the engine up front and report something actionable instead.
+  // Wait for the async wasm instantiate before touching the FS — bounded so a
+  // hung fetch can't wedge the mic forever.
+  await Promise.race([
+    engineReady,
+    new Promise((_, rej) => setTimeout(() => rej(new Error('speech engine load timed out — check the connection and try again')), 60000)),
+  ])
+  if (_engineError) throw _engineError
   if (typeof OnlineRecognizer !== 'function' || !Module.FS || !Module.HEAPU8) {
     throw new Error('speech engine failed to initialize (wasm not loaded) — check the connection and try again')
   }
+
+  postMessage({ t: 'phase', phase: 'fetch' })
 
   // Emscripten FS paths come from the official wasm example layout: one dir
   // with encoder.onnx / decoder.onnx / joiner.onnx / tokens.txt.
