@@ -48,13 +48,9 @@ export const ASR_MODELS: Record<string, AsrModelDef> = {
     kind: 'funasrNano',
     providers: ['webgpu', 'cpu'],
   },
-  wsyue: {
-    base: '/models/wenetspeech-yue-u2pp-int8',
-    files: ['model.int8.onnx', 'tokens.txt'],
-    bytes: 129 * 1048576,
-    kind: 'wenetCtc',
-    providers: ['cpu'],
-  },
+  // wsyue (wenetCtc) is intentionally not listed: the wasm build's wenetCtc
+  // engine traps on this int8 model (works in native builds), and its niche —
+  // Cantonese only, no punctuation — is covered better by funasr/qwen3.
   firered2: {
     base: '/models/fire-red-asr2-ctc-int8',
     files: ['model.int8.onnx', 'tokens.txt'],
