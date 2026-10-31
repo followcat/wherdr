@@ -1,32 +1,74 @@
 // On-device speech recognition: the model lives in Cache Storage, independent
 // of the app's precache — a wherdr update never re-downloads it. "Installed"
-// means every model file is cached; Settings installs/removes, Composer's mic
-// button reads `installed` (dim until true).
+// means every file of the selected model is cached; Settings installs/removes,
+// Composer's mic button reads `asrInstalled` (dim until true).
+//
+// Two models are offered (ASR_MODELS): SenseVoice-small — fast, five
+// languages — and Qwen3-ASR 0.6B — four times the size, the clearest
+// Cantonese output of the bake-off (proper punctuation, real 廣東話
+// characters). `asrModelId` picks which one the mic loads.
 //
 // The worker (public/workers/asr-worker.js) resolves the same URLs through
 // the same cache, so a pre-warmed install makes model load offline-capable.
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 export const ASR_CACHE = 'wherdr-asr-v1'
-export const ASR_MODEL = {
-  base: '/models/sensevoice-zh-en-ja-ko-yue',
-  files: {
-    model: 'model.int8.onnx',
-    tokens: 'tokens.txt',
-  } as Record<string, string>,
-  bytes: 234 * 1048576, // shown in Settings; actual sizes come from content-length
+
+export interface AsrModelDef {
+  base: string
+  // Relative file paths under `base` (tokenizer entries keep their subdir).
+  files: string[]
+  bytes: number // shown in Settings; actual sizes come from content-length
+  // Which recognizer config the worker builds.
+  kind: 'senseVoice' | 'qwen3Asr'
+  // Execution providers the worker tries in order.
+  providers: string[]
 }
-export const asrUrls = () => Object.values(ASR_MODEL.files).map(f => `${ASR_MODEL.base}/${f}`)
+
+export const ASR_MODELS: Record<string, AsrModelDef> = {
+  sensevoice: {
+    base: '/models/sensevoice-zh-en-ja-ko-yue',
+    files: ['model.int8.onnx', 'tokens.txt'],
+    bytes: 234 * 1048576,
+    kind: 'senseVoice',
+    providers: ['cpu'],
+  },
+  qwen3: {
+    base: '/models/qwen3-asr-0.6b-int8',
+    files: ['conv_frontend.onnx', 'encoder.int8.onnx', 'decoder.int8.onnx', 'tokenizer/vocab.json', 'tokenizer/merges.txt', 'tokenizer/tokenizer_config.json'],
+    bytes: 983 * 1048576,
+    kind: 'qwen3Asr',
+    // webgpu first — falls back to cpu if the engine rejects it.
+    providers: ['webgpu', 'cpu'],
+  },
+}
+export const ASR_MODEL_IDS = Object.keys(ASR_MODELS)
+
+const STORAGE_KEY = 'wherdr-asr-model'
+export const asrModelId = ref<string>(ASR_MODEL_IDS[0]!)
+if (typeof localStorage !== 'undefined') {
+  const saved = localStorage.getItem(STORAGE_KEY)
+  if (saved && ASR_MODELS[saved]) asrModelId.value = saved
+}
+export function selectAsrModel(id: string) {
+  if (!ASR_MODELS[id]) return
+  asrModelId.value = id
+  try { localStorage.setItem(STORAGE_KEY, id) } catch {}
+}
+
+export const asrModel = computed(() => ASR_MODELS[asrModelId.value]!)
+export const asrUrls = (id: string = asrModelId.value) => (ASR_MODELS[id]?.files || []).map(f => `${ASR_MODELS[id]!.base}/${f}`)
 
 // The retired streaming-zipformer set — evicted on refresh so a leftover
 // install doesn't squat ~200 MB of Cache Storage after the SenseVoice switch.
 const LEGACY_BASE = '/models/asr-zipformer-zh-en'
 
-// Shared reactive install state — Settings mutates, Composer reads.
-export const asrInstalled = ref(false)
+// Per-model install state — Settings shows each, the mic reads the selected.
+export const asrInstalledBy = ref<Record<string, boolean>>({})
+export const asrInstalled = computed(() => Boolean(asrInstalledBy.value[asrModelId.value]))
 
 export async function refreshAsrInstalled(cacheProvider: CacheStorage | undefined = globalThis.caches): Promise<boolean> {
-  if (!cacheProvider) { asrInstalled.value = false; return false }
+  if (!cacheProvider) { asrInstalledBy.value = {}; return false }
   try {
     // The retired files may sit in any cache — the service worker's
     // network-first cache also stored them when they were fetched.
@@ -37,19 +79,23 @@ export async function refreshAsrInstalled(cacheProvider: CacheStorage | undefine
       }
     }
   } catch {}
-  const hits = await Promise.all(asrUrls().map(u => cacheProvider.match(u)))
-  asrInstalled.value = hits.every(Boolean)
+  const map: Record<string, boolean> = {}
+  for (const id of ASR_MODEL_IDS) {
+    const hits = await Promise.all(asrUrls(id).map(u => cacheProvider.match(u)))
+    map[id] = hits.every(Boolean)
+  }
+  asrInstalledBy.value = map
   return asrInstalled.value
 }
 
 export interface AsrProgress { file: string, got: number, total: number, done: number, count: number }
 
-// Downloads every model file into the ASR cache. Progress counts whole files;
-// per-file byte progress rides along when content-length is known.
-export async function installAsr(onProgress?: (p: AsrProgress) => void, cacheProvider: CacheStorage | undefined = globalThis.caches): Promise<void> {
+// Downloads every file of a model into the ASR cache. Progress counts whole
+// files; per-file byte progress rides along when content-length is known.
+export async function installAsr(onProgress?: (p: AsrProgress) => void, cacheProvider: CacheStorage | undefined = globalThis.caches, modelId: string = asrModelId.value): Promise<void> {
   if (!cacheProvider) throw new Error('Cache Storage unavailable')
   const cache = await cacheProvider.open(ASR_CACHE)
-  const urls = asrUrls()
+  const urls = asrUrls(modelId)
   for (let i = 0; i < urls.length; i++) {
     const url = urls[i]!
     const file = url.split('/').pop()!
@@ -61,10 +107,12 @@ export async function installAsr(onProgress?: (p: AsrProgress) => void, cachePro
   await refreshAsrInstalled(cacheProvider)
 }
 
-// The ~230 MB model crosses tunnels that drop long transfers, so files are
+// The ~1 GB model crosses tunnels that drop long transfers, so files are
 // pulled in byte-range slices with per-slice retries: progress survives a
 // dropped connection instead of restarting from zero. When the server ignores
-// Range (older deploys) the whole body is drained in one pass.
+// Range (older deploys) the whole body is drained in one pass. Slices feed a
+// ReadableStream straight into the cached Response — a 750 MB file is never
+// assembled in memory.
 const DL_CHUNK = 8 * 1024 * 1024
 
 async function refetch(doFetch: () => Promise<Response>): Promise<Response> {
@@ -81,49 +129,61 @@ async function refetch(doFetch: () => Promise<Response>): Promise<Response> {
 }
 
 async function fetchModelFile(url: string, file: string, onGot: (got: number, total: number) => void): Promise<Response> {
-  const headers = { 'content-type': 'application/octet-stream' }
   const first = await refetch(() => fetch(url, { headers: { range: `bytes=0-${DL_CHUNK - 1}` } }))
   if (first.status === 206) {
     const total = Number((first.headers.get('content-range') || '').split('/')[1]) || 0
     if (!total) throw new Error(`bad content-range on ${file}`)
-    const parts = [new Uint8Array(await first.arrayBuffer())]
-    let got = parts[0]!.byteLength
-    onGot(got, total)
-    while (got < total) {
-      const end = Math.min(got + DL_CHUNK - 1, total - 1)
-      const res = await refetch(() => fetch(url, { headers: { range: `bytes=${got}-${end}` } }))
-      if (res.status !== 206) throw new Error(`HTTP ${res.status} on ${file} at byte ${got}`)
-      const part = new Uint8Array(await res.arrayBuffer())
-      if (part.byteLength !== end - got + 1) throw new Error(`short slice on ${file} at byte ${got}`)
-      parts.push(part)
-      got += part.byteLength
-      onGot(got, total)
-    }
-    const buf = new Uint8Array(total)
-    let at = 0
-    for (const p of parts) { buf.set(p, at); at += p.byteLength }
-    return new Response(buf, { headers: { ...headers, 'content-length': String(total) } })
+    const firstPart = new Uint8Array(await first.arrayBuffer())
+    const stream = new ReadableStream<Uint8Array>({
+      async start(ctrl) {
+        try {
+          ctrl.enqueue(firstPart)
+          let got = firstPart.byteLength
+          onGot(got, total)
+          while (got < total) {
+            const end = Math.min(got + DL_CHUNK - 1, total - 1)
+            const res = await refetch(() => fetch(url, { headers: { range: `bytes=${got}-${end}` } }))
+            if (res.status !== 206) throw new Error(`HTTP ${res.status} on ${file} at byte ${got}`)
+            const part = new Uint8Array(await res.arrayBuffer())
+            if (part.byteLength !== end - got + 1) throw new Error(`short slice on ${file} at byte ${got}`)
+            ctrl.enqueue(part)
+            got = end + 1
+            onGot(got, total)
+          }
+          ctrl.close()
+        } catch (e) { ctrl.error(e) }
+      },
+    })
+    return new Response(stream, { headers: { 'content-type': 'application/octet-stream', 'content-length': String(total) } })
   }
   if (!first.ok) throw new Error(`HTTP ${first.status} on ${file}`)
   const total = Number(first.headers.get('content-length')) || 0
   if (!first.body) return first
   const reader = first.body.getReader()
-  const chunks: Uint8Array[] = []
-  let got = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    chunks.push(value)
-    got += value.length
-    onGot(got, total)
-  }
-  const buf = new Uint8Array(got)
-  let at = 0
-  for (const c of chunks) { buf.set(c, at); at += c.length }
-  return new Response(buf, { headers: first.headers })
+  const stream = new ReadableStream<Uint8Array>({
+    async start(ctrl) {
+      try {
+        let got = 0
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          ctrl.enqueue(value)
+          got += value.length
+          onGot(got, total)
+        }
+        ctrl.close()
+      } catch (e) { ctrl.error(e) }
+    },
+  })
+  return new Response(stream, { headers: first.headers })
 }
 
-export async function removeAsr(cacheProvider: CacheStorage | undefined = globalThis.caches): Promise<void> {
-  if (cacheProvider) await cacheProvider.delete(ASR_CACHE)
-  asrInstalled.value = false
+// Removes one model's files (its URLs only — a second model may share the
+// cache). `modelId` defaults to the selected one.
+export async function removeAsr(cacheProvider: CacheStorage | undefined = globalThis.caches, modelId: string = asrModelId.value): Promise<void> {
+  if (cacheProvider) {
+    const cache = await cacheProvider.open(ASR_CACHE)
+    for (const u of asrUrls(modelId)) await cache.delete(u).catch(() => {})
+  }
+  await refreshAsrInstalled(cacheProvider)
 }

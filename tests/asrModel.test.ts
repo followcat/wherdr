@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { asrInstalled, asrUrls, installAsr, refreshAsrInstalled, removeAsr } from '../app/utils/asrModel'
+import { ASR_MODELS, ASR_MODEL_IDS, asrInstalled, asrInstalledBy, asrModelId, asrUrls, installAsr, refreshAsrInstalled, removeAsr, selectAsrModel } from '../app/utils/asrModel'
 
 // A minimal CacheStorage: match() answers from a map, open() returns a cache
 // whose put() fills the same map — enough to exercise install state.
@@ -8,13 +8,24 @@ function fakeCaches(present: string[] = []) {
   const put = vi.fn(async (u: string, r: Response) => { store.set(u, r) })
   const caches = {
     match: async (u: RequestInfo | URL) => store.get(String(u)),
-    open: async () => ({ put, delete: async () => true }),
+    open: async () => ({ put, delete: async (u: string) => store.delete(String(u)) }),
+    keys: async () => ['wherdr-asr-v1'],
     delete: async () => { store.clear(); return true },
   } as unknown as CacheStorage
   return { caches, store, put }
 }
 
-beforeEach(() => { asrInstalled.value = false })
+beforeEach(() => { asrInstalledBy.value = {}; selectAsrModel(ASR_MODEL_IDS[0]!) })
+
+describe('asrUrls', () => {
+  it('lists every file the worker needs, per model', () => {
+    for (const id of ASR_MODEL_IDS) {
+      const urls = asrUrls(id)
+      expect(urls.length).toBe(ASR_MODELS[id]!.files.length)
+      expect(urls.every(u => u.startsWith(ASR_MODELS[id]!.base))).toBe(true)
+    }
+  })
+})
 
 describe('asrInstalled', () => {
   it('is false until every model file is cached', async () => {
@@ -24,6 +35,16 @@ describe('asrInstalled', () => {
     expect(await refreshAsrInstalled(caches)).toBe(false)
     store.set(asrUrls().at(-1)!, new Response('x'))
     expect(await refreshAsrInstalled(caches)).toBe(true)
+    expect(asrInstalled.value).toBe(true)
+  })
+
+  it('tracks install state per model', async () => {
+    const { caches, store } = fakeCaches()
+    for (const u of asrUrls('qwen3')) store.set(u, new Response('x'))
+    await refreshAsrInstalled(caches)
+    expect(asrInstalledBy.value.qwen3).toBe(true)
+    expect(asrInstalledBy.value.sensevoice).toBe(false)
+    selectAsrModel('qwen3')
     expect(asrInstalled.value).toBe(true)
   })
 
@@ -62,11 +83,12 @@ describe('installAsr', () => {
 })
 
 describe('removeAsr', () => {
-  it('drops the cache and the flag', async () => {
-    const { caches, store } = fakeCaches(asrUrls())
-    asrInstalled.value = true
+  it('drops only the selected model\'s files', async () => {
+    const { caches, store } = fakeCaches([...asrUrls('sensevoice'), ...asrUrls('qwen3')])
+    await refreshAsrInstalled(caches)
+    selectAsrModel('qwen3')
     await removeAsr(caches)
-    expect(asrInstalled.value).toBe(false)
-    expect(store.size).toBe(0)
+    expect(asrInstalledBy.value.qwen3).toBe(false)
+    expect(asrInstalledBy.value.sensevoice).toBe(true)
   })
 })

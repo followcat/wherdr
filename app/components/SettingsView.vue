@@ -91,6 +91,7 @@ const replyStyleChoice = replyStyle
 
 // Voice input: the on-device speech model (utils/asrModel.ts) lives in Cache
 // Storage; the composer's microphone stays dim until `asrInstalled` is true.
+// `asrModelId` picks which of ASR_MODELS the mic loads.
 const asrInstalling = ref(false)
 const asrRemoving = ref(false)
 const asrDlFile = ref('')
@@ -100,6 +101,14 @@ const asrDlDone = ref(0)
 const asrDlCount = ref(0)
 const asrError = ref('')
 function fmtMb(n: number) { return `${Math.round(n / 1048576)} MB` }
+const asrModelItems = computed(() => ASR_MODEL_IDS.map(id => ({
+  label: id === 'qwen3' ? 'Qwen3-ASR 0.6B' : 'SenseVoice-small',
+  description: id === 'qwen3'
+    ? tl('Clearest Cantonese — real 廣東話 characters and punctuation; ~980 MB, decodes slower. Also strong in zh/en/ja/ko.', 'Cantonais le plus net — vrais caractères 廣東話 et ponctuation ; ~980 Mo, décodage plus lent. Fort aussi en zh/en/ja/ko.')
+    : tl('Fast and light (~230 MB): zh/en/ja/ko/廣東話 auto-detected, no punctuation. The safe everyday pick.', 'Rapide et léger (~230 Mo) : zh/en/ja/ko/廣東話 détectés tout seuls, sans ponctuation. Le choix quotidien sûr.'),
+  value: id,
+})))
+const asrInstalled = computed(() => Boolean(asrInstalledBy.value[asrModelId.value]))
 const asr = {
   installing: asrInstalling, removing: asrRemoving, error: asrError,
   dlFile: asrDlFile, dlGot: asrDlGot, dlTotal: asrDlTotal, dlDone: asrDlDone, dlCount: asrDlCount,
@@ -457,7 +466,8 @@ onMounted(() => {
           </div>
           <div class="settings-group">
             <h3>{{ tl('Voice input', 'Saisie vocale') }}</h3>
-            <p class="muted settings-lead">{{ tl('Dictate into the message field on this device: the speech model (about 200 MB) downloads once into the browser and stays here — recognition runs on the phone, no server or account. The microphone button in the field turns on once the model is downloaded.', 'Dicte dans le champ de message sur cet appareil : le modèle vocal (environ 200 Mo) se télécharge une fois dans le navigateur et y reste — la reconnaissance tourne sur le téléphone, sans serveur ni compte. Le bouton micro du champ s’active une fois le modèle téléchargé.') }}</p>
+            <p class="muted settings-lead">{{ tl('Dictate into the message field on this device: the speech model downloads once into the browser and stays here — recognition runs on the phone, no server or account. The microphone button in the field turns on once the model is downloaded.', 'Dicte dans le champ de message sur cet appareil : le modèle vocal se télécharge une fois dans le navigateur et y reste — la reconnaissance tourne sur le téléphone, sans serveur ni compte. Le bouton micro du champ s’active une fois le modèle téléchargé.') }}</p>
+            <URadioGroup :model-value="asrModelId" :items="asrModelItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" @update:model-value="selectAsrModel" />
             <div v-if="asrInstalling" class="asr-progress">
               <progress :value="asrDlDone" :max="asrDlCount || 1" />
               <p class="muted settings-hint">{{ asrDlFile }}<template v-if="asrDlGot"> · {{ fmtMb(asrDlGot) }}<template v-if="asrDlTotal"> / {{ fmtMb(asrDlTotal) }}</template></template></p>
