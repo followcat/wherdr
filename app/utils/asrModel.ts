@@ -9,22 +9,30 @@ import { ref } from 'vue'
 
 export const ASR_CACHE = 'wherdr-asr-v1'
 export const ASR_MODEL = {
-  base: '/models/asr-zipformer-zh-en',
+  base: '/models/sensevoice-zh-en-ja-ko-yue',
   files: {
-    encoder: 'encoder.int8.onnx',
-    decoder: 'decoder.int8.onnx',
-    joiner: 'joiner.int8.onnx',
+    model: 'model.int8.onnx',
     tokens: 'tokens.txt',
   } as Record<string, string>,
-  bytes: 198 * 1048576, // shown in Settings; actual sizes come from content-length
+  bytes: 234 * 1048576, // shown in Settings; actual sizes come from content-length
 }
 export const asrUrls = () => Object.values(ASR_MODEL.files).map(f => `${ASR_MODEL.base}/${f}`)
+
+// The retired streaming-zipformer set — evicted on refresh so a leftover
+// install doesn't squat ~200 MB of Cache Storage after the SenseVoice switch.
+const LEGACY_BASE = '/models/asr-zipformer-zh-en'
 
 // Shared reactive install state — Settings mutates, Composer reads.
 export const asrInstalled = ref(false)
 
 export async function refreshAsrInstalled(cacheProvider: CacheStorage | undefined = globalThis.caches): Promise<boolean> {
   if (!cacheProvider) { asrInstalled.value = false; return false }
+  try {
+    const cache = await cacheProvider.open(ASR_CACHE)
+    for (const f of ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt']) {
+      await cache.delete(`${LEGACY_BASE}/${f}`).catch(() => {})
+    }
+  } catch {}
   const hits = await Promise.all(asrUrls().map(u => cacheProvider.match(u)))
   asrInstalled.value = hits.every(Boolean)
   return asrInstalled.value

@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added and improved
+
+- **On-device dictation hears Cantonese, Japanese and Korean too.** The microphone's speech model is now SenseVoice-small (int8): the language — 中文, English, 廣東話, 日本語 or 한국어 — is detected automatically, and the take is transcribed when you stop, with punctuation. The first launch after the update downloads the new model (~230 MB) once; the retired bilingual model is evicted from the browser cache.
+
 ## [2.4.0] — 2026-10-31
 
 ### Added and improved
