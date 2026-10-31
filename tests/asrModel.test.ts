@@ -8,7 +8,7 @@ function fakeCaches(present: string[] = []) {
   const put = vi.fn(async (u: string, r: Response) => { store.set(u, r) })
   const caches = {
     match: async (u: RequestInfo | URL) => store.get(String(u)),
-    open: async () => ({ put }),
+    open: async () => ({ put, delete: async () => true }),
     delete: async () => { store.clear(); return true },
   } as unknown as CacheStorage
   return { caches, store, put }

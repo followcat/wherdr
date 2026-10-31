@@ -25,7 +25,7 @@ async function onFile(e: Event) {
 <template>
   <div class="asr-test">
     <h1>Local ASR test</h1>
-    <p class="dim">sherpa-onnx WASM · streaming zipformer zh-en int8 · 16 kHz mono · runs in a worker</p>
+    <p class="dim">sherpa-onnx WASM · SenseVoice-small int8 · zh/en/ja/ko/yue · 16 kHz mono · runs in a worker</p>
 
     <div class="row">
       <button v-if="sp.status.value === 'idle' || sp.status.value === 'error'" @click="sp.ensure().catch(() => {})">Load model</button>

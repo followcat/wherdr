@@ -1,18 +1,22 @@
-// ASR worker: loads the sherpa-onnx WASM engine + a transducer model, then
-// turns Float32 PCM (16 kHz mono) into partial/final text. All messages are
-// plain objects; PCM frames travel as transferred ArrayBuffers.
+// ASR worker: loads the sherpa-onnx WASM engine + a SenseVoice model, then
+// turns accumulated Float32 PCM (16 kHz mono) into final text on flush.
+// All messages are plain objects; PCM frames travel as transferred
+// ArrayBuffers.
 //
 //   in : {t:'load', wasmBase, modelBase, files, cache}
 //   in : {t:'push', pcm:ArrayBuffer}        Float32, 16kHz
-//   in : {t:'flush'}                         end of speech: finish input
-//   in : {t:'reset'}                         drop the current stream
-//   out: {t:'phase', phase, detail}          'fetch'|'wasm'|'create'
+//   in : {t:'flush'}                         end of speech: decode the take
+//   in : {t:'reset'}                         drop the buffered take
+//   out: {t:'phase', phase, detail}          'wasm'|'fetch'|'create'|'decode'
 //   out: {t:'dl', file, got, total}
 //   out: {t:'ready', loadMs}
-//   out: {t:'partial', text}
-//   out: {t:'segment', text}                 endpoint reached, stream reset
+//   out: {t:'partial', text}                 '' (kept for the composable)
 //   out: {t:'final', text, decodeMs}
 //   out: {t:'error', error}
+//
+// SenseVoice is an offline model: there are no streaming partials. The whole
+// take is buffered and decoded once, in one shot, which is also what makes it
+// comfortable with code-switched zh/en/yue.
 
 'use strict'
 
@@ -22,10 +26,13 @@ self.window = self
 
 const WASM_BASE = '/wasm/'
 const MODEL_DIR = '/asr-models'
+const SAMPLE_RATE = 16000
+// Longest take we will buffer — the composer also caps recording at 120 s.
+const MAX_SAMPLES = SAMPLE_RATE * 180
 
 let recognizer = null
-let stream = null
-let utterance = ''   // accumulated text for the current utterance (survives endpoint resets)
+const pending = []      // Float32Array chunks of the current take
+let pendingLen = 0
 
 // Emscripten instantiates the .wasm asynchronously: importScripts returns as
 // soon as the loader kicks it off, and the 'load' message is handled while
@@ -85,55 +92,34 @@ async function load(msg) {
     new Promise((_, rej) => setTimeout(() => rej(new Error('speech engine load timed out — check the connection and try again')), 60000)),
   ])
   if (_engineError) throw _engineError
-  if (typeof OnlineRecognizer !== 'function' || !Module.FS || !Module.HEAPU8) {
+  if (typeof OfflineRecognizer !== 'function' || !Module.FS || !Module.HEAPU8) {
     throw new Error('speech engine failed to initialize (wasm not loaded) — check the connection and try again')
   }
 
   postMessage({ t: 'phase', phase: 'fetch' })
 
-  // Emscripten FS paths come from the official wasm example layout: one dir
-  // with encoder.onnx / decoder.onnx / joiner.onnx / tokens.txt.
   try { Module.FS.mkdir(MODEL_DIR) } catch (e) {}
-  const targets = { encoder: 'encoder.onnx', decoder: 'decoder.onnx', joiner: 'joiner.onnx', tokens: 'tokens.txt' }
-  for (const [slot, file] of Object.entries(msg.files)) {
+  for (const file of Object.values(msg.files)) {
     const buf = await fetchCached(`${msg.modelBase}/${file}`, file, msg.cache)
-    Module.FS.writeFile(`${MODEL_DIR}/${targets[slot] || file}`, new Uint8Array(buf))
+    Module.FS.writeFile(`${MODEL_DIR}/${file}`, new Uint8Array(buf))
   }
 
   postMessage({ t: 'phase', phase: 'create' })
-  const config = {
-    featConfig: { sampleRate: 16000, featureDim: 80 },
+  // SenseVoice: '' = auto language (zh/en/ja/ko/yue); ITN gives punctuation
+  // and normalized numbers in the output text.
+  recognizer = new OfflineRecognizer({
     modelConfig: {
-      transducer: {
-        encoder: `${MODEL_DIR}/encoder.onnx`,
-        decoder: `${MODEL_DIR}/decoder.onnx`,
-        joiner: `${MODEL_DIR}/joiner.onnx`,
+      senseVoice: {
+        model: `${MODEL_DIR}/model.int8.onnx`,
+        language: '',
+        useInverseTextNormalization: 1,
       },
       tokens: `${MODEL_DIR}/tokens.txt`,
       numThreads: 1,
       provider: 'cpu',
       debug: 0,
     },
-    decodingMethod: 'greedy_search',
-    enableEndpoint: 1,
-    rule1MinTrailingSilence: 2.4,
-    rule2MinTrailingSilence: 1.2,
-    rule3MinUtteranceLength: 30,
-  }
-  recognizer = new OnlineRecognizer(config, Module)
-  stream = recognizer.createStream()
-}
-
-function pump() {
-  if (!recognizer || !stream) return
-  while (recognizer.isReady(stream)) recognizer.decode(stream)
-  const r = recognizer.getResult(stream)
-  if (r.text) postMessage({ t: 'partial', text: utterance + r.text })
-  if (recognizer.isEndpoint(stream)) {
-    const seg = recognizer.getResult(stream)
-    if (seg.text) { utterance += (utterance ? ' ' : '') + seg.text; postMessage({ t: 'segment', text: utterance }) }
-    recognizer.reset(stream)
-  }
+  }, Module)
 }
 
 self.onmessage = async (e) => {
@@ -144,29 +130,34 @@ self.onmessage = async (e) => {
       await load(m)
       postMessage({ t: 'ready', loadMs: Math.round(performance.now() - t0) })
     } else if (m.t === 'push') {
-      if (!stream) return
-      stream.acceptWaveform(16000, new Float32Array(m.pcm))
-      pump()
+      if (pendingLen >= MAX_SAMPLES) return
+      const pcm = new Float32Array(m.pcm)
+      pending.push(pcm)
+      pendingLen += pcm.length
     } else if (m.t === 'flush') {
-      // Always answer a flush — with no stream there is simply nothing to
-      // decode; a silent return leaves the composer stuck in "Recognizing…".
-      if (!stream || !recognizer) { postMessage({ t: 'final', text: '', decodeMs: 0 }); return }
+      // Always answer a flush — with nothing buffered there is nothing to
+      // decode; a silent return leaves the composer stuck on "Recognizing…".
+      if (!recognizer || !pendingLen) { postMessage({ t: 'final', text: '', decodeMs: 0 }); return }
       const t0 = performance.now()
-      stream.inputFinished()
-      while (recognizer.isReady(stream)) recognizer.decode(stream)
-      const r = recognizer.getResult(stream)
-      const text = r.text ? (utterance ? utterance + ' ' + r.text : r.text) : utterance
-      postMessage({ t: 'final', text, decodeMs: Math.round(performance.now() - t0) })
-      utterance = ''
-      recognizer.reset(stream)
-      stream.free()
-      stream = recognizer.createStream()
+      postMessage({ t: 'phase', phase: 'decode' })
+      const all = new Float32Array(pendingLen)
+      let at = 0
+      for (const c of pending) { all.set(c, at); at += c.length }
+      pending.length = 0; pendingLen = 0
+      const stream = recognizer.createStream()
+      try {
+        stream.acceptWaveform(SAMPLE_RATE, all)
+        recognizer.decode(stream)
+        const r = recognizer.getResult(stream)
+        const text = (r.text || '').replace(/<\|[^|]*\|>/g, '').trim()
+        postMessage({ t: 'final', text, decodeMs: Math.round(performance.now() - t0) })
+      } finally { stream.free() }
     } else if (m.t === 'reset') {
-      if (stream && recognizer) { stream.free(); stream = recognizer.createStream() }
-      utterance = ''
+      pending.length = 0; pendingLen = 0
       postMessage({ t: 'partial', text: '' })
     }
   } catch (err) {
+    pending.length = 0; pendingLen = 0
     postMessage({ t: 'error', error: String(err && err.stack || err) })
   }
 }

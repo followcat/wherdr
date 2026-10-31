@@ -4,25 +4,33 @@
 # them from disk, they are not part of the npm tarball).
 #
 #   DATA_DIR=/home/followcat/wherdr/data scripts/fetch-asr-models.sh
+#
+# Source: the official sherpa-onnx release tarball (HF direct links are gated
+# in some networks). Extracts model.int8.onnx + tokens.txt only.
 set -euo pipefail
 
-DEST="${DATA_DIR:-$(pwd)/data}/models/asr-zipformer-zh-en"
-REPO="pkufool/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"
-BASE="https://modelscope.cn/api/v1/models/${REPO}/repo?FilePath="
+DEST="${DATA_DIR:-$(pwd)/data}/models/sensevoice-zh-en-ja-ko-yue"
+TARBALL="sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17"
+URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/${TARBALL}.tar.bz2"
 
 mkdir -p "$DEST"
-dl() { # $1 remote name, $2 local name
-  if [ -s "$DEST/$2" ]; then echo "have $2"; return; fi
-  echo "fetch $1 -> $2"
-  # -C - resumes the .tmp; --retry alone would restart from zero.
-  for try in 1 2 3 4 5; do
-    curl -fL -C - --retry 3 -o "$DEST/$2.tmp" "${BASE}$1" && { mv "$DEST/$2.tmp" "$DEST/$2"; return; }
-    echo "retry $try for $2"; sleep 2
-  done
-  echo "FAILED $2" >&2; return 1
-}
-dl "encoder-epoch-99-avg-1.int8.onnx"  "encoder.int8.onnx"
-dl "decoder-epoch-99-avg-1.int8.onnx"  "decoder.int8.onnx"
-dl "joiner-epoch-99-avg-1.int8.onnx"   "joiner.int8.onnx"
-dl "tokens.txt"                        "tokens.txt"
-echo "done -> $DEST"
+if [ -s "$DEST/model.int8.onnx" ] && [ -s "$DEST/tokens.txt" ]; then
+  echo "have model files -> $DEST"; exit 0
+fi
+
+TMP="$DEST/${TARBALL}.tar.bz2.tmp"
+echo "fetch $URL"
+# -C - resumes the .tmp; --retry alone would restart from zero.
+for try in 1 2 3 4 5; do
+  curl -fL -C - --retry 3 -o "$TMP" "$URL" && break
+  echo "retry $try"; sleep 2
+done
+[ -s "$TMP" ] || { echo "FAILED download" >&2; exit 1; }
+
+mv "$TMP" "$DEST/${TARBALL}.tar.bz2"
+tar -xjf "$DEST/${TARBALL}.tar.bz2" -C "$DEST" --strip-components=1 \
+  "${TARBALL}/model.int8.onnx" "${TARBALL}/tokens.txt"
+rm -f "$DEST/${TARBALL}.tar.bz2"
+
+[ -s "$DEST/model.int8.onnx" ] && [ -s "$DEST/tokens.txt" ] \
+  && echo "done -> $DEST" || { echo "FAILED extract" >&2; exit 1; }

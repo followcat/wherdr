@@ -1,13 +1,14 @@
-// On-device ASR: a Web Worker running sherpa-onnx WASM (streaming zipformer).
+// On-device ASR: a Web Worker running sherpa-onnx WASM (SenseVoice, offline).
 // The worker downloads the model into Cache Storage on first use, reports
-// progress, then accepts Float32 PCM frames (16 kHz mono).
+// progress, then buffers Float32 PCM frames (16 kHz mono) and decodes the
+// whole take in one shot on flush — SenseVoice has no streaming partials.
 export type SpeechStatus = 'idle' | 'downloading' | 'loading' | 'ready' | 'recording' | 'flushing' | 'error'
 
 interface DlProgress { file: string; got: number; total: number }
 
 const MODEL = ASR_MODEL
-// A single take is capped — the transducer is streaming, but a forgotten
-// recording should still end somewhere on a phone.
+// A single take is capped — the buffered take is decoded at once on stop,
+// and a forgotten recording should still end somewhere on a phone.
 const MAX_RECORD_MS = 120_000
 
 export function useSpeech() {
