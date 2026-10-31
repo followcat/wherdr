@@ -52,17 +52,69 @@ self.Module = {
   noInitialRun: true,
 }
 
+// Large model files download in range slices: a long single GET through a
+// tunnel or a captive mobile link dies mid-stream and restarts from zero,
+// while each slice below gets its own retries and the progress survives.
+const CHUNK = 8 * 1024 * 1024
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+
 async function fetchCached(url, file, cache) {
   if (cache && self.caches) {
     const hit = await caches.match(url)
     if (hit) return hit.arrayBuffer()
   }
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`fetch ${file}: HTTP ${res.status}`)
-  const total = Number(res.headers.get('content-length')) || 0
-  const buf = res.body && res.body.getReader ? await readProgress(res, file, total) : await res.arrayBuffer()
-  if (cache && self.caches) (await caches.open('wherdr-asr-v1')).put(url, new Response(buf.slice(0), { headers: res.headers })).catch(() => {})
+  const buf = await fetchChunked(url, file)
+  if (cache && self.caches) {
+    (await caches.open('wherdr-asr-v1'))
+      .put(url, new Response(buf.slice(0), { headers: { 'content-type': 'application/octet-stream', 'content-length': String(buf.byteLength) } }))
+      .catch(() => {})
+  }
   return buf
+}
+
+// The first request doubles as slice 0 and a range probe: a 206 means the
+// server slices, a 200 means it streams whole files (older deploy) and the
+// body is drained monolithically.
+async function fetchChunked(url, file) {
+  const first = await refetch(() => fetch(url, { headers: { range: `bytes=0-${CHUNK - 1}` } }))
+  if (first.status !== 206) {
+    if (!first.ok) throw new Error(`fetch ${file}: HTTP ${first.status}`)
+    const total = Number(first.headers.get('content-length')) || 0
+    return first.body && first.body.getReader ? await readProgress(first, file, total) : await first.arrayBuffer()
+  }
+  const total = Number((first.headers.get('content-range') || '').split('/')[1]) || 0
+  if (!total) throw new Error(`fetch ${file}: bad content-range`)
+  const parts = [new Uint8Array(await first.arrayBuffer())]
+  let got = parts[0].byteLength
+  postMessage({ t: 'dl', file, got, total })
+  while (got < total) {
+    const end = Math.min(got + CHUNK - 1, total - 1)
+    const want = end - got + 1
+    const res = await refetch(() => fetch(url, { headers: { range: `bytes=${got}-${end}` } }))
+    if (res.status !== 206) throw new Error(`fetch ${file}: HTTP ${res.status} at byte ${got}`)
+    const part = new Uint8Array(await res.arrayBuffer())
+    if (part.byteLength !== want) throw new Error(`fetch ${file}: short slice at byte ${got}`)
+    parts.push(part)
+    got += part.byteLength
+    postMessage({ t: 'dl', file, got, total })
+  }
+  const out = new Uint8Array(total)
+  let at = 0
+  for (const p of parts) { out.set(p, at); at += p.byteLength }
+  return out.buffer
+}
+
+async function refetch(doFetch) {
+  let lastErr = null
+  for (let i = 0; i < 5; i++) {
+    try {
+      const r = await doFetch()
+      if (r.status < 500) return r
+      lastErr = new Error(`HTTP ${r.status}`)
+    } catch (e) { lastErr = e }
+    await sleep(700 * (i + 1))
+  }
+  throw lastErr
 }
 
 async function readProgress(res, file, total) {

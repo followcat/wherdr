@@ -50,30 +50,73 @@ export async function installAsr(onProgress?: (p: AsrProgress) => void, cachePro
     const url = urls[i]!
     const file = url.split('/').pop()!
     if (await cacheProvider.match(url)) { onProgress?.({ file, got: 0, total: 0, done: i + 1, count: urls.length }); continue }
-    const res = await fetch(url)
-    if (!res.ok) throw new Error(`HTTP ${res.status} on ${file}`)
-    const total = Number(res.headers.get('content-length')) || 0
-    let body = res
-    if (res.body && onProgress) {
-      const reader = res.body.getReader()
-      const chunks: Uint8Array[] = []
-      let got = 0
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        chunks.push(value)
-        got += value.length
-        onProgress({ file, got, total, done: i, count: urls.length })
-      }
-      const buf = new Uint8Array(got)
-      let at = 0
-      for (const c of chunks) { buf.set(c, at); at += c.length }
-      body = new Response(buf, { headers: res.headers })
-    }
+    const body = await fetchModelFile(url, file, (got, total) => onProgress?.({ file, got, total, done: i, count: urls.length }))
     await cache.put(url, body)
-    onProgress?.({ file, got: total, total, done: i + 1, count: urls.length })
+    onProgress?.({ file, got: 0, total: 0, done: i + 1, count: urls.length })
   }
   await refreshAsrInstalled(cacheProvider)
+}
+
+// The ~230 MB model crosses tunnels that drop long transfers, so files are
+// pulled in byte-range slices with per-slice retries: progress survives a
+// dropped connection instead of restarting from zero. When the server ignores
+// Range (older deploys) the whole body is drained in one pass.
+const DL_CHUNK = 8 * 1024 * 1024
+
+async function refetch(doFetch: () => Promise<Response>): Promise<Response> {
+  let lastErr: unknown = null
+  for (let i = 0; i < 5; i++) {
+    try {
+      const r = await doFetch()
+      if (r.status < 500) return r
+      lastErr = new Error(`HTTP ${r.status}`)
+    } catch (e) { lastErr = e }
+    await new Promise(r => setTimeout(r, 700 * (i + 1)))
+  }
+  throw lastErr
+}
+
+async function fetchModelFile(url: string, file: string, onGot: (got: number, total: number) => void): Promise<Response> {
+  const headers = { 'content-type': 'application/octet-stream' }
+  const first = await refetch(() => fetch(url, { headers: { range: `bytes=0-${DL_CHUNK - 1}` } }))
+  if (first.status === 206) {
+    const total = Number((first.headers.get('content-range') || '').split('/')[1]) || 0
+    if (!total) throw new Error(`bad content-range on ${file}`)
+    const parts = [new Uint8Array(await first.arrayBuffer())]
+    let got = parts[0]!.byteLength
+    onGot(got, total)
+    while (got < total) {
+      const end = Math.min(got + DL_CHUNK - 1, total - 1)
+      const res = await refetch(() => fetch(url, { headers: { range: `bytes=${got}-${end}` } }))
+      if (res.status !== 206) throw new Error(`HTTP ${res.status} on ${file} at byte ${got}`)
+      const part = new Uint8Array(await res.arrayBuffer())
+      if (part.byteLength !== end - got + 1) throw new Error(`short slice on ${file} at byte ${got}`)
+      parts.push(part)
+      got += part.byteLength
+      onGot(got, total)
+    }
+    const buf = new Uint8Array(total)
+    let at = 0
+    for (const p of parts) { buf.set(p, at); at += p.byteLength }
+    return new Response(buf, { headers: { ...headers, 'content-length': String(total) } })
+  }
+  if (!first.ok) throw new Error(`HTTP ${first.status} on ${file}`)
+  const total = Number(first.headers.get('content-length')) || 0
+  if (!first.body) return first
+  const reader = first.body.getReader()
+  const chunks: Uint8Array[] = []
+  let got = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+    got += value.length
+    onGot(got, total)
+  }
+  const buf = new Uint8Array(got)
+  let at = 0
+  for (const c of chunks) { buf.set(c, at); at += c.length }
+  return new Response(buf, { headers: first.headers })
 }
 
 export async function removeAsr(cacheProvider: CacheStorage | undefined = globalThis.caches): Promise<void> {
