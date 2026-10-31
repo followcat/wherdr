@@ -1,0 +1,38 @@
+
+                                            ████████████
+                                               ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                               ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                               ▒▒  ██                  █
+                                                   ██       v18.14.0
+
+                         Tip: Start your prompt with `$ ` to run Python — `$$ ` runs it without
+                                              adding the output to context
+
+
+ write notes
+
+
+╭─── Write: 🗒 notes.txt ───────────────────────────────────────────────────────────────────────────────────────────────╮
+│   1 line one                                                                                                         │
+│   2 line two                                                                                                         │
+│   3                                                                                                                  │
+│ … (streaming)                                                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+  ⎋ Working…
+╭─ Allow tool: write ──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Reason: target not yet approved                                                                                      │
+│ Path: notes.txt · Content: line one …                                                                                │
+│ Folder: ~/demo — 2 entries (1 folder, 1 file)                                                                        │
+│   - .git/                                                                                                            │
+│   - notes.txt                                                                                                        │
+│   ☐ Remember across sessions                                                                                         │
+│   Approve Directory: ~/demo                                                                                          │
+│   Approve File                                                                                                       │
+│ ❯ Approve Once                                                                                                       │
+│   Deny                                                                                                               │
+├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ↑/↓ choose · ⏎ select · Ctrl+⏎/Ctrl+Q approve · ⎋ deny · Ctrl+O details · type to deny and steer                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ⠹ 3s > ⬢ Fake One > 🗑 ~/demo > ⑂ main ?1 ▶────────────────────────────────────6%────────────────────────╎───┃─────128K─
+╰─

@@ -331,7 +331,7 @@ const FR: Record<string, string> = {
   'Show or hide the phone keyboard': 'Afficher ou masquer le clavier du téléphone',
   'Swipe for more function keys': 'Glisser pour plus de touches',
   'Digits': 'Chiffres', 'One-shot chord': 'Accord à un coup',
-  'Keys': 'Touches', 'Type in terminal': 'Écrire dans le terminal',
+  'Keys': 'Touches', 'Type in terminal': 'Taper dans le terminal',
   'List layout': 'Disposition de la liste', 'Spaces': 'Espaces',
   'One row per agent': 'Un agent par ligne', 'Grouped by space': 'Regroupés par espace',
   'Photo, file, paste, commands': 'Photo, fichier, collage, commandes',

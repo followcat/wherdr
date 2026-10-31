@@ -99,16 +99,31 @@ async function ls(fs: MachineFs, d: string) {
 export type ClaudeReading = Quota & { account: string | null }
 export interface ClaudeMachineReading { q: ClaudeReading | null, setup: ClaudeSetupState }
 
-// wherdr's status line set up on a machine? `ok`: complete reading
-// (quotas + fingerprint), or an account without quotas (API key: nothing to show).
-// `pending`: the up-to-date status line (with fingerprint) is wired in
-// settings.json, the quotas will come with the next exchange. `outdated`: a
-// status file is there (the quotas show) but written by an older status line:
-// an update is offered, never "not set up". `missing`: nothing at all.
+// Snapshot of the current status line (identity and time bound to it) taken
+// without rate limits: the status line keeps one only after an API response
+// that carried none, so Claude Code runs on API billing (API key, Console
+// credits): usage without quota. Gateway spend limits come inside rate_limits.
+export function claudeApiBilling(status: Json | null): boolean {
+  return Boolean(status && typeof status === 'object' && status._wherdr?.version === 1 && !('rate_limits' in status))
+}
+
+// Marker of a status line that keeps API-billing snapshots.
+const API_AWARE = 'total_api_duration_ms'
+
+// wherdr's status line set up on a machine? `api`: a current snapshot without
+// rate limits (API billing, see claudeApiBilling). `ok`: complete reading
+// (quotas + fingerprint), or an older snapshot without quotas. `pending`: the
+// up-to-date status line (with fingerprint) is wired in settings.json, the
+// quotas will come with the next exchange. `outdated`: a status file is there
+// (the quotas show) but written by an older status line, or an older status
+// line that never wrote one (it would miss API billing): an update is offered,
+// never "not set up". `missing`: nothing at all.
 export function claudeSetupState(f: { status: Json | null, account: boolean, statusline: string | null, settings: string | null }): ClaudeSetupState {
+  if (claudeApiBilling(f.status)) return 'api'
   if (f.status && (!f.status.rate_limits || f.account)) return 'ok'
-  const installed = Boolean(f.statusline?.includes('claude-account') && f.settings?.includes('wherdr-statusline.sh'))
-  if (installed) return f.status ? 'ok' : 'pending' // up to date, but no readable fingerprint: nothing more to do
+  const wired = Boolean(f.statusline?.includes('claude-account') && f.settings?.includes('wherdr-statusline.sh'))
+  if (wired && f.status) return 'ok' // up to date, but no readable fingerprint: nothing more to do
+  if (wired) return f.statusline!.includes(API_AWARE) ? 'pending' : 'outdated'
   return f.status ? 'outdated' : 'missing'
 }
 
@@ -306,7 +321,10 @@ export function mergeQuotas(readings: { key: string, label: string, claude: Clau
   const accounts = groupAccounts(readings.flatMap(r => (r.claude ? [{ key: r.key, label: r.label, q: r.claude }] : [])))
   let claude: Quota | null = null
   for (const { machines: _, ...a } of accounts) claude = fresher(claude, a)
-  const out: Quotas = accounts.length > 1 ? { claude, codex, claudeAccounts: accounts } : { claude, codex }
+  // A machine on API billing has no quota block: the subscription account(s)
+  // then go under their own machines, so they are listed with them.
+  const api = readings.some(r => r.setup?.state === 'api')
+  const out: Quotas = accounts.length > 1 || (api && accounts.length) ? { claude, codex, claudeAccounts: accounts } : { claude, codex }
   if (codexAccounts.length > 1) out.codexAccounts = codexAccounts
   const setup = readings.flatMap(r => (r.setup ? [r.setup] : []))
   if (setup.length) out.claudeSetup = setup

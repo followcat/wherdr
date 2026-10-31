@@ -8,11 +8,30 @@ import installer from '../../scripts/install-claude-statusline.sh?raw'
 
 export interface QuotaRow { key: string, agent: 'claude' | 'codex', q: Quota }
 
+// Machines whose Claude Code runs on API billing (usage without quota).
+const claudeApiKeys = (q: Quotas) => (q.claudeSetup || []).filter(s => s.state === 'api').map(s => s.key)
+// Claude shown under each machine: several accounts, or a subscription account
+// next to machines on API billing.
+function claudeSplit(q: Quotas) {
+  const n = q.claudeAccounts?.length || 0
+  return n > 1 || (n > 0 && claudeApiKeys(q).length > 0)
+}
+
+// "Claude · API usage, no quota" label instead of gauges: at the top (`key`
+// null) when every machine read with a Claude reading is on API billing,
+// under a machine when it is the API one among subscription machines.
+export function claudeApiShown(q: Quotas | null, key: string | null, hidden: readonly string[] = []): boolean {
+  if (!q || hidden.includes('claude')) return false
+  const api = claudeApiKeys(q)
+  if (!api.length) return false
+  return key === null ? !q.claude : claudeSplit(q) && api.includes(key)
+}
+
 // Rows at the top of the home screen.
 export function quotaRows(q: Quotas | null, hidden: readonly string[] = []): QuotaRow[] {
   if (!q) return []
   const rows: QuotaRow[] = []
-  if (q.claude && !hidden.includes('claude') && !((q.claudeAccounts?.length || 0) > 1)) rows.push({ key: 'claude', agent: 'claude', q: q.claude })
+  if (q.claude && !hidden.includes('claude') && !claudeSplit(q)) rows.push({ key: 'claude', agent: 'claude', q: q.claude })
   if (q.codex && !hidden.includes('codex') && !((q.codexAccounts?.length || 0) > 1)) rows.push({ key: 'codex', agent: 'codex', q: q.codex })
   return rows
 }
@@ -24,7 +43,7 @@ export function machineQuotaRows(q: Quotas | null, key: string, hidden: readonly
   const rows: QuotaRow[] = []
   for (const agent of ['claude', 'codex'] as const) {
     const list = agent === 'claude' ? q.claudeAccounts : q.codexAccounts
-    if (hidden.includes(agent) || (list?.length || 0) < 2) continue
+    if (hidden.includes(agent) || !(agent === 'claude' ? claudeSplit(q) : (list?.length || 0) > 1)) continue
     const a = list!.find(a => a.machines.some(m => m.key === key))
     if (!a) continue
     const { machines: _, ...quota } = a

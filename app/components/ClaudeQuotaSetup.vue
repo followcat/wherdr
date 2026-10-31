@@ -21,6 +21,7 @@ function stateText(r: ClaudeSetupRow): string {
     case 'pending': return tl('Installed', 'Installés')
     case 'outdated': return tl('Update available', 'Mise à jour disponible')
     case 'missing': return tl('Not set up', 'Non configurés')
+    case 'api': return tl('API usage (no quota)', 'Usage API (pas de quota)')
     default: return homeQuotas.value ? tl('Status unavailable', 'État indisponible') : tl('Checking…', 'Vérification…')
   }
 }
@@ -42,8 +43,9 @@ async function install(r: ClaudeSetupRow) {
         <strong>{{ r.name }}</strong>
         <span :class="r.online ? r.setup?.state : 'offline'">{{ stateText(r) }}</span>
       </div>
-      <p v-if="r.online && r.setup?.state === 'pending'" class="claude-quotas-note">{{ t('They will show after the next exchange with a Claude.') }}</p>
-      <p v-else-if="r.online && r.setup?.state === 'outdated'" class="claude-quotas-note">{{ tl('Quotas show, from an older status line. Update it so that a change of Claude account is seen at once.', 'Les quotas s’affichent, depuis une ancienne barre d’état. Mets-la à jour pour qu’un changement de compte Claude soit vu tout de suite.') }}</p>
+      <p v-if="r.online && r.setup?.state === 'api'" class="claude-quotas-note">{{ tl('Claude Code runs on API billing here (API key or Console credits): no usage limits to show.', 'Claude Code tourne ici en facturation API (clé API ou crédits Console) : pas de limites d’usage à afficher.') }}</p>
+      <p v-else-if="r.online && r.setup?.state === 'pending'" class="claude-quotas-note">{{ t('They will show after the next exchange with a Claude.') }}</p>
+      <p v-else-if="r.online && r.setup?.state === 'outdated'" class="claude-quotas-note">{{ tl('An older status line is installed. Update it so that a change of Claude account, or API usage, is seen at once.', 'Une ancienne barre d’état est installée. Mets-la à jour pour qu’un changement de compte Claude, ou un usage API, soit vu tout de suite.') }}</p>
       <template v-if="offer(r)">
         <p v-if="!r.setup!.installable" class="claude-quotas-note">{{ tl(`Home folder is read-only here: copy the command and paste it into a terminal on ${r.name}.`, `Dossier personnel en lecture seule ici : copie la commande et colle-la dans un terminal de ${r.name}.`) }}</p>
         <div class="claude-quotas-actions">

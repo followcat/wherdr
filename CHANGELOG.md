@@ -6,10 +6,75 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.4.0] — 2026-10-31
+
 ### Added and improved
 
 - **More room on phones.** The agent header keeps its tabs, title and state on one row. Terminal function keys default to closed and open above Send in both conversation and terminal views, with the mobile key layout; the input stays compact at rest.
 - **One-shot terminal modifiers.** Ctrl, Alt and Shift can be armed for the next key-bar or phone-keyboard key. Existing shortcuts and digit buttons remain available; pastes and composed text stay text.
+- **Shepherdr 2 protection (#243).** wherdr recognizes Shepherdr 2.x and clearly explains that the Board does not support it, instead of calling it too old. It refuses to install or update herdr-projects over it and provides a manual return to the supported 1.2.21 release; no data is migrated automatically.
+
+- **Board tasks in global search (#248).** Search (⌘K) finds tasks by key, title or description, shows their machine, project and state, and opens them on the Board.
+
+- **One-shot terminal modifiers (#239).** Arm Ctrl, Alt and Shift for the next key-bar or phone-keyboard key; pastes and composed text stay text. Thanks to [@followcat](https://github.com/followcat) for the contribution.
+
+- **Swipe between home tabs (#242).** Switch machine and group tabs with touch or trackpad gestures, with animated tab content and selection.
+
+- **Optional individual-agent list (#240).** Settings › Appearance can show standalone agents as separate rows; workspace cards remain the default and Board helpers stay grouped. Thanks to [@followcat](https://github.com/followcat) for the contribution.
+
+- **Release distance in update notices (#241).** The banner shows how many newer stable releases are available and a short version list, with the installation-specific update action. Thanks to [@followcat](https://github.com/followcat) for the contribution.
+
+- **A single Agent tab for tasks (#224).** The task panel brings its conversation and terminal together under Agent.
+
+- **Send queued Claude messages immediately (#236).** A queued message can be sent without waiting for the current turn to finish.
+
+- **Smooth touch scrolling beta (#234).** A device-local setting enables smoother terminal scrolling; legacy scrolling remains the default, and a tap that stops scrolling does not activate terminal content. Thanks to [@followcat](https://github.com/followcat) for the original contribution (#218).
+
+- **Dismissible transcript note (#221).** The transcript notice can be dismissed. Thanks to [@followcat](https://github.com/followcat) for the contribution.
+
+- **Run chat commands in a managed split terminal (#216).** Chat command actions use an idle wherdr-owned split with a verified shell prompt.
+
+- **Shared keyboard shortcut reference (#225).** A common shortcut reference replaces the Desktop settings section.
+
+- **Reproducible Board tutorial sources (#215).** Narrated tutorial sources can be rebuilt from the repository.
+
+- **Refreshed tutorial video (#226).** The Board tutorial has updated visuals and narration.
+
+- **wherdr in one minute (#235).** A short tutorial episode introduces the app.
+
+- **Shared interface design rules (#256).** Contributors have one design reference for interface changes.
+
+- **Claude on API billing.** Home and Settings show API usage with no quota for API-key or Console-credit sessions, rather than no status or “not set up”. Update the Claude status line on those machines.
+
+### Fixed
+
+- **No false “command did not start” after a split or new tab (#249).** The server polls the new pane's machine for up to two seconds before reporting a missing pane; offline machines are identified as unreachable.
+
+- **Sharp terminal at every pixel ratio (#246).** On 2× and 3× screens, the WebGL terminal, including the demo, no longer draws oversized, clipped text when canvas sizes arrive in CSS pixels.
+
+- **Phone agent headers fit (#244).** Long state lines end in an ellipsis instead of overflowing.
+
+- **Reconnect after waking (#229).** Suspended sockets recover without competing wake probes.
+
+- **Codex update detection on Ubuntu (#227).** Ubuntu shell prompts no longer prevent detection of a completed Codex self-update.
+
+- **Codex status reset remains visible (#228).** A footer warning no longer hides the status reset information.
+
+- **Passive Codex reads leave shell history alone (#230).** Background reads no longer interfere with shell history.
+
+- **Directories are not transcripts (#233).** A transcript path pointing to a folder returns “no conversation” instead of a server error.
+
+- **Wrapped task panel titles keep their height (#223).** Task badges no longer squeeze a title spanning several lines.
+
+- **Autopilot copy button appears on hover (#237).** Automatic messages keep their copy control unobtrusive.
+
+- **Deterministic Settings phone navigation test (#238).** The test waits for history navigation before teardown.
+
+- **Verified tutorial fonts (#231).** Tutorial fonts are pinned to a google/fonts commit and verified with SHA-256.
+
+- **Updated CI runtimes (#232).** Actions use Node 24 majors and runners are pinned to Ubuntu 24.04.
+
+- **omp 18.14 tool approvals show their card again.** The conversation recognizes the new approval prompt, including grants and expanded details, answers with arrows then Enter, and holds messages while it is open. The 18.4 dialog remains supported.
 
 ## [2.3.0] — 2026-10-28
 

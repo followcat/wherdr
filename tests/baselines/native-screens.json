@@ -505,6 +505,72 @@
     "devin-idle.txt/codex/true": 0,
     "devin-idle.txt/omp/false": 0,
     "devin-idle.txt/omp/true": 0,
+    "omp-approve-1814-answered.txt/claude/false": 0,
+    "omp-approve-1814-answered.txt/claude/true": 0,
+    "omp-approve-1814-answered.txt/codex/false": 0,
+    "omp-approve-1814-answered.txt/codex/true": 0,
+    "omp-approve-1814-answered.txt/omp/false": 0,
+    "omp-approve-1814-answered.txt/omp/true": 0,
+    "omp-approve-1814-ascii.txt/claude/false": 0,
+    "omp-approve-1814-ascii.txt/claude/true": 0,
+    "omp-approve-1814-ascii.txt/codex/false": 0,
+    "omp-approve-1814-ascii.txt/codex/true": 0,
+    "omp-approve-1814-ascii.txt/omp/false": 101,
+    "omp-approve-1814-ascii.txt/omp/true": 101,
+    "omp-approve-1814-bash.txt/claude/false": 0,
+    "omp-approve-1814-bash.txt/claude/true": 0,
+    "omp-approve-1814-bash.txt/codex/false": 0,
+    "omp-approve-1814-bash.txt/codex/true": 0,
+    "omp-approve-1814-bash.txt/omp/false": 102,
+    "omp-approve-1814-bash.txt/omp/true": 102,
+    "omp-approve-1814-draft.txt/claude/false": 0,
+    "omp-approve-1814-draft.txt/claude/true": 0,
+    "omp-approve-1814-draft.txt/codex/false": 0,
+    "omp-approve-1814-draft.txt/codex/true": 0,
+    "omp-approve-1814-draft.txt/omp/false": 103,
+    "omp-approve-1814-draft.txt/omp/true": 103,
+    "omp-approve-1814-edit.txt/claude/false": 0,
+    "omp-approve-1814-edit.txt/claude/true": 0,
+    "omp-approve-1814-edit.txt/codex/false": 0,
+    "omp-approve-1814-edit.txt/codex/true": 0,
+    "omp-approve-1814-edit.txt/omp/false": 104,
+    "omp-approve-1814-edit.txt/omp/true": 104,
+    "omp-approve-1814-eval-details.txt/claude/false": 0,
+    "omp-approve-1814-eval-details.txt/claude/true": 0,
+    "omp-approve-1814-eval-details.txt/codex/false": 0,
+    "omp-approve-1814-eval-details.txt/codex/true": 0,
+    "omp-approve-1814-eval-details.txt/omp/false": 105,
+    "omp-approve-1814-eval-details.txt/omp/true": 105,
+    "omp-approve-1814-eval-long.txt/claude/false": 0,
+    "omp-approve-1814-eval-long.txt/claude/true": 0,
+    "omp-approve-1814-eval-long.txt/codex/false": 0,
+    "omp-approve-1814-eval-long.txt/codex/true": 0,
+    "omp-approve-1814-eval-long.txt/omp/false": 106,
+    "omp-approve-1814-eval-long.txt/omp/true": 106,
+    "omp-approve-1814-eval.txt/claude/false": 0,
+    "omp-approve-1814-eval.txt/claude/true": 0,
+    "omp-approve-1814-eval.txt/codex/false": 0,
+    "omp-approve-1814-eval.txt/codex/true": 0,
+    "omp-approve-1814-eval.txt/omp/false": 107,
+    "omp-approve-1814-eval.txt/omp/true": 107,
+    "omp-approve-1814-narrow.txt/claude/false": 0,
+    "omp-approve-1814-narrow.txt/claude/true": 0,
+    "omp-approve-1814-narrow.txt/codex/false": 0,
+    "omp-approve-1814-narrow.txt/codex/true": 0,
+    "omp-approve-1814-narrow.txt/omp/false": 108,
+    "omp-approve-1814-narrow.txt/omp/true": 108,
+    "omp-approve-1814-nerd-write.txt/claude/false": 0,
+    "omp-approve-1814-nerd-write.txt/claude/true": 0,
+    "omp-approve-1814-nerd-write.txt/codex/false": 0,
+    "omp-approve-1814-nerd-write.txt/codex/true": 0,
+    "omp-approve-1814-nerd-write.txt/omp/false": 109,
+    "omp-approve-1814-nerd-write.txt/omp/true": 109,
+    "omp-approve-1814-write-grants.txt/claude/false": 0,
+    "omp-approve-1814-write-grants.txt/claude/true": 0,
+    "omp-approve-1814-write-grants.txt/codex/false": 0,
+    "omp-approve-1814-write-grants.txt/codex/true": 0,
+    "omp-approve-1814-write-grants.txt/omp/false": 110,
+    "omp-approve-1814-write-grants.txt/omp/true": 110,
     "omp-approve-bash.txt/claude/false": 0,
     "omp-approve-bash.txt/claude/true": 0,
     "omp-approve-bash.txt/codex/false": 0,
@@ -517,12 +583,24 @@
     "omp-approve-eval.txt/codex/true": 0,
     "omp-approve-eval.txt/omp/false": 74,
     "omp-approve-eval.txt/omp/true": 74,
+    "omp-approve-inline.txt/claude/false": 111,
+    "omp-approve-inline.txt/claude/true": 0,
+    "omp-approve-inline.txt/codex/false": 111,
+    "omp-approve-inline.txt/codex/true": 0,
+    "omp-approve-inline.txt/omp/false": 112,
+    "omp-approve-inline.txt/omp/true": 112,
     "omp-approve-long.txt/claude/false": 0,
     "omp-approve-long.txt/claude/true": 0,
     "omp-approve-long.txt/codex/false": 0,
     "omp-approve-long.txt/codex/true": 0,
     "omp-approve-long.txt/omp/false": 75,
     "omp-approve-long.txt/omp/true": 75,
+    "omp-ask-1814-single.txt/claude/false": 0,
+    "omp-ask-1814-single.txt/claude/true": 0,
+    "omp-ask-1814-single.txt/codex/false": 0,
+    "omp-ask-1814-single.txt/codex/true": 0,
+    "omp-ask-1814-single.txt/omp/false": 113,
+    "omp-ask-1814-single.txt/omp/true": 113,
     "omp-ask-multi.txt/claude/false": 0,
     "omp-ask-multi.txt/claude/true": 0,
     "omp-ask-multi.txt/codex/false": 0,
@@ -8068,10 +8146,704 @@
         },
         "menu": null
       }
+    },
+    {
+      "recognized": {
+        "choices": {
+          "question": "Allow tool: bash",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Approve bash for this session",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "bash",
+            "command": "Command: ls -la"
+          }
+        },
+        "menu": null,
+        "screen": null,
+        "settings": false
+      },
+      "output": {
+        "choices": {
+          "question": "Allow tool: bash",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Approve bash for this session",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "bash",
+            "command": "Command: ls -la"
+          }
+        },
+        "screen": null,
+        "menu": null
+      }
+    },
+    {
+      "recognized": {
+        "choices": {
+          "question": "Allow tool: bash",
+          "cursor": 1,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Approve bash for this session",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "bash",
+            "command": "Command: echo hello > out.txt"
+          }
+        },
+        "menu": null,
+        "screen": null,
+        "settings": false
+      },
+      "output": {
+        "choices": {
+          "question": "Allow tool: bash",
+          "cursor": 1,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Approve bash for this session",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "bash",
+            "command": "Command: echo hello > out.txt"
+          }
+        },
+        "screen": null,
+        "menu": null
+      }
+    },
+    {
+      "recognized": {
+        "choices": {
+          "question": "Allow tool: eval",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Deny and send message",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "eval",
+            "command": "Language: python · Code: import os …"
+          }
+        },
+        "menu": null,
+        "screen": null,
+        "settings": false
+      },
+      "output": {
+        "choices": {
+          "question": "Allow tool: eval",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Deny and send message",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "eval",
+            "command": "Language: python · Code: import os …"
+          }
+        },
+        "screen": null,
+        "menu": null
+      }
+    },
+    {
+      "recognized": {
+        "choices": {
+          "question": "Allow tool: edit",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Approve edit for this session",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "edit",
+            "command": "File: notes.txt"
+          }
+        },
+        "menu": null,
+        "screen": null,
+        "settings": false
+      },
+      "output": {
+        "choices": {
+          "question": "Allow tool: edit",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Approve edit for this session",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "edit",
+            "command": "File: notes.txt"
+          }
+        },
+        "screen": null,
+        "menu": null
+      }
+    },
+    {
+      "recognized": {
+        "choices": {
+          "question": "Allow tool: eval",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Approve eval for this session",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "eval",
+            "command": "Language: python\nCode:\nimport os\nprint(1)\nprint(2)\nprint(3)\nprint(4)\nprint(5)"
+          }
+        },
+        "menu": null,
+        "screen": null,
+        "settings": false
+      },
+      "output": {
+        "choices": {
+          "question": "Allow tool: eval",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Approve eval for this session",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "eval",
+            "command": "Language: python\nCode:\nimport os\nprint(1)\nprint(2)\nprint(3)\nprint(4)\nprint(5)"
+          }
+        },
+        "screen": null,
+        "menu": null
+      }
+    },
+    {
+      "recognized": {
+        "choices": {
+          "question": "Allow tool: eval",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Approve eval for this session",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "eval",
+            "command": "Language: python · Code: import os …"
+          }
+        },
+        "menu": null,
+        "screen": null,
+        "settings": false
+      },
+      "output": {
+        "choices": {
+          "question": "Allow tool: eval",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Approve eval for this session",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "eval",
+            "command": "Language: python · Code: import os …"
+          }
+        },
+        "screen": null,
+        "menu": null
+      }
+    },
+    {
+      "recognized": {
+        "choices": {
+          "question": "Allow tool: eval",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Approve eval for this session",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "eval",
+            "command": "Language: python · Code: print(6*7)"
+          }
+        },
+        "menu": null,
+        "screen": null,
+        "settings": false
+      },
+      "output": {
+        "choices": {
+          "question": "Allow tool: eval",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Approve eval for this session",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "eval",
+            "command": "Language: python · Code: print(6*7)"
+          }
+        },
+        "screen": null,
+        "menu": null
+      }
+    },
+    {
+      "recognized": {
+        "choices": {
+          "question": "Allow tool: bash",
+          "cursor": 2,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Approve bash for this session",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "bash",
+            "command": "Command: echo hello > out.txt"
+          }
+        },
+        "menu": null,
+        "screen": null,
+        "settings": false
+      },
+      "output": {
+        "choices": {
+          "question": "Allow tool: bash",
+          "cursor": 2,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Approve bash for this session",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "bash",
+            "command": "Command: echo hello > out.txt"
+          }
+        },
+        "screen": null,
+        "menu": null
+      }
+    },
+    {
+      "recognized": {
+        "choices": {
+          "question": "Allow tool: write",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Approve write for this session",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "write",
+            "command": "Path: notes.txt · Content: line one …"
+          }
+        },
+        "menu": null,
+        "screen": null,
+        "settings": false
+      },
+      "output": {
+        "choices": {
+          "question": "Allow tool: write",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Approve write for this session",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "write",
+            "command": "Path: notes.txt · Content: line one …"
+          }
+        },
+        "screen": null,
+        "menu": null
+      }
+    },
+    {
+      "recognized": {
+        "choices": {
+          "question": "Allow tool: write",
+          "cursor": 3,
+          "options": [
+            {
+              "label": "☐ Remember across sessions",
+              "hint": null
+            },
+            {
+              "label": "Approve Directory: ~/demo",
+              "hint": null
+            },
+            {
+              "label": "Approve File",
+              "hint": null
+            },
+            {
+              "label": "Approve Once",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "write",
+            "command": "Reason: target not yet approved\nPath: notes.txt · Content: line one …\nFolder: ~/demo — 2 entries (1 folder, 1 file)\n  - .git/\n  - notes.txt"
+          }
+        },
+        "menu": null,
+        "screen": null,
+        "settings": false
+      },
+      "output": {
+        "choices": {
+          "question": "Allow tool: write",
+          "cursor": 3,
+          "options": [
+            {
+              "label": "☐ Remember across sessions",
+              "hint": null
+            },
+            {
+              "label": "Approve Directory: ~/demo",
+              "hint": null
+            },
+            {
+              "label": "Approve File",
+              "hint": null
+            },
+            {
+              "label": "Approve Once",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "write",
+            "command": "Reason: target not yet approved\nPath: notes.txt · Content: line one …\nFolder: ~/demo — 2 entries (1 folder, 1 file)\n  - .git/\n  - notes.txt"
+          }
+        },
+        "screen": null,
+        "menu": null
+      }
+    },
+    {
+      "recognized": {
+        "choices": {
+          "question": "Language: python · Code: import os …",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ]
+        },
+        "menu": null,
+        "screen": null,
+        "settings": false
+      },
+      "output": {
+        "choices": {
+          "question": "Language: python · Code: import os …",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ]
+        },
+        "screen": null,
+        "menu": null
+      }
+    },
+    {
+      "recognized": {
+        "choices": {
+          "question": "Allow tool: eval",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "eval",
+            "command": "Language: python · Code: import os …"
+          }
+        },
+        "menu": null,
+        "screen": null,
+        "settings": false
+      },
+      "output": {
+        "choices": {
+          "question": "Allow tool: eval",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Approve",
+              "hint": null
+            },
+            {
+              "label": "Deny",
+              "hint": null
+            }
+          ],
+          "detail": {
+            "tool": "eval",
+            "command": "Language: python · Code: import os …"
+          }
+        },
+        "screen": null,
+        "menu": null
+      }
+    },
+    {
+      "recognized": {
+        "choices": {
+          "question": "Favourite colour?",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Red",
+              "hint": "warm"
+            },
+            {
+              "label": "Green",
+              "hint": "calm"
+            },
+            {
+              "label": "Blue",
+              "hint": "cool"
+            },
+            {
+              "label": "Other (type your own)",
+              "hint": null,
+              "free": true
+            }
+          ]
+        },
+        "menu": null,
+        "screen": null,
+        "settings": false
+      },
+      "output": {
+        "choices": {
+          "question": "Favourite colour?",
+          "cursor": 0,
+          "options": [
+            {
+              "label": "Red",
+              "hint": "warm"
+            },
+            {
+              "label": "Green",
+              "hint": "calm"
+            },
+            {
+              "label": "Blue",
+              "hint": "cool"
+            },
+            {
+              "label": "Other (type your own)",
+              "hint": null,
+              "free": true
+            }
+          ]
+        },
+        "screen": null,
+        "menu": null
+      }
     }
   ],
   "sources": {
     "codex-request-increase.txt": "User report, 2026-10-12, t-0345: reconstructed from Conversation capture; cursor and terminal legend inferred, not a raw terminal capture.",
-    "codex-approaching-limits.txt": "User report, 2026-10-12, t-0345: terminal text transcribed in task brief; no real account accessed."
+    "codex-approaching-limits.txt": "User report, 2026-10-12, t-0345: terminal text transcribed in task brief; no real account accessed.",
+    "omp-approve-inline.txt": "User report, 2026-10-30: omp 18.14 approval prompt drawn without its frame, reconstructed from the text in the task brief around a real 18.14 screen; not a raw terminal capture."
   }
 }
