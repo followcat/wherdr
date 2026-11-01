@@ -485,9 +485,14 @@ self.onmessage = async (e) => {
       let at = 0
       for (const c of pending) { all.set(c, at); at += c.length }
       pending.length = 0; pendingLen = 0
+      // Take stats travel with the result — a silent mic and a bad decode
+      // look identical in the UI otherwise.
+      let peak = 0, sumSq = 0
+      for (let i = 0; i < all.length; i++) { const v = Math.abs(all[i]); if (v > peak) peak = v; sumSq += v * v }
+      const take = { secs: Math.round(all.length / SAMPLE_RATE * 10) / 10, rms: Math.sqrt(sumSq / (all.length || 1)), peak }
       if (q4) {
         const text = await decodeQ4F16(all)
-        postMessage({ t: 'final', text, decodeMs: Math.round(performance.now() - t0) })
+        postMessage({ t: 'final', text, decodeMs: Math.round(performance.now() - t0), take })
         return
       }
       const stream = recognizer.createStream()
@@ -496,7 +501,7 @@ self.onmessage = async (e) => {
         recognizer.decode(stream)
         const r = recognizer.getResult(stream)
         const text = (r.text || '').replace(/<\|[^|]*\|>/g, '').trim()
-        postMessage({ t: 'final', text, decodeMs: Math.round(performance.now() - t0) })
+        postMessage({ t: 'final', text, decodeMs: Math.round(performance.now() - t0), take })
       } finally { stream.free() }
     } else if (m.t === 'reset') {
       pending.length = 0; pendingLen = 0

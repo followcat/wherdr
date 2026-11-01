@@ -63,6 +63,7 @@ async function onFile(e: Event) {
     <dl v-if="sp.loadMs.value" class="stats">
       <div><dt>model load</dt><dd>{{ sp.loadMs.value }} ms</dd></div>
       <div v-if="sp.decodeMs.value !== null"><dt>final decode</dt><dd>{{ sp.decodeMs.value }} ms</dd></div>
+      <div v-if="sp.take.value"><dt>take</dt><dd>{{ sp.take.value.secs }}s rms {{ sp.take.value.rms.toFixed(4) }} peak {{ sp.take.value.peak.toFixed(3) }}</dd></div>
     </dl>
 
     <pre v-if="sp.error.value" class="err">{{ sp.error.value }}</pre>
