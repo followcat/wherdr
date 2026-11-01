@@ -102,12 +102,12 @@ const asrInstallingId = ref('')
 const asrRemovingId = ref('')
 function fmtMb(n: number) { return `${Math.round(n / 1048576)} MB` }
 const ASR_MODEL_INFO: Record<string, { label: string, en: string, fr: string }> = {
-  sensevoice: { label: 'SenseVoice-small', en: 'Fast, light (~230 MB): zh/en/ja/ko/廣東話 auto-detected, punctuation. The everyday pick.', fr: 'Rapide, léger (~230 Mo) : zh/en/ja/ko/廣東話 détectés tout seuls, ponctuation. Le choix quotidien.' },
-  qwen3q4f16: { label: 'Qwen3-ASR 0.6B q4f16', en: 'Sharpest Cantonese — real 廣東話 characters and punctuation — now on the GPU: ~850 MB, true-WebGPU decode ~14x faster than the old int8 build.', fr: 'Cantonais le plus net — vrais caractères 廣東話 et ponctuation — désormais sur GPU : ~850 Mo, décodage WebGPU ~14× plus rapide que l’ancien int8.' },
-  funasr: { label: 'FunASR-Nano', en: 'LLM-based (~970 MB): zh/en/ja/ko, 廣東話 and dialects, with punctuation. Heavy like Qwen3.', fr: 'Basé LLM (~970 Mo) : zh/en/ja/ko, 廣東話 et dialectes, avec ponctuation. Lourd comme Qwen3.' },
-  firered2: { label: 'FireRedASR2 CTC', en: 'Cantonese + 20 dialects (~740 MB), zh/en; heavy and unpunctuated.', fr: 'Cantonais + 20 dialectes (~740 Mo), zh/en ; lourd et sans ponctuation.' },
-  omnilingual: { label: 'Omnilingual 300M', en: '1600+ languages (~350 MB); its Cantonese came out garbled in our tests — pick for rare languages only.', fr: '1600+ langues (~350 Mo) ; son cantonais sortait illisible à nos tests — pour les langues rares seulement.' },
-  dolphin: { label: 'Dolphin-base', en: 'Smallest (~100 MB), 40 languages + Chinese dialects; weak on Cantonese.', fr: 'Le plus petit (~100 Mo), 40 langues + dialectes chinois ; faible en cantonais.' },
+  sensevoice: { label: 'SenseVoice-small', en: 'Small and fast (~230 MB): zh · en · ja · ko · yue auto-detected, with punctuation. CPU.', fr: 'Petit et rapide (~230 Mo) : zh · en · ja · ko · yue détectés tout seuls, avec ponctuation. CPU.' },
+  qwen3q4f16: { label: 'Qwen3-ASR 0.6B q4f16', en: 'LLM-based (~850 MB): 30 languages and 22 Chinese dialects, with punctuation. GPU only — WebGPU int4/fp16.', fr: 'Basé LLM (~850 Mo) : 30 langues et 22 dialectes chinois, avec ponctuation. GPU seulement — WebGPU int4/fp16.' },
+  funasr: { label: 'FunASR-Nano', en: 'LLM-based (~970 MB): zh · en · ja · ko and Chinese dialects, with punctuation.', fr: 'Basé LLM (~970 Mo) : zh · en · ja · ko et dialectes chinois, avec ponctuation.' },
+  firered2: { label: 'FireRedASR2 CTC', en: 'CTC (~740 MB): zh · en and 20 Chinese dialects. No punctuation.', fr: 'CTC (~740 Mo) : zh · en et 20 dialectes chinois. Sans ponctuation.' },
+  omnilingual: { label: 'Omnilingual 300M', en: 'CTC (~350 MB): 1600+ languages — the widest coverage. No punctuation.', fr: 'CTC (~350 Mo) : 1600+ langues — la couverture la plus large. Sans ponctuation.' },
+  dolphin: { label: 'Dolphin-base', en: 'CTC (~100 MB): the smallest — 40 languages and Chinese dialects. No punctuation.', fr: 'CTC (~100 Mo) : le plus petit — 40 langues et dialectes chinois. Sans ponctuation.' },
 }
 const asrModelItems = computed(() => ASR_MODEL_IDS.map(id => ({
   label: ASR_MODEL_INFO[id]?.label || id,

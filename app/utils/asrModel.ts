@@ -4,11 +4,10 @@
 // Composer's mic button reads `asrInstalled` (dim until true).
 //
 // Six models are offered (ASR_MODELS): SenseVoice-small — fast, five
-// languages, the everyday pick — then Qwen3-ASR 0.6B q4f16, the same
-// sharpest-Cantonese model in the WebGPU-native export (int4 weights + fp16
-// activations, ~14x faster decode than the int8 sherpa build it replaces),
-// plus FunASR-Nano, FireRedASR2, Omnilingual and Dolphin. `asrModelId`
-// picks which one the mic loads.
+// languages — then Qwen3-ASR 0.6B q4f16 in the WebGPU-native export
+// (int4 weights + fp16 activations, ~14x faster decode than the int8
+// sherpa build it replaces), plus FunASR-Nano, FireRedASR2, Omnilingual
+// and Dolphin. `asrModelId` picks which one the mic loads.
 //
 // The worker (public/workers/asr-worker.js) resolves the same URLs through
 // the same cache, so a pre-warmed install makes model load offline-capable.
