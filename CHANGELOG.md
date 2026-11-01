@@ -19,6 +19,7 @@ All notable changes to this project are documented here. The format follows
 
 - **No more ghost queue line beside a Devin send.** "Send with Ctrl+Enter" on a Devin pane never reached its TUI — the chord is dropped by the CLI, so the typed text stayed in the input box while later messages piled onto it, until a real Enter flushed the pile as one merged delivery that looked like a queued line plus an immediate send. Devin no longer offers an alternate send key, and the composer now ignores chorded Enters arriving during or right after IME composition — the stray chord an Android keyboard emits as its send action can no longer tag a normal send.
 - **A slow send no longer eats what you type meanwhile.** Shell answers, slash commands and free replies wait on the server, and the receipt used to wipe the field and the attachments unconditionally — anything typed or attached during the wait vanished. The receipt now drops only the text and attachments that send carried, and the command menu no longer crashes on Enter or Tab when it is open with no candidate.
+- **A mic start that outlives its caller stays dead.** Waiting on model load or mic permission could cross a page switch — the gone composer then entered recording anyway, and a second tap could leave a stream nothing could stop. Each start now carries a generation that stop, cancel, unmount and newer starts invalidate; a stale start drops whatever it already grabbed.
 
 ## [2.4.0] — 2026-10-31
 

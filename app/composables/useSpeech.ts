@@ -93,14 +93,24 @@ export function useSpeech() {
     return new Promise((resolve, reject) => { readyWaiter = { resolve, reject } })
   }
 
+  // Each start gets a number; stop/cancel/dispose/a newer start bumps it, and
+  // an in-flight start that wakes up stale drops what it grabbed instead of
+  // recording into a dead component or leaking a second stream.
+  let micGen = 0
+
   async function startMic() {
+    const gen = ++micGen
     await ensure()
+    if (gen !== micGen) return
     // Dictation, not a call: hardware echo cancellation and noise suppression
     // are tuned to kill anything that isn't a loud near-field voice — on
     // Android they gate/distort quiet speech badly enough to break ASR.
-    media = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
+    if (gen !== micGen) { stream.getTracks().forEach(t => t.stop()); return }
+    media = stream
     ctx = new AudioContext({ sampleRate: 16000 })
     if (ctx.state === 'suspended') await ctx.resume()
+    if (gen !== micGen) { teardownAudio(); return }
     src = ctx.createMediaStreamSource(media)
     node = ctx.createScriptProcessor(4096, 1, 1)
     // Not every device honors the requested context rate — resample the
@@ -137,6 +147,7 @@ export function useSpeech() {
   }
 
   function stopMic() {
+    micGen++
     const wasRecording = status.value === 'recording'
     teardownAudio()
     if (worker && wasRecording) {
@@ -150,6 +161,7 @@ export function useSpeech() {
 
   // Cancel = drop the audio and the result immediately; no tail decode.
   function cancelMic() {
+    micGen++
     teardownAudio()
     worker?.postMessage({ t: 'reset' })
     partial.value = ''; finalText.value = ''; segments.value = []
@@ -177,6 +189,7 @@ export function useSpeech() {
   }
 
   function dispose() {
+    micGen++
     teardownAudio()
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
     worker?.terminate(); worker = null
