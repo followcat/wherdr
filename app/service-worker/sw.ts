@@ -48,7 +48,9 @@ sw.addEventListener('message', (e) => {
 
 sw.addEventListener('activate', (e) => {
   e.waitUntil((async () => {
-    for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k)
+    // wherdr-asr-* holds the downloaded speech models (~100 MB–1 GB each):
+    // evicting them on update would re-download a gigabyte per release.
+    for (const k of await caches.keys()) if (k !== CACHE && !k.startsWith('wherdr-asr-')) await caches.delete(k)
     await sw.clients.claim()
   })())
 })
