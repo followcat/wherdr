@@ -249,7 +249,43 @@ watch(sp.error, (e) => {
   sp.error.value = ''
   toast(tl('Voice input failed', 'La saisie vocale a échoué'), true, e)
 })
+// Hold to talk: press starts, release ends the take. A release under ~0.6 s of
+// actual recording keeps it running — the press then read as tap-to-start and
+// the next press stops, so the click toggle still works and no sub-second take
+// decodes into a stray syllable. A release while the model/mic is still
+// starting cancels the pending start.
+let micHeld: 'start' | 'stop' | null = null
+let recStartedAt = 0
+let micUpAt = 0
+watch(asrRecording, (on) => { if (on) recStartedAt = performance.now() })
+const MIC_MIN_HOLD_MS = 600
+
+function micDown(e: PointerEvent) {
+  if (e.button) return
+  e.preventDefault()
+  if (!asrInstalled.value) return toast(tl('Voice input is not installed — download the model in Settings › Conversation', 'Saisie vocale non installée — télécharge le modèle dans Réglages › Conversation'))
+  if (asrBusy.value || micHeld) return
+  micHeld = asrRecording.value ? 'stop' : 'start'
+  if (e.pointerId !== undefined) (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
+  haptic()
+  if (micHeld === 'start') sp.startMic().catch((err: Error) => toast(err.message, true))
+}
+function micUp() {
+  const held = micHeld
+  micHeld = null
+  if (!held) return
+  micUpAt = performance.now()
+  if (held === 'stop') {
+    if (asrRecording.value) sp.stopMic()
+    return
+  }
+  if (asrRecording.value) {
+    if (performance.now() - recStartedAt >= MIC_MIN_HOLD_MS) sp.stopMic()
+  } else sp.cancelMic()
+}
 function onMic() {
+  // The click that follows a real hold's release is already handled above.
+  if (performance.now() - micUpAt < 700) return
   haptic()
   if (!asrInstalled.value) return toast(tl('Voice input is not installed — download the model in Settings › Conversation', 'Saisie vocale non installée — télécharge le modèle dans Réglages › Conversation'))
   if (asrBusy.value) return
@@ -257,6 +293,17 @@ function onMic() {
   sp.startMic().catch((err: Error) => toast(err.message, true))
 }
 function cancelAsr() { haptic(); sp.cancelMic() }
+// The take as block-glyph bars — the wave reads like text, the chat way.
+const WAVE_GLYPHS = '▁▂▃▄▅▆▇█'
+const asrWave = computed(() => {
+  let s = ''
+  for (const v of sp.levels.value) s += WAVE_GLYPHS[Math.min(7, Math.floor(Math.sqrt(v * 4) * 8))]
+  return s
+})
+const asrTime = computed(() => {
+  const s = Math.floor(sp.recMs.value / 1000)
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+})
 function rememberSent(typed: string) {
   rememberPrompt(props.paneId, typed)
   history.reset()
@@ -792,7 +839,11 @@ defineExpose({
     </div>
     <div v-if="asrRecording || asrBusy" class="prompt-asr" role="status">
       <span class="asr-dot" />
-      <span class="asr-live">{{ asrRecording ? (sp.partial.value || tl('Listening…', 'Écoute…')) : sp.status.value === 'flushing' ? tl('Recognizing…', 'Reconnaissance…') : tl('Loading the speech model…', 'Chargement du modèle vocal…') }}</span>
+      <template v-if="asrRecording">
+        <span class="asr-wave" aria-hidden="true"><span class="asr-wave-in">{{ asrWave || '▁' }}</span></span>
+        <span class="asr-time">{{ asrTime }}</span>
+      </template>
+      <span v-else class="asr-live">{{ sp.status.value === 'flushing' ? tl('Recognizing…', 'Reconnaissance…') : tl('Loading the speech model…', 'Chargement du modèle vocal…') }}</span>
       <button v-if="asrRecording" type="button" class="asr-x" :aria-label="t('Cancel recording')" @click="cancelAsr"><UIcon name="i-lucide-x" /></button>
     </div>
     <UChatPrompt
@@ -850,7 +901,8 @@ defineExpose({
           :icon="asrRecording ? 'i-lucide-square' : asrInstalled ? 'i-lucide-mic' : 'i-lucide-mic-off'" color="neutral" variant="outline" size="sm"
           class="prompt-mic" :class="{ dim: !asrInstalled, rec: asrRecording }" :disabled="readOnly || asrBusy"
           :title="asrInstalled ? t('Voice input') : tl('Voice input not installed — Settings › Conversation', 'Saisie vocale non installée — Réglages › Conversation')"
-          :aria-label="asrInstalled ? t('Voice input') : tl('Voice input not installed', 'Saisie vocale non installée')" :aria-pressed="asrRecording" @click="onMic"
+          :aria-label="asrInstalled ? t('Voice input') : tl('Voice input not installed', 'Saisie vocale non installée')" :aria-pressed="asrRecording"
+          @pointerdown="micDown" @pointerup="micUp" @pointercancel="micUp" @click="onMic"
         />
         <UChatPromptSubmit
           :status="stopMode ? 'streaming' : 'ready'" :disabled="sendDisabled"

@@ -14,6 +14,7 @@ All notable changes to this project are documented here. The format follows
 - **Plain Send steers a working Devin again.** The white button ends the draft with Enter everywhere, so a message reaches a running Devin at once instead of sitting in its queue.
 - **The microphone no longer talks over itself.** Dictation played your own voice back through the speaker while it listened, and the echo re-entering the mic turned takes into reverb — recognition was starved before the model ever ran. The capture tap is now muted, Android's auto-gain is off so the noise floor isn't pumped between phrases, and a suspended audio context is resumed before recording starts.
 - **Speech fixes actually reach the phone.** The ASR worker was inside the service-worker precache, which serves cache-first until you reload — a phone could keep running the old recognizer forever after an update. Worker files are out of the precache now, and the worker URL carries a version so the next load always gets fresh speech code. The test page also shows each take's level (duration/rms/peak), so a dead mic is visible instead of looking like a bad decode.
+- **Hold to talk, with a wave.** Press and hold the microphone to dictate: the status row turns into a live waveform drawn in block glyphs — `▁▂▃▄▅▆▇█` in the terminal mono face, like text rendering itself — with a running timer, and letting go ends the take for recognition. A tap under half a second still works as tap-to-start/stop for longer takes, and the × still cancels.
 
 ### Fixed
 

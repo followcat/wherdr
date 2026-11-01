@@ -28,6 +28,10 @@ export function useSpeech() {
   const loadMs = ref(0)
   const decodeMs = ref<number | null>(null)
   const take = ref<{ secs: number, rms: number, peak: number } | null>(null)
+  // The live take as RMS bars (~128 ms each): the composer draws its wave.
+  const levels = ref<number[]>([])
+  const recMs = ref(0)
+  const LEVELS_MAX = 40
 
   let worker: Worker | null = null
   let loadedModelId: string | null = null
@@ -116,9 +120,21 @@ export function useSpeech() {
     // Not every device honors the requested context rate — resample the
     // captured rate rather than feeding the engine a wrong-speed stream.
     const inRate = ctx.sampleRate
+    levels.value = []
+    recMs.value = 0
     node.onaudioprocess = (e) => {
-      const buf = resampleTo16k(e.inputBuffer.getChannelData(0).slice(0), inRate)
+      const raw = e.inputBuffer.getChannelData(0)
+      const buf = resampleTo16k(raw.slice(0), inRate)
       worker?.postMessage({ t: 'push', pcm: buf.buffer }, [buf.buffer])
+      // Two RMS bars per buffer feed the composer's live wave.
+      const half = raw.length >> 1
+      for (let h = 0; h < 2; h++) {
+        let sum = 0
+        for (let i = h * half; i < (h + 1) * half; i++) sum += raw[i]! * raw[i]!
+        levels.value.push(Math.sqrt(sum / half))
+      }
+      recMs.value += Math.round(raw.length / inRate * 1000)
+      if (levels.value.length > LEVELS_MAX) levels.value.splice(0, levels.value.length - LEVELS_MAX)
     }
     src.connect(node)
     // The script processor only fires onaudioprocess while it is pulled —
@@ -197,5 +213,5 @@ export function useSpeech() {
     status.value = 'idle'
   }
 
-  return { status, error, phase, dl, partial, segments, finalText, loadMs, decodeMs, take, installed: asrInstalled, ensure, startMic, stopMic, cancelMic, reset, decodeBlob, dispose }
+  return { status, error, phase, dl, partial, segments, finalText, loadMs, decodeMs, take, levels, recMs, installed: asrInstalled, ensure, startMic, stopMic, cancelMic, reset, decodeBlob, dispose }
 }
