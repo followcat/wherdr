@@ -24,6 +24,7 @@ export function useSpeech() {
   const finalText = ref('')
   const loadMs = ref(0)
   const decodeMs = ref<number | null>(null)
+  const take = ref<{ secs: number, rms: number, peak: number } | null>(null)
 
   let worker: Worker | null = null
   let loadedModelId: string | null = null
@@ -48,7 +49,7 @@ export function useSpeech() {
     else if (m.t === 'segment') { if (m.text) segments.value.push(m.text); partial.value = '' }
     else if (m.t === 'final') {
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
-      finalText.value = m.text; decodeMs.value = m.decodeMs; status.value = 'ready'
+      finalText.value = m.text; decodeMs.value = m.decodeMs; take.value = m.take || null; status.value = 'ready'
     }
     else if (m.t === 'error') {
       error.value = m.error
@@ -180,5 +181,5 @@ export function useSpeech() {
     status.value = 'idle'
   }
 
-  return { status, error, phase, dl, partial, segments, finalText, loadMs, decodeMs, installed: asrInstalled, ensure, startMic, stopMic, cancelMic, reset, decodeBlob, dispose }
+  return { status, error, phase, dl, partial, segments, finalText, loadMs, decodeMs, take, installed: asrInstalled, ensure, startMic, stopMic, cancelMic, reset, decodeBlob, dispose }
 }
