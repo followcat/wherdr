@@ -24,6 +24,9 @@ export interface AsrModelDef {
   kind: 'senseVoice' | 'qwen3Asr' | 'qwen3Q4F16' | 'funasrNano' | 'fireRedAsrCtc' | 'omnilingual' | 'dolphin'
   // Execution providers the worker tries in order.
   providers: string[]
+  // LLM-decoder engines that take a context/hotword prompt (Settings marks
+  // them; the composer feeds buildAsrContext into the system turn).
+  context?: boolean
 }
 
 export const ASR_MODELS: Record<string, AsrModelDef> = {
@@ -41,6 +44,7 @@ export const ASR_MODELS: Record<string, AsrModelDef> = {
     kind: 'qwen3Q4F16',
     // Real-GPU path through onnxruntime-web; there is no sherpa/cpu variant.
     providers: ['webgpu'],
+    context: true,
   },
   funasr: {
     base: '/models/funasr-nano-int8',

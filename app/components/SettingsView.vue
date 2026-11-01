@@ -113,6 +113,7 @@ const asrModelItems = computed(() => ASR_MODEL_IDS.map(id => ({
   label: ASR_MODEL_INFO[id]?.label || id,
   description: ASR_MODEL_INFO[id] ? tl(ASR_MODEL_INFO[id]!.en, ASR_MODEL_INFO[id]!.fr) : '',
   size: fmtMb(ASR_MODELS[id]!.bytes),
+  context: Boolean(ASR_MODELS[id]!.context),
   value: id,
 })))
 const asrInstalled = computed(() => Boolean(asrInstalledBy.value[asrModelId.value]))
@@ -478,7 +479,7 @@ onMounted(() => {
               <div v-for="m in asrModelItems" :key="m.value" class="asr-model-row" :class="{ 'asr-model-on': asrModelId === m.value }">
                 <button type="button" class="asr-model-pick" @click="selectAsrModel(m.value)">
                   <UIcon :name="asrModelId === m.value ? 'i-lucide-circle-dot' : 'i-lucide-circle'" class="asr-model-dot" />
-                  <span class="asr-model-text"><b>{{ m.label }}</b><small>{{ m.description }}</small></span>
+                  <span class="asr-model-text"><b>{{ m.label }} <UBadge v-if="m.context" color="info" variant="subtle" size="sm" :title="tl('Biases recognition toward this pane\'s terms — agent, machine, cwd, draft — picked up at each mic press', 'Biaise la reconnaissance vers les termes de ce panneau — agent, machine, dossier, brouillon — relevés à chaque appui micro')">{{ tl('context', 'contexte') }}</UBadge></b><small>{{ m.description }}</small></span>
                 </button>
                 <UBadge v-if="asrInstalledBy[m.value]" color="success" variant="soft"><UIcon name="i-lucide-check" /> {{ tl('Installed', 'Installé') }}</UBadge>
                 <UButton v-if="!asrInstalledBy[m.value]" color="primary" variant="soft" size="sm" icon="i-lucide-download" :loading="asr.installingId.value === m.value" :disabled="Boolean(asr.installingId.value) || Boolean(asr.removingId.value)" @click="asr.install(m.value)">{{ m.size }}</UButton>

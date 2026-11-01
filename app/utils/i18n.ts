@@ -341,6 +341,7 @@ const FR: Record<string, string> = {
   'Type': 'Type', 'Folder': 'Dossier', 'Resume the last conversation': 'Reprendre la dernière conversation',
   'for this agent in this folder': 'de cet agent dans ce dossier', 'Name': 'Nom',
   'Cancel': 'Annuler', 'Choose this folder': 'Choisir ce dossier',
+  'Cancel recording': 'Annuler l’enregistrement', 'Voice input': 'Saisie vocale',
   'Language': 'Langue', 'English': 'English',
   'The interface language is saved on this device.': 'La langue de l’interface est enregistrée sur cet appareil.',
   'Offered agents': 'Agents proposés',
