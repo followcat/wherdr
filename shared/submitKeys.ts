@@ -20,12 +20,15 @@ const TABLE: Record<string, (ctx: { working: boolean }) => string[]> = {
   // verified on 2.1.247 ("Press up to edit queued messages"). It is not the
   // drain/flush key it was suspected to be.
   claude: () => ['ctrl+enter'],
-  // Devin: Ctrl+Enter submits a draft idle and queues it while working —
-  // verified on v3000.11.234 ("1 queued · ↵ send now"), delivered at the
-  // turn's end. Plain Send stays Enter: on a working Devin it steers the
-  // running turn, which is what Send means — the queue is never the
-  // default, only this explicit chord.
-  devin: () => ['ctrl+enter'],
+  // Devin: no alternate terminator. Ctrl+Enter is what its TUI would queue a
+  // draft on, but the chord never reaches it over the API: send_input encodes
+  // it as an enhanced-keyboard report the TUI drops (checked on v3000.11.234 —
+  // the draft just sits in the field). Offered as "Send with Ctrl+Enter", the
+  // send left the typed text stranded in the input box, where the next
+  // message's text accumulated until a real Enter flushed the pile as one
+  // merged/queued delivery. Plain Send stays Enter: on a working Devin it
+  // steers the running turn.
+  devin: () => [],
 }
 
 // Keys that may terminate a draft for `agent` right now. Enter is never

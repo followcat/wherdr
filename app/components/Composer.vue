@@ -153,20 +153,35 @@ const placeholder = computed(() => {
 
 // Enter: UChatPrompt only sends text; a photo alone, or an empty field
 // while the agent is working (Stop), go through here.
+// IME guard, the same shape as Nuxt UI's useIMEGuard: an IME can emit a
+// chorded Enter as its send action right when composition ends, where
+// isComposing is already false — caught below it would end the draft with
+// that key ("Send with Ctrl+Enter" queues instead of sending).
+let compositionJustEnded = false
+let compositionEndTimer: ReturnType<typeof setTimeout> | undefined
+function onCompositionEnd() {
+  clearTimeout(compositionEndTimer)
+  compositionJustEnded = true
+  compositionEndTimer = setTimeout(() => { compositionJustEnded = false }, 50)
+}
+onBeforeUnmount(() => clearTimeout(compositionEndTimer))
+const imeKey = (e: KeyboardEvent) => e.isComposing || e.keyCode === 229 || compositionJustEnded
 function onKeydown(e: KeyboardEvent) {
-  if (slashOpen.value && !e.isComposing) {
+  if (slashOpen.value && !imeKey(e)) {
     const n = slashMatches.value.length
-    if (e.key === 'ArrowDown') { e.preventDefault(); lastPointer = 'kb'; slashSel.value = (slashSel.value + 1) % n; return }
-    if (e.key === 'ArrowUp') { e.preventDefault(); lastPointer = 'kb'; slashSel.value = (slashSel.value - 1 + n) % n; return }
+    if (e.key === 'ArrowDown' && n) { e.preventDefault(); lastPointer = 'kb'; slashSel.value = (slashSel.value + 1) % n; return }
+    if (e.key === 'ArrowUp' && n) { e.preventDefault(); lastPointer = 'kb'; slashSel.value = (slashSel.value - 1 + n) % n; return }
     if (e.key === 'Escape') { e.preventDefault(); slashDismissed.value = true; return }
-    if (e.key === 'Tab' || (enterSends.value && e.key === 'Enter' && !e.shiftKey)) {
+    // The menu can be open with no candidate (a denied-list note): Enter and
+    // Tab then keep their normal job — there is nothing to pick.
+    if ((e.key === 'Tab' || (enterSends.value && e.key === 'Enter' && !e.shiftKey)) && n) {
       e.preventDefault()
       e.stopPropagation()
       pickSlash(slashMatches.value[slashSel.value] || slashMatches.value[0]!)
       return
     }
   }
-  if (e.key === 'Tab' && !e.shiftKey && !e.isComposing && suggestion.value && !text.value) {
+  if (e.key === 'Tab' && !e.shiftKey && !imeKey(e) && suggestion.value && !text.value) {
     e.preventDefault()
     useSuggestion()
     return
@@ -174,7 +189,7 @@ function onKeydown(e: KeyboardEvent) {
   // A verified terminator of this agent ends the draft with that key
   // ("Send with Tab"), like the same press in the terminal. Plain Tab only:
   // on an empty field it keeps moving the focus, and Shift+Tab always does.
-  if (!e.isComposing && canSend.value) {
+  if (!imeKey(e) && canSend.value) {
     const chord = e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey ? 'tab'
       : e.key === 'Enter' && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey ? 'ctrl+enter'
         : null
@@ -184,7 +199,7 @@ function onKeydown(e: KeyboardEvent) {
       return
     }
   }
-  if (enterSends.value && e.key === 'Enter' && !e.shiftKey && !e.isComposing && !text.value.trim()) {
+  if (enterSends.value && e.key === 'Enter' && !e.shiftKey && !imeKey(e) && !text.value.trim()) {
     e.preventDefault()
     submit()
   }
@@ -310,14 +325,18 @@ async function submit(submitKey?: string) {
   sending.value = true
   // Before the send: it tells the server where they sit (see sendMessage).
   rememberPastes(pastes)
+  // What was sent, for the receipt: the send awaits an answer, and typing or
+  // attaching may go on meanwhile — the receipt clears only what it sent.
+  const sentAtts = attachments.value.slice()
   try {
     let queued: QueuedMessage | null = null
     if (prompt && free >= 0) {
       if (!(await choose(props.paneId, free, prompt.options[free]!.label, prompt.identity, { text: msg, question: prompt.question }))) return
     } else queued = await sendMessage(p, props.paneId, msg, undefined, submitKey)
     rememberSent(typed)
-    text.value = ''
-    clearAttachments()
+    if (text.value === typed) text.value = ''
+    else if (text.value.startsWith(typed)) text.value = text.value.slice(typed.length)
+    dropAttachments(sentAtts)
     haptic()
     emit('sent', queued)
     // "/" command: its result (terminal screen), as from the + menu.
@@ -383,6 +402,13 @@ function stop() {
 function clearAttachments() {
   for (const a of attachments.value) if (a.url) URL.revokeObjectURL(a.url)
   attachments.value = []
+}
+// A send's receipt drops only what it carried: attachments added while the
+// answer was awaited stay.
+function dropAttachments(sent: Att[]) {
+  const drop = new Set(sent)
+  for (const a of sent) if (a.url) URL.revokeObjectURL(a.url)
+  attachments.value = attachments.value.filter(a => !drop.has(a))
 }
 // Large preview (same viewer as the conversation), including while
 // sending: the local URL (blob) is enough.
@@ -775,7 +801,7 @@ defineExpose({
       :enterkeyhint="enterSends ? 'send' : 'enter'" autocapitalize="sentences"
       class="prompt" :class="{ suggesting: suggestTap, expanded }" :style="suggestRoom ? { '--suggest-room': `${suggestRoom}px` } : undefined" :ui="{ header: 'prompt-head', body: 'prompt-body', base: 'prompt-input', footer: 'prompt-foot' }"
       @focusin="fieldFocused = true" @focusout="onFocusOut" @focus="fieldFocused = true" @blur="onFocusOut"
-      @submit="submit()" @keydown="onKeydown" @paste="onPaste" @beforeinput="onBeforeInput"
+      @submit="submit()" @keydown="onKeydown" @compositionend="onCompositionEnd" @paste="onPaste" @beforeinput="onBeforeInput"
     >
       <template v-if="attachments.length" #header>
         <div class="attachments">

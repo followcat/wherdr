@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
+import { readBody } from 'h3'
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import { defineComponent, h, nextTick, ref } from 'vue'
 import { UApp } from '#components'
@@ -15,11 +16,13 @@ const pane = (id: string, status: Pane['status'] = 'idle'): Pane => ({
 })
 
 let release: () => void = () => {}
+const sentBodies: Record<string, unknown>[] = []
 registerEndpoint('/api/prompt', {
   method: 'POST',
-  handler: () => {
+  handler: async (event) => {
     const { promise, resolve } = Promise.withResolvers<{ ok: boolean }>()
     release = () => resolve({ ok: true })
+    sentBodies.push(await readBody(event))
     return promise
   },
 })
@@ -112,6 +115,59 @@ describe('Composer send', () => {
     await w.find('textarea').trigger('keydown', { key: 'Enter' })
     expect((field.element as HTMLTextAreaElement).value).toBe('Fix the cache')
     expect(outboxFor('w1:p2')).toHaveLength(0)
+    w.unmount()
+  })
+
+  it('a slow send clears only its own draft — typing during the wait stays', async () => {
+    registerEndpoint('/api/input', {
+      method: 'POST',
+      handler: async (event) => {
+        const { promise, resolve } = Promise.withResolvers<{ ok: boolean }>()
+        release = () => resolve({ ok: true })
+        sentBodies.push(await readBody(event))
+        return promise
+      },
+    })
+    // A shell pane (no agent) is answered on receipt, not held in an outbox.
+    const p = { ...pane('w1:p10'), agent: '' }
+    const w = await mountSuspended(Composer, { props: { pane: p, paneId: p.id, sendKeys: async () => {} } })
+    const field = w.find('textarea')
+    await field.setValue('first message')
+    const before = sentBodies.length
+    await w.find('button.prompt-send').trigger('click')
+    await vi.waitFor(() => expect(sentBodies.length).toBe(before + 1))
+    // The send is still waiting on the server: the user keeps typing.
+    await field.setValue('first message and more')
+    release()
+    await vi.waitFor(() => expect((field.element as HTMLTextAreaElement).value).toBe(' and more'))
+    w.unmount()
+  })
+
+  it('an IME chorded Enter does not end the draft with that key; a real chord does', async () => {
+    const p = { ...pane('w1:p4'), agent: 'claude' }
+    // Claude shows the model picker; it is not what this test exercises.
+    const w = await mountSuspended(Composer, {
+      props: { pane: p, paneId: p.id, sendKeys: async () => {} },
+      global: { stubs: { ModelPicker: { template: '<div />' } } },
+    })
+    const field = w.find('textarea')
+    await field.setValue('Fix the cache')
+    const before = sentBodies.length
+    // The IME's send action arrives as the composing key, or right at
+    // composition end — neither is a deliberate chord.
+    await field.trigger('keydown', { key: 'Enter', ctrlKey: true, keyCode: 229 })
+    await field.trigger('compositionend')
+    await field.trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await flushPromises()
+    expect(sentBodies.length).toBe(before)
+    expect((field.element as HTMLTextAreaElement).value).toBe('Fix the cache')
+    // A deliberate Ctrl+Enter after the window still ends the draft with it.
+    await new Promise(r => setTimeout(r, 80))
+    await field.trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await vi.waitFor(() => expect(sentBodies.length).toBe(before + 1))
+    expect(sentBodies.at(-1)).toMatchObject({ submit_key: 'ctrl+enter' })
+    release()
+    await flushPromises()
     w.unmount()
   })
 })
