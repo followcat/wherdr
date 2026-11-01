@@ -40,11 +40,11 @@ describe('asrInstalled', () => {
 
   it('tracks install state per model', async () => {
     const { caches, store } = fakeCaches()
-    for (const u of asrUrls('qwen3')) store.set(u, new Response('x'))
+    for (const u of asrUrls('qwen3q4f16')) store.set(u, new Response('x'))
     await refreshAsrInstalled(caches)
-    expect(asrInstalledBy.value.qwen3).toBe(true)
+    expect(asrInstalledBy.value.qwen3q4f16).toBe(true)
     expect(asrInstalledBy.value.sensevoice).toBe(false)
-    selectAsrModel('qwen3')
+    selectAsrModel('qwen3q4f16')
     expect(asrInstalled.value).toBe(true)
   })
 
@@ -84,11 +84,11 @@ describe('installAsr', () => {
 
 describe('removeAsr', () => {
   it('drops only the selected model\'s files', async () => {
-    const { caches, store } = fakeCaches([...asrUrls('sensevoice'), ...asrUrls('qwen3')])
+    const { caches, store } = fakeCaches([...asrUrls('sensevoice'), ...asrUrls('qwen3q4f16')])
     await refreshAsrInstalled(caches)
-    selectAsrModel('qwen3')
+    selectAsrModel('qwen3q4f16')
     await removeAsr(caches)
-    expect(asrInstalledBy.value.qwen3).toBe(false)
+    expect(asrInstalledBy.value.qwen3q4f16).toBe(false)
     expect(asrInstalledBy.value.sensevoice).toBe(true)
   })
 })

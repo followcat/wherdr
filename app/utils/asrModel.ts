@@ -3,10 +3,12 @@
 // means every file of the selected model is cached; Settings installs/removes,
 // Composer's mic button reads `asrInstalled` (dim until true).
 //
-// Two models are offered (ASR_MODELS): SenseVoice-small — fast, five
-// languages — and Qwen3-ASR 0.6B — four times the size, the clearest
-// Cantonese output of the bake-off (proper punctuation, real 廣東話
-// characters). `asrModelId` picks which one the mic loads.
+// Six models are offered (ASR_MODELS): SenseVoice-small — fast, five
+// languages, the everyday pick — then Qwen3-ASR 0.6B q4f16, the same
+// sharpest-Cantonese model in the WebGPU-native export (int4 weights + fp16
+// activations, ~14x faster decode than the int8 sherpa build it replaces),
+// plus FunASR-Nano, FireRedASR2, Omnilingual and Dolphin. `asrModelId`
+// picks which one the mic loads.
 //
 // The worker (public/workers/asr-worker.js) resolves the same URLs through
 // the same cache, so a pre-warmed install makes model load offline-capable.
@@ -20,7 +22,7 @@ export interface AsrModelDef {
   files: string[]
   bytes: number // shown in Settings; actual sizes come from content-length
   // Which recognizer config the worker builds.
-  kind: 'senseVoice' | 'qwen3Asr'
+  kind: 'senseVoice' | 'qwen3Asr' | 'qwen3Q4F16' | 'funasrNano' | 'fireRedAsrCtc' | 'omnilingual' | 'dolphin'
   // Execution providers the worker tries in order.
   providers: string[]
 }
@@ -33,13 +35,13 @@ export const ASR_MODELS: Record<string, AsrModelDef> = {
     kind: 'senseVoice',
     providers: ['cpu'],
   },
-  qwen3: {
-    base: '/models/qwen3-asr-0.6b-int8',
-    files: ['conv_frontend.onnx', 'encoder.int8.onnx', 'decoder.int8.onnx', 'tokenizer/vocab.json', 'tokenizer/merges.txt', 'tokenizer/tokenizer_config.json'],
-    bytes: 983 * 1048576,
-    kind: 'qwen3Asr',
-    // webgpu first — falls back to cpu if the engine rejects it.
-    providers: ['webgpu', 'cpu'],
+  qwen3q4f16: {
+    base: '/models/qwen3-asr-0.6b-q4f16',
+    files: ['encoder.fp16.onnx', 'decoder_init.q4f16.onnx', 'decoder_step.q4f16.onnx', 'decoder_weights.q4f16.data', 'embed_tokens.int8.bin', 'embed_scales.f32.bin', 'prompt_config.json', 'mel_filters.json', 'tokenizer.json'],
+    bytes: 848 * 1048576,
+    kind: 'qwen3Q4F16',
+    // Real-GPU path through onnxruntime-web; there is no sherpa/cpu variant.
+    providers: ['webgpu'],
   },
   funasr: {
     base: '/models/funasr-nano-int8',
@@ -82,7 +84,9 @@ const STORAGE_KEY = 'wherdr-asr-model'
 export const asrModelId = ref<string>(ASR_MODEL_IDS[0]!)
 if (typeof localStorage !== 'undefined') {
   const saved = localStorage.getItem(STORAGE_KEY)
-  if (saved && ASR_MODELS[saved]) asrModelId.value = saved
+  // 'qwen3' was the int8 sherpa export; its selection follows the swap.
+  const migrated = saved === 'qwen3' ? 'qwen3q4f16' : saved
+  if (migrated && ASR_MODELS[migrated]) asrModelId.value = migrated
 }
 export function selectAsrModel(id: string) {
   if (!ASR_MODELS[id]) return
@@ -99,6 +103,8 @@ export const asrUrls = (id: string = asrModelId.value) => (ASR_MODELS[id]?.files
 const LEGACY_FILES: Record<string, string[]> = {
   '/models/asr-zipformer-zh-en': ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt'],
   '/models/sensevoice-zh-en-ja-ko-yue': ['model.int8.onnx', 'tokens.txt'],
+  // The int8 sherpa Qwen3 export the q4f16 build replaces — nearly 1 GB.
+  '/models/qwen3-asr-0.6b-int8': ['conv_frontend.onnx', 'encoder.int8.onnx', 'decoder.int8.onnx', 'tokenizer/vocab.json', 'tokenizer/merges.txt', 'tokenizer/tokenizer_config.json'],
 }
 
 // Per-model install state — Settings shows each, the mic reads the selected.

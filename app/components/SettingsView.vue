@@ -103,7 +103,7 @@ const asrRemovingId = ref('')
 function fmtMb(n: number) { return `${Math.round(n / 1048576)} MB` }
 const ASR_MODEL_INFO: Record<string, { label: string, en: string, fr: string }> = {
   sensevoice: { label: 'SenseVoice-small', en: 'Fast, light (~230 MB): zh/en/ja/ko/廣東話 auto-detected, punctuation. The everyday pick.', fr: 'Rapide, léger (~230 Mo) : zh/en/ja/ko/廣東話 détectés tout seuls, ponctuation. Le choix quotidien.' },
-  qwen3: { label: 'Qwen3-ASR 0.6B', en: 'Sharpest Cantonese — real 廣東話 characters and full punctuation; ~980 MB, decodes slowly.', fr: 'Cantonais le plus net — vrais caractères 廣東話 et ponctuation ; ~980 Mo, décodage lent.' },
+  qwen3q4f16: { label: 'Qwen3-ASR 0.6B q4f16', en: 'Sharpest Cantonese — real 廣東話 characters and punctuation — now on the GPU: ~850 MB, true-WebGPU decode ~14x faster than the old int8 build.', fr: 'Cantonais le plus net — vrais caractères 廣東話 et ponctuation — désormais sur GPU : ~850 Mo, décodage WebGPU ~14× plus rapide que l’ancien int8.' },
   funasr: { label: 'FunASR-Nano', en: 'LLM-based (~970 MB): zh/en/ja/ko, 廣東話 and dialects, with punctuation. Heavy like Qwen3.', fr: 'Basé LLM (~970 Mo) : zh/en/ja/ko, 廣東話 et dialectes, avec ponctuation. Lourd comme Qwen3.' },
   firered2: { label: 'FireRedASR2 CTC', en: 'Cantonese + 20 dialects (~740 MB), zh/en; heavy and unpunctuated.', fr: 'Cantonais + 20 dialectes (~740 Mo), zh/en ; lourd et sans ponctuation.' },
   omnilingual: { label: 'Omnilingual 300M', en: '1600+ languages (~350 MB); its Cantonese came out garbled in our tests — pick for rare languages only.', fr: '1600+ langues (~350 Mo) ; son cantonais sortait illisible à nos tests — pour les langues rares seulement.' },
