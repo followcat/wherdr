@@ -103,7 +103,10 @@ export default defineNuxtConfig({
       globPatterns: ['**/*.{js,css,png,svg,webmanifest,woff2}'],
       // PDF.js and its worker are URL-imported .mjs assets, fetched only
       // when a PDF opens; deliberately outside this precache glob.
-      globIgnores: ['**/node_modules/**'],
+      // workers/* are out too: precache is cache-first, and the SW waits for
+      // the user's reload — a stale asr-worker would keep running under a
+      // new app until every tab dies.
+      globIgnores: ['**/node_modules/**', 'workers/**'],
     },
     client: { installPrompt: false, periodicSyncForUpdates: 0 },
     devOptions: { enabled: false },

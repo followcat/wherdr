@@ -13,6 +13,9 @@ const MAX_RECORD_MS = 120_000
 // Decode can take tens of seconds on a big model (Qwen3 on a phone); the
 // flushing UI must not flip back to ready early.
 const FLUSH_TIMEOUT_MS = 90_000
+// Bump when the worker's message contract changes: the URL query defeats
+// stale precached copies left behind by an older service worker.
+const WORKER_V = '4'
 
 export function useSpeech() {
   const status = ref<SpeechStatus>('idle')
@@ -80,7 +83,7 @@ export function useSpeech() {
     status.value = 'downloading'
     loadedModelId = asrModelId.value
     const model = ASR_MODELS[loadedModelId!]!
-    worker = new Worker('/workers/asr-worker.js')
+    worker = new Worker(`/workers/asr-worker.js?v=${WORKER_V}`)
     worker.onmessage = onMsg
     worker.onerror = (e) => {
       error.value = e.message || 'worker failed'
