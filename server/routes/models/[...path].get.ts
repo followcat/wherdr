@@ -2,7 +2,8 @@
 // browser once, then held in Cache Storage. Kept out of the app bundle so the
 // ~200 MB survives redeploys and never lands in the npm tarball.
 import { createReadStream } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
+import { Readable } from 'node:stream'
 import path from 'node:path'
 
 export default defineEventHandler(async (event) => {
@@ -15,8 +16,18 @@ export default defineEventHandler(async (event) => {
   const st = await stat(file).catch(() => null)
   if (!st?.isFile()) throw createError({ statusCode: 404 })
 
+  const MIME: Record<string, string> = {
+    '.onnx': 'application/octet-stream',
+    '.bin': 'application/octet-stream',
+    '.data': 'application/octet-stream',
+    '.wasm': 'application/wasm',
+    '.js': 'text/javascript; charset=utf-8',
+    '.mjs': 'text/javascript; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.txt': 'text/plain; charset=utf-8',
+  }
   const headers = {
-    'content-type': file.endsWith('.onnx') ? 'application/octet-stream' : 'text/plain; charset=utf-8',
+    'content-type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream',
     'cache-control': 'public, max-age=31536000, immutable',
     'accept-ranges': 'bytes',
   }
@@ -31,14 +42,28 @@ export default defineEventHandler(async (event) => {
       setResponseHeader(event, 'content-range', `bytes */${st.size}`)
       throw createError({ statusCode: 416 })
     }
-    setResponseStatus(event, 206)
-    setResponseHeaders(event, { ...headers,
-      'content-range': `bytes ${start}-${end}/${st.size}`,
-      'content-length': end - start + 1,
+    // sendStream drops response headers under this h3 version, so stream via a
+    // Web Response instead — the Range slices the model download depends on
+    // keep working and script/wasm files get a real MIME for importScripts.
+    return new Response(Readable.toWeb(createReadStream(file, { start, end })) as ReadableStream, {
+      status: 206,
+      headers: { ...headers,
+        'content-range': `bytes ${start}-${end}/${st.size}`,
+        'content-length': String(end - start + 1),
+      },
     })
-    return sendStream(event, createReadStream(file, { start, end }))
   }
 
-  setResponseHeaders(event, { ...headers, 'content-length': st.size })
-  return sendStream(event, createReadStream(file))
+  // Script/wasm payloads need an honest MIME (importScripts enforces it under
+  // nosniff). send(event, body) drops handler headers on this h3 build —
+  // a Web Response is the only return shape whose headers survive.
+  if (st.size < 64 * 1024 * 1024) {
+    return new Response(await readFile(file), {
+      headers: { ...headers, 'content-length': String(st.size) },
+    })
+  }
+
+  return new Response(Readable.toWeb(createReadStream(file)) as ReadableStream, {
+    headers: { ...headers, 'content-length': String(st.size) },
+  })
 })
