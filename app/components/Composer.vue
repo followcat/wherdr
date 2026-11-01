@@ -266,7 +266,7 @@ function micDown(e: PointerEvent) {
   if (!asrInstalled.value) return toast(tl('Voice input is not installed — download the model in Settings › Conversation', 'Saisie vocale non installée — télécharge le modèle dans Réglages › Conversation'))
   if (asrBusy.value || micHeld) return
   micHeld = asrRecording.value ? 'stop' : 'start'
-  if (e.pointerId !== undefined) (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
+  if (e.pointerId !== undefined) { try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch { /* synthetic events carry no active pointer */ } }
   haptic()
   if (micHeld === 'start') sp.startMic(asrCtx()).catch((err: Error) => toast(err.message, true))
 }
