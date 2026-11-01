@@ -96,6 +96,7 @@ export function useSpeech() {
     // Android they gate/distort quiet speech badly enough to break ASR.
     media = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false } })
     ctx = new AudioContext({ sampleRate: 16000 })
+    if (ctx.state === 'suspended') await ctx.resume()
     src = ctx.createMediaStreamSource(media)
     node = ctx.createScriptProcessor(4096, 1, 1)
     // Not every device honors the requested context rate — resample the
@@ -106,7 +107,14 @@ export function useSpeech() {
       worker?.postMessage({ t: 'push', pcm: buf.buffer }, [buf.buffer])
     }
     src.connect(node)
-    node.connect(ctx.destination)
+    // The script processor only fires onaudioprocess while it is pulled —
+    // but wiring it straight to the output plays the mic back through the
+    // speaker, and that echo is re-captured into the take (howling ruins
+    // recognition). Route through silence instead.
+    const mute = ctx.createGain()
+    mute.gain.value = 0
+    node.connect(mute)
+    mute.connect(ctx.destination)
     partial.value = ''
     finalText.value = ''
     segments.value = []
