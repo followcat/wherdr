@@ -241,15 +241,46 @@ function q4BytesToUnicode() {
   for (let i = 0; i < bs.length; i++) m.set(String.fromCharCode(cs[i]), bs[i])
   return m
 }
-// Byte-level BPE decode for the shared Qwen tokenizer (ids -> string only;
-// encoding is not needed: the prompt is built from prompt_config's ids).
+// Byte-level BPE for the shared Qwen tokenizer. Decode feeds generated ids
+// back to text; encode tokenizes the context string spliced into the
+// prompt's system turn (see decodeQ4F16) — prompt_config's ids alone can't
+// carry free text.
 function q4Tokenizer(tj) {
-  const idTo = []
-  for (const [t, id] of Object.entries(tj.model.vocab)) idTo[id] = t
+  const idTo = [], vocab = new Map()
+  for (const [t, id] of Object.entries(tj.model.vocab)) { idTo[id] = t; vocab.set(t, id) }
   const sp = new Map()
   for (const t of tj.added_tokens || []) sp.set(t.id, t.content)
-  const c2b = q4BytesToUnicode(), td = new TextDecoder('utf-8')
+  const c2b = q4BytesToUnicode(), td = new TextDecoder('utf-8'), te = new TextEncoder()
+  // Inverse of c2b: byte -> the mapped char vocab strings are written in.
+  const b2c = new Map()
+  for (const [ch, b] of c2b) b2c.set(b, ch)
+  const merges = new Map()
+  for (let i = 0; i < (tj.model.merges || []).length; i++) {
+    const e = tj.model.merges[i]
+    merges.set(typeof e === 'string' ? e : e.join(' '), i)
+  }
+  const PRE = /'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu
+  function encode(str) {
+    const out = []
+    for (const m of String(str).matchAll(PRE)) {
+      let word = ''
+      for (const byte of te.encode(m[0])) word += b2c.get(byte)
+      const parts = [...word]
+      for (;;) {
+        let best = -1, bi = -1
+        for (let i = 0; i + 1 < parts.length; i++) {
+          const r = merges.get(parts[i] + ' ' + parts[i + 1])
+          if (r !== undefined && (best < 0 || r < best)) { best = r; bi = i }
+        }
+        if (bi < 0) break
+        parts.splice(bi, 2, parts[bi] + parts[bi + 1])
+      }
+      for (const p of parts) { const id = vocab.get(p); if (id !== undefined) out.push(id) }
+    }
+    return out
+  }
   return {
+    encode,
     decode(ids) {
       const bytes = []
       let out = ''
@@ -311,13 +342,17 @@ async function loadQ4F16(msg) {
 
 // Greedy decode of one take: mel -> encoder -> prompt+embed -> prefill ->
 // KV-cached step loop until EOS / max_new_tokens.
-async function decodeQ4F16(all) {
+async function decodeQ4F16(all, ctxText) {
   const { ort, PC, filters, tok, hidden, embI8, embScales, encSess, initSess, stepSess, embType, stepEmbType, encMelType } = q4
   const mel = q4LogMel(all, filters)
   const encOut = await encSess.run({ mel: new ort.Tensor(encMelType, encMelType === 'float16' ? q4f32ToF16(mel.data) : mel.data, [1, mel.nMels, mel.T]) })
   const af = encOut.audio_features, nAudio = af.dims[1]
   const afF32 = af.type === 'float16' ? q4f16ToF32(af.data) : af.data
-  const ids = [...PC.prompt.prefix_ids]
+  // The stock prompt's system turn is empty — context terms go inside it:
+  // prefix_ids[0..2] is im_start/'system'/'\n', so encoded terms splice in
+  // at index 3, before im_end/user/audio_start.
+  const ctxIds = ctxText ? tok.encode(String(ctxText).slice(0, 400)) : []
+  const ids = [...PC.prompt.prefix_ids.slice(0, 3), ...ctxIds, ...PC.prompt.prefix_ids.slice(3)]
   const audioStart = ids.length
   for (let i = 0; i < nAudio; i++) ids.push(PC.prompt.audio_pad_id)
   ids.push(...PC.prompt.suffix_ids)
@@ -491,8 +526,8 @@ self.onmessage = async (e) => {
       for (let i = 0; i < all.length; i++) { const v = Math.abs(all[i]); if (v > peak) peak = v; sumSq += v * v }
       const take = { secs: Math.round(all.length / SAMPLE_RATE * 10) / 10, rms: Math.sqrt(sumSq / (all.length || 1)), peak }
       if (q4) {
-        const text = await decodeQ4F16(all)
-        postMessage({ t: 'final', text, decodeMs: Math.round(performance.now() - t0), take })
+        const text = await decodeQ4F16(all, m.ctx)
+        postMessage({ t: 'final', text, decodeMs: Math.round(performance.now() - t0), take, ctx: m.ctx || '' })
         return
       }
       const stream = recognizer.createStream()
@@ -501,7 +536,7 @@ self.onmessage = async (e) => {
         recognizer.decode(stream)
         const r = recognizer.getResult(stream)
         const text = (r.text || '').replace(/<\|[^|]*\|>/g, '').trim()
-        postMessage({ t: 'final', text, decodeMs: Math.round(performance.now() - t0), take })
+        postMessage({ t: 'final', text, decodeMs: Math.round(performance.now() - t0), take, ctx: '' })
       } finally { stream.free() }
     } else if (m.t === 'reset') {
       pending.length = 0; pendingLen = 0

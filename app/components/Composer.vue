@@ -268,7 +268,7 @@ function micDown(e: PointerEvent) {
   micHeld = asrRecording.value ? 'stop' : 'start'
   if (e.pointerId !== undefined) (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
   haptic()
-  if (micHeld === 'start') sp.startMic().catch((err: Error) => toast(err.message, true))
+  if (micHeld === 'start') sp.startMic(asrCtx()).catch((err: Error) => toast(err.message, true))
 }
 function micUp() {
   const held = micHeld
@@ -290,9 +290,24 @@ function onMic() {
   if (!asrInstalled.value) return toast(tl('Voice input is not installed — download the model in Settings › Conversation', 'Saisie vocale non installée — télécharge le modèle dans Réglages › Conversation'))
   if (asrBusy.value) return
   if (asrRecording.value) { sp.stopMic(); return }
-  sp.startMic().catch((err: Error) => toast(err.message, true))
+  sp.startMic(asrCtx()).catch((err: Error) => toast(err.message, true))
 }
 function cancelAsr() { haptic(); sp.cancelMic() }
+// Bias terms for context-capable engines (asrModel.ts `context`): the pane
+// identity, cwd, draft and attachment names already hold the technical words
+// the take is likely to say — harvested at mic-press, not maintained by hand.
+function asrCtx(): string {
+  if (!asrModel.value?.context) return ''
+  return buildAsrContext({
+    agent: props.pane?.displayAgent || props.pane?.agent,
+    machine: props.pane?.machine,
+    name: props.pane?.name,
+    title: props.pane?.title,
+    cwd: props.pane?.cwd,
+    draft: text.value,
+    files: attachments.value.map(a => a.name ?? a.ref ?? a.path),
+  })
+}
 // The take as block-glyph bars — the wave reads like text, the chat way.
 const WAVE_GLYPHS = '▁▂▃▄▅▆▇█'
 const asrWave = computed(() => {

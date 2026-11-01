@@ -15,7 +15,7 @@ const MAX_RECORD_MS = 120_000
 const FLUSH_TIMEOUT_MS = 90_000
 // Bump when the worker's message contract changes: the URL query defeats
 // stale precached copies left behind by an older service worker.
-const WORKER_V = '4'
+const WORKER_V = '5'
 
 export function useSpeech() {
   const status = ref<SpeechStatus>('idle')
@@ -31,6 +31,9 @@ export function useSpeech() {
   // The live take as RMS bars (~128 ms each): the composer draws its wave.
   const levels = ref<number[]>([])
   const recMs = ref(0)
+  // The context string the last take was decoded with (speech-test shows it).
+  const lastCtx = ref('')
+  let pendingCtx = ''
   const LEVELS_MAX = 40
 
   let worker: Worker | null = null
@@ -56,7 +59,9 @@ export function useSpeech() {
     else if (m.t === 'segment') { if (m.text) segments.value.push(m.text); partial.value = '' }
     else if (m.t === 'final') {
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
-      finalText.value = m.text; decodeMs.value = m.decodeMs; take.value = m.take || null; status.value = 'ready'
+      finalText.value = m.text; decodeMs.value = m.decodeMs; take.value = m.take || null
+      lastCtx.value = typeof m.ctx === 'string' ? m.ctx : lastCtx.value
+      status.value = 'ready'
     }
     else if (m.t === 'error') {
       error.value = m.error
@@ -102,7 +107,7 @@ export function useSpeech() {
   // recording into a dead component or leaking a second stream.
   let micGen = 0
 
-  async function startMic() {
+  async function startMic(ctxText?: string) {
     const gen = ++micGen
     await ensure()
     if (gen !== micGen) return
@@ -120,6 +125,7 @@ export function useSpeech() {
     // Not every device honors the requested context rate — resample the
     // captured rate rather than feeding the engine a wrong-speed stream.
     const inRate = ctx.sampleRate
+    pendingCtx = ctxText || ''
     levels.value = []
     recMs.value = 0
     node.onaudioprocess = (e) => {
@@ -168,7 +174,7 @@ export function useSpeech() {
     teardownAudio()
     if (worker && wasRecording) {
       status.value = 'flushing'
-      worker.postMessage({ t: 'flush' })
+      worker.postMessage({ t: 'flush', ctx: pendingCtx })
       // The worker always answers a flush, but a wedged decode must never
       // leave the composer stuck on "Recognizing…".
       flushTimer = setTimeout(() => { if (status.value === 'flushing') status.value = 'ready' }, FLUSH_TIMEOUT_MS)
@@ -189,7 +195,7 @@ export function useSpeech() {
     partial.value = ''; finalText.value = ''; segments.value = []
   }
 
-  async function decodeBlob(blob: Blob) {
+  async function decodeBlob(blob: Blob, ctx?: string) {
     await ensure()
     const ac = new OfflineAudioContext(1, 1, 16000)
     const decoded = await ac.decodeAudioData(await blob.arrayBuffer())
@@ -201,7 +207,7 @@ export function useSpeech() {
       const slice = out.slice(at, at + CH)
       worker?.postMessage({ t: 'push', pcm: slice.buffer }, [slice.buffer])
     }
-    worker?.postMessage({ t: 'flush' })
+    worker?.postMessage({ t: 'flush', ctx: ctx || '' })
   }
 
   function dispose() {
@@ -213,5 +219,5 @@ export function useSpeech() {
     status.value = 'idle'
   }
 
-  return { status, error, phase, dl, partial, segments, finalText, loadMs, decodeMs, take, levels, recMs, installed: asrInstalled, ensure, startMic, stopMic, cancelMic, reset, decodeBlob, dispose }
+  return { status, error, phase, dl, partial, segments, finalText, loadMs, decodeMs, take, levels, recMs, lastCtx, installed: asrInstalled, ensure, startMic, stopMic, cancelMic, reset, decodeBlob, dispose }
 }
