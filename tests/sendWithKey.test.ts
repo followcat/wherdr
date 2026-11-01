@@ -76,14 +76,14 @@ describe('sendPrompt: an alternate terminator ends the typed text', () => {
     expect(herdr.mock.calls[1]![1]).toMatchObject({ keys: ['tab'] })
   })
 
-  it('Devin working: text, then ctrl+enter — its queue terminator, never Enter', async () => {
+  it('Devin ctrl+enter: the chord never reaches the TUI — sent as a plain prompt', async () => {
     const devin = { ...pane, agent: 'devin' }
-    const { sendPrompt, herdr, agentPrompt, confirmSubmitted } = sendPromptBind(devin)
+    const { sendPrompt, herdr, agentPrompt, confirmSubmitted, log } = sendPromptBind(devin)
     await sendPrompt(devin, 'Summarize the diff', { submitKey: 'ctrl+enter' })
-    expect(herdr.mock.calls.map(c => c[0])).toEqual(['pane.send_input', 'pane.send_input'])
-    expect(herdr.mock.calls[1]![1]).toMatchObject({ pane_id: 'w1:p1', keys: ['ctrl+enter'] })
-    expect(confirmSubmitted).toHaveBeenCalledWith(expect.anything(), 'Summarize the diff', { submitKey: 'ctrl+enter' })
-    expect(agentPrompt).not.toHaveBeenCalled()
+    expect(agentPrompt).toHaveBeenCalledOnce()
+    expect(herdr.mock.calls.map(c => c[0])).not.toContain('pane.send_input')
+    expect(confirmSubmitted).not.toHaveBeenCalled()
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('ctrl+enter'))
   })
 })
 

@@ -18,10 +18,10 @@ describe('submit keys: the verified terminators of each agent', () => {
     expect(isSubmitKey('claude', 'ctrl+enter', { working: false })).toBe(true)
   })
 
-  it('Devin takes Ctrl+Enter idle and working — verified submit and queue', () => {
-    expect(submitKeysFor('devin', { working: true })).toEqual(['ctrl+enter'])
-    expect(submitKeysFor('devin', { working: false })).toEqual(['ctrl+enter'])
-    expect(isSubmitKey('devin', 'ctrl+enter', { working: true })).toBe(true)
+  it('Devin has no alternate terminator — its Ctrl+Enter never reaches the TUI', () => {
+    expect(submitKeysFor('devin', { working: true })).toEqual([])
+    expect(submitKeysFor('devin', { working: false })).toEqual([])
+    expect(isSubmitKey('devin', 'ctrl+enter', { working: true })).toBe(false)
   })
 
   it('agents without a verified key only have the implicit Enter', () => {
@@ -34,7 +34,7 @@ describe('submit keys: the verified terminators of each agent', () => {
 
   it('what a submission asks for is kept if any context could use it', () => {
     expect(possibleSubmitKey('codex', 'tab')).toBe(true)
-    expect(possibleSubmitKey('devin', 'ctrl+enter')).toBe(true)
+    expect(possibleSubmitKey('devin', 'ctrl+enter')).toBe(false)
     expect(possibleSubmitKey('claude', 'ctrl+enter')).toBe(true)
     // Enter is the default submission everywhere, never an alternate.
     expect(possibleSubmitKey('codex', 'enter')).toBe(false)
