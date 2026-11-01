@@ -94,7 +94,7 @@ export function useSpeech() {
     // Dictation, not a call: hardware echo cancellation and noise suppression
     // are tuned to kill anything that isn't a loud near-field voice — on
     // Android they gate/distort quiet speech badly enough to break ASR.
-    media = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false } })
+    media = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
     ctx = new AudioContext({ sampleRate: 16000 })
     if (ctx.state === 'suspended') await ctx.resume()
     src = ctx.createMediaStreamSource(media)
