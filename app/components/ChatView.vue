@@ -360,6 +360,8 @@ const TOOL_LABEL: Record<string, string> = {
   Bash: TOOL_COMMAND, Read: tl('Read', 'Lecture'), Write: tl('Write', 'Écriture'), Edit: TOOL_EDIT, MultiEdit: TOOL_EDIT, Grep: tl('Search', 'Recherche'),
   Glob: tl('Files', 'Fichiers'), WebFetch: 'Web', WebSearch: tl('Web search', 'Recherche web'), Task: TOOL_SUBAGENT, Agent: TOOL_SUBAGENT,
   TodoWrite: tl('Tasks', 'Tâches'), exec: TOOL_COMMAND, shell: TOOL_COMMAND, bash: TOOL_COMMAND, read: tl('Read', 'Lecture'), write: tl('Write', 'Écriture'), edit: TOOL_EDIT, grep: tl('Search', 'Recherche'), glob: tl('Files', 'Fichiers'), apply_patch: TOOL_EDIT,
+  // OpenCode's lowercase tool names (its parts carry e.g. webfetch, todoread).
+  webfetch: 'Web', websearch: tl('Web search', 'Recherche web'), task: TOOL_SUBAGENT, todoread: tl('Tasks', 'Tâches'), todowrite: tl('Tasks', 'Tâches'), list: tl('Files', 'Fichiers'), patch: TOOL_EDIT,
 }
 const TOOL_ICON: Record<string, string> = {
   Bash: 'i-lucide-terminal', exec: 'i-lucide-terminal', shell: 'i-lucide-terminal', bash: 'i-lucide-terminal',
@@ -367,6 +369,7 @@ const TOOL_ICON: Record<string, string> = {
   apply_patch: 'i-lucide-file-pen', NotebookEdit: 'i-lucide-file-pen', Grep: 'i-lucide-text-search', Glob: 'i-lucide-folder-search',
   WebFetch: 'i-lucide-globe', WebSearch: 'i-lucide-search', Task: 'i-lucide-bot', Agent: 'i-lucide-bot',
   TodoWrite: 'i-lucide-list-todo', AskUserQuestion: 'i-lucide-message-circle-question',
+  webfetch: 'i-lucide-globe', websearch: 'i-lucide-search', task: 'i-lucide-bot', todoread: 'i-lucide-list-todo', todowrite: 'i-lucide-list-todo', list: 'i-lucide-folder-search', patch: 'i-lucide-file-pen',
 }
 // Codex "exec" runs code: a shell command, or another tool (write_stdin…).
 // Tool summary: the task count comes from the server in English ("3 tasks").
@@ -374,6 +377,8 @@ const toolText = (tool: ChatItem) => (tool.name === 'TodoWrite' ? t(tool.text ||
 const isOtherTool = (tool: ChatItem) => tool.name === 'exec' && /^\w+$/.test(tool.text || '')
 const toolLabel = (tool: ChatItem) => isOtherTool(tool) ? t('Tool') : TOOL_LABEL[tool.name || ''] || tool.name || ''
 const toolIcon = (tool: ChatItem) => (tool.error ? 'i-lucide-circle-x' : isOtherTool(tool) ? 'i-lucide-wrench' : TOOL_ICON[tool.name || ''] || 'i-lucide-wrench')
+// A tool's wall time when the transcript carries it (OpenCode's parts do).
+const toolSuffix = (tool: ChatItem) => [toolText(tool), tool.ms !== undefined ? ompWall(tool.ms) : ''].filter(Boolean).join(' · ')
 const toolLive = (tool: ChatItem, fallback: boolean) => tool.toolStatus ? tool.toolStatus === 'streaming' || tool.toolStatus === 'running' : fallback
 const toolGroupLive = (b: { list: ChatItem[], live: boolean }) => b.list.some((tool, j) => toolLive(tool, b.live && j === b.list.length - 1))
 // Collapsed action block: its last action.
@@ -407,7 +412,7 @@ type Block =
   | { k: 'who', key: string }
   | { k: 'user', key: string, text: string, pasted?: string[], srcs: string[], files: { path: string, name: string }[], time: string | null, at: string | null, reply: ReplyTarget | null, origin: string | null }
   // `rid`: its code in the references to it (shared/reference.ts messageId).
-  | { k: 'assistant', key: string, id: string, rid: string, text: string, html: string, time: string | null, endsTurn: boolean }
+  | { k: 'assistant', key: string, id: string, rid: string, text: string, html: string, time: string | null, endsTurn: boolean, error?: boolean }
   | { k: 'thinking', key: string, id: string, text: string, html: string, ms: number | undefined }
   | { k: 'job', key: string, id: string, tool: string, out: string, ms: number | undefined, error: boolean }
   | { k: 'autopilot', key: string, text: string }
@@ -432,6 +437,9 @@ function itemImageSrcs(it: ChatItem): string[] {
   return srcs
 }
 // Image srcs of actions that only repeat an image shown higher up.
+// Dedupe keys on `hashes` — only Claude and omp transcripts carry them, so
+// Devin and OpenCode images are never deduplicated (their readers fetch
+// image bytes lazily and hash nothing).
 const dupeSrcs = computed(() => {
   const dupes = duplicateImages(items.value)
   const out = new Set<string>()
@@ -551,7 +559,7 @@ const blocks = computed<Block[]>(() => {
     } else if (it.role === 'assistant') {
       lastReply = it.text
       const time = it.ts ? fmtTime(it.ts) : null
-      lastReplyBlock = lazyHtml({ k: 'assistant' as const, key, id: replyId(it), rid: messageId(it), text: it.text, time, endsTurn: false }, () => withQuestions(md(it.text), { reply: t('Reply'), quoted: t('Quoted'), discuss: t('Discuss'), yes: t('Yes'), no: t('No'), okAll: t('OK to all'), decisions: t('Decisions') }))
+      lastReplyBlock = lazyHtml({ k: 'assistant' as const, key, id: replyId(it), rid: messageId(it), text: it.text, time, endsTurn: false, error: Boolean(it.error) }, () => withQuestions(md(it.text), { reply: t('Reply'), quoted: t('Quoted'), discuss: t('Discuss'), yes: t('Yes'), no: t('No'), okAll: t('OK to all'), decisions: t('Decisions') }))
       out.push(lastReplyBlock)
       replies.push({ key, time, text: it.text, rid: lastReplyBlock.rid })
     } else if (it.role === 'thinking') {
@@ -1426,7 +1434,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                   :id="b.key" role="assistant" side="left" variant="naked"
                   :data-hit-key="b.key"
                   :parts="[{ type: 'text', text: b.text }]"
-                  :ui="{ root: `msg msg-ai tw-${pane.agent || 'agent'}${canRun ? ' can-run' : ''}${pickKey === b.key ? ' q-picking' : ''}`, container: 'msg-c', content: 'md' }"
+                  :ui="{ root: `msg msg-ai tw-${pane.agent || 'agent'}${canRun ? ' can-run' : ''}${pickKey === b.key ? ' q-picking' : ''}${b.error ? ' err' : ''}`, container: 'msg-c', content: 'md' }"
                 >
                   <template #content>
                     <ChatMarkdown :html="b.html" :typing="typingAt(b.id)" @done="typingDone(b.id)" />
@@ -1559,7 +1567,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                 <template v-if="b.list.length <= 3">
                   <template v-for="(tool, j) in b.list" :key="j">
                     <UChatTool
-                      :text="toolLabel(tool)" :suffix="toolText(tool)" :icon="toolIcon(tool)"
+                      :text="toolLabel(tool)" :suffix="toolSuffix(tool)" :icon="toolIcon(tool)"
                       :loading="toolLive(tool, b.live && j === b.list.length - 1)" :streaming="toolLive(tool, b.live && j === b.list.length - 1)"
                       :ui="{ root: 'tool', trigger: 'tool-trigger', label: 'tool-label', suffix: 'tool-suffix', leading: 'tool-leading' }"
                       :class="{ err: tool.error }"
@@ -1578,7 +1586,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                 >
                   <template v-for="(tool, j) in b.list" :key="j">
                     <div class="tool-row" :class="{ err: tool.error }">
-                      <UIcon :name="toolIcon(tool)" /><b>{{ toolLabel(tool) }}</b><span>{{ toolText(tool) }}</span>
+                      <UIcon :name="toolIcon(tool)" /><b>{{ toolLabel(tool) }}</b><span>{{ toolSuffix(tool) }}</span>
                     </div>
                     <pre v-if="tool.out" class="tool-result" :class="{ open: isOutOpen(b.key, j) }" role="button" tabindex="0" :aria-expanded="isOutOpen(b.key, j)" @click="toggleOut(b.key, j)" @keydown.enter.prevent="toggleOut(b.key, j)" @keydown.space.prevent="toggleOut(b.key, j)">{{ toolOutText(tool) }}</pre>
                     <MsgThumbs v-if="tool.images" class="tool-thumbs" :srcs="itemImageSrcs(tool)" :max="TOOL_THUMB_MAX" :offline="readOnly" :dupes="dupeSrcs" />

@@ -856,9 +856,27 @@ const bashInput = (line: string, above: string | undefined) => /^!(\s|$)/.test(l
 // ("π > Opus > ~/demo ▶─1%────1M─"); a box's bottom is a longer rule.
 export function inputVisible(text: string | null | undefined): boolean {
   if (ompApprovalOpen(text)) return false
-  const lines = String(text || '').replace(/\s+$/, '').split('\n').slice(-12)
+  const t = String(text || '')
+  const lines = t.replace(/\s+$/, '').split('\n').slice(-12)
   return lines.some((l, i) => /^\s*›(\s|$)/.test(l)
     || (/^\s*❯(\s|$)/.test(l) && /^\s*─{3,}/.test(lines[i - 1] || ''))
     || /^╰─(\s|$)/.test(l)
     || bashInput(l, lines[i - 1]))
+    || opencodeFieldOnScreen(t)
+}
+
+// OpenCode 2.x composer: its "┃" input lines sit directly above the box's
+// "╹▀" bottom rule (the status footer follows that rule). A permission or
+// question dialog keeps that box on screen, so its markers must also be
+// absent — the same dialog rows herdr's opencode.toml detects as "blocked"
+// (the pane is an alternate-screen TUI: no scrollback replays to exclude).
+const OPENCODE_DIALOG = /△ Permission required|esc dismiss|↑↓ select|⇆ tab|enter (confirm|submit|toggle)/
+function opencodeFieldOnScreen(text: string): boolean {
+  const lines = String(text || '').split('\n')
+  const last = lines.length - 1
+  if (lines.slice(Math.max(0, last - 12)).some(l => OPENCODE_DIALOG.test(l))) return false
+  for (let i = last; i >= Math.max(1, last - 8); i--) {
+    if (/^\s*╹▀{3,}/.test(lines[i]!.replace(/\s+$/, ''))) return /^\s*┃/.test(lines[i - 1]!)
+  }
+  return false
 }
