@@ -68,6 +68,8 @@ export const transcripts = {
   pendingAsk: (p: TranscriptPane) => trFor(p).pendingAsk(p),
   pendingClaudeQuestions: (p: TranscriptPane) => trFor(p).pendingClaudeQuestions(p),
   forget: (id: string) => machineOfPane(id)?.transcripts.forget(id),
+  opencodeModels: (p: TranscriptPane) => trFor(p).opencodeModels(p),
+  opencodePatchModel: (p: TranscriptPane, m: { id: string, providerID: string, variant?: string }) => trFor(p).opencodePatchModel(p, m),
 }
 
 export { isUploadLine }

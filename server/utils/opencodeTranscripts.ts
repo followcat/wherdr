@@ -259,8 +259,26 @@ export function createOpenCodeTranscripts({ home, exec, stream }: { home: string
     }
     return { hits, limited: Boolean(native), kind: 'opencode' }
   }
+  // The model catalog (/api/model) — display names, ids, providers, variants.
+  async function models(pane: TranscriptPane): Promise<Json[]> {
+    const s = pane.agentSession ? await snapshot(pane.agentSession) : null
+    const r = await query(pane.agentSession || 'x', 'models')
+    if (s && r.server !== s.server) return []
+    if (r.status !== 200 || !Array.isArray(r.data?.data)) return []
+    return r.data.data
+  }
+  // The one whitelisted write: PATCH /api/session/<id> {model} — verified by
+  // the transport's re-GET, which is the data returned here.
+  async function patchModel(pane: TranscriptPane, model: { id: string, providerID: string, variant?: string }): Promise<Json | null> {
+    if (!pane.agentSession) return null
+    const s = await snapshot(pane.agentSession)
+    if (!s) return null
+    const r = await query(pane.agentSession, 'model', { model })
+    if (r.server !== s.server || r.status !== 200) return null
+    return r.data?.data ?? null
+  }
   function observe(panes: TranscriptPane[]) {
     if (!panes.some(p => p.agent === 'opencode' && p.agentSession)) { child?.kill(); child = null; cache.clear(); pageBytes = 0 }
   }
-  return { chat, model, image, search, dispose, observe }
+  return { chat, model, image, search, models, patchModel, dispose, observe }
 }

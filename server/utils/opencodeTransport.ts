@@ -84,7 +84,7 @@ try:
                     except (ValueError, TypeError):
                         emit({'changed': True})
     else:
-        session = urllib.parse.quote(request['session'], safe='')
+        session = urllib.parse.quote(str(request.get('session', '')), safe='')
         root = '/api/session/' + session
         path = root
         op = request.get('op')
@@ -95,6 +95,30 @@ try:
             path += '/message?' + urllib.parse.urlencode(query)
         elif op in ['message', 'image']:
             path += '/message/' + urllib.parse.quote(request['message'], safe='')
+        elif op == 'models':
+            path = '/api/model'
+        elif op == 'model':
+            # The only write this helper may do: PATCH the session's model
+            # with an id/providerID/variant body, then re-GET the session so
+            # the caller verifies the result. Any other field is refused.
+            model = request.get('model')
+            keys = set(model) if isinstance(model, dict) else None
+            valid = keys is not None and keys <= {'id', 'providerID', 'variant'} \
+                and all(isinstance(v, str) for v in model.values()) \
+                and bool(model.get('id')) and bool(model.get('providerID'))
+            if not valid:
+                raise ValueError('Invalid OpenCode model')
+            body = json.dumps({'model': model}, ensure_ascii=True).encode()
+            try:
+                req = urllib.request.Request(base + path, data=body, method='PATCH', headers={'Authorization': auth, 'Accept': 'application/json', 'Content-Type': 'application/json'})
+                with opener.open(req, timeout=timeout) as response:
+                    response.read(limit)
+                with get(path) as response:
+                    data = json.loads(response.read(limit + 1))
+                emit({'server': server, 'status': 200, 'data': data})
+            except urllib.error.HTTPError as e:
+                emit({'server': server, 'status': e.code})
+            sys.exit(0)
         elif op != 'session':
             raise ValueError('Invalid OpenCode read operation')
         try:
@@ -134,7 +158,7 @@ try:
             emit({'server': server, 'status': e.code})
 except ValueError as e:
     # Only our fixed messages may leave this helper; JSON/URL errors may contain secrets.
-    allowed = ['OpenCode 2.x background service is not running', 'Invalid OpenCode service state', 'OpenCode service must use a loopback address', 'OpenCode 2.x is required for conversation reading', 'OpenCode service credentials are unavailable', 'OpenCode conversation exceeded its read limit', 'Invalid OpenCode read operation']
+    allowed = ['OpenCode 2.x background service is not running', 'Invalid OpenCode service state', 'OpenCode service must use a loopback address', 'OpenCode 2.x is required for conversation reading', 'OpenCode service credentials are unavailable', 'OpenCode conversation exceeded its read limit', 'Invalid OpenCode read operation', 'Invalid OpenCode model']
     emit({'error': str(e) if str(e) in allowed else 'Unable to read OpenCode conversation'})
     sys.exit(1)
 except Exception:
