@@ -11,13 +11,15 @@ import { cleanModelName } from './models'
 type Json = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
 type Stream = (script: string, args: string[]) => ChildProcessWithoutNullStreams | null
 interface Cursor { file: string, kind: 'tail' | 'page', value: string }
-interface Snapshot { file: string, server: string, info: Json, pages: Map<string, Json>, bytes: number, at: number, epoch: number }
+interface Snapshot { file: string, server: string, info: Json, inbox?: Json[], pages: Map<string, { data: Json, at: number, bytes: number }>, bytes: number, at: number, epoch: number }
 export interface OpenCodeOptions { since?: string, from?: ChatCursor | null, before?: ChatCursor | null, anchor?: string }
 const hash = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 24)
 const clip = (s: unknown) => typeof s === 'string' ? s.slice(0, 20000) : ''
 const ascii = (value: unknown) => JSON.stringify(value).replace(/[\u007f-\uffff]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
 const tsOf = (m: Json) => Number.isFinite(m.time?.created) && Math.abs(m.time.created) <= 8.64e15 ? new Date(m.time.created).toISOString() : null
-const imageFiles = (files: unknown): Json[] => Array.isArray(files) ? files.filter(f => /^image\/(png|jpeg|gif|webp|avif)$/.test(f?.mime) && typeof f.data === 'string') : []
+// User attachments count as images when they carry inline data or a local
+// file:/data: URI — the transport resolves session-referenced URIs only.
+const imageFiles = (files: unknown): Json[] => Array.isArray(files) ? files.filter(f => /^image\/(png|jpeg|gif|webp|avif)$/.test(f?.mime) && (typeof f.data === 'string' || typeof f.uri === 'string')) : []
 const toolImages = (content: unknown): Json[] => Array.isArray(content) ? content.filter(f => f?.type === 'file' && /^image\/(png|jpeg|gif|webp|avif)$/.test(f.mime) && /^(?:file:|data:image\/)/.test(f.uri)) : []
 const toolText = (content: unknown) => typeof content === 'string' ? clip(content) : Array.isArray(content)
   ? content.filter(p => p?.type === 'text').map(p => clip(p.text)).join('\n').slice(0, 20000) : ''
@@ -31,7 +33,9 @@ export function parseOpenCode(messages: Json[]): ChatItem[] {
       const images = imageFiles(m.files).length
       return m.text || images ? [{ role: 'user', text: clip(m.text), ts, ref: ref('u'), ...(images ? { images } : {}) } as ChatItem] : []
     }
-    if (m.type === 'shell') return [{ role: 'tool', name: 'shell', text: clip(m.command), out: clip(m.output?.output), ts, ref: ref('s'), toolStatus: m.status === 'running' ? 'running' : 'completed', ...(m.exit || m.status === 'timeout' ? { error: true } : {}) } as ChatItem]
+    // A shell message is the same "!" run Claude renders as a bash card —
+    // the role also lets a sent "! cmd" land on it (see queued.ts landed).
+    if (m.type === 'shell') return [{ role: 'bash', text: clip(m.command), out: clip(m.output?.output), ts, ref: ref('s'), ...(m.exit || m.status === 'timeout' ? { error: true } : {}) } as ChatItem]
     if (m.type !== 'assistant') return []
     const items: ChatItem[] = []
     for (const [index, part] of (Array.isArray(m.content) ? m.content : []).entries()) {
@@ -65,7 +69,12 @@ export function createOpenCodeTranscripts({ home, exec, stream }: { home: string
   let failures = 0
   let disposed = false
   let streamBuffer = ''
-  const invalidate = (reset = false) => { for (const s of cache.values()) s.at = 0; if (reset) epoch++ }
+  // Invalidation must reach the carried pages too, or an SSE event would be
+  // masked by a page still inside its own freshness window.
+  const invalidate = (reset = false) => {
+    for (const s of cache.values()) { s.at = 0; for (const p of s.pages.values()) p.at = 0 }
+    if (reset) epoch++
+  }
   function dispose() { disposed = true; child?.kill(); child = null; cache.clear(); pageBytes = 0; cursors.clear() }
   function cursor(file: string, kind: Cursor['kind'], value: string): string {
     const key = 'oc_' + createHmac('sha256', secret).update(JSON.stringify([file, kind, value])).digest('base64url').slice(0, 32)
@@ -114,7 +123,7 @@ export function createOpenCodeTranscripts({ home, exec, stream }: { home: string
     const work = (async () => {
       let body: Buffer
       if (exec) {
-        const r = await exec('python3 -X utf8 -c "$1" "$2" "$3"', [OPENCODE_READ, home, ascii(request)], { timeoutMs: Math.min(15000, (options.seconds || 10) * 1000 + 1000), maxBytes: 25 * 1024 * 1024 })
+        const r = await exec('python3 -X utf8 -c "$1" "$2" "$3"', [OPENCODE_READ, home, ascii(request)], { timeoutMs: Math.min(300000, (options.seconds || 10) * 1000 + 1000), maxBytes: 25 * 1024 * 1024 })
         body = r.stdout
         if (r.code !== 0 && !body.length) throw new Error('Unable to read OpenCode conversation on the remote machine')
       } else body = await new Promise<Buffer>((resolve, reject) => {
@@ -144,21 +153,35 @@ export function createOpenCodeTranscripts({ home, exec, stream }: { home: string
     if (r.status !== 200 || r.data?.data?.id !== session) throw new Error('Unable to read OpenCode session')
     const info = r.data.data
     const file = 'opencode-' + hash(JSON.stringify([r.server, session, info.revert || null, epoch]))
-    const s: Snapshot = { file, info, server: r.server, pages: new Map(), bytes: 0, at: Date.now(), epoch }
-    pageBytes -= cache.get(session)?.bytes || 0
+    // An unchanged file identity means the pages fetched under it are still
+    // the same address space: carry them over (each keeps its own freshness
+    // window in page()) instead of dropping the whole map every 800 ms —
+    // over SSH every refetch is another shim process.
+    const prev = cache.get(session)
+    const carried = prev && prev.file === file && prev.epoch === epoch
+    const s: Snapshot = { file, info, server: r.server,
+      // null/absent means the inbox read itself failed — never carried from a
+      // previous snapshot: "unknown" is honest, a stale list is not.
+      inbox: Array.isArray(r.data?.inbox) ? r.data.inbox : undefined,
+      pages: carried ? prev!.pages : new Map(), bytes: carried ? prev!.bytes : 0, at: Date.now(), epoch }
+    if (!carried) pageBytes -= prev?.bytes || 0
     cache.set(session, s)
     if (cache.size > 32) { const id = cache.keys().next().value!; pageBytes -= cache.get(id)!.bytes; cache.delete(id) }
     return s
   }
   async function page(session: string, s: Snapshot, native = '', seconds?: number): Promise<Json> {
+    // A cached page is good for the same window the snapshot revalidation
+    // uses — identical staleness bound to the old drop-and-refetch, minus
+    // the refetch.
     const known = s.pages.get(native)
-    if (known) return known
+    if (known && Date.now() - known.at < 800) return known.data
+    if (known) { s.pages.delete(native); s.bytes -= known.bytes; pageBytes -= known.bytes }
     const r = await query(session, 'page', { cursor: native, seconds })
     if (r.server !== s.server || r.status === 400 || r.status === 404) return { invalid: true }
     if (r.status !== 200 || !Array.isArray(r.data?.data) || !r.data?.cursor) throw new Error('Unable to read OpenCode messages')
     const bytes = Buffer.byteLength(JSON.stringify(r.data))
     if (cache.get(session) === s && !s.pages.has(native) && pageBytes + bytes <= 16 * 1024 * 1024) {
-      s.pages.set(native, r.data); s.bytes += bytes; pageBytes += bytes
+      s.pages.set(native, { data: r.data, at: Date.now(), bytes }); s.bytes += bytes; pageBytes += bytes
     }
     return r.data
   }
@@ -197,10 +220,15 @@ export function createOpenCodeTranscripts({ home, exec, stream }: { home: string
     messages.reverse()
     const start = valid && at >= 0 ? opts.from! : cursor(s.file, 'tail', messages[0]?.id || '')
     const items = parseOpenCode(messages)
-    const token = `opencode:${s.file}:${hash(JSON.stringify([start, items, s.info.model]))}`
+    // The session inbox is the real queue: user entries still waiting to be
+    // delivered (typed on the computer, or sent while it works). A failed
+    // inbox read omits the queue key entirely — unknown, not "no queue".
+    const inbox = Array.isArray(s.inbox) ? s.inbox.filter(i => i?.type === 'user' && typeof i?.payload?.text === 'string') : null
+    const queue = inbox?.map(i => ({ text: clip(i.payload.text), ts: tsOf(i), ...(imageFiles(i.payload?.files).length ? { images: imageFiles(i.payload.files).length } : {}) }))
+    const token = `opencode:${s.file}:${hash(JSON.stringify([start, items, s.info.model, inbox?.map(i => i.id) ?? null]))}`
     const olderCursor = initial.cursor.next ? cursor(s.file, 'page', initial.cursor.next) : null
     if (!rewritten && token === opts.since) return { ...base, token, unchanged: true }
-    return { ...base, token, start, olderCursor, items, queue: [], ...(rewritten ? { rewritten: true } : {}) }
+    return { ...base, token, start, olderCursor, items, ...(queue ? { queue } : {}), ...(rewritten ? { rewritten: true } : {}) }
   }
   async function model(pane: TranscriptPane): Promise<ModelInfo | null> {
     if (!pane.agentSession) return null
@@ -242,8 +270,135 @@ export function createOpenCodeTranscripts({ home, exec, stream }: { home: string
     }
     return { hits, limited: Boolean(native), kind: 'opencode' }
   }
+  // The model catalog (/api/model) — display names, ids, providers, variants.
+  async function models(pane: TranscriptPane): Promise<Json[]> {
+    const s = pane.agentSession ? await snapshot(pane.agentSession) : null
+    const r = await query(pane.agentSession || 'x', 'models')
+    if (s && r.server !== s.server) return []
+    if (r.status !== 200 || !Array.isArray(r.data?.data)) return []
+    return r.data.data
+  }
+  // Whitelisted write: PATCH /api/session/<id> {model} — verified by
+  // the transport's re-GET, which is the data returned here.
+  async function patchModel(pane: TranscriptPane, model: { id: string, providerID: string, variant?: string }): Promise<Json | null> {
+    if (!pane.agentSession) return null
+    const s = await snapshot(pane.agentSession)
+    if (!s) return null
+    const r = await query(pane.agentSession, 'model', { model })
+    if (r.server !== s.server || r.status !== 200) return null
+    return r.data?.data ?? null
+  }
+  // Pending permission requests and unanswered forms (the native API owns
+  // the same dialogs the TUI draws — answering here resolves both).
+  async function pendingRequests(pane: TranscriptPane): Promise<{ permissions: Json[], forms: Json[] }> {
+    const empty = { permissions: [] as Json[], forms: [] as Json[] }
+    if (!pane.agentSession) return empty
+    const s = await snapshot(pane.agentSession)
+    if (!s) return empty
+    const r = await query(pane.agentSession, 'pending')
+    if (r.server !== s.server || r.status !== 200) return empty
+    return {
+      permissions: Array.isArray(r.data?.permissions) ? r.data.permissions : [],
+      forms: Array.isArray(r.data?.forms) ? r.data.forms : [],
+    }
+  }
+  // A reply is only confirmed by the request leaving the pending list.
+  async function replyPermission(pane: TranscriptPane, requestID: string, decision: string, message?: string): Promise<boolean> {
+    if (!pane.agentSession) return false
+    const s = await snapshot(pane.agentSession)
+    if (!s) return false
+    const r = await query(pane.agentSession, 'reply', { request: requestID, decision, ...(message ? { message } : {}) })
+    if (r.server !== s.server || r.status !== 200) return false
+    return !Array.isArray(r.data?.pending) || !r.data.pending.some((x: Json) => x?.id === requestID)
+  }
+  async function replyForm(pane: TranscriptPane, formID: string, key: string, value: unknown): Promise<boolean> {
+    if (!pane.agentSession) return false
+    const s = await snapshot(pane.agentSession)
+    if (!s) return false
+    const r = await query(pane.agentSession, 'form_reply', { form: formID, key, value })
+    if (r.server !== s.server || r.status !== 200) return false
+    return !Array.isArray(r.data?.pending) || !r.data.pending.some((x: Json) => x?.id === formID)
+  }
+  // Screen-parsed permission cards have no request id: the pending list
+  // resolves one by its displayed action/resources. An ambiguous or missing
+  // match is refused, never guessed — the reply still goes out by id.
+  async function permissionMatch(pane: TranscriptPane, target: { action: string, resources: string[], decision: 'once' | 'always' | 'reject' }): Promise<boolean> {
+    if (!pane.agentSession) return false
+    const s = await snapshot(pane.agentSession)
+    if (!s) return false
+    const r = await query(pane.agentSession, 'pending')
+    if (r.server !== s.server || r.status !== 200 || !Array.isArray(r.data?.permissions)) return false
+    const norm = (v: unknown) => String(v || '').trim()
+    const wanted = target.resources.map(norm).filter(Boolean)
+    const matches = r.data.permissions.filter((p: Json) => {
+      if (norm(p.action) !== norm(target.action)) return false
+      if (!wanted.length) return true
+      const have = (Array.isArray(p.resources) ? p.resources : []).map(norm)
+      return wanted.some(w => have.some(h => h === w || h.endsWith('/' + w) || w.endsWith('/' + h)))
+    })
+    if (matches.length !== 1 || typeof matches[0].id !== 'string') return false
+    const id = matches[0].id
+    const reply = await query(pane.agentSession, 'reply', { request: id, decision: target.decision })
+    if (reply.server !== s.server || reply.status !== 200) return false
+    return !Array.isArray(reply.data?.pending) || !reply.data.pending.some((x: Json) => x?.id === id)
+  }
+  // The queued-message inbox (its own GET, for the cancel path — chat's copy
+  // arrives on the session snapshot instead).
+  async function inbox(pane: TranscriptPane): Promise<Json[]> {
+    if (!pane.agentSession) return []
+    const s = await snapshot(pane.agentSession)
+    if (!s) return []
+    const r = await query(pane.agentSession, 'inbox')
+    if (r.server !== s.server || r.status !== 200) return []
+    return Array.isArray(r.data?.data) ? r.data.data : []
+  }
+  async function inboxDelete(pane: TranscriptPane, itemID: string): Promise<boolean | null> {
+    if (!pane.agentSession) return false
+    const s = await snapshot(pane.agentSession)
+    if (!s) return false
+    const r = await query(pane.agentSession, 'inbox_delete', { item: itemID })
+    if (r.server !== s.server) return false
+    if (r.status === 404) return null
+    if (r.status !== 200) return false
+    return !Array.isArray(r.data?.items) || !r.data.items.some((x: Json) => x?.id === itemID)
+  }
+  async function shell(pane: TranscriptPane, command: string): Promise<boolean> {
+    if (!pane.agentSession) return false
+    const s = await snapshot(pane.agentSession)
+    if (!s) return false
+    // The reply arrives when the command ends: allow the full shim budget.
+    const r = await query(pane.agentSession, 'shell', { command, seconds: 290 })
+    return r.server === s.server && r.status === 200
+  }
+  // Composer status from the session record itself: the agent and model on
+  // the line, per-direction token counts and cost as meters. The context
+  // window is not published, so it is not guessed.
+  async function status(pane: TranscriptPane): Promise<{ line: string, meters: string | null } | null> {
+    if (!pane.agentSession) return null
+    const s = await snapshot(pane.agentSession)
+    if (!s) return null
+    const n = (v: unknown) => Number.isFinite(Number(v)) ? Number(v) : 0
+    const t = s.info.tokens && typeof s.info.tokens === 'object' ? s.info.tokens : {}
+    const input = n(t.input)
+    const output = n(t.output)
+    const reasoning = n(t.reasoning)
+    const cost = n(s.info.cost)
+    if (!input && !output && !reasoning && !cost) return null
+    const k = (v: number) => v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${(v / 1e3).toFixed(v >= 1e4 ? 0 : 1)}k` : String(v)
+    const meters = [
+      input ? `${k(input)} in` : '',
+      output ? `${k(output)} out` : '',
+      reasoning ? `${k(reasoning)} reason` : '',
+      cost > 0 ? `$${cost < 1 ? cost.toFixed(4) : cost.toFixed(2)}` : '',
+    ].filter(Boolean).join(' · ').slice(0, 200) || null
+    const model = typeof s.info.model?.id === 'string' ? cleanModelName(s.info.model.id) : null
+    const variant = typeof s.info.model?.variant === 'string' ? s.info.model.variant : null
+    const agent = typeof s.info.agent === 'string' && s.info.agent ? s.info.agent[0]!.toUpperCase() + s.info.agent.slice(1) : 'OpenCode'
+    const line = [agent, model, variant].filter(Boolean).join(' · ').slice(0, 300)
+    return { line, meters }
+  }
   function observe(panes: TranscriptPane[]) {
     if (!panes.some(p => p.agent === 'opencode' && p.agentSession)) { child?.kill(); child = null; cache.clear(); pageBytes = 0 }
   }
-  return { chat, model, image, search, dispose, observe }
+  return { chat, model, image, search, models, patchModel, pending: pendingRequests, replyPermission, replyForm, permissionMatch, inbox, inboxDelete, shell, status, dispose, observe }
 }

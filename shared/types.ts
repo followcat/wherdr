@@ -29,7 +29,7 @@ export interface PromptDetail {
 // `typing`: omp's free-text answer field is open (single option: `free`).
 // `tabs`: tabs of omp's multi-question "Ask" box (the last one is Submit),
 // `tab` the one shown; ←/→ move between them.
-export interface Choices { identity?: string, unavailable?: boolean, question: string | null, cursor: number, options: ChoiceOption[], kind?: 'self-update', detail?: PromptDetail, multi?: boolean, typing?: boolean, tabs?: string[], tab?: number }
+export interface Choices { identity?: string, unavailable?: boolean, question: string | null, cursor: number, options: ChoiceOption[], kind?: 'self-update', detail?: PromptDetail, multi?: boolean, typing?: boolean, tabs?: string[], tab?: number, horizontal?: boolean }
 
 // Waiting screen of an agent (Codex at startup: hooks, folder trust,
 // login…), see server/utils/waitScreen.ts. `other`: unrecognized screen,
@@ -151,6 +151,9 @@ export interface Pane {
   activity?: string
   // Claude working, conversation shown: what its screen shows.
   claudeScreen?: ClaudeScreen
+  // OpenCode's session record read through its service: model, per-direction
+  // token counts and cost — Composer shows it like omp's status line.
+  opencodeStatus?: OmpStatus
   // Claude Code status near the input field ("✔ Update installed · Restart to update").
   claudeNotice?: string
   // Restart requested from wherdr (see server/utils/restart.ts): the agent
