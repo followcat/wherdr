@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { imageTagCount } from '../../shared/queuedMatch'
-import type { ChatItem, ChatResponse, ClaudeQueueEntry, CommandCodeStatus, ModelInfo, PromptDetail } from '../../shared/types'
+import type { ChatItem, ChatResponse, ClaudeQueueEntry, CommandCodeStatus, CommandCodeToolUpdate, ModelInfo, PromptDetail } from '../../shared/types'
 import { ompToolCall, ompToolResult, ompUserRun } from './ompTools'
 import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDetail'
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
 import { cleanModelName, lastModel, mergeOmpModel, ompLastModel, ompModelComplete, ompModelLabel, ompModelResult } from './models'
-import { type MachineFs, chunksByBytes, localFs } from './fsx'
+import { type MachineFs, type ShellExec, chunksByBytes, localFs } from './fsx'
 import { searchFile } from './conversationSearch'
 import { hasTranscript, transcriptKind } from '../../shared/agentKind'
 import { type CommandTemplate, ompCommandTemplates } from './slash'
@@ -37,9 +37,9 @@ interface CodexRollout { file: string, id: string, ts: number, mtimeMs: number }
 const CODEX_BIRTH_BEFORE = 5000
 const CODEX_BIRTH_AFTER = 120000
 type Lines = string[] & { refs?: string[], raw?: string[] }
-type Parsed = ChatItem[] & { queue?: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[] }
+type Parsed = ChatItem[] & { queue?: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], updates?: CommandCodeToolUpdate[] }
 // `anchor`: fingerprint of the bytes just above `start` (see anchorAt).
-interface TailResult { start: number, items: ChatItem[], queue: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], anchor?: string }
+interface TailResult { start: number, items: ChatItem[], queue: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], anchor?: string, updates?: CommandCodeToolUpdate[] }
 
 // Join check of a re-read from a cursor: the bytes just above it, hashed. A
 // transcript rewritten at the same size, or shortened but still longer than
@@ -906,7 +906,7 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
           items.push(lastText)
         } else if (part.type === 'tool_use' && typeof part.id === 'string') {
           const name = typeof part.name === 'string' ? part.name : 'Tool'
-          const t: ChatItem = { role: 'tool', name, text: clip(commandCodeTool(name, part.input), 300), ts }
+          const t: ChatItem = { role: 'tool', name, toolId: part.id, text: clip(commandCodeTool(name, part.input), 300), ts }
           // Its result may have been parsed in a newer page (a page boundary
           // between the call and the result): apply the remembered outcome.
           const saved = results?.get(part.id)
@@ -1002,6 +1002,14 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
           if (rec.out || rec.error || rec.images) {
             results.set(part.tool_use_id, rec)
             if (results.size > 4096) results.delete(results.keys().next().value!)
+            // The call may already be shown in an older page the client
+            // loaded: send the outcome so it updates without a reopen.
+            updates?.push({
+              id: part.tool_use_id,
+              ...(rec.out !== undefined ? { out: rec.out } : {}),
+              ...(rec.error ? { error: true } : {}),
+              ...(rec.images ? { images: rec.images, ref: rec.ref, imageAt: rec.imageAt } : {}),
+            })
           }
         }
         // lineImages() counts this result's images even when its call is
@@ -1134,7 +1142,7 @@ export const CMD_HEADERS_SCRIPT = `for f in "$@"; do
   fi
 done`
 
-export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number }) {
+export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, exec }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number, exec?: ShellExec }) {
   // Command Code discovery/status caches: project headers change rarely, and
   // an unchanged session must not be re-read on every 5 s status refresh.
   const cmdHeaders = new Map<string, { size: number, mtimeMs: number, cwd: string | null, id: string | null }>()
@@ -1649,6 +1657,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     let items: ChatItem[] = []
     let queue: ClaudeQueueEntry[] | null = null
     let popped: ClaudeQueueEntry[] | null = null
+    let updates: CommandCodeToolUpdate[] = []
     // Command Code's result may sit in the newer window while its call is in
     // the older one: the per-file results map bridges the windows. Other
     // agents never allocate these caches.
@@ -1670,11 +1679,12 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
       const parsed = parseLines(r.text, kind, r.start, home, ompTemplates.list, cwd, results, kind === 'cmd' ? cmdWatchesFor(file) : undefined)
       if (!queue) queue = parsed.queue || [] // the queue lives in the most recent window
       if (!popped) popped = parsed.popped || []
+      if (parsed.updates?.length) updates = parsed.updates.concat(updates)
       items = parsed.concat(items)
       start = r.start
       if (items.length >= PAGE_ITEMS) break
     }
-    return { start, items, queue: queue || [], popped: popped || [] }
+    return { start, items, queue: queue || [], popped: popped || [], ...(updates.length ? { updates } : {}) }
   }
 
   // Bottom of the conversation: from `from` (already shown on the phone) or,
@@ -1699,7 +1709,11 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
       const items = parseLines(buf.subarray(off).toString('utf8'), kind, s0 + off, home, ompTemplates.list, kind === 'omp' ? await ompCwd(file) : '', kind === 'cmd' ? cmdResultsFor(file) : undefined, kind === 'cmd' ? cmdWatchesFor(file) : undefined)
       // Start kept even when it moved to the next line: the client then sees a
       // stale anchor (or another start) and reloads from the bottom.
-      r = { start: from, items, queue: items.queue || [], popped: items.popped || [], anchor: off === from - s0 ? anchorHash(above) : '' }
+      r = {
+        start: from, items, queue: items.queue || [], popped: items.popped || [],
+        ...(items.updates?.length ? { updates: items.updates } : {}),
+        anchor: off === from - s0 ? anchorHash(above) : '',
+      }
     } else {
       r = await readBackwards(file, size, kind)
       r.anchor = await anchorAt(file, r.start)
@@ -1777,7 +1791,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     if (kind === 'omp') await refreshOmpTemplates()
     if (opts.before !== null && opts.before !== undefined) {
       const r = await readBackwards(loc.file, Math.min(opts.before, st.size), kind)
-      return { ...base, older: true, items: r.items, start: r.start }
+      return { ...base, older: true, items: r.items, start: r.start, ...(r.updates?.length ? { toolUpdates: r.updates } : {}) }
     }
     const from = opts.from === undefined ? null : opts.from
     const gen = genOf(st)
@@ -1821,8 +1835,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
       if (kind === 'cmd' && fileRewritten) forgetCmdFile(loc.file)
       r = await tail(loc.file, kind, st.size, gen, null, settled)
     }
-    const mark = `${head}${settled ? '' : '!'}`
-    const token = r.anchor ? `${mark}/${r.start}.${r.anchor}` : mark
+    const token = r.anchor ? `${head}/${r.start}.${r.anchor}` : head
     return {
       ...base, token, items: r.items, start: r.start, queue: r.queue || [],
       ...(r.popped?.length ? { popped: r.popped } : {}),
@@ -1883,8 +1896,6 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   const MODEL_MAX_BYTES = 16 * 1024 * 1024
   const modelCache = new Map<string, { file: string, size: number, raw: ModelInfo | null, info: ModelInfo | null }>()
   async function model(pane: TranscriptPane): Promise<ModelInfo | null> {
-    if (pane.agent === 'devin') return devin.model(pane)
-    if (pane.agent === 'opencode') return opencode.model(pane)
     if (!pane.agent || !['claude', 'codex', 'omp', 'cmd'].includes(pane.agent)) return null
     const loc = await locate(pane)
     if (!loc) return null
@@ -2057,7 +2068,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     cmdStatsCache.delete(paneId)
   }
 
-  return { chat, preview, latestReply, image, forget, locate, model, commandCodeStats, observe, dispose: opencode.dispose, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions }
+  return { chat, preview, latestReply, image, forget, locate, model, commandCodeStats, observe, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions }
 }
 
 export type Transcripts = ReturnType<typeof createTranscripts>

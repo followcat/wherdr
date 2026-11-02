@@ -180,6 +180,15 @@ export interface Pane {
 }
 export interface OmpStatus { line: string, meters: string | null }
 export interface CommandCodeStatus { contextTokens: number | null, costUsd: number | null }
+// Outcome appended to a Command Code tool call (see ChatResponse.toolUpdates).
+export interface CommandCodeToolUpdate {
+  id: string
+  out?: string
+  error?: boolean
+  images?: number
+  ref?: string
+  imageAt?: number
+}
 export interface OmpActivity { step: string | null, since: number | null }
 
 export interface ChangeLine { kind: 'add' | 'del' | 'context' | 'hunk' | 'meta', text: string }
@@ -263,6 +272,9 @@ export interface ChatItem {
   text: string
   ts: string | null
   name?: string
+  // Command Code tool call id: lets a result appended after the page was
+  // loaded update the item already shown (see toolUpdates).
+  toolId?: string
   // Output of a 'bash' or 'cmd' command (stdout / stderr).
   out?: string
   err?: string
@@ -279,6 +291,7 @@ export interface ChatItem {
   // already shown higher up (see shared/imageDupes.ts).
   hashes?: string[]
   error?: boolean
+  toolStatus?: 'streaming' | 'running' | 'completed' | 'error'
   // omp reasoning and completed background jobs, read from its transcript.
   ms?: number
   job?: { id: string, tool: string, out: string }
@@ -310,6 +323,10 @@ export interface OmpToolView {
 // the entry is one of wherdr's messages with photos (see server/utils/sentHistory.ts).
 export interface ClaudeQueueEntry { text: string, ts: string | null, images?: number, sent?: string }
 
+// Pagination cursor: a JSONL byte offset, an opaque API cursor, or a page
+// token. Numeric zero means the beginning; opaque cursors compare by equality.
+export type ChatCursor = number | string
+
 export interface ChatResponse {
   available: boolean
   // 'no_integration': not found, and Herdr's integration of this agent is
@@ -330,6 +347,12 @@ export interface ChatResponse {
   // whole bottom of the conversation.
   keep?: number
   start?: number
+  // Command Code: results appended after a tool page was loaded, matched by
+  // `toolId`, so the client can update items already on screen.
+  toolUpdates?: CommandCodeToolUpdate[]
+  // Native API pagination is independent of the tail anchor. null: no older
+  // page. Absent: legacy readers use their numeric start as the boundary.
+  olderCursor?: ChatCursor | null
   // The transcript was rewritten above the client's cursor (same size or
   // shorter): the reply is a fresh bottom, the client starts again from it.
   rewritten?: boolean
