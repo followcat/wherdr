@@ -1,93 +1,46 @@
-import { beforeAll, describe, expect, it, vi } from 'vitest'
+// The former expandable rows are now the ordered 2.5 strip. Its full key
+// matrix is covered by PhoneKeybar.test.ts and KeybarKeyboard.test.ts.
+import { afterEach, expect, it, vi } from 'vitest'
 import { mountSuspended } from '@nuxt/test-utils/runtime'
 import { ref } from 'vue'
 import Keybar from '~/components/Keybar.vue'
+import { PHONE_KEY_IDS } from '~/utils/keybarOrder'
+import { phoneKeyOrder } from '~/composables/useHerdr'
+import type { TerminalCtl } from '~/composables/useTerminal'
 import type { VirtualModifier } from '~/utils/virtualKeys'
 
-beforeAll(async () => {
-  const app = await mountSuspended({ template: '<div />' })
-  app.unmount()
-}, 60_000)
-
-function makeCtl() {
-  let focused = false
+const previous = phoneKeyOrder.value.slice()
+afterEach(() => { phoneKeyOrder.value = previous.slice() })
+function ctl() {
   return {
-    virtualModifiers: ref<VirtualModifier[]>([]),
-    lastVirtualChord: ref(''),
-    toggleVirtualModifier: vi.fn((m: VirtualModifier) => {}),
-    sendVirtualKey: vi.fn(async (_key: string) => {}),
-    kbdOn: ref(false),
-    hasFocus: () => focused,
-    focus: vi.fn(() => { focused = true }),
-    blur: vi.fn(() => { focused = false }),
-  }
+    virtualModifiers: ref<VirtualModifier[]>([]), lastVirtualChord: ref(''), kbdOn: ref(false),
+    sendVirtualKey: vi.fn(), toggleModifier: vi.fn(), toggleVirtualModifier: vi.fn(),
+    focus: vi.fn(), blur: vi.fn(), hasFocus: () => false,
+  } as unknown as TerminalCtl
 }
-const stripLabels = (w: Awaited<ReturnType<typeof mountSuspended>>) =>
-  w.findAll('.vk-strip button').map(b => b.attributes('aria-label'))
 
-describe('Keybar', () => {
-  it('sends named keys from the always-visible strip', async () => {
-    const ctl = makeCtl()
-    const w = await mountSuspended(Keybar, { props: { ctl: ctl as never, compact: true } })
-    expect(stripLabels(w)).toEqual(['Esc', 'Shift', 'Tab', '←', '↑', '↓', '→', 'Enter', 'Show or hide function keys'])
-    await w.findAll('.vk-strip button')[2]!.trigger('click')
-    expect(ctl.sendVirtualKey).toHaveBeenCalledWith('tab')
-    await w.findAll('.vk-strip button')[0]!.trigger('click')
-    expect(ctl.sendVirtualKey).toHaveBeenCalledWith('esc')
-    w.unmount()
-  })
+it('forwards the saved key order and the conversation keyboard request', async () => {
+  phoneKeyOrder.value = ['esc', ...PHONE_KEY_IDS.filter(id => id !== 'esc')]
+  const c = ctl()
+  const w = await mountSuspended(Keybar, { props: { ctl: c, compact: true, terminal: false } })
+  try {
+    expect(w.find('.vk-strip button').attributes('aria-label')).toBe('Esc')
+    await w.get('[data-key="esc"]').trigger('click')
+    expect(c.sendVirtualKey).toHaveBeenCalledWith('esc')
+    await w.get('[data-key="keyboard"]').trigger('click')
+    expect(w.emitted('keyboard')).toHaveLength(1)
+    expect(c.focus).not.toHaveBeenCalled()
+  } finally { w.unmount() }
+})
 
-  it('shows digits only when allDigits asks for them', async () => {
-    const ctl = makeCtl()
-    const plain = await mountSuspended(Keybar, { props: { ctl: ctl as never, compact: true } })
-    expect(plain.find('.vk-digits').exists()).toBe(false)
-    plain.unmount()
-
-    const w = await mountSuspended(Keybar, { props: { ctl: ctl as never, compact: true, allDigits: true } })
-    const buttons = w.findAll('.vk-digits button')
-    expect(buttons.map(b => b.text())).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'])
-    await buttons[4]!.trigger('click')
-    expect(ctl.sendVirtualKey).toHaveBeenCalledWith('5')
-    w.unmount()
-  })
-
-  it('expands to the function row without duplicating the strip Tab', async () => {
-    const ctl = makeCtl()
-    const w = await mountSuspended(Keybar, { props: { ctl: ctl as never, compact: true } })
-    expect(w.find('.vk-extra-row').exists()).toBe(false)
-    await w.get('.vk-more').trigger('click')
-    const row = w.findAll('.vk-function-scroll > button')
-    const labels = row.map(b => b.attributes('aria-label'))
-    expect(labels.slice(0, 2)).toEqual(['Ctrl', 'Alt'])
-    expect(labels.slice(2, 12)).toEqual(['Ctrl + C', '⌫', 'Y', 'N', 'PgUp', 'PgDn', 'Home', 'End', 'Del', 'INSERT'])
-    expect(labels.slice(12)).toEqual(Array.from({ length: 12 }, (_, i) => `F${i + 1}`))
-    expect(labels).not.toContain('Tab')
-    await row[2]!.trigger('click')
-    expect(ctl.sendVirtualKey).toHaveBeenCalledWith('ctrl+c')
-    await row[3]!.trigger('click')
-    expect(ctl.sendVirtualKey).toHaveBeenCalledWith('backspace')
-    w.unmount()
-  })
-
-  it('arms modifiers and announces the pending chord', async () => {
-    const ctl = makeCtl()
-    const w = await mountSuspended(Keybar, { props: { ctl: ctl as never, compact: true } })
-    await w.get('.vk-more').trigger('click')
-    const mods = w.findAll('.vk-extra-row .vk-mod')
-    await mods[0]!.trigger('click')
-    expect(ctl.toggleVirtualModifier).toHaveBeenCalledWith('ctrl')
-    ctl.virtualModifiers.value = ['ctrl']
-    await w.vm.$nextTick()
-    expect(w.get('.vk-announcement').text()).toBe('Ctrl + …')
-    w.unmount()
-  })
-
-  it('toggles the phone keyboard from the extra row', async () => {
-    const ctl = makeCtl()
-    const w = await mountSuspended(Keybar, { props: { ctl: ctl as never, compact: true } })
-    await w.get('.vk-more').trigger('click')
-    await w.get('.vk-system').trigger('click')
-    expect(ctl.focus).toHaveBeenCalled()
-    w.unmount()
-  })
+it.each([false, true])('marks a configured draft terminator with compact=%s', async compact => {
+  const c = ctl()
+  c.virtualModifiers.value = ['shift']
+  const w = await mountSuspended(Keybar, { props: { ctl: c, compact, sendWith: ['shift+tab'] } })
+  try {
+    const key = compact ? w.get('[data-key="tab"]') : w.findAll('button').find(b => b.text() === 'tab')!
+    expect(key.classes()).toContain('send-with')
+    await key.trigger('click')
+    expect(c.sendVirtualKey).toHaveBeenCalledWith('tab')
+  } finally { w.unmount() }
 })
