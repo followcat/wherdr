@@ -51,6 +51,9 @@ interface TailResult { start: number, items: ChatItem[], queue: ClaudeQueueEntry
 // token carries the anchor of its start (`/<start>.<hash>`) and a re-read from
 // that start checks it first.
 const ANCHOR_BYTES = 4096
+// A watched tool result is fingerprinted on this many leading bytes: enough
+// to notice a rewrite without transferring a huge output again on each poll.
+const WATCH_BYTES = 64 * 1024
 const anchorHash = (b: Uint8Array) => createHash('sha1').update(b).digest('hex').slice(0, 12)
 const ANCHOR = /\/(\d+)\.([0-9a-f]{12})(?=[~#]|$)/
 // Anchor of a token as the client sent it (other suffixes allowed after it).
@@ -846,7 +849,8 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
         let watch: CommandCodeWatch | null = null
         if (ref) {
           const [at, len] = ref.split(':')
-          watch = { at: Number(at), len: Number(len), hash: createHash('sha256').update(lines.raw?.[i] ?? lines[i]!).digest('hex').slice(0, 16) }
+          const raw = Buffer.from(lines.raw?.[i] ?? lines[i]!)
+          watch = { at: Number(at), len: Number(len), hash: createHash('sha256').update(raw.subarray(0, WATCH_BYTES)).digest('hex').slice(0, 16) }
           if (watches) {
             watches.set(part.tool_use_id, watch)
             if (watches.size > 4096) watches.delete(watches.keys().next().value!)
@@ -1006,6 +1010,19 @@ export function isMissing(e: unknown): boolean {
   return err.code === 'remote' && /no such file|not a directory|introuvable/i.test(err.message || '')
 }
 
+// One tab-separated line per file: `M` missing, `E` unreadable, `H` + first
+// line. `head` inside a pipeline hides its own failure behind the last
+// command's success: capture first, then take the line.
+export const CMD_HEADERS_SCRIPT = `for f in "$@"; do
+  if [ ! -e "$f" ]; then printf "%s\\tM\\n" "$f"
+  elif [ ! -r "$f" ]; then printf "%s\\tE\\n" "$f"
+  elif h=$(head -c 65536 "$f" 2>/dev/null) && h=$(printf "%s\\n" "$h" | head -n 1); then
+    printf "%s\\tH%s\\n" "$f" "$h"
+  else
+    printf "%s\\tE\\n" "$f"
+  fi
+done`
+
 export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, exec, stream }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number, exec?: ShellExec, stream?: (script: string, args: string[]) => ChildProcessWithoutNullStreams | null }) {
   const devin = createDevinTranscripts({ home, exec })
   const opencode = createOpenCodeTranscripts({ home, exec, stream })
@@ -1101,15 +1118,17 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
   // result record (matched or orphan) must still fingerprint the same bytes.
   // One bounded read covers the whole watch set: a per-record pipeline would
   // launch thousands of processes on a tool-heavy session.
-  async function cmdResultsValid(file: string): Promise<boolean> {
+  async function cmdResultsValid(file: string): Promise<boolean | null> {
     const watches = cmdWatches.get(file)
     if (!watches || !watches.size) return true
     const records = new Map<string, CommandCodeWatch>()
     for (const w of watches.values()) records.set(`${w.at}:${w.len}:${w.hash}`, w)
     const all = [...records.values()].sort((a, b) => a.at - b.at)
+    // Only the sampled prefix is read: a huge result never exceeds the budget.
+    const sampleLen = (w: CommandCodeWatch) => Math.min(w.len, WATCH_BYTES)
     let first = all[0]!.at
     const last = all[all.length - 1]!
-    const end = last.at + last.len
+    const end = last.at + sampleLen(last)
     let selected = all
     // Above the cap, validate the newest records that fit: the work stays
     // bounded whatever the session size.
@@ -1123,11 +1142,14 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
       first = selected[0]!.at
     }
     let buf: Buffer
-    try { buf = await fs.read(file, first, end - first) } catch { return true }
+    // Unknown, not valid: the caller keeps the previous size and retries on
+    // the next poll instead of trusting an unvalidated state.
+    try { buf = await fs.read(file, first, end - first) } catch { return null }
     for (const w of selected) {
       const from = w.at - first
-      if (from < 0 || from + w.len > buf.length) return false
-      const h = createHash('sha256').update(buf.subarray(from, from + w.len)).digest('hex').slice(0, 16)
+      const n = sampleLen(w)
+      if (from < 0 || from + n > buf.length) return null
+      const h = createHash('sha256').update(buf.subarray(from, from + n)).digest('hex').slice(0, 16)
       if (h !== w.hash) return false
     }
     return true
@@ -1374,7 +1396,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     if (exec) {
       try {
         for (const chunk of chunksByBytes(paths)) {
-          const r = await exec('for f in "$@"; do if [ ! -e "$f" ]; then printf "%s\\tM\\n" "$f"; elif [ ! -r "$f" ]; then printf "%s\\tE\\n" "$f"; else printf "%s\\tH%s\\n" "$f" "$(head -c 65536 "$f" 2>/dev/null | head -n 1)"; fi; done', chunk, { timeoutMs: 4000 })
+          const r = await exec(CMD_HEADERS_SCRIPT, chunk, { timeoutMs: 4000 })
           if (r.code !== 0) throw new Error(`header batch failed: ${r.stderr || r.code}`)
           for (const line of r.stdout.toString('utf8').split('\n')) {
             const tab = line.indexOf('\t')
@@ -1647,13 +1669,18 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
         || (st.size === prev!.size && prev!.gen !== g)
       )
       const grewInPlace = Boolean(prev) && st.size > prev!.size && prev!.ino === st.ino
-      cmdInvalidated = replaced || (grewInPlace && !await cmdResultsValid(loc.file))
+      const verdict = grewInPlace ? await cmdResultsValid(loc.file) : true
+      cmdInvalidated = replaced || verdict === false
       if (cmdInvalidated) {
         cmdEpochs.set(loc.file, (cmdEpochs.get(loc.file) ?? 0) + 1)
         forgetCmdFile(loc.file)
       }
-      cmdSizes.set(loc.file, { size: st.size, gen: g, ino: st.ino })
-      if (cmdSizes.size > 64) evictCmdFile(cmdSizes.keys().next().value!)
+      // A failed validation keeps the previous size, so the next poll retries
+      // before trusting this state.
+      if (verdict !== null) {
+        cmdSizes.set(loc.file, { size: st.size, gen: g, ino: st.ino })
+        if (cmdSizes.size > 64) evictCmdFile(cmdSizes.keys().next().value!)
+      }
     }
     const base = { available: true, file: fileId, session: loc.session, guessed: Boolean(loc.guessed) }
     // The transcript path tells the real kind: a pane whose agent changed while

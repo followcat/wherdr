@@ -8,7 +8,7 @@ import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { PANE_RE, isSelfTarget, joinId, machineKey, machineOf, parseMachineList, parseStatusSocket, routeParams, splitId, targetHost } from '../shared/ids'
 import { type ShellExec, MAX_ARG_BYTES, STAT_SCRIPT, createShellFs, LIST_DIRS_SCRIPT, parseDirList, parseStatLine, shq } from '../server/utils/fsx'
-import { createTranscripts, isMissing } from '../server/utils/transcripts'
+import { CMD_HEADERS_SCRIPT, createTranscripts, isMissing } from '../server/utils/transcripts'
 import { FsError } from '../server/utils/fsx'
 
 const fx = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
@@ -170,6 +170,18 @@ describe('files of a remote machine (shell)', () => {
     expect(stats.every(s => s?.size === 10)).toBe(true)
     expect(calls.length).toBeGreaterThan(1)
     for (const args of calls) expect(args.reduce((n, p) => n + Buffer.byteLength(p) + 1, 0)).toBeLessThanOrEqual(MAX_ARG_BYTES)
+  })
+
+  it('marks a readable but unopenable header file as an error', async () => {
+    const file = path.join(home, 'projets/fichier.txt')
+    const dir = path.join(home, 'projets/notes')
+    const missing = path.join(home, 'absent.jsonl')
+    const r = await localSh(CMD_HEADERS_SCRIPT, [file, dir, missing])
+    expect(r.code).toBe(0)
+    const lines = r.stdout.toString('utf8').split('\n').filter(Boolean)
+    expect(lines).toContain(`${file}\tH0123456789`)
+    expect(lines).toContain(`${dir}\tE`)
+    expect(lines).toContain(`${missing}\tM`)
   })
 
   it('reads a byte range, a file, a folder', async () => {
