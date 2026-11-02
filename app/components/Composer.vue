@@ -934,5 +934,10 @@ defineExpose({
       <span class="composer-status-line">{{ pane.ompStatus.line }}</span>
       <span v-if="pane.ompStatus.meters" class="composer-status-meters">{{ pane.ompStatus.meters }}</span>
     </div>
+    <!-- Command Code: the model and context of its last turn. -->
+    <div v-if="pane?.cmdStatus" class="composer-status" :title="[pane.cmdStatus.line, pane.cmdStatus.meters].filter(Boolean).join('\n')">
+      <span class="composer-status-line">{{ pane.cmdStatus.line }}</span>
+      <span v-if="pane.cmdStatus.meters" class="composer-status-meters">{{ pane.cmdStatus.meters }}</span>
+    </div>
   </div>
 </template>

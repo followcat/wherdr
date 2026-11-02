@@ -6,6 +6,19 @@
 // [name, description, arguments?]
 export type SlashEntry = [string, string, string?]
 
+// Command Code 1.88: the TUI commands confirmed by its own menu and strings.
+// `/model` and `/effort` set the default for NEW sessions; the running session
+// keeps its model, so wherdr shows it read-only and leaves the change here.
+export const CMD_BUILTIN: SlashEntry[] = [
+  ["model", "Choose the model for new sessions; the running session keeps its model"],
+  ["effort", "Set the reasoning effort for new sessions"],
+  ["permissions", "Manage permission and approval rules"],
+  ["compact", "Compact the conversation context"],
+  ["clear", "Clear the conversation context"],
+  ["config", "Open settings"],
+  ["help", "Show help and available commands"],
+]
+
 export const CLAUDE_BUILTIN: SlashEntry[] = [
   ["claude-in-chrome", "Automates your Chrome browser to interact with web pages - clicking elements, filling forms, capturing screenshots, reading console log"],
   ["run", "Launch and drive this project's app to see a change working. Use when asked to run, start, or screenshot the app, or to confirm a ch"],

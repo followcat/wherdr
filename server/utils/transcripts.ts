@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { imageTagCount } from '../../shared/queuedMatch'
-import type { ChatItem, ChatResponse, ClaudeQueueEntry, ModelInfo, PromptDetail } from '../../shared/types'
+import type { ChatItem, ChatResponse, ClaudeQueueEntry, ModelInfo, OmpStatus, PromptDetail } from '../../shared/types'
 import { ompToolCall, ompToolResult, ompUserRun } from './ompTools'
 import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDetail'
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
@@ -1512,6 +1512,42 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     return info
   }
 
+  // Command Code: the last assistant turn's model and context, for the
+  // composer's status line. `/model` and `/effort` only change the default
+  // for new sessions, so this stays a read-only display.
+  async function commandCodeStats(pane: TranscriptPane): Promise<OmpStatus | null> {
+    if (pane.agent !== 'cmd') return null
+    const loc = await locate(pane)
+    if (!loc) return null
+    let size: number
+    try { size = (await fs.stat(loc.file)).size } catch { return null }
+    let text: string
+    try { text = (await fs.read(loc.file, Math.max(0, size - 256 * 1024), Math.min(size, 256 * 1024))).toString('utf8') } catch { return null }
+    let model: string | null = null
+    let context: number | null = null
+    let cost: number | null = null
+    for (const line of text.split('\n')) {
+      let d: Json
+      try { d = JSON.parse(line) } catch { continue }
+      if (!d || d.type !== 'message' || !d.message || d.message.role !== 'assistant') continue
+      if (typeof d.model === 'string' && d.model) model = d.model
+      const u = d.usage
+      if (u && typeof u === 'object') {
+        const input = Number(u.inputTokens) || 0
+        const cached = Number(u.cacheReadTokens) || 0
+        context = input + cached
+        cost = Number.isFinite(u.costUsd) ? Number(u.costUsd) : null
+      }
+    }
+    if (!model && context === null) return null
+    const tokens = context === null ? '' : `${context >= 1000 ? `${(context / 1000).toFixed(1)}k` : context} context`
+    const money = cost === null ? '' : `$${cost.toFixed(4)}`
+    return {
+      line: `Command Code · ${model ? cleanModelName(model) : 'session'}`,
+      meters: [tokens, money].filter(Boolean).join(' · ') || null,
+    }
+  }
+
   // Tool call waiting for a permission: the last one without a result, read
   // from the end of the transcript (re-read only if the file has grown).
   // `tool`: name shown on screen (omp's dialog title), to pick among parallel calls.
@@ -1582,7 +1618,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     claudeAskCache.delete(paneId)
   }
 
-  return { chat, preview, latestReply, image, forget, locate, model, observe, dispose: opencode.dispose, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions }
+  return { chat, preview, latestReply, image, forget, locate, model, commandCodeStats, observe, dispose: opencode.dispose, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions }
 }
 
 export type Transcripts = ReturnType<typeof createTranscripts>

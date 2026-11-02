@@ -55,6 +55,10 @@ it('reads a Command Code session: messages, thinking, tools and their results', 
   expect(edit.images).toBe(1)
   expect(JSON.stringify(r)).not.toContain('private-signature')
   expect((await reader.model(pane))?.id).toBe('example/model-b')
+  expect(await reader.commandCodeStats(pane)).toMatchObject({
+    line: expect.stringContaining('Command Code'),
+    meters: expect.stringContaining('120 context'),
+  })
 
   const img = await reader.image(pane, r.file!, edit.ref!, 0)
   expect(img?.type).toBe('image/png')
