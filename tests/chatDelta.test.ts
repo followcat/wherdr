@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createChatDelta, splitToken } from '../server/utils/chatDelta'
 import { anchorOf, createTranscripts, headOf } from '../server/utils/transcripts'
-import { createTailLoader, nextTail, restartsTail, tailQuery } from '../app/utils/chatTail'
+import { applyToolUpdates, createTailLoader, nextTail, restartsTail, tailQuery } from '../app/utils/chatTail'
 import type { ChatItem } from '../shared/types'
 import { type FsStat, type MachineFs, type ShellExec, createShellFs, localFs } from '../server/utils/fsx'
 import { spawn } from 'node:child_process'
@@ -131,6 +131,13 @@ describe('nextTail and tailQuery', () => {
     expect(nextTail(tail, { keep: 2, items: [] })).toBe(tail)
     expect(nextTail(tail, { keep: 3, items: [] })).toBeNull()
     expect(nextTail(tail, { keep: -1, items: [] })).toBeNull()
+  })
+
+  it('updates a tool already loaded in an older page', () => {
+    const older: ChatItem[] = [{ role: 'tool', name: 'shell_command', toolId: 'call_1', text: 'echo ok', ts: null }]
+    expect(applyToolUpdates(older, [{ id: 'call_1', out: 'ok' }])[0]).toMatchObject({ out: 'ok' })
+    expect(applyToolUpdates(older, [{ id: 'other', out: 'x' }])[0]).toBe(older[0])
+    expect(applyToolUpdates(older, undefined)).toBe(older)
   })
 
   it('sends the item count of the list held (0 without a token)', () => {

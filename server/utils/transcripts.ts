@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { imageTagCount } from '../../shared/queuedMatch'
-import type { ChatItem, ChatResponse, ClaudeQueueEntry, CommandCodeStatus, ModelInfo, PromptDetail } from '../../shared/types'
+import type { ChatItem, ChatResponse, ClaudeQueueEntry, CommandCodeStatus, CommandCodeToolUpdate, ModelInfo, PromptDetail } from '../../shared/types'
 import { ompToolCall, ompToolResult, ompUserRun } from './ompTools'
 import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDetail'
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
@@ -40,9 +40,9 @@ interface CodexRollout { file: string, id: string, ts: number, mtimeMs: number }
 const CODEX_BIRTH_BEFORE = 5000
 const CODEX_BIRTH_AFTER = 120000
 type Lines = string[] & { refs?: string[], raw?: string[] }
-type Parsed = ChatItem[] & { queue?: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[] }
+type Parsed = ChatItem[] & { queue?: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], updates?: CommandCodeToolUpdate[] }
 // `anchor`: fingerprint of the bytes just above `start` (see anchorAt).
-interface TailResult { start: number, items: ChatItem[], queue: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], anchor?: string }
+interface TailResult { start: number, items: ChatItem[], queue: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], updates?: CommandCodeToolUpdate[], anchor?: string }
 
 // Join check of a re-read from a cursor: the bytes just above it, hashed. A
 // transcript rewritten at the same size, or shortened but still longer than
@@ -742,7 +742,7 @@ function commandCodeTool(name: string, input: Json): string {
 
 export type CommandCodeResult = { out?: string, error?: boolean, images?: number, ref?: string, imageAt?: number, at?: number, len?: number, hash?: string }
 
-export function parseCommandCode(lines: Lines, results?: Map<string, CommandCodeResult>): Parsed {
+export function parseCommandCode(lines: Lines, results?: Map<string, CommandCodeResult>, updates?: CommandCodeToolUpdate[]): Parsed {
   const items: Parsed = []
   const tools = new Map<string, ChatItem>()
   for (let i = 0; i < lines.length; i++) {
@@ -767,7 +767,7 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
           items.push(lastText)
         } else if (part.type === 'tool_use' && typeof part.id === 'string') {
           const name = typeof part.name === 'string' ? part.name : 'Tool'
-          const t: ChatItem = { role: 'tool', name, text: clip(commandCodeTool(name, part.input), 300), ts }
+          const t: ChatItem = { role: 'tool', name, toolId: part.id, text: clip(commandCodeTool(name, part.input), 300), ts }
           // Its result may have been parsed in a newer page (a page boundary
           // between the call and the result): apply the remembered outcome.
           const saved = results?.get(part.id)
@@ -851,6 +851,14 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
           if (rec.out || rec.error || rec.images) {
             results.set(part.tool_use_id, rec)
             if (results.size > 4096) results.delete(results.keys().next().value!)
+            // The call may already be shown in an older page the client
+            // loaded: send the outcome so it updates without a reopen.
+            updates?.push({
+              id: part.tool_use_id,
+              ...(rec.out !== undefined ? { out: rec.out } : {}),
+              ...(rec.error ? { error: true } : {}),
+              ...(rec.images ? { images: rec.images, ref: rec.ref, imageAt: rec.imageAt } : {}),
+            })
           }
         }
         // lineImages() counts this result's images even when its call is
@@ -878,7 +886,9 @@ export function parseLines(text: string, kind: string | null, base = 0, home = '
   const lines: Lines = raw.map(stripBlobs)
   lines.refs = refs
   lines.raw = raw
-  const items = kind === 'omp' ? parseOmp(lines, home, templates, cwd) : kind === 'codex' ? parseCodex(lines) : kind === 'cmd' ? parseCommandCode(lines, cmdResults) : parseClaude(lines, home)
+  const cmdUpdates: CommandCodeToolUpdate[] = []
+  const items = kind === 'omp' ? parseOmp(lines, home, templates, cwd) : kind === 'codex' ? parseCodex(lines) : kind === 'cmd' ? parseCommandCode(lines, cmdResults, cmdUpdates) : parseClaude(lines, home)
+  if (cmdUpdates.length) items.updates = cmdUpdates
   // Content hash of each image, to spot one shown twice (see shared/imageDupes.ts).
   const byRef = new Map<string, number>()
   refs.forEach((r, i) => byRef.set(r, i))
@@ -1445,6 +1455,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     let items: ChatItem[] = []
     let queue: ClaudeQueueEntry[] | null = null
     let popped: ClaudeQueueEntry[] | null = null
+    let updates: CommandCodeToolUpdate[] = []
     // Command Code's result may sit in the newer window while its call is in
     // the older one: the per-file results map bridges the windows.
     const results = cmdResultsFor(file)
@@ -1465,11 +1476,12 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
       const parsed = parseLines(r.text, kind, r.start, home, ompTemplates.list, cwd, results)
       if (!queue) queue = parsed.queue || [] // the queue lives in the most recent window
       if (!popped) popped = parsed.popped || []
+      if (parsed.updates?.length) updates = parsed.updates.concat(updates)
       items = parsed.concat(items)
       start = r.start
       if (items.length >= PAGE_ITEMS) break
     }
-    return { start, items, queue: queue || [], popped: popped || [] }
+    return { start, items, queue: queue || [], popped: popped || [], ...(updates.length ? { updates } : {}) }
   }
 
   // Bottom of the conversation: from `from` (already shown on the phone) or,
@@ -1494,7 +1506,11 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
       const items = parseLines(buf.subarray(off).toString('utf8'), kind, s0 + off, home, ompTemplates.list, kind === 'omp' ? await ompCwd(file) : '', cmdResultsFor(file))
       // Start kept even when it moved to the next line: the client then sees a
       // stale anchor (or another start) and reloads from the bottom.
-      r = { start: from, items, queue: items.queue || [], popped: items.popped || [], anchor: off === from - s0 ? anchorHash(above) : '' }
+      r = {
+        start: from, items, queue: items.queue || [], popped: items.popped || [],
+        ...(items.updates?.length ? { updates: items.updates } : {}),
+        anchor: off === from - s0 ? anchorHash(above) : '',
+      }
     } else {
       r = await readBackwards(file, size, kind)
       r.anchor = await anchorAt(file, r.start)
@@ -1574,7 +1590,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     if (kind === 'omp') await refreshOmpTemplates()
     if (opts.before !== null && opts.before !== undefined) {
       const r = await readBackwards(loc.file, Math.min(opts.before, st.size), kind)
-      return { ...base, older: true, items: r.items, start: r.start }
+      return { ...base, older: true, items: r.items, start: r.start, ...(r.updates?.length ? { toolUpdates: r.updates } : {}) }
     }
     const from = opts.from === undefined ? null : opts.from
     const gen = genOf(st)
@@ -1606,7 +1622,12 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     }
     const mark = `${head}${settled ? '' : '!'}`
     const token = r.anchor ? `${mark}/${r.start}.${r.anchor}` : mark
-    return { ...base, token, items: r.items, start: r.start, queue: r.queue || [], ...(r.popped?.length ? { popped: r.popped } : {}), ...(rewritten ? { rewritten: true } : {}) }
+    return {
+      ...base, token, items: r.items, start: r.start, queue: r.queue || [],
+      ...(r.popped?.length ? { popped: r.popped } : {}),
+      ...(r.updates?.length ? { toolUpdates: r.updates } : {}),
+      ...(rewritten ? { rewritten: true } : {}),
+    }
   }
 
   // Agent's last reply, for cards and notifications.

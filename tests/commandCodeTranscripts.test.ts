@@ -389,6 +389,25 @@ it('keeps a tool result across a pagination boundary', async () => {
   expect(older2.items!.find(i => i.name === 'shell_command')?.out).toBeUndefined()
 })
 
+it('reports a late result for a tool shown in an older page', async () => {
+  const { home, reader } = fixture()
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+  ]
+  const filler = 'v'.repeat(32 * 1024)
+  for (let i = 0; i < 200; i++) lines.push(commandCodeUser(`filler-${i}`, 'a1', filler, 3000 + i))
+  const file = writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
+  const tail = await reader.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+  expect(tail.items!.some(i => i.toolId === 'call_1')).toBe(false)
+
+  appendFileSync(file, JSON.stringify(commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'ok' }] }], 4000)) + '\n')
+  const next = await reader.chat(pane, { since: tail.token, from: tail.start })
+  expect(next.toolUpdates).toEqual([expect.objectContaining({ id: 'call_1', out: 'ok' })])
+})
+
 it('invalidates remembered results when a larger file is rewritten in place', async () => {
   const { home, reader } = fixture()
   const filler = 'w'.repeat(32 * 1024)
