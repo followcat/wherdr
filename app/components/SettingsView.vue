@@ -75,7 +75,7 @@ const shellsOn = showShells
 const countersOn = showCounters
 const quotasOn = showQuotas
 const homeGroup = homeGrouping
-const homeGroupItems = computed(() => [{ value: 'machine', label: t('Machine') }, { value: 'state', label: t('State') }])
+const homeGroupItems = computed(() => [{ value: 'machine', label: t('Machine') }, { value: 'state', label: t('State') }, { value: 'flat', label: t('Agents') }])
 const compactOn = compactList
 const autoReorderOn = autoReorderReady
 const encryptedOn = encryptedText

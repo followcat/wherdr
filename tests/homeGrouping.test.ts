@@ -23,6 +23,7 @@ describe('home grouping', () => {
   it('preserves Machine as the default for missing and invalid stored values', () => {
     for (const v of [null, undefined, '', 'unknown', 'machine', 1]) expect(readHomeGrouping(v)).toBe('machine')
     expect(readHomeGrouping('state')).toBe('state')
+    expect(readHomeGrouping('flat')).toBe('flat')
   })
   it('flattens all coordinator levels, tasks and ordinary agents without losing task metadata', () => {
     const entries = stateEntries(sections, false)

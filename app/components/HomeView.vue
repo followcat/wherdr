@@ -29,7 +29,7 @@ import { dropMachineKey, shiftMachineKey } from '#shared/machineOrder'
 import { stateEntries, stateMachines } from '~/utils/homeGrouping'
 import { BAR_ALL } from '~/utils/machineBar'
 import type { AwakeState, SleepAssertion, AwakeMode } from '../../server/utils/awake'
-import { individualAgentRows } from '~/utils/homeAgentRows'
+import { flatAgentRows, individualAgentRows } from '~/utils/homeAgentRows'
 const emit = defineEmits<{ search: [] }>()
 useQuotaLoader()
 onMounted(loadUpdate)
@@ -112,6 +112,13 @@ const soloLocal = computed(() => machineInfo(machineBaseKeys.value[0] ?? '')?.lo
 const soloName = computed(() => machineName(machineBaseKeys.value[0] ?? '') || hostLabel.value)
 const soloSelected = computed(() => machineBarSelection.value === null || machineBarSelection.value.includes(machineBaseKeys.value[0] ?? ''))
 const solo = computed(() => listOf(soloSelected.value ? rowsFor() : []))
+
+// Flat mode: every agent in Herdr's order, machine sections and board
+// structure removed; the machine bar still filters (base keys).
+const flatRows = computed(() => flatAgentRows(st.value, machineBarSelection.value, baseOfPane))
+const flatGroups = computed(() => groupsOf(flatRows.value))
+const flatMachine = (r: Row) => (multiMachine.value ? machineName(r.lead.machine || '') || undefined : undefined)
+const flatSpace = (r: Row) => st.value.workspaces.find(w => w.id === r.lead.workspace)?.label || undefined
 
 const topQuotas = computed(() => (showQuotas.value ? quotaRows(homeQuotas.value, hiddenAgents.value) : []))
 // Claude on API billing (no quota): a label instead of gauges.
@@ -694,7 +701,7 @@ function resetListWidth() {
         </button>
       </UContextMenu>
     </nav>
-    <div class="agent-list-mode" role="group" :aria-label="t('List layout')">
+    <div v-if="homeGrouping !== 'flat'" class="agent-list-mode" role="group" :aria-label="t('List layout')">
       <button type="button" :class="{ on: individualAgents }" :aria-pressed="individualAgents" @click="individualAgents = true">Agents <b>{{ shownCounted.length }}</b></button>
       <button type="button" :class="{ on: !individualAgents }" :aria-pressed="!individualAgents" @click="individualAgents = false">{{ t('Spaces') }}</button>
       <span>{{ individualAgents ? t('One row per agent') : t('Grouped by space') }}</span>
@@ -736,7 +743,24 @@ function resetListWidth() {
       <UpdateBanner v-if="updateBanner" :info="updateBanner" dismissible />
 
       <p v-if="machineBarSelection?.length === 0" class="machine-empty">{{ tl('No machines in this group.', 'Aucune machine dans ce groupe.') }}</p>
-      <template v-if="homeGrouping === 'state'">
+      <!-- Flat: every agent in one list, no space or machine sections. -->
+      <template v-if="homeGrouping === 'flat'">
+        <p v-if="st.ok && !flatGroups.length" class="machine-empty state-empty">{{ t('No agents yet.') }}</p>
+        <section v-for="g in flatGroups" :key="g.key" class="agent-group" :class="g.key">
+          <h2 class="group-title"><span>{{ g.title }}</span><span class="count">{{ g.list.length }}</span>
+            <UDropdownMenu v-if="g.key === 'ready'" :items="readySortItems" :content="{ align: 'end' }" :ui="{ content: 'hw-dropdown' }">
+              <UButton :icon="READY_SORT_LABELS[readySort][1]" color="neutral" variant="ghost" size="xs" class="group-sort" :aria-label="`${t('Sort ready')} : ${t(READY_SORT_LABELS[readySort][0])}`" />
+            </UDropdownMenu>
+          </h2>
+          <template v-for="(cards, i) in g.lists" :key="i">
+            <p v-if="g.key === 'ready' && g.lists.length > 1" class="ready-subgroup-label">{{ t(i === 0 ? 'Unread' : 'Read') }}</p>
+            <div class="card-list">
+              <AgentCard v-for="r in cards" :key="r.key" :pane="r.lead" :row="r" :machine-badge="flatMachine(r)" :project-badge="flatSpace(r)" />
+            </div>
+          </template>
+        </section>
+      </template>
+      <template v-else-if="homeGrouping === 'state'">
         <ul v-if="stateMachineChips.length" class="state-machines" :aria-label="tl('Online machines', 'Machines en ligne')">
           <li v-for="c in stateMachineChips" :key="c.m.key" class="state-machine" :data-machine="c.m.key || 'local'">
             <UDropdownMenu :items="machineMenu(c.m)" :content="{ align: 'start', sideOffset: 6 }" :ui="{ content: 'hw-dropdown' }" @update:open="(o: boolean) => { if (o) loadPluginActions(multiMachine ? c.m.key : '') }">

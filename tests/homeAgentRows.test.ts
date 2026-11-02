@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { individualAgentRows, individualAgentTitle } from '../app/utils/homeAgentRows'
+import { flatAgentRows, individualAgentRows, individualAgentTitle } from '../app/utils/homeAgentRows'
 import type { Pane } from '../shared/types'
 
 describe('individual agent list', () => {
@@ -20,5 +20,11 @@ describe('individual agent list', () => {
   it('uses the same machine scope as the machine count, with original names', () => {
     expect(individualAgentRows(state, '').map(r => individualAgentTitle(r.pane))).toEqual(['core-X', 'core-alpha-X'])
     expect(individualAgentRows(state, 't14').map(r => individualAgentTitle(r.pane))).toEqual(['cheshire-X'])
+  })
+  it('flat mode lists every machine in Herdr order, filtered by the bar selection', () => {
+    const base = (p: Pane) => p.machine || 'local'
+    expect(flatAgentRows(state, null, base).map(r => r.pane.id)).toEqual(['w1:p1', 'w1:p2', 't14~w1:p1'])
+    expect(flatAgentRows(state, ['t14'], base).map(r => r.pane.id)).toEqual(['t14~w1:p1'])
+    expect(flatAgentRows(state, [], base)).toEqual([])
   })
 })
