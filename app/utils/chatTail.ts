@@ -42,6 +42,21 @@ export function applyToolUpdates(items: ChatItem[], updates: CommandCodeToolUpda
   })
 }
 
+// Keep tool updates whose call is not on screen yet (an older page is still
+// in flight): the page arrives with the stale call, and the pending update is
+// applied when it is inserted. Bounded so a long session cannot grow them.
+export function retainToolUpdates(pending: Map<string, CommandCodeToolUpdate>, items: ChatItem[], updates: CommandCodeToolUpdate[] | undefined): void {
+  if (!updates?.length) return
+  const shown = new Set(items.map(i => i.toolId).filter(Boolean))
+  for (const u of updates) {
+    if (shown.has(u.id)) pending.delete(u.id)
+    else {
+      pending.set(u.id, u)
+      if (pending.size > 256) pending.delete(pending.keys().next().value!)
+    }
+  }
+}
+
 // Whether a reply means starting again from the bottom, dropping the older
 // pages loaded above: another file (/clear, new session), or a bottom the
 // server read from another byte. The latter happens when the file grew more
