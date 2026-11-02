@@ -1038,7 +1038,7 @@ export function isMissing(e: unknown): boolean {
 }
 
 export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, exec, stream }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number, exec?: ShellExec, stream?: (script: string, args: string[]) => ChildProcessWithoutNullStreams | null }) {
-  const devin = createDevinTranscripts({ home, exec })
+  const devin = createDevinTranscripts({ home, fs })
   const opencode = createOpenCodeTranscripts({ home, exec, stream })
   // File -> state (size, generation) and when this server first saw it, for
   // whole-second mtimes (see SETTLE_MS); `file|size|gen` -> checksum of the

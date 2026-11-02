@@ -18,7 +18,7 @@ const rows = [
 test.beforeEach(async () => { await fakeHerdr('e2e.devin', { pane_id: pane, rows, head: 303 }) })
 test.afterEach(async () => { await fakeHerdr('e2e.devin', { pane_id: pane, reset: true }) })
 
-test('Devin reads real SQLite messages, tool results and images without attaching the terminal', async ({ page }) => {
+test('Devin reads ATIF messages, tool results and images without attaching the terminal', async ({ page }) => {
   const writes: string[] = []
   page.on('request', r => { if (r.method() === 'POST' && /\/api\/(?:send|keys|choose|prompt)/.test(r.url())) writes.push(r.url()) })
   await page.goto(`/#/a/${pane}`)

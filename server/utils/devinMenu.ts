@@ -89,6 +89,6 @@ export function parseDevinModelMenu(text: string | null | undefined): DevinModel
 // The confirmation Devin echoes after alt+↵:
 //   ✓ Model set to Grok 4.7 for this session
 export function devinModelSetEcho(text: string | null | undefined): string | null {
-  const m = /✓ Model set to (\S(?:.*?\S)?) for this session/.exec(String(text || ''))
+  const m = [...String(text || '').matchAll(/✓ Model set to (\S(?:.*?\S)?) for this session/g)].at(-1)
   return m ? m[1]! : null
 }
