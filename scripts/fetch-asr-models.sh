@@ -5,9 +5,11 @@
 #
 #   DATA_DIR=~/wherdr/data scripts/fetch-asr-models.sh [model|all]
 #
-# Sources: the official sherpa-onnx release tarballs (HF direct links are
-# gated in some networks). SenseVoice is the default; the rest are options —
-# "all" fetches ~2.9 GB.
+# Sources: the official sherpa-onnx release tarballs, except the WebGPU
+# Qwen3-ASR export which is a Hugging Face repo (HF direct links are gated
+# in some networks — HF_ENDPOINT selects a mirror). SenseVoice is the
+# default; the rest are options — "all" fetches ~3.6 GB. Only models in
+# the app's ASR_MODELS list are fetched; retired exports have no branch.
 set -euo pipefail
 
 WHICH="${1:-sensevoice}"
@@ -40,22 +42,28 @@ fetch_sensevoice() {
   fetch_tar "$d" sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09 model.int8.onnx tokens.txt
 }
 
-fetch_qwen3() {
-  local d=qwen3-asr-0.6b-int8
-  if [ -s "$MODELS_DIR/$d/decoder.int8.onnx" ]; then echo "have $d"; return 0; fi
-  fetch_tar "$d" sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25 conv_frontend.onnx encoder.int8.onnx decoder.int8.onnx tokenizer
+# The WebGPU-native Qwen3-ASR export (list #2 in Settings) is not a sherpa
+# tarball — it is jiangzhuo9357/Qwen3-ASR-0.6B-ONNX on Hugging Face, layout
+# v2. HF_ENDPOINT lets a mirror stand in where huggingface.co is gated.
+fetch_qwen3q4f16() {
+  local d=qwen3-asr-0.6b-q4f16
+  if [ -s "$MODELS_DIR/$d/decoder_weights.q4f16.data" ]; then echo "have $d"; return 0; fi
+  mkdir -p "$MODELS_DIR/$d"
+  local hf="${HF_ENDPOINT:-https://huggingface.co}/jiangzhuo9357/Qwen3-ASR-0.6B-ONNX/resolve/main"
+  local f
+  for f in encoder.fp16.onnx decoder_init.q4f16.onnx decoder_step.q4f16.onnx \
+           decoder_weights.q4f16.data embed_tokens.int8.bin embed_scales.f32.bin \
+           prompt_config.json mel_filters.json tokenizer.json \
+           tokenizer_config.json vocab.json added_tokens.json config.json; do
+    dl "$hf/$f" "$MODELS_DIR/$d/$f.tmp"
+    mv "$MODELS_DIR/$d/$f.tmp" "$MODELS_DIR/$d/$f"
+  done
 }
 
 fetch_funasr() {
   local d=funasr-nano-int8
   if [ -s "$MODELS_DIR/$d/llm.int8.onnx" ]; then echo "have $d"; return 0; fi
   fetch_tar "$d" sherpa-onnx-funasr-nano-int8-2025-12-30 encoder_adaptor.int8.onnx llm.int8.onnx embedding.int8.onnx Qwen3-0.6B
-}
-
-fetch_wsyue() {
-  local d=wenetspeech-yue-u2pp-int8
-  if [ -s "$MODELS_DIR/$d/model.int8.onnx" ]; then echo "have $d"; return 0; fi
-  fetch_tar "$d" sherpa-onnx-wenetspeech-yue-u2pp-conformer-ctc-zh-en-cantonese-int8-2025-09-10 model.int8.onnx tokens.txt
 }
 
 fetch_firered2() {
@@ -77,7 +85,7 @@ fetch_dolphin() {
 }
 
 case "$WHICH" in
-  sensevoice|qwen3|funasr|wsyue|firered2|omnilingual|dolphin) "fetch_$WHICH" ;;
-  all) for m in sensevoice qwen3 funasr wsyue firered2 omnilingual dolphin; do "fetch_$m"; done ;;
-  *) echo "usage: $0 [sensevoice|qwen3|funasr|wsyue|firered2|omnilingual|dolphin|all]" >&2; exit 2 ;;
+  sensevoice|qwen3q4f16|funasr|firered2|omnilingual|dolphin) "fetch_$WHICH" ;;
+  all) for m in sensevoice qwen3q4f16 funasr firered2 omnilingual dolphin; do "fetch_$m"; done ;;
+  *) echo "usage: $0 [sensevoice|qwen3q4f16|funasr|firered2|omnilingual|dolphin|all]" >&2; exit 2 ;;
 esac
