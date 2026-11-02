@@ -97,6 +97,26 @@ describe('matchShortcut', () => {
     expect(match({ key: 'Escape', defaultPrevented: true })).toBeNull()
   })
 
+  it('Ctrl+arrows switch agents and space tabs; fields and the terminal keep theirs', () => {
+    expect(match({ key: 'ArrowUp', ctrlKey: true }, body, linux)).toBe('prev-agent')
+    expect(match({ key: 'ArrowDown', ctrlKey: true }, body, linux)).toBe('next-agent')
+    expect(match({ key: 'ArrowLeft', ctrlKey: true }, body, linux)).toBe('prev-tab')
+    expect(match({ key: 'ArrowRight', ctrlKey: true }, body, linux)).toBe('next-tab')
+    // Same bindings on macOS (Ctrl, not ⌘ — the OS takes ⌘+arrows anyway).
+    expect(match({ key: 'ArrowDown', ctrlKey: true })).toBe('next-agent')
+    expect(match({ key: 'ArrowLeft', ctrlKey: true })).toBe('prev-tab')
+    // Word/paragraph jumps in a non-empty field stay with the field.
+    expect(match({ key: 'ArrowLeft', ctrlKey: true }, field('half a sentence'), linux)).toBeNull()
+    expect(match({ key: 'ArrowUp', ctrlKey: true }, field('draft'), linux)).toBeNull()
+    expect(match({ key: 'ArrowLeft', ctrlKey: true }, field(''), linux)).toBe('prev-tab')
+    // The terminal keeps the keys its program expects.
+    expect(match({ key: 'ArrowRight', ctrlKey: true }, term, linux)).toBeNull()
+    expect(match({ key: 'ArrowDown', ctrlKey: true }, term, linux)).toBeNull()
+    // A held key keeps stepping; overlays block navigation.
+    expect(match({ key: 'ArrowRight', ctrlKey: true, repeat: true }, body, linux)).toBe('next-tab')
+    expect(match({ key: 'ArrowRight', ctrlKey: true }, { ...body, overlay: true }, linux)).toBeNull()
+  })
+
   it('held keys repeat agent navigation only', () => {
     expect(match({ key: 'ArrowDown', altKey: true, repeat: true })).toBe('next-agent')
     expect(match({ key: 'Escape', repeat: true })).toBeNull()
