@@ -28,7 +28,9 @@ export default defineEventHandler(async (event) => {
   }
   const headers = {
     'content-type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream',
-    'cache-control': 'public, max-age=31536000, immutable',
+    // Private: the route sits behind the passkey lock — shared caches must
+    // not keep model weights the requester was never entitled to.
+    'cache-control': 'private, max-age=31536000, immutable',
     'accept-ranges': 'bytes',
   }
 

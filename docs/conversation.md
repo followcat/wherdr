@@ -72,6 +72,12 @@
   of the draft, pane information, attachment names and the last three messages sent from this
   device to this pane. Source text keeps its original words, numbers and writing system.
   Context is a recognition hint; it does not guarantee a spelling or number format.
+  The server side supplies the weights: `scripts/fetch-asr-models.sh <model|all>` downloads
+  them into `DATA_DIR/models/<name>/` (sherpa-onnx release tarballs, or Hugging Face for the
+  WebGPU Qwen3-ASR export — `HF_ENDPOINT` selects a mirror where huggingface.co is gated),
+  and the `/models/**` route serves them with byte ranges, behind the passkey lock like the
+  API. The browser fetches each file once, in resumable slices, and keeps it in Cache
+  Storage, so models survive redeploys and are not part of the npm tarball.
 - **Model and effort pickers** for Claude Code, Codex and omp (omp: its
   "Switch Model" selector, `/switch` or `/model`, and its thinking level, changed with its own
   ⇧⇥ cycle). Changes apply **to the current session only**; wherdr never changes your default

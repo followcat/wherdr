@@ -226,11 +226,15 @@ async function fetchModelFile(url: string, file: string, onGot: (got: number, to
 }
 
 // Removes one model's files (its URLs only — a second model may share the
-// cache). `modelId` defaults to the selected one.
+// cache). The service worker's network-first cache can hold copies too, and
+// refreshAsrInstalled() matches across all caches — so every cache is swept
+// or Remove would leave the model reporting installed.
 export async function removeAsr(cacheProvider: CacheStorage | undefined = globalThis.caches, modelId: string = asrModelId.value): Promise<void> {
   if (cacheProvider) {
-    const cache = await cacheProvider.open(ASR_CACHE)
-    for (const u of asrUrls(modelId)) await cache.delete(u).catch(() => {})
+    for (const name of await cacheProvider.keys()) {
+      const cache = await cacheProvider.open(name)
+      for (const u of asrUrls(modelId)) await cache.delete(u).catch(() => {})
+    }
   }
   await refreshAsrInstalled(cacheProvider)
 }

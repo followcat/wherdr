@@ -188,7 +188,7 @@ export function checkClient(peer: string | undefined, h: Headers, ctx: NetContex
 // ------------------------------------------------------------------ gate
 
 export type GateVerdict = 'ok' | 'network' | 'host' | 'origin' | 'locked'
-const needsUnlock = (p: string) => (p.startsWith('/api/') && !p.startsWith('/api/auth/') && p !== '/api/health') || p.startsWith('/uploads/')
+const needsUnlock = (p: string) => (p.startsWith('/api/') && !p.startsWith('/api/auth/') && p !== '/api/health') || p.startsWith('/uploads/') || p.startsWith('/models/')
 
 // The whole guard decision for one request (server/middleware/guard.ts) or one
 // WebSocket upgrade (server/utils/ws.ts), in order:
