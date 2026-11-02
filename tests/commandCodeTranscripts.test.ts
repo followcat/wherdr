@@ -237,9 +237,15 @@ it('enumerates remote projects with one find', async () => {
   const file = path.join(root, 'project', 'sess.jsonl')
   const buf = Buffer.from(JSON.stringify({ type: 'session', version: 3, id: 'sess', cwd: '/home/user/acme' }) + '\n')
   let finds = 0
-  const exec = async (script: string) => {
-    if (script.startsWith('find')) finds++
-    return { code: 0, stdout: Buffer.from(`${file}\n`), stderr: '' }
+  let headerBatches = 0
+  const header = JSON.stringify({ type: 'session', version: 3, id: 'sess', cwd: '/home/user/acme' })
+  const exec = async (script: string, args: string[] = []) => {
+    if (script.startsWith('find')) {
+      finds++
+      return { code: 0, stdout: Buffer.from(`${file}\n`), stderr: '' }
+    }
+    headerBatches++
+    return { code: 0, stdout: Buffer.from(args.map(p => `${p}\t${header}`).join('\n') + '\n'), stderr: '' }
   }
   const fs = {
     ...localFs,
@@ -249,6 +255,7 @@ it('enumerates remote projects with one find', async () => {
   const reader = createTranscripts({ home, fs, exec, herdr: async () => ({}) })
   expect(await reader.locate({ id: 'remote', agent: 'cmd', cwd: '/home/user/acme' })).toMatchObject({ session: 'sess' })
   expect(finds).toBe(1)
+  expect(headerBatches).toBe(1)
 })
 
 it('reports a new session even before its first usage', async () => {
@@ -285,14 +292,11 @@ it('keeps a tool result across a pagination boundary', async () => {
   await reader.chat(pane, { since: tail.token, from: tail.start })
   const older = await reader.chat(pane, { before: tail.start })
   expect(older.items!.find(i => i.name === 'shell_command')?.out).toBe('ok')
-  // Forgetting the pane must not let the remembered result resurrect.
+  // Another pane may share the session: forgetting one pane keeps the
+  // file-scoped result available to the survivor.
   reader.forget(pane.id)
   const afterForget = await reader.chat(pane, { before: tail.start })
-  expect(afterForget.items!.find(i => i.name === 'shell_command')?.out).toBeUndefined()
-  // A fresh tail re-read after forget must remember the result again.
-  const reopenedTail = await reader.chat(pane)
-  const reopenedOlder = await reader.chat(pane, { before: reopenedTail.start })
-  expect(reopenedOlder.items!.find(i => i.name === 'shell_command')?.out).toBe('ok')
+  expect(afterForget.items!.find(i => i.name === 'shell_command')?.out).toBe('ok')
 
   // Replacing the file (new inode) with a larger transcript without that
   // result must invalidate the remembered entry too.
