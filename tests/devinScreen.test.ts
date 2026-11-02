@@ -65,6 +65,31 @@ const IDLE = ` done
 SWE-2 Max                          Use /clear to start a fresh conversation
 `
 
+// Entries and echoes wider than the pane wrap onto indented continuation
+// rows — captured shape (2-cell indent, no marker).
+const WRAPPED_QUEUE = `❭ QUEUEPROBE second steer test
+
+⣄⠀ Thinking · 5s (esc twice to interrupt)
+── 2 queued ────────────────────────────────── ↑ edit · ↵ send now ──
+○ WRAPPROBE wrapped-queued-entry-wrapped-queued-entry-wrapped-queued-
+  entry-wrapped-queued-entry- TAIL
+○ UNQUEUE-TEST second msg
+─── Run a 60-Second Sleep Command ───
+❭ Press Enter to send queued messages now
+───
+SWE-2 Max · 1 shell ↓
+`
+
+const WRAPPED_SENT = `❭ WRAPPROBE wrapped-queued-entry-wrapped-queued-entry-wrapped-queued-
+  entry-wrapped-queued-entry- TAIL
+
+⣄⠀ Typing · 5s (esc twice to interrupt)
+─── Run a 60-Second Sleep Command ───
+❭ Guide Devin while it works
+───
+SWE-2 Max · 1 shell ↓
+`
+
 const DIALOG = `❭ Use your exec tool to run: sleep 45. Nothing else.
 
  ⏺ Running command
@@ -112,6 +137,22 @@ describe('Devin screen', () => {
     expect(s.queued).toEqual([])
     expect(s.sendNow).toBeUndefined()
     expect(s.sent).toBeNull()
+  })
+
+  it('a wrapped entry still parses, joined with its continuation', () => {
+    const s = parseDevinScreen(WRAPPED_QUEUE)!
+    expect(s.queued).toEqual([
+      'WRAPPROBE wrapped-queued-entry-wrapped-queued-entry-wrapped-queued- entry-wrapped-queued-entry- TAIL',
+      'UNQUEUE-TEST second msg',
+    ])
+    expect(s.sendNow).toBe(true)
+    expect(s.sent).toBe('QUEUEPROBE second steer test')
+  })
+
+  it('a wrapped sent echo keeps its continuation too', () => {
+    const s = parseDevinScreen(WRAPPED_SENT)!
+    expect(s.queued).toEqual([])
+    expect(s.sent).toBe('WRAPPROBE wrapped-queued-entry-wrapped-queued-entry-wrapped-queued- entry-wrapped-queued-entry- TAIL')
   })
 
   it('permission dialog: no composer field on screen → null', () => {

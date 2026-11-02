@@ -21,6 +21,9 @@ const BOX_RULE = /^─{2,}/
 const QUEUE_HEAD = /^─+\s*\d+\s+queued\b/
 const ENTRY = /^○\s?/
 const SEND_NOW = /↵ send now/
+// A row wider than the pane wraps: its continuation is indented ~2 cells
+// (measured on live screens: "  queued-entry-… TAIL" under a "❭"/"○" row).
+const CONTINUED = /^\s{2,}\S/
 
 export function parseDevinScreen(text: string | null | undefined): ClaudeScreen | null {
   if (!text) return null
@@ -53,7 +56,7 @@ export function parseDevinScreen(text: string | null | undefined): ClaudeScreen 
     let i = boxTop - 1
     for (; i >= 0; i--) {
       const l = lines[i]!
-      if (ENTRY.test(l) || !l.trim()) continue
+      if (ENTRY.test(l) || !l.trim() || CONTINUED.test(l)) continue
       break
     }
     if (i >= 0 && QUEUE_HEAD.test(lines[i]!)) head = i
@@ -63,17 +66,23 @@ export function parseDevinScreen(text: string | null | undefined): ClaudeScreen 
     for (let i = head + 1; i < boxTop; i++) {
       const l = lines[i]!
       if (ENTRY.test(l)) queued.push(l.replace(ENTRY, '').trim())
+      // A wrapped row joins the entry it continues.
+      else if (CONTINUED.test(l) && queued.length) queued[queued.length - 1] += ' ' + l.trim()
     }
   }
   const sendNow = queued.length && head >= 0 && lines.slice(head, boxTop).some(l => SEND_NOW.test(l))
     ? { sendNow: true } : {}
 
   // The last sent message echoed in the scrollback, above the queue section.
+  // Its wrapped rows (indented, no marker) join it too.
   let sent: string | null = null
   const top = head >= 0 ? head : (boxTop >= 0 ? boxTop : field)
   for (let i = top - 1; i >= 0; i--) {
     const m = /^❭\s?(.*)$/.exec(lines[i]!)
-    if (m) { sent = m[1]!.trim(); break }
+    if (!m) continue
+    sent = m[1]!.trim()
+    for (let j = i + 1; j < top && CONTINUED.test(lines[j]!); j++) sent += ' ' + lines[j]!.trim()
+    break
   }
 
   return { shell: null, sent, queued, ...sendNow }

@@ -15,7 +15,7 @@ vi.mock('~/utils/terminalMouse', () => ({ bindTerminalMouse: () => ({ dispose() 
 vi.mock('~/utils/terminalSelection', () => ({ bindTerminalSelection: () => () => {} }))
 vi.mock('~/utils/terminalLinks', () => ({ bindTerminalLinks: () => ({ dispose() {} }) }))
 vi.mock('~/utils/terminalOsc52', () => ({ OSC52_MAX_BYTES: 1000, bindTerminalOsc52: () => () => {} }))
-vi.mock('~/utils/terminalFont', () => ({ TERM_FONT: 'monospace', onFontsLoaded: () => () => {} }))
+vi.mock('~/utils/terminalFont', () => ({ TERM_FONT: 'monospace', onFontsLoaded: () => () => {}, scaledTermFont: (n: number) => n }))
 
 it.each([false, true])('shares wake probes and counts painted frames with touch beta=%s', async enabled => {
   smoothTouchScrolling.value = enabled
