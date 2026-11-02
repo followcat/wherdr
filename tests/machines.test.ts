@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { PANE_RE, isSelfTarget, joinId, machineKey, machineOf, parseMachineList, parseStatusSocket, routeParams, splitId, targetHost } from '../shared/ids'
-import { type ShellExec, createShellFs, LIST_DIRS_SCRIPT, parseDirList, parseStatLine, shq } from '../server/utils/fsx'
+import { type ShellExec, MAX_ARG_BYTES, STAT_SCRIPT, createShellFs, LIST_DIRS_SCRIPT, parseDirList, parseStatLine, shq } from '../server/utils/fsx'
 import { createTranscripts, isMissing } from '../server/utils/transcripts'
 import { FsError } from '../server/utils/fsx'
 
@@ -154,6 +154,22 @@ describe('files of a remote machine (shell)', () => {
     expect(parseStatLine('0 1758860000 12 directory')!.isDir).toBe(true)
     expect(parseStatLine('5 1758860000.800000000 12 regular file')!.mtimeMs).toBe(1758860000800)
     expect(parseStatLine('5 1758860000.123456789 12 regular file')!.mtimeMs).toBeCloseTo(1758860000123.456, 3)
+  })
+
+  it('bounds stat batches by argument bytes', async () => {
+    const calls: string[][] = []
+    const exec = async (script: string, args: string[] = []) => {
+      expect(script).toBe(STAT_SCRIPT)
+      calls.push(args)
+      return { code: 0, stdout: Buffer.from(args.map(() => '10 1758860000 1 regular file').join('\n')), stderr: '' }
+    }
+    const fs = createShellFs(exec, { statTtlMs: 0 })
+    const paths = Array.from({ length: 1500 }, (_, i) => `/home/user/.commandcode/projects/project-${i}/${'s'.repeat(80)}${i}.jsonl`)
+    const stats = await fs.statMany(paths)
+    expect(stats).toHaveLength(1500)
+    expect(stats.every(s => s?.size === 10)).toBe(true)
+    expect(calls.length).toBeGreaterThan(1)
+    for (const args of calls) expect(args.reduce((n, p) => n + Buffer.byteLength(p) + 1, 0)).toBeLessThanOrEqual(MAX_ARG_BYTES)
   })
 
   it('reads a byte range, a file, a folder', async () => {
