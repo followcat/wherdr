@@ -380,7 +380,7 @@ describe('parseDevinDialog (screenChoices, devin)', () => {
     const c = screenChoices(dialog, 'devin')!
     expect(c.options.map(o => o.label)).toEqual(['Allow', 'Bypass mode', 'Deny'])
     expect(c.cursor).toBe(0)
-    expect(c.question).toBe('Allow Devin to run: Exec(sleep)')
+    expect(c.question).toBe('Allow Devin to run: Exec(sleep) — Once')
     expect(keysFor(c, 2)).toEqual(['down', 'down', 'enter'])
   })
 
@@ -394,10 +394,20 @@ describe('parseDevinDialog (screenChoices, devin)', () => {
   it('a live composer below the legend = scrollback replay, not a prompt', () => {
     const replayed = dialog + '\n─── composer ───\n❭ Ask Devin to build features\n───\nSWE-2 Max    Context: 12k / 262k tokens (4%)\n'
     expect(screenChoices(replayed, 'devin')).toBeNull()
+    // The field may wrap: indented continuation rows before the bare rule.
+    const wrapped = dialog + '\n❭ a long draft that wraps\n    its continuation row\n───\nSWE-2 Max\n'
+    expect(screenChoices(wrapped, 'devin')).toBeNull()
+    expect(inputVisible(wrapped, 'devin')).toBe(true)
   })
 
   it('a ❭ echo without the legend or options is not a dialog', () => {
     expect(screenChoices('❭ sent message\n  Bypass mode\n───\n❭ field\n───\n', 'devin')).toBeNull()
     expect(screenChoices('some text', 'devin')).toBeNull()
+  })
+
+  it('a re-scoped dialog gets a different identity', () => {
+    const reScoped = dialog.replace('→ Once', '→ Always')
+    expect(screenChoices(reScoped, 'devin')!.question).toBe('Allow Devin to run: Exec(sleep) — Always')
+    expect(screenChoices(reScoped, 'devin')!.identity).not.toBe(screenChoices(dialog, 'devin')!.identity)
   })
 })

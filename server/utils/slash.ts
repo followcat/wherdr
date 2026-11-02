@@ -370,6 +370,10 @@ export async function slashCommands(opts: { key: string, fs: MachineFs, exec?: S
   } else if (kind === 'codex') {
     builtin = CODEX_BUILTIN
     roots = [{ dir: path.join(home, '.codex/prompts'), kind: 'commands', depth: 0, prefix: 'prompts:' }]
+  } else if (kind === 'devin') {
+    builtin = DEVIN_BUILTIN
+  } else if (kind === 'opencode') {
+    builtin = OPENCODE_BUILTIN
   } else if (kind === 'omp') {
     builtin = OMP_BUILTIN
     const dirs = ompConfigDirs(home, cwd)

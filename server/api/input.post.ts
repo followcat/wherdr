@@ -34,7 +34,10 @@ export default defineApi(async (event, b) => {
       // typing text + Enter there would answer it. Hold the message like a
       // prompt-route send would; a bare key press is refused outright.
       if (now?.agent === 'opencode' && now.status === 'blocked' && !b.native) {
-        if (typeof b.text !== 'string' || !b.text.trim() || isSlashCommand(b.text)) {
+        // Only a complete submission (text + Enter) is worth holding; a raw
+        // draft or stray keys have nothing safe to do.
+        if (typeof b.text !== 'string' || !b.text.trim() || isSlashCommand(b.text)
+          || !Array.isArray(b.keys) || b.keys.length !== 1 || b.keys[0] !== 'enter') {
           throw new HerdrError('stale', 'OpenCode is asking something — answer it in its terminal.')
         }
         const q = addQueued(b.pane_id, b.text, { held: true })
@@ -49,7 +52,8 @@ export default defineApi(async (event, b) => {
       if (now?.agent === 'devin' && !b.native) {
         const r = await herdr('pane.read', { pane_id: b.pane_id, source: 'detection' }, 4000)
         if (!inputVisible(r.read?.text, 'devin')) {
-          if (typeof b.text !== 'string' || !b.text.trim() || isSlashCommand(b.text)) {
+          if (typeof b.text !== 'string' || !b.text.trim() || isSlashCommand(b.text)
+            || !Array.isArray(b.keys) || b.keys.length !== 1 || b.keys[0] !== 'enter') {
             throw new HerdrError('stale', 'Devin is asking something — answer it in its terminal.')
           }
           const q = addQueued(b.pane_id, b.text, { held: true })

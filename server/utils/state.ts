@@ -18,7 +18,7 @@ import { DATA_DIR, HERDR_SESSION, NOTIFY_SETTLE_MS, POLL_MS, log } from './env'
 import { HerdrError, agentPrompt, herdr, herdrOn, sleep } from './herdr'
 import { CHOICE_MS, keepReading, ScreenCache } from './screenCache'
 import { mapScreenPanes, screenRpcGate } from './screenGate'
-import { type AskChecks, completeClaudeAsk, completeOmpAsk, ompActiveTab, parseChoices, parseOmpPrompt } from './choices'
+import { type AskChecks, completeClaudeAsk, completeOmpAsk, ompActiveTab, parseChoices, parseDevinDialog, parseOmpPrompt } from './choices'
 import { isPermissionQuestion, mergeDetail } from './promptDetail'
 import { parseWaitScreen } from './waitScreen'
 import { parseMenu, TOP } from '../../shared/menuScreen'
@@ -170,7 +170,7 @@ async function readChoices(p: Pane, rev: unknown, strict: boolean, watch = false
     // A live quota footer keeps the input usable. Ignore lists in scrollback.
     const usageLimit = p.status === 'unknown' ? null : parseUsageLimit(String(text || ''), p.agent)
     // omp: its select dialog (tool approval) or "Ask" box.
-    let choices = usageLimit ? null : p.agent === 'omp' ? parseOmpPrompt(text) : parseChoices(text, { strict })
+    let choices = usageLimit ? null : p.agent === 'devin' ? parseDevinDialog(text) : p.agent === 'omp' ? parseOmpPrompt(text) : p.agent === 'opencode' ? null : parseChoices(text, { strict })
     if (choices) choices.identity = promptIdentity(text, p.agent)
     const menu = !usageLimit && p.agent !== 'omp' && framed && (strict || !choices || !parseChoices(text, { strict: true })) ? await readMenu(p.id) : null
     if (menu) {

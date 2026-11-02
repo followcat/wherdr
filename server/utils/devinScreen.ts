@@ -103,6 +103,8 @@ export function parseDevinStatus(text: string | null | undefined): OmpStatus | n
   if (i <= 0) return null
   const line = last.slice(0, i).trim()
   const meters = last.slice(i).trim()
-  if (!line || !/\d/.test(meters)) return null
+  // The gauge has a fixed shape — "Context: 16k / 262k tokens (6%)"; prose
+  // mentioning "Context:" must not publish as a status footer.
+  if (!line || !/^Context:\s*[\d.]+[kM]?\s*\/\s*[\d.]+[kM]?\s*tokens?\s*\(\s*\d+%\s*\)/.test(meters)) return null
   return { line: line.slice(0, 300), meters: meters.slice(0, 200) }
 }
