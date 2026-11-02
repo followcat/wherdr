@@ -75,8 +75,8 @@ export async function opencodeFixture(home) {
   }
   save()
   return { state, save, url,
-    event: type => { for (const res of state.streams) res.write(`event: message\ndata: ${JSON.stringify(JSON.stringify({ type, sessionID: state.session }))}\n\n`) },
-    disconnect: () => { for (const res of state.streams) res.end() },
+    event: type => { for (const res of state.streams) if (!res.writableEnded) res.write(`event: message\ndata: ${JSON.stringify(JSON.stringify({ type, sessionID: state.session }))}\n\n`) },
+    disconnect: () => { for (const res of state.streams) res.end(); state.streams.clear() },
     async close() { for (const res of state.streams) res.end(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)) },
   }
 }

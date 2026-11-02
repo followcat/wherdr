@@ -70,10 +70,11 @@ test('OpenCode preserves a reading anchor on append and discards pages after rev
   await expect(chat.getByText('Incremental OpenCode reply', { exact: true })).toBeAttached()
   const y = await chat.locator('[data-hit-key]').evaluateAll((nodes, key) => nodes.find(n => (n as HTMLElement).dataset.hitKey === key)!.getBoundingClientRect().top, anchor.key)
   expect(Math.abs(y - anchor.y)).toBeLessThan(3)
+  const focused = await page.evaluate(() => document.activeElement?.tagName)
   await fakeHerdr('e2e.opencode', { pane_id: pane, rows: [rows[0], opencodeMessage(304, 'assistant', 'Replacement OpenCode branch')], revert: { messageID: rows[1]!.id }, event: 'session.revert.committed' })
   await expect(chat.getByText('Replacement OpenCode branch', { exact: true })).toBeVisible()
   await expect(chat.getByRole('heading', { name: 'OpenCode reading ready' })).toHaveCount(0)
-  expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('TEXTAREA')
+  expect(await page.evaluate(() => document.activeElement?.tagName)).toBe(focused)
 })
 
 test('OpenCode keeps cached reading across failures and recovers from credential rotation and restart', async ({ page }) => {
@@ -87,8 +88,8 @@ test('OpenCode keeps cached reading across failures and recovers from credential
   await fakeHerdr('e2e.opencode', { pane_id: pane, fail: 0, rotate: true, restart: true, rows: [...rows, opencodeMessage(303, 'assistant', 'Recovered OpenCode reply')] })
   await expect(page.getByText('Recovered OpenCode reply', { exact: true })).toBeVisible()
   await expect(heading).toBeVisible()
-  await page.getByRole('button', { name: 'Terminal', exact: true }).click()
+  await page.getByRole('tab', { name: 'Terminal' }).or(page.getByRole('button', { name: 'Terminal', exact: true })).click()
   await expect(page.locator('#term .xterm-rows')).toContainText('fake terminal')
-  await page.getByRole('button', { name: 'Terminal', exact: true }).click()
+  await page.getByRole('tab', { name: 'Conversation' }).or(page.getByRole('button', { name: 'Terminal', exact: true })).click()
   await expect(heading).toBeVisible()
 })
