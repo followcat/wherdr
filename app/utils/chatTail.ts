@@ -1,4 +1,4 @@
-import type { ChatCursor, ChatItem, ChatResponse } from '#shared/types'
+import type { ChatCursor, ChatItem, ChatResponse, CommandCodeToolUpdate } from '#shared/types'
 
 export const hasOlder = (cursor: ChatCursor | null): boolean => typeof cursor === 'string' ? cursor.length > 0 : typeof cursor === 'number' && cursor > 0
 export function olderCursor(r: Pick<ChatResponse, 'olderCursor' | 'start'>, before?: ChatCursor | null): ChatCursor | null {
@@ -22,6 +22,24 @@ export function nextTail(tail: ChatItem[], r: Pick<ChatResponse, 'items' | 'keep
   if (r.keep === undefined) return items
   if (!Number.isInteger(r.keep) || r.keep < 0 || r.keep > tail.length) return null
   return r.keep === tail.length && !items.length ? tail : tail.slice(0, r.keep).concat(items)
+}
+
+// Apply Command Code results that arrived after their tool call was already
+// shown (a page older than the re-read tail): the client keeps those pages,
+// so the matching item is updated in place instead of waiting for a reopen.
+export function applyToolUpdates(items: ChatItem[], updates: CommandCodeToolUpdate[] | undefined): ChatItem[] {
+  if (!updates?.length || !items.length) return items
+  const byId = new Map(updates.map(u => [u.id, u]))
+  return items.map((it) => {
+    const u = it.toolId ? byId.get(it.toolId) : undefined
+    if (!u) return it
+    return {
+      ...it,
+      ...(u.out !== undefined ? { out: u.out } : {}),
+      ...(u.error ? { error: true } : {}),
+      ...(u.images ? { images: u.images, ref: u.ref, imageAt: u.imageAt } : {}),
+    }
+  })
 }
 
 // Whether a reply means starting again from the bottom, dropping the older

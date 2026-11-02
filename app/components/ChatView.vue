@@ -13,7 +13,7 @@ import { isUploadLine, uploadSrc } from '#shared/queuedMatch'
 import { pendingQueue, queuedRowMatches, rememberSent } from '~/utils/pendingQueue'
 import { clampRange, createSelectionSettler, lastLineRect, selectionReplyPos } from '~/utils/selectionReply'
 import { addAnswer, addQuote, answerEnd, answerOf, forgetReply, isQuoted, replyTargets, rowOf, rowRef, rowSettled, tableRank, tableRef, tappedAnswer, toggleOkAll, unansweredCount, withQuestions, type Answer } from '~/utils/questionReply'
-import { CHAT_READ_MS, createTailLoader, hasOlder, needsOlderForHit, olderCursor, nextTail, restartsTail, tailQuery } from '~/utils/chatTail' 
+import { CHAT_READ_MS, applyToolUpdates, createTailLoader, hasOlder, needsOlderForHit, olderCursor, nextTail, restartsTail, tailQuery } from '~/utils/chatTail' 
 import { pickTyping, replyId } from '~/utils/typewriter'
 import { newestThought } from '~/utils/reasoningReveal'
 import { restoredScrollTop, saveReadingPosition } from '~/utils/readingPosition'
@@ -289,7 +289,10 @@ async function loadStep(current: () => boolean): Promise<boolean> {
       }
       c.file = r.file || null
       c.token = r.token || ''
-      c.tail = tail
+      c.tail = applyToolUpdates(tail, r.toolUpdates)
+      // A late result may belong to a tool already shown in an older page,
+      // which this re-read does not replace.
+      if (r.toolUpdates?.length) c.older = applyToolUpdates(c.older, r.toolUpdates)
       c.queue = r.queue || []
       chat.value = c
       noteReplies(c.tail)
