@@ -75,10 +75,11 @@ function legacyOnTouchEnd(e: TouchEvent) {
   legacyLastY = null
   legacyLastX = null
   if (!legacyMoved && !lpEntered && t && Math.hypot(t.clientX - legacyStartX, t.clientY - legacyStartY) < 5) {
-    if (!props.ctl.tapLink(t.clientX, t.clientY)) props.ctl.tapMouse(t.clientX, t.clientY)
+    const linked = props.ctl.tapLink(t.clientX, t.clientY)
+    if (!linked) props.ctl.tapMouse(t.clientX, t.clientY)
     // Same as the smooth path: the cursor's own row asks for the keyboard,
     // other taps close it.
-    if (tapFocuses && props.ctl.tapOnCursor(t.clientX, t.clientY)) props.ctl.focus()
+    if (!linked && tapFocuses && props.ctl.tapOnCursor(t.clientX, t.clientY)) props.ctl.focus()
     else {
       props.ctl.blur()
       ;(document.activeElement as HTMLElement | null)?.blur?.()
@@ -307,11 +308,12 @@ function onTouchEnd(e: TouchEvent) {
   // Flush the drag before any momentum tick so both directions retain order.
   if (raf) { cancelAnimationFrame(raf); raf = 0; flush() }
   if (tapped && !stoppingScroll && !lpEntered && t) {
-    if (!props.ctl.tapLink(t.clientX, t.clientY)) props.ctl.tapMouse(t.clientX, t.clientY)
+    const linked = props.ctl.tapLink(t.clientX, t.clientY)
+    if (!linked) props.ctl.tapMouse(t.clientX, t.clientY)
     // A tap on the cursor's own row is a request to type at the field —
     // focus it. Taps anywhere else act on the pane only: scroll-adjacent
     // taps must not keep reopening the keyboard.
-    if (tapFocuses && props.ctl.tapOnCursor(t.clientX, t.clientY)) props.ctl.focus()
+    if (!linked && tapFocuses && props.ctl.tapOnCursor(t.clientX, t.clientY)) props.ctl.focus()
     else {
       props.ctl.blur()
       ;(document.activeElement as HTMLElement | null)?.blur?.()
