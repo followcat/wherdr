@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Settings, in sections: appearance, conversation, terminal, agents,
-// notifications, security (passkey), computer, about.
+// notifications, security (passkey), shortcuts, about.
 import type { ThemeDef, ThemeGroup } from '~/utils/themes'
 import type { TypingSpeed } from '~/utils/typewriter'
 import { pasteJournalEnabled, pasteJournal, setPasteJournal } from '~/utils/pasteJournal'
@@ -13,25 +13,28 @@ import { DEFAULT_MAX_SESSION_DAYS, MAX_SESSION_DAYS, type MaxSessionDays } from 
 
 const appVersion = pkg.version
 const router = useRouter()
-// Computer section: opens the keyboard shortcuts (ShortcutsSheet).
-const shortcuts = shortcutsOpen
 // Sections: sidebar on a computer (one section shown), iOS Settings-style
 // list on the phone (a tap opens the section, Back returns to the list).
 // The section lives in the URL (`?section=plugins`):
 // on the phone, opening it adds a history entry, which the system Back button
 // pops like the header's; on a computer, it replaces the entry.
 const route = useRoute()
+watch(() => [route.path, route.query.section], () => {
+  if (route.query.section === 'desktop' || route.path === '/settings/desktop') {
+    router.replace({ path: '/settings', query: { ...route.query, section: 'conversation' } })
+  }
+}, { immediate: true })
 const section = computed<SettingsSection | null>(() => (SETTINGS_SECTIONS as readonly string[]).includes(String(route.query.section)) ? route.query.section as SettingsSection : null)
 const sectionIcons: Record<SettingsSection, string> = {
   appearance: 'i-lucide-palette', conversation: 'i-lucide-message-square', terminal: 'i-lucide-square-terminal',
-  agents: 'i-lucide-bot', plugins: 'i-lucide-puzzle', phone: 'i-lucide-smartphone', notifications: 'i-lucide-bell', security: 'i-lucide-lock', desktop: 'i-lucide-monitor', advanced: 'i-lucide-bug', about: 'i-lucide-info',
+  agents: 'i-lucide-bot', plugins: 'i-lucide-puzzle', phone: 'i-lucide-smartphone', notifications: 'i-lucide-bell', security: 'i-lucide-lock', shortcuts: 'i-lucide-keyboard', advanced: 'i-lucide-bug', about: 'i-lucide-info',
 }
 const sectionLabels: Record<SettingsSection, string> = {
   appearance: 'Appearance', conversation: 'Conversation', terminal: 'Terminal', agents: 'Agents',
-  plugins: 'Plugins', phone: 'Phone', notifications: 'Notifications', security: 'Security', desktop: 'Desktop', advanced: 'Advanced', about: 'About',
+  plugins: 'Plugins', phone: 'Phone', notifications: 'Notifications', security: 'Security', shortcuts: 'Shortcuts', advanced: 'Advanced', about: 'About',
 }
 const sections = computed(() => SETTINGS_SECTIONS
-  .filter(id => id !== 'desktop' || desk.value)
+  .filter(id => id !== 'shortcuts' || (desk.value && !coarse.value))
   .map(id => ({ id, label: t(sectionLabels[id]), icon: sectionIcons[id] })))
 const activeSection = computed<SettingsSection | null>(() => {
   if (section.value && sections.value.some(s => s.id === section.value)) return section.value
@@ -61,18 +64,12 @@ onMounted(async () => {
   await router.replace('/')
   await router.push(here)
 })
-const lang = ref<Lang>(language)
-watch(lang, (l) => {
-  if (l === language) return
-  setLanguage(l)
-  location.reload()
-})
 // Global refs bound in the template: local (assignable) aliases.
 const shellsOn = showShells
 const countersOn = showCounters
 const quotasOn = showQuotas
 const homeGroup = homeGrouping
-const homeGroupItems = computed(() => [{ value: 'machine', label: t('Machine') }, { value: 'state', label: t('State') }])
+const homeGroupItems = computed(() => [{ value: 'machine', label: t('Machine') }, { value: 'state', label: t('State') }, { value: 'flat', label: t('Agents') }])
 const compactOn = compactList
 const autoReorderOn = autoReorderReady
 const encryptedOn = encryptedText
@@ -85,6 +82,51 @@ const quoteItems = computed(() => [
 ])
 // How questions and points offer to be quoted (utils/questionReply.ts).
 const replyStyleChoice = replyStyle
+
+// Voice input: the on-device speech model (utils/asrModel.ts) lives in Cache
+// Storage; the composer's microphone stays dim until `asrInstalled` is true.
+// `asrModelId` picks which of ASR_MODELS the mic loads.
+const asrDlFile = ref('')
+const asrDlGot = ref(0)
+const asrDlTotal = ref(0)
+const asrDlDone = ref(0)
+const asrDlCount = ref(0)
+const asrError = ref('')
+const asrInstallingId = ref('')
+const asrRemovingId = ref('')
+function fmtMb(n: number) { return `${Math.round(n / 1048576)} MB` }
+const ASR_MODEL_INFO: Record<string, { label: string, en: string, fr: string }> = {
+  sensevoice: { label: 'SenseVoice-small', en: 'Small and fast (~230 MB): zh · en · ja · ko · yue auto-detected, with punctuation. CPU.', fr: 'Petit et rapide (~230 Mo) : zh · en · ja · ko · yue détectés tout seuls, avec ponctuation. CPU.' },
+  qwen3q4f16: { label: 'Qwen3-ASR 0.6B q4f16', en: 'LLM-based (~850 MB): 30 languages and 22 Chinese dialects, with punctuation. GPU only — WebGPU int4/fp16.', fr: 'Basé LLM (~850 Mo) : 30 langues et 22 dialectes chinois, avec ponctuation. GPU seulement — WebGPU int4/fp16.' },
+  funasr: { label: 'FunASR-Nano', en: 'LLM-based (~970 MB): zh · en · ja · ko and Chinese dialects, with punctuation.', fr: 'Basé LLM (~970 Mo) : zh · en · ja · ko et dialectes chinois, avec ponctuation.' },
+  firered2: { label: 'FireRedASR2 CTC', en: 'CTC (~740 MB): zh · en and 20 Chinese dialects. No punctuation.', fr: 'CTC (~740 Mo) : zh · en et 20 dialectes chinois. Sans ponctuation.' },
+  omnilingual: { label: 'Omnilingual 300M', en: 'CTC (~350 MB): 1600+ languages — the widest coverage. No punctuation.', fr: 'CTC (~350 Mo) : 1600+ langues — la couverture la plus large. Sans ponctuation.' },
+  dolphin: { label: 'Dolphin-base', en: 'CTC (~100 MB): the smallest — 40 languages and Chinese dialects. No punctuation.', fr: 'CTC (~100 Mo) : le plus petit — 40 langues et dialectes chinois. Sans ponctuation.' },
+}
+const asrModelItems = computed(() => ASR_MODEL_IDS.map(id => ({
+  label: ASR_MODEL_INFO[id]?.label || id,
+  description: ASR_MODEL_INFO[id] ? tl(ASR_MODEL_INFO[id]!.en, ASR_MODEL_INFO[id]!.fr) : '',
+  size: fmtMb(ASR_MODELS[id]!.bytes),
+  context: Boolean(ASR_MODELS[id]!.context),
+  value: id,
+})))
+const asrInstalled = computed(() => Boolean(asrInstalledBy.value[asrModelId.value]))
+const asr = {
+  installingId: asrInstallingId, removingId: asrRemovingId, error: asrError,
+  dlFile: asrDlFile, dlGot: asrDlGot, dlTotal: asrDlTotal, dlDone: asrDlDone, dlCount: asrDlCount,
+  async install(id: string) {
+    asrInstallingId.value = id; asrError.value = ''
+    try {
+      await installAsr((p) => { asrDlFile.value = p.file; asrDlGot.value = p.got; asrDlTotal.value = p.total; asrDlDone.value = p.done; asrDlCount.value = p.count }, undefined, id)
+    } catch (err) { asrError.value = (err as Error).message }
+    finally { asrInstallingId.value = '' }
+  },
+  async remove(id: string) {
+    asrRemovingId.value = id
+    try { await removeAsr(undefined, id) } finally { asrRemovingId.value = '' }
+  },
+}
+onMounted(() => { refreshAsrInstalled() })
 const replyStyleItems = computed(() => [
   { label: tl('Icon', 'Icône'), description: tl('A small ↳ after each question, and a grey one after each point (on hover on a computer). Default.', 'Un petit ↳ après chaque question, et un gris après chaque point (au survol sur ordinateur). Par défaut.'), value: 'icon' },
   { label: tl('Tap the text', 'Toucher le texte'), description: tl('No button: a question is underlined, tap it. A point: click it on a computer; on a phone, tap it, then “↳ Discuss”.', 'Aucun bouton : une question est soulignée, touche-la. Un point : clique-le sur ordinateur ; sur téléphone, touche-le, puis « ↳ Discuter ».'), value: 'text' },
@@ -99,13 +141,19 @@ const typingItems = computed(() => [
   { label: t('Slow'), description: t('Three times as slow · 1.5 to 6 s.'), value: 'slow' },
 ])
 const renderer = terminalRenderer
+const smoothScrollingOn = smoothTouchScrolling
 const width = contentWidth
 const widthItems = computed(() => [
   { label: t('Normal'), description: t('760 px column · terminal fitted to width.'), value: 'normal' },
   { label: t('Wide'), description: t('Up to 1100 px · terminal fitted to width.'), value: 'wide' },
   { label: t('Full width'), description: t('The whole width, terminal included.'), value: 'full' },
 ])
-// What an agent pane opens on (computer): the Conversation, or the Terminal.
+const scale = uiScale
+const scaleItems = computed(() => [
+  { label: tl('Standard', 'Standard'), description: tl('The usual density.', 'La densité habituelle.'), value: 'md' },
+  { label: tl('Large', 'Grande'), description: tl('Interface and text enlarged by about 15%, terminal included; the terminal text size stays the base.', 'Interface et textes agrandis d’environ 15 %, terminal compris ; sa taille de texte sert de base.'), value: 'lg' },
+])
+// What an agent pane opens on: the Conversation, or the Terminal.
 const defaultPane = defaultViewMode
 const defaultPaneItems = [
   { label: t('Conversation'), description: t('Read the transcript first.'), value: 'chat' },
@@ -128,7 +176,6 @@ const backdropItems = computed(() => [
   { label: 'wherdr grid', description: t('Dotted grid with light packets, like wherdr.dev.'), value: 'wherdr' },
   { label: 'herdr grid', description: t('Flat line grid, like herdr.dev.'), value: 'herdr' },
 ])
-const langItems = [{ label: 'English', value: 'en' }, { label: 'Français', value: 'fr' }]
 
 // Inventory of the reachable machines; the preferences follow the user across devices.
 const agentMachines = computed(() => {
@@ -258,7 +305,7 @@ const deadlineText = computed(() => {
   const st = sec.value
   if (!st?.deadline) return ''
   const when = new Date(st.deadline + Date.now() - (st.now ?? Date.now()))
-    .toLocaleString(language === 'fr' ? 'fr-FR' : 'en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+    .toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
   return tl(`This device asks for the passkey again at the first opening after ${when}.`, `Cet appareil redemandera la clé d’accès à la première ouverture après le ${when}.`)
 })
 
@@ -335,12 +382,6 @@ onMounted(() => {
           </div>
 
           <div class="settings-group">
-            <h3>{{ t('Language') }}</h3>
-            <URadioGroup v-model="lang" :items="langItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
-          </div>
-          <p class="muted settings-hint">{{ t('The interface language is saved on this device.') }}</p>
-
-          <div class="settings-group">
             <h3>{{ t('Home screen') }}</h3>
             <h4 id="home-group-label">{{ t('Group by') }}</h4>
             <URadioGroup v-model="homeGroup" :items="homeGroupItems" aria-labelledby="home-group-label" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
@@ -391,10 +432,20 @@ onMounted(() => {
               <URadioGroup v-model="width" :items="widthItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
               <p class="muted settings-hint">{{ t('Conversation, terminal, settings and other content. Saved on this device.') }}</p>
             </div>
+            <div class="settings-group">
+              <h3>{{ tl('Interface size', 'Taille de l’interface') }}</h3>
+              <URadioGroup v-model="scale" :items="scaleItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
+              <p class="muted settings-hint">{{ tl('The agent side and its text, enlarged. Saved on this device.', 'Le côté agent et ses textes, agrandis. Enregistré sur cet appareil.') }}</p>
+            </div>
           </template>
         </div>
 
         <div v-show="activeSection === 'conversation'" class="settings-section">
+          <div class="settings-group">
+            <h3>{{ t('Default pane view') }}</h3>
+            <URadioGroup v-model="defaultPane" :items="defaultPaneItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
+            <p class="muted settings-hint">{{ t('What an agent pane opens on. A pane you switched to Terminal stays there. Follows you on every device.') }}</p>
+          </div>
           <div class="settings-group settings-typing">
             <h3>{{ t('Typewriter') }}</h3>
             <URadioGroup v-model="typewriter" :items="typingItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" :disabled="reducedMotion" />
@@ -417,6 +468,27 @@ onMounted(() => {
             <QuoteTokensPreview v-if="activeSection === 'conversation'" :mode="quoteChoice" />
             <URadioGroup v-model="quoteChoice" :items="quoteItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio quote-mode-radio" />
             <p class="muted settings-hint">{{ tl('Saved on this device.', 'Enregistré sur cet appareil.') }}</p>
+          </div>
+          <div class="settings-group">
+            <h3>{{ tl('Voice input', 'Saisie vocale') }}</h3>
+            <p class="muted settings-lead">{{ tl('Dictate into the message field on this device: the speech model downloads once into the browser and stays here — recognition runs on the phone, no server or account. The microphone button in the field turns on once the model is downloaded.', 'Dicte dans le champ de message sur cet appareil : le modèle vocal se télécharge une fois dans le navigateur et y reste — la reconnaissance tourne sur le téléphone, sans serveur ni compte. Le bouton micro du champ s’active une fois le modèle téléchargé.') }}</p>
+            <div class="asr-model-list">
+              <div v-for="m in asrModelItems" :key="m.value" class="asr-model-row" :class="{ 'asr-model-on': asrModelId === m.value }">
+                <button type="button" class="asr-model-pick" @click="selectAsrModel(m.value)">
+                  <UIcon :name="asrModelId === m.value ? 'i-lucide-circle-dot' : 'i-lucide-circle'" class="asr-model-dot" />
+                  <span class="asr-model-text"><b>{{ m.label }} <UBadge v-if="m.context" color="info" variant="subtle" size="sm" :title="tl('Biases recognition toward this pane\'s terms — agent, machine, cwd, draft — picked up at each mic press', 'Biaise la reconnaissance vers les termes de ce panneau — agent, machine, dossier, brouillon — relevés à chaque appui micro')">{{ tl('context', 'contexte') }}</UBadge></b><small>{{ m.description }}</small></span>
+                </button>
+                <UBadge v-if="asrInstalledBy[m.value]" color="success" variant="soft"><UIcon name="i-lucide-check" /> {{ tl('Installed', 'Installé') }}</UBadge>
+                <UButton v-if="!asrInstalledBy[m.value]" color="primary" variant="soft" size="sm" icon="i-lucide-download" :loading="asr.installingId.value === m.value" :disabled="Boolean(asr.installingId.value) || Boolean(asr.removingId.value)" @click="asr.install(m.value)">{{ m.size }}</UButton>
+                <UButton v-else color="neutral" variant="ghost" size="sm" icon="i-lucide-trash-2" :loading="asr.removingId.value === m.value" :disabled="Boolean(asr.installingId.value)" @click="asr.remove(m.value)">{{ tl('Remove', 'Supprimer') }}</UButton>
+              </div>
+            </div>
+            <div v-if="asr.installingId.value" class="asr-progress">
+              <progress :value="asrDlDone" :max="asrDlCount || 1" />
+              <p class="muted settings-hint">{{ asrDlFile }}<template v-if="asrDlGot"> · {{ fmtMb(asrDlGot) }}<template v-if="asrDlTotal"> / {{ fmtMb(asrDlTotal) }}</template></template></p>
+            </div>
+            <p v-if="asrError" class="settings-hint asr-error">{{ asrError }}</p>
+            <p class="muted settings-hint">{{ tl('Tap a name to pick the mic\'s model; install or remove each independently. Kept on this device across app updates.', 'Touche un nom pour choisir le modèle du micro ; installe ou supprime chacun indépendamment. Conservés sur cet appareil entre les mises à jour de l’app.') }}</p>
           </div>
         </div>
 
@@ -446,12 +518,19 @@ onMounted(() => {
               <USwitch v-model="agentClipboardOn" color="success" size="xl" />
             </label>
           </div>
+          <div class="settings-group">
+            <label class="settings-toggle">
+              <span><b>{{ t('Smooth touch scrolling (beta)') }}</b><small>{{ t('Experimental finger tracking and inertia. Saved on this device.') }}</small></span>
+              <USwitch v-model="smoothScrollingOn" color="success" size="xl" />
+            </label>
+          </div>
           <div class="settings-group settings-renderer">
             <h3>{{ t('Terminal rendering') }}</h3>
             <URadioGroup v-model="renderer" :items="rendererItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
             <p class="muted settings-hint">{{ t('Rendering is saved on this device.') }}</p>
             <p class="settings-renderer-status" role="status">{{ rendererStatus }}</p>
           </div>
+          <PhoneKeyOrderSettings />
         </div>
 
         <div v-show="activeSection === 'agents'" class="settings-section">
@@ -491,6 +570,7 @@ onMounted(() => {
           <div class="settings-group">
             <h3>{{ tl('This device’s notifications', 'Notifications de cet appareil') }}</h3>
             <PushCard detailed />
+            <PushDevices v-if="activeSection === 'notifications'" />
           </div>
         </div>
 
@@ -521,20 +601,8 @@ onMounted(() => {
           </div>
         </div>
 
-        <!-- Computer layout only (same threshold as the app: 900 px). -->
-        <div v-if="desk" v-show="activeSection === 'desktop'" class="settings-section">
-          <div class="settings-group">
-            <h3>{{ t('Default pane view') }}</h3>
-            <URadioGroup v-model="defaultPane" :items="defaultPaneItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
-            <p class="muted settings-hint">{{ t('What an agent pane opens on. A pane you switched to Terminal stays there. Follows you on every device.') }}</p>
-          </div>
-          <div class="settings-group">
-            <h3>{{ tl('Keyboard shortcuts', 'Raccourcis clavier') }}</h3>
-            <button type="button" class="settings-action solo" @click="shortcuts = true">
-              <UIcon name="i-lucide-keyboard" />{{ tl('Show keyboard shortcuts', 'Voir les raccourcis clavier') }}
-              <span class="settings-action-keys"><UKbd v-for="k in shortcutKbds('help')" :key="k" :value="k" /></span>
-            </button>
-          </div>
+        <div v-if="desk && !coarse" v-show="activeSection === 'shortcuts'" class="settings-section">
+          <ShortcutsReference />
         </div>
 
         <div v-show="activeSection === 'advanced'" class="settings-section">

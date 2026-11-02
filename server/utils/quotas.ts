@@ -99,16 +99,31 @@ async function ls(fs: MachineFs, d: string) {
 export type ClaudeReading = Quota & { account: string | null }
 export interface ClaudeMachineReading { q: ClaudeReading | null, setup: ClaudeSetupState }
 
-// wherdr's status line set up on a machine? `ok`: complete reading
-// (quotas + fingerprint), or an account without quotas (API key: nothing to show).
-// `pending`: the up-to-date status line (with fingerprint) is wired in
-// settings.json, the quotas will come with the next exchange. `outdated`: a
-// status file is there (the quotas show) but written by an older status line:
-// an update is offered, never "not set up". `missing`: nothing at all.
+// Snapshot of the current status line (identity and time bound to it) taken
+// without rate limits: the status line keeps one only after an API response
+// that carried none, so Claude Code runs on API billing (API key, Console
+// credits): usage without quota. Gateway spend limits come inside rate_limits.
+export function claudeApiBilling(status: Json | null): boolean {
+  return Boolean(status && typeof status === 'object' && status._wherdr?.version === 1 && !('rate_limits' in status))
+}
+
+// Marker of a status line that keeps API-billing snapshots.
+const API_AWARE = 'total_api_duration_ms'
+
+// wherdr's status line set up on a machine? `api`: a current snapshot without
+// rate limits (API billing, see claudeApiBilling). `ok`: complete reading
+// (quotas + fingerprint), or an older snapshot without quotas. `pending`: the
+// up-to-date status line (with fingerprint) is wired in settings.json, the
+// quotas will come with the next exchange. `outdated`: a status file is there
+// (the quotas show) but written by an older status line, or an older status
+// line that never wrote one (it would miss API billing): an update is offered,
+// never "not set up". `missing`: nothing at all.
 export function claudeSetupState(f: { status: Json | null, account: boolean, statusline: string | null, settings: string | null }): ClaudeSetupState {
+  if (claudeApiBilling(f.status)) return 'api'
   if (f.status && (!f.status.rate_limits || f.account)) return 'ok'
-  const installed = Boolean(f.statusline?.includes('claude-account') && f.settings?.includes('wherdr-statusline.sh'))
-  if (installed) return f.status ? 'ok' : 'pending' // up to date, but no readable fingerprint: nothing more to do
+  const wired = Boolean(f.statusline?.includes('claude-account') && f.settings?.includes('wherdr-statusline.sh'))
+  if (wired && f.status) return 'ok' // up to date, but no readable fingerprint: nothing more to do
+  if (wired) return f.statusline!.includes(API_AWARE) ? 'pending' : 'outdated'
   return f.status ? 'outdated' : 'missing'
 }
 
@@ -217,12 +232,14 @@ export function codexAccount(head: string): string | null {
 }
 
 // Codex quota of a machine: that of the account of the most recent conversation
-// (readings without a fingerprint included: old Codex).
-export function machineCodexQuota(readings: CodexReading[]): CodexAccountReading | null {
+// Unknown identities cannot inherit an older account or combine conversations.
+type CodexSessionReading = Omit<CodexReading, 'q'> & { q: Quota | null }
+export function machineCodexQuota(readings: CodexSessionReading[]): CodexAccountReading | null {
   if (!readings.length) return null
   const newest = readings.reduce((a, b) => (b.stamp > a.stamp ? b : a))
-  const account = newest.account ?? readings.find(r => r.account)?.account ?? null
-  const q = latestCodexQuota(readings.filter(r => !r.account || !account || r.account === account))
+  const account = newest.account ?? null
+  const selected = readings.filter(r => account ? r.account === account : r === newest)
+  const q = latestCodexQuota(selected.filter((r): r is CodexReading => r.q !== null))
   return q ? { ...q, account } : null
 }
 
@@ -252,19 +269,29 @@ export async function readCodex(fs: MachineFs, home: string): Promise<CodexAccou
     .sort((a, b) => b.s!.mtimeMs - a.s!.mtimeMs).slice(0, 6)
   // End of each file: 64 KiB is usually enough (one token_count per
   // reply), 512 KiB at most if nothing is there.
-  const readings = await Promise.all(recent.map(async ({ f, s }) => {
+  const readings = await Promise.all(recent.map(async ({ f, s }): Promise<CodexSessionReading> => {
+    const head = await readHead(fs, f, s!.size).catch(() => '')
+    const account = codexAccount(head)
+    let started = 0
+    try {
+      const meta = JSON.parse(head.split('\n', 1)[0] || '')
+      if (meta.type === 'session_meta') started = Date.parse(meta.timestamp) || 0
+    } catch { /* unknown session format */ }
+    // Even without limits, a new session can identify an account switch.
+    // File time is only a fallback when there is no timestamp in the session.
+    const empty = { q: null, account, stamp: started || s!.mtimeMs }
     for (const max of [64 * 1024, 512 * 1024]) {
       const len = Math.min(s!.size, max)
       try {
         const hit = lastCodexLimits((await fs.read(f, s!.size - len, len)).toString('utf8'))
         const q = hit && codexQuota(hit.rl, hit.at || s!.mtimeMs)
-        if (q) return { q, stamp: hit!.at, account: codexAccount(await readHead(fs, f, s!.size).catch(() => '')) }
-      } catch { return null /* unreadable file */ }
+        if (q) return { q, stamp: Math.max(started, hit!.at || s!.mtimeMs), account }
+      } catch { return empty /* unreadable file: never reuse an older identity */ }
       if (len === s!.size) break
     }
-    return null
+    return empty
   }))
-  return machineCodexQuota(readings.filter(Boolean) as CodexReading[])
+  return machineCodexQuota(readings)
 }
 
 // Codex gauge of a machine checked against the latest weekly window known
@@ -273,7 +300,7 @@ export async function readCodex(fs: MachineFs, home: string): Promise<CodexAccou
 // earlier one is ignored. The 5-hour window and the reading's age stay those
 // of the conversations.
 export function applyCodexKnown<Q extends Quota & { account?: string | null }>(q: Q, known: KnownWeek | null | undefined, now: number): Q {
-  if (!known || !q.week) return q
+  if (!known || !q.week || !q.account || q.account !== known.account) return q
   const w = codexWeekWindow({ week: { used: q.week.used, resetsAt: q.week.resetsAt, at: q.at, account: q.account ?? null }, known, now })
   if (!w) return q
   const used = 100 - w.left
@@ -290,9 +317,9 @@ export function setCodexKnownWeek(f: KnownWeekSource | null) { knownWeek = f }
 
 const fresher = (a: Quota | null, b: Quota | null) => (!a ? b : !b ? a : b.at > a.at ? b : a)
 
-// Codex: only fingerprints separate accounts (without a fingerprint, same
-// account: previous display, the most recent reading wins).
-export const sameCodexAccount = (a: ClaudeReading, b: ClaudeReading) => !a.account || !b.account || a.account === b.account
+// Codex: only matching known fingerprints establish a shared account.
+// Unknown identities remain scoped to their own machine.
+export const sameCodexAccount = (a: ClaudeReading, b: ClaudeReading) => Boolean(a.account && b.account && a.account === b.account)
 
 // Assembles the readings of the online machines (in machine order).
 export function mergeQuotas(readings: { key: string, label: string, claude: ClaudeReading | null, codex: (Quota & { account?: string | null }) | null, setup?: ClaudeSetup | null }[]): Quotas {
@@ -306,8 +333,11 @@ export function mergeQuotas(readings: { key: string, label: string, claude: Clau
   const accounts = groupAccounts(readings.flatMap(r => (r.claude ? [{ key: r.key, label: r.label, q: r.claude }] : [])))
   let claude: Quota | null = null
   for (const { machines: _, ...a } of accounts) claude = fresher(claude, a)
-  const out: Quotas = accounts.length > 1 ? { claude, codex, claudeAccounts: accounts } : { claude, codex }
-  if (codexAccounts.length > 1) out.codexAccounts = codexAccounts
+  // A machine on API billing has no quota block: the subscription account(s)
+  // then go under their own machines, so they are listed with them.
+  const api = readings.some(r => r.setup?.state === 'api')
+  const out: Quotas = accounts.length > 1 || (api && accounts.length) ? { claude, codex, claudeAccounts: accounts } : { claude, codex }
+  if (codexAccounts.length > 1 || (codexAccounts.length > 0 && readings.some(r => !r.codex?.account))) out.codexAccounts = codexAccounts
   const setup = readings.flatMap(r => (r.setup ? [r.setup] : []))
   if (setup.length) out.claudeSetup = setup
   return out
@@ -345,22 +375,16 @@ async function readMachineClaude(m: Machine): Promise<ClaudeMachineReading | nul
   return null
 }
 
-// Last successful Codex reading of each machine. Claude cannot reuse an old
-// identity after a failed read: the machine may have changed accounts meanwhile.
-const lastRead = new Map<string, { codex?: CodexAccountReading | null }>()
-
 export async function readQuotas(force = false): Promise<Quotas> {
   if (!force && cache && Date.now() - cache.at < TTL) return cache.q
   const version = ++readVersion
   const online = allMachines().filter(m => m.home && !m.info().baseKey && (m.local || m.status === 'online'))
   const dismissed = readDismissed()
   const readings = await Promise.all(online.map(async (m) => {
-    const last = lastRead.get(m.key) || {}
     const [claude, rolled] = await Promise.all([
       readMachineClaude(m),
-      readCodex(m.fs, m.home).then((r) => { last.codex = r; return r }, () => last.codex ?? null),
+      readCodex(m.fs, m.home).catch(() => null),
     ])
-    lastRead.set(m.key, last)
     const week = rolled?.week ? { used: rolled.week.used, resetsAt: rolled.week.resetsAt, at: rolled.at, account: rolled.account } : null
     const known = knownWeek ? await knownWeek(m.key, week).catch(() => null) : null
     const codex = rolled && applyCodexKnown(rolled, known, Date.now())

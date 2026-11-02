@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   secrets:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       ready: ${{ steps.check.outputs.ready }}
     steps:
@@ -47,12 +47,12 @@ jobs:
   demo:
     needs: secrets
     if: needs.secrets.outputs.ready == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -62,7 +62,7 @@ jobs:
       - name: Build the demo
         run: npm run build:demo
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: demo
           path: .output-demo/public/
@@ -71,7 +71,7 @@ jobs:
   deploy:
     needs: [secrets, demo]
     if: needs.secrets.outputs.ready == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -81,14 +81,14 @@ jobs:
       # tsconfig.json (extending an ungenerated .nuxt) breaks the site build.
       # Whole history, without the file contents it does not check out:
       # sitemap.xml dates each page by the last commit of its sources.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           sparse-checkout: /website/
           sparse-checkout-cone-mode: false
           fetch-depth: 0
           filter: blob:none
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -99,7 +99,7 @@ jobs:
       - name: Generate
         run: npm run generate
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: demo
           path: website/.output/public/demo

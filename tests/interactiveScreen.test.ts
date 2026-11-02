@@ -30,9 +30,15 @@ describe('terminal fallback after native recognition', () => {
     expect(classifyScreen({ text, agent: 'codex', choices: parseChoices(text), screen: {} })).toBe('terminal')
     expect(confirmedInput(text)).toBe(false)
   })
-  it.each(['codex-idle.txt', 'claude-idle.txt', 'omp-fresh-nerd.txt', 'omp-idle-footer.txt'])(
+  it.each(['codex-idle.txt', 'claude-idle.txt', 'omp-fresh-nerd.txt', 'omp-idle-footer.txt', 'devin-idle.txt'])(
     'confirms the real message field in %s', name => expect(confirmedInput(fx(name))).toBe(true),
   )
+  it('classifies an idle Devin screen as its input field, not the terminal fallback', () => {
+    const text = fx('devin-idle.txt')
+    expect(classifyScreen({ text, agent: 'devin' })).toBe('input')
+    // An echoed user line shares the ❭ prefix; only the boxed prompt counts.
+    expect(text.indexOf('❭ show me the docs')).toBeGreaterThanOrEqual(0)
+  })
   it.each(['claude', 'codex', 'omp'])('keeps long %s drafts and wrapped footers at the message field', agent => {
     const draft = Array.from({ length: 30 }, (_, i) => `  draft line ${i}`).join('\n')
     const text = agent === 'claude' ? `────────────────\n❯ draft\n${draft}\n────────────────\n  auto mode`
@@ -41,8 +47,13 @@ describe('terminal fallback after native recognition', () => {
     expect(confirmedInput(text)).toBe(true)
     expect(classifyScreen({ text, agent })).toBe('input')
   })
-  it.each(['pi', 'gemini', 'opencode', 'kimi', null])('does not infer a menu from an unsupported agent %s', agent => {
+  it.each(['pi', 'gemini', 'kimi', null])('does not infer a menu from an unsupported agent %s', agent => {
     expect(classifyScreen({ text: 'A normal reply without a known input marker', agent })).toBe('unknown')
+  })
+  it('keeps OpenCode idle reading passive and offers its terminal for a reported block', () => {
+    const text = 'A normal reply without a known input marker'
+    expect(classifyScreen({ text, agent: 'opencode', status: 'idle' })).toBe('unknown')
+    expect(classifyScreen({ text, agent: 'opencode', status: 'blocked' })).toBe('terminal')
   })
   it('never reads normal working output as an interactive fallback', () => {
     expect(classifyScreen({ text: 'Thinking…', agent: 'codex', status: 'working' })).toBe('working')

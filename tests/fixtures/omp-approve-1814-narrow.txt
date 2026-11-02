@@ -1,0 +1,30 @@
+
+ Done.
+
+
+ print sixty numbers
+
+
+Tool call denied by user: eval
+
+ Done.
+
+
+ write hello to out.txt
+
+
+╭──────────────────────────────────────────╮
+│ $ echo hello > out.txt                   │
+╰─── elapsed 6.0s ─────────────────────────╯
+
+  ⎋ Working…
+╭─ Allow tool: bash ───────────────────────╮
+│ Command: echo hello > out.txt            │
+│   Approve                                │
+│   Approve bash for this session          │
+│ ❯ Deny                                   │
+├──────────────────────────────────────────┤
+│ ↑/↓ choose · ⏎ select · Ctrl+⏎/Ctrl+Q a… │
+╰──────────────────────────────────────────╯
+ ⠏ 6s > ⬢ Fake One > 🗑 …/demo ▶─6%───╎┃128K─
+╰─

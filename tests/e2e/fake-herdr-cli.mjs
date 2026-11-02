@@ -107,6 +107,13 @@ readline.createInterface({ input: process.stdin }).on('line', async (line) => {
   } else if (m.type === 'terminal.release') {
     out({ type: 'terminal.closed', reason: 'detached' })
     leave(0)
+  } else if (m.type === 'terminal.scroll') {
+    const state = await call('e2e.touch_scroll', { pane_id: pane, event: m }).catch(() => null)
+    const emitted = !!(state?.text && state.frame !== false)
+    if (emitted) { currentText = state.text; frame(currentSize, currentText) }
+    // Report the act back: specs can distinguish "fixture decided no frame"
+    // from "the consumer actually skipped emitting".
+    call('e2e.touch_scroll', { pane_id: pane, frame_sent: emitted }).catch(() => {})
   } else if (m.type === 'terminal.mouse') {
     await call('e2e.terminal_mouse', { pane_id: pane, event: m }).catch(() => {})
   } else if (m.type === 'terminal.input') {

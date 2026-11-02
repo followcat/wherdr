@@ -3,7 +3,7 @@
 // fake Claude imitating the observed one (2.1.283, hwtest session).
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { clearKeys, findQueued, inputBox, msgText, unqueueClaude } from '../server/utils/unqueue'
+import { clearKeys, findQueued, inputBox, msgText, unqueueClaude, unqueueDevin } from '../server/utils/unqueue'
 import { canCancelQueued, restoreDraft } from '../app/utils/queuedCancel'
 import type { ChatItem, ClaudeQueueEntry, Pane } from '../shared/types'
 
@@ -191,6 +191,101 @@ describe('annuler un message en file de Claude', () => {
     const { st, deps } = fakeClaude(['A', 'B'], { stuck: true })
     await expect(unqueueClaude(deps, 'B')).rejects.toMatchObject({ code: 'clear_failed' })
     expect(st.sent).toEqual([])
+  })
+})
+
+// Fake Devin (v3000.x): "○" rows = its own queue, the "❭" line its boxed
+// field. ↑ pulls the NEWEST queue entry into the field; nothing puts a draft
+// back into the queue (Ctrl+Enter steers or strands it — see submitKeys.ts).
+function fakeDevin(queue: string[], opts: { field?: string, take?: boolean, intruder?: boolean } = {}) {
+  const st = { queue: [...queue], field: opts.field ?? '', keys: [] as string[] }
+  const draw = () => [
+    '❭ an earlier message',
+    ' ⏺ /tmp',
+    ...(st.queue.length ? [`── ${st.queue.length} queued ── ↑ edit · ↵ send now ──`, ...st.queue.map(t => `○ ${t}`)] : []),
+    '─── Run a 60-Second Sleep Command ───',
+    `❭ ${st.field || 'Press Enter to send queued messages now'}`,
+    '───',
+    'SWE-2 Max   Context: 16k / 262k tokens (6%)',
+  ].join('\n')
+  const deps = {
+    screen: async () => draw(),
+    keys: async (keys: string[]) => {
+      st.keys.push(...keys)
+      for (const k of keys) {
+        if (k === 'up') {
+          // `take`: the turn took the queue first — ↑ recalls history instead.
+          if (opts.take) { st.queue = []; st.field = 'previous prompt (history)' }
+          // `intruder`: a message queued from elsewhere just before our ↑.
+          else if (opts.intruder) { opts.intruder = false; st.queue.push('intruder just queued'); st.field = st.queue.pop()! }
+          else if (st.queue.length) st.field = st.queue.pop()!
+          else st.field = 'previous prompt (history)'
+        } else if (k === 'ctrl+u') st.field = ''
+        else if (k === 'backspace') st.field = st.field.slice(0, -1)
+      }
+    },
+    sleep: async () => {},
+  }
+  return { st, deps }
+}
+
+describe('cancel a message in Devin’s own queue', () => {
+  it('the newest of one: ↑ pulls it into the field, cleared, gone from the queue', async () => {
+    const { st, deps } = fakeDevin(['mine second'])
+    const r = await unqueueDevin(deps, 'mine second')
+    expect(r.requeued).toEqual([])
+    expect(st.queue).toEqual([])
+    expect(st.field).toBe('')
+  })
+
+  it('the newest of several: only it is popped, the rest stay queued', async () => {
+    const { st, deps } = fakeDevin(['first', 'second', 'mine newest'])
+    const r = await unqueueDevin(deps, 'mine newest')
+    expect(r.requeued).toEqual([])
+    expect(st.queue).toEqual(['first', 'second'])
+    expect(st.field).toBe('')
+  })
+
+  it('a deeper one: refused before any ↑ — popping it would strand the newer entries', async () => {
+    const { st, deps } = fakeDevin(['mine', 'newer one', 'newest one'])
+    await expect(unqueueDevin(deps, 'mine')).rejects.toMatchObject({ code: 'queue_tail' })
+    expect(st.keys).toEqual([])
+    expect(st.queue).toEqual(['mine', 'newer one', 'newest one'])
+  })
+
+  it('the oldest of several: also refused', async () => {
+    const { st, deps } = fakeDevin(['mine oldest', 'b', 'c'])
+    await expect(unqueueDevin(deps, 'mine oldest')).rejects.toMatchObject({ code: 'queue_tail' })
+    expect(st.keys).toEqual([])
+  })
+
+  it('not in the queue: refused without touching the terminal', async () => {
+    const { st, deps } = fakeDevin(['other'])
+    await expect(unqueueDevin(deps, 'mine')).rejects.toMatchObject({ code: 'already_read' })
+    expect(st.keys).toEqual([])
+  })
+
+  it('queue gone meanwhile (↑ pulled a history line): already_read, the draft stays', async () => {
+    const { st, deps } = fakeDevin(['other'], { take: true })
+    await expect(unqueueDevin(deps, 'other')).rejects.toMatchObject({ code: 'already_read' })
+    expect(st.queue).toEqual([])
+    // The history line ↑ recalled is left as a draft, not silently emptied.
+    expect(st.field).toBe('previous prompt (history)')
+  })
+
+  it('a foreign entry queued meanwhile: busy — and it is left as a draft, not lost', async () => {
+    const { st, deps } = fakeDevin(['other'], { intruder: true })
+    await expect(unqueueDevin(deps, 'other')).rejects.toMatchObject({ code: 'busy' })
+    // ↑ popped the intruder's entry into the field; clearing it would lose it.
+    expect(st.queue).toEqual(['other'])
+    expect(st.field).toBe('intruder just queued')
+  })
+
+  it('a draft in the field is left alone', async () => {
+    const { st, deps } = fakeDevin(['mine'], { field: 'draft typed on the computer' })
+    await expect(unqueueDevin(deps, 'mine')).rejects.toMatchObject({ code: 'input_busy' })
+    expect(st.keys).toEqual([])
+    expect(st.field).toBe('draft typed on the computer')
   })
 })
 

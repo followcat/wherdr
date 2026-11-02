@@ -53,7 +53,7 @@ it('S7: independent viewed reads publish within two seconds and survive the old 
  getMachine:()=>({transcripts:{observe:()=>{}}}),joinId:(_:string,id:string)=>id,restarts:map(),leftForGood:()=>false,lookForLeftMenu:()=>false,
  findPane:()=>null,pendingPrompts:map(),queued:map(),screenVersions:versions,mapScreenPanes,choicesFor,refreshModel:()=>{},refreshPreview:()=>{},
  previews:new Map(panes.map(p=>[p.id,{status:'blocked',at:Date.now()}])),models:new Map(panes.map(p=>[p.id,{status:'blocked',at:Date.now()}])),
- isViewed,activities:map(),ompStatuses:map(),codexFields:map(),codexStatus:{forget:()=>{},statusOf:()=>null},chatDelta:{ids:()=>[],forget:()=>{}},
+ isViewed,activities:map(),ompStatuses:map(),ocStatuses:map(),ocInboxes:map(),refreshOcStatus:()=>{},codexFields:map(),codexStatus:{forget:()=>{},statusOf:()=>null},devinScreens:map(),refreshDevinScreen:()=>{},chatDelta:{ids:()=>[],forget:()=>{}},
  choicesCache:cache,askChecks:map(),takenBack:map(),seen:map(),saveBorn:()=>{},saveSeen:()=>{},saveQueued:()=>{},machineOf:()=>''})
  const publish=vi.fn(()=>({at:Date.now(),state:JSON.parse(JSON.stringify(states.get('')))}))
  const pollMachine=bindFunction(source,'pollMachine',{mstates:states,screenVersions:versions,choicesCache:cache,screenFields,herdrOn:async()=>({panes:panes.map(p=>({pane_id:p.id,revision:7}))}),

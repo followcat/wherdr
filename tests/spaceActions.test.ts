@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { closeSummary, moveTargets, paneSpaceEntries, spaceCall, spaceResult, verifySpaceRename } from '../shared/spaceActions'
 import { reduceSnapshot } from '../server/utils/snapshot'
 import layouts from './fixtures/snapshot-layouts.json'
-import { closeConfirm } from '../app/utils/spaceConfirm'
+import { closeConfirm, paneCloseConfirm } from '../app/utils/spaceConfirm'
 
 const R = 'abcd1234'
 
@@ -148,24 +148,32 @@ describe('closeConfirm', () => {
   it('names the agents that will be stopped', () => {
     const c = closeConfirm({ kind: 'tab', label: 'dev', panes: tab }, fr)
     expect(closeConfirm({ kind: 'tab', label: 'dev', panes: tab }, (_: string, b: string) => b).message).toContain('«\u00a0dev\u00a0»\u00a0?')
-    expect(c.message).toBe('Fermer l’onglet « dev » ? 2 agents y tournent : Claude « Claude », Codex « Codex ». Ils seront arrêtés. Son terminal sera fermé aussi.')
+    expect(c.message).toBe('Fermer l’onglet « dev » ? 3 panneaux seront fermés. 2 agents y tournent : Claude, Codex. Ils seront arrêtés. Son terminal sera fermé aussi.')
     expect(c.action).toBe('Fermer et arrêter 2 agents')
     expect(closeConfirm({ kind: 'tab', label: 'dev', panes: tab }, en).action).toBe('Close and stop 2 agents')
   })
 
   it('warns when the last tab takes its space with it', () => {
     const c = closeConfirm({ kind: 'tab', label: '1', panes: state.panes.filter(p => p.workspace === 'w3'), lastTab: true, workspaceLabel: 'notes' }, fr)
-    expect(c.message).toBe('Fermer l’onglet « 1 » ? C’est son dernier onglet : l’espace « notes » sera fermé aussi. Son terminal sera fermé.')
+    expect(c.message).toBe('Fermer l’onglet « 1 » ? C’est son dernier onglet : l’espace « notes » sera fermé aussi. 1 panneau sera fermé. Son terminal sera fermé.')
     expect(c.action).toBe('Fermer l’onglet')
   })
 
   it('space without agents, or with many agents', () => {
     expect(closeConfirm({ kind: 'workspace', label: 'api', panes: state.panes.filter(p => p.workspace === 'w2') }, en))
-      .toEqual({ message: 'Close space “api”? Its 2 terminals will close.', action: 'Close space' })
+      .toEqual({ message: 'Close space “api”? 2 panes will close. Its 2 terminals will close.', action: 'Close space' })
     const many = ['claude', 'codex', 'claude', 'claude', 'codex'].map((a, i) => ({ ...tab[0]!, id: `w1:p${i}`, agent: a, name: `a${i}` }))
     const c = closeConfirm({ kind: 'workspace', label: 'x', panes: many }, fr)
     expect(c.message).toContain('5 agents y tournent : Claude « a0 », Codex « a1 », Claude « a2 » et 2 autres.')
     expect(c.action).toBe('Fermer et arrêter 5 agents')
+  })
+
+  it('names the tabs of a space and counts its panes', () => {
+    const panes = state.panes.filter(p => p.workspace === 'w2')
+    expect(closeConfirm({ kind: 'workspace', label: 'api', panes, tabs: ['main', 'logs'] }, en).message)
+      .toBe('Close space “api”? Its 2 tabs (“main”, “logs”) and 2 panes will close. Its 2 terminals will close.')
+    expect(closeConfirm({ kind: 'workspace', label: 'api', panes, tabs: ['main', 'logs', 'a', 'b'] }, fr).message)
+      .toContain('Ses 4 onglets (« main », « logs », « a » et 1 autre) et 2 panneaux seront fermés.')
   })
 })
 
@@ -180,4 +188,39 @@ describe('rename confirmation', () => {
       expect(() => verifySpaceRename(call, { [`${kind}s`]: [{ [key]: id, label: 'new' }] })).not.toThrow()
     })
   }
+})
+
+describe('paneCloseConfirm', () => {
+  const fr = (_: string, b: string) => b.replace(/\u00a0/g, ' ')
+  const en = (a: string) => a
+  const agent = { ...state.panes.find(p => p.agent === 'claude')!, name: 'review', label: null, stopped: undefined }
+  const shell = { ...agent, agent: null, name: 'build' }
+  const base = { process: { state: 'unknown' as const }, tabLabel: 'dev', workspaceLabel: 'api', tabPanes: 1, workspaceTabs: 1, closesTab: true, closesWorkspace: true }
+
+  it('lone pane of its space: one close, the space goes too', () => {
+    const c = paneCloseConfirm({ ...base, pane: agent }, en)
+    expect(c.message).toBe('Close the conversation with Claude “review”? Claude “review” will be stopped. It is the last pane of space “api”: the space closes too.')
+    expect(c.action).toBe('Close conversation')
+    expect(paneCloseConfirm({ ...base, pane: agent }, fr).message).toContain('l’espace sera fermé aussi')
+  })
+
+  it('only pane of its tab: the tab goes, the other tabs stay', () => {
+    const c = paneCloseConfirm({ ...base, pane: agent, workspaceTabs: 3, closesWorkspace: false }, en)
+    expect(c.message).toContain('It is the only pane of tab “dev”: the tab closes too. The other 2 tabs of space “api” stay open.')
+    expect(paneCloseConfirm({ ...base, pane: agent, workspaceTabs: 2, closesWorkspace: false }, fr).message)
+      .toContain('L’autre onglet de l’espace « api » reste ouvert.')
+  })
+
+  it('does not repeat the agent kind for a pane named after it', () => {
+    const unnamed = { ...agent, name: null, label: null, agent: 'omp' }
+    expect(paneCloseConfirm({ ...base, pane: unnamed }, en).message).toMatch(/^Close the conversation with Omp\? Omp will be stopped\./)
+  })
+
+  it('pane among others: only it closes', () => {
+    const c = paneCloseConfirm({ ...base, pane: shell, process: { state: 'running', command: 'npm test' }, tabPanes: 3, closesTab: false, closesWorkspace: false }, en)
+    expect(c.message).toBe('Close the terminal “build” in space “api”? The running command “npm test” will be stopped. Only this pane closes: the other 2 panes of tab “dev” stay open.')
+    expect(c.action).toBe('Close terminal')
+    expect(paneCloseConfirm({ ...base, pane: shell, process: { state: 'idle' }, tabPanes: 2, closesTab: false, closesWorkspace: false }, en).message)
+      .toBe('Close the terminal “build” in space “api”? Only this pane closes: the other pane of tab “dev” stays open.')
+  })
 })

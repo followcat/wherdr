@@ -1,0 +1,20 @@
+
+                                            ████████████
+                                               ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                               ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                               ▒▒  ██                  █
+                                                   ██       v18.14.0
+
+                        Tip: Press ←← to drill into a running or finished agent and inspect its
+                                               tool calls and transcript
+
+
+ compute six times seven
+
+
+Tool call denied by user: eval
+
+ Done.
+
+ π > ⬢ Fake One > 🗑 ~/demo > ⑂ main ?1 ▶────────────────────────────────────6%──────────────────────────╎────┃─────128K─
+╰─

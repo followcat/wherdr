@@ -52,6 +52,13 @@ The screen reads top to bottom:
    others). Each says how it differs from the default; removing one goes back to it.
 4. **This device's notifications** only asks this browser or phone for permission to
    show push notifications, and shows whether it is allowed, blocked or not asked yet.
+   Below it, every registered device is listed with the result of the last push sent to it:
+   delivered, expired (404/410: the browser dropped the subscription), rejected (401/403),
+   push service unreachable, or failed with its HTTP status. Each device keeps its own result,
+   so one device's success never hides another's failure. An expired device is no longer
+   tried; **Remove** forgets it (otherwise it goes away on its own after 30 days). Only the
+   time, the class and the status code are stored in `data/push.json`, never the push
+   service's response.
 
 A coordinator's exception is kept by its identity (machine, Herdr session, level and
 repo), not its pane: it still applies after `coordinator new` or a restart.

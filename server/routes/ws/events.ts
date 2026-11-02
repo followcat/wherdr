@@ -15,6 +15,7 @@ export default defineWebSocketHandler({
     let m: any
     try { m = JSON.parse(raw) }
     catch { return }
+    if (m && m.type === 'ping') { peer.send(JSON.stringify({ type: 'pong' })); return }
     const c = eventClients.get(peer.id)
     if (c && m && m.type === 'viewing') {
       c.pane = PANE_RE.test(m.pane || '') ? m.pane : null

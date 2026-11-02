@@ -3,7 +3,7 @@
 // .output/server/node_modules/.nitro/<name>@<version>; npm drops symlinks from
 // the tarball, so the server would miss them. Replace each link with a copy of
 // its target, then remove the now unused .nitro folder.
-import { cpSync, lstatSync, readdirSync, realpathSync, rmSync } from 'node:fs'
+import { cpSync, lstatSync, readdirSync, realpathSync, rmSync, unlinkSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -21,7 +21,7 @@ function links(dir, out = []) {
 let count = 0
 for (const link of links(MODULES)) {
   const target = realpathSync(link)
-  rmSync(link)
+  unlinkSync(link)
   cpSync(target, link, { recursive: true, dereference: true })
   count++
 }

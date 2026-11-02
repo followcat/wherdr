@@ -117,13 +117,34 @@ are released after the browser saves the file, keeping repeated downloads reliab
 
 ## Rolling develop prerelease
 
-`develop-prerelease.yml` rebuilds one prerelease on every push to the `develop` branch (the
-integration branch; `main` only receives releases), so a machine can install develop from a prebuilt package (the plugin's GitHub download) and never compile it.
+`develop-prerelease.yml` rebuilds one prerelease for each commit of the `develop` branch (the
+integration branch; `main` only receives releases) that passes CI, so a machine can install develop from a prebuilt package (the plugin's GitHub download) and never compile it.
+
+It starts on `workflow_run` when the `ci` workflow (`ci.yml`, `name: ci`) completes for a push
+to `develop`, and only goes on when that run succeeded. It builds exactly the commit that run
+tested (`workflow_run.head_sha`), not the current head of `develop`: pull requests no longer
+have to be up to date before merging, so two green pull requests can still break `develop`
+together, and such a commit is never published. Before building, `scripts/prerelease.sh gate`
+checks through the API that:
+
+- a push run of `ci.yml` on `develop` for that commit succeeded with its `checks` and `e2e`
+  jobs green;
+- the commit is on `develop` (its head or an ancestor);
+- the commit is not older than the one the `develop` tag already names. Runs can finish out
+  of order: an older commit is then skipped, never published over a newer one.
+
+Any API error stops the gate and the run fails: an unreadable tag is never taken for a
+missing one.
+
+A manual run (`workflow_dispatch`, on `develop` only) builds the head of `develop` under the
+same gate, so it too needs a green CI run for that commit. Runs never overlap and are never
+cancelled halfway. GitHub reads `workflow_run` triggers from the default branch (`main`): a
+change to this trigger takes effect once it is released to `main`.
 It always publishes the fixed tag **`develop`**, including stable package versions.
 The package version stays unchanged; `COMMIT` identifies the build. Existing
 `vX.Y.Z-dev` prereleases are left alone.
 
-- the tag moves to the pushed commit; the release is a prerelease, never `latest`. The update
+- the tag moves to the published commit; the release is a prerelease, never `latest`. The update
   checks of every version, the legacy channel and `release-ready.yml` only read stable
   `vX.Y.Z` releases, so none of them offers it;
 - `wherdr-<version>.tgz` and `.tgz.sha256` are made as in `release.yml` (`npm pack`,
@@ -132,8 +153,9 @@ The package version stays unchanged; `COMMIT` identifies the build. Existing
   (`.node`, `binding.gyp`, `prebuilds`, ELF or Mach-O files): the same file runs on
   linux-arm64 and x64;
 - `COMMIT` holds the full SHA of the packaged commit, also written in the notes. It is removed
-  before the archive is replaced and attached last: when `COMMIT` is there and names the
-  branch head, the archive is that commit's.
+  before the archive is replaced and attached last: when `COMMIT` is there, the archive is
+  that commit's. It can lag behind the head of `develop` while CI runs, or when the head's
+  CI failed.
 
 The Pi reads `releases/tags/develop`, never `releases/latest`. Download `COMMIT`,
 the single `wherdr-<version>.tgz` asset and `wherdr-<version>.tgz.sha256`.

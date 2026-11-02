@@ -32,8 +32,8 @@ async function openTerminal(page: Page, { refuse = 0, enabled = true } = {}) {
   }, { refuse, enabled })
   await page.goto(`/#/a/${pane}`)
   await expect(page.locator('.chat').getByText('Ready when you are.')).toBeVisible()
-  const tabs = page.locator('.view-tabs')
-  if (await tabs.count()) await tabs.getByRole('tab', { name: 'Terminal' }).click()
+  const tabs = page.locator('.view-toggle')
+  if (await tabs.count()) await tabs.click()
   else await page.locator('button[aria-label="Terminal"]').first().click()
   await expect(page.locator('#term .xterm-rows')).toContainText('fake terminal')
 }

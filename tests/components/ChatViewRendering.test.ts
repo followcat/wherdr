@@ -4,6 +4,8 @@ import ChatView from '~/components/ChatView.vue'
 import { lightboxSet, lightboxSrc } from '~/composables/useUi'
 import { herdrState } from '~/composables/useHerdr'
 import type { ChatItem, Pane } from '#shared/types'
+import { parseLines } from '../../server/utils/transcripts'
+import ompErrors from '../fixtures/omp-errors.jsonl?raw'
 
 const pane: Pane = { id: 'w1:p1', workspace: 'w1', tab: 'w1:t1', tabLabel: null, agent: 'omp', name: null, label: null, status: 'blocked', title: null, cwd: '/tmp/demo', agentSession: null }
 let items: ChatItem[] = []
@@ -12,7 +14,7 @@ registerEndpoint('/api/chat', () => ({ available: true, token: 'rendering', file
 describe('conversation rendering', () => {
   afterEach(() => { lightboxSrc.value = null; lightboxSet.value = []; herdrState.value = { ok: false, workspaces: [], panes: [] } })
 
-  it('attributes both wake formats to Autopilot and preserves their complete text and copy action', async () => {
+  it('attributes both wake formats to Autopilot and keeps their complete text and labelled copy action together', async () => {
     const wakes = ['Autopilot: Check ready work.\nBoard context: no pending replies.  ', 'Autopilot woke: Check older work.']
     const human = 'Please explain Autopilot: and Autopilot woke:.'
     items = [
@@ -32,7 +34,10 @@ describe('conversation rendering', () => {
         expect(block.find('.msg-system').text()).toBe('Autopilot')
         expect(block.find('.msg-fold').element.textContent).toBe(wakes[i])
         expect(block.find('.msg-user').exists()).toBe(false)
-        await block.find('button').trigger('click')
+        const copy = block.find('.msg-autopilot-body button')
+        expect(copy.exists()).toBe(true)
+        expect(copy.attributes('aria-label')).toBe('Copy message')
+        await copy.trigger('click')
         expect(writeText).toHaveBeenLastCalledWith(wakes[i])
       }
       expect(w.findAll('.msg-user')).toHaveLength(2)
@@ -58,6 +63,23 @@ describe('conversation rendering', () => {
       expect(w.find('.tools.omp-console.live').isVisible()).toBe(true)
       expect(w.find('.omp-console .omp-tool-cmd').text()).toBe('rm -rf build')
       expect(w.findAll('.turn-end')).toHaveLength(0)
+    } finally { w.unmount() }
+  })
+
+  it('renders OpenCode tool output and respects its completed state while the agent is working', async () => {
+    const opencode = { ...pane, agent: 'opencode', status: 'working' as const }
+    herdrState.value = { ok: true, workspaces: [], panes: [opencode] }
+    items = [{ role: 'tool', name: 'bash', text: 'npm test', out: 'All tests passed', toolStatus: 'completed', ts: '2026-01-01T00:00:01Z', ref: 'oc:msg_1:tcall_1' }]
+    const w = await mountSuspended(ChatView, { props: { pane: opencode, localQueued: [] } })
+    try {
+      await expect.poll(() => w.find('.tool-trigger').text()).toContain('npm test')
+      expect(w.find('.tool-trigger .animate-spin').exists()).toBe(false)
+      await w.find('.tool-trigger').trigger('click')
+      await expect.poll(() => w.find('.tool-result').text()).toBe('All tests passed')
+      expect(w.find('.tool-result').attributes('aria-expanded')).toBe('false')
+      expect(w.find('.tool-result').attributes('tabindex')).toBe('0')
+      await w.find('.tool-result').trigger('keydown', { key: 'Enter' })
+      expect(w.find('.tool-result').attributes('aria-expanded')).toBe('true')
     } finally { w.unmount() }
   })
 
@@ -111,4 +133,34 @@ describe('conversation rendering', () => {
     } finally { w.unmount() }
   })
 
+  it('shows omp errors between the check-ins and actions, each once, in plain text', async () => {
+    const idle = { ...pane, status: 'idle' as const }
+    herdrState.value = { ok: true, workspaces: [], panes: [idle] }
+    // The conversation as the server reads it from omp's session file.
+    items = parseLines(ompErrors, 'omp', 0, '/home/user')
+    const w = await mountSuspended(ChatView, {
+      props: { pane: idle, localQueued: [] },
+      global: { stubs: { UTooltip: { template: '<slot />' } } },
+    })
+    try {
+      await expect.poll(() => w.findAll('.msg-error').length).toBe(4)
+      const errors = w.findAll('.msg-error')
+      expect(errors.map(e => e.find('.msg-notice-head').text())).toEqual(['Error', 'Error', 'Error', 'Error'])
+      const texts = errors.map(e => e.find('.msg-error-text').text())
+      expect(texts[0]).toContain('You have reached your specified API usage limits.')
+      expect(texts[1]).toContain('rate_limit_error')
+      expect(texts[2]).toBe('Retry budget exhausted after 2 retries: Anthropic stream stalled while waiting for the next event')
+      expect(texts[3]).toContain('Your credit balance is too low to access the Anthropic API.')
+      // Raw provider JSON stays as written (no Markdown).
+      expect(errors[0]!.find('.msg-error-text').element.textContent).toMatch(/^400 \{"type":"error"/)
+      // Check-ins and actions are still there, around the errors.
+      expect(w.findAll('.msg-autopilot')).toHaveLength(5)
+      expect(w.find('.omp-console .omp-tool-cmd').text()).toBe('tools/tasks.sh list')
+      expect(w.find('.msg-ai').text()).toContain('Checking the board.')
+      expect(w.findAll('.msg-system').map(s => s.text())).toEqual(expect.arrayContaining(['Retried after an error', 'Interrupted']))
+      // Order: each error right after the check-in that hit it.
+      const order = [...w.find('.chat').element.querySelectorAll('.msg-autopilot, .msg-error')].map(el => el.classList.contains('msg-error') ? 'E' : 'A')
+      expect(order.join('')).toBe('AEAEAEAAE')
+    } finally { w.unmount() }
+  })
 })

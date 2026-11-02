@@ -5,6 +5,7 @@
 // lightbox, dividers) stay with that component.
 
 export type ShortcutId = 'search-all' | 'search-chat' | 'toggle-term' | 'stop' | 'prev-agent' | 'next-agent'
+  | 'prev-tab' | 'next-tab'
   | 'new-space' | 'new-tab' | 'close-pane' | 'open-editor' | 'settings' | 'board' | 'help'
 
 type Mod = 'mod' | 'ctrl' | 'alt' | 'shift'
@@ -44,8 +45,15 @@ export const SHORTCUTS: readonly Shortcut[] = [
   // the key left of 1 as IntlBackslash (elsewhere it is the < key next to Shift).
   { id: 'toggle-term', mods: ['ctrl'], codes: ['Backquote'], macCodes: ['Backquote', 'IntlBackslash'], fields: 'any', terminal: true, kbds: ['ctrl', '`'] },
   { id: 'stop', mods: [], key: 'escape', fields: 'empty', terminal: false, kbds: ['escape'] },
-  { id: 'prev-agent', mods: ['alt'], key: 'arrowup', fields: 'empty', terminal: false, repeat: true, kbds: ['alt', 'arrowup'] },
-  { id: 'next-agent', mods: ['alt'], key: 'arrowdown', fields: 'empty', terminal: false, repeat: true, kbds: ['alt', 'arrowdown'] },
+  // Alt+arrows are global navigation in this fork — agents ↕, space tabs ↔.
+  // Taken at capture before fields and the terminal: Alt+←/→ is the browser's
+  // Back/Forward, and a focused xterm would otherwise eat Alt+↑/↓ and make
+  // agent stepping look stuck. Programs lose their own alt-arrow bindings
+  // (macOS: also ⌥-arrow word jumps in fields) — accepted for this fork.
+  { id: 'prev-agent', mods: ['alt'], key: 'arrowup', fields: 'any', terminal: true, capture: true, repeat: true, kbds: ['alt', 'arrowup'] },
+  { id: 'next-agent', mods: ['alt'], key: 'arrowdown', fields: 'any', terminal: true, capture: true, repeat: true, kbds: ['alt', 'arrowdown'] },
+  { id: 'prev-tab', mods: ['alt'], key: 'arrowleft', fields: 'any', terminal: true, capture: true, repeat: true, kbds: ['alt', 'arrowleft'] },
+  { id: 'next-tab', mods: ['alt'], key: 'arrowright', fields: 'any', terminal: true, capture: true, repeat: true, kbds: ['alt', 'arrowright'] },
   // Ctrl/⌘+N, T, W belong to the browser (pages never see them in Chromium).
   { id: 'new-space', mods: ['mod', 'alt'], key: 'n', fields: 'any', terminal: true, capture: true, kbds: ['meta', 'alt', 'N'] },
   { id: 'new-tab', mods: ['mod', 'alt'], key: 't', fields: 'any', terminal: true, capture: true, kbds: ['meta', 'alt', 'T'] },

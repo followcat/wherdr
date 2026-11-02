@@ -48,7 +48,9 @@ sw.addEventListener('message', (e) => {
 
 sw.addEventListener('activate', (e) => {
   e.waitUntil((async () => {
-    for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k)
+    // wherdr-asr-* holds the downloaded speech models (~100 MB–1 GB each):
+    // evicting them on update would re-download a gigabyte per release.
+    for (const k of await caches.keys()) if (k !== CACHE && !k.startsWith('wherdr-asr-')) await caches.delete(k)
     await sw.clients.claim()
   })())
 })
@@ -80,7 +82,17 @@ sw.addEventListener('fetch', (e) => {
   const network = fetch(req, { cache: 'no-cache' })
   // Also kept when the answer comes after the cached copy was served.
   e.waitUntil(network.then(res => keep(req, res)).catch(() => {}))
-  const fromCache = async () => (await caches.match(req)) || (req.mode === 'navigate' ? caches.match('/') : undefined)
+  if (req.mode === 'navigate') {
+    // The app shell is precached: serve it at once instead of holding the
+    // page on a possibly-silent network. The fingerprinted /_nuxt files it
+    // names are immutable, so the cached pair stays consistent; the network
+    // answer still refreshes the cache (kept above) and the update banner
+    // announces a new build. First install finds nothing cached: the
+    // network answer, however late.
+    e.respondWith(caches.match('/').then(hit => hit || network))
+    return
+  }
+  const fromCache = async () => (await caches.match(req)) || undefined
   e.respondWith(networkFirst(network, fromCache, NETWORK_WAIT_MS))
 })
 

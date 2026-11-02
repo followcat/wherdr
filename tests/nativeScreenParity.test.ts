@@ -132,3 +132,22 @@ describe('review approval rows', () => {
 it('covers exactly the current fixture corpus', () => {
   expect(Object.keys(baseline.cases).filter(k => !k.startsWith('push/')).sort()).toEqual(fixtures.flatMap(f => ['claude', 'codex', 'omp'].flatMap(a => [false, true].map(strict => `${f}/${a}/${strict}`))).sort())
 })
+
+it.each([
+  ['claude', 'claude-approve-bash.txt', 'Agent Command Center'],
+  ['codex', 'codex-approve-command.txt', 'Agent Command Center'],
+  ['codex', 'codex-approve-edits.txt', 'codex-command-center.txt'],
+  ['codex', 'codex-approve-command.txt', 'codex-usage-menu.txt'],
+])('quoted menus do not steal native approvals: %s / %s / %s', async (agent, file, quote) => {
+  const fx = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
+  const text = `${quote.endsWith('.txt') ? fx(quote) : quote}\n\n${fx(file)}`
+  const current = await pipeline(afterSource, after, text)({ id: 'neutral', agent, status: 'blocked' }, 1, false)
+  expect(current.interaction).toBe('native')
+  expect(current.choices).toMatchObject(choices.screenChoices(fx(file), agent)!)
+})
+
+it('a closed Claude shell stays unknown', async () => {
+  const text = 'Resume this session with:\nclaude --resume 00000000-0000-4000-8000-000000000000\nuser@host demo % '
+  const current = await pipeline(afterSource, after, text)({ id: 'neutral', agent: 'claude', status: 'unknown' }, 1, true)
+  expect(current).toMatchObject({ interaction: 'unknown', choices: null, menu: null, screen: null })
+})

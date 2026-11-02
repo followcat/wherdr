@@ -2,7 +2,6 @@ import { expect, test } from './test'
 import fs from 'node:fs/promises'
 
 test('Board follows the sidebar tab and keeps manual choices through refreshes', async ({ page }) => {
-  test.setTimeout(60000)
   await expect.poll(async () => (await (await page.request.get('/api/state')).json()).ok).toBe(true)
   const base = await (await page.request.get('/api/state')).json()
   const keys = ['', 'laptop']
@@ -20,6 +19,8 @@ test('Board follows the sidebar tab and keeps manual choices through refreshes',
   await page.addInitScript(() => {
     localStorage.setItem('machineGroups', JSON.stringify([{ id: '*group:personal', name: 'Personal', machines: [''] }]))
   })
+  // A fake clock (time still flows): the Board's 15 s poll is fired at once below.
+  await page.clock.install()
   await page.goto('/')
   await page.locator('[data-bar-id="*group:personal"]').click()
   await page.goto('/#/board')
@@ -29,7 +30,8 @@ test('Board follows the sidebar tab and keeps manual choices through refreshes',
   await page.getByRole('option', { name: 'All machines', exact: true }).click()
   await expect(select).toContainText('All machines')
   const before = reads
-  await expect.poll(() => reads, { timeout: 20000 }).toBeGreaterThan(before)
+  await page.clock.fastForward(15_000)
+  await expect.poll(() => reads).toBeGreaterThan(before)
   await expect(select).toContainText('All machines')
   // A page reload on the same tab keeps it too.
   await page.reload()

@@ -299,6 +299,21 @@ describe('done tasks: when they were made', () => {
   })
 })
 
+describe('the global search source', () => {
+  it('the Board\'s list, its keys and each description from the task files, read once', async () => {
+    listReply = { code: 0, stdout: JSON.stringify([{ id: 'demo/4', state: 'idle', title: 'Login page', stage: 'todo' }, { id: 'demo/5', state: 'idle', title: 'Other', stage: 'todo' }]), stderr: '' }
+    taskFile('demo/4', { title: 'Login page', stage: 'todo', description: 'The session cookie expires too early.' })
+    const boards = await T.searchableBoards(5000)
+    expect(boards).toEqual([{ machine: '', tasks: [
+      { row: expect.objectContaining({ id: 'demo/4', repoKey: 'DEMO' }), description: 'The session cookie expires too early.' },
+      { row: expect.objectContaining({ id: 'demo/5' }), description: '' },
+    ] }])
+    // Within the Board's reuse window: no second read.
+    await T.searchableBoards(5000)
+    expect(calls.filter(c => c[0] === 'list')).toHaveLength(1)
+  })
+})
+
 describe('task identity across endpoints', () => {
   it('list and details retain the worker, reviewer and recorded takeover', async () => {
     const raw = { title: 'Improve search', stage: 'reviewing', agent: 'codex', app: 'claude', on: 'codex/gpt', handovers: [{ role: 'worker', from: 'claude', to: 'codex/gpt' }], link: { pane: 'w1:p1', reviewer: { pane: 'w1:p4', kind: 'omp' } } }

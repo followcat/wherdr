@@ -2,7 +2,7 @@
 
 Status: **implemented** (2026-10-01). Code: `app/utils/shortcuts.ts` (table and matcher),
 `app/composables/useShortcuts.ts` (dispatcher and actions), `app/components/ShortcutsSheet.vue`
-(help sheet). Tests: `tests/shortcuts.test.ts`, `tests/cardKeys.test.ts`.
+(help sheet), `app/components/ShortcutsReference.vue` (shared with Settings › Shortcuts). Tests: `tests/shortcuts.test.ts`, `tests/cardKeys.test.ts`.
 `[INFERENCE]` marks claims nobody has tested on a device yet.
 
 > 2026-10-02: Mod+Alt+O (current agent folder in the default editor, via the existing
@@ -30,7 +30,8 @@ promise that wherdr "can replace the Herdr terminal client day to day".
 | Action | Keys | Where | From the terminal |
 |---|---|---|---|
 | Global search (existing) | Ctrl/⌘+K | Anywhere, phone included | macOS only (on Windows/Linux, xterm sends Ctrl+K to the program) |
-| Previous / next agent: the card a click would open, in sidebar order; stops at the ends | Alt+↑ / Alt+↓ | Computer | No (the program gets Alt+arrows) |
+| Previous / next agent: the card a click would open, in sidebar order; stops at the ends | Alt+↑ / Alt+↓ | Computer | Yes (caught before the terminal — fork change, see C1) |
+| Previous / next space tab: the chip a click would switch to, as shown | Alt+← / Alt+→ | Computer | Yes (caught before the terminal — and before the browser's Back/Forward; fork change, see C1) |
 | New agent in a new space: the "New agent" sheet, which creates the space (`workspace.create`) | Mod+Alt+N | Computer, online | Yes (caught before the terminal) |
 | New tab in the current pane's space: the "Start in a new tab" sheet | Mod+Alt+T | Computer, online, a pane being viewed | Yes (caught before the terminal) |
 | Close the current pane, through the same confirmation as the menu | Mod+Alt+W | Computer, online, a pane being viewed | Yes (caught before the terminal) |
@@ -39,7 +40,7 @@ promise that wherdr "can replace the Herdr terminal client day to day".
 | Switch between conversation and terminal | Ctrl+`` ` `` on every platform, by position (`Backquote`; on macOS also `IntlBackslash`, the key left of 1 on ISO keyboards) | Agent with a conversation, or the active cell | Yes (xterm sends nothing for it) |
 | Stop the working agent, same as the Stop button | Esc | Conversation mode, Stop shown, empty field, no conversation search open | No (Esc goes to the program) |
 | Settings | Mod+, | Computer | Yes |
-| Shortcut list | Mod+/, or `?` outside a field | Computer; also Settings › Computer | Mod+/ only |
+| Shortcut list | Mod+/, or `?` outside a field | Computer; also Settings › Shortcuts | Mod+/ only |
 | Board: the herdr-projects tasks of every machine | `H` outside a field | Computer | No (the program gets the key) |
 
 These existing shortcuts are unchanged and listed in the help sheet:
@@ -83,7 +84,17 @@ Per xterm.js:
 - **Decision:** Mod+Alt+N, T and W are caught on `window` in the capture phase, before xterm.
   - On Linux, the terminal program therefore never receives Ctrl+Alt+N, T or W.
   - This follows the precedent of Ctrl/⌘+Alt+arrows (`TabView.vue:72`).
-  - No other new shortcut takes a key the program would receive.
+- **Fork change — Alt+arrows are wherdr's:** Alt+↑/↓ (agents) and Alt+←/→ (space tabs) are
+  also caught on `window` in the capture phase, so they work while the terminal or a field has
+  focus. Two reasons, both user-visible: a focused xterm used to eat Alt+↑/↓ and made agent
+  stepping look stuck, and the browser reads Alt+←/→ as Back/Forward — taking them at capture
+  also shields text fields, where they would otherwise navigate away mid-draft.
+  - The program running in the terminal never receives Alt+arrows (its own alt-arrow bindings,
+    e.g. in some shells/tmux configs, are lost).
+  - On macOS, ⌥+←/→ word jumps in text fields are taken too.
+  - With no card/chip to step to the key is still swallowed — it never reaches the browser.
+  - If this fork's keys are ever upstreamed, C1's "the terminal owns its keys" must be decided
+    explicitly — this deviation is deliberate for the fork, not an accident.
 - New shortcuts accept only the platform modifier. On macOS that leaves Ctrl+F, B, K, A and E to
   text editing. ⌘K still accepts both modifiers, as before.
 - Synthetic key events (`isTrusted` false) are ignored. HeaderMenu closes its menu with a fake
@@ -120,8 +131,9 @@ Per xterm.js:
   blurs itself.
 - Never during IME composition, including Safari's composition-ending key (`keyCode` 229). Never
   when another handler has already marked the key handled.
-- With focus in a field that contains text, only Mod/Ctrl chords fire. Esc and Alt+↑/↓ fire only
-  if the field is empty. `?` never fires in a field.
+- With focus in a field that contains text, only Mod/Ctrl chords and the Alt+arrows fire (see
+  C1: they are global navigation in this fork). Esc fires only if the field is empty. `?` never
+  fires in a field.
 - Actions that create or close something are disabled exactly when their buttons are: offline view,
   events closed, or a stale pane.
 - Agent actions apply to `curPane`, which side by side is the active cell.

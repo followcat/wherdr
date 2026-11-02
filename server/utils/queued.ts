@@ -44,6 +44,11 @@ export function queuedDone(q: { text: string, at: number, turnSeen?: boolean }, 
   const needle = norm(q.text.split('\n').filter(l => !isUploadLine(l)).join(' ')).slice(0, 80)
   const bashNeedle = norm(bashText(q.text)).slice(0, 80)
   const photos = photosOnly(q.text)
+  // OpenCode runs "!cmd" as a shell item in its transcript; it never becomes
+  // a user row, so match that item's command (either landing shape).
+  if (agent === 'opencode' && /^\s*!/.test(q.text) && bashNeedle
+    && items.some(i => (i.role === 'bash' || (i.role === 'tool' && i.name === 'shell'))
+      && (!i.ts || Date.parse(i.ts) >= q.at - 10000) && norm(i.text).includes(bashNeedle))) return true
   if (users.some(u => (!u.ts || Date.parse(u.ts) >= q.at - 10000)
     && (u.role === 'bash' ? Boolean(bashNeedle) && norm(u.text).includes(bashNeedle)
       : needle ? norm(u.text).includes(needle) : photos ? photosLanded(q.text, u) : (u.images || 0) > 0))) return true
@@ -94,6 +99,8 @@ export function landed(q: { text: string, at: number, typedAt?: number }, items:
   const hit = items.find((u) => {
     if (taken.has(u) || !u.ts || !(Date.parse(u.ts) >= since)) return false
     if (u.role === 'bash') return bash !== null && Boolean(bash) && flat(u.text) === bash
+    // OpenCode's shell run may surface as a tool item named "shell".
+    if (u.role === 'tool' && u.name === 'shell' && agent === 'opencode') return bash !== null && Boolean(bash) && flat(u.text) === bash
     if (u.role !== 'user' && u.role !== 'cmd') return false
     if (photos) return photosLanded(q.text, u)
     return wholes.has(flat(u.text)) || partOf(u.text)
@@ -117,13 +124,20 @@ export const LOST_MS = 60 * 1000
 // (unknown screen). Reported as not sent, with that reason, instead of
 // waiting "until the menu closes" for nothing.
 export const NO_INPUT_MS = 30 * 1000
-export const HOLD_AGENTS = new Set(['claude', 'codex', 'omp'])
+export const HOLD_AGENTS = new Set(['claude', 'codex', 'omp', 'devin', 'opencode', 'cmd'])
 // Agent at rest, whose input field may be checked on screen (see closePanel).
 export const INPUT_STATES = new Set(['idle', 'done', 'unknown'])
 
 export interface QueueEntry {
   id: string
   text: string
+  // The whole message when `text` had to be cut (display/record bound):
+  // delivery and give-back use it, never the truncated preview.
+  full?: string
+  // The terminator this message was submitted with ("send with Tab"…):
+  // preserved through holds, retries and restarts — delivery must not
+  // silently turn it back into Enter.
+  submitKey?: string
   at: number
   held?: boolean
   failed?: boolean
@@ -164,6 +178,19 @@ export function shouldHold(agent: string | null | undefined, status: string | nu
   if (!agent || !HOLD_AGENTS.has(agent)) return false
   // Keep the order: behind a held message, everything waits.
   if (earlierHeld) return true
+  // Devin: typed while its composer is off screen (a permission or question
+  // dialog — the pane reads "done", never "blocked"), a message is lost and
+  // its Enter answers the dialog in the user's place. Only a visible field
+  // releases it — whatever the pane's status.
+  if (agent === 'devin') return !input
+  // OpenCode reports "blocked" by event while its permission/question dialog
+  // owns the keys — typed text and its Enter would answer it. Its dialog
+  // leaves the composer box on screen, so the generic input check alone
+  // can't tell it; the status is event-driven and trusted.
+  // Command Code's input UI is not recognized yet: only a blocked pane (a
+  // permission/question dialog) holds; an idle one must never wait forever.
+  if (agent === 'cmd') return status === 'blocked'
+  if (agent === 'opencode' && status === 'blocked') return true
   return INPUT_STATES.has(status || '') && !input
 }
 
@@ -187,7 +214,10 @@ export function lookForLeftMenu(p: Pick<Pane, 'agent' | 'status' | 'stopped' | '
 // Updates timers in place on each poll; true when an entry just failed.
 // `menu`: a menu, question or panel recognized on the agent's screen (or a
 // restart running): something a held message legitimately waits for.
-export function checkQueue(list: QueueEntry[], status: string | null | undefined, now: number, menu = true): boolean {
+// `alive`: a sent message the agent still holds in its own queue (Devin's
+// on-screen "N queued" section while it compacts — a pane then reads done
+// however long the wait): it is not lost, only not read yet.
+export function checkQueue(list: QueueEntry[], status: string | null | undefined, now: number, menu = true, alive?: (q: QueueEntry) => boolean): boolean {
   let changed = false
   const ready = status === 'idle' || status === 'done'
   for (const q of list) {
@@ -208,6 +238,7 @@ export function checkQueue(list: QueueEntry[], status: string | null | undefined
       continue
     }
     if (!ready) { delete q.readySince; continue }
+    if (alive && alive(q)) { delete q.readySince; continue }
     q.readySince ??= now
     if (now - Math.max(q.readySince, q.at) > LOST_MS) {
       q.failed = true
@@ -236,7 +267,7 @@ export function checkQueue(list: QueueEntry[], status: string | null | undefined
 // Either way it gets Retry / Cancel. Retry waits for the end of a turn and
 // first looks at the transcript again (see landed): a message the agent did
 // take is not typed twice.
-export function checkSent(list: QueueEntry[], o: { agent: string | null | undefined, claude: { queue: ClaudeQueueEntry[], popped: ClaudeQueueEntry[] } | null, now: number }): boolean {
+export function checkSent(list: QueueEntry[], o: { agent: string | null | undefined, claude: { queue: ClaudeQueueEntry[], popped: ClaudeQueueEntry[] } | null, devinQueue?: string[] | null, ocQueue?: ClaudeQueueEntry[] | null, now: number }): boolean {
   let changed = false
   for (const q of list) {
     if (q.held || q.failed) { delete q.lostSince; delete q.popped; continue }
@@ -252,7 +283,16 @@ export function checkSent(list: QueueEntry[], o: { agent: string | null | undefi
       ? (cut ? flat(e.text).startsWith(text) : flat(e.text) === text)
       : !e.text && (e.images || 0) === photos)
     const c = o.agent === 'claude' ? o.claude : null
+    // Devin's queue is read on its screen (see devinScreen.ts), never in its
+    // transcript: an entry keeps only the message's first line — matched the
+    // same way, whole text against whole text, screen cut allowed.
+    const d = o.agent === 'devin' ? o.devinQueue : null
+    // OpenCode's queue is its session inbox, read through the service (see
+    // opencodeTranscripts.ts): entries keep the whole text and a timestamp.
+    const oc = o.agent === 'opencode' ? o.ocQueue : null
     const inQueue = Boolean(c && c.queue.some(isIt))
+      || Boolean(d && text && d.some(t => flat(t) === text || (flat(t).length >= 8 && text.startsWith(flat(t)))))
+      || Boolean(oc && oc.some(isIt))
     if (inQueue) { delete q.popped; delete q.lostSince }
     else if (c && c.popped.some(isIt)) q.popped = true
     if (!inQueue && o.now - q.at > QUEUED_TTL_MS) {
@@ -287,6 +327,7 @@ export const leftForGood = (p: Pick<Pane, 'agent' | 'leaving'>, before: Pick<Pan
 // Fields the app sees.
 export const publicEntry = (q: QueueEntry): QueuedMessage => ({
   id: q.id, text: q.text, at: q.at,
+  ...(q.submitKey ? { submitKey: q.submitKey } : {}),
   ...(q.held && !q.failed ? { state: 'held' as const } : {}),
   ...(q.failed ? { state: 'failed' as const } : {}),
   ...((q.held || q.failed) && q.busy ? { reason: 'busy' as const } : q.failed && q.noInput ? { reason: 'no_input' as const }
@@ -313,7 +354,7 @@ export function loadQueued(raw: unknown, now: number): [string, QueueEntry[]][] 
         // resume those automatically after upgrading or restarting.
         if (q.delivering || (q.held && q.typedAt)) q = { ...q, held: false, failed: true }
         const old = !q.failed && !(q.held && q.busy) && now - q.at >= QUEUED_TTL_MS
-        return { id: q.id, text: q.text, at: q.at, ...(q.held && !old ? { held: true } : {}), ...(q.failed || old ? { failed: true } : {}), ...(q.busy ? { busy: true } : {}), ...(q.back ? { back: true } : {}),
+        return { id: q.id, text: q.text, ...(typeof q.full === 'string' ? { full: q.full } : {}), ...(typeof q.submitKey === 'string' ? { submitKey: q.submitKey } : {}), at: q.at, ...(q.held && !old ? { held: true } : {}), ...(q.failed || old ? { failed: true } : {}), ...(q.busy ? { busy: true } : {}), ...(q.back ? { back: true } : {}),
           ...(typeof q.typedAt === 'number' ? { typedAt: q.typedAt } : {}), ...(q.turn && !old ? { turn: true } : {}),
           ...(q.noInput ? { noInput: true } : {}), ...(q.lost ? { lost: true } : {}), ...(q.unseen || (old && !q.held) ? { unseen: true } : {}) }
       })

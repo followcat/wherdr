@@ -16,10 +16,13 @@ import { DATA_DIR, PANE_RE, log } from './env'
 import { herdr } from './herdr'
 import { getState, termSessions, type TermView } from './state'
 import { cleanTerminalMouse, hasTerminalMouse } from '../../shared/herdrFeatures'
-import { machineOfPane, runHerdrCli } from './machines'
+import { machineOfPane, runHerdrCli, type Machine } from './machines'
 import { type PaneHold, type PaneSize, cleanSavedSizes, createPaneSizes, parseSttySize } from './paneSizes'
 import { splitId } from '../../shared/ids'
 import { createScrollThrottle } from './scrollThrottle'
+import { terminalScrollPosition } from './scrollPosition'
+import { createTouchScrollPacer } from './touchScrollPacer'
+import { createTerminalWriter } from './terminalWriter'
 import { fmt } from '../../shared/message'
 
 export const clampInt = (v: unknown, lo: number, hi: number, dflt: number) => {
@@ -55,11 +58,17 @@ function ttySize(pane: string, pid: number): Promise<string> {
 // agrees with the rows Herdr reports); otherwise the rows Herdr reports and
 // the width of the pane in Herdr's layout, the one Herdr would give it.
 export async function readPaneSize(pane: string): Promise<PaneSize | null> {
-  const p = (await herdr('pane.get', { pane_id: pane }, 3000).catch(() => null))?.pane
+  // Independent reads go together: on a remote machine each is a separate
+  // SSH round trip, and serializing them cost a whole extra hop.
+  const [g, pi] = await Promise.all([
+    herdr('pane.get', { pane_id: pane }, 3000).catch(() => null),
+    herdr('pane.process_info', { pane_id: pane }, 3000).catch(() => null),
+  ])
+  const p = g?.pane
   if (!p) return null
   const terminal = typeof p.terminal_id === 'string' ? { terminal: p.terminal_id as string } : {}
   const rows = Number(p.scroll?.viewport_rows) || 0
-  const pid = Number((await herdr('pane.process_info', { pane_id: pane }, 3000).catch(() => null))?.process_info?.shell_pid)
+  const pid = Number(pi?.process_info?.shell_pid)
   if (Number.isInteger(pid) && pid > 1) {
     const tty = parseSttySize(await ttySize(pane, pid))
     if (tty && (!rows || tty.rows === rows)) return { ...tty, exact: true, ...terminal }
@@ -70,6 +79,24 @@ export async function readPaneSize(pane: string): Promise<PaneSize | null> {
   const cols = Number(rect?.width) || 0
   if (!rows || !cols) return null
   return { cols, rows, exact: false, ...terminal }
+}
+
+// `herdr --version` changes only when the agent does: keep the answer a few
+// minutes so a reopened terminal (or a second pane on the same machine) does
+// not pay the CLI again -- an SSH round trip on a remote machine.
+const VERSION_TTL_MS = 5 * 60 * 1000
+const versionCache = new Map<string, { at: number, serverVersion: string, p: Promise<ExecResult | null> }>()
+function terminalServerVersion(m: Machine): string {
+  const state = getState()
+  return state.machines?.find(item => item.key === m.key)?.version ?? (m.key === '' ? state.version || '' : '')
+}
+function herdrVersion(m: Machine): Promise<ExecResult | null> {
+  const serverVersion = terminalServerVersion(m)
+  const hit = versionCache.get(m.key)
+  if (hit && hit.serverVersion === serverVersion && Date.now() - hit.at < VERSION_TTL_MS) return hit.p
+  const p = runHerdrCli(m, ['--version'], 4000).catch(() => null)
+  versionCache.set(m.key, { at: Date.now(), serverVersion, p })
+  return p
 }
 
 const sizesFile = () => path.join(DATA_DIR, 'term-sizes.json')
@@ -135,28 +162,56 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
   let size = { cols, rows }
   let attached = false
   let mouse = false
-  // What the client sends before the control session is started.
-  const early: unknown[] = []
+  // What the client sends before the control session is started. Callbacks
+  // and lifecycle metadata travel with the queued object: a scroll replayed
+  // on attach still honors its own deadline and cancel tag.
+  type ScrollTag = { scroll: true, direction: string, epoch: number, dragLines: number, momentumLines: number }
+  const early: { obj: unknown, cb?: { onSubmit?: () => void, onFlush?: (err?: Error | null) => void }, tag?: ScrollTag, expiresAt?: number }[] = []
 
-  const toChild = (obj: unknown) => {
+  // Backpressure-aware writer: a full kernel buffer pauses the tail, it
+  // never resends the chunk that reported `false`. Queued scroll work keeps
+  // its tag and deadline so cancels and TTL reach it until submission.
+  let writer: ReturnType<typeof createTerminalWriter> | undefined
+  const toChild = (obj: unknown, cb?: { onSubmit?: () => void, onFlush?: (err?: Error | null) => void }, tag?: ScrollTag, expiresAt?: number) => {
     if (!child) {
-      if (early.length < 64) early.push(obj)
+      if (early.length < 64) early.push({ obj, cb, tag, expiresAt })
     } else if (child.stdin.writable) {
-      child.stdin.write(JSON.stringify(obj) + '\n')
+      // Scroll commands are superseded by the next gesture — under a stalled
+      // pipe they are the only chunks the writer is allowed to shed.
+      const expendable = (obj as { type?: string }).type === 'terminal.scroll'
+      writer?.write(JSON.stringify(obj) + '\n', { ...cb, expendable, tag, expiresAt })
     }
+  }
+  // Every unsubmitted scroll chunk — the early queue before spawn and the
+  // writer queue after. Without a predicate all scroll work goes; a phase
+  // or direction predicate revokes only its own kind.
+  const cancelQueuedScrolls = (drop?: (t: ScrollTag) => boolean) => {
+    const match = (t: ScrollTag | undefined) => t?.scroll === true && (drop?.(t) ?? true)
+    for (let i = early.length - 1; i >= 0; i--) if (match(early[i]!.tag)) early.splice(i, 1)
+    writer?.cancelWhere(e => match(e.tag as ScrollTag | undefined))
   }
 
   function start() {
     const c = machine!.spawnHerdr(args)
     child = c
+    writer = createTerminalWriter(c.stdin)
     log(`term ${pane} opened ${cols}x${rows}${args.includes('--takeover') ? ' (takeover)' : ''}${machine!.local ? '' : ` on ${machine!.label}`}`)
 
     readline.createInterface({ input: c.stdout }).on('line', (line) => {
-      if (!attached && line.includes('"terminal.frame"')) {
+      const isFrame = line.includes('"terminal.frame"')
+      if (!attached && isFrame) {
         attached = true
         hold?.resized(size.cols, size.rows)
       }
-      if (ws.isOpen()) ws.send(line)
+      if (ws.isOpen()) {
+        ws.send(line)
+        if (isFrame) {
+          for (const { epoch, phase, lines } of scrollDelivered.values())
+            ws.send(JSON.stringify({ type: 'scroll.ack', epoch, phase, lines }))
+          scrollDelivered.clear()
+        }
+      } else scrollDelivered.clear()
+      if (isFrame) touchScroll?.frame()
     })
     readline.createInterface({ input: c.stderr }).on('line', (line) => {
       log(`term ${pane} stderr: ${line}`)
@@ -167,27 +222,139 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
       ws.close(4500, 'herdr error')
     })
     c.on('exit', (code) => {
+      writer?.dispose()
+      scroll.dispose()
+      touchScroll?.dispose()
+      touchMerged.dispose()
       termSessions.delete(sess)
       if (ws.isOpen()) ws.close(4000, `herdr exit ${code}`)
     })
     // No crash if the CLI closes while we write to it.
     c.stdin.on('error', () => {})
-    for (const m of early.splice(0)) toChild(m)
+    for (const { obj, cb, tag, expiresAt } of early.splice(0)) {
+      // A scroll that expired while the child was still starting is stale —
+      // replay only work still inside its own deadline.
+      if (expiresAt !== undefined && expiresAt <= Date.now()) continue
+      toChild(obj, cb, tag, expiresAt)
+    }
   }
 
   // Scrolls merged and rate-limited (see scrollThrottle.ts).
+  // Acknowledge sent rows after relaying the next frame. Herdr exposes no
+  // applied viewport delta or causal input sequence, so this acknowledges delivery only.
+  // Delivery ledger, keyed `${epoch}:${phase}`: drag and momentum stay
+  // separate accounts even inside one merged batch. A v2 client (scroll
+  // messages carrying `v:2`) additionally receives per-command stages.
+  const scrollDelivered = new Map<string, { epoch: number, phase: string, lines: number }>()
+  const delivered = (epoch: number, phase: string, lines: number) => {
+    const key = `${epoch}:${phase}`
+    const entry = scrollDelivered.get(key) || { epoch, phase, lines: 0 }
+    entry.lines += lines
+    scrollDelivered.set(key, entry)
+  }
+  let scrollV2 = false
+  const scrollCmd = (epoch: number, id: number, phase: string, stage: string) => {
+    if (scrollV2 && ws.isOpen()) ws.send(JSON.stringify({ type: 'scroll.cmd', epoch, id, phase, stage }))
+  }
+  type TouchPosition = ReturnType<typeof terminalScrollPosition> & { epoch: number, preview: boolean, phase: string, id: number }
+  let touchScroll: ReturnType<typeof createTouchScrollPacer<TouchPosition>> | undefined
+  // Preserve the legacy wire contract, and allocate no pacer for default clients.
   const scroll = createScrollThrottle((direction, lines) => toChild({ type: 'terminal.scroll', direction, lines }))
+  const pacedTouch = () => touchScroll ||= createTouchScrollPacer<TouchPosition>((direction, lines, position, expiresAt) => {
+    if (!position) return
+    const { epoch, preview, phase, id, ...cell } = position
+    const signed = direction === 'up' ? lines : -lines
+    // submitted/delivered only when the bytes actually enter the stream —
+    // a chunk queued inside the writer under backpressure is not sent yet.
+    // Its tag and deadline ride along so cancels and TTL reach it there too.
+    toChild({ type: 'terminal.scroll', direction, lines, ...cell }, {
+      onSubmit: () => { delivered(epoch, phase, signed); scrollCmd(epoch, id, phase, 'submitted') },
+      // The stream callback carries an error on a failed write — 'flushed'
+      // means the kernel took the bytes; anything else is its own fact.
+      onFlush: err => scrollCmd(epoch, id, phase, err ? 'writeFailed' : 'flushed'),
+    }, {
+      scroll: true, direction, epoch,
+      dragLines: phase === 'drag' ? Math.abs(signed) : 0,
+      momentumLines: phase === 'momentum' ? Math.abs(signed) : 0,
+    }, expiresAt)
+  })
+  // Panes without mouse-report need no per-tick wheel reports: Herdr honors
+  // lines:N there, so merge touch drags into one command per repaint instead
+  // of one frame per row. The merged batch still counts toward the gesture's
+  // epoch for compatibility with clients consuming scroll.ack. `mergedContrib`
+  // attributes the merged total back to (epoch, phase) in send order.
+  // Contributions are a raw signed append log — NO pre-netting. The
+  // throttle's tagged cancel must be able to remove a phase cleanly, which
+  // pre-netted entries would make unrecoverable. At flush the batch is
+  // attributed oldest-first over same-sign entries; opposite-sign leftovers
+  // simply wait (bounded by the epoch).
+  const mergedContrib: { epoch: number, phase: string, lines: number }[] = []
+  const addContrib = (epoch: number, phase: string, signed: number) => {
+    mergedContrib.push({ epoch, phase, lines: signed })
+  }
+  const touchMerged = createScrollThrottle((direction, lines) => {
+    // Consume the contribution log now, report delivery when the bytes
+    // really enter the stream (onSubmit) — a chunk dropped by the bounded
+    // writer or stalled under backpressure is honestly never delivered.
+    const attrib: { epoch: number, phase: string, lines: number }[] = []
+    let rest = lines
+    const dirSign = direction === 'up' ? 1 : -1
+    for (let i = 0; rest > 0 && i < mergedContrib.length;) {
+      const c = mergedContrib[i]!
+      if (Math.sign(c.lines) !== dirSign) { i++; continue }
+      const take = Math.min(Math.abs(c.lines), rest)
+      c.lines -= dirSign * take
+      rest -= take
+      attrib.push({ epoch: c.epoch, phase: c.phase, lines: dirSign * take })
+      if (!c.lines) mergedContrib.splice(i, 1); else i++
+    }
+    // The throttle's post-flush net is zero: anything left in the log was
+    // netting residue or clamped by its line cap — never sendable input.
+    mergedContrib.length = 0
+    // Phases never share a wire batch: each emitted chunk carries one
+    // phase's tag and deadline, so a momentum cancel — or its shorter TTL —
+    // drops a dead tail without ever taking real drag input down with it.
+    // Lines without ledger credit count as drag — conservative.
+    const groups = new Map<string, { attrib: typeof attrib, lines: number }>()
+    for (const a of attrib) {
+      const g = groups.get(a.phase) || { attrib: [], lines: 0 }
+      g.attrib.push(a)
+      g.lines += Math.abs(a.lines)
+      groups.set(a.phase, g)
+    }
+    const drag = groups.get('drag') || { attrib: [], lines: 0 }
+    drag.lines += rest
+    groups.set('drag', drag)
+    // Drag goes first: real input precedes its expendable tail.
+    for (const phase of ['drag', 'momentum'] as const) {
+      const g = groups.get(phase)
+      if (!g?.lines) continue
+      const phaseAttribs = g.attrib
+      toChild({ type: 'terminal.scroll', direction, lines: g.lines },
+        phaseAttribs.length ? { onSubmit: () => phaseAttribs.forEach(a => delivered(a.epoch, a.phase, a.lines)) } : undefined,
+        { scroll: true, direction, epoch: 0, dragLines: phase === 'drag' ? g.lines : 0, momentumLines: phase === 'drag' ? 0 : g.lines },
+        Date.now() + (phase === 'drag' ? 800 : 240))
+    }
+  }, { intervalMs: 30 })
+  const cancelMerged = () => { touchMerged.cancel(); mergedContrib.length = 0 }
+  // Full touch cancellation clears every queue stage: pacer ticks, merged
+  // net, contribution ledger, and scroll chunks still waiting in the writer.
+  const cancelTouchWork = () => { touchScroll?.cancel(); cancelMerged(); cancelQueuedScrolls() }
+  let scrollbackSeq = 0
 
   // The pane's size is read before the control session resizes it (see paneSizes.ts).
+  // `herdr --version` does not depend on it: fired alongside, so the CLI's
+  // own round trip (SSH on a remote machine) is not serialized after the
+  // size read. The answer is also cached -- it only changes with the agent.
+  const versionP = machine ? herdrVersion(machine) : Promise.resolve(null)
   paneSizes().hold(pane).then(async (h) => {
     if (closed) return h.release(true)
     hold = h
-    const version = await runHerdrCli(machine!, ['--version']).catch(() => null)
+    const version = await versionP
     if (closed) return
-    const state = getState()
-    const serverVersion = state.machines?.find(m => m.key === machine!.key)?.version ?? (machine!.key === '' ? state.version : '')
+    const serverVersion = machine ? terminalServerVersion(machine) : ''
     mouse = version?.code === 0 && hasTerminalMouse(version.stdout.toString('utf8')) && hasTerminalMouse(serverVersion || '')
-    if (ws.isOpen()) ws.send(JSON.stringify({ type: 'web.capabilities', mouse }))
+    if (ws.isOpen()) ws.send(JSON.stringify({ type: 'web.capabilities', mouse, scroll: 2 }))
     start()
   })
 
@@ -198,16 +365,22 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
       try { m = JSON.parse(raw) }
       catch { return }
       switch (m && m.type) {
+        case 'ping': // liveness probe after sleep/backgrounding
+          if (ws.isOpen()) ws.send(JSON.stringify({ type: 'pong' }))
+          break
         case 'terminal.input':
+          cancelTouchWork()
           if (typeof m.text === 'string' && m.text.length <= 65536) toChild({ type: 'terminal.input', text: m.text })
           else if (typeof m.bytes === 'string' && m.bytes.length <= 90000) toChild({ type: 'terminal.input', bytes: m.bytes })
           break
         case 'terminal.mouse': {
+          cancelTouchWork()
           const event = mouse && cleanTerminalMouse(m, size.cols, size.rows)
           if (event) toChild(event)
           break
         }
         case 'terminal.resize': {
+          cancelTouchWork()
           size = { cols: clampInt(m.cols, 10, 400, cols), rows: clampInt(m.rows, 5, 200, rows) }
           if (attached) hold?.resized(size.cols, size.rows)
           toChild({ type: 'terminal.resize', ...size })
@@ -215,10 +388,64 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
         }
         case 'terminal.scroll':
           if (m.direction === 'up' || m.direction === 'down') {
-            scroll.push(m.direction, clampInt(m.lines, 1, 500, 3))
+            if (m.v === 2) scrollV2 = true
+            if (m.source === 'touch') {
+              // tui = the pane's live mouse-report/alt-screen state as seen by
+              // the client's xterm. Older clients send no tui; fall back to
+              // the herdr capability flag.
+              const tui = m.tui === undefined ? mouse : m.tui === true
+              const phase = m.phase === 'momentum' || m.preview === false ? 'momentum' : 'drag'
+              const epoch = clampInt(m.epoch, 0, Number.MAX_SAFE_INTEGER, 0)
+              // A reversed gesture supersedes opposite-direction work still
+              // waiting in early or writer queues — the pacer already
+              // clears its side.
+              cancelQueuedScrolls(t => t.direction !== m.direction)
+              if (tui) {
+                pacedTouch().push(m.direction, clampInt(m.lines, 1, 500, 3), {
+                  ...terminalScrollPosition(m, size.cols, size.rows),
+                  epoch, preview: m.preview !== false, phase,
+                  id: clampInt(m.id, 0, Number.MAX_SAFE_INTEGER, 0),
+                }, phase === 'momentum' ? 240 : 800)
+              }
+              else {
+                addContrib(epoch, phase, (m.direction === 'up' ? 1 : -1) * clampInt(m.lines, 1, 500, 3))
+                touchMerged.push(m.direction, clampInt(m.lines, 1, 500, 3), phase)
+              }
+            }
+            else { cancelTouchWork(); scroll.push(m.direction, clampInt(m.lines, 1, 500, 3)) }
           }
           break
+        case 'touch.cancel':
+          if (m.phase === 'momentum') {
+            // Phase cancel: drop expendable momentum only. Queued drags —
+            // which may still be owed to a finger that is down — survive.
+            touchScroll?.cancelWhere(position => position?.phase === 'momentum')
+            touchMerged.cancelTagged('momentum')
+            for (let i = mergedContrib.length - 1; i >= 0; i--) if (mergedContrib[i]!.phase === 'momentum') mergedContrib.splice(i, 1)
+            // Momentum chunks in early/writer queues die too. Emitted
+            // batches are phase-pure (the merged flush splits per phase),
+            // so a drag-bearing batch is never taken down by this.
+            cancelQueuedScrolls(t => t.momentumLines > 0 && t.dragLines === 0)
+            break
+          }
+          cancelTouchWork()
+          if (m.disabled === true) { touchScroll?.dispose(); touchScroll = undefined }
+          scrollDelivered.clear()
+          break
+        // The client renders scrollback locally in a native scroller, so the
+        // terminal itself never leaves the bottom for history browsing.
+        case 'scrollback.read': {
+          const seq = ++scrollbackSeq
+          // 'recent' wraps at pane width (physical rows for the transcript
+          // scroller); 'recent_unwrapped' keeps logical lines (history dump).
+          const source = m.source === 'recent' ? 'recent' : 'recent_unwrapped'
+          herdr('pane.read', { pane_id: pane, source, lines: clampInt(m.lines, 1, 4000, 800), format: 'ansi' }, 8000)
+            .then(r => { if (seq === scrollbackSeq && ws.isOpen()) ws.send(JSON.stringify({ type: 'scrollback.chunk', text: String(r?.read?.text || '') })) })
+            .catch(() => { if (seq === scrollbackSeq && ws.isOpen()) ws.send(JSON.stringify({ type: 'scrollback.chunk', text: '' })) })
+          break
+        }
         case 'keys': // logical keys encoded by Herdr according to the terminal mode
+          cancelTouchWork()
           if (Array.isArray(m.keys) && m.keys.length <= 32 && m.keys.every((k: unknown) => typeof k === 'string' && k.length <= 24)) {
             herdr('pane.send_input', { pane_id: pane, keys: m.keys }).catch(e =>
               ws.isOpen() && ws.send(JSON.stringify({ type: 'web.error', code: e.code, message: e.message })))
@@ -228,6 +455,7 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
         // turns an image path into an image (typed through wherdr's xterm, which
         // never learns the program's bracketed paste mode, it stays text).
         case 'paste':
+          cancelTouchWork()
           if (typeof m.text === 'string' && m.text && m.text.length <= 65536) {
             herdr('pane.send_input', { pane_id: pane, text: m.text }).catch(e =>
               ws.isOpen() && ws.send(JSON.stringify({ type: 'web.error', code: e.code, message: e.message })))
@@ -235,17 +463,24 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
           break
         case 'visibility':
           sess.visible = Boolean(m.visible)
+          if (!sess.visible) cancelTouchWork()
           break
       }
     },
     onClose(clean = false) {
       closed = true
       scroll.dispose()
+      touchScroll?.dispose()
+      touchMerged.dispose()
+      mergedContrib.length = 0
       termSessions.delete(sess)
       const c = child
       if (c) {
         // Hand control back cleanly (the pane size goes back to the other clients).
-        toChild({ type: 'terminal.release' })
+        // Drop queued scroll chunks first: end() would cut them anyway, and
+        // release must not wait behind a backpressured tail.
+        writer?.dispose()
+        if (c.stdin.writable) c.stdin.write(JSON.stringify({ type: 'terminal.release' }) + '\n')
         c.stdin.end()
         setTimeout(() => {
           if (c.exitCode === null) c.kill('SIGTERM')
@@ -273,6 +508,7 @@ export function resizePane(pane: string, cols: number, rows: number): Promise<bo
     if (done) return
     done = true
     clearTimeout(timer)
+    // A standalone control session — no shared writer here.
     if (child.stdin.writable) child.stdin.write(JSON.stringify({ type: 'terminal.release' }) + '\n')
     child.stdin.end()
     setTimeout(() => {

@@ -21,3 +21,11 @@ playwright-report/
 /.wherdr-dir
 blob-report/
 e2e-metrics/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Tutorial fonts, downloaded and verified by tools/tutorial-board/fontpin.py
+/tools/tutorial-board/fonts/
+*.tgz

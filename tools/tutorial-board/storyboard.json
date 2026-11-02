@@ -1,0 +1,82 @@
+{
+  "voice": "matilda",
+  "model": "elevenlabs/eleven-v4-turbo",
+  "pronunciation": "where-der",
+  "spoken": { "where-der": "wherdr", "weirder": "wherdr", "wierder": "wherdr", "herder": "herdr", "herd": "herdr" },
+  "pause": 0.2,
+  "lead_in": 0.08,
+  "tail": 0.2,
+  "mark": "spotlight",
+  "segments": [
+    {
+      "id": "intro",
+      "title": "The herdr-projects board",
+      "screen": "board",
+      "narration": "where-der puts your herder-projects board in one clear view. herder-projects runs the tasks, coordinators and project management; where-der makes them easy to use.",
+      "caption": "wherdr puts your herdr-projects board in one clear view. herdr-projects runs the tasks, coordinators and project management; wherdr makes them easy to use."
+    },
+    {
+      "id": "board",
+      "title": "Four columns",
+      "narration": "The board is optional: where-der also works with Herder alone. Here, tasks sit in four columns: Needs you, Ready to approve, Working, and To do.",
+      "caption": "The board is optional: wherdr also works with Herdr alone. Here, tasks sit in four columns: Needs you, Ready to approve, Working, and To do.",
+      "marks": [
+        { "on": "needsHead", "at": "Needs" },
+        { "on": "readyHead", "at": "Ready" },
+        { "on": "workingHead", "at": "Working" },
+        { "on": "todoHead", "at": "To" }
+      ]
+    },
+    {
+      "id": "needs",
+      "title": "Start with Needs you",
+      "narration": "Start with Needs you. The card shows the question that is blocking the agent. Click it to open the task.",
+      "caption": "Start with Needs you. The card shows the question that is blocking the agent. Click it to open the task.",
+      "marks": [{ "on": "needsCard", "at": "card", "until": "Click" }],
+      "cursor": [{ "to": "needsCard", "at": "Click", "then": "needs-open" }]
+    },
+    {
+      "id": "task",
+      "title": "Read the task",
+      "narration": "The task opens beside the board, and all four columns stay in view. In the Task tab, read the question and the description.",
+      "caption": "The task opens beside the board, and all four columns stay in view. In the Task tab, read the question and the description.",
+      "cursor": [{ "to": "taskTab", "at": "In", "then": "needs-task" }],
+      "marks": [
+        { "on": "question", "at": "question" },
+        { "on": "description", "at": "description" }
+      ]
+    },
+    {
+      "id": "ready",
+      "title": "Ready to approve",
+      "narration": "Close the panel. Ready to approve works the same way: open a task, and the Task tab gathers the summary, the review and the pull request.",
+      "caption": "Close the panel. Ready to approve works the same way: open a task, and the Task tab gathers the summary, the review and the pull request.",
+      "cursor": [
+        { "to": "close", "at": "Close", "then": "board-after" },
+        { "to": "readyCard", "at": "open", "then": "ready-task" }
+      ],
+      "marks": [
+        { "on": "summary", "at": "summary", "pad": 6 },
+        { "on": "facts", "at": "review", "pad": 6 }
+      ]
+    },
+    {
+      "id": "working",
+      "title": "Check progress",
+      "narration": "Close it again for the overview. Working shows each task's progress, and To do holds what comes next.",
+      "caption": "Close it again for the overview. Working shows each task's progress, and To do holds what comes next.",
+      "cursor": [{ "to": "close", "at": "Close", "then": "board-closed" }],
+      "marks": [
+        { "on": "workingCard", "at": "Working", "until": "To" },
+        { "on": "todoCard", "at": "To" }
+      ]
+    },
+    {
+      "id": "outro",
+      "title": "Keep moving",
+      "narration": "Use where-der to follow your herder-projects board, spot the next decision, and keep moving.",
+      "caption": "Use wherdr to follow your herdr-projects board, spot the next decision, and keep moving.",
+      "card": "Know what needs you."
+    }
+  ]
+}

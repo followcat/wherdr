@@ -1,4 +1,17 @@
-import type { ChatItem, ChatResponse } from '#shared/types'
+import type { ChatCursor, ChatItem, ChatResponse } from '#shared/types'
+
+export const hasOlder = (cursor: ChatCursor | null): boolean => typeof cursor === 'string' ? cursor.length > 0 : typeof cursor === 'number' && cursor > 0
+export function olderCursor(r: Pick<ChatResponse, 'olderCursor' | 'start'>, before?: ChatCursor | null): ChatCursor | null {
+  const next = r.olderCursor !== undefined ? r.olderCursor : r.start ?? null
+  if (!hasOlder(next) || next === before) return null
+  if (typeof next === 'number' && typeof before === 'number' && next >= before) return null
+  return next
+}
+
+export function needsOlderForHit(cursor: ChatCursor | null, offset: number | null, found: boolean, pages: number): boolean {
+  if (!hasOlder(cursor) || found) return false
+  return offset === null ? pages < 40 : typeof cursor === 'number' && cursor > offset
+}
 
 // Bottom of the conversation after a re-read. With `keep` (incremental reply,
 // see server/utils/chatDelta.ts) the first `keep` items stay as they are (same
@@ -21,7 +34,7 @@ export function nextTail(tail: ChatItem[], r: Pick<ChatResponse, 'items' | 'keep
 // `rewritten`: the file was rewritten above our start (same size or shorter,
 // see anchorOf in server/utils/transcripts.ts), even if the new bottom happens
 // to start at the same byte.
-export function restartsTail(c: { file: string | null, tailStart: number | null }, r: Pick<ChatResponse, 'file' | 'start' | 'rewritten'>): boolean {
+export function restartsTail(c: { file: string | null, tailStart: ChatCursor | null }, r: Pick<ChatResponse, 'file' | 'start' | 'rewritten'>): boolean {
   return Boolean(c.file && r.file !== c.file)
     || Boolean(c.file && r.rewritten)
     || (c.tailStart !== null && r.start !== undefined && r.start !== c.tailStart)
@@ -31,12 +44,18 @@ export function restartsTail(c: { file: string | null, tailStart: number | null 
 // here let the server send only what changed.
 // `n` also tells the server this client splices incremental replies (other
 // readers of /api/chat, such as plugins, get full lists and are not remembered).
-export function tailQuery(pane: string, c: { token: string, tailStart: number | null, tail: ChatItem[] }): URLSearchParams {
+export function tailQuery(pane: string, c: { token: string, tailStart: ChatCursor | null, tail: ChatItem[] }): URLSearchParams {
   const q = new URLSearchParams({ pane, since: c.token })
   if (c.tailStart !== null) q.set('from', String(c.tailStart))
   q.set('n', String(c.token ? c.tail.length : 0))
   return q
 }
+
+// A bottom read unanswered past this is dead (a black-holed fetch after the
+// server went away mid-request): aborting frees the one-at-a-time lock below
+// so the next poll can ask again, instead of every refresh waiting forever
+// behind a read that will never settle.
+export const CHAT_READ_MS = 8000
 
 // One re-read of the bottom at a time, for its whole life. `step` returns
 // true to run again at once (session changed, delta did not fit), up to `max`

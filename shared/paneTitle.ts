@@ -4,7 +4,7 @@ export const cleanTitle = (title: string | null | undefined) =>
   (title || '').replace(/^[^\p{L}\p{N}~/]+/u, '').trim()
 
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'tcsh', 'csh', 'nu', 'pwsh', 'login', 'tmux', 'screen'])
-const GENERIC_AGENTS = new Set(['claude', 'claude code', 'codex', 'gemini', 'gemini cli', 'opencode', 'kimi', 'agent'])
+const GENERIC_AGENTS = new Set(['claude', 'claude code', 'codex', 'gemini', 'gemini cli', 'opencode', 'cmd', 'command code', 'kimi', 'agent'])
 
 const baseName = (dir: string | null | undefined) =>
   (dir || '').replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop() || ''
@@ -45,6 +45,16 @@ export function coordinatorTitle(p: Pick<Pane, 'name' | 'tabLabel'>): string {
 // agent name, terminal title if meaningful, foreground
 // command, and as a last resort the folder.
 export function paneTitle(p: Pane, _workspaceTitle?: string | null): string {
+  return titleOf(p, kindLabel)
+}
+
+// Same name, but an unnamed agent pane keeps its agent id as typed ("omp",
+// "claude") instead of a capitalised kind label.
+export function paneOwnTitle(p: Pane): string {
+  return titleOf(p, kind => kind)
+}
+
+function titleOf(p: Pane, agentFallback: (kind: string) => string): string {
   if (p.label) return p.label
   const coordinator = coordinatorTitle(p)
   if (coordinator) return coordinator
@@ -52,7 +62,7 @@ export function paneTitle(p: Pane, _workspaceTitle?: string | null): string {
   if (p.agent && shown && !GENERIC_AGENTS.has(shown.toLocaleLowerCase()) && shown.toLocaleLowerCase() !== p.agent.toLocaleLowerCase()) return shown
   const title = meaningfulTitle(p)
   if (title) return title
-  if (p.agent) return p.name && p.name !== p.agent ? p.name : kindLabel(p.agent)
+  if (p.agent) return p.name && p.name !== p.agent ? p.name : agentFallback(p.agent)
   if (p.command) return p.command
   return baseName(p.cwd) || (p.cwd ? '/' : 'Shell')
 }
@@ -61,6 +71,7 @@ function kindLabel(kind: string | null) {
   if (kind === 'claude') return 'Claude'
   if (kind === 'codex') return 'Codex'
   if (kind === 'opencode') return 'OpenCode'
+  if (kind === 'cmd') return 'Command Code'
   if (kind === 'gemini') return 'Gemini CLI'
   if (kind === 'kimi') return 'Kimi'
   return kind ? kind[0]!.toUpperCase() + kind.slice(1) : 'Shell'

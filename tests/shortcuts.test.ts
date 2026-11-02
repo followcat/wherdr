@@ -64,19 +64,24 @@ describe('matchShortcut', () => {
     expect(match({ key: '§', code: 'IntlBackslash', ctrlKey: true })).toBe('toggle-term')
   })
 
-  it('the terminal keeps keys not meant for it: Escape, Alt+arrows, ⌘F, ?', () => {
+  it('the terminal keeps keys not meant for it: Escape, ⌘F, ? — Alt+arrows are taken at capture', () => {
     expect(match({ key: 'Escape' }, term)).toBeNull()
+    // Bubble phase: the capture Alt+arrows do not match here — they were eaten
+    // upstream, so xterm never sent them to the program.
     expect(match({ key: 'ArrowDown', altKey: true }, term)).toBeNull()
+    expect(match({ key: 'ArrowDown', altKey: true }, term, { ...mac, phase: 'capture' })).toBe('next-agent')
     expect(match({ key: 'f', metaKey: true }, term)).toBeNull()
     expect(match({ key: '?', shiftKey: true }, term)).toBeNull()
     expect(match({ key: ',', metaKey: true }, term)).toBe('settings')
   })
 
-  it('text being typed: plain and Alt keys left to the field, Mod chords still work', () => {
+  it('text being typed: plain keys left to the field, Alt+arrows navigate, Mod chords still work', () => {
+    const cap = { ...mac, phase: 'capture' as const }
     expect(match({ key: 'Escape' }, field(''))).toBe('stop')
     expect(match({ key: 'Escape' }, field('half a sentence'))).toBeNull()
-    expect(match({ key: 'ArrowUp', altKey: true }, field(''))).toBe('prev-agent')
-    expect(match({ key: 'ArrowUp', altKey: true }, field('line one'))).toBeNull()
+    // Alt+arrows fire even mid-draft: global navigation beats word jumps.
+    expect(match({ key: 'ArrowUp', altKey: true }, field(''), cap)).toBe('prev-agent')
+    expect(match({ key: 'ArrowUp', altKey: true }, field('line one'), cap)).toBe('prev-agent')
     expect(match({ key: '?', shiftKey: true }, field(''))).toBeNull()
     expect(match({ key: '?', shiftKey: true })).toBe('help')
     expect(match({ key: '/', metaKey: true }, field('draft'))).toBe('help')
@@ -91,14 +96,33 @@ describe('matchShortcut', () => {
     const overlay = { ...body, overlay: true }
     expect(match({ key: 'Escape' }, overlay)).toBeNull()
     expect(match({ key: 'ArrowDown', altKey: true }, overlay)).toBeNull()
+    expect(match({ key: 'ArrowDown', altKey: true }, { ...overlay, phase: 'capture' as const })).toBeNull()
     expect(match({ key: 'k', metaKey: true }, overlay)).toBe('search-all')
     expect(match({ key: '/', metaKey: true }, overlay)).toBe('help')
     expect(match({ key: 'Escape', isComposing: true })).toBeNull()
     expect(match({ key: 'Escape', defaultPrevented: true })).toBeNull()
   })
 
+  it('Alt+←/→ switches space tabs, taken before fields and the terminal (browser Back)', () => {
+    const cap = { ...linux, phase: 'capture' as const }
+    expect(match({ key: 'ArrowLeft', altKey: true }, body, cap)).toBe('prev-tab')
+    expect(match({ key: 'ArrowRight', altKey: true }, body, cap)).toBe('next-tab')
+    // Capture phase only: the key is eaten before xterm or the browser sees it.
+    expect(match({ key: 'ArrowLeft', altKey: true }, body, linux)).toBeNull()
+    expect(match({ key: 'ArrowLeft', altKey: true }, term, cap)).toBe('prev-tab')
+    expect(match({ key: 'ArrowLeft', altKey: true }, field('typing a draft'), cap)).toBe('prev-tab')
+    // A held key keeps stepping; overlays block navigation.
+    expect(match({ key: 'ArrowRight', altKey: true, repeat: true }, body, cap)).toBe('next-tab')
+    expect(match({ key: 'ArrowRight', altKey: true }, { ...body, overlay: true }, cap)).toBeNull()
+    // On macOS too (⌥+←/→), and plain or shifted arrows are untouched.
+    const macCap = { ...mac, phase: 'capture' as const }
+    expect(match({ key: 'ArrowLeft', altKey: true }, body, macCap)).toBe('prev-tab')
+    expect(match({ key: 'ArrowLeft' }, body, macCap)).toBeNull()
+    expect(match({ key: 'ArrowLeft', altKey: true, shiftKey: true }, body, macCap)).toBeNull()
+  })
+
   it('held keys repeat agent navigation only', () => {
-    expect(match({ key: 'ArrowDown', altKey: true, repeat: true })).toBe('next-agent')
+    expect(match({ key: 'ArrowDown', altKey: true, repeat: true }, body, { ...mac, phase: 'capture' })).toBe('next-agent')
     expect(match({ key: 'Escape', repeat: true })).toBeNull()
     expect(match({ key: 'n', code: 'KeyN', metaKey: true, altKey: true, repeat: true }, body, { ...mac, phase: 'capture' })).toBeNull()
   })

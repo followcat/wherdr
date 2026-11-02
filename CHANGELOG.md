@@ -6,6 +6,146 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added and improved
+
+- **OpenCode's asks, queue and shell, through its service.** A blocked OpenCode pane's permission request or question no longer means "use the terminal": pending requests are read from the session's own API (`GET …/permission`, `GET …/form`) and shown as the same "Your turn" card Claude's questions get — Allow once / Always allow / Reject, or Yes/No, a choice list, or a free answer for single-field forms. Answers go back through whitelisted replies (`POST …/reply`), never typed keys, and are only trusted once the request has actually left the pending list; a request that changed since the card was drawn is refused rather than answered. The session inbox is now the queue: messages waiting to be delivered appear as queued bubbles, Cancel deletes the matching inbox entry (the transport re-lists before deleting, never a blind delete), and a message still in the inbox can no longer be misjudged as never sent. Typing `! command` runs OpenCode's real shell through `POST …/shell`, landing as the same bash card Claude's "!" produces. The composer status line finally shows OpenCode's own numbers — agent, model, per-direction token counts and cost from the session record — where omp and Devin already show theirs.
+- **Session-scoped model switching for Devin and OpenCode.** The composer ModelPicker now works on both agents. Devin's `/model` picker is driven through its search field with `alt+↵` — the only session-scoped confirm (plain ↵ would write the global default); the change is verified against the `✓ Model set to … for this session` echo and the parsed footer. OpenCode's TUI `/models` hides its cursor in styling, so the switch goes through the service API instead: the transport gained a whitelisted model write — `PATCH /api/session/<id>` with a `{model:{id,providerID,variant}}` body, re-GET for verification — plus a `/api/model` catalog read for the option list. Its other writes are the fixed permission/form/inbox/shell operations above; there is no generic write proxy.
+- **Devin's status line and permission card.** The composer footer — `SWE-2 Max · 1 shell ↓` plus its `Context: … tokens` gauge — now shows under the composer like omp's status. Its permission dialog (Allow ←◼◼◼◼→ Once / Bypass mode / Deny) is recognized as a native prompt: the "Your turn" card appears even though the pane stays "done", and an answer sends real cursor keys, re-validated on a fresh screen read. A dialog replayed in scrollback above a live composer is not mistaken for a prompt. The raw `/api/input` route got the same protection OpenCode has: with no field on screen it holds the text and refuses a bare Enter, so an older tab can't type into the dialog either.
+- **Devin and OpenCode slash commands.** `/clear` and `/compact` for Devin (the only commands its screens evidence), and OpenCode 2.x's documented builtin set complete the composer autocomplete.
+- **Command Code conversations.** wherdr reads the Command Code CLI's local JSONL sessions (`~/.commandcode/projects/<project>/<session>.jsonl`) on the machine running the agent, over SSH too: text, reasoning, tool calls and results, saved images, search, previews, model and pagination. Herdr already reports the pane as `cmd`, so no integration is needed; without a session id the reader takes the most recently written session for the pane's folder (two live panes in one folder share the newest). `/model`, `/effort` and permission dialogs stay in the terminal.
+- **A blocked OpenCode no longer answers its own dialog.** OpenCode's permission and question dialogs own the keys while the pane is blocked — text typed from the composer and its Enter would confirm or deny in your place (the same hole Devin's was). Sends now always take the prompt route, hold while the pane is blocked, keep order behind an entry already held, and release only when the composer box is really back on screen — its ┃ field above the ╹▀ rule and no dialog footer left. The guard is server-side too, so a tab opened before this version can't bypass it through the raw input route, and a bare Enter there is refused; dialog detection needs the same marker conjunction Herdr uses, so prose like "enter confirm" in the output no longer keeps a message held, and only the pane's own composer anchor counts — a stray › or ❯ in Devin/OpenCode output can't fake a free field.
+- **Devin's model shows up in PlanCell.** `currentModel` accepted only Claude/Codex/omp plus OpenCode's transcript branch — the implemented Devin `model()` reader was never called, so Devin's model never reached the plan header.
+- **OpenCode tools show their wall time and real names.** Each tool chip and group row now ends with its measured duration (the transcripts carried it, unrendered), and the lowercase OpenCode tool names — webfetch, websearch, task, todoread, todowrite, list, patch — get labels and icons instead of falling back to raw names and a wrench. An assistant error message is marked with the error style now, and image dedupe is documented as covering only Claude/omp transcripts (the Devin and OpenCode readers hash nothing).
+- **One microphone, one owner.** The speech engine is still shared, but every composer now holds its own take: dictation results can no longer land in a neighboring split's draft, a pane closing mid-recording no longer cancels another pane's take, and a second mic press while a take runs is refused instead of hijacking it. A failed mic grab releases the stream it already held, a wedged decode of an audio blob now honors the same Recognizing timeout as a mic take, and every caller waiting on model load resolves — not just the first.
+- **q4f16 downloads like the rest.** `scripts/fetch-asr-models.sh` gained the `qwen3q4f16` branch (the WebGPU Qwen3-ASR export is a Hugging Face repo, not a sherpa tarball — `HF_ENDPOINT` selects a mirror), and dropped the two fetchers whose models are no longer in the app's list. Removing an installed model now sweeps every browser cache, not just the ASR one — the service worker's network-first cache could otherwise keep it "installed" after Remove.
+- **Model weights sit behind the lock too.** `/models/**` now requires the unlocked session like the API, and its cache header is `private` so shared caches along the tunnel can't keep blobs a locked-out client fetched.
+- **OpenCode reading wastes fewer round-trips.** A snapshot refresh that finds the same conversation identity now keeps its fetched pages (each still expires on its own window, and SSE invalidation clears them as before) — over SSH every page refetch used to spawn another shim. User image attachments stored as local `file:` URIs now display like tool-result images, resolved only when the session references them, and a relative `XDG_STATE_HOME` no longer misleads service discovery.
+- **Devin Cancel only where it can succeed.** The button showed on every queued row, but ↑ can only recall the newest — older rows showed it just to be refused. It now appears only on the newest Devin queue entry (held and failed messages keep theirs).
+- **On-device dictation hears Cantonese, Japanese and Korean too.** The microphone's speech model is now SenseVoice-small (int8): the language — 中文, English, 廣東話, 日本語 or 한국어 — is detected automatically, and the take is transcribed when you stop, with punctuation. The first launch after the update downloads the new model (~230 MB) once in resumable slices, so a dropped connection no longer restarts it; the retired bilingual model is evicted from the browser cache.
+- **Six ears to compare, one tap apart.** Settings → Conversation now lists every viable speech model from our bake-off — SenseVoice-small (everyday default), Qwen3-ASR 0.6B and FunASR-Nano (real 廣東話 characters and full punctuation, ~1 GB each), FireRedASR2, Omnilingual 300M and Dolphin-base. Install or remove each independently; the mic uses the one you pick, and the big models can run on the phone's GPU through WebGPU. Large model files stream into the recognizer in slices, so loading a gigabyte no longer floods the tab's memory, and SenseVoice now truly emits punctuation — its ITN flag had been silently ignored until now.
+- **Qwen3-ASR now runs on the phone's GPU.** The Cantonese-accuracy pick switches to the WebGPU-native q4f16 export (int4 weights, fp16 activations) driven by onnxruntime-web with KV-cached decoding — measured ~70 ms/token on an Adreno phone, about 14x faster than the sherpa int8 path it replaces, which is evicted from the cache. SenseVoice keeps first place in the list.
+- **Plain Send steers a working Devin again.** The white button ends the draft with Enter everywhere, so a message reaches a running Devin at once instead of sitting in its queue.
+- **The microphone no longer talks over itself.** Dictation played your own voice back through the speaker while it listened, and the echo re-entering the mic turned takes into reverb — recognition was starved before the model ever ran. The capture tap is now muted, Android's auto-gain is off so the noise floor isn't pumped between phrases, and a suspended audio context is resumed before recording starts.
+- **Speech fixes actually reach the phone.** The ASR worker was inside the service-worker precache, which serves cache-first until you reload — a phone could keep running the old recognizer forever after an update. Worker files are out of the precache now, and the worker URL carries a version so the next load always gets fresh speech code. The test page also shows each take's level (duration/rms/peak), so a dead mic is visible instead of looking like a bad decode.
+- **Hold to talk, with a wave.** Press and hold the microphone to dictate: the status row turns into a live waveform drawn in block glyphs — `▁▂▃▄▅▆▇█` in the terminal mono face, like text rendering itself — with a running timer, and letting go ends the take for recognition. A tap under half a second still works as tap-to-start/stop for longer takes, and the × still cancels.
+- **Speech model list reads like a spec sheet.** Each row in Settings › Conversation now states the model's own facts — size, languages, engine family and punctuation — instead of a Cantonese-shopping pitch, so picks are comparable at a glance.
+- **The mic learns the room before you speak.** On context-capable speech models (marked `context` in Settings — Qwen3-ASR q4f16 today), each mic press harvests a bare term list from the pane itself — agent and machine names, cwd tail, pane title, draft and attachment names — and feeds it into the model's system turn as recognition bias. Terms like `terminalTouch`, `Composer.vue` or `fvps` are weighed toward what they really are instead of whatever the audio resembles. Nothing is maintained by hand: switch pane and the bias follows. The speech test page shows each model's context capability and the exact list a take was decoded with.
+- **Devin's own queue is seen, labeled and steerable.** A message sent while Devin compacts lands in its native "N queued" section even though Herdr reports the pane done — it used to sit invisible until Devin flushed it. The composer's screen is now read like Claude's: its "○" rows appear as queued bubbles (labeled Queued, not "sending…"), deduplicated against wherdr's records, and they keep a sent record from being misjudged as lost. The queue header's "↵ send now" shows a Send now button that presses Enter on the verified-empty field. Cancel pulls the newest entry back with ↑ and empties the field; deeper entries can't be — Ctrl+Enter is not a re-queue key over the API (it steers on an idle pane or strands the draft mid-turn, measured on v3000.11.234), so they are refused instead of silently dropping or reordering what was popped.
+- **One flat agent list, like Herdr's own.** Settings › Home screen › Group by gains a third choice, Agents: every agent across the machines in a single list — still in Herdr's workspace/tab/pane order and grouped only by state (Your turn / Working / Ready) — with machine and space names as card badges. The machine bar keeps filtering on the same base keys as the counters.
+- **A bigger main interface on the computer.** Settings › Desktop › Interface size › Large widens the reading column to 1500 px, narrows the agent list, and grows the text of the chat, composer, agent header, tabs, cards, counters, settings and the terminal by about 15% — the terminal's own text size stays the base. Font sizes only — layouts stay put. Saved on this device; phones are unaffected. The personal fork defaults to Large.
+- **OpenCode 2.x conversations, read-only.** The Conversation view now reads an OpenCode pane's history from its already-running background service — native pagination ("Load older"), reasoning, tool progress and results, saved images, previews and global search, on local and SSH machines alike. A small Python reader on the agent's machine discovers `service.json`, authenticates there and only ever issues loopback GETs — credentials and service URLs never reach the browser, and nothing starts, restarts or reconfigures the service. A single SSE subscription per machine refreshes pages on events; temporary failures keep what was already read. Install `herdr integration install opencode` so Herdr reports the session; OpenCode 1.x, `--standalone` and explicit `--server` are out of scope. Sending still goes through the terminal.
+- **Alt+arrows drive agents and tabs, from anywhere.** Alt+ArrowUp/Down step through the agent list and Alt+ArrowLeft/Right switch the viewed space's tabs. All four are taken at capture — before the browser turns Alt+←/→ into Back/Forward and before a focused terminal could eat Alt+↑/↓ and make agent stepping look stuck — so they work while typing or in a terminal, and repeat while held. Terminal programs lose their own Alt-arrow bindings; on macOS, ⌥-arrow word jumps in fields too.
+- **OpenCode's permission dialog also answers from the screen when the service can't be reached.** The API card is still authoritative, but a blocked pane whose session service is unreachable — or whose request the pending list does not carry — now still shows the "Your turn" card, parsed straight from the boxed permission dialog (the ┃ box, ⇆ select legend, wide and narrow layouts). Its colour-only cursor is read from an ANSI re-read, never guessed, and the answer goes back through the same whitelisted API: the displayed action and resources resolve exactly one pending request — an ambiguous match refuses rather than guessing — the reply still goes out by request id, and leaving the pending list is still what proves it worked. Keyboard arrows on a permission card are ←/→ like the dialog's own ⇆ select, and OpenCode's shell transcript rows now match a sent "! command" in either landing shape. The composer status line gained the agent and model next to per-direction token counts and cost.
+
+### Fixed
+
+- **A Devin dialog can no longer eat a send.** A permission or question dialog reports the pane "done" while its composer is off screen — typed there, a message vanished and its Enter confirmed "Allow" for you. Sends now check for the boxed composer field before typing, and hold the message until it is back.
+
+- **No more ghost queue line beside a Devin send.** "Send with Ctrl+Enter" on a Devin pane never reached its TUI — the chord is dropped by the CLI, so the typed text stayed in the input box while later messages piled onto it, until a real Enter flushed the pile as one merged delivery that looked like a queued line plus an immediate send. Devin no longer offers an alternate send key, and the composer now ignores chorded Enters arriving during or right after IME composition — the stray chord an Android keyboard emits as its send action can no longer tag a normal send.
+- **A slow send no longer eats what you type meanwhile.** Shell answers, slash commands and free replies wait on the server, and the receipt used to wipe the field and the attachments unconditionally — anything typed or attached during the wait vanished. The receipt now drops only the text and attachments that send carried, and the command menu no longer crashes on Enter or Tab when it is open with no candidate.
+- **A mic start that outlives its caller stays dead.** Waiting on model load or mic permission could cross a page switch — the gone composer then entered recording anyway, and a second tap could leave a stream nothing could stop. Each start now carries a generation that stop, cancel, unmount and newer starts invalidate; a stale start drops whatever it already grabbed.
+## [2.5.0] — 2026-11-02
+
+### Added and improved
+
+- **Choose the order of the phone keys.** Settings › Terminal › Phone key bar reorders the keys of the phone key bar (drag a handle, or the up and down buttons), with a preview of the row and a reset to the default order. The same order applies in the Conversation and the Terminal; it is saved on the device. The default order is unchanged. Thanks to [@followcat](https://github.com/followcat) for the idea.
+- **Per-device push delivery results.** Settings › Notifications lists every registered device with the result of its last push (delivered, expired, rejected, unreachable) and removes expired ones on request, instead of dropping them silently.
+- **English-only interface.** The interface is now always in English, including on a browser set to French or after choosing French earlier; Settings › Appearance no longer has a Language choice. Messages you and the agents write are unchanged, in any language.
+
+- **Clearer phone navigation.** The header chevron has a full-size button box, including the pane position when several panes are open. Desktop view switching uses a single action button.
+- **Verified links in the agent skill.** The wherdr skill explains how agents can share links to files, pages and services that users can actually open.
+- **Focused tests and lighter CI.** Repeated browser cases move to unit or component tests, phone jobs are sharded, and full develop coverage runs nightly. Engine checks run only for relevant changes; develop prereleases require successful CI on their exact commit.
+
+### Fixed
+
+- **Progressive reconnect after a restart (#253, #284).** Machines recover independently instead of waiting for every probe. Existing panes stay visible until their machine has been read or is confirmed offline, including when SSH returns before its first snapshot.
+- **Codex quotas belong to their account (#282).** Changing accounts cannot reuse another account's quota readings, and unidentified accounts do not inherit cached weekly quotas.
+- **Accurate Home WORKING counts (#263, #283).** Cards and counters follow Board task groups without counting remote tasks twice; independent agents in shared task workspaces remain visible.
+- **Reliable navigation and conversation recovery.** Back from a task on a phone returns to the Board, wherdr links reuse its existing window, closed coordinator panes can be found by conversation, and explicitly resumed older Codex conversations can be located.
+- **Honest terminal close feedback (#251).** Closing a terminal no longer falsely claims that its process stopped.
+
+- **No keyboard on a terminal tap on iOS.** On iPhone and iPad a tap on the terminal no longer opens the on-screen keyboard; the message field and the key bar's keyboard button still do. That button acts on the touch itself, so it opens the keyboard even when Safari drops the click. Android and computers keep tap or click to type.
+- **Images from your other tailnet machines in replies.** A Markdown image an agent links to on another machine or port of your tailnet (`https://<machine>.<tailnet>.ts.net:<port>/…`) now shows in the conversation; wherdr's security policy allows HTTPS images from the tailnet it is reached on, and nothing else. An image that is refused or cannot be loaded shows a note saying why, with a link to open it, instead of a broken icon.
+- **No image markers in Codex messages (#265).** A photo sent to Codex shows as its thumbnail only, without a bubble reading `</image>` or `[Image #1]`. Only the placeholders Codex declares as its own are removed: the text sent with photos stays whole, including a `[Image #1]` typed as text.
+- **No false Codex “Restart to update”.** The notice no longer appears when Codex already runs the installed version: the version written at the top of its conversation file (by the shared background server, or by the version that started a resumed conversation) is no longer taken as the version the session runs. The notice relies on what Codex itself shows on screen, remembered only for the same Codex process.
+- **omp errors in the conversation.** Provider errors that ended an omp turn (API usage limit, credit balance too low, stalled stream, exhausted retries) were missing from the chat although omp's terminal showed them. They now appear in place as an Error note, live and when the history loads; retried attempts follow omp (hidden once superseded, one line once recovered).
+
+## [2.4.0] — 2026-10-31
+
+### Added and improved
+
+- **More room on phones.** The agent header keeps its tabs, title and state on one row. Terminal function keys default to closed and open above Send in both conversation and terminal views, with the mobile key layout; the input stays compact at rest.
+- **One-shot terminal modifiers.** Ctrl, Alt and Shift can be armed for the next key-bar or phone-keyboard key. Existing shortcuts and digit buttons remain available; pastes and composed text stay text.
+- **More room on phones.** The agent header keeps its tabs, title and state on one row. Tapping the agent identity opens the single place to switch, rename, split, move and close panes and tabs; Options keeps the agent's own actions, without duplicates. Closing is explicit: *Close this conversation* (or *terminal*) closes only the pane shown, *Close entire space…* is separate, a tab closes from its overview, and each confirmation names what stops and what stays open, asking again if the close grew meanwhile. Terminal function keys default to closed and open above Send in both conversation and terminal views, with the mobile key layout; the input stays compact at rest.
+- **One-shot terminal modifiers.** Ctrl, Alt and Shift can be armed for the next key-bar or phone-keyboard key. Existing shortcuts and digit buttons remain available; pastes and composed text stay text.
+- **Optional individual-agent list.** Settings › Appearance can show standalone agents as separate rows, while workspace cards remain the default and Board task helpers stay grouped.
+- **Board tasks in global search.** Search (⌘K) also finds herdr-projects tasks by name (`WHR-12`), title or description, shows their machine, project and state, and opens the chosen task on the Board.
+- **Claude on API billing.** A machine whose Claude Code runs on an API key or Console credits shows *Claude · API usage, no quota* on the home screen and **API usage (no quota)** in Settings › Agents › Claude quotas, instead of nothing or "not set up". Update the Claude status line on such machines.
+- **Release distance in update notices.** The banner shows how many newer stable releases are available and a short version list, preserving the installation-specific update action.
+- **Shepherdr 2 protection (#243).** wherdr recognizes Shepherdr 2.x and clearly explains that the Board does not support it, instead of calling it too old. It refuses to install or update herdr-projects over it and provides a manual return to the supported 1.2.21 release; no data is migrated automatically.
+
+- **Board tasks in global search (#248).** Search (⌘K) finds tasks by key, title or description, shows their machine, project and state, and opens them on the Board.
+
+- **One-shot terminal modifiers (#239).** Arm Ctrl, Alt and Shift for the next key-bar or phone-keyboard key; pastes and composed text stay text. Thanks to [@followcat](https://github.com/followcat) for the contribution.
+
+- **Swipe between home tabs (#242).** Switch machine and group tabs with touch or trackpad gestures, with animated tab content and selection.
+
+- **Optional individual-agent list (#240).** Settings › Appearance can show standalone agents as separate rows; workspace cards remain the default and Board helpers stay grouped. Thanks to [@followcat](https://github.com/followcat) for the contribution.
+
+- **Release distance in update notices (#241).** The banner shows how many newer stable releases are available and a short version list, with the installation-specific update action. Thanks to [@followcat](https://github.com/followcat) for the contribution.
+
+- **A single Agent tab for tasks (#224).** The task panel brings its conversation and terminal together under Agent.
+
+- **Send queued Claude messages immediately (#236).** A queued message can be sent without waiting for the current turn to finish.
+
+- **Smooth touch scrolling beta (#234).** A device-local setting enables smoother terminal scrolling; legacy scrolling remains the default, and a tap that stops scrolling does not activate terminal content. Thanks to [@followcat](https://github.com/followcat) for the original contribution (#218).
+
+- **Dismissible transcript note (#221).** The transcript notice can be dismissed. Thanks to [@followcat](https://github.com/followcat) for the contribution.
+
+- **Run chat commands in a managed split terminal (#216).** Chat command actions use an idle wherdr-owned split with a verified shell prompt.
+
+- **Shared keyboard shortcut reference (#225).** A common shortcut reference replaces the Desktop settings section.
+
+- **Reproducible Board tutorial sources (#215).** Narrated tutorial sources can be rebuilt from the repository.
+
+- **Refreshed tutorial video (#226).** The Board tutorial has updated visuals and narration.
+
+- **wherdr in one minute (#235).** A short tutorial episode introduces the app.
+
+- **Shared interface design rules (#256).** Contributors have one design reference for interface changes.
+
+- **Claude on API billing.** Home and Settings show API usage with no quota for API-key or Console-credit sessions, rather than no status or “not set up”. Update the Claude status line on those machines.
+
+### Fixed
+
+- **No false “command did not start” after a split or new tab (#249).** The server polls the new pane's machine for up to two seconds before reporting a missing pane; offline machines are identified as unreachable.
+
+- **Sharp terminal at every pixel ratio (#246).** On 2× and 3× screens, the WebGL terminal, including the demo, no longer draws oversized, clipped text when canvas sizes arrive in CSS pixels.
+
+- **Phone agent headers fit (#244).** Long state lines end in an ellipsis instead of overflowing.
+
+- **Reconnect after waking (#229).** Suspended sockets recover without competing wake probes.
+
+- **Codex update detection on Ubuntu (#227).** Ubuntu shell prompts no longer prevent detection of a completed Codex self-update.
+
+- **Codex status reset remains visible (#228).** A footer warning no longer hides the status reset information.
+
+- **Passive Codex reads leave shell history alone (#230).** Background reads no longer interfere with shell history.
+
+- **Directories are not transcripts (#233).** A transcript path pointing to a folder returns “no conversation” instead of a server error.
+
+- **Wrapped task panel titles keep their height (#223).** Task badges no longer squeeze a title spanning several lines.
+
+- **Autopilot copy button appears on hover (#237).** Automatic messages keep their copy control unobtrusive.
+
+- **Deterministic Settings phone navigation test (#238).** The test waits for history navigation before teardown.
+
+- **Verified tutorial fonts (#231).** Tutorial fonts are pinned to a google/fonts commit and verified with SHA-256.
+
+- **Updated CI runtimes (#232).** Actions use Node 24 majors and runners are pinned to Ubuntu 24.04.
+
+- **omp 18.14 tool approvals show their card again.** The conversation recognizes the new approval prompt, including grants and expanded details, answers with arrows then Enter, and holds messages while it is open. The 18.4 dialog remains supported.
+
 ## [2.3.0] — 2026-10-28
 
 ### Added and improved

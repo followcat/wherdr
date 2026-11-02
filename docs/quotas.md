@@ -30,7 +30,13 @@ week, with reset times), for every online machine.
 
 - **Codex**: nothing to do, Codex writes its limits in its session files. Machines on different
   Codex accounts get one block each (told apart by a short hash of the account ID found in the
-  session files; `~/.codex/auth.json` is never read).
+  session files; `~/.codex/auth.json` is never read). If a session has no recognized account
+  fingerprint, its reading stays under its own machine and is never merged with another
+  conversation or machine. A new conversation identifies an account switch even before it
+  logs limits; until a reading for that account is available, no Codex gauge is shown. Failed reads do not
+  reuse an older machine snapshot, and remembered weekly limits cannot cross account
+  identities. Without a known fingerprint, remembered weekly corrections are not reused,
+  even on the same machine. Session files are read from `~/.codex/sessions`.
 - **Claude Code** only gives them to its status line. On each machine, install wherdr's
   invisible status line (it displays nothing, and chains to your existing status line if you
   have one):
@@ -59,6 +65,12 @@ week, with reset times), for every online machine.
   line, rerun the install command on each machine (or use **Install**) and exchange a message
   with Claude to produce the new snapshot. The status line also requires `python3` in Claude’s
   `PATH` at runtime.
+
+  **API billing** (API key or Anthropic Console credits): Claude Code passes no rate limits, so
+  once a session has had an API response the status line keeps its snapshot without them, and
+  the machine reads **API usage (no quota)** in Settings and *Claude · API usage, no quota* on the
+  home screen (no gauge, no setup prompt); switching back to a subscription shows the gauges
+  again after the next exchange. Status lines installed before this need **Update**.
 
   **New machine**: run `sh scripts/install-claude-statusline.sh` on it once (or **Install** in
   Settings › Agents › Claude quotas), then send a message to any Claude agent there; its quotas

@@ -4,6 +4,8 @@
 // and answers from a fixed in-memory session. No real Herdr is ever involved.
 import fs from 'node:fs'
 import net from 'node:net'
+import { writeDevinFixture } from '../helpers/devin-fixture.mjs'
+import { opencodeFixture } from '../helpers/opencode-fixture.mjs' 
 
 // Delay of agent.prompt, so the app's "sending…" state is observable.
 export const PROMPT_DELAY_MS = 1500
@@ -73,7 +75,7 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
       })),
       panes: panes.map(p => ({
         pane_id: p.id, workspace_id: p.workspace, tab_id: `${p.workspace}:t1`,
-        agent: p.agent, agent_status: p.status, cwd: p.cwd, foreground_cwd: p.cwd, focused: false,
+        tokens: p.tokens || {}, agent: p.agent, agent_status: p.status, cwd: p.cwd, foreground_cwd: p.cwd, focused: false,
         terminal_title: p.agent || 'shell',
         terminal_id: `term_${p.id.replace(/\W/g, '')}`,
         scroll: { viewport_rows: p.size.rows, offset_from_bottom: 0, max_offset_from_bottom: 0 },
@@ -114,7 +116,7 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
   function resetUpdate(params) {
     const p = need(params.pane_id)
     p.agent = 'codex'; p.status = 'idle'; p.pid = (p.pid || 3000) + 1
-    p.updateOutput = params.session ? '' : '✨ Update available! 0.148.0 -> 0.162.1'; p.foreground = false; p.starts = []
+    p.updateOutput = params.session ? '' : '✨ Update available! 0.148.0 -> 0.162.1'; p.starts = []
     p.processReads = 0
     p.argv = null; p.writes = []; p.prompts = []
     p.baseCwd ||= p.cwd
@@ -124,10 +126,48 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
   }
 
   let terminalVersion = '0.9.1'
+  let splitLagMs = 0
   const terminalMouse = []
   let integrations = {}
   let plugins = []
   const methods = {
+    'e2e.devin': params => {
+      const p = need(params.pane_id)
+      if (!p.devinHome) throw new Error('No isolated Devin fixture for this pane')
+      if (params.reset) {
+        if (p.devinOriginal) Object.assign(p, p.devinOriginal)
+        delete p.devinOriginal
+        return {}
+      }
+      p.devinOriginal ||= { agent: p.agent, session: p.session }
+      writeDevinFixture(p.devinHome, { session: 'e2e-devin', rows: params.rows || [], head: params.head, states: params.states || [] })
+      p.agent = 'devin'
+      p.session = 'e2e-devin'
+      return {}
+    },
+    'e2e.opencode': async params => {
+      const p = need(params.pane_id)
+      if (!p.conversationHome) throw new Error('No isolated conversation fixture for this pane')
+      if (params.reset) {
+        await p.opencodeFixture?.close(); delete p.opencodeFixture
+        if (p.opencodeOriginal) Object.assign(p, p.opencodeOriginal)
+        delete p.opencodeOriginal
+        return {}
+      }
+      p.opencodeOriginal ||= { agent: p.agent, session: p.session }
+      p.opencodeFixture ||= await opencodeFixture(p.conversationHome)
+      const fixture = p.opencodeFixture
+      if (params.rows) fixture.state.messages = params.rows
+      if (params.revert !== undefined) fixture.state.revert = params.revert
+      if (params.fail !== undefined) fixture.state.fail = params.fail
+      if (params.restart) { fixture.state.pid++; fixture.save() }
+      if (params.rotate) { fixture.state.password += '-rotated'; fixture.save() }
+      if (params.disconnect) fixture.disconnect()
+      fixture.event(params.event || 'session.text.ended')
+      p.agent = 'opencode'; p.session = fixture.state.session
+      return { requests: fixture.state.requests, connections: fixture.state.connections, streams: fixture.state.streams.size }
+    },
+
     'e2e.terminal_version': params => {
       if (params.version) { terminalVersion = params.version; terminalMouse.length = 0 }
       return { version: terminalVersion }
@@ -158,17 +198,24 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
       const p = paneById(params.pane_id)
       if (p?.readFailure && params.source === 'detection') throw Object.assign(new Error('Transient detection read failure'), { code: 'timeout' })
       if (p?.readDelayMs) await new Promise(r => setTimeout(r, p.readDelayMs))
+      // Server state reads of the current fixture, so a test can wait for them.
+      if (p && params.source === 'detection') p.detectionReads = (p.detectionReads || 0) + 1
       const raw = screen(p)
       // Herdr detection/visible reads are plain unless ANSI was requested.
       // eslint-disable-next-line no-control-regex
       const text = params.format === 'ansi' ? raw : raw.replace(/\x1b\[[0-9;]*m|\r/g, '')
       return { read: { pane_id: params.pane_id, source: params.source || 'visible', text } }
     },
+    'pane.report_metadata': params => {
+      const p = paneById(params.pane_id)
+      if (p) p.tokens = { ...p.tokens, ...params.tokens }
+      return {}
+    },
     'pane.process_info': (params) => {
       const p = paneById(params.pane_id)
       if (p) p.processReads = (p.processReads || 0) + 1
       const procs = p?.agent ? [{ pid: p.pid || 2001, name: p.agent, argv: p.argv || [p.agent, ...(p.agent === 'codex' ? ['--profile', 'work', '-m', 'gpt-x'] : [])] }] : [{ pid: 2000, name: 'zsh' }]
-      return { process_info: { shell_pid: 2000, foreground_process_group_id: p?.foreground ? 4000 : p?.agent ? (p.pid || 2001) : 2000, foreground_processes: procs } }
+      return { process_info: { shell_pid: 2000, foreground_process_group_id: p?.agent ? (p.pid || 2001) : 2000, foreground_processes: procs } }
     },
     'e2e.update_reset': params => {
       need(params.pane_id)
@@ -183,15 +230,12 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
       p.updateOutput = (params.plain ? '' : 'Codex CLI 0.162.1 installed successfully.\n\n🎉 Update ran successfully! Please restart Codex.\n\n') + 'user@host project % ' + (params.draft || '')
       return {}
     },
-    'e2e.update_replace': params => {
-      const p = need(params.pane_id)
-      p.pid++; p.argv = params.argv
-      return { pid: p.pid }
-    },
     // Herdr integrations as `herdr integration status` reports them (all
     // installed unless a spec says otherwise): { codex: 'missing' }…
     'e2e.integrations': params => { integrations = { ...(params.states || {}) }; return {} },
     'e2e.integration_states': () => ({ states: integrations }),
+    // Herdr renames a workspace (the real `workspace.rename` above leaves it intact).
+    'e2e.workspace_label': params => { allWorkspaces.find(w => w.id === params.workspace_id).label = params.label; return {} },
     'e2e.pane_status': params => { need(params.pane_id).status = params.status; return {} },
     // Herdr closes the pane and opens another one for the same agent (same
     // conversation, as herdr-projects restarting a coordinator): a new id.
@@ -206,8 +250,9 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
     // Herdr closes the pane for good (`hidden: false` brings it back).
     'e2e.hide_pane': (params) => { need(params.pane_id).hidden = Boolean(params.hidden); return {} },
     'e2e.update_session': params => { need(params.pane_id).session = params.session; return {} },
+    // A scenario field of the pane (an alternate transcript, for instance).
+    'e2e.pane_field': params => ({ value: need(params.pane_id)[params.field] ?? null }),
     'e2e.update_draft': params => { need(params.pane_id).updateOutput += params.text; return {} },
-    'e2e.update_foreground': params => { need(params.pane_id).foreground = true; return {} },
     'e2e.update_starts': params => {
       const p = need(params.pane_id)
       return { starts: p.starts || [], reads: p.processReads || 0, writes: p.writes || [], prompts: p.prompts || [] }
@@ -271,13 +316,61 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
       p.sentKeys = []
       p.screenTransitions = params.transitions || null
       p.readDelayMs = params.readDelayMs || 0
+      p.detectionReads = 0
       return {}
+    },
+    // Explicit scroll fixture: mouse apps consume `wheelRowsPerTick` rows per
+    // wheel report; ordinary history consumes `lines`, matching Herdr's two
+    // paths. Fault knobs (terminal scroll suite):
+    //   consumeDelayMs    events apply this late — a slow or stalled consumer
+    //   wheelRowsPerTick  a tick is not always one row (app-defined semantic)
+    //   noFrameAtBoundary scrolls clamped at an edge emit no movement frame
+    'e2e.touch_scroll': params => {
+      const p = need(params.pane_id)
+      if (params.reset) p.touchScroll = { offset: 0, events: [], mouse: !!params.mouse, pending: [], wheelRowsPerTick: 1, consumeDelayMs: 0, noFrameAtBoundary: false }
+      if (params.clear) { p.touchScroll = null; return {} }
+      const state = p.touchScroll
+      if (!state) return {}
+      for (const key of ['wheelRowsPerTick', 'consumeDelayMs', 'noFrameAtBoundary'])
+        if (typeof params[key] === 'number' || typeof params[key] === 'boolean') state[key] = params[key]
+      if (typeof params.offset === 'number') state.offset = Math.max(0, Math.min(80, params.offset))
+      if (params.event) {
+        state.events.push(params.event)
+        state.pending.push({ event: params.event, at: Date.now() + state.consumeDelayMs })
+      }
+      // The consumer (fake-herdr-cli) reports back whether it really wrote a
+      // frame for the last decision — lastFrame is the DECISION, this is the
+      // ACT: a spec can prove the CLI honored `frame: false` instead of only
+      // reading the flag it was told.
+      if (typeof params.frame_sent === 'boolean') state.lastFrameSent = params.frame_sent
+      // Apply whatever is due, strictly in order: a slow consumer serializes
+      // later input behind its head event rather than letting it overtake.
+      const now = Date.now()
+      let moved = false, clamped = false, applied = 0
+      while (state.pending.length && state.pending[0].at <= now) {
+        const { event } = state.pending.shift()
+        applied++
+        const n = state.mouse ? state.wheelRowsPerTick : event.lines
+        const next = state.offset + (event.direction === 'up' ? n : -n)
+        const clampedNext = Math.max(0, Math.min(80, next))
+        if (clampedNext !== next) clamped = true
+        if (clampedNext !== state.offset) moved = true
+        state.offset = clampedNext
+      }
+      // A scroll clamped at the boundary moves nothing: opaque apps may still
+      // repaint, history panes stay put. Specs read `applied` for causality.
+      // lastFrame records the flag for the latest CONSUMED event — a bare
+      // status read must not overwrite the evidence a spec is asserting on.
+      const frame = applied ? (moved || !(clamped && state.noFrameAtBoundary)) : true
+      if (applied) state.lastFrame = frame
+      return { ...state, pending: state.pending.length, applied, frame,
+        text: `History offset ${state.offset}\n` + Array.from({ length: Math.max(1, p.size.rows - 1) }, (_, i) => `History row ${100 - state.offset + i}`).join('\n') }
     },
     'e2e.terminal_screen': params => {
       const p = need(params.pane_id)
       const osc = p.osc || []
       p.osc = []
-      return { text: p.customScreen || '', size: p.size, keys: p.sentKeys || [], osc }
+      return { text: p.touchScroll ? methods['e2e.touch_scroll'](params).text : p.customScreen || '', size: p.size, keys: p.sentKeys || [], osc, detectionReads: p.detectionReads || 0 }
     },
     // Raw sequences (OSC 52…) the control session writes once, after the screen.
     'e2e.terminal_osc': params => {
@@ -285,6 +378,22 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
       ;(p.osc ||= []).push(params.data)
       return {}
     },
+    // "Split": a new plain-shell pane in the target's workspace. `splitLagMs`
+    // (e2e.split_lag): the new pane stays out of session snapshots for that
+    // long, as when wherdr's pane list has not seen it yet.
+    'pane.split': (params) => {
+      const t = need(params.target_pane_id)
+      const w = allWorkspaces.find(x => x.id === t.workspace)
+      let n = 2
+      while (paneById(`${t.workspace}:p${n}`)) n++
+      const id = `${t.workspace}:p${n}`
+      const p = { id, agent: null, status: 'unknown', cwd: params.cwd || t.cwd, workspace: t.workspace, size: { ...t.size }, control: null, hidden: splitLagMs > 0 }
+      allPanes.push(p)
+      w.panes.push(p)
+      if (splitLagMs > 0) setTimeout(() => { p.hidden = false }, splitLagMs)
+      return { pane: { pane_id: id, tab_id: `${t.workspace}:t1`, workspace_id: t.workspace } }
+    },
+    'e2e.split_lag': (params) => { splitLagMs = Number(params.ms) || 0; return { ms: splitLagMs } },
     'pane.layout': (params) => {
       const p = need(params.pane_id)
       return { layout: snapshot().layouts.find(l => l.workspace_id === p.workspace) }

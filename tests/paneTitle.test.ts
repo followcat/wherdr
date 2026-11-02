@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Pane } from '../shared/types'
-import { paneTitle } from '../shared/paneTitle'
+import { paneOwnTitle, paneTitle } from '../shared/paneTitle'
 
 const pane = (overrides: Partial<Pane> = {}): Pane => ({
   id: 'w1:p1', workspace: 'w1', tab: 't1', tabLabel: null,
@@ -44,5 +44,16 @@ describe('name of a pane in a space with several panes', () => {
   it('goes back to the automatic title when the name is cleared', () => {
     const named = shell({ label: 'Serveur', command: 'pnpm dev' })
     expect(paneTitle({ ...named, label: null })).toBe('pnpm dev')
+  })
+})
+
+describe('own title of a pane, without an added capital', () => {
+  it('keeps the agent id of an unnamed agent pane as typed', () => {
+    const unnamed = pane({ agent: 'omp', name: '', title: '' })
+    expect(paneTitle(unnamed)).toBe('Omp')
+    expect(paneOwnTitle(unnamed)).toBe('omp')
+    expect(paneOwnTitle(pane({ agent: 'claude', name: 'claude', title: '' }))).toBe('claude')
+    expect(paneOwnTitle(pane({ label: 'Mon agent' }))).toBe('Mon agent')
+    expect(paneOwnTitle(pane({ agent: 'omp', name: 'build review', title: '' }))).toBe('build review')
   })
 })

@@ -14,6 +14,7 @@ import { isUploadLine } from './queued'
 import { sameMsg } from './transcripts'
 import { photosLanded, photosOnly } from '../../shared/queuedMatch'
 import { lostPhotos } from './sentHistory'
+import { parseDevinScreen } from './devinScreen'
 
 // Message text without photo paths (which became images in Claude).
 export const msgText = (t: string) => String(t || '').split('\n').filter(l => !isUploadLine(l)).join('\n').trim()
@@ -117,6 +118,35 @@ export function codexFieldLine(ansi: string): string | null {
     if (plain.trim() && !plain.startsWith('  ')) return null
   }
   return undimmed(line).replace(/^›\s?/, '').replace(/\u00a0/g, ' ').trim()
+}
+
+// First line of Devin's input field (v3000.x), read from the ANSI screen.
+// '' empty, null: field not found. Its marker "❭" (U+276D — a different
+// glyph from Claude's "❯") also leads every sent message in the history,
+// so the field is anchored on position, never on the glyph alone:
+// - it is the LAST line starting with "❭" (followed by a space or nothing);
+// - below it come only the box's bottom rule, blanks, and the status footer
+//   (Context: … tokens), never history or queued rows.
+// Its hint lines ("Ask Devin to build…", "Guide Devin while it works",
+// "Press Enter to send queued messages now") read as empty. Checked on
+// v3000.11.234: idle, working with a queued message, after a turn.
+const DEVIN_FIELD = /^❭(?: |$)/
+const DEVIN_BOX = /^─{2,}/
+const DEVIN_HINTS = /^(?:Ask Devin to build|Guide Devin while it works|Press Enter to send queued messages)/
+export function devinFieldLine(ansi: string): string | null {
+  const lines = String(ansi || '').split('\n').map(l => l.replace(/\r$/, ''))
+  let at = -1
+  for (let i = lines.length - 1; i >= 0 && at < 0; i--) if (DEVIN_FIELD.test(lines[i]!.replace(SGR, ''))) at = i
+  if (at < 0) return null
+  // The prompt is boxed: a ─ separator closes it. Below it sits whatever
+  // status block the running Devin draws (model line, token gauge, key
+  // hints) — its wording changes between versions, so only the box's own
+  // separator proves the ❭ line is the field and not a replayed message.
+  const below = lines.slice(at + 1).map(l => l.replace(SGR, ''))
+  const border = below.find(l => l.trim() !== '')
+  if (!border || !DEVIN_BOX.test(border)) return null
+  const line = undimmed(lines[at]!).replace(/^❭\s?/, '').replace(/\u00a0/g, ' ').trim()
+  return DEVIN_HINTS.test(line) ? '' : line
 }
 
 // Dim and reverse video in effect at the end of `prefix` (SGR sequences only).
@@ -223,4 +253,69 @@ export async function unqueueClaude(d: UnqueueDeps, text: string): Promise<{ req
     requeued.push(t)
   }
   return { requeued, images, lost }
+}
+
+export interface DevinUnqueueDeps {
+  // Visible screen, detection text (no ANSI needed by parseDevinScreen).
+  screen: () => Promise<string>
+  keys: (keys: string[]) => Promise<void>
+  sleep: (ms: number) => Promise<void>
+}
+
+// Removes `text` from Devin's own queue (v3000.x). Its "↑" pulls the NEWEST
+// "○" entry back into the composer's field for editing — and nothing over the
+// API puts a draft back into the queue: Ctrl+Enter submits it as a steer on
+// an idle pane, or leaves it in the field mid-turn (both measured on
+// 3000.11.234). Cancelling anything but the newest entry would pop the newer
+// ones with no way back, so only the last queued row can be pulled out.
+// Returns the texts queued again (always none — kept for the caller's shape).
+export async function unqueueDevin(d: DevinUnqueueDeps, text: string): Promise<{ requeued: string[] }> {
+  const wanted = msgText(text)
+  const isIt = (entry: string) => sameMsg(msgText(entry), wanted) || sameMsg(wanted, msgText(entry))
+  const scr0 = await d.screen()
+  const s0 = parseDevinScreen(scr0)
+  const box0 = devinFieldLine(scr0)
+  if (!s0 || box0 === null) throw new HerdrError('no_input', 'Agent input field not found')
+  if (box0) throw new HerdrError('input_busy', 'The agent’s input field is not empty')
+  const idx = s0.queued.findIndex(isIt)
+  if (idx < 0) throw already()
+  if (idx !== s0.queued.length - 1)
+    throw new HerdrError('queue_tail', 'Only the newest queued message can be pulled back — cancel the newer ones first')
+  // One row of the screen may be a cut first line: a loose match, never "is".
+  const loose = (box: string, entry: string) => {
+    const b = box.replace(/\s+/g, ' ').trim()
+    const e = entry.replace(/\s+/g, ' ').trim()
+    return Boolean(b && e) && (b === e || b.startsWith(e.slice(0, Math.min(e.length, 60))) || e.startsWith(b.slice(0, Math.min(b.length, 60))))
+  }
+  const field = async () => {
+    for (let i = 0; i < 8; i++) {
+      await d.sleep(150)
+      const box = devinFieldLine(await d.screen())
+      if (box) return box
+    }
+    return null
+  }
+  const clear = async (lines: number) => {
+    await d.keys(clearKeys(lines))
+    await d.sleep(150)
+    if (await field()) throw new HerdrError('clear_failed', 'Agent input not cleared: check its terminal')
+  }
+  // Pop the newest entry into the field; it should be ours.
+  await d.keys(['up'])
+  const box = await field()
+  const changed = async (): Promise<never> => {
+    // The queue changed under us: flushed (ours delivered → already_read) or
+    // reshuffled (still listed → busy). A field left holding another entry is
+    // NOT emptied — popped and cleared would lose it; kept, it is a draft.
+    const s1 = parseDevinScreen(await d.screen())
+    throw s1?.queued.some(isIt)
+      ? new HerdrError('busy', 'Devin’s queue changed: try again')
+      : already()
+  }
+  // Ours sits in the field: emptied, its text back to wherdr's.
+  if (box && loose(box, s0.queued[idx]!)) {
+    await clear(box.split('\n').length)
+    return { requeued: [] }
+  }
+  return await changed()
 }

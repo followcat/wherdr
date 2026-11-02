@@ -3,7 +3,7 @@ import { reduceSnapshot } from '../server/utils/snapshot'
 import { spaceRows } from '../shared/spaces'
 import {
   type MachineLinks, boardSections, coordinatorFromFile, countedPanes, socketSession, elapsedLabel, linksFromTaskFile, memberStage, memberTag,
-  parseRepoGit, shownPane, tasksFromFiles, tasksIn,
+  parseRepoGit, resolveCoordinators, shownPane, tasksFromFiles, tasksIn,
 } from '../shared/boardLinks'
 import { taskActivity } from '../shared/taskActivity'
 import { rowFromTaskFile } from '../shared/projectsTasks'
@@ -127,9 +127,9 @@ describe('the home list follows Herdr\'s worktree groups', () => {
     expect(g.members.map(m => [m.row.key, m.row.lead.id, m.task?.key ?? null])).toEqual([
       ['w3', 'w3:p9', 'APP-1'], ['w4:p1', 'w4:p1', 'APP-2'],
     ])
-    // Tasks, not tabs: the project coordinator (at work) and the two tasks.
-    expect(g.sum).toEqual({ blocked: 2, working: 1, ready: 0, total: 3 })
-    expect(g.state).toBe('blocked')
+    // The project coordinator and both tasks are in the working group.
+    expect(g.sum).toEqual({ blocked: 0, working: 3, ready: 0, total: 3 })
+    expect(g.state).toBe('working')
   })
 
   it('a worker and its reviewer in one space: one row, led by the reviewer', () => {
@@ -231,6 +231,15 @@ describe('one row per task, whatever helpers its space holds', () => {
     expect(g.sum).toEqual({ blocked: 0, working: 1, ready: 0, total: 1 })
   })
 
+  it('project totals follow task groups despite leftover working terminals', () => {
+    const st = session([...reviewTabs, ['w8:t1', 'Agent', 'w8:p1', 'codex', 'working'], ['w9:t1', 'Agent', 'w9:p1', 'codex', 'working']])
+    const b = board([reviewing,
+      { id: 'app/8', stage: 'done', link: { pane: 'w8:p1', workspace: 'w8', ownsWorkspace: true } },
+      { id: 'app/9', stage: 'todo', link: { pane: 'w9:p1', workspace: 'w9', ownsWorkspace: true } },
+    ])
+    expect(groupOf(st, b).sum).toEqual({ blocked: 0, working: 1, ready: 2, total: 3 })
+  })
+
   it('the review over: its tab closed, the task\'s own agent again', () => {
     const done = { ...reviewing, stage: 'approval', link: { ...reviewing.link, reviewer: null } }
     const g = groupOf(session([reviewTabs[0]!]), board([done]))
@@ -313,11 +322,11 @@ describe('one row per task, whatever helpers its space holds', () => {
     const st = session([...reviewTabs, ['w5:t1', '1', 'w5:p1', 'claude', 'done']])
     const counted = countedPanes(st.panes.filter(p => p.agent), [board([reviewing])])
     expect(counted.map(p => p.id).sort()).toEqual(['w5:p1', 'w7:p2'])
-    // A reviewer an older board put in a space of its own: two rows, counted twice.
+    // A reviewer in its own space still belongs to the same task.
     const apart = session([reviewTabs[0]!, ['w6:t1', 'Reviewer', 'w6:p2', 'codex', 'working']])
     const far = board([{ ...reviewing, link: { ...reviewing.link, reviewer: { pane: 'w6:p2', kind: 'codex' } } }])
-    expect(groupOf(apart, far).sum.total).toBe(2)
-    expect(countedPanes(apart.panes.filter(p => p.agent), [far])).toHaveLength(2)
+    expect(groupOf(apart, far).sum.total).toBe(1)
+    expect(countedPanes(apart.panes.filter(p => p.agent), [far])).toHaveLength(1)
     // Without the board, every agent counts.
     expect(countedPanes(st.panes.filter(p => p.agent), [])).toHaveLength(3)
   })
@@ -431,4 +440,123 @@ describe('checkout path attachment after a repository move', () => {
       expect(boardSections(spaceRows(st), st.workspaces, [board], new Set()).projects[0]!.space).toBeNull()
     })
   }
+})
+
+// herdr-projects writes a coordinator's pane and space when it starts it. Once
+// Herdr closes that pane (Herdr or the agent restarted), the file keeps ids that
+// no longer say where it is, until the coordinator is restarted. Seen on macOS
+// with omp coordinators: the Coordinator and a project coordinator were listed
+// in Ready as plain spaces. Herdr reports each one's conversation on its pane
+// (`agent_session`), the same as the file's `session`.
+describe('a coordinator whose file names a closed pane', () => {
+  const CONV = {
+    top: '/home/user/.omp/agent/sessions/-chat/top.jsonl',
+    machine: '/home/user/.omp/agent/sessions/-machine-chat/machine.jsonl',
+    project: '/home/user/.omp/agent/sessions/-acme-shop/project.jsonl',
+  }
+  const ACME = '/home/user/dev/acme-shop/.git'
+  const acme = (linked: boolean, path: string) => ({ checkout_path: path, is_linked_worktree: linked, repo_key: ACME, repo_name: 'acme-shop', repo_root: '/home/user/dev/acme-shop' })
+  const omp = (id: string, tab: string, conv: string | null, agent: string | null = 'omp') => ({
+    pane_id: id, workspace_id: id.split(':')[0]!, tab_id: tab, agent, agent_status: agent ? 'done' : 'unknown',
+    ...(conv ? { agent_session: { agent: 'omp', kind: 'path', source: 'herdr:omp', value: conv } } : {}),
+  })
+  // What Herdr shows now: the Coordinator in a tab of the home space, the
+  // project coordinator in a tab of the repo's space, a task, and a space of
+  // the user's own whose ids the coordinators' files still name.
+  function now(machine = '') {
+    const workspaces = [
+      { workspace_id: 'wA', label: 'notes', number: 1 },
+      { workspace_id: 'wB', label: 'home', number: 2 },
+      { workspace_id: 'wC', label: 'acme-shop', number: 3, worktree: acme(false, '/home/user/dev/acme-shop') },
+      { workspace_id: 'wD', label: 'ACM-1 Checkout', number: 4, worktree: acme(true, '/home/user/wt/acme-1') },
+    ]
+    const panes = [
+      omp('wA:p2', 'wA:t1', '/home/user/.omp/agent/sessions/-notes/notes.jsonl'),
+      omp('wB:p1', 'wB:t1', null, null), omp('wB:p5', 'wB:t5', CONV.top),
+      omp('wC:p1', 'wC:t1', null, null), omp('wC:p2', 'wC:t2', CONV.project),
+      omp('wD:p1', 'wD:t1', 'task-conv', 'codex'),
+    ]
+    const tabs = [...new Set(panes.map(p => p.tab_id))].map(id => ({ tab_id: id, workspace_id: id.split(':')[0], label: id, number: Number(id.split(':t')[1]) }))
+    return reduceSnapshot({ workspaces, tabs, panes }, machine)
+  }
+  const SOCK_MAC = '/home/user/.config/herdr/herdr.sock'
+  const key = (socket: unknown) => (socket === SOCK_MAC ? '' : null)
+  // The files as left by an earlier Herdr run: the Coordinator's and the
+  // project coordinator's pane ids now name nothing or the user's own space.
+  const files = () => [
+    coordinatorFromFile('top', { socket: SOCK_MAC, space: 'wA', tab: 'wA:t5', pane: 'wA:p5', session: CONV.top, agent: 'sw-coordinator', run: { kind: 'omp' } }, key, '', 'default')!,
+    coordinatorFromFile('machine', { socket: SOCK_MAC, space: 'wB', tab: 'wB:t4', pane: 'wB:p4', session: CONV.machine, run: { kind: 'omp' } }, key, '', 'default')!,
+    coordinatorFromFile('project', { socket: SOCK_MAC, repo: 'acme-shop', space: 'wA', tab: 'wA:t2', pane: 'wA:p2', session: CONV.project, run: { kind: 'omp' } }, key, 'acme-shop', 'default')!,
+  ]
+  const task = linksFromTaskFile({ id: 'acme-shop/1', title: 'Checkout', stage: 'working', link: { socket: SOCK_MAC, pane: 'wD:p1', workspace: 'wD', ownsWorkspace: true } }, key)!
+  const board = (machine = ''): MachineLinks => ({ machine, coordinators: files(), tasks: tasksFromFiles([task], { 'acme-shop': 'ACM' }) })
+  const sections = (machines: MachineLinks[]) => {
+    const st = now()
+    return boardSections(spaceRows(st), st.workspaces, machines, new Set(st.panes.map(p => p.id)))
+  }
+
+  it('reads the conversation from the file', () => {
+    expect(files()[0]).toEqual({ level: 'top', pane: 'wA:p5', workspace: 'wA', session: 'default', agentSession: CONV.top })
+  })
+
+  it('without it, the home list loses them and takes a plain space for one', () => {
+    const s = sections([board()])
+    // The Coordinator is lost, the machine coordinator (not running) takes its space,
+    // and the user's own agent passes for the project coordinator.
+    expect(s.coordinators.map(c => [c.level, c.row.key])).toEqual([['machine', 'wB']])
+    expect(s.projects.find(p => p.repo === 'acme-shop')?.coordinator?.key).toBe('wA:p2')
+  })
+
+  it('finds each one again on the pane of its conversation', () => {
+    const [b] = resolveCoordinators([board()], now().panes)
+    expect(b!.coordinators.map(c => [c.level, c.pane, c.workspace])).toEqual([
+      ['top', 'wB:p5', 'wB'],
+      // Not running: its pane is gone, its space holds only the Coordinator.
+      ['machine', 'wB:p4', 'wB'],
+      ['project', 'wC:p2', 'wC'],
+    ])
+    const s = sections(resolveCoordinators([board()], now().panes))
+    expect(s.coordinators.map(c => [c.level, c.row.key])).toEqual([['top', 'wB']])
+    const g = s.projects.find(p => p.repo === 'acme-shop')!
+    expect([g.coordinator?.key, g.members.map(m => m.task?.key)]).toEqual(['wC', ['ACM-1']])
+    // The user's own space stays one.
+    expect(s.others.map(r => r.key)).toEqual(['wA:p2'])
+  })
+
+  it('never takes another conversation\'s pane or space', () => {
+    // The project coordinator is not running: wA:p2 is another agent's, and so is its space.
+    const panes = now().panes.filter(p => p.id !== 'wC:p2')
+    const [b] = resolveCoordinators([board()], panes)
+    expect(b!.coordinators.find(c => c.level === 'project')).toMatchObject({ pane: null, workspace: null })
+    const st = now()
+    const s = boardSections(spaceRows({ ...st, panes }), st.workspaces, resolveCoordinators([board()], panes), new Set(panes.map(p => p.id)))
+    expect(s.others.map(r => r.key)).toContain('wA:p2')
+    expect(s.projects.find(p => p.repo === 'acme-shop')?.coordinator ?? null).toBeNull()
+  })
+
+  it('two panes with the same conversation: neither is chosen', () => {
+    const st = now()
+    const twin = { ...st.panes.find(p => p.id === 'wB:p5')!, id: 'wD:p7', workspace: 'wD' }
+    const [b] = resolveCoordinators([board()], [...st.panes, twin])
+    expect(b!.coordinators[0]).toMatchObject({ level: 'top', pane: 'wA:p5', workspace: null })
+  })
+
+  it('stays on its own machine', () => {
+    const far = now('0a1b2c3d').panes
+    const [b] = resolveCoordinators([board()], far)
+    expect(b!.coordinators.map(c => c.pane)).toEqual(['wA:p5', 'wB:p4', 'wA:p2'])
+    const [r] = resolveCoordinators([{ ...board('0a1b2c3d'), coordinators: files().map(c => ({ ...c, pane: `0a1b2c3d~${c.pane}`, workspace: `0a1b2c3d~${c.workspace}` })) }], far)
+    expect(r!.coordinators.map(c => c.pane)).toEqual(['0a1b2c3d~wB:p5', '0a1b2c3d~wB:p4', '0a1b2c3d~wC:p2'])
+  })
+
+  it('ids that still hold, or a file without a conversation, change nothing', () => {
+    const fresh = [{ ...board(), coordinators: [
+      { level: 'top' as const, pane: 'wB:p5', workspace: 'wB', agentSession: CONV.top },
+      { level: 'project' as const, repo: 'acme-shop', pane: 'wC:p2', workspace: 'wC', agentSession: CONV.project },
+    ] }]
+    expect(resolveCoordinators(fresh, now().panes)).toBe(fresh)
+    // The Linux session above (herdr-projects 1.2.1, no conversation read): the same links.
+    const linux = [links()]
+    expect(resolveCoordinators(linux, snapshot().panes)).toBe(linux)
+  })
 })

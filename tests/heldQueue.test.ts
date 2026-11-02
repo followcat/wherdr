@@ -25,6 +25,28 @@ describe('shouldHold', () => {
     expect(shouldHold('gemini', 'idle', false, false)).toBe(false)
     expect(shouldHold(null, 'idle', false, false)).toBe(false)
   })
+  // Devin v3000.x: a permission dialog reports the pane "done" while its
+  // composer is off screen — Enter there would confirm it, the text lost.
+  it('holds a Devin message whenever its composer field is off screen', () => {
+    expect(shouldHold('devin', 'done', false, false)).toBe(true)
+    expect(shouldHold('devin', 'blocked', false, false)).toBe(true)
+    expect(shouldHold('devin', 'unknown', false, false)).toBe(true)
+    // Field visible — a working turn steers it, a compaction queues it.
+    expect(shouldHold('devin', 'done', true, false)).toBe(false)
+    expect(shouldHold('devin', 'idle', true, false)).toBe(false)
+  })
+  // OpenCode reports "blocked" by event while its permission/question dialog
+  // owns the keys — typed text and its Enter would answer it.
+  it('holds an OpenCode message while its pane is blocked', () => {
+    expect(shouldHold('opencode', 'blocked', true, false)).toBe(true)
+    expect(shouldHold('opencode', 'blocked', false, false)).toBe(true)
+    // Not blocked: the input-visible result still holds it when its composer
+    // is off screen, and releases when the field is confirmed.
+    expect(shouldHold('opencode', 'idle', false, false)).toBe(true)
+    expect(shouldHold('opencode', 'idle', true, false)).toBe(false)
+    expect(shouldHold('opencode', 'working', false, false)).toBe(false)
+    expect(shouldHold('opencode', 'working', true, true)).toBe(true)
+  })
 })
 
 describe('nextHeld', () => {
@@ -64,6 +86,19 @@ describe('checkQueue', () => {
     checkQueue([q], 'idle', 40000)
     expect(checkQueue([q], 'idle', 40000 + LOST_MS - 1)).toBe(false)
     expect(q.failed).toBeFalsy()
+  })
+  // Devin's own queue holds a sent message while the pane reads done — a
+  // compaction can wait minutes; it is not lost.
+  it('does not fail a sent message the agent still queues (alive)', () => {
+    const q = entry('a', 0)
+    const inDevinQueue = (x: QueueEntry) => x.text === 'message a'
+    checkQueue([q], 'done', 1000, true, inDevinQueue)
+    expect(checkQueue([q], 'done', 1000 + LOST_MS + 1000, true, inDevinQueue)).toBe(false)
+    expect(q.failed).toBeFalsy()
+    // Delivered (gone from the agent's queue): the normal timer resumes.
+    checkQueue([q], 'done', 2000 + LOST_MS + 1000)
+    expect(checkQueue([q], 'done', 3000 + LOST_MS * 2 + 1000)).toBe(true)
+    expect(q.failed).toBe(true)
   })
   it('exposes the state to the app', () => {
     expect(publicEntry(entry('a', 5, { held: true }))).toEqual({ id: 'a', text: 'message a', at: 5, state: 'held' })

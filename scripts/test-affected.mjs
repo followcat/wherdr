@@ -64,6 +64,8 @@ export function select(files, available, warning) {
   let broad = Boolean(warning)
   const add = (map, p, reason) => map.set(p, [...new Set([...(map.get(p) || []), reason])])
   for (const file of files) {
+    // Rust tests are selected by the conditional engine workflow, not Vitest.
+    if (file.startsWith('engine/')) continue
     if (doc(file)) continue
     if ((test(file) || e2e(file)) && available.includes(file)) {
       add(e2e(file) ? browser : unit, file, 'Changed test: run explicitly.'); continue
@@ -86,7 +88,7 @@ export function select(files, available, warning) {
     const smoke = 'tests/e2e/startup-hash.spec.ts'
     if (available.includes(smoke)) add(browser, smoke, reason)
   }
-  if (files.some(p => !doc(p)) && !unit.size && !browser.size) throw new Error('Unexpected empty selection; update the domain table.')
+  if (files.some(p => !doc(p) && !p.startsWith('engine/')) && !unit.size && !browser.size) throw new Error('Unexpected empty selection; update the domain table.')
   return { files, domains: Object.fromEntries(selectedDomains), related: broad ? [] : related, tests: Object.fromEntries(unit), e2e: Object.fromEntries(browser), broad, warning }
 }
 function assertFocusedE2E(specs) {
@@ -125,7 +127,7 @@ export async function main(args = process.argv.slice(2)) {
   console.log(JSON.stringify({ ...plan, project }, null, 2))
   if (plan.broad) console.log('CI must run the complete reduced suite. Local fallback adds all Vitest tests and a startup e2e smoke; review additional journeys manually.')
   if (!plan.files.length && !plan.warning) console.log('No changed files.')
-  else if (!Object.keys(plan.tests).length && !Object.keys(plan.e2e).length) console.log('Documentation only: no tests or browser required.')
+  else if (!Object.keys(plan.tests).length && !Object.keys(plan.e2e).length) console.log('Documentation or engine only: no JS tests or browser required.')
   if (dry) return
   assertFocusedE2E(Object.keys(plan.e2e))
   const tests = Object.keys(plan.tests)

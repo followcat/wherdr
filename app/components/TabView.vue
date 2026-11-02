@@ -1,4 +1,5 @@
 <script setup lang="ts">
+const backToOrigin = useViewBack()
 // Tab of a Herdr workspace, in its real proportions. Phone: plan of
 // summary cards; tapping a cell opens the pane full screen (mini-map and
 // swipe to the neighbours). Computer: the panes side by side, every cell live
@@ -272,7 +273,7 @@ function open(paneId: string) {
     <SpaceTabs v-if="entry" :workspace="entry.tab.workspace" :current="tabId" />
     <HeaderMenu :items="tabMenu" :title="tabMenuTitle" :disabled="!entry">
       <header class="top bar tab-top">
-        <UButton icon="i-lucide-chevron-left" color="neutral" variant="ghost" size="lg" class="icon-btn back tab-back" :aria-label="t('Back')" to="/" />
+        <UButton icon="i-lucide-chevron-left" color="neutral" variant="ghost" size="lg" class="icon-btn back tab-back" :aria-label="t('Back')" @click="backToOrigin" />
         <div class="tab-head">
           <div class="tab-title">
             <UIcon v-if="ws?.worktree" name="i-lucide-git-branch" class="tab-title-branch" />{{ ws?.label || '—' }}
@@ -296,7 +297,7 @@ function open(paneId: string) {
     <div v-if="closed" class="chat-empty">
       <UIcon name="i-lucide-layout-panel-left" class="chat-empty-icon" />
       <p>{{ t('This tab is unavailable.') }}</p>
-      <UButton color="neutral" variant="outline" to="/">{{ t('Back') }}</UButton>
+      <UButton color="neutral" variant="outline" @click="backToOrigin">{{ t('Back') }}</UButton>
     </div>
     <div v-else-if="!entry" class="chat-empty">{{ t('Loading…') }}</div>
     <div v-else-if="entry && desk" ref="area" class="split" :class="{ dragging: drag?.started, resizing: resizingPath != null }">

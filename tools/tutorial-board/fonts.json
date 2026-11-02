@@ -1,0 +1,12 @@
+{
+  "source": "https://raw.githubusercontent.com/google/fonts/{commit}/ofl/{family}/{file}",
+  "commit": "9862abc066c9b83bf84c3e8ed1fc2d8d48f9bbf0",
+  "files": [
+    {"family": "archivo", "file": "Archivo[wdth,wght].ttf", "local": "archivo.ttf", "sha256": "0e094a7d3c7c4c25cf1310c4b30014f1dae9332220b1c2c88f4fa996f0b05053"},
+    {"family": "archivo", "file": "OFL.txt", "local": "archivo-OFL.txt", "sha256": "108b4e57c9c796d3d38d0428ca7ee39de47ad93187302718d9b2d8864b9b716b"},
+    {"family": "inter", "file": "Inter[opsz,wght].ttf", "local": "inter.ttf", "sha256": "29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031"},
+    {"family": "inter", "file": "OFL.txt", "local": "inter-OFL.txt", "sha256": "5b9321a4298cfeb6b34354164a1c3afc3db114569984c502b9b35d988fd58c57"},
+    {"family": "jetbrainsmono", "file": "JetBrainsMono[wght].ttf", "local": "jetbrainsmono.ttf", "sha256": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda"},
+    {"family": "jetbrainsmono", "file": "OFL.txt", "local": "jetbrainsmono-OFL.txt", "sha256": "b2fe5e8987594e9ffd1d2ca52a2f5d73eb8335243893c5d6254b5ad69269591d"}
+  ]
+}

@@ -1,4 +1,5 @@
 // Types shared between the server (Nitro) and the app (Vue).
+import type { TaskHit } from './taskSearch'
 import type { TabLayout } from './layout'
 import type { CodexStatus } from './codexStatus'
 import type { MaxSessionDays } from './sessionLimit'
@@ -28,7 +29,25 @@ export interface PromptDetail {
 // `typing`: omp's free-text answer field is open (single option: `free`).
 // `tabs`: tabs of omp's multi-question "Ask" box (the last one is Submit),
 // `tab` the one shown; ←/→ move between them.
-export interface Choices { identity?: string, unavailable?: boolean, question: string | null, cursor: number, options: ChoiceOption[], kind?: 'self-update', detail?: PromptDetail, multi?: boolean, typing?: boolean, tabs?: string[], tab?: number }
+export interface Choices {
+  identity?: string
+  unavailable?: boolean
+  question: string | null
+  cursor: number
+  options: ChoiceOption[]
+  kind?: 'self-update'
+  detail?: PromptDetail
+  multi?: boolean
+  typing?: boolean
+  tabs?: string[]
+  tab?: number
+  // OpenCode's permission dialog moves with ←/→ (⇆ select), not ↑/↓.
+  horizontal?: boolean
+  // OpenCode permission request behind a screen-parsed card (fallback when
+  // the service API is unreachable): answered through the service by
+  // action/resources match — never by guessing the colour-only cursor.
+  permission?: { action: string, resources: string[] }
+}
 
 // Waiting screen of an agent (Codex at startup: hooks, folder trust,
 // login…), see server/utils/waitScreen.ts. `other`: unrecognized screen,
@@ -62,7 +81,7 @@ export interface InteractiveMenu {
 // `pasted`: the long pasted texts its text holds (see server/utils/pastes.ts).
 // `back`: no agent will take it (see server/utils/queued.ts giveBackHeld): the
 // app puts its text back into the message field.
-export interface QueuedMessage { inputText?: string, id: string, text: string, at?: number, state?: 'held' | 'failed', reason?: 'busy' | 'no_input' | 'turn' | 'lost' | 'unseen', pasted?: string[], back?: boolean }
+export interface QueuedMessage { inputText?: string, id: string, text: string, at?: number, state?: 'held' | 'failed', reason?: 'busy' | 'no_input' | 'turn' | 'lost' | 'unseen', pasted?: string[], back?: boolean, submitKey?: string }
 
 // Claude Code's screen while working (see server/utils/claudeScreen.ts): the
 // "!" command running, the last message sent, the messages
@@ -78,7 +97,7 @@ export interface ShellRun {
   // omp's "$ code" (Python) rather than a "!" shell command.
   python?: boolean
 }
-export interface ClaudeScreen { shell: ShellRun | null, sent: string | null, queued: string[] }
+export interface ClaudeScreen { sendNow?: boolean, shell: ShellRun | null, sent: string | null, queued: string[] }
 
 export interface Workspace {
   id: string
@@ -150,6 +169,13 @@ export interface Pane {
   activity?: string
   // Claude working, conversation shown: what its screen shows.
   claudeScreen?: ClaudeScreen
+  // Devin, conversation shown: its composer screen — own queue ("○" rows),
+  // last echoed message, send-now (see server/utils/devinScreen.ts).
+  devinScreen?: ClaudeScreen
+  // Devin's composer footer (model · mode · shells + context gauge), parsed
+  // like omp's status — Composer shows whichever is set (server/utils/devinScreen.ts).
+  devinStatus?: OmpStatus
+  opencodeStatus?: OmpStatus
   // Claude Code status near the input field ("✔ Update installed · Restart to update").
   claudeNotice?: string
   // Restart requested from wherdr (see server/utils/restart.ts): the agent
@@ -228,6 +254,9 @@ export interface MachineInfo {
   target?: string
   version?: string
   os?: string // `uname -s`: 'Darwin' (macOS), 'Linux'…
+  // Only while the server is not ready (see shared/stateReady.ts): whether
+  // this machine's state has been read since the server started.
+  polled?: boolean
 }
 
 export interface NamedSession { name: string, running: boolean, key: string }
@@ -272,6 +301,7 @@ export interface ChatItem {
   // already shown higher up (see shared/imageDupes.ts).
   hashes?: string[]
   error?: boolean
+  toolStatus?: 'streaming' | 'running' | 'completed' | 'error'
   // omp reasoning and completed background jobs, read from its transcript.
   ms?: number
   job?: { id: string, tool: string, out: string }
@@ -303,6 +333,7 @@ export interface OmpToolView {
 // the entry is one of wherdr's messages with photos (see server/utils/sentHistory.ts).
 export interface ClaudeQueueEntry { text: string, ts: string | null, images?: number, sent?: string }
 
+export type ChatCursor = number | string
 export interface ChatResponse {
   available: boolean
   // 'no_integration': not found, and Herdr's integration of this agent is
@@ -322,7 +353,13 @@ export interface ChatResponse {
   // first `keep` items and `items` replace the rest. Absent: `items` is the
   // whole bottom of the conversation.
   keep?: number
-  start?: number
+  // Tail anchor: a JSONL byte offset, an opaque API cursor, or Devin's
+  // main-chain node id + 1. Numeric zero means the beginning; opaque anchors
+  // are compared by equality.
+  start?: ChatCursor
+  // Native API pagination is independent of the tail anchor. null: no older page.
+  // Absent: legacy readers use their numeric start as the older-page boundary.
+  olderCursor?: ChatCursor | null
   // The transcript was rewritten above the client's cursor (same size or
   // shorter): the reply is a fresh bottom, the client starts again from it.
   rewritten?: boolean
@@ -341,9 +378,11 @@ export interface ConversationHit {
   text: string
   excerpt: string
   ts: string | null
-  offset: number
+  offset: ChatCursor
+  ref?: string
 }
-export interface ConversationSearchResponse { hits: ConversationHit[], limited: boolean }
+// `tasks`: the Board's tasks it matched (shared/taskSearch.ts), best first.
+export interface ConversationSearchResponse { hits: ConversationHit[], limited: boolean, tasks?: TaskHit[] }
 
 // Herdr theme (~/.config/herdr/config.toml, [theme] section), for "Follow Herdr".
 export interface HerdrThemeConfig {
@@ -415,7 +454,8 @@ export interface Quotas {
   claude: Quota | null
   codex: Quota | null
   // Only present when the online machines do not use the same account
-  // Claude: one block per account (at least two).
+  // Claude: one block per account (at least two, or one alongside machines
+  // on API billing, which have no quota block).
   claudeAccounts?: AccountQuota[]
   // Same for Codex (fingerprint taken from its conversations).
   codexAccounts?: AccountQuota[]
@@ -425,11 +465,13 @@ export interface Quotas {
 }
 // Claude quota status line of each machine read: `ok` = set up, `pending` =
 // installed, waiting for the next exchange with a Claude, `outdated` = quotas
-// read but from an older status line (update offered), `missing` = to install.
+// read but from an older status line (update offered), `missing` = to install,
+// `api` = set up, Claude Code runs on API billing (API key, Console credits):
+// usage without quota, nothing to install.
 // `installable`: the server can install it itself (otherwise, a command to copy).
 // `dismissed`: the suggestion was declined or skipped (home menu, setup guide);
 // Settings still offers it.
-export type ClaudeSetupState = 'ok' | 'pending' | 'outdated' | 'missing'
+export type ClaudeSetupState = 'ok' | 'pending' | 'outdated' | 'missing' | 'api'
 export interface ClaudeSetup { key: string, state: ClaudeSetupState, installable: boolean, dismissed?: boolean }
 
 // Git worktree linked to a repository (Herdr), for the cleanup list.

@@ -48,21 +48,22 @@ test('a pane opened alone keeps the backdrop in its margins', { tag: '@chromium-
 })
 
 // The Conversation / Terminal selector of a cell: its labels where they fit,
-// its two icons in a narrow cell; never cut by the cell's edge.
+// its icon in a narrow cell; never cut by the cell's edge.
 for (const [width, narrow] of [[1440, false], [1000, true]] as const) {
   test(`the selector of a cell stays whole (${width} px)`, { tag: '@chromium-desktop' }, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 800 })
     await page.goto(`/#/t/${SPLIT_TAB}`)
     const cell = page.locator('.cell-view').first()
-    const terminal = cell.getByRole('tab', { name: 'Terminal' })
+    const terminal = cell.getByRole('button', { name: 'Show terminal' })
     await expect(terminal).toBeVisible()
-    await expect(terminal.locator('.hw-tab-icon')).toBeVisible({ visible: narrow })
+    await expect(terminal.locator('.iconify')).toBeVisible()
+    await expect(terminal.locator('.view-toggle-label')).toBeVisible({ visible: !narrow })
     const m = await cell.evaluate((el) => {
       const right = (x: Element) => x.getBoundingClientRect().right
-      const label = el.querySelector('.hw-tab[id$="term"] .hw-tab-label, .hw-tab:last-child .hw-tab-label') as HTMLElement
-      const tab = label.closest('.hw-tab') as HTMLElement
+      const label = el.querySelector('.view-toggle-label') as HTMLElement
+      const tab = label.closest('.view-toggle') as HTMLElement
       return {
-        cell: right(el), tabs: right(el.querySelector('.view-tabs')!), actions: right(el.querySelector('.agent-actions')!),
+        cell: right(el), tabs: right(el.querySelector('.view-toggle')!), actions: right(el.querySelector('.agent-actions')!),
         label: label.getBoundingClientRect().width, cut: label.scrollWidth > label.clientWidth + 1 || tab.scrollWidth > tab.clientWidth + 1,
         title: el.querySelector('.agent-title')!.getBoundingClientRect().width,
       }
@@ -76,7 +77,7 @@ for (const [width, narrow] of [[1440, false], [1000, true]] as const) {
     // The icons still switch the view.
     await terminal.click()
     await expect(cell.locator('#term .xterm')).toBeVisible()
-    await cell.getByRole('tab', { name: 'Conversation' }).click()
+    await cell.getByRole('button', { name: 'Show conversation' }).click()
     await expect(cell.locator('.chat')).toContainText('It runs in the pane on the right.')
   })
 }

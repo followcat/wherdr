@@ -20,7 +20,7 @@ import type { Pane } from '../../shared/types'
 import {
   type CodexScreenInfo, type CodexScreenWeekly, type CodexStatus, type CodexUpdateJob, type CodexWeekly, type KnownWeek,
   type WeekReading, codexUpdateState, codexWeeklyWarning, loadKnownWeeks, parseCliVersion, parseCodexScreen, parsePackageVersion,
-  parseVersionFile, rememberWeek, rolloutCliVersion, runningVersion, updateScript, weekFromReading, weekFromScreen,
+  parseVersionFile, rememberWeek, rolloutCliVersion, runningVersion, tuiVersion, updateScript, weekFromReading, weekFromScreen,
 } from '../../shared/codexStatus'
 import type { ExecResult, MachineFs } from './fsx'
 import { HerdrError } from './herdr'
@@ -47,7 +47,11 @@ export interface CodexMachine {
 export interface CodexStatusDeps {
   machineOf: (paneId: string) => CodexMachine | null
   readScreen: (paneId: string) => Promise<string>
+  readProcesses?: (paneId: string) => Promise<{ pid: number, name?: string, argv?: string[] }[]>
   rolloutOf: (p: Pane) => Promise<string | null>
+  // Pid of the Codex process in the pane (null: none or unknown). A version
+  // read on its screen is remembered only for that same process.
+  agentPid?: (paneId: string) => Promise<number | null>
   runLocal: (script: string, home: string, timeoutMs: number) => Promise<ExecResult>
   writable: (dir: string) => Promise<boolean>
   onChange: () => void
@@ -70,7 +74,11 @@ export function createCodexStatus(d: CodexStatusDeps) {
   // Last decision logged per pane (logged again only when it changes).
   const why = new Map<string, string>()
   const rollouts = new Map<string, RolloutInfo>()
+  const processes = new Map<string, { key: string, pid: number, version: string | null, at: number }>()
   const jobs = new Map<string, Job>()
+  // Version last read on each Codex screen (pane id), with the pid of the
+  // process that showed it: the header scrolls away, the process stays.
+  const seenTui = new Map<string, { pid: number, version: string }>()
   // Weekly-limit warning last read on each Codex screen (pane id).
   const warnings = new Map<string, CodexWeekly | null>()
   // Last weekly reading on each Codex screen (pane id), for the home gauge.
@@ -137,26 +145,58 @@ export function createCodexStatus(d: CodexStatusDeps) {
     return pub as CodexUpdateJob
   }
 
+  // A resumed rollout keeps the version that created it; PATH and another
+  // installation can name yet another version. On Linux /proc pins the
+  // pane's actual executable, even after a package upgrade unlinks it.
+  // Other platforms or unreadable process metadata keep the screen fallback.
+  async function processVersion(m: CodexMachine, paneId: string): Promise<string | null> {
+    const procs = await d.readProcesses?.(paneId).catch(() => []) ?? []
+    const proc = procs.find(p => p.name === 'codex' || path.posix.basename(p.argv?.[0] || '') === 'codex')
+    if (!proc || !Number.isSafeInteger(proc.pid) || proc.pid <= 0) { processes.delete(paneId); return null }
+    const old = processes.get(paneId)
+    if (old && old.key === m.key && old.pid === proc.pid && now() - old.at < FILES_MS) return old.version
+    const script = `if [ "$(uname -s)" = Linux ] && [ -x /proc/${proc.pid}/exe ]; then
+  executable=$(readlink /proc/${proc.pid}/exe 2>/dev/null) || exit 0
+  case "$executable" in */codex|*/codex' (deleted)') exec /proc/${proc.pid}/exe --version ;; esac
+fi`
+    let version: string | null = null
+    try {
+      const r = m.local ? await d.runLocal(script, m.home, 4000)
+        : m.online && m.exec ? await m.exec('exec sh -s', Buffer.from(script), 4000) : null
+      if (r?.code === 0) version = parseCliVersion(r.stdout.toString('utf8'))
+    } catch { /* unavailable: retain the existing fallbacks */ }
+    processes.set(paneId, { key: m.key, pid: proc.pid, version, at: now() })
+    return version
+  }
+
   async function compute(p: Pane): Promise<CodexStatus | null> {
     const m = d.machineOf(p.id)
     if (!m) return null
     let screenError: string | null = null
-    const [mf, screenText, file] = await Promise.all([
+    const [mf, screenText, file, process, pid] = await Promise.all([
       machineFiles(m),
       d.readScreen(p.id).catch((e: Error) => { screenError = e.message || 'error'; return '' }),
       d.rolloutOf(p).catch(() => null),
+      processVersion(m, p.id),
+      d.agentPid ? d.agentPid(p.id).catch(() => null) : Promise.resolve(null),
     ])
     const screen: CodexScreenInfo = parseCodexScreen(screenText)
+    // Remembered only while the same process runs: unknown pid, nothing kept.
+    const kept = seenTui.get(p.id)
+    const seen = pid && kept?.pid === pid ? kept.version : null
+    const tui = process || tuiVersion(screen, seen)
+    if (pid && tui) seenTui.set(p.id, { pid, version: tui })
+    else if (!pid || kept?.pid !== pid) seenTui.delete(p.id)
     if (!screenError) screens.set(p.id, { key: m.key, weekly: screen.weekly, at: now() })
     const ro = await rolloutInfo(m, file)
     const job = publicJob(jobOf(m.key))
-    const running = runningVersion({ rollout: ro?.version ?? null, screen })
-    const update = codexUpdateState({ running, latest: mf.latest, dismissed: mf.dismissed, installed: mf.installed, standalone: mf.standalone, screen, canRun: mf.canRun, job })
+    const running = runningVersion({ process, rollout: ro?.version ?? null, screen, seen })
+    const update = codexUpdateState({ running, tui, latest: mf.latest, dismissed: mf.dismissed, installed: mf.installed, standalone: mf.standalone, screen, canRun: mf.canRun, job })
     // An unreadable screen keeps the warning it last showed.
     const weekly = screenError ? (warnings.get(p.id) ?? null) : codexWeeklyWarning(screenText)
     if (!screenError) warnings.set(p.id, weekly)
     const line = [
-      `running=${running ?? '?'} (screen ${screenError ? `unreadable: ${screenError}` : screen.version ?? screen.update?.current ?? '-'}, rollout ${ro?.version ?? '-'})`,
+      `running=${running ?? '?'} (screen ${screenError ? `unreadable: ${screenError}` : screen.version ?? screen.update?.current ?? '-'}, rollout ${ro?.version ?? '-'}${process ? `, process ${process}` : ''})`,
       `installed=${mf.installed ?? '-'} latest=${mf.latest ?? '-'}${mf.dismissed ? ` dismissed=${mf.dismissed}` : ''}`,
       `-> ${update ? update.state : 'no update'}`,
       `-> ${weekly ? `weekly warning on screen: ${weekly.lessThan ? '< ' : ''}${weekly.left}%` : 'no weekly warning on screen'}`,
@@ -196,7 +236,7 @@ export function createCodexStatus(d: CodexStatusDeps) {
     for (const [id, s] of statuses) if (key === null || d.machineOf(id)?.key === key) s.at = 0
   }
 
-  function forget(paneId: string) { statuses.delete(paneId); why.delete(paneId); warnings.delete(paneId) }
+  function forget(paneId: string) { statuses.delete(paneId); why.delete(paneId); warnings.delete(paneId); processes.delete(paneId); seenTui.delete(paneId) }
 
   // Runs the update on the agent's machine; returns right away, the progress
   // goes through `codexStatus.update.job` of the machine's Codex panes.
