@@ -372,17 +372,18 @@ setCodexKnownWeek((key, rolled) => codexStatus.knownWeek(key, state.panes, rolle
 // not changed).
 const models = new Map<string, { info: ModelInfo | null, status: string | null, at: number }>()
 const modelBusy = new Set<string>()
-const cmdStatuses = new Map<string, { status: OmpStatus | null, at: number }>()
+const cmdStatuses = new Map<string, { status: OmpStatus | null, session: string | null, at: number }>()
 const cmdStatusBusy = new Set<string>()
 function refreshCmdStatus(p: Pane) {
   if (cmdStatusBusy.has(p.id)) return
   cmdStatusBusy.add(p.id)
   transcripts.commandCodeStats(p)
-    .then((status) => {
-      // A cut trailing record returns null: keep the last good line instead
-      // of dropping the composer status on every oversized screenshot.
-      const old = cmdStatuses.get(p.id)?.status ?? null
-      cmdStatuses.set(p.id, { status: status ?? old, at: Date.now() })
+    .then(({ status, session }) => {
+      // A cut transient read returns null for the same session: keep the last
+      // good line. A new session with no usage yet must clear it instead.
+      const old = cmdStatuses.get(p.id)
+      const keep = status ?? (old && old.session === session ? old.status : null)
+      cmdStatuses.set(p.id, { status: keep, session, at: Date.now() })
     })
     .catch(() => {})
     .finally(() => cmdStatusBusy.delete(p.id))

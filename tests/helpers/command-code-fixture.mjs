@@ -8,6 +8,7 @@ const at = (ms) => new Date(1_700_000_000_000 + ms).toISOString()
 const created = (ms) => 1_700_000_000_000 + ms
 
 export const commandCodePNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII='
+export const commandCodePNG2 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
 
 export function commandCodeSession(id, cwd, ms = 0) {
   return { type: 'session', version: 3, id, timestamp: at(ms), cwd }
