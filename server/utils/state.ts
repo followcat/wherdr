@@ -511,10 +511,11 @@ export function sendPrompt(p: Pane, text: string, opts: { retry?: boolean } = {}
       throw new HerdrError(isSlashCommand(text) ? 'stale' : 'no_input', 'Restart Codex before sending a command.')
     }
     // OpenCode's "!" runs through its service, not a typed bash-mode field —
-    // the run lands in the transcript as a shell message either way.
-    if (p.agent === 'opencode' && /^!\s*\S/.test(text)) {
-      if (await transcripts.opencodeShell(p, text.replace(/^!\s*/, ''))) return
-      throw new HerdrError('stale', 'OpenCode refused the shell command')
+    // the run lands in the transcript as a shell message either way. The
+    // pane was re-read under the lock: its session may have changed since.
+    if (now?.agent === 'opencode' && /^!\s*\S/.test(text)) {
+      if (await transcripts.opencodeShell(now, text.replace(/^!\s*/, ''))) return
+      throw new HerdrError('stale', 'OpenCode did not confirm the shell command — check the transcript.')
     }
     // Herdr may still call a quota wait blocked. Its visible field also takes
     // slash commands, using the same checked send rather than agent.prompt.
@@ -829,7 +830,9 @@ function reconcileQueued(p: Pane) {
       if (left.length) queued.set(p.id, left)
       else queued.delete(p.id)
     })
-    .catch(() => {})
+    // A failed read keeps no inbox evidence: stale entries must not keep a
+    // lost message alive forever.
+    .catch(() => { ocInboxes.delete(p.id) })
     .finally(() => reconcileBusy.delete(p.id))
 }
 
@@ -879,7 +882,12 @@ export async function cancelQueued(paneId: string, text: string, id?: string): P
     unqueueBusy.add(p.id)
     try {
       const items = await transcripts.opencodeInbox(p)
-      const match = items.find(i => i?.type === 'user' && typeof i?.id === 'string' && sameMsg(String(i.payload?.text || ''), msgText(text)))
+      const candidates = items.filter(i => i?.type === 'user' && typeof i?.id === 'string')
+      // Exact text first — a substring hit ("review" inside "review server")
+      // must not delete a different entry. Identical repeats: the newest.
+      const exact = candidates.filter(i => msgText(String(i.payload?.text || '')) === msgText(text))
+      const loose = exact.length ? [] : candidates.filter(i => sameMsg(String(i.payload?.text || ''), msgText(text)))
+      const match = exact.length ? exact[exact.length - 1] : loose.length === 1 ? loose[0] : null
       if (!match) throw new HerdrError('already_read', 'Already read by the agent')
       const gone = await transcripts.opencodeInboxDelete(p, String(match.id))
       if (!gone) throw new HerdrError(gone === null ? 'already_read' : 'stale', gone === null ? 'Already read by the agent' : 'OpenCode did not remove the queued message')
@@ -1243,7 +1251,13 @@ async function enrich(next: HerdrState, snap: Json, machine: string, publish?: (
       if (!o || Date.now() - o.at >= (p.status === 'working' ? ACTIVITY_MS : NOTICE_MS)) refreshOcStatus(p)
       if (o?.status) p.opencodeStatus = o.status
       else delete p.opencodeStatus
-    } else { ocStatuses.delete(p.id); ocInboxes.delete(p.id); delete p.opencodeStatus }
+    } else {
+      ocStatuses.delete(p.id)
+      // Inbox evidence is the sent-message alibi, not a viewed-only nicety:
+      // an unviewed OpenCode pane keeps it until the pane or its agent goes.
+      if (p.agent !== 'opencode') ocInboxes.delete(p.id)
+      delete p.opencodeStatus
+    }
     if (p.agent === 'codex' && isViewed(p.id) && (p.status === 'idle' || p.status === 'done') && !p.prompt && !p.menu && !p.restart) {
       const f = codexFields.get(p.id)
       if (!f || Date.now() - f.at >= NOTICE_MS) refreshCodexField(p)
