@@ -170,6 +170,8 @@ export interface Pane {
   codexField?: string
   // omp shown: its status line (model, folder, branch) and its gauges (context, quotas).
   ompStatus?: OmpStatus
+  // Command Code shown: model and context of its last turn, read from the session.
+  cmdStatus?: OmpStatus
   // omp working, conversation shown: the running step ("Finding Fixed section",
   // null before the first tool) and when the turn started (ms, null if unknown).
   ompActivity?: OmpActivity

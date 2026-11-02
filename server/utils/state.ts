@@ -62,6 +62,7 @@ export const transcripts = {
   preview: (p: TranscriptPane) => trFor(p).preview(p),
   image: (p: TranscriptPane, file: string | null, ref: string | null, i: number) => trFor(p).image(p, file, ref, i),
   model: (p: TranscriptPane) => trFor(p).model(p),
+  commandCodeStats: (p: TranscriptPane) => trFor(p).commandCodeStats(p),
   locate: (p: TranscriptPane) => trFor(p).locate(p),
   pendingTool: (p: TranscriptPane, tool?: string | null) => trFor(p).pendingTool(p, tool),
   pendingAsk: (p: TranscriptPane) => trFor(p).pendingAsk(p),
@@ -371,6 +372,17 @@ setCodexKnownWeek((key, rolled) => codexStatus.knownWeek(key, state.panes, rolle
 // not changed).
 const models = new Map<string, { info: ModelInfo | null, status: string | null, at: number }>()
 const modelBusy = new Set<string>()
+const cmdStatuses = new Map<string, { status: OmpStatus | null, at: number }>()
+const cmdStatusBusy = new Set<string>()
+function refreshCmdStatus(p: Pane) {
+  if (cmdStatusBusy.has(p.id)) return
+  cmdStatusBusy.add(p.id)
+  transcripts.commandCodeStats(p)
+    .then((status) => { cmdStatuses.set(p.id, { status, at: Date.now() }) })
+    .catch(() => {})
+    .finally(() => cmdStatusBusy.delete(p.id))
+}
+
 export function refreshModel(p: Pane) {
   if (modelBusy.has(p.id)) return
   modelBusy.add(p.id)
@@ -1144,6 +1156,17 @@ async function enrich(next: HerdrState, snap: Json, machine: string, publish?: (
     const md = models.get(p.id)
     if (!md || md.status !== p.status || Date.now() - md.at > 5000) refreshModel(p)
     if (md && md.info) p.model = md.info
+    // Command Code: model and context of its last turn, for the composer.
+    // The outer agent check keeps this state out of the extracted `enrich`
+    // used by the parity tests for the other agents.
+    if (p.agent === 'cmd') {
+      if (isViewed(p.id)) {
+        const cs = cmdStatuses.get(p.id)
+        if (!cs || Date.now() - cs.at >= 5000) refreshCmdStatus(p)
+        if (cs?.status) p.cmdStatus = cs.status
+        else delete p.cmdStatus
+      } else { cmdStatuses.delete(p.id); delete p.cmdStatus }
+    }
     // Claude on screen: screen re-read (fast while working, more slowly otherwise, for
     // its status near the input field).
     if (p.agent === 'claude' && isViewed(p.id)) {

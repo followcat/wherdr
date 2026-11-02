@@ -66,6 +66,40 @@ describe('conversation rendering', () => {
     } finally { w.unmount() }
   })
 
+  it('renders OpenCode tool output and respects its completed state while the agent is working', async () => {
+    const opencode = { ...pane, agent: 'opencode', status: 'working' as const }
+    herdrState.value = { ok: true, workspaces: [], panes: [opencode] }
+    items = [{ role: 'tool', name: 'bash', text: 'npm test', out: 'All tests passed', toolStatus: 'completed', ts: '2026-01-01T00:00:01Z', ref: 'oc:msg_1:tcall_1' }]
+    const w = await mountSuspended(ChatView, { props: { pane: opencode, localQueued: [] } })
+    try {
+      await expect.poll(() => w.find('.tool-trigger').text()).toContain('npm test')
+      expect(w.find('.tool-trigger .animate-spin').exists()).toBe(false)
+      await w.find('.tool-trigger').trigger('click')
+      await expect.poll(() => w.find('.tool-result').text()).toBe('All tests passed')
+      expect(w.find('.tool-result').attributes('aria-expanded')).toBe('false')
+      expect(w.find('.tool-result').attributes('tabindex')).toBe('0')
+      await w.find('.tool-result').trigger('keydown', { key: 'Enter' })
+      expect(w.find('.tool-result').attributes('aria-expanded')).toBe('true')
+    } finally { w.unmount() }
+  })
+
+  it('renders Command Code shell and edit calls with their own names', async () => {
+    const cmd = { ...pane, agent: 'cmd', status: 'working' as const }
+    herdrState.value = { ok: true, workspaces: [], panes: [cmd] }
+    items = [
+      { role: 'tool', name: 'shell_command', text: 'rg login', out: 'src/login.ts:12', toolStatus: 'completed', ts: '2026-01-01T00:00:01Z', ref: '12:34' },
+      { role: 'tool', name: 'edit_file', text: 'src/login.ts', out: 'patched', toolStatus: 'completed', ts: '2026-01-01T00:00:02Z', ref: '56:78' },
+      { role: 'assistant', text: 'Fixed.', ts: '2026-01-01T00:00:03Z' },
+    ]
+    const w = await mountSuspended(ChatView, { props: { pane: cmd, localQueued: [] } })
+    try {
+      await expect.poll(() => w.find('.chat').text()).toContain('Fixed.')
+      const triggers = w.findAll('.tool-trigger')
+      expect(triggers.map(t => t.text())).toEqual(expect.arrayContaining([expect.stringContaining('Command'), expect.stringContaining('Edit')]))
+      expect(w.find('.tool-trigger .animate-spin').exists()).toBe(false)
+    } finally { w.unmount() }
+  })
+
   it('keeps a folded omp tool image outside the hidden calls and opens its viewer', async () => {
     const idle = { ...pane, status: 'idle' as const }
     herdrState.value = { ok: true, workspaces: [], panes: [idle] }
