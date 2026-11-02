@@ -18,7 +18,9 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 def discover():
     own = os.path.realpath(os.environ.get('HOME', '')) == os.path.realpath(home)
     state = pathlib.Path(os.environ.get('XDG_STATE_HOME', '') if own else '')
-    if not str(state) or str(state) == '.':
+    # A relative XDG_STATE_HOME would resolve against our cwd, not the
+    # user's — only an absolute one is honored.
+    if not str(state) or str(state) == '.' or not state.is_absolute():
         state = pathlib.Path(home) / '.local' / 'state'
     file = state / 'opencode' / 'service.json'
     if not file.is_file():
@@ -105,14 +107,17 @@ try:
                     slot = request.get('slot')
                     mime_pattern = r'image/(png|jpeg|gif|webp|avif)'
                     if slot == 'u' and message.get('type') == 'user':
-                        files = [f for f in message.get('files', []) if re.fullmatch(mime_pattern, f.get('mime', '')) and isinstance(f.get('data'), str)]
+                        # User attachments arrive inline or as a file:/data: URI
+                        # on the agent machine — resolved below like tool files.
+                        files = [f for f in message.get('files', []) if re.fullmatch(mime_pattern, f.get('mime', '')) and (isinstance(f.get('data'), str) or isinstance(f.get('uri'), str))]
                     else:
                         part = next((p for p in message.get('content', []) if p.get('type') == 'tool' and 't' + p.get('id', '') == slot), {})
                         files = [f for f in part.get('state', {}).get('content', []) if f.get('type') == 'file' and re.fullmatch(mime_pattern, f.get('mime', '')) and isinstance(f.get('uri'), str)]
                     index = request.get('index', -1)
                     image = files[index] if isinstance(index, int) and 0 <= index < len(files) else None
                     if image and 'data' not in image:
-                        uri = urllib.parse.urlsplit(image['uri'])
+                        source_uri = image.get('uri', '')
+                        uri = urllib.parse.urlsplit(source_uri)
                         if uri.scheme == 'file' and uri.netloc in ['', 'localhost'] and not uri.query and not uri.fragment:
                             file = pathlib.Path(urllib.parse.unquote(uri.path))
                             if file.is_file() and file.stat().st_size <= 16 * 1024 * 1024:
@@ -120,8 +125,8 @@ try:
                                     blob = source.read(16 * 1024 * 1024 + 1)
                                 image = dict(image, data=base64.b64encode(blob).decode()) if len(blob) <= 16 * 1024 * 1024 else None
                             else: image = None
-                        elif image['uri'].startswith('data:' + image['mime'] + ';base64,'):
-                            image = dict(image, data=image['uri'].split(',', 1)[1])
+                        elif source_uri.startswith('data:' + image['mime'] + ';base64,'):
+                            image = dict(image, data=source_uri.split(',', 1)[1])
                         else: image = None
                     data = {'image': {'mime': image['mime'], 'data': image['data']} if image else None}
                 emit({'server': server, 'status': response.status, 'data': data})

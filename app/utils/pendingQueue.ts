@@ -40,6 +40,11 @@ const normText = (s: string) => String(s || '').replace(/\s+/g, ' ').trim().toLo
 // first words of `sent` (see sameSent).
 const holds = (text: string, sent: string) => sameSent(normText(text), normText(sent), (a, b) => a.includes(b.slice(0, 60)))
 
+// Whether a rendered queue item's raw text is the given on-screen queue
+// row — the same match the merge uses. Devin's Cancel only exists for its
+// newest row, so the button hides on anything older.
+export const queuedRowMatches = (raw: string, screenEntry: string) => holds(raw, screenEntry)
+
 // Records with photos seen for a pane (most recent last), to give Claude's
 // entries their photos. Plain memory of this page, outside reactivity.
 const MEMORY = 30
