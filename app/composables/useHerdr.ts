@@ -28,6 +28,7 @@ import { flag, settingsSync, syncedRef } from './useSyncedSettings'
 import type { SettingsMap } from '#shared/settings'
 import type { QuotaDisplay } from '~/utils/quotas'
 import type { ContentWidth } from '~/utils/contentWidth'
+import { readUiScale, type UiScale } from '~/utils/uiScale'
 
 const ls = {
   get(k: string) {
@@ -135,6 +136,12 @@ watch(contentWidth, (v) => {
     try { localStorage.removeItem('chatWidth') } catch { /* stockage indisponible */ }
     document.documentElement.dataset.contentWidth = v
   }
+}, { immediate: true })
+// Interface size on a computer; applied as data-ui-scale, desk media only.
+export const uiScale = ref<UiScale>(readUiScale(ls.get('uiScale')))
+watch(uiScale, (v) => {
+  ls.set('uiScale', v)
+  if (import.meta.client) document.documentElement.dataset.uiScale = v
 }, { immediate: true })
 // Independent settings; migration of the old modes on first read.
 const savedTyping = parseTypingSettings(ls.get('typewriterSpeed'), ls.get('encryptedText'), ls.get('typewriterMode'), ls.get('typewriter'))

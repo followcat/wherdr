@@ -154,6 +154,11 @@ const widthItems = computed(() => [
   { label: t('Wide'), description: t('Up to 1100 px · terminal fitted to width.'), value: 'wide' },
   { label: t('Full width'), description: t('The whole width, terminal included.'), value: 'full' },
 ])
+const scale = uiScale
+const scaleItems = computed(() => [
+  { label: tl('Standard', 'Standard'), description: tl('The usual density.', 'La densité habituelle.'), value: 'md' },
+  { label: tl('Large', 'Grande'), description: tl('Interface and text enlarged by about a fifth; the terminal keeps its own text size.', 'Interface et textes agrandis d’environ un cinquième ; le terminal garde sa taille de texte.'), value: 'lg' },
+])
 // What an agent pane opens on: the Conversation, or the Terminal.
 const defaultPane = defaultViewMode
 const defaultPaneItems = [
@@ -439,6 +444,11 @@ onMounted(() => {
               <h3>{{ t('Content width') }}</h3>
               <URadioGroup v-model="width" :items="widthItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
               <p class="muted settings-hint">{{ t('Conversation, terminal, settings and other content. Saved on this device.') }}</p>
+            </div>
+            <div class="settings-group">
+              <h3>{{ tl('Interface size', 'Taille de l’interface') }}</h3>
+              <URadioGroup v-model="scale" :items="scaleItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
+              <p class="muted settings-hint">{{ tl('The agent side and its text, enlarged. Saved on this device.', 'Le côté agent et ses textes, agrandis. Enregistré sur cet appareil.') }}</p>
             </div>
           </template>
         </div>
