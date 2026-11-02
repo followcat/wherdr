@@ -44,7 +44,9 @@ const why = computed(() => {
   if (!eventsOpen.value || offlineView.value || paneStale(props.pane)) return t('Changes unavailable offline')
   const s = props.pane!.status
   if (s === 'working') return t('The agent is working — change the model once it’s done.')
-  if (s === 'blocked') return t('The agent is waiting for an answer — reply first.')
+  // A dialog or menu owns the terminal even when the status stays "done"
+  // (Devin's permission card) — typing /model would answer it.
+  if (s === 'blocked' || props.pane!.prompt || props.pane!.menu || props.pane!.screen) return t('The agent is waiting for an answer — reply first.')
   return null
 })
 const locked = computed(() => Boolean(why.value) || switching.value)
@@ -100,7 +102,7 @@ async function choose(o: ModelOption) {
   } finally {
     switching.value = false
   }
-  if (!why.value) await loadEfforts()
+  if (!why.value && ['claude', 'codex', 'omp'].includes(props.pane!.agent || '')) await loadEfforts()
 }
 
 async function chooseEffort(level: string) {

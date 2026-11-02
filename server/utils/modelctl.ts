@@ -18,6 +18,7 @@ import { resizePane } from './terminal'
 import { type ClaudeEffortSlider, type ModelMenu, type OmpCycleKnowledge, type OmpSelector, OMP_EFFORT_ORDER, claudeEffortCommand, claudeEffortLevels, cleanModelName, codexCachedEfforts, codexConfigModel, claudeScreenEffort, claudeScreenModel, codexFooterModel, effortMatches, effortValue, learnOmpCycle, ompEffortLevels, ompModelLabel, ompScreenEffort, ompScreenModel, ompSelectorCaption, parseClaudeEffortScreen, parseModelMenu, parseOmpSelector, sameModel, switchConfirmKeys } from './models'
 import { fmt } from '../../shared/message'
 import { hasTranscript } from '../../shared/agentKind'
+import { type DevinModelMenu, devinMenuOpen, devinModelSetEcho, parseDevinModelMenu } from './devinMenu'
 
 // ---------------------------------------------------------------- current model
 // Choice made from the phone: shown right away, until the
@@ -137,12 +138,15 @@ const listKey = (paneId: string, agent: string) => `${machineOfPane(paneId)?.key
 const busy = new Set<string>()
 export const modelControlBusy = (paneId: string) => busy.has(paneId)
 
+const SWITCH_AGENTS = new Set(['claude', 'codex', 'omp', 'devin'])
 async function withPane<T>(paneId: string, fn: (p: Pane) => Promise<T>): Promise<T> {
   const p = findPane(paneId)
   if (!p) throw new HerdrError('bad_pane', 'Pane not found')
-  if (!p.agent || !['claude', 'codex', 'omp'].includes(p.agent)) throw new HerdrError('unsupported', 'Not a Claude, Codex or omp agent')
-  if (!READY.has(p.status || '')) {
-    throw new HerdrError('busy', p.status === 'blocked' ? 'The agent is waiting for an answer — reply first.' : 'The agent is working — change the model once it’s done.')
+  if (!p.agent || !SWITCH_AGENTS.has(p.agent)) throw new HerdrError('unsupported', 'This agent’s model cannot be changed from wherdr')
+  // A dialog or menu owns the terminal even when the status stays "done" —
+  // typing /model would answer it (Devin's permission prompt, /resume…).
+  if (!READY.has(p.status || '') || p.prompt || p.menu || p.screen) {
+    throw new HerdrError('busy', p.status === 'blocked' || p.prompt || p.menu || p.screen ? 'The agent is waiting for an answer — reply first.' : 'The agent is working — change the model once it’s done.')
   }
   if (busy.has(paneId)) throw new HerdrError('busy', 'Model change already in progress')
   busy.add(paneId)
@@ -224,6 +228,7 @@ export async function listModels(paneId: string, refresh = false): Promise<Model
   const p0 = findPane(paneId)
   if (!p0 || !p0.agent) throw new HerdrError('bad_pane', 'Pane not found')
   if (p0.agent === 'omp') return ompListModels(p0, refresh)
+  if (p0.agent === 'devin') return devinListModels(p0, refresh)
   const hit = listCache.get(listKey(p0.id, p0.agent))
   if (hit && !refresh && Date.now() - hit.at < LIST_TTL_MS) return hit
   return withPane(paneId, async (p) => {
@@ -251,6 +256,7 @@ async function pick(paneId: string, m: ModelMenu, n: number, label: string, kind
 export async function setModel(paneId: string, wanted: string): Promise<ModelInfo> {
   const p0 = findPane(paneId)
   if (p0?.agent === 'omp') return ompSetModel(paneId, String(wanted || '').trim())
+  if (p0?.agent === 'devin') return devinSetModel(p0.id, String(wanted || '').trim())
   const label = cleanModelName(wanted)
   if (!label) throw new HerdrError('bad_model', 'Missing model')
   return withPane(paneId, async (p) => {
@@ -607,6 +613,7 @@ async function ompCycleTo(p: Pane, before: ModelInfo, level: string) {
 
 export async function listEfforts(paneId: string): Promise<EffortList> {
   return withPane(paneId, async p => {
+    if (!EFFORT_AGENTS.has(p.agent!)) return { levels: [], current: null }
     const model = await currentModel(p)
     if (!model) return { levels: [], current: null }
     // omp: levels of its ⇧⇥ cycle, as far as the presses have shown them.
@@ -638,6 +645,7 @@ export async function listEfforts(paneId: string): Promise<EffortList> {
 
 export async function setEffort(paneId: string, level: string): Promise<ModelInfo> {
   return withPane(paneId, async p => {
+    if (!EFFORT_AGENTS.has(p.agent!)) throw new HerdrError('unsupported', 'This agent’s effort cannot be changed from wherdr')
     const before = await currentModel(p)
     if (!before) throw new HerdrError('bad_model', 'Unknown model')
     const started = Date.now()
@@ -696,5 +704,104 @@ export async function setEffort(paneId: string, level: string): Promise<ModelInf
     observedEfforts.set(p.id, { label: info.label, effort: level })
     setTimeout(poll, 100)
     return info
+  })
+}
+
+// ── Devin ───────────────────────────────────────────────────────────────────
+// /model opens a searchable picker (Devin v3000.x). Plain ↵ sets the GLOBAL
+// default — only alt+↵ is session-scoped, so it is the only confirm key we
+// ever send. Effort stays whatever the row carries.
+
+const EFFORT_AGENTS = new Set(['claude', 'codex', 'omp'])
+
+async function devinMenu(paneId: string, timeoutMs = 6000): Promise<DevinModelMenu | null> {
+  const end = Date.now() + timeoutMs
+  let m: DevinModelMenu | null = null
+  do { m = parseDevinModelMenu(await screen(paneId)); if (m) return m; await sleep(300) } while (Date.now() < end)
+  return null
+}
+
+async function devinCloseMenu(paneId: string) {
+  for (let i = 0; i < 3; i++) {
+    // The legend marks an open picker even when a search left zero options.
+    if (!devinMenuOpen(await screen(paneId))) return
+    await herdr('pane.send_input', { pane_id: paneId, keys: ['esc'] })
+    await sleep(400)
+  }
+}
+
+async function devinOpenMenu(paneId: string): Promise<DevinModelMenu> {
+  await devinCloseMenu(paneId)
+  await closePanel(paneId).catch(() => false)
+  await agentPrompt(paneId, '/model')
+  const m = await devinMenu(paneId)
+  if (!m) { await devinCloseMenu(paneId); throw new HerdrError('no_menu', 'The /model menu did not show up') }
+  return m
+}
+
+async function devinListModels(p: Pane, refresh = false): Promise<ModelList> {
+  const hit = listCache.get(listKey(p.id, 'devin'))
+  if (hit && !refresh && Date.now() - hit.at < LIST_TTL_MS) return hit
+  return withPane(p.id, async () => {
+    const cur = await transcripts.model(p).catch(() => null)
+    let m = await devinOpenMenu(p.id)
+    const seen = new Map<string, ModelOption>()
+    try {
+      // Collect across scrolls until "↓ more below" disappears.
+      for (let pages = 0; pages < 12; pages++) {
+        for (const o of m.options) seen.set(o.label, { label: o.label, hint: o.hint, current: o.label === cur?.label })
+        if (!/↓ more below/.test(await screen(p.id))) break
+        if (m.cursor < 0) break // unknown cursor: don't guess a position
+        const last = m.options.length - 1
+        await herdr('pane.send_input', { pane_id: p.id, keys: moveKeys(m.cursor, last) })
+        await sleep(350)
+        await herdr('pane.send_input', { pane_id: p.id, keys: ['down'] })
+        await sleep(350)
+        m = (await devinMenu(p.id, 2000)) || m
+      }
+    } finally { await devinCloseMenu(p.id) }
+    const list: ModelList = { agent: 'devin', options: [...seen.values()], at: Date.now() }
+    listCache.set(listKey(p.id, 'devin'), list)
+    return list
+  })
+}
+
+async function devinSetModel(paneId: string, wanted: string): Promise<ModelInfo> {
+  if (!wanted) throw new HerdrError('bad_model', 'Missing model')
+  const label = wanted.toLowerCase()
+  return withPane(paneId, async (p) => {
+    await devinOpenMenu(p.id)
+    try {
+      // Narrow with the search field, then alt+↵ on the matching row.
+      for (const ch of wanted.slice(0, 40)) {
+        await herdr('pane.send_input', { pane_id: p.id, keys: [ch] })
+        await sleep(60)
+      }
+      const m = await devinMenu(p.id, 3000)
+      const n = m?.options.findIndex(o => o.label.toLowerCase() === label) ?? -1
+      if (!m || n < 0) throw new HerdrError('bad_model', fmt('Model not found in /model: {model}', { model: wanted }))
+      const target = m.options[n]!.label
+      // Never guess the cursor: a missing ❭ makes any move land on a wrong row.
+      if (m.cursor < 0) throw new HerdrError('stale', 'The /model menu changed — try again.')
+      const keys = moveKeys(m.cursor, n)
+      if (keys.length) { await herdr('pane.send_input', { pane_id: p.id, keys }); await sleep(300) }
+      await herdr('pane.send_input', { pane_id: p.id, keys: ['alt+enter'] })
+      // Verify: the menu closes, and only an echo of THIS model counts — a
+      // different "Model set to …" is a failure, never success.
+      const end = Date.now() + 4000
+      let echo: string | null = null
+      do {
+        const t = await screen(p.id)
+        if (!devinMenuOpen(t)) { echo = devinModelSetEcho(t); break }
+        await sleep(300)
+      } while (Date.now() < end)
+      const echoOk = echo && sameModel(echo, target)
+      if (echo && !echoOk) throw new HerdrError('stale', fmt('Devin set a different model ({model}) — check the session.', { model: echo }))
+      const now = await transcripts.model(p).catch(() => null)
+      if (!echoOk && !sameModel(now?.label || '', target)) throw new HerdrError('stale', 'The model did not change — try again.')
+      const info: ModelInfo = { id: target, label: target }
+      setTimeout(poll, 100)
+      return info
+    } finally { await devinCloseMenu(p.id) }
   })
 }

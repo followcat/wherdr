@@ -740,7 +740,7 @@ defineExpose({
         />
         <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onFiles">
         <input ref="anyFileInput" type="file" multiple hidden data-testid="attach-any" @change="onFiles">
-        <ModelPicker v-if="pane && (pane.agent === 'claude' || pane.agent === 'codex' || pane.agent === 'omp')" :pane="pane" />
+        <ModelPicker v-if="pane && (pane.agent === 'claude' || pane.agent === 'codex' || pane.agent === 'omp' || pane.agent === 'devin')" :pane="pane" />
         <span v-else-if="pane?.agent === 'devin' && pane.model?.label" class="model-pick-wrap">
           <span class="model-pick model-pick-static" role="status" :aria-label="`${t('Model')} : ${pane.model.label}`">
             <span class="model-name">{{ pane.model.label }}</span>
