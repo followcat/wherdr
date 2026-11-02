@@ -1039,8 +1039,13 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
   async function cmdResultsValid(file: string): Promise<boolean> {
     const results = cmdResults.get(file)
     if (!results || !results.size) return true
+    const seen = new Set<string>()
     for (const [, r] of results) {
       if (r.at === undefined || r.len === undefined || !r.hash) return false
+      // Several tool results can live in one JSONL record: hash it once.
+      const key = `${r.at}:${r.len}:${r.hash}`
+      if (seen.has(key)) continue
+      seen.add(key)
       try {
         const raw = (await fs.read(file, r.at, r.len)).toString('utf8')
         const h = createHash('sha256').update(stripBlobs(raw)).digest('hex').slice(0, 16)
