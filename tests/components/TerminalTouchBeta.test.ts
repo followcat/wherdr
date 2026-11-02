@@ -239,6 +239,7 @@ describe('terminal beta switch', () => {
   it.each([false, true])('keeps the keyboard closed for links with beta=%s', async enabled => {
     const r = await mounted(enabled)
     r.ctl.tapLink.mockReturnValue(true)
+    r.ctl.tapOnCursor.mockReturnValue(true)
     await r.send('touchstart', 100)
     const end = new Event('touchend', { bubbles: true, cancelable: true })
     Object.defineProperty(end, 'changedTouches', { value: [{ clientX: 50, clientY: 100 }] })
