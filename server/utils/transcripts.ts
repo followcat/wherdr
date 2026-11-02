@@ -1285,29 +1285,53 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     return out.sort((a, b) => b.mtimeMs - a.mtimeMs)
   }
 
+  // First line of every candidate in one remote shell pass (one SSH command
+  // for 100 sessions, not 100 awaited reads), falling back to the local fs.
+  async function commandCodeHeaders(paths: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>()
+    if (!paths.length) return out
+    if (exec) {
+      try {
+        const r = await exec('for f in "$@"; do printf "%s\\t" "$f"; head -c 65536 "$f" | head -n 1; done', paths, { timeoutMs: 4000 })
+        if (r.code === 0) {
+          for (const line of r.stdout.toString('utf8').split('\n')) {
+            const tab = line.indexOf('\t')
+            if (tab > 0) out.set(line.slice(0, tab), line.slice(tab + 1))
+          }
+          return out
+        }
+      } catch { /* fall back to per-file reads */ }
+    }
+    for (const p of paths) {
+      try { out.set(p, (await fs.read(p, 0, 64 * 1024)).toString('utf8').split('\n')[0]!) } catch (e) {
+        if (isMissing(e)) continue
+        throw e
+      }
+    }
+    return out
+  }
+
   async function locateCommandCode(pane: TranscriptPane): Promise<Loc | null> {
     if (pane.agentSession) {
       const f = await findSessionFile('cmd', pane.agentSession)
       if (f) return { file: f, session: pane.agentSession }
     }
     if (!pane.cwd) return null
+    const sessions = await commandCodeSessions()
+    const missing = sessions.filter((s) => {
+      const c = cmdHeaders.get(s.file)
+      return !(c && c.size === s.size && c.mtimeMs === s.mtimeMs)
+    }).map(s => s.file)
+    const headers = await commandCodeHeaders(missing)
     let best: { file: string, id: string, cwdLength: number } | null = null
-    for (const s of await commandCodeSessions()) {
+    for (const s of sessions) {
       const cached = cmdHeaders.get(s.file)
       let d: Json | null = null
       if (cached && cached.size === s.size && cached.mtimeMs === s.mtimeMs) {
         d = cached.cwd === null ? null : { type: 'session', cwd: cached.cwd, id: cached.id }
       } else {
-        let first: string
-        try {
-          first = (await fs.read(s.file, 0, 64 * 1024)).toString('utf8').split('\n')[0]!
-        } catch (e) {
-          // A missing file is not a candidate; a transient read failure must
-          // reach locate()'s last-known-session fallback instead of silently
-          // selecting an older session in the same folder.
-          if (isMissing(e)) continue
-          throw e
-        }
+        const first = headers.get(s.file)
+        if (first === undefined) continue
         try { d = JSON.parse(first) } catch { d = null }
         if (d && d.type === 'session' && typeof d.cwd === 'string') {
           cmdHeaders.set(s.file, { size: s.size, mtimeMs: s.mtimeMs, cwd: d.cwd, id: typeof d.id === 'string' ? d.id : null })
@@ -1775,8 +1799,8 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
   }
 
   function forget(paneId: string) {
-    const last = lastLoc.get(paneId)
-    if (last) { forgetCmdFile(last.file); cmdSizes.delete(last.file) }
+    // File-scoped results/tails stay: another pane may share the session, and
+    // a rewrite/truncation invalidates them through cmdSizes anyway.
     locCache.delete(paneId)
     lastLoc.delete(paneId)
     modelCache.delete(paneId)
