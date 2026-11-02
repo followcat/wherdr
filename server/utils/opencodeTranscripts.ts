@@ -319,6 +319,29 @@ export function createOpenCodeTranscripts({ home, exec, stream }: { home: string
     if (r.server !== s.server || r.status !== 200) return false
     return !Array.isArray(r.data?.pending) || !r.data.pending.some((x: Json) => x?.id === formID)
   }
+  // Screen-parsed permission cards have no request id: the pending list
+  // resolves one by its displayed action/resources. An ambiguous or missing
+  // match is refused, never guessed — the reply still goes out by id.
+  async function permissionMatch(pane: TranscriptPane, target: { action: string, resources: string[], decision: 'once' | 'always' | 'reject' }): Promise<boolean> {
+    if (!pane.agentSession) return false
+    const s = await snapshot(pane.agentSession)
+    if (!s) return false
+    const r = await query(pane.agentSession, 'pending')
+    if (r.server !== s.server || r.status !== 200 || !Array.isArray(r.data?.permissions)) return false
+    const norm = (v: unknown) => String(v || '').trim()
+    const wanted = target.resources.map(norm).filter(Boolean)
+    const matches = r.data.permissions.filter((p: Json) => {
+      if (norm(p.action) !== norm(target.action)) return false
+      if (!wanted.length) return true
+      const have = (Array.isArray(p.resources) ? p.resources : []).map(norm)
+      return wanted.some(w => have.some(h => h === w || h.endsWith('/' + w) || w.endsWith('/' + h)))
+    })
+    if (matches.length !== 1 || typeof matches[0].id !== 'string') return false
+    const id = matches[0].id
+    const reply = await query(pane.agentSession, 'reply', { request: id, decision: target.decision })
+    if (reply.server !== s.server || reply.status !== 200) return false
+    return !Array.isArray(reply.data?.pending) || !reply.data.pending.some((x: Json) => x?.id === id)
+  }
   // The queued-message inbox (its own GET, for the cancel path — chat's copy
   // arrives on the session snapshot instead).
   async function inbox(pane: TranscriptPane): Promise<Json[]> {
@@ -347,20 +370,35 @@ export function createOpenCodeTranscripts({ home, exec, stream }: { home: string
     const r = await query(pane.agentSession, 'shell', { command, seconds: 290 })
     return r.server === s.server && r.status === 200
   }
-  // Composer status from the session record itself: total tokens and cost.
+  // Composer status from the session record itself: the agent and model on
+  // the line, per-direction token counts and cost as meters. The context
+  // window is not published, so it is not guessed.
   async function status(pane: TranscriptPane): Promise<{ line: string, meters: string | null } | null> {
     if (!pane.agentSession) return null
     const s = await snapshot(pane.agentSession)
     if (!s) return null
-    const t = s.info.tokens
-    const total = ['input', 'output', 'reasoning'].reduce((n, k) => n + (Number.isFinite(t?.[k]) ? t[k] : 0), 0)
-    if (!total && !Number.isFinite(s.info.cost)) return null
-    const tok = total >= 1e6 ? `${(total / 1e6).toFixed(1)}M` : total >= 1e3 ? `${(total / 1e3).toFixed(1)}k` : String(total)
-    const cost = Number.isFinite(s.info.cost) && s.info.cost > 0 ? ` · $${s.info.cost.toFixed(2)}` : ''
-    return { line: `${tok} tok${cost}`, meters: null }
+    const n = (v: unknown) => Number.isFinite(Number(v)) ? Number(v) : 0
+    const t = s.info.tokens && typeof s.info.tokens === 'object' ? s.info.tokens : {}
+    const input = n(t.input)
+    const output = n(t.output)
+    const reasoning = n(t.reasoning)
+    const cost = n(s.info.cost)
+    if (!input && !output && !reasoning && !cost) return null
+    const k = (v: number) => v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${(v / 1e3).toFixed(v >= 1e4 ? 0 : 1)}k` : String(v)
+    const meters = [
+      input ? `${k(input)} in` : '',
+      output ? `${k(output)} out` : '',
+      reasoning ? `${k(reasoning)} reason` : '',
+      cost > 0 ? `$${cost < 1 ? cost.toFixed(4) : cost.toFixed(2)}` : '',
+    ].filter(Boolean).join(' · ').slice(0, 200) || null
+    const model = typeof s.info.model?.id === 'string' ? cleanModelName(s.info.model.id) : null
+    const variant = typeof s.info.model?.variant === 'string' ? s.info.model.variant : null
+    const agent = typeof s.info.agent === 'string' && s.info.agent ? s.info.agent[0]!.toUpperCase() + s.info.agent.slice(1) : 'OpenCode'
+    const line = [agent, model, variant].filter(Boolean).join(' · ').slice(0, 300)
+    return { line, meters }
   }
   function observe(panes: TranscriptPane[]) {
     if (!panes.some(p => p.agent === 'opencode' && p.agentSession)) { child?.kill(); child = null; cache.clear(); pageBytes = 0 }
   }
-  return { chat, model, image, search, models, patchModel, pending: pendingRequests, replyPermission, replyForm, inbox, inboxDelete, shell, status, dispose, observe }
+  return { chat, model, image, search, models, patchModel, pending: pendingRequests, replyPermission, replyForm, permissionMatch, inbox, inboxDelete, shell, status, dispose, observe }
 }

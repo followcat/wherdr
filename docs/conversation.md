@@ -6,7 +6,7 @@
   Markdown, with grouped tool calls, images (full-screen viewer with pinch / wheel zoom and pan), timestamps, search and infinite scroll back to the
   first message. Reading a conversation never touches the terminal, so it never resizes a pane.
   A command the agent proposes (shell code block, or inline `! command`) can be copied without
-  its prompt, or run in the agent's shell mode (`!`, Claude Code, Codex and omp) after you
+  its prompt, or run in the agent's shell mode (`!`, Claude Code, Codex, omp and OpenCode) after you
   confirm the full command.
 - **Devin conversations**: read the local CLI's SQLite history on the machine running
   the agent, including its current main branch, tool results and saved images. Python 3.7 or later

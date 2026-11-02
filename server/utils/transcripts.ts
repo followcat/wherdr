@@ -1582,7 +1582,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     claudeAskCache.delete(paneId)
   }
 
-  return { chat, preview, latestReply, image, forget, locate, model, observe, dispose: opencode.dispose, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions, opencodeModels: opencode.models, opencodePatchModel: opencode.patchModel, opencodePending: opencode.pending, opencodeReplyPermission: opencode.replyPermission, opencodeReplyForm: opencode.replyForm, opencodeInbox: opencode.inbox, opencodeInboxDelete: opencode.inboxDelete, opencodeShell: opencode.shell, opencodeStatus: opencode.status }
+  return { chat, preview, latestReply, image, forget, locate, model, observe, dispose: opencode.dispose, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions, opencodeModels: opencode.models, opencodePatchModel: opencode.patchModel, opencodePending: opencode.pending, opencodeReplyPermission: opencode.replyPermission, opencodeReplyForm: opencode.replyForm, opencodePermissionMatch: opencode.permissionMatch, opencodeInbox: opencode.inbox, opencodeInboxDelete: opencode.inboxDelete, opencodeShell: opencode.shell, opencodeStatus: opencode.status }
 }
 
 export type Transcripts = ReturnType<typeof createTranscripts>

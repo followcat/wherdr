@@ -2,7 +2,7 @@
 // service's pending list, and only a reply the service confirms counts.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { opencodeCard } from '../server/utils/opencodePrompts'
-import { sameQuestion } from '../server/utils/choices'
+import { opencodeDecision, sameQuestion, screenChoices } from '../server/utils/choices'
 import { HerdrError } from '../server/utils/herdr'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -18,10 +18,15 @@ async function endpoint(pending: unknown) {
   for (const [name, value] of Object.entries({
     defineApi: (handler: unknown) => handler, PANE_RE: /^w1:p1$/, HerdrError,
     findPane: () => pane,
+    // The card-less fallback re-reads the screen for a permission match —
+    // an idle screen holds none, so it refuses like a stale card.
+    herdr: async () => ({ read: { text: 'plain idle composer  ┃' } }),
+    screenChoices, opencodeDecision,
     transcripts: {
       opencodePending: async () => pending,
       opencodeReplyPermission: replyPermission,
       opencodeReplyForm: replyForm,
+      opencodePermissionMatch: async () => false,
     },
     sameQuestion, choicesCache: new Map(), poll: () => {},
   })) vi.stubGlobal(name, value)
