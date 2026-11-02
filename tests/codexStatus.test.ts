@@ -368,6 +368,7 @@ function fakeFs(files: Record<string, string>): MachineFs {
 
 function setup(o: {
   local?: boolean, writable?: boolean, exitCode?: number, hang?: boolean, screen?: string | Error, cliVersion?: string
+  processPid?: number, processVersion?: string | null, processExitCode?: number
   loadWeeks?: () => unknown, saveWeeks?: (w: Record<string, KnownWeek>) => void
 } = {}) {
   const ts = '2026-01-01T10:00:00Z'
@@ -380,13 +381,15 @@ function setup(o: {
       '',
     ].join('\n'),
   }
-  const exec = vi.fn(async (_script: string, _input: Buffer, _t: number) => o.hang ? new Promise<never>(() => {}) : ({ code: o.exitCode ?? 0, stdout: Buffer.from('installed\ncodex-cli 0.160.0\n'), stderr: o.exitCode ? 'curl: (6) Could not resolve host' : '' }))
+  const probe = () => ({ code: o.processExitCode ?? 0, stdout: Buffer.from(o.processVersion ? `codex-cli ${o.processVersion}\n` : ''), stderr: '' })
+  const exec = vi.fn(async (_script: string, input: Buffer, _t: number) => input.toString().includes('/proc/') ? probe() : o.hang ? new Promise<never>(() => {}) : ({ code: o.exitCode ?? 0, stdout: Buffer.from('installed\ncodex-cli 0.160.0\n'), stderr: o.exitCode ? 'curl: (6) Could not resolve host' : '' }))
   const log = vi.fn()
-  const runLocal = vi.fn(async () => ({ code: 0, stdout: Buffer.from('codex-cli 0.160.0\n'), stderr: '' }))
+  const runLocal = vi.fn(async (script: string) => script.includes('/proc/') ? probe() : ({ code: 0, stdout: Buffer.from('codex-cli 0.160.0\n'), stderr: '' }))
   const m: CodexMachine = { key: 'mac', label: 'Laptop', local: Boolean(o.local), home: HOME, fs: fakeFs(files), online: true, exec: o.local ? null : exec }
   let clock = Date.parse(ts)
   const svc = createCodexStatus({
     machineOf: () => m,
+    readProcesses: async () => o.processPid ? [{ pid: o.processPid, name: 'codex', argv: ['/opt/codex/bin/codex'] }] : [],
     readScreen: async () => {
       if (o.screen instanceof Error) throw o.screen
       return o.screen ?? SCREEN
@@ -405,6 +408,69 @@ function setup(o: {
 }
 
 describe('Codex status service', () => {
+  it('a resumed current binary does not inherit the conversation creation version or another install', async () => {
+    const { svc, pane } = setup({ processPid: 201, processVersion: '0.160.0', screen: '› Ask Codex to do anything' })
+    expect((await svc.compute(pane))?.update).toBeUndefined()
+  })
+
+  it('the current binary wins over an old header still visible on screen', async () => {
+    const { svc, pane } = setup({ processPid: 201, processVersion: '0.160.0', screen: STATUS_SCREEN })
+    expect((await svc.compute(pane))?.update).toBeUndefined()
+  })
+
+  it('an older running binary still offers a restart after an install', async () => {
+    const { svc, pane, files } = setup({ processPid: 201, processVersion: '0.159.1', screen: 'OpenAI Codex (v0.160.0)' })
+    files[`${HOME}/.codex/packages/standalone/current/codex-package.json`] = '{"version":"0.160.0"}'
+    expect((await svc.compute(pane))?.update).toMatchObject({ state: 'installed', current: '0.159.1' })
+  })
+
+  it('reuses a process probe but refreshes immediately when a pane gets a new PID', async () => {
+    const o = { processPid: 201, processVersion: '0.159.1', screen: '› Ask Codex to do anything' }
+    const { svc, pane, exec } = setup(o)
+    expect((await svc.compute(pane))?.update).toMatchObject({ state: 'available' })
+    await svc.compute(pane)
+    expect(exec).toHaveBeenCalledOnce()
+    o.processPid = 202
+    o.processVersion = '0.160.0'
+    expect((await svc.compute(pane))?.update).toBeUndefined()
+    expect(exec).toHaveBeenCalledTimes(2)
+  })
+
+  it('bounds the process cache and forgets it when a pane is removed', async () => {
+    const { svc, pane, exec, tick } = setup({ processPid: 201, processVersion: '0.160.0', screen: '› ' })
+    await svc.compute(pane)
+    tick(60000)
+    await svc.compute(pane)
+    expect(exec).toHaveBeenCalledTimes(2)
+    svc.forget(pane.id)
+    await svc.compute(pane)
+    expect(exec).toHaveBeenCalledTimes(3)
+  })
+
+  it('probes the same binary locally without running an update command', async () => {
+    const { svc, pane, exec, runLocal } = setup({ local: true, processPid: 201, processVersion: '0.160.0', screen: '› ' })
+    expect((await svc.compute(pane))?.update).toBeUndefined()
+    expect(exec).not.toHaveBeenCalled()
+    expect(runLocal).toHaveBeenCalledOnce()
+    expect(runLocal.mock.calls[0]![0]).toContain('/proc/201/exe')
+    expect(runLocal.mock.calls[0]![0]).not.toContain('install')
+  })
+
+  it('an unavailable or failed process probe keeps the existing screen fallback', async () => {
+    for (const processExitCode of [0, 1]) {
+      const { svc, pane } = setup({ processPid: 201, processVersion: processExitCode ? '0.160.0' : null, processExitCode, screen: STATUS_SCREEN })
+      expect((await svc.compute(pane))?.update).toMatchObject({ state: 'available', current: '0.159.1' })
+    }
+  })
+
+  it('invalid process IDs are never put in a shell command', async () => {
+    for (const processPid of [-1, 1.5, Number.NaN]) {
+      const { svc, pane, exec } = setup({ processPid, processVersion: '0.160.0', screen: STATUS_SCREEN })
+      expect((await svc.compute(pane))?.update).toMatchObject({ state: 'available' })
+      expect(exec).not.toHaveBeenCalled()
+    }
+  })
+
   it('combines files, rollout and screen', async () => {
     const { svc, pane } = setup()
     const st = await svc.compute(pane)

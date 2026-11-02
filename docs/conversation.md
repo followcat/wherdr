@@ -58,6 +58,10 @@
   "Switch Model" selector, `/switch` or `/model`, and its thinking level, changed with its own
   ⇧⇥ cycle). Changes apply **to the current session only**; wherdr never changes your default
   model.
+- **Codex update notices**: on Linux, wherdr checks the executable of the pane's
+  current process, with a bounded cache. Resuming an older conversation does not
+  make its original CLI version the running version. If the process cannot be
+  inspected, wherdr falls back to the screen and conversation metadata.
 **Settings › Conversation › Reply style** chooses how an agent's reply offers to be quoted in
 the field, question by question and point by point (a list item or a paragraph that asks
 nothing), so that one message answers them all:

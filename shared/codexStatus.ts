@@ -1,9 +1,9 @@
 // Codex notices shown in its conversation view: "Update available" (with an
 // Update button) and the weekly-limit warning. Pure logic, shared by the
 // server and the tests. Structured data first:
-//  - running version: the TUI's own header on screen ("OpenAI Codex (v…)"),
-//    else `cli_version` in the header of the agent's rollout (written by the
-//    shared app-server daemon, which may run another version than the TUI);
+//  - running version: the pane's executable when it can be inspected, then
+//    the TUI's header, else the rollout's original `cli_version` (which does
+//    not change when a newer CLI resumes an existing conversation);
 //  - latest version: `latest_version` in ~/.codex/version.json (Codex's own
 //    daily check, `dismissed_version` when the user skipped it in Codex);
 //  - installed version: ~/.codex/packages/standalone/current/codex-package.json
@@ -189,14 +189,14 @@ export interface CodexStatus { update?: CodexUpdate, weekly?: CodexWeekly }
 const newest = (...vs: (string | null | undefined)[]) =>
   vs.reduce<string | null>((a, b) => (!b ? a : !a || compareVersions(b, a) > 0 ? b : a), null)
 
-// Version the agent runs: the TUI's header on screen first (the process
+// Version the agent runs: its executable first, then the TUI's header (the process
 // actually running in the pane), then the version of its "Update available"
 // box, then the rollout's `cli_version` (that of the app-server daemon shared
 // by all the Codex of the machine: it may be newer or older than the TUI).
 // No guess from dates: an agent started after an install may still run an
 // older version (another binary, daemon kept), the screen tells.
-export function runningVersion(o: { rollout: string | null, screen: CodexScreenInfo }): string | null {
-  return o.screen.version || o.screen.update?.current || o.rollout || null
+export function runningVersion(o: { process?: string | null, rollout: string | null, screen: CodexScreenInfo }): string | null {
+  return o.process || o.screen.version || o.screen.update?.current || o.rollout || null
 }
 
 // Update notice of a Codex agent, or null. `canRun`: the server can run a
