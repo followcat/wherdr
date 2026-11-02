@@ -663,6 +663,31 @@ it('rebuilds clients when a remembered result is evicted', async () => {
   expect(older.items!.find(i => i.toolId === 'call_1')?.out).toBe('ok')
 })
 
+it('does not reset an open chat when other transcripts are evicted', async () => {
+  const { home, reader } = fixture()
+  const panes: { id: string, agent: string, cwd: string }[] = []
+  for (let i = 0; i < 67; i++) {
+    const cwd = `/home/user/cache-${i}`
+    writeCommandCodeSession(home, {
+      id: `cache-${i}`, cwd,
+      lines: [
+        commandCodeSession(`cache-${i}`, cwd),
+        commandCodeUser(`u${i}`, null, 'hi'),
+        commandCodeAssistant(`a${i}`, `u${i}`, [{ type: 'text', text: 'reply' }], { ms: 1000 }),
+      ],
+    })
+    panes.push({ id: `cache-pane-${i}`, agent: 'cmd', cwd })
+  }
+  for (let i = 0; i < 64; i++) await reader.chat(panes[i]!)
+  const active = await reader.chat(panes[63]!)
+  expect(active.available).toBe(true)
+  // Three more transcripts push the oldest entries out; the active file's
+  // own state is still cached, so its client must not be reset.
+  for (let i = 64; i < 67; i++) await reader.chat(panes[i]!)
+  const next = await reader.chat(panes[63]!, { since: active.token, from: active.start })
+  expect(next.rewritten).toBeUndefined()
+})
+
 it('reads past trailing tool results with no displayable message', async () => {
   const { home, reader } = fixture()
   const big = 'q'.repeat(1.5 * 1024 * 1024)
