@@ -3369,7 +3369,7 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
   /* Large grows the reading column — except over Content width › Full
      width, whose (same-specificity) --read is defined above and wins on
      document order; keep full's explicit choice by scoping ours out. */
-  :root[data-ui-scale="lg"]:not([data-content-width="full"]) { --read: min(1150px, 100% - 48px); }
+  :root[data-ui-scale="lg"]:not([data-content-width="full"]) { --read: min(1500px, 100% - 48px); }
   :root[data-ui-scale="lg"] .md-body { font-size: 16.5px; }
   :root[data-ui-scale="lg"] .md-body pre { font-size: 14px; }
   :root[data-ui-scale="lg"] .prompt-input { font-size: 16px; }
