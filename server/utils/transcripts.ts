@@ -64,11 +64,11 @@ export function anchorOf(token: string | null | undefined): { start: number, has
 const genOf = (st: { mtimeMs: number, ino?: number }) => `${st.ino ? `${st.ino}-` : ''}${Math.round(st.mtimeMs * 1000)}`
 // State a client's token was read from: file, size, cursor, inode, mtime
 // (`!`: read before its mtime second was over, see SETTLE_MS).
-const HEAD = /^(.*):(\d+):(null|\d+):(?:(\d+)-)?(\d+)(!?)(?=[@/%~#]|$)/
+const HEAD = /^(.*):(\d+):(null|\d+):(?:(\d+)-)?(\d+)(!?)(?=[@&/%~#]|$)/
 // Command Code invalidation generation carried by a token (`@N`, before the
 // anchor): a client whose generation is behind rebuilds the older pages it
 // kept. `~` stays the taken-back marker of server/api/chat.get.ts.
-const EPOCH = /@(\d+)(?=[/%~#]|$)/
+const EPOCH = /@(\d+)(?=[&/%~#]|$)/
 export function cmdEpochOf(token: string | null | undefined): number | null {
   const m = EPOCH.exec(String(token || ''))
   return m ? Number(m[1]) : null
@@ -76,10 +76,17 @@ export function cmdEpochOf(token: string | null | undefined): number | null {
 // A restart drops the reader's remembered cross-page results: the instance
 // nonce makes an old token reload the pages instead of showing a tool without
 // its output.
-const READER = /%([a-z0-9]+)(?=[/~#]|$)/
+const READER = /%([a-z0-9]+)(?=[&/~#]|$)/
 export function cmdReaderOf(token: string | null | undefined): string | null {
   const m = READER.exec(String(token || ''))
   return m ? m[1]! : null
+}
+// Cache eviction also drops results a client may still need: the generation
+// advances so every affected client rebuilds its pages.
+const CACHE = /&(\d+)(?=[/~#]|$)/
+export function cmdCacheOf(token: string | null | undefined): number | null {
+  const m = CACHE.exec(String(token || ''))
+  return m ? Number(m[1]) : null
 }
 export function headOf(token: string | null | undefined): { file: string, size: number, from: number | null, ino: number | null, gen: string, unsettled: boolean } | null {
   const m = HEAD.exec(String(token || ''))
@@ -1028,17 +1035,21 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
   // map, so an old token must reload the pages instead of showing a tool
   // without output that was parsed in another, now-forgotten page.
   const readerId = Math.random().toString(36).slice(2, 10)
+  // Cache eviction drops results a client may still need: every eviction
+  // advances this generation, and tokens carry it so affected clients rebuild.
+  let cmdCacheGeneration = 0
+  function evictCmdFile(file: string) {
+    forgetCmdFile(file)
+    cmdSizes.delete(file)
+    cmdEpochs.delete(file)
+    cmdCacheGeneration++
+  }
   function cmdResultsFor(file: string) {
     let m = cmdResults.get(file)
     if (!m) {
       m = new Map()
       cmdResults.set(file, m)
-      if (cmdResults.size > 64) {
-        const oldest = cmdResults.keys().next().value!
-        forgetCmdFile(oldest)
-        cmdSizes.delete(oldest)
-        cmdEpochs.delete(oldest)
-      }
+      if (cmdResults.size > 64) evictCmdFile(cmdResults.keys().next().value!)
     }
     return m
   }
@@ -1047,7 +1058,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     if (!m) {
       m = new Map()
       cmdWatches.set(file, m)
-      if (cmdWatches.size > 64) cmdWatches.delete(cmdWatches.keys().next().value!)
+      if (cmdWatches.size > 64) evictCmdFile(cmdWatches.keys().next().value!)
     }
     return m
   }
@@ -1518,8 +1529,9 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     let popped: ClaudeQueueEntry[] | null = null
     let updates: CommandCodeToolUpdate[] = []
     // Command Code's result may sit in the newer window while its call is in
-    // the older one: the per-file results map bridges the windows.
-    const results = cmdResultsFor(file)
+    // the older one: the per-file results map bridges the windows. Other
+    // agents never allocate these caches.
+    const results = kind === 'cmd' ? cmdResultsFor(file) : undefined
     while (start > 0 && end - start < MAX_READ_BYTES) {
       // Window widened as long as it contains no line start (a
       // multi-MB line: message with images), within the cap.
@@ -1534,7 +1546,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
       if (r.start === start) break // giant line beyond the cap: stop there
       // Each window is parsed alone; Command Code orphans are carried in the
       // per-file results map, so a later window's call still gets its output.
-      const parsed = parseLines(r.text, kind, r.start, home, ompTemplates.list, cwd, results, cmdWatchesFor(file))
+      const parsed = parseLines(r.text, kind, r.start, home, ompTemplates.list, cwd, results, kind === 'cmd' ? cmdWatchesFor(file) : undefined)
       if (!queue) queue = parsed.queue || [] // the queue lives in the most recent window
       if (!popped) popped = parsed.popped || []
       if (parsed.updates?.length) updates = parsed.updates.concat(updates)
@@ -1564,7 +1576,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
         const nl = buf.indexOf(0x0a, off)
         off = nl < 0 ? buf.length : nl + 1
       }
-      const items = parseLines(buf.subarray(off).toString('utf8'), kind, s0 + off, home, ompTemplates.list, kind === 'omp' ? await ompCwd(file) : '', cmdResultsFor(file), cmdWatchesFor(file))
+      const items = parseLines(buf.subarray(off).toString('utf8'), kind, s0 + off, home, ompTemplates.list, kind === 'omp' ? await ompCwd(file) : '', kind === 'cmd' ? cmdResultsFor(file) : undefined, kind === 'cmd' ? cmdWatchesFor(file) : undefined)
       // Start kept even when it moved to the next line: the client then sees a
       // stale anchor (or another start) and reloads from the bottom.
       r = {
@@ -1649,12 +1661,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
         forgetCmdFile(loc.file)
       }
       cmdSizes.set(loc.file, { size: st.size, gen: g, ino: st.ino })
-      if (cmdSizes.size > 64) {
-        const oldest = cmdSizes.keys().next().value!
-        cmdSizes.delete(oldest)
-        cmdEpochs.delete(oldest)
-        cmdWatches.delete(oldest)
-      }
+      if (cmdSizes.size > 64) evictCmdFile(cmdSizes.keys().next().value!)
     }
     const base = { available: true, file: fileId, session: loc.session, guessed: Boolean(loc.guessed) }
     // The transcript path tells the real kind: a pane whose agent changed while
@@ -1674,15 +1681,18 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     const same = prev !== null && prev.file === fileId
     const sentEpoch = cmdEpochOf(opts.since || opts.anchor)
     const sentReader = cmdReaderOf(opts.since || opts.anchor)
+    const sentCache = cmdCacheOf(opts.since || opts.anchor)
     // A client that did not witness an invalidation (a preview read or
-    // another client consumed it), or that outlived a reader restart, still
-    // has an older state in its token: rebuild its pages.
+    // another client consumed it), that outlived a reader restart, or whose
+    // remembered result was evicted, still has an older state in its token:
+    // rebuild its pages.
     const readerChanged = kind === 'cmd' && same && sentReader !== readerId
-    const staleState = kind === 'cmd' && same && (readerChanged || (sentEpoch === null ? epoch > 0 : sentEpoch !== epoch))
+    const cacheChanged = kind === 'cmd' && same && (sentCache === null ? cmdCacheGeneration > 0 : sentCache !== cmdCacheGeneration)
+    const staleState = kind === 'cmd' && same && (readerChanged || cacheChanged || (sentEpoch === null ? epoch > 0 : sentEpoch !== epoch))
     // Token: file, size, cursor, generation (unchanged as long as these are,
-    // once settled), Command Code invalidation generation and reader, then
-    // the anchor.
-    const head = `${fileId}:${st.size}:${from}:${gen}${settled ? '' : '!'}${epoch ? `@${epoch}` : ''}${kind === 'cmd' ? `%${readerId}` : ''}`
+    // once settled), Command Code invalidation generation, reader and cache
+    // generation, then the anchor.
+    const head = `${fileId}:${st.size}:${from}:${gen}${settled ? '' : '!'}${epoch ? `@${epoch}` : ''}${kind === 'cmd' ? `%${readerId}&${cmdCacheGeneration}` : ''}`
     if (settled && !staleState && opts.since && opts.since.split('/')[0] === head) return { ...base, unchanged: true, token: opts.since }
     let r = await tail(loc.file, kind, st.size, gen, from, settled)
     // The client's list starts at the cursor, and the file was rewritten
