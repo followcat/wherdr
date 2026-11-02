@@ -1,10 +1,10 @@
 import type { BoardSections, CoordinatorLevel, Member } from '#shared/boardLinks'
 import type { Row } from '#shared/spaces'
 
-export type HomeGrouping = 'machine' | 'state'
+export type HomeGrouping = 'machine' | 'state' | 'flat'
 
 export function readHomeGrouping(value: unknown): HomeGrouping {
-  return value === 'state' ? 'state' : 'machine'
+  return value === 'state' || value === 'flat' ? value : 'machine'
 }
 
 export interface StateEntry {

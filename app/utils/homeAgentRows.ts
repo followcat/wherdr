@@ -13,6 +13,14 @@ export function individualAgentRows(state: ListState, machine?: string): Individ
     .map(p => ({ kind: 'pane', key: p.id, pane: p, lead: p, individual: true }))
 }
 
+// Flat mode (Home screen › Group by › Agents): one list across all machines,
+// no space or machine sections, still in Herdr's workspace / tab / pane order.
+// The machine bar keeps filtering, on the same base keys as the counters.
+export function flatAgentRows(state: ListState, selectedBaseKeys: readonly string[] | null, baseKeyOf: (pane: Pane) => string): IndividualAgentRow[] {
+  const rows = individualAgentRows(state)
+  return selectedBaseKeys === null ? rows : rows.filter(r => selectedBaseKeys.includes(baseKeyOf(r.pane)))
+}
+
 export function isIndividualAgentRow(row: Row | null | undefined): row is IndividualAgentRow {
   return row?.kind === 'pane' && 'individual' in row && row.individual === true
 }
