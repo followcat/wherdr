@@ -4,7 +4,7 @@
 // replies "unchanged" as long as the file has not grown).
 // Shown = older pages loaded on demand (`older`, up to
 // byte `olderCursor`) + bottom re-read continuously from byte `tailStart`.
-import type { ChatCursor, ChatItem, ChatResponse, ClaudeQueueEntry, ClaudeScreen, OmpToolView, Pane, QueuedMessage } from '#shared/types'
+import type { ChatCursor, ChatItem, ChatResponse, ClaudeQueueEntry, ClaudeScreen, CommandCodeToolUpdate, OmpToolView, Pane, QueuedMessage } from '#shared/types'
 import { readChat, saveChat, touchChat } from '~/utils/offlineCache'
 import { mayReadOffline, readOfflineAccess } from '~/utils/offlineAccess'
 import { queueReason, canClearQueued } from '~/utils/queuedReason'
@@ -13,7 +13,7 @@ import { isUploadLine, uploadSrc } from '#shared/queuedMatch'
 import { pendingQueue, queuedRowMatches, rememberSent } from '~/utils/pendingQueue'
 import { clampRange, createSelectionSettler, lastLineRect, selectionReplyPos } from '~/utils/selectionReply'
 import { addAnswer, addQuote, answerEnd, answerOf, forgetReply, isQuoted, replyTargets, rowOf, rowRef, rowSettled, tableRank, tableRef, tappedAnswer, toggleOkAll, unansweredCount, withQuestions, type Answer } from '~/utils/questionReply'
-import { CHAT_READ_MS, createTailLoader, hasOlder, needsOlderForHit, olderCursor, nextTail, restartsTail, tailQuery } from '~/utils/chatTail' 
+import { CHAT_READ_MS, applyToolUpdates, createTailLoader, hasOlder, needsOlderForHit, olderCursor, nextTail, restartsTail, retainToolUpdates, tailQuery } from '~/utils/chatTail' 
 import { pickTyping, replyId } from '~/utils/typewriter'
 import { newestThought } from '~/utils/reasoningReveal'
 import { restoredScrollTop, saveReadingPosition } from '~/utils/readingPosition'
@@ -55,6 +55,8 @@ const loadError = ref<string | null>(null)
 const misses = shallowRef<ChatMisses>(noMisses()) // missed polls, view kept
 const rendered = ref(false)
 const olderBusy = ref(false)
+// Results whose call is in an older page still loading (see retainToolUpdates).
+const pendingToolUpdates = new Map<string, CommandCodeToolUpdate>()
 const savedAt = ref<number | null>(null)
 const readOnly = computed(() => offlineView.value || paneStale(props.pane))
 // The end kept on this device, still not read again after 600 ms: "Read at" over the list.
@@ -72,6 +74,7 @@ async function restoreChat() {
   const saved = await readChat(id)
   if (!saved || synced || rendered.value || unavailable.value || id !== props.pane.id) return
   await apply(() => {
+    pendingToolUpdates.clear()
     chat.value = { ...fresh(), tail: saved.items }
     savedAt.value = saved.at
   })
@@ -255,6 +258,7 @@ async function loadStep(current: () => boolean): Promise<boolean> {
       const m = onUnavailable(misses.value, Boolean(chat.value.file) && items.value.length > 0)
       misses.value = m.next
       if (!m.clear) return false
+      pendingToolUpdates.clear()
       chat.value = fresh()
       unavailable.value = r.reason || 'unsupported'
       integration.value = r.reason === 'no_integration' ? r.integration || null : null
@@ -271,6 +275,7 @@ async function loadStep(current: () => boolean): Promise<boolean> {
     // New session (/clear, new agent), or a bottom read from another byte:
     // we start again from the bottom (utils/chatTail.ts).
     if (restartsTail(chat.value, r)) {
+      pendingToolUpdates.clear()
       chat.value = fresh()
       synced = false
       return true
@@ -289,10 +294,16 @@ async function loadStep(current: () => boolean): Promise<boolean> {
       }
       c.file = r.file || null
       c.token = r.token || ''
-      c.tail = tail
+      c.tail = applyToolUpdates(tail, r.toolUpdates)
+      // A late result may belong to a tool already shown in an older page,
+      // which this re-read does not replace.
+      if (r.toolUpdates?.length) c.older = applyToolUpdates(c.older, r.toolUpdates)
       c.queue = r.queue || []
       chat.value = c
       noteReplies(c.tail)
+      // The call may still be in an older page being loaded: keep the result
+      // for when that page arrives.
+      retainToolUpdates(pendingToolUpdates, c.older.concat(c.tail), r.toolUpdates)
     })
     saveChat(pane, items.value)
     // Paint the prepared tail first, then revalidate using its token and cursor.
@@ -319,6 +330,7 @@ async function loadOlder() {
     const r = await api<ChatResponse>(`/api/chat?${new URLSearchParams({ pane, before: String(before), since: chat.value.token })}`, undefined, AbortSignal.timeout(CHAT_READ_MS))
     if (pane !== props.pane.id || chat.value.file !== file || chat.value.olderCursor !== before) return
     if (r.rewritten) {
+      pendingToolUpdates.clear()
       chat.value = fresh()
       synced = false
       await loadChat()
@@ -327,14 +339,18 @@ async function loadOlder() {
     if (r.file !== file) return
     const b = box.value
     const fromBottom = b ? b.scrollHeight - b.scrollTop : 0
+    const pending = [...pendingToolUpdates.values()]
     await apply(() => {
       chat.value = {
         ...chat.value,
-        older: (r.items || []).concat(chat.value.older),
+        // Apply results that arrived while this page was in flight: its call
+        // was not on screen yet, so the tail re-read could not update it.
+        older: applyToolUpdates((r.items || []).concat(chat.value.older), pending),
         // no progress: stop there
         olderCursor: olderCursor(r, before),
       }
     }, true)
+    for (const u of pending) if (items.value.some(i => i.toolId === u.id)) pendingToolUpdates.delete(u.id)
     saveChat(pane, items.value)
     if (b) b.scrollTop = b.scrollHeight - fromBottom
   } catch (err) {
@@ -423,7 +439,7 @@ type Block =
   | { k: 'who', key: string }
   | { k: 'user', key: string, text: string, pasted?: string[], srcs: string[], files: { path: string, name: string }[], time: string | null, at: string | null, reply: ReplyTarget | null, origin: string | null }
   // `rid`: its code in the references to it (shared/reference.ts messageId).
-  | { k: 'assistant', key: string, id: string, rid: string, text: string, html: string, time: string | null, endsTurn: boolean, error?: boolean }
+  | { k: 'assistant', key: string, id: string, rid: string, text: string, html: string, time: string | null, endsTurn: boolean, error?: boolean, images?: number, ref?: string, imageAt?: number }
   | { k: 'thinking', key: string, id: string, text: string, html: string, ms: number | undefined }
   | { k: 'job', key: string, id: string, tool: string, out: string, ms: number | undefined, error: boolean }
   | { k: 'autopilot', key: string, text: string }
@@ -438,7 +454,7 @@ type Block =
 
 // Images of a transcript item (a user message, or what a tool returned),
 // re-read on demand from its line (ref = its position in the file).
-function itemImageSrcs(it: ChatItem): string[] {
+function itemImageSrcs(it: { ref?: string, images?: number, imageAt?: number }): string[] {
   const file = chat.value.file
   const srcs: string[] = []
   if (!it.ref || !it.images || !file) return srcs
@@ -570,7 +586,7 @@ const blocks = computed<Block[]>(() => {
     } else if (it.role === 'assistant') {
       lastReply = it.text
       const time = it.ts ? fmtTime(it.ts) : null
-      lastReplyBlock = lazyHtml({ k: 'assistant' as const, key, id: replyId(it), rid: messageId(it), text: it.text, time, endsTurn: false, error: Boolean(it.error) }, () => withQuestions(md(it.text), { reply: t('Reply'), quoted: t('Quoted'), discuss: t('Discuss'), yes: t('Yes'), no: t('No'), okAll: t('OK to all'), decisions: t('Decisions') }))
+      lastReplyBlock = lazyHtml({ k: 'assistant' as const, key, id: replyId(it), rid: messageId(it), text: it.text, time, endsTurn: false, error: Boolean(it.error), images: it.images, ref: it.ref, imageAt: it.imageAt }, () => withQuestions(md(it.text), { reply: t('Reply'), quoted: t('Quoted'), discuss: t('Discuss'), yes: t('Yes'), no: t('No'), okAll: t('OK to all'), decisions: t('Decisions') }))
       out.push(lastReplyBlock)
       replies.push({ key, time, text: it.text, rid: lastReplyBlock.rid })
     } else if (it.role === 'thinking') {
@@ -1460,6 +1476,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
 
               <template v-else-if="b.k === 'assistant'">
                 <UChatMessage
+                  v-if="b.text"
                   :id="b.key" role="assistant" side="left" variant="naked"
                   :data-hit-key="b.key"
                   :parts="[{ type: 'text', text: b.text }]"
@@ -1469,6 +1486,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                     <ChatMarkdown :html="b.html" :typing="typingAt(b.id)" @done="typingDone(b.id)" />
                   </template>
                 </UChatMessage>
+                <MsgThumbs v-if="b.images && b.ref" class="tool-thumbs" :srcs="itemImageSrcs(b)" :max="TOOL_THUMB_MAX" :offline="readOnly" :dupes="dupeSrcs" />
                 <div v-if="replyStyle === 'list' && !readOnly && typingAt(b.id) === null && (replyTargets(b.html).questions.length || replyTargets(b.html).pick)" class="q-bar">
                   <template v-if="replyTargets(b.html).questions.length">
                     <p class="q-bar-h">{{ tl('Questions · reply to', 'Questions · répondre à') }}</p>

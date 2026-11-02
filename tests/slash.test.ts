@@ -26,6 +26,12 @@ describe('"/" commands', () => {
     expect(r.map(c => [c.name, c.desc])).toEqual([['clear', 'x'], ['model', 'perso']])
   })
 
+  it('offers Command Code its own commands', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'hw-slash-cmd-'))
+    const names = (await slashCommands({ key: 'cmd1', fs: localFs, home, kind: 'cmd', cwd: null })).map(c => c.name)
+    expect(names).toEqual(expect.arrayContaining(['model', 'effort', 'permissions', 'compact', 'clear', 'config']))
+  })
+
   it('finds skills (including synced ones), commands and Codex prompts', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'hw-slash-'))
     const w = (f: string, t: string) => { mkdirSync(path.dirname(path.join(home, f)), { recursive: true }); writeFileSync(path.join(home, f), t) }

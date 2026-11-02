@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { imageTagCount } from '../../shared/queuedMatch'
-import type { ChatItem, ChatResponse, ClaudeQueueEntry, ModelInfo, PromptDetail } from '../../shared/types'
+import type { ChatItem, ChatResponse, ClaudeQueueEntry, CommandCodeStatus, CommandCodeToolUpdate, ModelInfo, PromptDetail } from '../../shared/types'
 import { ompToolCall, ompToolResult, ompUserRun } from './ompTools'
 import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDetail'
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
 import { cleanModelName, lastModel, mergeOmpModel, ompLastModel, ompModelComplete, ompModelLabel, ompModelResult } from './models'
-import { type MachineFs, type ShellExec, localFs } from './fsx'
+import { type MachineFs, type ShellExec, chunksByBytes, localFs } from './fsx'
 import { createDevinTranscripts } from './devinTranscripts'
 import { createOpenCodeTranscripts, type OpenCodeOptions } from './opencodeTranscripts'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process' 
@@ -39,10 +39,10 @@ interface CodexRollout { file: string, id: string, ts: number, mtimeMs: number }
 // Window in which a Codex's conversation is created around its appearance.
 const CODEX_BIRTH_BEFORE = 5000
 const CODEX_BIRTH_AFTER = 120000
-type Lines = string[] & { refs?: string[] }
-type Parsed = ChatItem[] & { queue?: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[] }
+type Lines = string[] & { refs?: string[], raw?: string[] }
+type Parsed = ChatItem[] & { queue?: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], updates?: CommandCodeToolUpdate[] }
 // `anchor`: fingerprint of the bytes just above `start` (see anchorAt).
-interface TailResult { start: number, items: ChatItem[], queue: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], anchor?: string }
+interface TailResult { start: number, items: ChatItem[], queue: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], updates?: CommandCodeToolUpdate[], anchor?: string }
 
 // Join check of a re-read from a cursor: the bytes just above it, hashed. A
 // transcript rewritten at the same size, or shortened but still longer than
@@ -51,6 +51,9 @@ interface TailResult { start: number, items: ChatItem[], queue: ClaudeQueueEntry
 // token carries the anchor of its start (`/<start>.<hash>`) and a re-read from
 // that start checks it first.
 const ANCHOR_BYTES = 4096
+// A watched tool result is fingerprinted on this many leading bytes: enough
+// to notice a rewrite without transferring a huge output again on each poll.
+const WATCH_BYTES = 64 * 1024
 const anchorHash = (b: Uint8Array) => createHash('sha1').update(b).digest('hex').slice(0, 12)
 const ANCHOR = /\/(\d+)\.([0-9a-f]{12})(?=[~#]|$)/
 // Anchor of a token as the client sent it (other suffixes allowed after it).
@@ -64,7 +67,23 @@ export function anchorOf(token: string | null | undefined): { start: number, has
 const genOf = (st: { mtimeMs: number, ino?: number }) => `${st.ino ? `${st.ino}-` : ''}${Math.round(st.mtimeMs * 1000)}`
 // State a client's token was read from: file, size, cursor, inode, mtime
 // (`!`: read before its mtime second was over, see SETTLE_MS).
-const HEAD = /^(.*):(\d+):(null|\d+):(?:(\d+)-)?(\d+)(!?)(?=[/~#]|$)/
+const HEAD = /^(.*):(\d+):(null|\d+):(?:(\d+)-)?(\d+)(!?)(?=[@/%~#]|$)/
+// Command Code invalidation generation carried by a token (`@N`, before the
+// anchor): a client whose generation is behind rebuilds the older pages it
+// kept. `~` stays the taken-back marker of server/api/chat.get.ts.
+const EPOCH = /@(\d+)(?=[/%~#]|$)/
+export function cmdEpochOf(token: string | null | undefined): number | null {
+  const m = EPOCH.exec(String(token || ''))
+  return m ? Number(m[1]) : null
+}
+// A restart drops the reader's remembered cross-page results: the instance
+// nonce makes an old token reload the pages instead of showing a tool without
+// its output.
+const READER = /%([a-z0-9]+)(?=[/~#]|$)/
+export function cmdReaderOf(token: string | null | undefined): string | null {
+  const m = READER.exec(String(token || ''))
+  return m ? m[1]! : null
+}
 export function headOf(token: string | null | undefined): { file: string, size: number, from: number | null, ino: number | null, gen: string, unsettled: boolean } | null {
   const m = HEAD.exec(String(token || ''))
   if (!m) return null
@@ -862,7 +881,10 @@ function commandCodeTool(name: string, input: Json): string {
   }
 }
 
-export function parseCommandCode(lines: Lines): Parsed {
+export type CommandCodeResult = { out?: string, error?: boolean, images?: number, ref?: string, imageAt?: number, at?: number, len?: number, hash?: string }
+export type CommandCodeWatch = { at: number, len: number, hash: string }
+
+export function parseCommandCode(lines: Lines, results?: Map<string, CommandCodeResult>, updates?: CommandCodeToolUpdate[], watches?: Map<string, CommandCodeWatch>): Parsed {
   const items: Parsed = []
   const tools = new Map<string, ChatItem>()
   for (let i = 0; i < lines.length; i++) {
@@ -877,28 +899,54 @@ export function parseCommandCode(lines: Lines): Parsed {
     if (m.role === 'assistant') {
       const content = Array.isArray(m.content) ? m.content : []
       let images = 0
+      let lastText: ChatItem | null = null
       for (const [block, part] of content.entries()) {
         if (!part || typeof part !== 'object') continue
         if (part.type === 'thinking' && typeof part.thinking === 'string' && part.thinking.trim()) {
           items.push({ role: 'thinking', text: clip(part.thinking), ts })
         } else if (part.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
-          items.push(replyItem({ role: 'assistant', text: clip(part.text), ts }, ref, block))
+          lastText = replyItem({ role: 'assistant', text: clip(part.text), ts }, ref, block)
+          items.push(lastText)
         } else if (part.type === 'tool_use' && typeof part.id === 'string') {
           const name = typeof part.name === 'string' ? part.name : 'Tool'
-          const t: ChatItem = { role: 'tool', name, text: clip(commandCodeTool(name, part.input), 300), ts }
+          const t: ChatItem = { role: 'tool', name, toolId: part.id, text: clip(commandCodeTool(name, part.input), 300), ts }
+          // Its result may have been parsed in a newer page (a page boundary
+          // between the call and the result): apply the remembered outcome.
+          const saved = results?.get(part.id)
+          if (saved) {
+            if (saved.out) t.out = saved.out
+            if (saved.error) t.error = true
+            if (saved.images && saved.ref) {
+              t.images = saved.images
+              t.ref = saved.ref
+              if (saved.imageAt) t.imageAt = saved.imageAt
+            }
+          }
           tools.set(part.id, t)
           items.push(t)
         } else if (part.type === 'image') images++
       }
-      if (images) items.push(replyItem({ role: 'assistant', text: '', images, ts, ...(ref ? { ref } : {}) }, ref))
+      if (images) {
+        // An assistant image belongs to the text reply, not to an extra empty
+        // turn that would replace the Copy/Reply target.
+        if (lastText) {
+          lastText.images = images
+          if (ref) lastText.ref = ref
+        } else {
+          items.push(replyItem({ role: 'assistant', text: '', images, ts, ...(ref ? { ref } : {}) }, ref))
+        }
+      }
       continue
     }
     if (m.role !== 'user') continue
     const content = m.content
     const source = m.meta && typeof m.meta.source === 'string' ? m.meta.source : null
+    // `meta.isMeta` marks automation (monitor wake-ups, goal continuations):
+    // its source is still "user" but it is not a human turn.
+    const hidden = m.meta?.isMeta === true
     if (typeof content === 'string') {
       const text = content.trim()
-      if (text && source !== 'system') items.push({ role: 'user', text: clip(text), ts })
+      if (text && source !== 'system' && !hidden) items.push({ role: 'user', text: clip(text), ts })
       continue
     }
     if (!Array.isArray(content)) continue
@@ -915,20 +963,64 @@ export function parseCommandCode(lines: Lines): Parsed {
         images++
       } else if (part.type === 'tool_result' && typeof part.tool_use_id === 'string') {
         const t = tools.get(part.tool_use_id)
-        if (!t) continue
-        const out = commandCodeText(part.content)
-        if (out) t.out = clip(out, 8000)
-        if (part.is_error) t.error = true
         const n = Array.isArray(part.content) ? part.content.filter((p: Json) => p && p.type === 'image').length : 0
-        if (n && ref) {
-          t.images = n
-          t.ref = ref
-          if (toolImages) t.imageAt = toolImages
+        const out = commandCodeText(part.content)
+        // Watch every result record, whether its call is in this page or an
+        // older one: an in-place rewrite of shown output must invalidate the
+        // client pages that display it.
+        let watch: CommandCodeWatch | null = null
+        if (ref) {
+          const [at, len] = ref.split(':')
+          const raw = Buffer.from(lines.raw?.[i] ?? lines[i]!)
+          watch = { at: Number(at), len: Number(len), hash: createHash('sha256').update(raw.subarray(0, WATCH_BYTES)).digest('hex').slice(0, 16) }
+          if (watches) {
+            watches.set(part.tool_use_id, watch)
+            if (watches.size > 4096) watches.delete(watches.keys().next().value!)
+          }
         }
+        if (t) {
+          if (out) t.out = clip(out, 8000)
+          if (part.is_error) t.error = true
+          if (n && ref) {
+            t.images = n
+            t.ref = ref
+            if (toolImages) t.imageAt = toolImages
+          }
+        } else if (results) {
+          // The call is in an older page: remember its result for the page
+          // that will render it.
+          const rec: CommandCodeResult = {}
+          if (out) rec.out = clip(out, 8000)
+          if (part.is_error) rec.error = true
+          if (watch) {
+            rec.at = watch.at
+            rec.len = watch.len
+            rec.hash = watch.hash
+          }
+          if (n && ref) {
+            rec.images = n
+            rec.ref = ref
+            if (toolImages) rec.imageAt = toolImages
+          }
+          if (rec.out || rec.error || rec.images) {
+            results.set(part.tool_use_id, rec)
+            if (results.size > 4096) results.delete(results.keys().next().value!)
+            // The call may already be shown in an older page the client
+            // loaded: send the outcome so it updates without a reopen.
+            updates?.push({
+              id: part.tool_use_id,
+              ...(rec.out !== undefined ? { out: rec.out } : {}),
+              ...(rec.error ? { error: true } : {}),
+              ...(rec.images ? { images: rec.images, ref: rec.ref, imageAt: rec.imageAt } : {}),
+            })
+          }
+        }
+        // lineImages() counts this result's images even when its call is
+        // outside the loaded page: the next matched tool's offset must skip them.
         toolImages += n
       }
     }
-    const human = source === 'user' || (!source && !content.some((p: Json) => p && p.type === 'tool_result'))
+    const human = !hidden && (source === 'user' || (!source && !content.some((p: Json) => p && p.type === 'tool_result')))
     if (human && (text.trim() || images)) {
       items.push({ role: 'user', text: clip(text.trim()), images, ...(images && ref ? { ref } : {}), ts })
     }
@@ -936,7 +1028,7 @@ export function parseCommandCode(lines: Lines): Parsed {
   return items
 }
 
-export function parseLines(text: string, kind: string | null, base = 0, home = '', templates?: readonly CommandTemplate[], cwd = ''): Parsed {
+export function parseLines(text: string, kind: string | null, base = 0, home = '', templates?: readonly CommandTemplate[], cwd = '', cmdResults?: Map<string, CommandCodeResult>, cmdWatches?: Map<string, CommandCodeWatch>): Parsed {
   const raw = text.split('\n')
   const refs: string[] = []
   let off = base
@@ -947,7 +1039,10 @@ export function parseLines(text: string, kind: string | null, base = 0, home = '
   }
   const lines: Lines = raw.map(stripBlobs)
   lines.refs = refs
-  const items = kind === 'omp' ? parseOmp(lines, home, templates, cwd) : kind === 'codex' ? parseCodex(lines) : kind === 'cmd' ? parseCommandCode(lines) : parseClaude(lines, home)
+  lines.raw = raw
+  const cmdUpdates: CommandCodeToolUpdate[] = []
+  const items = kind === 'omp' ? parseOmp(lines, home, templates, cwd) : kind === 'codex' ? parseCodex(lines) : kind === 'cmd' ? parseCommandCode(lines, cmdResults, cmdUpdates, cmdWatches) : parseClaude(lines, home)
+  if (cmdUpdates.length) items.updates = cmdUpdates
   // Content hash of each image, to spot one shown twice (see shared/imageDupes.ts).
   const byRef = new Map<string, number>()
   refs.forEach((r, i) => byRef.set(r, i))
@@ -1037,9 +1132,67 @@ export function isMissing(e: unknown): boolean {
   return err.code === 'remote' && /no such file|not a directory|introuvable/i.test(err.message || '')
 }
 
+// One tab-separated line per file: `M` missing, `E` unreadable, `H` + first
+// line. `head` inside a pipeline hides its own failure behind the last
+// command's success: capture first, then take the line.
+export const CMD_HEADERS_SCRIPT = `for f in "$@"; do
+  if [ ! -e "$f" ]; then printf "%s\\tM\\n" "$f"
+  elif [ ! -r "$f" ]; then printf "%s\\tE\\n" "$f"
+  elif h=$(head -c 65536 "$f" 2>/dev/null) && h=$(printf "%s\\n" "$h" | head -n 1); then
+    printf "%s\\tH%s\\n" "$f" "$h"
+  else
+    printf "%s\\tE\\n" "$f"
+  fi
+done`
+
 export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, exec, stream }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number, exec?: ShellExec, stream?: (script: string, args: string[]) => ChildProcessWithoutNullStreams | null }) {
   const devin = createDevinTranscripts({ home, fs })
   const opencode = createOpenCodeTranscripts({ home, exec, stream })
+  // Command Code discovery/status caches: project headers change rarely, and
+  // an unchanged session must not be re-read on every 5 s status refresh.
+  const cmdHeaders = new Map<string, { size: number, mtimeMs: number, cwd: string | null, id: string | null }>()
+  const cmdStatsCache = new Map<string, { file: string, size: number, gen: string, stats: CommandCodeStatus | null, session: string | null }>()
+  // Tool results parsed in a newer page than their call (a page boundary):
+  // the call's page applies them when it is read. Scoped per transcript so a
+  // truncated or another session's call id cannot resurrect an old result.
+  const cmdResults = new Map<string, Map<string, CommandCodeResult>>()
+  // Fingerprints of every parsed tool result (matched or orphan), used to
+  // detect an in-place rewrite of output already shown in a loaded page.
+  const cmdWatches = new Map<string, Map<string, CommandCodeWatch>>()
+  const cmdSizes = new Map<string, { size: number, gen: string, ino?: number }>()
+  // Per-file invalidation generation: carried by tokens so a client that did
+  // not witness the rewrite still rebuilds the older pages it kept.
+  const cmdEpochs = new Map<string, number>()
+  // Identifies this reader instance: a restart empties the cross-page result
+  // map, so an old token must reload the pages instead of showing a tool
+  // without output that was parsed in another, now-forgotten page.
+  const readerId = Math.random().toString(36).slice(2, 10)
+  function evictCmdFile(file: string) {
+    // The evicted transcript's own epoch advances: only the clients that may
+    // have loaded its pages rebuild, not every open Command Code chat.
+    cmdEpochs.set(file, (cmdEpochs.get(file) ?? 0) + 1)
+    if (cmdEpochs.size > 4096) cmdEpochs.delete(cmdEpochs.keys().next().value!)
+    forgetCmdFile(file)
+    cmdSizes.delete(file)
+  }
+  function cmdResultsFor(file: string) {
+    let m = cmdResults.get(file)
+    if (!m) {
+      m = new Map()
+      cmdResults.set(file, m)
+      if (cmdResults.size > 64) evictCmdFile(cmdResults.keys().next().value!)
+    }
+    return m
+  }
+  function cmdWatchesFor(file: string) {
+    let m = cmdWatches.get(file)
+    if (!m) {
+      m = new Map()
+      cmdWatches.set(file, m)
+      if (cmdWatches.size > 64) evictCmdFile(cmdWatches.keys().next().value!)
+    }
+    return m
+  }
   // File -> state (size, generation) and when this server first saw it, for
   // whole-second mtimes (see SETTLE_MS); `file|size|gen` -> checksum of the
   // file at first sight (null: could not be taken).
@@ -1075,6 +1228,54 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
   const locCache = new Map<string, { at: number, loc: Loc | null, session?: string | null }>()
   const lastLoc = new Map<string, Loc>() // last file found, fallback if a lookup fails
   const parseCache = new Map<string, { size: number, gen: string, settled: boolean, r: TailResult }>()
+  // A file's remembered results and parsed tails travel together: clearing one
+  // without the other would serve a cached page that no longer has them.
+  function forgetCmdFile(file: string) {
+    cmdResults.delete(file)
+    cmdWatches.delete(file)
+    for (const key of [...parseCache.keys()]) if (key.startsWith(`${file}|`)) parseCache.delete(key)
+  }
+
+  // A larger same-inode file may still be an in-place rewrite: every parsed
+  // result record (matched or orphan) must still fingerprint the same bytes.
+  // One bounded read covers the whole watch set: a per-record pipeline would
+  // launch thousands of processes on a tool-heavy session.
+  async function cmdResultsValid(file: string): Promise<boolean | null> {
+    const watches = cmdWatches.get(file)
+    if (!watches || !watches.size) return true
+    const records = new Map<string, CommandCodeWatch>()
+    for (const w of watches.values()) records.set(`${w.at}:${w.len}:${w.hash}`, w)
+    const all = [...records.values()].sort((a, b) => a.at - b.at)
+    // Only the sampled prefix is read: a huge result never exceeds the budget.
+    const sampleLen = (w: CommandCodeWatch) => Math.min(w.len, WATCH_BYTES)
+    let first = all[0]!.at
+    const last = all[all.length - 1]!
+    const end = last.at + sampleLen(last)
+    let selected = all
+    // Above the cap, validate the newest records that fit: the work stays
+    // bounded whatever the session size.
+    const CAP = 4 * 1024 * 1024
+    if (end - first > CAP) {
+      // Compare every candidate against the fixed end: adjacent records may
+      // be close while the whole watched span is much larger than the cap.
+      let i = all.length - 1
+      while (i > 0 && end - all[i - 1]!.at <= CAP) i--
+      selected = all.slice(i)
+      first = selected[0]!.at
+    }
+    let buf: Buffer
+    // Unknown, not valid: the caller keeps the previous size and retries on
+    // the next poll instead of trusting an unvalidated state.
+    try { buf = await fs.read(file, first, end - first) } catch { return null }
+    for (const w of selected) {
+      const from = w.at - first
+      const n = sampleLen(w)
+      if (from < 0 || from + n > buf.length) return null
+      const h = createHash('sha256').update(buf.subarray(from, from + n)).digest('hex').slice(0, 16)
+      if (h !== w.hash) return false
+    }
+    return true
+  }
   const metaCache = new Map<string, Json>()
   // omp file commands of this machine (see parseOmp), re-read every 5 min.
   let ompTemplates: { at: number, list: CommandTemplate[] } = { at: 0, list: [] }
@@ -1283,16 +1484,62 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
   // still share the newest file (see docs/conversation.md).
   async function commandCodeSessions() {
     const root = path.join(home, '.commandcode/projects')
-    const out: { file: string, mtimeMs: number }[] = []
-    for (const d of await listDir(root)) {
-      const dir = path.join(root, d)
-      const files = (await listDir(dir)).filter(n => n.endsWith('.jsonl') && !n.endsWith('.checkpoints.jsonl'))
-      if (!files.length) continue
-      const paths = files.map(n => path.join(dir, n))
-      const stats = await fs.statMany(paths)
-      for (let i = 0; i < paths.length; i++) if (stats[i]?.isFile) out.push({ file: paths[i]!, mtimeMs: stats[i]!.mtimeMs })
+    let paths: string[] = []
+    // Remote: one `find` for every project, then one batched stat. Listing
+    // each project directory separately costs an SSH round-trip per folder.
+    if (exec) {
+      try {
+        const r = await exec('find "$1" -type f -name "*.jsonl" ! -name "*.checkpoints.jsonl" -print', [root], { timeoutMs: 4000 })
+        if (r.code === 0) paths = r.stdout.toString('utf8').split('\n').filter(Boolean)
+      } catch { paths = [] }
     }
+    if (!paths.length) {
+      for (const d of await listDir(root)) {
+        const dir = path.join(root, d)
+        const files = (await listDir(dir)).filter(n => n.endsWith('.jsonl') && !n.endsWith('.checkpoints.jsonl'))
+        for (const n of files) paths.push(path.join(dir, n))
+      }
+    }
+    if (!paths.length) return []
+    const stats = await fs.statMany(paths)
+    const out: { file: string, mtimeMs: number, size: number }[] = []
+    for (let i = 0; i < paths.length; i++) if (stats[i]?.isFile) out.push({ file: paths[i]!, mtimeMs: stats[i]!.mtimeMs, size: stats[i]!.size })
     return out.sort((a, b) => b.mtimeMs - a.mtimeMs)
+  }
+
+  // First line of every candidate in byte-bounded remote shell passes (one
+  // SSH command per batch, not one per session), falling back to local reads.
+  // `M` marks a missing file (not a candidate, as on disk); `E` marks a read
+  // failure, which must reach locate()'s last-known fallback instead of
+  // silently choosing an older session in the same folder.
+  async function commandCodeHeaders(paths: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>()
+    if (!paths.length) return out
+    if (exec) {
+      try {
+        for (const chunk of chunksByBytes(paths)) {
+          const r = await exec(CMD_HEADERS_SCRIPT, chunk, { timeoutMs: 4000 })
+          if (r.code !== 0) throw new Error(`header batch failed: ${r.stderr || r.code}`)
+          for (const line of r.stdout.toString('utf8').split('\n')) {
+            const tab = line.indexOf('\t')
+            if (tab <= 0) continue
+            const file = line.slice(0, tab)
+            const rest = line.slice(tab + 1)
+            if (rest === 'E') throw new Error(`read failed: ${file}`)
+            if (rest === 'M') continue
+            if (rest.startsWith('H')) out.set(file, rest.slice(1))
+          }
+        }
+        return out
+      } catch { /* fall back to per-file reads */ }
+    }
+    for (const p of paths) {
+      try { out.set(p, (await fs.read(p, 0, 64 * 1024)).toString('utf8').split('\n')[0]!) } catch (e) {
+        if (isMissing(e)) continue
+        throw e
+      }
+    }
+    return out
   }
 
   async function locateCommandCode(pane: TranscriptPane): Promise<Loc | null> {
@@ -1301,17 +1548,46 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
       if (f) return { file: f, session: pane.agentSession }
     }
     if (!pane.cwd) return null
+    const sessions = await commandCodeSessions()
+    const missing = sessions.filter((s) => {
+      const c = cmdHeaders.get(s.file)
+      return !(c && c.size === s.size && c.mtimeMs === s.mtimeMs)
+    }).map(s => s.file)
+    const headers = await commandCodeHeaders(missing)
+    // Resolve the complete batch for this pass. The shared cache caps its
+    // size, so eviction must not hide a candidate from the selection below
+    // (newest-first insertion would otherwise drop the newest headers).
+    const resolved = new Map<string, Json | null>()
+    for (const s of sessions) {
+      const cached = cmdHeaders.get(s.file)
+      if (cached && cached.size === s.size && cached.mtimeMs === s.mtimeMs) {
+        resolved.set(s.file, cached.cwd === null ? null : { type: 'session', cwd: cached.cwd, id: cached.id })
+        continue
+      }
+      const first = headers.get(s.file)
+      if (first === undefined) continue
+      try { resolved.set(s.file, JSON.parse(first)) } catch { resolved.set(s.file, null) }
+    }
     let best: { file: string, id: string, cwdLength: number } | null = null
-    for (const s of await commandCodeSessions()) {
-      let first: string
-      try { first = (await fs.read(s.file, 0, 64 * 1024)).toString('utf8').split('\n')[0]! } catch { continue }
-      let d: Json
-      try { d = JSON.parse(first) } catch { continue }
+    for (const s of sessions) {
+      const d = resolved.get(s.file)
       if (!d || d.type !== 'session' || typeof d.cwd !== 'string') continue
       if (d.cwd !== pane.cwd && !pane.cwd.startsWith(d.cwd + '/')) continue
       const hit = { file: s.file, id: typeof d.id === 'string' ? d.id : path.basename(s.file, '.jsonl'), cwdLength: d.cwd.length }
       if (!best || hit.cwdLength > best.cwdLength) best = hit
       if (d.cwd === pane.cwd) break // newest exact match
+    }
+    // Cache the valid headers now that the choice is made. Insert the oldest
+    // first so the cap keeps the recent sessions, and so the next pass does
+    // not reread the headers the exact-match break skipped.
+    for (let i = sessions.length - 1; i >= 0; i--) {
+      const s = sessions[i]!
+      const d = resolved.get(s.file)
+      if (!d || d.type !== 'session' || typeof d.cwd !== 'string') continue
+      const cached = cmdHeaders.get(s.file)
+      if (cached && cached.size === s.size && cached.mtimeMs === s.mtimeMs) continue
+      cmdHeaders.set(s.file, { size: s.size, mtimeMs: s.mtimeMs, cwd: d.cwd, id: typeof d.id === 'string' ? d.id : null })
+      if (cmdHeaders.size > 4096) cmdHeaders.delete(cmdHeaders.keys().next().value!)
     }
     return best ? { file: best.file, session: best.id, guessed: true } : null
   }
@@ -1387,6 +1663,11 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     let items: ChatItem[] = []
     let queue: ClaudeQueueEntry[] | null = null
     let popped: ClaudeQueueEntry[] | null = null
+    let updates: CommandCodeToolUpdate[] = []
+    // Command Code's result may sit in the newer window while its call is in
+    // the older one: the per-file results map bridges the windows. Other
+    // agents never allocate these caches.
+    const results = kind === 'cmd' ? cmdResultsFor(file) : undefined
     while (start > 0 && end - start < MAX_READ_BYTES) {
       // Window widened as long as it contains no line start (a
       // multi-MB line: message with images), within the cap.
@@ -1399,16 +1680,17 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
         w *= 2
       }
       if (r.start === start) break // giant line beyond the cap: stop there
-      // Each window is parsed alone (a tool result in error whose
-      // call is in the previous window just loses its red mark).
-      const parsed = parseLines(r.text, kind, r.start, home, ompTemplates.list, cwd)
+      // Each window is parsed alone; Command Code orphans are carried in the
+      // per-file results map, so a later window's call still gets its output.
+      const parsed = parseLines(r.text, kind, r.start, home, ompTemplates.list, cwd, results, kind === 'cmd' ? cmdWatchesFor(file) : undefined)
       if (!queue) queue = parsed.queue || [] // the queue lives in the most recent window
       if (!popped) popped = parsed.popped || []
+      if (parsed.updates?.length) updates = parsed.updates.concat(updates)
       items = parsed.concat(items)
       start = r.start
       if (items.length >= PAGE_ITEMS) break
     }
-    return { start, items, queue: queue || [], popped: popped || [] }
+    return { start, items, queue: queue || [], popped: popped || [], ...(updates.length ? { updates } : {}) }
   }
 
   // Bottom of the conversation: from `from` (already shown on the phone) or,
@@ -1430,10 +1712,14 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
         const nl = buf.indexOf(0x0a, off)
         off = nl < 0 ? buf.length : nl + 1
       }
-      const items = parseLines(buf.subarray(off).toString('utf8'), kind, s0 + off, home, ompTemplates.list, kind === 'omp' ? await ompCwd(file) : '')
+      const items = parseLines(buf.subarray(off).toString('utf8'), kind, s0 + off, home, ompTemplates.list, kind === 'omp' ? await ompCwd(file) : '', kind === 'cmd' ? cmdResultsFor(file) : undefined, kind === 'cmd' ? cmdWatchesFor(file) : undefined)
       // Start kept even when it moved to the next line: the client then sees a
       // stale anchor (or another start) and reloads from the bottom.
-      r = { start: from, items, queue: items.queue || [], popped: items.popped || [], anchor: off === from - s0 ? anchorHash(above) : '' }
+      r = {
+        start: from, items, queue: items.queue || [], popped: items.popped || [],
+        ...(items.updates?.length ? { updates: items.updates } : {}),
+        anchor: off === from - s0 ? anchorHash(above) : '',
+      }
     } else {
       r = await readBackwards(file, size, kind)
       r.anchor = await anchorAt(file, r.start)
@@ -1491,6 +1777,33 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
       return { available: false, reason: 'not_found' }
     }
     const fileId = path.basename(loc.file)
+    let cmdInvalidated = false
+    if (transcriptKind(loc.file) === 'cmd') {
+      // A rewrite/truncation invalidates results remembered for the removed
+      // page; a still-growing file keeps them unless the bytes of a retained
+      // result changed (an in-place rewrite). Either way the client must
+      // rebuild its older pages, which may show the superseded output.
+      const prev = cmdSizes.get(loc.file)
+      const g = genOf(st)
+      const replaced = Boolean(prev) && (
+        st.size < prev!.size
+        || (prev!.ino !== undefined && st.ino !== undefined && prev!.ino !== st.ino)
+        || (st.size === prev!.size && prev!.gen !== g)
+      )
+      const grewInPlace = Boolean(prev) && st.size > prev!.size && prev!.ino === st.ino
+      const verdict = grewInPlace ? await cmdResultsValid(loc.file) : true
+      cmdInvalidated = replaced || verdict === false
+      if (cmdInvalidated) {
+        cmdEpochs.set(loc.file, (cmdEpochs.get(loc.file) ?? 0) + 1)
+        forgetCmdFile(loc.file)
+      }
+      // A failed validation keeps the previous size, so the next poll retries
+      // before trusting this state.
+      if (verdict !== null) {
+        cmdSizes.set(loc.file, { size: st.size, gen: g, ino: st.ino })
+        if (cmdSizes.size > 64) evictCmdFile(cmdSizes.keys().next().value!)
+      }
+    }
     const base = { available: true, file: fileId, session: loc.session, guessed: Boolean(loc.guessed) }
     // The transcript path tells the real kind: a pane whose agent changed while
     // its session stayed must not read the file as another agent's (no message).
@@ -1498,36 +1811,57 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     if (kind === 'omp') await refreshOmpTemplates()
     if (opts.before !== null && opts.before !== undefined) {
       const r = await readBackwards(loc.file, Math.min(opts.before, st.size), kind)
-      return { ...base, older: true, items: r.items, start: r.start }
+      return { ...base, older: true, items: r.items, start: r.start, ...(r.updates?.length ? { toolUpdates: r.updates } : {}) }
     }
     const from = opts.from === undefined ? null : opts.from
     const gen = genOf(st)
     const settled = await settledGen(loc.file, st, gen)
+    const epoch = kind === 'cmd' ? cmdEpochs.get(loc.file) ?? 0 : 0
+    const sent = opts.anchor ?? opts.since
+    const prev = headOf(sent)
+    const same = prev !== null && prev.file === fileId
+    const sentEpoch = cmdEpochOf(opts.since || opts.anchor)
+    const sentReader = cmdReaderOf(opts.since || opts.anchor)
+    // A client that did not witness an invalidation (a preview read or
+    // another client consumed it), or that outlived a reader restart, still
+    // has an older state in its token: rebuild its pages. Cache eviction
+    // advances only the evicted transcript's own epoch (see evictCmdFile).
+    const readerChanged = kind === 'cmd' && same && sentReader !== readerId
+    const staleState = kind === 'cmd' && same && (readerChanged || (sentEpoch === null ? epoch > 0 : sentEpoch !== epoch))
     // Token: file, size, cursor, generation (unchanged as long as these are,
-    // once settled), then the anchor of the reply's start.
-    const head = `${fileId}:${st.size}:${from}:${gen}`
-    if (settled && opts.since && opts.since.split('/')[0] === head) return { ...base, unchanged: true, token: opts.since }
+    // once settled), Command Code invalidation generation and reader, then
+    // the anchor.
+    const head = `${fileId}:${st.size}:${from}:${gen}${settled ? '' : '!'}${epoch ? `@${epoch}` : ''}${kind === 'cmd' ? `%${readerId}` : ''}`
+    if (settled && !staleState && opts.since && opts.since.split('/')[0] === head) return { ...base, unchanged: true, token: opts.since }
     let r = await tail(loc.file, kind, st.size, gen, from, settled)
     // The client's list starts at the cursor, and the file was rewritten
     // above it: replaced by another file (inode), shorter, rewritten at the
-    // same size (appends always grow it), or other bytes just above the cursor
+    // same size (appends always grow it), other bytes just above the cursor
     // (anchor), or no line start there any more. Read back from the end, and
     // say so: the client starts again.
-    const sent = opts.anchor ?? opts.since
     const at = anchorOf(sent)
-    const prev = headOf(sent)
-    const same = prev !== null && prev.file === fileId
     // A list read before its state settled (whole-second mtimes): rewritten
     // within that second if its part of the file changed since.
-    const rewritten = from !== null && from > 0 && at !== null && at.start === from && (r.anchor !== at.hash
+    const fileRewritten = from !== null && from > 0 && at !== null && at.start === from && (cmdInvalidated
+      || r.anchor !== at.hash
       || (same && prev.ino !== null && st.ino !== undefined && prev.ino !== st.ino)
       || (same && st.size < prev.size)
       || (same && st.size === prev.size && prev.gen !== gen)
       || (same && prev.unsettled && !await stillThere(loc.file, prev)))
-    if (rewritten) r = await tail(loc.file, kind, st.size, gen, null, settled)
-    const mark = `${head}${settled ? '' : '!'}`
-    const token = r.anchor ? `${mark}/${r.start}.${r.anchor}` : mark
-    return { ...base, token, items: r.items, start: r.start, queue: r.queue || [], ...(r.popped?.length ? { popped: r.popped } : {}), ...(rewritten ? { rewritten: true } : {}) }
+    const rewritten = staleState || fileRewritten
+    if (rewritten) {
+      // A stale token only means this client must reload; it must not erase
+      // results another client collected from the unchanged transcript.
+      if (kind === 'cmd' && fileRewritten) forgetCmdFile(loc.file)
+      r = await tail(loc.file, kind, st.size, gen, null, settled)
+    }
+    const token = r.anchor ? `${head}/${r.start}.${r.anchor}` : head
+    return {
+      ...base, token, items: r.items, start: r.start, queue: r.queue || [],
+      ...(r.popped?.length ? { popped: r.popped } : {}),
+      ...(r.updates?.length ? { toolUpdates: r.updates } : {}),
+      ...(rewritten ? { rewritten: true } : {}),
+    }
   }
 
   // Agent's last reply, for cards and notifications.
@@ -1634,6 +1968,57 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     return info
   }
 
+  // Command Code: the last assistant turn's model and context, for the
+  // composer's status line. `/model` and `/effort` only change the default
+  // for new sessions, so this stays a read-only display.
+  async function commandCodeStats(pane: TranscriptPane): Promise<{ status: CommandCodeStatus | null, session: string | null }> {
+    if (pane.agent !== 'cmd') return { status: null, session: null }
+    const loc = await locate(pane)
+    if (!loc) return { status: null, session: null }
+    let st
+    try { st = await fs.stat(loc.file) } catch { return { status: null, session: loc.session } }
+    const gen = genOf(st)
+    const hit = cmdStatsCache.get(pane.id)
+    if (hit && hit.file === loc.file && hit.size === st.size && hit.gen === gen) {
+      return { status: hit.stats, session: hit.session }
+    }
+    const size = st.size
+    let context: number | null = null
+    let cost: number | null = null
+    // A single trailing record (a screenshot, a huge tool result) may be
+    // larger than the first window: widen backwards until a complete
+    // assistant usage is in view, not just a cut record.
+    for (let length = 256 * 1024; ; length *= 2) {
+      const start = Math.max(0, size - length)
+      let text: string
+      try { text = (await fs.read(loc.file, start, size - start)).toString('utf8') } catch { return { status: null, session: loc.session } }
+      const from = start > 0 ? text.indexOf('\n') + 1 : 0
+      for (const line of text.slice(from).split('\n')) {
+        let d: Json
+        try { d = JSON.parse(line) } catch { continue }
+        if (!d || d.type !== 'message' || !d.message || d.message.role !== 'assistant') continue
+        const u = d.usage
+        if (u && typeof u === 'object') {
+          // `inputTokens` already includes `cacheReadTokens` (a breakdown).
+          context = Number(u.inputTokens) || 0
+          cost = Number.isFinite(u.costUsd) ? Number(u.costUsd) : null
+        }
+      }
+      if (context !== null || start === 0 || length >= 16 * 1024 * 1024) break
+    }
+    if (context === null) {
+      // Cache the "no usage yet" answer too: a new session with no assistant
+      // turn must not rescan the file every five seconds.
+      cmdStatsCache.set(pane.id, { file: loc.file, size, gen, stats: null, session: loc.session })
+      if (cmdStatsCache.size > 256) cmdStatsCache.delete(cmdStatsCache.keys().next().value!)
+      return { status: null, session: loc.session }
+    }
+    const status: CommandCodeStatus = { contextTokens: context, costUsd: cost }
+    cmdStatsCache.set(pane.id, { file: loc.file, size, gen, stats: status, session: loc.session })
+    if (cmdStatsCache.size > 256) cmdStatsCache.delete(cmdStatsCache.keys().next().value!)
+    return { status, session: loc.session }
+  }
+
   // Tool call waiting for a permission: the last one without a result, read
   // from the end of the transcript (re-read only if the file has grown).
   // `tool`: name shown on screen (omp's dialog title), to pick among parallel calls.
@@ -1696,15 +2081,18 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
   }
 
   function forget(paneId: string) {
+    // File-scoped results/tails stay: another pane may share the session, and
+    // a rewrite/truncation invalidates them through cmdSizes anyway.
     locCache.delete(paneId)
     lastLoc.delete(paneId)
     modelCache.delete(paneId)
     pendingCache.delete(paneId)
     askCache.delete(paneId)
     claudeAskCache.delete(paneId)
+    cmdStatsCache.delete(paneId)
   }
 
-  return { chat, preview, latestReply, image, forget, locate, model, observe, dispose: opencode.dispose, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions, opencodeModels: opencode.models, opencodePatchModel: opencode.patchModel, opencodePending: opencode.pending, opencodeReplyPermission: opencode.replyPermission, opencodeReplyForm: opencode.replyForm, opencodePermissionMatch: opencode.permissionMatch, opencodeInbox: opencode.inbox, opencodeInboxDelete: opencode.inboxDelete, opencodeShell: opencode.shell, opencodeStatus: opencode.status }
+  return { chat, preview, latestReply, image, forget, locate, model, commandCodeStats, observe, dispose: opencode.dispose, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions, opencodeModels: opencode.models, opencodePatchModel: opencode.patchModel, opencodePending: opencode.pending, opencodeReplyPermission: opencode.replyPermission, opencodeReplyForm: opencode.replyForm, opencodePermissionMatch: opencode.permissionMatch, opencodeInbox: opencode.inbox, opencodeInboxDelete: opencode.inboxDelete, opencodeShell: opencode.shell, opencodeStatus: opencode.status }
 }
 
 export type Transcripts = ReturnType<typeof createTranscripts>

@@ -1,10 +1,11 @@
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { createTranscripts } from '../server/utils/transcripts'
+import { MAX_ARG_BYTES, localFs } from '../server/utils/fsx'
 import {
-  commandCodeAssistant, commandCodeModel, commandCodePNG, commandCodeSession,
+  commandCodeAssistant, commandCodeModel, commandCodePNG, commandCodePNG2, commandCodeSession,
   commandCodeToolResults, commandCodeUser, writeCommandCodeSession,
 } from './helpers/command-code-fixture.mjs'
 
@@ -29,12 +30,14 @@ it('reads a Command Code session: messages, thinking, tools and their results', 
       { type: 'text', text: 'I will inspect the form.' },
       { type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'rg login' } },
       { type: 'tool_use', id: 'call_2', name: 'edit_file', input: { file_path: 'src/login.ts' } },
-    ], { ms: 2000, usage: { inputTokens: 120, outputTokens: 20, costUsd: 0.004 } }),
+    ], { ms: 2000, usage: { inputTokens: 120, cacheReadTokens: 80, outputTokens: 20, costUsd: 0.004 } }),
     commandCodeToolResults('u2', 'a1', [
       { tool_use_id: 'call_1', content: [{ type: 'text', text: 'src/login.ts:12' }] },
       { tool_use_id: 'call_2', content: [{ type: 'text', text: 'patched' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: commandCodePNG } }] },
     ], 3000),
     commandCodeAssistant('a2', 'u2', [{ type: 'text', text: 'Fixed.' }], { model: 'example/model-b', ms: 4000 }),
+    commandCodeUser('hidden', 'a2', 'Monitor wake-up: check the queue', 5000, { isMeta: true }),
+    { type: 'message', id: 'hidden-string', parentId: 'a2', timestamp: '2026-01-01T00:00:06.000Z', message: { role: 'user', content: 'Hidden string automation', meta: { source: 'user', isMeta: true } } },
   ]
   writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
 
@@ -55,10 +58,754 @@ it('reads a Command Code session: messages, thinking, tools and their results', 
   expect(edit.images).toBe(1)
   expect(JSON.stringify(r)).not.toContain('private-signature')
   expect((await reader.model(pane))?.id).toBe('example/model-b')
+  // The 120 input tokens already include the 80 cached ones.
+  expect(await reader.commandCodeStats(pane)).toMatchObject({
+    session: 'sess-1',
+    status: { contextTokens: 120, costUsd: 0.004 },
+  })
+  expect(r.items!.some(i => i.text.includes('Monitor wake-up'))).toBe(false)
+  expect(r.items!.some(i => i.text.includes('Hidden string automation'))).toBe(false)
 
   const img = await reader.image(pane, r.file!, edit.ref!, 0)
   expect(img?.type).toBe('image/png')
   expect(img?.body.equals(Buffer.from(commandCodePNG, 'base64'))).toBe(true)
+})
+
+it('finds the last usage through a trailing record larger than the status window', async () => {
+  const { home, reader } = fixture()
+  const big = 'x'.repeat(300 * 1024)
+  writeCommandCodeSession(home, {
+    id: 'sess-1', cwd: pane.cwd, lines: [
+      commandCodeSession('sess-1', pane.cwd),
+      commandCodeUser('u1', null, 'Take a screenshot', 1000),
+      commandCodeAssistant('a1', 'u1', [
+        { type: 'tool_use', id: 'call_1', name: 'read_file', input: { file_path: 'shot.png' } },
+      ], { ms: 2000, usage: { inputTokens: 1000, cacheReadTokens: 800, costUsd: 0.002 } }),
+      commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: big }] }], 3000),
+    ],
+  })
+  const stats = await reader.commandCodeStats(pane)
+  expect(stats.status?.contextTokens).toBe(1000)
+})
+
+it('keeps a tool result when its call and result straddle read windows', async () => {
+  const { home, reader } = fixture()
+  const filler = 'y'.repeat(2.2 * 1024 * 1024)
+  writeCommandCodeSession(home, {
+    id: 'sess-1', cwd: pane.cwd, lines: [
+      commandCodeSession('sess-1', pane.cwd),
+      commandCodeUser('u1', null, 'Run it', 1000),
+      commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+      commandCodeUser('filler', 'a1', filler, 3000),
+      commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'ok' }] }], 4000),
+    ],
+  })
+  const r = await reader.chat(pane)
+  expect(r.items!.find(i => i.name === 'shell_command')?.out).toBe('ok')
+})
+
+it('keeps the last session when a header read fails', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-fail-'))
+  homes.push(home)
+  let fail = false
+  const fs = {
+    ...localFs,
+    read: (file: string, start: number, len: number, timeout?: number) => {
+      if (fail && file.endsWith('sess-new.jsonl') && start === 0 && len === 64 * 1024) {
+        return Promise.reject(Object.assign(new Error('ssh read failed'), { code: 'remote' }))
+      }
+      return localFs.read(file, start, len, timeout)
+    },
+  }
+  const reader = createTranscripts({ home, herdr: async () => ({}), fs })
+  const write = (id: string, text: string, mtime: Date) => writeCommandCodeSession(home, {
+    id, cwd: pane.cwd, lines: [commandCodeSession(id, pane.cwd), commandCodeUser(`${id}-u`, null, text)], mtime,
+  })
+  write('sess-old', 'Old conversation', new Date(1_700_000_000_000))
+  write('sess-new', 'New conversation', new Date(1_700_000_100_000))
+
+  expect((await reader.chat(pane))?.items?.[0]?.text).toBe('New conversation')
+  fail = true
+  vi.useFakeTimers()
+  try {
+    vi.setSystemTime(Date.now() + 9000)
+    expect((await reader.chat(pane))?.items?.[0]?.text).toBe('New conversation')
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('keeps the last remote session when a batched header read fails', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-remote-fail-'))
+  homes.push(home)
+  const write = (id: string, text: string, mtime: Date) => writeCommandCodeSession(home, {
+    id, cwd: pane.cwd, lines: [commandCodeSession(id, pane.cwd), commandCodeUser(`${id}-u`, null, text)], mtime,
+  })
+  const oldFile = write('sess-old', 'Old conversation', new Date(1_700_000_000_000))
+  const newFile = write('sess-new', 'New conversation', new Date(1_700_000_100_000))
+  let fail = false
+  let headerBatches = 0
+  const exec = async (script: string, args: string[] = []) => {
+    if (script.startsWith('find')) return { code: 0, stdout: Buffer.from(`${newFile}\n${oldFile}\n`), stderr: '' }
+    headerBatches++
+    const lines = args.map((f) => {
+      if (fail && f === newFile) return `${f}\tE`
+      const header = readFileSync(f, 'utf8').split('\n')[0]!
+      return `${f}\tH${header}`
+    })
+    return { code: 0, stdout: Buffer.from(lines.join('\n') + '\n'), stderr: '' }
+  }
+  const fs = {
+    ...localFs,
+    read: (file: string, start: number, len: number, timeout?: number) => {
+      if (fail && file === newFile && start === 0 && len === 64 * 1024) {
+        return Promise.reject(Object.assign(new Error('ssh read failed'), { code: 'remote' }))
+      }
+      return localFs.read(file, start, len, timeout)
+    },
+  }
+  const reader = createTranscripts({ home, exec, herdr: async () => ({}), fs })
+
+  expect((await reader.chat(pane))?.items?.[0]?.text).toBe('New conversation')
+  // Refresh the newest header: only its batched read now fails, so the old
+  // cache would fall through to the older session without the last-known fallback.
+  utimesSync(newFile, new Date(1_700_000_200_000), new Date(1_700_000_200_000))
+  fail = true
+  const before = headerBatches
+  vi.useFakeTimers()
+  try {
+    vi.setSystemTime(Date.now() + 9000)
+    expect((await reader.chat(pane))?.items?.[0]?.text).toBe('New conversation')
+  } finally {
+    vi.useRealTimers()
+  }
+  expect(headerBatches).toBeGreaterThan(before)
+})
+
+it('bounds remote header batches by argument bytes', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-header-batch-'))
+  homes.push(home)
+  const paths = Array.from({ length: 1200 }, (_, i) => path.join(home, '.commandcode/projects/p', `s${i}.jsonl`))
+  const batches: string[][] = []
+  const exec = async (script: string, args: string[] = []) => {
+    if (script.startsWith('find')) return { code: 0, stdout: Buffer.from(paths.join('\n') + '\n'), stderr: '' }
+    batches.push(args)
+    const lines = args.map((f) => {
+      const i = paths.indexOf(f)
+      const cwd = f === paths[1199] ? pane.cwd : `/home/user/other-${i}`
+      return `${f}\tH${JSON.stringify({ type: 'session', version: 3, id: `s${i}`, cwd })}`
+    })
+    return { code: 0, stdout: Buffer.from(lines.join('\n') + '\n'), stderr: '' }
+  }
+  const fs = {
+    ...localFs,
+    statMany: async (ps: string[]) => ps.map((_, i) => ({ size: 10 + i, mtimeMs: 1_700_000_000_000 + i, isFile: true, isDir: false })),
+  }
+  const reader = createTranscripts({ home, fs, exec, herdr: async () => ({}) })
+  expect(await reader.locate({ id: 'batched', agent: 'cmd', cwd: pane.cwd })).toMatchObject({ session: 's1199' })
+  expect(batches.length).toBeGreaterThan(1)
+  for (const args of batches) {
+    expect(args.reduce((n, p) => n + Buffer.byteLength(p) + 1, 0)).toBeLessThanOrEqual(MAX_ARG_BYTES)
+  }
+})
+
+it('keeps an assistant image on its text reply', async () => {
+  const { home, reader } = fixture()
+  writeCommandCodeSession(home, {
+    id: 'sess-1', cwd: pane.cwd, lines: [
+      commandCodeSession('sess-1', pane.cwd),
+      commandCodeUser('u1', null, 'Draw it', 1000),
+      commandCodeAssistant('a1', 'u1', [
+        { type: 'text', text: 'Here is the mock' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: commandCodePNG } },
+      ], { ms: 2000 }),
+    ],
+  })
+  const r = await reader.chat(pane)
+  const replies = r.items!.filter(i => i.role === 'assistant')
+  expect(replies).toHaveLength(1)
+  expect(replies[0]).toMatchObject({ text: 'Here is the mock', images: 1 })
+})
+
+it('offsets images for a tool result whose call is outside the page', async () => {
+  const { home, reader } = fixture()
+  writeCommandCodeSession(home, {
+    id: 'sess-1', cwd: pane.cwd, lines: [
+      commandCodeSession('sess-1', pane.cwd),
+      commandCodeUser('u1', null, 'Patch it', 1000),
+      commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_2', name: 'edit_file', input: { file_path: 'src/login.ts' } }], { ms: 2000 }),
+      commandCodeToolResults('u2', 'a1', [
+        { tool_use_id: 'call_missing', content: [{ type: 'text', text: 'gone' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: commandCodePNG2 } }] },
+        { tool_use_id: 'call_2', content: [{ type: 'text', text: 'kept' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: commandCodePNG } }] },
+      ], 3000),
+    ],
+  })
+  const r = await reader.chat(pane)
+  const tool = r.items!.find(i => i.name === 'edit_file')!
+  expect(tool).toMatchObject({ out: 'kept', images: 1, imageAt: 1 })
+  const img = await reader.image(pane, r.file!, tool.ref!, 1)
+  expect(img?.body.equals(Buffer.from(commandCodePNG, 'base64'))).toBe(true)
+})
+
+it('does not rescan unchanged usage', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-cache-'))
+  homes.push(home)
+  let reads = 0
+  const fs = {
+    ...localFs,
+    read: (file: string, start: number, len: number, timeout?: number) => {
+      reads++
+      return localFs.read(file, start, len, timeout)
+    },
+  }
+  const reader = createTranscripts({ home, herdr: async () => ({}), fs })
+  writeCommandCodeSession(home, {
+    id: 'sess-1', cwd: pane.cwd, lines: [
+      commandCodeSession('sess-1', pane.cwd),
+      commandCodeUser('u1', null, 'Usage', 1000),
+      commandCodeAssistant('a1', 'u1', [{ type: 'text', text: 'ok' }], { ms: 2000, usage: { inputTokens: 42, outputTokens: 1 } }),
+    ],
+  })
+  const first = await reader.commandCodeStats(pane)
+  expect(first.status?.contextTokens).toBe(42)
+  const after = reads
+  expect(await reader.commandCodeStats(pane)).toEqual(first)
+  expect(reads).toBe(after)
+})
+
+it('caches session headers across discovery passes', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-headers-'))
+  homes.push(home)
+  const root = path.join(home, '.commandcode/projects')
+  const dir = path.join(root, 'history')
+  const files = new Map(Array.from({ length: 100 }, (_, i) => [path.join(dir, `s${i}.jsonl`), Buffer.from(JSON.stringify({ type: 'session', version: 3, id: `s${i}`, cwd: `/home/user/other${i}` }))]))
+  let reads = 0
+  const fs = {
+    ...localFs,
+    readdir: async (p: string) => p === root ? ['history'] : [...files.keys()].map(f => path.basename(f)),
+    statMany: async (ps: string[]) => ps.map(p => ({ size: files.get(p)!.length, mtimeMs: 1_700_000_000_000, isFile: true, isDir: false })),
+    read: async (p: string, start: number, len: number) => {
+      reads++
+      return files.get(p)!.subarray(start, start + len)
+    },
+  }
+  const reader = createTranscripts({ home, herdr: async () => ({}), fs })
+  const p = { id: 'p-headers', agent: 'cmd', cwd: '/home/user/new-project' }
+  vi.useFakeTimers()
+  try {
+    expect(await reader.locate(p)).toBeNull()
+    expect(reads).toBe(100)
+    reads = 0
+    vi.setSystemTime(Date.now() + 9000)
+    expect(await reader.locate(p)).toBeNull()
+    expect(reads).toBe(0)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('caches fetched headers even when the newest session matches exactly', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-headers-same-'))
+  homes.push(home)
+  const root = path.join(home, '.commandcode/projects')
+  const dir = path.join(root, 'history')
+  const files = new Map(Array.from({ length: 100 }, (_, i) => [path.join(dir, `s${i}.jsonl`), Buffer.from(JSON.stringify({ type: 'session', version: 3, id: `s${i}`, cwd: pane.cwd }))]))
+  let reads = 0
+  const fs = {
+    ...localFs,
+    readdir: async (p: string) => p === root ? ['history'] : [...files.keys()].map(f => path.basename(f)),
+    statMany: async (ps: string[]) => ps.map((p) => {
+      const i = Number(/s(\d+)\.jsonl$/.exec(p)![1])
+      return { size: files.get(p)!.length, mtimeMs: 1_700_000_000_000 + i, isFile: true, isDir: false }
+    }),
+    read: async (p: string, start: number, len: number) => {
+      reads++
+      return files.get(p)!.subarray(start, start + len)
+    },
+  }
+  const reader = createTranscripts({ home, herdr: async () => ({}), fs })
+  const p = { id: 'p-headers-same', agent: 'cmd', cwd: pane.cwd }
+  vi.useFakeTimers()
+  try {
+    expect(await reader.locate(p)).toMatchObject({ session: 's99' })
+    expect(reads).toBe(100)
+    reads = 0
+    vi.setSystemTime(Date.now() + 9000)
+    expect(await reader.locate(p)).toMatchObject({ session: 's99' })
+    expect(reads).toBe(0)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('selects a session beyond the header cache cap', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-headers-cap-'))
+  homes.push(home)
+  const root = path.join(home, '.commandcode/projects')
+  const dir = path.join(root, 'history')
+  const files = new Map(Array.from({ length: 4097 }, (_, i) => [path.join(dir, `s${i}.jsonl`), Buffer.from(JSON.stringify({ type: 'session', version: 3, id: `s${i}`, cwd: i === 4096 ? pane.cwd : `/home/user/other-${i}` }))]))
+  const fs = {
+    ...localFs,
+    readdir: async (p: string) => p === root ? ['history'] : [...files.keys()].map(f => path.basename(f)),
+    statMany: async (ps: string[]) => ps.map((p) => {
+      const i = Number(/s(\d+)\.jsonl$/.exec(p)![1])
+      return { size: files.get(p)!.length, mtimeMs: 1_700_000_000_000 + i, isFile: true, isDir: false }
+    }),
+    read: async (p: string, start: number, len: number) => files.get(p)!.subarray(start, start + len),
+  }
+  const reader = createTranscripts({ home, herdr: async () => ({}), fs })
+  expect(await reader.locate({ id: 'p-cap', agent: 'cmd', cwd: pane.cwd })).toMatchObject({ session: 's4096' })
+})
+
+it('enumerates remote projects with one find', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-remote-'))
+  homes.push(home)
+  const root = path.join(home, '.commandcode/projects')
+  const file = path.join(root, 'project', 'sess.jsonl')
+  const buf = Buffer.from(JSON.stringify({ type: 'session', version: 3, id: 'sess', cwd: '/home/user/acme' }) + '\n')
+  let finds = 0
+  let headerBatches = 0
+  const header = JSON.stringify({ type: 'session', version: 3, id: 'sess', cwd: '/home/user/acme' })
+  const exec = async (script: string, args: string[] = []) => {
+    if (script.startsWith('find')) {
+      finds++
+      return { code: 0, stdout: Buffer.from(`${file}\n`), stderr: '' }
+    }
+    headerBatches++
+    return { code: 0, stdout: Buffer.from(args.map(p => `${p}\tH${header}`).join('\n') + '\n'), stderr: '' }
+  }
+  const fs = {
+    ...localFs,
+    statMany: async (ps: string[]) => ps.map(() => ({ size: buf.length, mtimeMs: 1_700_000_000_000, isFile: true, isDir: false })),
+    read: async (_p: string, start: number, len: number) => buf.subarray(start, start + len),
+  }
+  const reader = createTranscripts({ home, fs, exec, herdr: async () => ({}) })
+  expect(await reader.locate({ id: 'remote', agent: 'cmd', cwd: '/home/user/acme' })).toMatchObject({ session: 'sess' })
+  expect(finds).toBe(1)
+  expect(headerBatches).toBe(1)
+})
+
+it('reports a new session even before its first usage', async () => {
+  const { home, reader } = fixture()
+  const write = (id: string, lines: unknown[], mtime: Date) => writeCommandCodeSession(home, { id, cwd: pane.cwd, lines, mtime })
+  write('sess-old', [
+    commandCodeSession('sess-old', pane.cwd),
+    commandCodeUser('u1', null, 'Old', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'text', text: 'old reply' }], { ms: 2000, usage: { inputTokens: 10, outputTokens: 1 } }),
+  ], new Date(1_700_000_000_000))
+  write('sess-new', [commandCodeSession('sess-new', pane.cwd), commandCodeUser('u2', null, 'New question', 3000)], new Date(1_700_000_100_000))
+  expect(await reader.commandCodeStats(pane)).toMatchObject({ session: 'sess-new', status: null })
+})
+
+it('keeps a tool result across a pagination boundary', async () => {
+  const { home, reader } = fixture()
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+  ]
+  const filler = 'z'.repeat(32 * 1024)
+  for (let i = 0; i < 200; i++) lines.push(commandCodeUser(`filler-${i}`, 'a1', filler, 3000 + i))
+  // A 10 KiB unmatched result pushes call_1's id beyond a 4 KiB prefix: the
+  // append validation must fingerprint the whole result record.
+  lines.push(commandCodeToolResults('u2', 'a1', [
+    { tool_use_id: 'call_missing', content: [{ type: 'text', text: 'p'.repeat(10 * 1024) }] },
+    { tool_use_id: 'call_1', content: [{ type: 'text', text: 'ok' }] },
+  ], 4000))
+  const file = writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
+  const tail = await reader.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+  appendFileSync(file, JSON.stringify(commandCodeAssistant('a-new', 'a1', [{ type: 'text', text: 'new' }], { ms: 5000 })) + '\n')
+  await reader.chat(pane, { since: tail.token, from: tail.start })
+  const older = await reader.chat(pane, { before: tail.start })
+  expect(older.items!.find(i => i.name === 'shell_command')?.out).toBe('ok')
+  // Another pane may share the session: forgetting one pane keeps the
+  // file-scoped result available to the survivor.
+  reader.forget(pane.id)
+  const afterForget = await reader.chat(pane, { before: tail.start })
+  expect(afterForget.items!.find(i => i.name === 'shell_command')?.out).toBe('ok')
+
+  // Replacing the file (new inode) with a larger transcript without that
+  // result must invalidate the remembered entry too.
+  const replacement = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+  ]
+  for (let i = 0; i < 250; i++) replacement.push(commandCodeUser(`replacement-${i}`, 'a1', filler, 5000 + i))
+  const fresh = `${file}.replacement`
+  writeFileSync(fresh, replacement.map(line => JSON.stringify(line)).join('\n') + '\n')
+  renameSync(fresh, file)
+  const tail2 = await reader.chat(pane)
+  expect(tail2.start).toBeGreaterThan(0)
+  const older2 = await reader.chat(pane, { before: tail2.start })
+  expect(older2.items!.find(i => i.name === 'shell_command')?.out).toBeUndefined()
+})
+
+it('reports a late result for a tool shown in an older page', async () => {
+  const { home, reader } = fixture()
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+  ]
+  const filler = 'v'.repeat(32 * 1024)
+  for (let i = 0; i < 200; i++) lines.push(commandCodeUser(`filler-${i}`, 'a1', filler, 3000 + i))
+  const file = writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
+  const tail = await reader.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+  expect(tail.items!.some(i => i.toolId === 'call_1')).toBe(false)
+
+  appendFileSync(file, JSON.stringify(commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'ok' }] }], 4000)) + '\n')
+  const next = await reader.chat(pane, { since: tail.token, from: tail.start })
+  expect(next.toolUpdates).toEqual([expect.objectContaining({ id: 'call_1', out: 'ok' })])
+})
+
+it('invalidates remembered results when a larger file is rewritten in place', async () => {
+  const { home, reader } = fixture()
+  const filler = 'w'.repeat(32 * 1024)
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+  ]
+  for (let i = 0; i < 200; i++) lines.push(commandCodeUser(`filler-${i}`, 'a1', filler, 3000 + i))
+  lines.push(commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'ok' }] }], 4000))
+  const file = writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
+  const tail = await reader.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+
+  const replacement = lines.slice(0, 3)
+  for (let i = 0; i < 250; i++) replacement.push(commandCodeUser(`rewritten-${i}`, 'a1', filler, 5000 + i))
+  writeFileSync(file, replacement.map(line => JSON.stringify(line)).join('\n') + '\n')
+  const tail2 = await reader.chat(pane)
+  expect(tail2.start).toBeGreaterThan(0)
+  const older2 = await reader.chat(pane, { before: tail2.start })
+  expect(older2.items!.find(i => i.name === 'shell_command')?.out).toBeUndefined()
+})
+
+it('tells the client to rebuild pages when a remembered result is rewritten', async () => {
+  const { home, reader } = fixture()
+  const filler = 'w'.repeat(32 * 1024)
+  const head = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+  ]
+  for (let i = 0; i < 200; i++) head.push(commandCodeUser(`filler-${i}`, 'a1', filler, 3000 + i))
+  const oldResult = commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'old' }] }], 4000)
+  const file = writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines: [...head, oldResult] })
+  const tail = await reader.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+  expect(tail.rewritten).toBeUndefined()
+
+  // Change only the result record, keeping every byte above the client's
+  // cursor: the file grows, so the anchor alone cannot detect the rewrite.
+  const newResult = commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'new and longer' }] }], 4000)
+  writeFileSync(file, [...head, newResult].map(line => JSON.stringify(line)).join('\n') + '\n')
+  const next = await reader.chat(pane, { since: tail.token, from: tail.start })
+  expect(next.rewritten).toBe(true)
+})
+
+it('keeps an invalidation visible to a client that did not detect it', async () => {
+  const { home, reader } = fixture()
+  const filler = 'u'.repeat(32 * 1024)
+  const head = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+  ]
+  for (let i = 0; i < 200; i++) head.push(commandCodeUser(`filler-${i}`, 'a1', filler, 3000 + i))
+  const oldResult = commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'old' }] }], 4000)
+  const file = writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines: [...head, oldResult] })
+  const tail = await reader.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+
+  const newResult = commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'new and longer' }] }], 4000)
+  writeFileSync(file, [...head, newResult].map(line => JSON.stringify(line)).join('\n') + '\n')
+
+  // Another reader (a preview, another device) detects the rewrite first and
+  // updates the shared file state; the client that kept the old page still
+  // learns from its token generation that its pages must be rebuilt.
+  expect((await reader.chat(pane)).rewritten).toBeUndefined()
+  const next = await reader.chat(pane, { since: tail.token, from: tail.start })
+  expect(next.rewritten).toBe(true)
+})
+
+it('invalidates a page whose matched result is rewritten in place', async () => {
+  const { home, reader } = fixture()
+  const filler = 'm'.repeat(32 * 1024)
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+    commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'old' }] }], 3000),
+  ]
+  for (let i = 0; i < 200; i++) lines.push(commandCodeUser(`filler-${i}`, 'a1', filler, 4000 + i))
+  const file = writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
+  const tail = await reader.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+  const older = await reader.chat(pane, { before: tail.start })
+  expect(older.items!.find(i => i.toolId === 'call_1')?.out).toBe('old')
+
+  // Rewrite the matched result (not an orphan this time), keeping the bytes
+  // above the client's tail anchor identical.
+  const newResult = commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'new and longer' }] }], 3000)
+  writeFileSync(file, [...lines.slice(0, 3), newResult, ...lines.slice(4)].map(line => JSON.stringify(line)).join('\n') + '\n')
+  const next = await reader.chat(pane, { since: tail.token, from: tail.start })
+  expect(next.rewritten).toBe(true)
+})
+
+it('restarts pagination when a reader is replaced', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-reader-'))
+  homes.push(home)
+  const filler = 'n'.repeat(32 * 1024)
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+  ]
+  for (let i = 0; i < 100; i++) lines.push(commandCodeUser(`before-${i}`, 'a1', filler, 3000 + i))
+  lines.push(commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'ok' }] }], 4000))
+  for (let i = 0; i < 300; i++) lines.push(commandCodeUser(`after-${i}`, 'a1', filler, 5000 + i))
+  writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
+
+  const before = createTranscripts({ home, herdr: async () => ({}) })
+  const tail = await before.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+  // The client scrolled one page up: the result was parsed, its call is older.
+  const older = await before.chat(pane, { before: tail.start })
+  expect(older.items!.some(i => i.toolId === 'call_1')).toBe(false)
+
+  // A restarted reader lost the remembered result: the old token must make
+  // the client reload its pages rather than keep the call without output.
+  const after = createTranscripts({ home, herdr: async () => ({}) })
+  expect((await after.chat(pane, { since: tail.token, from: tail.start })).rewritten).toBe(true)
+})
+
+it('bounds result validation by the watched byte span', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-span-'))
+  homes.push(home)
+  const filler = 's'.repeat(32 * 1024)
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'First', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo one' } }], { ms: 2000 }),
+    commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'one' }] }], 3000),
+  ]
+  for (let i = 0; i < 200; i++) lines.push(commandCodeUser(`filler-${i}`, 'a1', filler, 4000 + i))
+  lines.push(commandCodeUser('u3', 'a1', 'Second', 5000))
+  lines.push(commandCodeAssistant('a2', 'u3', [{ type: 'tool_use', id: 'call_2', name: 'shell_command', input: { command: 'echo two' } }], { ms: 5100 }))
+  lines.push(commandCodeToolResults('u4', 'a2', [{ tool_use_id: 'call_2', content: [{ type: 'text', text: 'two' }] }], 5200))
+  for (let i = 0; i < 100; i++) lines.push(commandCodeUser(`after-${i}`, 'a2', filler, 6000 + i))
+  const file = writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
+
+  let early = 0
+  const fs = {
+    ...localFs,
+    read: (f: string, start: number, len: number, timeout?: number) => {
+      if (start < 1024 * 1024) early = Math.max(early, len)
+      return localFs.read(f, start, len, timeout)
+    },
+  }
+  const reader = createTranscripts({ home, fs, herdr: async () => ({}) })
+  const tail = await reader.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+  let page = await reader.chat(pane, { before: tail.start })
+  while (!page.items!.some(i => i.toolId === 'call_1') && page.start > 0) {
+    page = await reader.chat(pane, { before: page.start })
+  }
+  expect(page.items!.some(i => i.toolId === 'call_1')).toBe(true)
+
+  appendFileSync(file, JSON.stringify(commandCodeAssistant('a3', 'u4', [{ type: 'text', text: 'done' }], { ms: 9000 })) + '\n')
+  early = 0
+  await reader.chat(pane, { since: tail.token, from: tail.start })
+  // The two watched results are more than 4 MiB apart: only the newest fits
+  // the cap, so validation must not read the whole old span.
+  expect(early).toBeLessThanOrEqual(4 * 1024 * 1024)
+})
+
+it('keeps results collected by another client when a stale token arrives', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-stale-'))
+  homes.push(home)
+  const filler = 't'.repeat(32 * 1024)
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+  ]
+  for (let i = 0; i < 100; i++) lines.push(commandCodeUser(`before-${i}`, 'a1', filler, 3000 + i))
+  lines.push(commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'ok' }] }], 4000))
+  for (let i = 0; i < 300; i++) lines.push(commandCodeUser(`after-${i}`, 'a1', filler, 5000 + i))
+  writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
+
+  const before = createTranscripts({ home, herdr: async () => ({}) })
+  const tail = await before.chat(pane)
+  const fresh = createTranscripts({ home, herdr: async () => ({}) })
+  const freshTail = await fresh.chat(pane)
+  const middle = await fresh.chat(pane, { before: freshTail.start })
+  const resultPage = await fresh.chat(pane, { before: middle.start })
+  expect(resultPage.items!.some(i => i.toolId === 'call_1')).toBe(false)
+
+  // Another device still has its pre-restart token: the stale marker must
+  // reload its pages without discarding the result this reader collected.
+  expect((await fresh.chat(pane, { since: tail.token, from: tail.start })).rewritten).toBe(true)
+  const callPage = await fresh.chat(pane, { before: resultPage.start })
+  expect(callPage.items!.find(i => i.toolId === 'call_1')?.out).toBe('ok')
+})
+
+it('rebuilds clients when a remembered result is evicted', async () => {
+  const { home, reader } = fixture()
+  const filler = 'e'.repeat(32 * 1024)
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+  ]
+  for (let i = 0; i < 200; i++) lines.push(commandCodeUser(`filler-${i}`, 'a1', filler, 3000 + i))
+  lines.push(commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'ok' }] }], 4000))
+  writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
+  const tail = await reader.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+
+  // 65 other Command Code transcripts evict the oldest remembered result.
+  for (let i = 0; i < 65; i++) {
+    const cwd = `/home/user/evict-${i}`
+    writeCommandCodeSession(home, { id: `evict-${i}`, cwd, lines: [commandCodeSession(`evict-${i}`, cwd), commandCodeUser(`u${i}`, null, 'x')] })
+    await reader.chat({ id: `evict-pane-${i}`, agent: 'cmd', cwd })
+  }
+
+  // The client kept the old page: its token must now tell it to rebuild.
+  expect((await reader.chat(pane, { since: tail.token, from: tail.start })).rewritten).toBe(true)
+  const reread = await reader.chat(pane)
+  const older = await reader.chat(pane, { before: reread.start })
+  expect(older.items!.find(i => i.toolId === 'call_1')?.out).toBe('ok')
+})
+
+it('does not reset an open chat when other transcripts are evicted', async () => {
+  const { home, reader } = fixture()
+  const panes: { id: string, agent: string, cwd: string }[] = []
+  for (let i = 0; i < 67; i++) {
+    const cwd = `/home/user/cache-${i}`
+    writeCommandCodeSession(home, {
+      id: `cache-${i}`, cwd,
+      lines: [
+        commandCodeSession(`cache-${i}`, cwd),
+        commandCodeUser(`u${i}`, null, 'hi'),
+        commandCodeAssistant(`a${i}`, `u${i}`, [{ type: 'text', text: 'reply' }], { ms: 1000 }),
+      ],
+    })
+    panes.push({ id: `cache-pane-${i}`, agent: 'cmd', cwd })
+  }
+  for (let i = 0; i < 64; i++) await reader.chat(panes[i]!)
+  const active = await reader.chat(panes[63]!)
+  expect(active.available).toBe(true)
+  // Three more transcripts push the oldest entries out; the active file's
+  // own state is still cached, so its client must not be reset.
+  for (let i = 64; i < 67; i++) await reader.chat(panes[i]!)
+  const next = await reader.chat(panes[63]!, { since: active.token, from: active.start })
+  expect(next.rewritten).toBeUndefined()
+})
+
+it('retries a failed result validation before trusting the new size', async () => {
+  const { home } = fixture()
+  // Wide uniform fillers keep the 4 KiB anchor above the tail byte-identical
+  // after the result record grows, so only result validation can see it.
+  const filler = 'f'.repeat(64 * 1024)
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+    commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'old' }] }], 3000),
+  ]
+  for (let i = 0; i < 200; i++) lines.push(commandCodeUser(`filler-${i}`, 'a1', filler, 4000 + i))
+  // Sub-second mtime: the token is settled, so the whole-file checksum does
+  // not also detect the rewrite.
+  const file = writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines, mtime: new Date(1_700_000_000_123) })
+  let fail = false
+  const fs = {
+    ...localFs,
+    read: (f: string, start: number, len: number, timeout?: number) => {
+      if (fail) {
+        fail = false
+        return Promise.reject(Object.assign(new Error('read failed'), { code: 'remote' }))
+      }
+      return localFs.read(f, start, len, timeout)
+    },
+  }
+  const reader = createTranscripts({ home, fs, herdr: async () => ({}) })
+  const tail = await reader.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+  const older = await reader.chat(pane, { before: tail.start })
+  expect(older.items!.find(i => i.toolId === 'call_1')?.out).toBe('old')
+
+  // Same-length change above the tail (no byte shift), then an append below
+  // it: the file grows in place, but the anchor above the client's cursor is
+  // unchanged, so only result validation can detect the changed output.
+  const newResult = commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'new' }] }], 3000)
+  writeFileSync(file, [...lines.slice(0, 3), newResult, ...lines.slice(4)].map(line => JSON.stringify(line)).join('\n'))
+  appendFileSync(file, '\n' + JSON.stringify(commandCodeAssistant('a2', 'u2', [{ type: 'text', text: 'done' }], { ms: 9000 })) + '\n')
+  fail = true
+  // The first poll cannot validate: it must keep the previous size so the
+  // next one retries instead of trusting the unvalidated state.
+  expect((await reader.chat(pane, { since: tail.token, from: tail.start })).rewritten).toBeUndefined()
+  expect((await reader.chat(pane, { since: tail.token, from: tail.start })).rewritten).toBe(true)
+})
+
+it('does not reread a huge watched result on every append', async () => {
+  const { home } = fixture()
+  const big = 'b'.repeat(6 * 1024 * 1024)
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+    commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: big }] }], 3000),
+  ]
+  const filler = 'g'.repeat(32 * 1024)
+  for (let i = 0; i < 200; i++) lines.push(commandCodeUser(`filler-${i}`, 'a1', filler, 4000 + i))
+  const file = writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
+  let early = 0
+  const fs = {
+    ...localFs,
+    read: (f: string, start: number, len: number, timeout?: number) => {
+      if (start < 1024 * 1024) early = Math.max(early, len)
+      return localFs.read(f, start, len, timeout)
+    },
+  }
+  const reader = createTranscripts({ home, fs, herdr: async () => ({}) })
+  const tail = await reader.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+  let page = await reader.chat(pane, { before: tail.start })
+  while (!page.items!.some(i => i.toolId === 'call_1') && page.start > 0) {
+    page = await reader.chat(pane, { before: page.start })
+  }
+  expect(page.items!.some(i => i.toolId === 'call_1')).toBe(true)
+
+  appendFileSync(file, JSON.stringify(commandCodeAssistant('a2', 'u2', [{ type: 'text', text: 'done' }], { ms: 9000 })) + '\n')
+  early = 0
+  await reader.chat(pane, { since: tail.token, from: tail.start })
+  // Validation fingerprints the first 64 KiB of the 6 MiB result, not all of it.
+  expect(early).toBeLessThanOrEqual(4 * 1024 * 1024)
+})
+
+it('reads past trailing tool results with no displayable message', async () => {
+  const { home, reader } = fixture()
+  const big = 'q'.repeat(1.5 * 1024 * 1024)
+  const calls = [1, 2, 3, 4].map(i => ({ type: 'tool_use', id: `call_${i}`, name: 'read_file', input: { file_path: `shot-${i}.png` } }))
+  const results = [1, 2, 3, 4].map(i => commandCodeToolResults(`u${i}`, 'a1', [{ tool_use_id: `call_${i}`, content: [{ type: 'text', text: big }] }], 2000 + i))
+  writeCommandCodeSession(home, {
+    id: 'sess-1', cwd: pane.cwd, lines: [
+      commandCodeSession('sess-1', pane.cwd),
+      commandCodeUser('u0', null, 'Take screenshots', 1000),
+      commandCodeAssistant('a1', 'u0', [{ type: 'text', text: 'Old reply' }, ...calls], { ms: 2000 }),
+      ...results,
+    ],
+  })
+  const r = await reader.chat(pane)
+  expect(r.items!.some(i => i.text === 'Old reply')).toBe(true)
+  const out = r.items!.find(i => i.name === 'read_file')?.out
+  expect(out?.length).toBe(8001)
+  expect(out?.startsWith('qqqq')).toBe(true)
 })
 
 it('marks a failed tool result', async () => {
@@ -99,7 +846,7 @@ it('pages the tail, follows an unchanged token and sees appended replies', async
   const lines = [commandCodeSession('sess-1', pane.cwd), commandCodeModel('example/model-a')]
   const long = 'x'.repeat(32 * 1024)
   let parent = null
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 200; i++) {
     const user = `u${i}`
     const assistant = `a${i}`
     lines.push(commandCodeUser(user, parent, `Message ${i} ${long}`, i * 10))
@@ -112,7 +859,7 @@ it('pages the tail, follows an unchanged token and sees appended replies', async
   expect(tail.items!.length).toBeGreaterThan(0)
   // The file is larger than one read window: the tail starts in the middle.
   expect(tail.start).toBeGreaterThan(0)
-  expect(tail.items!.at(-1)?.text).toBe('Reply 99')
+  expect(tail.items!.at(-1)?.text).toBe('Reply 199')
 
   const older = await reader.chat(pane, { before: tail.start })
   expect(older.items!.length).toBeGreaterThan(0)
@@ -124,7 +871,7 @@ it('pages the tail, follows an unchanged token and sees appended replies', async
   const again = await reader.chat(pane, { since: second.token, from: second.start })
   expect(again).toMatchObject({ unchanged: true })
 
-  appendFileSync(file, JSON.stringify(commandCodeAssistant('a-new', 'a99', [{ type: 'text', text: 'Appended' }], { ms: 5000 })) + '\n')
+  appendFileSync(file, JSON.stringify(commandCodeAssistant('a-new', 'a199', [{ type: 'text', text: 'Appended' }], { ms: 5000 })) + '\n')
   const next = await reader.chat(pane, { since: second.token, from: second.start })
   expect(next.rewritten).toBeUndefined()
   expect(next.items?.at(-1)?.text).toBe('Appended')

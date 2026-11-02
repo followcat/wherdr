@@ -195,6 +195,8 @@ export interface Pane {
   codexField?: string
   // omp shown: its status line (model, folder, branch) and its gauges (context, quotas).
   ompStatus?: OmpStatus
+  // Command Code shown: context and cost of its last turn, read from the session.
+  cmdStatus?: CommandCodeStatus
   // omp working, conversation shown: the running step ("Finding Fixed section",
   // null before the first tool) and when the turn started (ms, null if unknown).
   ompActivity?: OmpActivity
@@ -202,6 +204,16 @@ export interface Pane {
   ompShell?: ShellRun
 }
 export interface OmpStatus { line: string, meters: string | null }
+export interface CommandCodeStatus { contextTokens: number | null, costUsd: number | null }
+// Outcome appended to a Command Code tool call (see ChatResponse.toolUpdates).
+export interface CommandCodeToolUpdate {
+  id: string
+  out?: string
+  error?: boolean
+  images?: number
+  ref?: string
+  imageAt?: number
+}
 export interface OmpActivity { step: string | null, since: number | null }
 
 export interface ChangeLine { kind: 'add' | 'del' | 'context' | 'hunk' | 'meta', text: string }
@@ -285,6 +297,9 @@ export interface ChatItem {
   text: string
   ts: string | null
   name?: string
+  // Command Code tool call id: lets a result appended after the page was
+  // loaded update the item already shown (see toolUpdates).
+  toolId?: string
   // Output of a 'bash' or 'cmd' command (stdout / stderr).
   out?: string
   err?: string
@@ -349,6 +364,9 @@ export interface ChatResponse {
   unchanged?: boolean
   older?: boolean
   items?: ChatItem[]
+  // Command Code: results appended after a tool page was loaded, matched by
+  // `toolId`, so the client can update items already on screen.
+  toolUpdates?: CommandCodeToolUpdate[]
   // Incremental re-read (server/utils/chatDelta.ts): the client keeps its
   // first `keep` items and `items` replace the rest. Absent: `items` is the
   // whole bottom of the conversation.
