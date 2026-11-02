@@ -3,26 +3,27 @@ import { nextTick, ref } from 'vue'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import Composer from '~/components/Composer.vue'
 import { asrInstalledBy, asrModelId } from '~/utils/asrModel'
+import { rememberPrompt } from '~/composables/usePromptHistory'
 import type { Pane } from '#shared/types'
 
 const pane = (id: string): Pane => ({
   id, workspace: 'w1', tab: 'w1:t1', tabLabel: null, agent: 'pi', name: null, label: null, status: 'idle', title: null, cwd: '/home/user/demo', agentSession: null,
 })
 
-const sp = vi.hoisted(() => ({ impl: null as any, start: 0, stop: 0, cancel: 0 }))
+const sp = vi.hoisted(() => ({ impl: null as any, start: 0, stop: 0, cancel: 0, contexts: [] as string[] }))
 mockNuxtImport('useSpeech', () => () => (sp.impl = {
   status: ref('ready'), error: ref(''), phase: ref(''), dl: ref(null), partial: ref(''), segments: ref<string[]>([]),
   finalText: ref(''), loadMs: ref(0), decodeMs: ref(null), take: ref(null), levels: ref<number[]>([]), recMs: ref(0),
   installed: ref(true),
   ensure: async () => {},
-  startMic: async () => { sp.start++; sp.impl.status.value = 'recording' },
+  startMic: async (ctx: string) => { sp.start++; sp.contexts.push(ctx); sp.impl.status.value = 'recording' },
   stopMic: () => { sp.stop++; sp.impl.status.value = 'flushing' },
   cancelMic: () => { sp.cancel++; sp.impl.status.value = 'ready' },
   reset: () => {}, decodeBlob: async () => {}, dispose: () => {},
 }))
 
-async function mount() {
-  return mountSuspended(Composer, { props: { pane: pane('w1:p1'), paneId: 'w1:p1', sendKeys: async () => {} } })
+async function mount(id = 'w1:p1') {
+  return mountSuspended(Composer, { props: { pane: pane(id), paneId: id, sendKeys: async () => {} } })
 }
 
 function installed(v: boolean) {
@@ -33,6 +34,30 @@ function installed(v: boolean) {
 const ptr = (el: Element, type: string) => el.dispatchEvent(new window.Event(type, { bubbles: true }))
 
 describe('Composer voice input', () => {
+  it('passes this pane’s recent original text to context-capable models', async () => {
+    const previousModel = asrModelId.value
+    const previousInstalled = asrInstalledBy.value
+    const prior = 'Réviser le nom AlpineService et le numéro 317.'
+    rememberPrompt('w9:p1', prior)
+    rememberPrompt('w9:p2', 'UnrelatedSecretProject')
+    asrModelId.value = 'qwen3q4f16'
+    const w = await mount('w9:p1')
+    try {
+      installed(true)
+      sp.contexts = []
+      await nextTick()
+      ptr(w.find('.prompt-mic').element, 'pointerdown')
+      await nextTick()
+      expect(sp.contexts).toHaveLength(1)
+      expect(sp.contexts[0]).toContain(prior)
+      expect(sp.contexts[0]).not.toContain('UnrelatedSecretProject')
+    } finally {
+      w.unmount()
+      asrModelId.value = previousModel
+      asrInstalledBy.value = previousInstalled
+    }
+  })
+
   it('dims the microphone while the model is not installed', async () => {
     const w = await mount()
     installed(false)

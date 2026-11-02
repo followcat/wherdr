@@ -294,19 +294,19 @@ function onMic() {
   sp.startMic(asrCtx()).catch((err: Error) => toast(err.message, true))
 }
 function cancelAsr() { haptic(); sp.cancelMic() }
-// Bias terms for context-capable engines (asrModel.ts `context`): the pane
-// identity, cwd, draft and attachment names already hold the technical words
-// the take is likely to say — harvested at mic-press, not maintained by hand.
+// Snapshot this pane's original text at mic-press. No extra transcript read
+// or vocabulary maintained by hand; other panes' histories stay separate.
 function asrCtx(): string {
   if (!asrModel.value?.context) return ''
   return buildAsrContext({
     agent: props.pane?.displayAgent || props.pane?.agent,
-    machine: props.pane?.machine,
+    machine: machineInfo(props.pane?.machine)?.label,
     name: props.pane?.name,
     title: props.pane?.title,
     cwd: props.pane?.cwd,
     draft: text.value,
     files: attachments.value.map(a => a.name ?? a.ref ?? a.path),
+    recent: promptHistoryFor(props.paneId),
   })
 }
 // The take as block-glyph bars — the wave reads like text, the chat way.
