@@ -278,4 +278,5 @@ test('desktop retains its header tabs and terminal key bar', { tag: ['@chromium-
     await expect(page.getByRole('menuitem').filter({ hasText: label }).first()).toBeVisible()
   }
   await expect(page.getByRole('menuitem').filter({ hasText: /^Close this pane/ })).toBeVisible()
+  await page.screenshot({ path: `.shots/${info.project.name}-desktop-header-2.5.png` })
 })

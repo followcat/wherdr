@@ -32,11 +32,15 @@ async function terminal(page: Page, enabled: boolean, offset = 0) {
   await expect(page.locator('#term .xterm-rows')).toContainText(`History offset ${offset}`)
 }
 
-test.beforeEach(async () => {
+test.beforeEach(async ({ request }) => {
   await expect.poll(async () => (await fakeHerdr('e2e.pane_size', { pane_id: pane }) as { attached: boolean }).attached).toBe(false)
   // Exercise the mouse-capable transport used by opaque applications. The
   // default fake version predates this capability and bypasses that route.
   await fakeHerdr('e2e.terminal_version', { version: '0.9.5' })
+  // Both the server's snapshot and the CLI must report this capability.
+  // Wait for the snapshot instead of racing the state poll after a prior
+  // journey used the older fake server version.
+  await expect.poll(async () => (await (await request.get('/api/state')).json()).version).toBe('0.9.5')
 })
 
 test.afterEach(async () => {
@@ -167,11 +171,10 @@ test('dismissing the phone keyboard releases terminal focus before the next scro
   await terminal(page, true)
   const field = page.locator('.xterm-helper-textarea')
   // Focus arrives through the explicit keyboard button — never a terminal tap.
-  // The keybar is collapsed by default on the phone layout, and the
-  // keyboard button sits in its second row.
+  // The keybar is collapsed by default; its ordered strip includes the
+  // explicit phone keyboard button.
   await page.getByRole('button', { name: 'Show or hide terminal keys' }).tap()
-  await page.locator('.vk-more').tap()
-  await page.locator('.vk-system').tap()
+  await page.getByRole('button', { name: 'Show or hide the phone keyboard' }).tap()
   await expect(field).toBeFocused()
   const viewport = page.viewportSize()!
   await page.setViewportSize({ ...viewport, height: viewport.height - 200 })
@@ -341,11 +344,11 @@ for (const edge of [0, 80]) {
 // 'keeps the keyboard closed for links'; terminalLinks.test.ts, 'terminal link destinations'.
 test.describe('beta touch contracts', () => {
   const enabled = true
-  test(`a normal terminal tap opens the keyboard on Chromium with beta ${enabled ? 'on' : 'off'}`, async ({ page, isMobile, browserName }) => {
+  test(`a tap outside the cursor keeps the keyboard closed on Chromium with beta ${enabled ? 'on' : 'off'}`, async ({ page, isMobile, browserName }) => {
     test.skip(!isMobile || browserName !== 'chromium', 'Touch gestures use the phone viewport; WebKit keeps the keyboard closed')
     await fakeHerdr('e2e.touch_scroll', { pane_id: pane, reset: true, mouse: false })
     await terminal(page, enabled)
-    await page.locator('#touch').tap()
+    await page.locator('#termWrap').tap()
     await expect(page.locator('.xterm-helper-textarea')).not.toBeFocused()
   })
 })
