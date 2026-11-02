@@ -259,10 +259,22 @@ function q4Tokenizer(tj) {
     const e = tj.model.merges[i]
     merges.set(typeof e === 'string' ? e : e.join(' '), i)
   }
-  const PRE = /'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu
+  // Use this export's tokenizer contract, not a hand-written approximation:
+  // a different split or Unicode normalization changes the embedding ids.
+  const [split, bytes] = tj.pre_tokenizer?.pretokenizers || []
+  const form = tj.normalizer?.type
+  if (tj.pre_tokenizer?.type !== 'Sequence' || tj.pre_tokenizer.pretokenizers.length !== 2
+    || split?.type !== 'Split' || split.behavior !== 'Isolated' || split.invert
+    || typeof split.pattern?.Regex !== 'string' || bytes?.type !== 'ByteLevel'
+    || bytes.add_prefix_space || bytes.use_regex
+    || (form && !['NFC', 'NFD', 'NFKC', 'NFKD'].includes(form))) {
+    throw new Error('Unsupported speech model tokenizer configuration')
+  }
+  const PRE = new RegExp(split.pattern.Regex, 'gu')
   function encode(str) {
     const out = []
-    for (const m of String(str).matchAll(PRE)) {
+    const text = form ? String(str).normalize(form) : String(str)
+    for (const m of text.matchAll(PRE)) {
       let word = ''
       for (const byte of te.encode(m[0])) word += b2c.get(byte)
       const parts = [...word]
@@ -351,7 +363,7 @@ async function decodeQ4F16(all, ctxText) {
   // The stock prompt's system turn is empty — context terms go inside it:
   // prefix_ids[0..2] is im_start/'system'/'\n', so encoded terms splice in
   // at index 3, before im_end/user/audio_start.
-  const ctxIds = ctxText ? tok.encode(String(ctxText).slice(0, 400)) : []
+  const ctxIds = ctxText ? tok.encode(String(ctxText).slice(0, 400).replace(/[\uD800-\uDBFF]$/, '')) : []
   const ids = [...PC.prompt.prefix_ids.slice(0, 3), ...ctxIds, ...PC.prompt.prefix_ids.slice(3)]
   const audioStart = ids.length
   for (let i = 0; i < nAudio; i++) ids.push(PC.prompt.audio_pad_id)
@@ -386,7 +398,7 @@ async function decodeQ4F16(all, ctxText) {
   }
   pk.dispose?.(); pv.dispose?.()
   const cut = gen.indexOf(PC.prompt.asr_text_id)
-  return tok.decode(cut >= 0 ? gen.slice(cut + 1) : gen)
+  return { text: tok.decode(cut >= 0 ? gen.slice(cut + 1) : gen), ctx: tok.decode(ctxIds) }
 }
 
 // Per-engine modelConfig bodies — field names are the JS binding's
@@ -526,8 +538,8 @@ self.onmessage = async (e) => {
       for (let i = 0; i < all.length; i++) { const v = Math.abs(all[i]); if (v > peak) peak = v; sumSq += v * v }
       const take = { secs: Math.round(all.length / SAMPLE_RATE * 10) / 10, rms: Math.sqrt(sumSq / (all.length || 1)), peak }
       if (q4) {
-        const text = await decodeQ4F16(all, m.ctx)
-        postMessage({ t: 'final', text, decodeMs: Math.round(performance.now() - t0), take, ctx: m.ctx || '' })
+        const { text, ctx } = await decodeQ4F16(all, m.ctx)
+        postMessage({ t: 'final', text, decodeMs: Math.round(performance.now() - t0), take, ctx })
         return
       }
       const stream = recognizer.createStream()

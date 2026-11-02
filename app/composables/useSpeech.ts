@@ -15,7 +15,7 @@ const MAX_RECORD_MS = 120_000
 const FLUSH_TIMEOUT_MS = 90_000
 // Bump when the worker's message contract changes: the URL query defeats
 // stale precached copies left behind by an older service worker.
-const WORKER_V = '5'
+const WORKER_V = '6'
 
 // One worker for the whole app: loading a recognizer costs seconds (the
 // models stay in Cache Storage, but the engine init does not), so the worker
