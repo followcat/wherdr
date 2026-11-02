@@ -1252,6 +1252,9 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 .msg-ai .msg-c { padding-bottom: 0; }
 .msg-ai:has(.msg-actions) .msg-c { padding-bottom: 36px; }
 
+/* An assistant turn that ended in an error keeps its text but reads as one. */
+.msg-ai.err .md-body { border-left: 2px solid var(--rose); padding-left: 10px; }
+
 /* User message: square block on the right. */
 .msg-user-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; margin-top: 6px; }
 .msg-user .msg-c { max-width: 88%; }
