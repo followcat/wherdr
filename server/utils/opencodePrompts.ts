@@ -20,15 +20,20 @@ const strs = (v: unknown, max = 8) => Array.isArray(v) ? v.filter(x => typeof x 
 // "Allow bash?" over "git push origin main".
 function permissionChoices(req: Json): OcCard | null {
   if (typeof req?.id !== 'string' || typeof req?.action !== 'string') return null
-  const resources = strs(req.resources)
+  // Approving covers every resource the request lists, not just the first
+  // rows the card has room for — the identity hashes the full list and the
+  // detail admits how many more there are.
+  const all = strs(req.resources, 64)
+  const resources = all.slice(0, 8)
+  const more = all.length - resources.length
   const message = str(req.message, 400)
   const options: ChoiceOption[] = ['Allow once', 'Always allow', 'Reject'].map((label, i) => ({ label, hint: null, n: i + 1 }))
   const choices: Choices = {
     question: message || `Allow ${req.action}?`,
     cursor: 0,
     options,
-    detail: { tool: str(req.action, 60) || 'tool', ...(resources.length ? { command: resources.join('\n') } : {}) },
-    identity: identity({ oc: 'permission', id: req.id, action: req.action, resources, save: strs(req.save), message }),
+    detail: { tool: str(req.action, 60) || 'tool', ...(resources.length ? { command: resources.join('\n') + (more ? `\n… ${more} more` : '') } : {}) },
+    identity: identity({ oc: 'permission', id: req.id, session: str(req.sessionID, 80), action: req.action, resources: all, save: strs(req.save, 64), message }),
   }
   return { choices, dispatch: { kind: 'permission', id: req.id, decisions: ['once', 'always', 'reject'] } }
 }
@@ -38,11 +43,13 @@ function permissionChoices(req: Json): OcCard | null {
 // or a free-text field. Anything wider stays on the terminal.
 function formChoices(form: Json): OcCard | null {
   if (typeof form?.id !== 'string') return null
-  const fields = (Array.isArray(form.fields) ? form.fields : []).filter(f => f && !f.hidden)
-  if (fields.length !== 1) return null
-  const f = fields[0]
+  const raw = Array.isArray(form.fields) ? form.fields : []
+  // A hidden or conditional field the card cannot answer stays on the
+  // terminal: submitting without it fails the service's own validation.
+  if (raw.length !== 1 || raw.some((f: Json) => f?.hidden)) return null
+  const f = raw[0]
   const key = typeof f.key === 'string' ? f.key : ''
-  if (!key) return null
+  if (!key || f.when) return null
   const question = str(f.title, 300) || str(form.title, 300) || 'Answer?'
   const hint = str(f.description, 300) || null
   let options: ChoiceOption[]
@@ -52,7 +59,9 @@ function formChoices(form: Json): OcCard | null {
     values = [true, false]
   } else if (f.type === 'string' && Array.isArray(f.options) && f.options.length) {
     options = f.options.slice(0, 12).map((o: Json, i: number) => ({ label: str(o?.label || o?.value, 200) || '?', hint: str(o?.description, 300) || null, n: i + 1 }))
-    values = f.options.slice(0, 12).map((o: Json) => str(o?.value, 200))
+    // The label is clipped for display; the submitted value is not —
+    // the service validates it against the full option list.
+    values = f.options.slice(0, 12).map((o: Json) => str(o?.value, 8000))
     if (f.custom) options.push({ label: 'Type something.', hint: null, n: options.length + 1, free: true })
   } else if (f.type === 'string') {
     options = [{ label: 'Type something.', hint, n: 1, free: true }]
@@ -62,7 +71,9 @@ function formChoices(form: Json): OcCard | null {
     question,
     cursor: 0,
     options,
-    identity: identity({ oc: 'form', id: form.id, key, question, options: options.map(({ label, hint: h, free }) => ({ label, hint: h, free })) }),
+    // Values and the session are identity too: a form recreated with the
+    // same labels but different choices must not take the old card's pick.
+    identity: identity({ oc: 'form', id: form.id, session: str(form.sessionID, 80), key, question, values, options: options.map(({ label, hint: h, free }) => ({ label, hint: h, free })) }),
   }
   return { choices, dispatch: { kind: 'form', id: form.id, key, values } }
 }

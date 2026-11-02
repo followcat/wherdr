@@ -123,7 +123,7 @@ export function createOpenCodeTranscripts({ home, exec, stream }: { home: string
     const work = (async () => {
       let body: Buffer
       if (exec) {
-        const r = await exec('python3 -X utf8 -c "$1" "$2" "$3"', [OPENCODE_READ, home, ascii(request)], { timeoutMs: Math.min(15000, (options.seconds || 10) * 1000 + 1000), maxBytes: 25 * 1024 * 1024 })
+        const r = await exec('python3 -X utf8 -c "$1" "$2" "$3"', [OPENCODE_READ, home, ascii(request)], { timeoutMs: Math.min(300000, (options.seconds || 10) * 1000 + 1000), maxBytes: 25 * 1024 * 1024 })
         body = r.stdout
         if (r.code !== 0 && !body.length) throw new Error('Unable to read OpenCode conversation on the remote machine')
       } else body = await new Promise<Buffer>((resolve, reject) => {
@@ -340,7 +340,8 @@ export function createOpenCodeTranscripts({ home, exec, stream }: { home: string
     if (!pane.agentSession) return false
     const s = await snapshot(pane.agentSession)
     if (!s) return false
-    const r = await query(pane.agentSession, 'shell', { command })
+    // The reply arrives when the command ends: allow the full shim budget.
+    const r = await query(pane.agentSession, 'shell', { command, seconds: 290 })
     return r.server === s.server && r.status === 200
   }
   // Composer status from the session record itself: total tokens and cost.

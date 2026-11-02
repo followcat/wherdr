@@ -542,7 +542,8 @@ const FR: Record<string, string> = {
   'Model not found in /models: {model}': 'Modèle introuvable dans /models : {model}',
   'The model did not change — try again.': 'Le modèle n’a pas changé — réessaie.',
   'Devin set a different model ({model}) — check the session.': 'Devin a choisi un autre modèle ({model}) — vérifie la session.',
-  'OpenCode refused the shell command': 'OpenCode a refusé la commande shell',
+  'OpenCode did not confirm the shell command — check the transcript.': 'OpenCode n’a pas confirmé la commande shell — vérifie la transcription.',
+  'OpenCode did not remove the queued message': 'OpenCode n’a pas retiré le message en file',
   'View image': 'Voir l’image',
   // Themes
   'Change theme': 'Changer de thème', 'Hide themes': 'Masquer les thèmes',
