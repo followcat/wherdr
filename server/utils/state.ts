@@ -9,7 +9,7 @@ import { notificationAllowed } from './notificationRules'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import type { ChatItem, Choices, ClaudeQueueEntry, ClaudeScreen, HerdrState, InteractiveMenu, WaitScreen, ModelInfo, OmpActivity, OmpStatus, Pane, QueuedMessage, ShellRun } from '../../shared/types'
+import type { ChatItem, Choices, ClaudeQueueEntry, ClaudeScreen, CommandCodeStatus, HerdrState, InteractiveMenu, WaitScreen, ModelInfo, OmpActivity, OmpStatus, Pane, QueuedMessage, ShellRun } from '../../shared/types'
 import { ompActivityOf, parseOmpActivity, parseOmpShell, parseOmpStatus } from './ompScreen'
 import { LOCAL, joinId, machineOf } from '../../shared/ids'
 import { paneTitle } from '../../shared/paneTitle'
@@ -65,6 +65,7 @@ export const transcripts = {
   preview: (p: TranscriptPane) => trFor(p).preview(p),
   image: (p: TranscriptPane, file: string | null, ref: string | null, i: number) => trFor(p).image(p, file, ref, i),
   model: (p: TranscriptPane) => trFor(p).model(p),
+  commandCodeStats: (p: TranscriptPane) => trFor(p).commandCodeStats(p),
   locate: (p: TranscriptPane) => trFor(p).locate(p),
   pendingTool: (p: TranscriptPane, tool?: string | null) => trFor(p).pendingTool(p, tool),
   pendingAsk: (p: TranscriptPane) => trFor(p).pendingAsk(p),
@@ -455,6 +456,23 @@ setCodexKnownWeek((key, rolled) => codexStatus.knownWeek(key, state.panes, rolle
 // not changed).
 const models = new Map<string, { info: ModelInfo | null, status: string | null, at: number }>()
 const modelBusy = new Set<string>()
+const cmdStatuses = new Map<string, { status: CommandCodeStatus | null, session: string | null, at: number }>()
+const cmdStatusBusy = new Set<string>()
+function refreshCmdStatus(p: Pane) {
+  if (cmdStatusBusy.has(p.id)) return
+  cmdStatusBusy.add(p.id)
+  transcripts.commandCodeStats(p)
+    .then(({ status, session }) => {
+      // A cut transient read returns null for the same session: keep the last
+      // good line. A new session with no usage yet must clear it instead.
+      const old = cmdStatuses.get(p.id)
+      const keep = status ?? (old && old.session === session ? old.status : null)
+      cmdStatuses.set(p.id, { status: keep, session, at: Date.now() })
+    })
+    .catch(() => {})
+    .finally(() => cmdStatusBusy.delete(p.id))
+}
+
 export function refreshModel(p: Pane) {
   if (modelBusy.has(p.id)) return
   modelBusy.add(p.id)
@@ -650,7 +668,12 @@ function deliverHeld(p: Pane) {
   deliverBusy.add(p.id)
   herdr('pane.read', { pane_id: p.id, source: 'detection' }, 4000)
     .then(async (r) => {
-      if (!inputVisible(r.read && r.read.text, p.agent)) return
+      // Command Code has no screen recognizer: its idle/done status is the
+      // readiness signal (a blocked pane is the one that held the message).
+      const ready = p.agent === 'cmd'
+        ? p.status === 'idle' || p.status === 'done'
+        : inputVisible(r.read && r.read.text, p.agent)
+      if (!ready) return
       if (p.agent === 'claude') {
         const box = await fieldDeps(p, inputBox).box()
         q.busy = Boolean(box && box !== BASH_EMPTY)
@@ -1330,6 +1353,17 @@ async function enrich(next: HerdrState, snap: Json, machine: string, publish?: (
     const md = models.get(p.id)
     if (!md || md.status !== p.status || Date.now() - md.at > 5000) refreshModel(p)
     if (md && md.info) p.model = md.info
+    // Command Code: model and context of its last turn, for the composer.
+    // The outer agent check keeps this state out of the extracted `enrich`
+    // used by the parity tests for the other agents.
+    if (p.agent === 'cmd') {
+      if (isViewed(p.id)) {
+        const cs = cmdStatuses.get(p.id)
+        if (!cs || Date.now() - cs.at >= 5000) refreshCmdStatus(p)
+        if (cs?.status) p.cmdStatus = cs.status
+        else delete p.cmdStatus
+      } else { cmdStatuses.delete(p.id); delete p.cmdStatus }
+    }
     // Claude on screen: screen re-read (fast while working, more slowly otherwise, for
     // its status near the input field).
     if (p.agent === 'claude' && isViewed(p.id)) {

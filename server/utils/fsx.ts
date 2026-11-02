@@ -116,6 +116,24 @@ export function parseStatLine(line: string): FsStat | null {
   return st
 }
 
+// SSH carries the command line as one argument: keep every batch well under
+// the per-argument limit, whatever the number of session files.
+export const MAX_ARG_BYTES = 32 * 1024
+
+export function chunksByBytes(ps: string[], max = MAX_ARG_BYTES): string[][] {
+  const out: string[][] = []
+  let cur: string[] = []
+  let bytes = 0
+  for (const p of ps) {
+    const n = Buffer.byteLength(p) + 1
+    if (cur.length && bytes + n > max) { out.push(cur); cur = []; bytes = 0 }
+    cur.push(p)
+    bytes += n
+  }
+  if (cur.length) out.push(cur)
+  return out
+}
+
 export function createShellFs(exec: ShellExec, opts: { statTtlMs?: number } = {}): MachineFs {
   const ttl = opts.statTtlMs ?? 700
   // Small cache (and grouping of simultaneous requests): the previews, the
@@ -142,12 +160,19 @@ export function createShellFs(exec: ShellExec, opts: { statTtlMs?: number } = {}
     })
     const missing = ps.filter((_, i) => !out[i])
     if (missing.length) {
-      const batch = run(STAT_SCRIPT, missing).then(b => b.toString('utf8').split('\n'))
-      missing.forEach((p, i) => {
-        const v = batch.then(lines => parseStatLine(lines[i] || ''))
-        v.catch(() => statCache.delete(p))
-        statCache.set(p, { at: now, v })
-      })
+      // A large session history exceeds the SSH command-line limit if sent
+      // as one argument list: stat it in byte-bounded chunks.
+      let at = 0
+      for (const chunk of chunksByBytes(missing)) {
+        const start = at
+        at += chunk.length
+        const batch = run(STAT_SCRIPT, chunk).then(b => b.toString('utf8').split('\n'))
+        missing.slice(start, at).forEach((p, i) => {
+          const v = batch.then(lines => parseStatLine(lines[i] || ''))
+          v.catch(() => statCache.delete(p))
+          statCache.set(p, { at: now, v })
+        })
+      }
       if (statCache.size > 2000) {
         for (const [k, c] of statCache) if (now - c.at >= ttl) statCache.delete(k)
       }
