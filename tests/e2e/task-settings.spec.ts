@@ -1,7 +1,8 @@
 import { expect, test } from './test'
 import fs from 'node:fs/promises'
 
-for (const language of ['en', 'fr']) {
+test.describe('English interface', () => {
+  const language = 'en'
   test(`read task settings and their provenance, ${language}`, async ({ page }) => {
     await page.addInitScript(lang => localStorage.setItem('herdrLanguage', lang), language)
     const row = { id: 'demo/11', repo: 'demo', repoKey: 'DEMO', n: 11, state: 'idle', kind: '', stage: 'todo', title: 'Prepare the lunar garden', msg: '', app: '', progress: null, eta: null, pr: '', review: null, reviewRound: 0, research: false, archived: false, queue: null, group: 'todo' }
@@ -30,20 +31,20 @@ for (const language of ['en', 'fr']) {
       return route.fulfill({ json: { agent: null, agents: [] } })
     })
     await page.goto('/#/board?machine=remote&task=demo%2F11')
-    const settingsTab = page.locator('.board-panel-tabs').getByRole('button', { name: language === 'fr' ? 'Réglages' : 'Settings', exact: true })
+    const settingsTab = page.locator('.board-panel-tabs').getByRole('button', { name: 'Settings', exact: true })
     await expect(settingsTab).toBeVisible()
     expect(reads).toBe(0)
     await settingsTab.click()
     const settings = page.locator('.task-settings:visible')
-    await expect(settings).toContainText(language === 'fr' ? 'Chargement' : 'Loading')
+    await expect(settings).toContainText('Loading')
     release!()
     await expect(settings).toContainText('CLI unavailable')
     fail = false
-    await settings.getByRole('button', { name: language === 'fr' ? 'Réessayer' : 'Retry' }).click()
+    await settings.getByRole('button', { name: 'Retry' }).click()
     await expect(settings).toContainText('your entry for demo')
     await expect(settings).toContainText('Task override')
     await expect(settings).toContainText('false')
-    await expect(settings).toContainText(language === 'fr' ? 'Non renseigné' : 'Not provided')
+    await expect(settings).toContainText('Not provided')
     await expect(settings.getByRole('alert')).toContainText('A setting from the repository file was ignored')
     expect(await settings.locator('input,select,textarea').count()).toBe(0)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
@@ -51,8 +52,8 @@ for (const language of ['en', 'fr']) {
     await page.screenshot({ path: `.shots/task-settings-${language}-phone.png`, fullPage: true })
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.screenshot({ path: `.shots/task-settings-${language}-desktop.png`, fullPage: true })
-    await page.locator('.board-panel-tabs').getByRole('button', { name: language === 'fr' ? 'Tâche' : 'Task', exact: true }).click()
+    await page.locator('.board-panel-tabs').getByRole('button', { name: 'Task', exact: true }).click()
     await settingsTab.click()
     expect(reads).toBe(2)
   })
-}
+})

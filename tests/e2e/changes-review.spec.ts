@@ -344,36 +344,36 @@ test('a refresh arriving during a drag cancels it: no comment on rows that are g
   await expect(page.locator('.review-note')).toHaveCount(0)
 })
 
-test('French review controls fit the phone and prepare a localized message', async ({ page, isMobile }, info) => {
+test('English review controls fit the phone with a legacy French preference', async ({ page, isMobile }, info) => {
   await page.addInitScript(() => localStorage.setItem('herdrLanguage', 'fr'))
   await setup(page)
-  await openChanges(page, 'Voir les changements')
+  await openChanges(page, 'View changes')
   const f = fileOf(page, 'src/first.ts')
   await f.locator('summary').click()
-  const line = (n: string) => f.getByRole('button', { name: `Commenter la ligne ${n}`, exact: true })
+  const line = (n: string) => f.getByRole('button', { name: `Comment on line ${n}`, exact: true })
   if (isMobile) {
-    await line('8 (ancienne ligne)').tap()
-    await f.locator('.review-line', { has: page.getByRole('button', { name: 'Commenter la ligne 10', exact: true }) }).locator('.review-source').tap()
+    await line('8 (old line)').tap()
+    await f.locator('.review-line', { has: page.getByRole('button', { name: 'Comment on line 10', exact: true }) }).locator('.review-source').tap()
     const pick = page.locator('.review-pick')
-    await expect(pick).toContainText('Ligne 10 + ancienne ligne 8')
+    await expect(pick).toContainText('Line 10 + old line 8')
     const box = (await pick.boundingBox())!
     expect(box.x).toBeGreaterThanOrEqual(0)
     expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width)
     await shot(page, info.project.name, 'french-block-chosen')
-    await pick.getByRole('button', { name: 'Commenter', exact: true }).tap()
+    await pick.getByRole('button', { name: 'Comment', exact: true }).tap()
   } else {
     await line('10').hover()
     await page.mouse.down()
-    await line('8 (ancienne ligne)').hover()
+    await line('8 (old line)').hover()
     await page.mouse.up()
   }
   await page.locator('.review-note textarea').fill('Vérifier la valeur vide')
-  const send = page.getByRole('button', { name: 'Envoyer la relecture', exact: true })
+  const send = page.getByRole('button', { name: 'Send review', exact: true })
   await expect(send).toBeVisible()
   const rect = (await send.boundingBox())!
   expect(rect.x).toBeGreaterThanOrEqual(0)
   expect(rect.x + rect.width).toBeLessThanOrEqual(page.viewportSize()!.width)
   await shot(page, info.project.name, 'french')
   await send.click()
-  await expect(field(page)).toHaveValue('Merci de revoir ces points :\n\nsrc/first.ts:10 (ancienne ligne 8) — Vérifier la valeur vide\n     function total() {\n    -  return 1')
+  await expect(field(page)).toHaveValue('Please review these points:\n\nsrc/first.ts:10 (old line 8) — Vérifier la valeur vide\n     function total() {\n    -  return 1')
 })

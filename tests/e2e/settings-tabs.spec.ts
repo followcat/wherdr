@@ -26,8 +26,7 @@ async function openConfig(page: any, text: string, transitions = {}) {
 
 test.afterEach(async () => { await show(null, {}, 'omp') })
 
-test('real Config captures navigate every tab, including a scrolled setting list', async ({ page }, info) => {
-  test.setTimeout(75_000)
+test('real Config captures switch tabs, including from a scrolled setting list', async ({ page }, info) => {
   const width = info.project.name.includes('phone') ? 80 : 120
   const fx = (name: string) => capture(name, width)
   const frame = (name: string, transitions: object = {}) => ({ text: fx(name), transitions })
@@ -41,25 +40,7 @@ test('real Config captures navigate every tab, including a scrolled setting list
   await page.getByRole('tab', { name: 'Stats', exact: true }).click()
   await expect(page.getByRole('tab', { name: 'Stats', exact: true })).toHaveAttribute('aria-selected', 'true')
   expect((await fakeHerdr('e2e.terminal_screen', { pane_id: pane })).keys).toEqual(['up', 'right', 'right'])
-  // Replay each source and destination, using the real tab frames.
-  const names: Record<string, string> = { Status: 'status-{w}', Config: 'config-{w}-returned', Usage: 'usage-{w}', Stats: 'stats-{w}' }
-  const order = Object.keys(names)
-  for (const from of order) for (const target of order) {
-    const at = (tab: string, depth = 0): any => frame(names[tab]!, depth >= 3 ? {} : {
-      ...(order.indexOf(tab) > 0 ? { left: at(order[order.indexOf(tab) - 1]!, depth + 1) } : {}),
-      ...(order.indexOf(tab) < 3 ? { right: at(order[order.indexOf(tab) + 1]!, depth + 1) } : {}),
-    })
-    const start = at(from)
-    await show(start.text, start.transitions)
-    // The endpoint must use the live source, even when the browser still
-    // holds the preceding tab's snapshot.
-    await page.getByRole('tab', { name: target, exact: true }).click()
-    await expect(page.getByRole('tab', { name: target, exact: true })).toHaveAttribute('aria-selected', 'true')
-    await expect(page.locator('.hw-sheet .spinner')).toHaveCount(0)
-    const result = await (await page.request.get(`/api/screen?pane=${encodeURIComponent(pane)}`)).json()
-    expect(result.tab).toBe(target)
-    expect((await fakeHerdr('e2e.terminal_screen', { pane_id: pane })).keys.every((k: string) => ['up', 'left', 'right'].includes(k))).toBe(true)
-  }
+  // Every source and destination tab: tests/settingsTabNavigation.test.ts (real frames, real handler).
   await show(fx('config-{w}-bottom'), { up: frame('config-{w}-bottom-up', { up: frame('config-{w}-middle', { up: frame('config-{w}-disabled', { up: frame('config-{w}-open', { up: tabs }) }) }) }) })
   await page.getByRole('tab', { name: 'Usage', exact: true }).click()
   await expect(page.getByRole('tab', { name: 'Usage', exact: true })).toHaveAttribute('aria-selected', 'true')

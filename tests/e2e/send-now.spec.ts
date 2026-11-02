@@ -13,10 +13,11 @@ test.afterEach(async () => {
   await fakeHerdr('e2e.interaction_screen', { pane_id: pane, text: null, agent: 'omp', status: 'idle' })
 })
 
-test('conversation sends the native queue now on phone and desktop, in EN and FR', async ({ page }) => {
+test('conversation sends the native queue now on phone and desktop, with a legacy French preference', async ({ page }) => {
   await setup()
   await page.goto(`/#/a/${pane}`)
-  await expect(page.locator('.agent-top .pill-kind')).toHaveText('claude')
+  // The unnamed phone identity uses the agent kind as its title, without a subtitle.
+  await expect(page.locator('.agent-top .phone-identity-title, .agent-top .pill-kind')).toHaveText(/^claude$/i)
   // Add a wherdr message so the pending-list region is present even with a fake transcript.
   await page.locator('.prompt').locator('textarea, [contenteditable="true"]').first().fill('Also update the changelog.')
   await page.locator('.prompt-send').click()
@@ -35,19 +36,19 @@ test('conversation sends the native queue now on phone and desktop, in EN and FR
   await page.evaluate(() => localStorage.setItem('herdrLanguage', 'fr'))
   await page.reload()
   await page.setViewportSize({ width: 390, height: 844 })
-  const french = page.getByRole('button', { name: 'Envoyer maintenant', exact: true })
+  const french = page.getByRole('button', { name: 'Send now', exact: true })
   await expect(french).toBeVisible()
   await french.click()
   await expect(french).toHaveCount(0)
   await setup(queued, 'codex')
-  await expect(page.locator('.agent-top .pill-kind')).toHaveText('codex')
+  await expect(page.locator('.agent-top .phone-identity-title, .agent-top .pill-kind')).toHaveText(/^codex$/i)
   await expect(french).toHaveCount(0)
 })
 
 test('terminal Ctrl+Enter reaches Herdr as a named key', { tag: '@chromium-desktop' }, async ({ page }, info) => {
   await setup()
   await page.goto(`/#/a/${pane}`)
-  await page.getByRole(info.project.name.includes('desktop') ? 'tab' : 'button', { name: 'Terminal', exact: true }).click()
+  await page.getByRole('button', { name: info.project.name.includes('desktop') ? 'Show terminal' : 'Terminal', exact: true }).click()
   const input = page.locator('.xterm-helper-textarea')
   await input.focus()
   await input.press('Control+Enter')

@@ -181,39 +181,39 @@ test('a question with no answers: Reply… goes to the field', async ({ page }) 
   await expect(panel.locator('.composer textarea')).toBeFocused()
 })
 
-test('a permission: Allow, Always allow, Refuse; a sign-in: Open terminal (French)', async ({ page }, testInfo) => {
+test('a permission: Allow, Always allow, Refuse; a sign-in: Open terminal (legacy French preference)', async ({ page }, testInfo) => {
   await page.addInitScript(() => localStorage.setItem('herdrLanguage', 'fr'))
   write({ ...task, kind: 'permission', msg: 'Need your OK to delete the test data of the staging shop (yes / always / no)' })
   const banner = page.locator('.board-panel .task-needs')
   await shows(page, 'Permission')
-  await expect(banner.locator('.task-needs-actions button')).toHaveText(['Autoriser', 'Toujours autoriser', 'Refuser'])
+  await expect(banner.locator('.task-needs-actions button')).toHaveText(['Allow', 'Always allow', 'Refuse'])
   await page.screenshot({ path: `.shots/needs-permission-fr-${testInfo.project.name}.png` })
   await desktopShot(page, '.shots/needs-permission-fr-desktop.png')
-  await banner.getByRole('button', { name: 'Refuser' }).click()
-  await expect.poll(() => fs.existsSync(path.join(root, 'told')) && fs.readFileSync(path.join(root, 'told'), 'utf8')).toBe('Refusé : ne le fais pas.')
+  await banner.getByRole('button', { name: 'Refuse' }).click()
+  await expect.poll(() => fs.existsSync(path.join(root, 'told')) && fs.readFileSync(path.join(root, 'told'), 'utf8')).toBe('Refused: do not do it.')
 
   // One of its numbered answers, it is offered too.
   write({ ...task, kind: 'permission', msg: 'Lancer le nettoyage ?\n1) Autoriser une fois\n2) Toujours autoriser\n3) Refuser' })
   await shows(page, 'Lancer le nettoyage ? 1) Autoriser une fois 2) Toujours autoriser 3) Refuser', '.task-needs-text')
-  await expect(banner.locator('.task-needs-actions button')).toHaveText(['Autoriser', 'Toujours autoriser', 'Refuser'])
+  await expect(banner.locator('.task-needs-actions button')).toHaveText(['Allow', 'Always allow', 'Refuse'])
 
   // Said to the human as something they can do, it is offered too.
   write({ ...task, kind: 'permission', msg: 'Lancer le script de nettoyage ? Tu peux aussi toujours autoriser ce script.' })
   await shows(page, 'Lancer le script de nettoyage ? Tu peux aussi toujours autoriser ce script.', '.task-needs-text')
-  await expect(banner.locator('.task-needs-actions button')).toHaveText(['Autoriser', 'Toujours autoriser', 'Refuser'])
+  await expect(banner.locator('.task-needs-actions button')).toHaveText(['Allow', 'Always allow', 'Refuse'])
 
   // A sentence that only uses the word offers no permanent permission.
   write({ ...task, kind: 'permission', msg: 'Ce script supprime toujours les données de test. Autoriser cette seule exécution ?' })
   await shows(page, 'Ce script supprime toujours les données de test. Autoriser cette seule exécution ?', '.task-needs-text')
-  await expect(banner.locator('.task-needs-actions button')).toHaveText(['Autoriser', 'Refuser'])
+  await expect(banner.locator('.task-needs-actions button')).toHaveText(['Allow', 'Refuse'])
   write({ ...task, kind: 'permission', msg: 'Our policy is to always allow read-only commands. May I delete the staging data for this run only?' })
   await shows(page, 'Our policy is to always allow read-only commands. May I delete the staging data for this run only?', '.task-needs-text')
-  await expect(banner.locator('.task-needs-actions button')).toHaveText(['Autoriser', 'Refuser'])
+  await expect(banner.locator('.task-needs-actions button')).toHaveText(['Allow', 'Refuse'])
 
   write({ ...task, kind: 'auth', msg: 'Need a GitHub login to open the PR' })
-  await shows(page, 'Connexion')
-  await expect(banner.locator('.task-needs-actions button')).toHaveText(['Ouvrir le terminal'])
+  await shows(page, 'Sign-in')
+  await expect(banner.locator('.task-needs-actions button')).toHaveText(['Open terminal'])
   await page.screenshot({ path: `.shots/needs-auth-fr-${testInfo.project.name}.png` })
-  await banner.getByRole('button', { name: 'Ouvrir le terminal' }).click()
+  await banner.getByRole('button', { name: 'Open terminal' }).click()
   await expect(page.locator('.board-panel #term')).toBeVisible()
 })

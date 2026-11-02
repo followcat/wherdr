@@ -2,13 +2,9 @@
 # forbidden patterns file is local and never committed), then the end-to-end tests
 # in Chromium and WebKit against a fake Herdr server.
 #
-# Two depths of browser tests (tests/e2e/scope.ts):
-# - light (E2E_SCOPE=light), for pull requests and pushes to main or develop: every test
-#   on chromium-phone in two shards, plus the tests tagged for chromium-desktop
-#   (keyboard, split view), webkit-phone (Safari/iOS journeys) and webkit-desktop
-#   (iPad, desktop Safari);
-# - full, on a manual run or a release tag vX.Y.Z: every test on all four projects.
-# The same five jobs run in both cases; only their selection changes.
+# Light on PRs and branch pushes; full on nightly develop, manual and release runs.
+# Phone projects use six Chromium shards and two WebKit shards. Desktop projects
+# keep one job each. No test is removed by sharding.
 #
 # The branch protection requires the checks named `checks` and `e2e`: `e2e` is the
 # last job, green only when every browser job is. After a failure, "Re-run failed
@@ -24,6 +20,9 @@ on:
     branches: [main, develop]
   # Manual run: the full suite, on any branch.
   workflow_dispatch:
+  # GitHub schedules run from the default branch; check out develop explicitly.
+  schedule:
+    - cron: '17 18 * * *'
 
 permissions:
   contents: read
@@ -38,10 +37,13 @@ env:
 
 jobs:
   checks:
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       - uses: actions/setup-node@v7
         with:
@@ -72,12 +74,33 @@ jobs:
     timeout-minutes: 5
     outputs:
       e2e: ${{ steps.filter.outputs.e2e }}
+      engine: ${{ steps.engine.outputs.engine }}
+      sha: ${{ steps.plan.outputs.sha }}
+      scope: ${{ steps.plan.outputs.scope }}
+      matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7
         with:
           # A pull request is checked out as its merge commit: the first
           # parent is the base branch.
           fetch-depth: 2
+          ref: ${{ github.event_name == 'schedule' && 'develop' || github.ref }}
+
+      - name: Select browser scope, shards and package version
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          node scripts/ci-browser-plan.mjs >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Look for an engine input change
+        id: engine
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: node scripts/engine-changes.mjs
 
       - name: Look for a change that needs the browser tests
         id: filter
@@ -110,21 +133,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      # Full on a manual run or a release tag, light otherwise.
-      E2E_SCOPE: ${{ (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && 'full' || 'light' }}
+      E2E_SCOPE: ${{ needs.changes.outputs.scope }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - project: chromium-phone
-            shard: 1/2
-          - project: chromium-phone
-            shard: 2/2
-          - project: chromium-desktop
-          - project: webkit-phone
-          - project: webkit-desktop
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       - uses: actions/setup-node@v7
         with:
@@ -147,6 +163,21 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ steps.pw.outputs.browser }}
+
+      # Cache downloaded packages, never /usr or an installed-package snapshot:
+      # apt still resolves dependencies and installs them on this fresh runner.
+      - name: Cache browser dependency packages
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/playwright-apt/*.deb
+          key: playwright-apt-${{ runner.os }}-24.04-${{ steps.pw.outputs.version }}-${{ steps.pw.outputs.browser }}
+
+      - name: Reuse downloaded apt packages
+        env:
+          APT_ARCHIVES: ${{ runner.temp }}/playwright-apt
+        run: |
+          mkdir -p "$APT_ARCHIVES/partial"
+          echo "Dir::Cache::archives \"$APT_ARCHIVES\";" | sudo tee /etc/apt/apt.conf.d/99-playwright-cache
 
       - name: Use Ubuntu's public mirror for browser dependencies
         run: |
@@ -197,7 +228,7 @@ jobs:
 
   # The required check. `always()`: a skipped job would count as a success, so
   # this one runs whatever happened and reads the results itself. The matrix
-  # result is `success` only when all five browser jobs passed: a failed,
+  # result is `success` only when all browser jobs passed: a failed,
   # cancelled or skipped one turns it red.
   e2e:
     needs: [changes, e2e-project]
@@ -220,3 +251,27 @@ jobs:
             true) [ "$PROJECTS" = success ] ;;
             *) echo "unexpected browser-test decision: '$NEEDED'"; exit 1 ;;
           esac
+
+  engine:
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
+    uses: ./.github/workflows/engine-ci.yml
+    with:
+      ref: ${{ needs.changes.outputs.sha }}
+
+  # Always present, including when the conditional Rust workflow is skipped.
+  engine-checks:
+    needs: [changes, engine]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - name: Require the selected engine checks
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          NEEDED: ${{ needs.changes.outputs.engine }}
+          ENGINE: ${{ needs.engine.result }}
+        run: sh scripts/engine-result.sh

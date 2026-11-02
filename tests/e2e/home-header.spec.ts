@@ -3,7 +3,8 @@ import { expect, test } from './test'
 // Agent list header: at the minimum sidebar width the buttons must stay inside the
 // row. No plugin button there: plugin actions are in the machine row's "…" menu.
 for (const width of [null, 280]) {
-  for (const lang of ['en', 'fr']) {
+  test.describe('English interface', () => {
+    const lang = 'en'
     test(`header buttons fit (sidebar ${width ?? 'default'}, ${lang})`, async ({ page }) => {
       await page.addInitScript(([w, l]) => {
         // No service worker in the tests: resolve the push lookup at once.
@@ -41,16 +42,16 @@ for (const width of [null, 280]) {
       // Folded buttons stay reachable through "…".
       if (await row.locator('.space-menu').count()) {
         await row.locator('.space-menu').click()
-        await expect(page.getByText(lang === 'fr' ? /Réglages/ : /Settings/).last()).toBeVisible()
+        await expect(page.getByText(/Settings/).last()).toBeVisible()
         await page.keyboard.press('Escape')
       }
       // Plugin actions: machine row "…" › Plugin actions; Herdr-side ones say so.
       await page.locator('.solo-machine-options').click()
-      await page.getByText(lang === 'fr' ? 'Actions des plugins' : 'Plugin actions').last().click()
+      await page.getByText('Plugin actions').last().click()
       await expect(page.getByText('Board').last()).toBeVisible()
-      await expect(page.getByText(lang === 'fr' ? /S’ouvre dans Herdr/ : /Opens in Herdr/).last()).toBeVisible()
+      await expect(page.getByText(/Opens in Herdr/).last()).toBeVisible()
     })
-  }
+  })
 }
 
 test('the eyebrow shows both versions and opens Settings › About', async ({ page }) => {

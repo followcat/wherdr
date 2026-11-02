@@ -1,6 +1,6 @@
 // Leak check in a linked worktree: patterns of the main checkout, warning otherwise.
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -41,6 +41,20 @@ afterEach(() => {
 const hasGit = spawnSync('git', ['--version']).status === 0
 
 describe.skipIf(!hasGit)('check-leaks in a worktree', () => {
+  it('passes the repository gitleaks config when scanning an exported index', () => {
+    const { wt } = repoWithWorktree()
+    const config = path.join(wt, '.gitleaks.toml')
+    writeFileSync(config, '[extend]\nuseDefault = true\n')
+    const binary = path.join(wt, 'gitleaks')
+    writeFileSync(binary, '#!/usr/bin/env node\nif (process.argv[2] !== "version" && !process.argv.includes(process.env.EXPECTED_CONFIG)) process.exit(1)\n')
+    chmodSync(binary, 0o755)
+    const r = spawnSync(process.execPath, [script], {
+      cwd: wt, encoding: 'utf8', env: { ...env, PATH: `${wt}${path.delimiter}${env.PATH}`, EXPECTED_CONFIG: config },
+    })
+    expect(r.stdout).toContain('gitleaks: no secret found.')
+    expect(r.status).toBe(0)
+  })
+
   it('finds the main checkout from a linked worktree, not from the main one', () => {
     const { main, wt } = repoWithWorktree()
     expect(realpathSync(mainCheckoutRoot(wt))).toBe(main)

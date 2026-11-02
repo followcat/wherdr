@@ -214,6 +214,9 @@ const hasGitleaks = () => !spawnSync('gitleaks', ['version'], { encoding: 'utf8'
 function runGitleaks({ dir, root, range }) {
   // --verbose lists each finding (commit, file, line, rule); --redact hides the secret itself.
   const opts = ['--redact', '--verbose', '--no-banner', '--exit-code', '1']
+  // Index scans run on a temporary export, outside the repository config discovery.
+  const config = path.join(root ?? git(['rev-parse', '--show-toplevel']).trim(), '.gitleaks.toml')
+  if (existsSync(config)) opts.push('--config', config)
   const args = range ? ['git', root, `--log-opts=${range}`, ...opts] : ['dir', dir, ...opts]
   if (!hasGitleaks()) {
     console.log('gitleaks: not installed, skipped (https://github.com/gitleaks/gitleaks). Forbidden patterns still run.')

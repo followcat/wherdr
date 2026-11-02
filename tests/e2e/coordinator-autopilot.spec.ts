@@ -41,29 +41,29 @@ async function fakeBoard(page: Page) {
   return fake
 }
 
-for (const language of ['en', 'fr'] as const) {
-  const fr = language === 'fr'
+test.describe('English interface', () => {
+  const language = 'en'
   test(`Autopilot: saved goal, refusal, turn on, stop (${language})`, async ({ page }) => {
     await page.addInitScript(lang => localStorage.setItem('herdrLanguage', lang), language)
     const fake = await fakeBoard(page)
     await page.goto('/#/board')
     const main = page.locator('.board-autopilots .autopilot-switch')
     await expect(main).toHaveAttribute('aria-checked', 'false')
-    await expect(main).toContainText(fr ? 'Arrêté' : 'Off')
+    await expect(main).toContainText('Off')
 
     await main.click()
     const dialog = page.getByRole('dialog')
-    const goal = dialog.getByRole('textbox', { name: fr ? 'Objectif' : 'Goal', exact: true })
+    const goal = dialog.getByRole('textbox', { name: 'Goal', exact: true })
     // Filled with the goal it saved.
     await expect(goal).toHaveValue('Keep the garden healthy')
-    const turnOn = dialog.getByRole('button', { name: fr ? 'Activer Autopilot' : 'Turn on Autopilot', exact: true })
+    const turnOn = dialog.getByRole('button', { name: 'Turn on Autopilot', exact: true })
     // No goal: nothing is sent.
     await goal.fill('  ')
     await expect(turnOn).toBeDisabled()
     expect(fake.actions).toEqual([])
 
     await goal.fill('Grow a lunar garden')
-    await dialog.getByRole('textbox', { name: fr ? 'Fréquence (optionnel)' : 'Every (optional)', exact: true }).fill('2h')
+    await dialog.getByRole('textbox', { name: 'Every (optional)', exact: true }).fill('2h')
     // The board's refusal is shown as it said it, and nothing is assumed.
     fake.refuse = 'Tell a coordinator its goal first.'
     await turnOn.click()
@@ -74,17 +74,17 @@ for (const language of ['en', 'fr'] as const) {
     await turnOn.click()
     await expect(dialog).toBeHidden()
     await expect(main).toHaveAttribute('aria-checked', 'true')
-    await expect(main).toContainText(fr ? 'Prochain réveil dans 2h' : 'Next wake in 2h')
+    await expect(main).toContainText('Next wake in 2h')
     expect(fake.actions.at(-1)).toMatchObject({ action: 'on', goal: 'Grow a lunar garden', every: '2h', tasksPerDay: '', to: { kind: 'main' } })
 
     // Stopping asks first.
     await main.click()
     await expect(dialog.getByText('Grow a lunar garden')).toBeVisible()
-    await dialog.getByRole('button', { name: fr ? 'Arrêter Autopilot' : 'Stop Autopilot', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Stop Autopilot', exact: true }).click()
     await expect(main).toHaveAttribute('aria-checked', 'false')
     expect(fake.actions.at(-1)).toMatchObject({ action: 'off', to: { kind: 'main' } })
   })
-}
+})
 
 test('Autopilot: machine and project targeting, panel state, old version', async ({ page }) => {
   const fake = await fakeBoard(page)

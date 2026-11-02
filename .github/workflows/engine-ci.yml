@@ -1,0 +1,64 @@
+# Called only after the parent workflow selects an engine input change.
+name: Engine
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ''
+permissions:
+  contents: read
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: engine
+    env:
+      GIT_AUTHOR_NAME: ci
+      GIT_AUTHOR_EMAIL: ci@example.com
+      GIT_COMMITTER_NAME: ci
+      GIT_COMMITTER_EMAIL: ci@example.com
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Install Rust
+        id: rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          echo "version=$(rustc -V | tr ' ' '-')" >> "$GITHUB_OUTPUT"
+          echo "host=$(rustc -vV | sed -n 's/^host: //p')" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Cache the build
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            engine/target
+          key: engine-${{ runner.os }}-${{ steps.rust.outputs.host }}-${{ steps.rust.outputs.version }}-${{ hashFiles('engine/Cargo.lock') }}
+          restore-keys: engine-${{ runner.os }}-${{ steps.rust.outputs.host }}-${{ steps.rust.outputs.version }}-
+      - name: Full Linux check
+        if: runner.os == 'Linux'
+        run: npm run check -- --all
+      - name: Platform checks on macOS
+        if: runner.os == 'macOS'
+        # Warm-start probes rustc; other fixtures mutate HOME in the same test
+        # process. Separate invocations keep its compiler identity consistent.
+        run: |
+          npm run check plan-sandbox plan-steps detached-jobs home-folder-more finish-commit take-over-more coordinator-levels board-coordinators-inks
+          npm run check warm-start
+      - name: Ensure checks only generated files inside engine
+        working-directory: .
+        run: |
+          git diff --exit-code -- . ':!engine'
+          test -z "$(git ls-files --others --exclude-standard -- . ':!engine')"

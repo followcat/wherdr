@@ -1,10 +1,28 @@
-import { checkoutMessage, planClose, taskStopMessage, tasksClosing, type CloseKind, type ClosePlan, type CheckoutStatus } from '~/utils/closeFlow'
+import { checkoutMessage, planClose, taskStopMessage, tasksClosing, widerClose, type CloseKind, type ClosePlan, type CheckoutStatus } from '~/utils/closeFlow'
 
 interface CloseStatus { git: boolean, modified?: number, untracked?: number, truncated?: boolean }
 
-export async function confirmClose(kind: CloseKind, id: string, message: string, action: string): Promise<ClosePlan | null> {
-  const plan = planClose(herdrState.value, kind, id)
-  if (!plan.workspaces.length) return null
+// What a close confirmation says about its target, written from the plan
+// computed right now (names, counts, what stops).
+export type CloseText = (plan: ClosePlan) => { message: string, action: string }
+
+// Asks, then checks the structure again before closing: if the close would now
+// take more than what was shown (a pane added to the space, the last other pane
+// gone, a worktree group…), the updated confirmation is shown again. A target
+// that disappeared closes nothing.
+export async function confirmClose(kind: CloseKind, id: string, text: CloseText): Promise<ClosePlan | null> {
+  let shown: ClosePlan | null = null
+  for (let round = 0; round < 4; round++) {
+    const plan = planClose(herdrState.value, kind, id)
+    if (!plan.workspaces.length) return null
+    if (shown && !widerClose(shown, plan)) return plan
+    if (!(await askClose(kind, plan, text(plan)))) return null
+    shown = plan
+  }
+  return null
+}
+
+async function askClose(kind: CloseKind, plan: ClosePlan, { message, action }: { message: string, action: string }): Promise<boolean> {
   const statuses: CheckoutStatus[] = []
   try {
     for (const w of plan.workspaces) {
@@ -22,7 +40,7 @@ export async function confirmClose(kind: CloseKind, id: string, message: string,
     }
   } catch (err) {
     toast((err as Error).message, true)
-    return null
+    return false
   }
   const details = statuses.length || plan.group ? `\n${checkoutMessage(statuses, plan.group, tl)}` : ''
   const processes = plan.group
@@ -33,5 +51,5 @@ export async function confirmClose(kind: CloseKind, id: string, message: string,
   await refreshBoardLinks()
   const tasks = taskStopMessage(tasksClosing(plan, kind, boardLinksNow()), tl)
   const text = `${message}${processes}${tasks ? `\n\n${tasks.message}` : ''}${details}`
-  return await askConfirm(text, tasks?.action || groupAction) ? plan : null
+  return await askConfirm(text, tasks?.action || groupAction)
 }

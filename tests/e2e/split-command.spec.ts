@@ -4,7 +4,7 @@
 import { expect, test } from './test'
 import { OMP_CHAT_PANE, fakeHerdr } from './scenario.mjs'
 
-test.skip(({ isMobile }) => !isMobile, 'phone flow: the Options bottom sheet')
+test.skip(({ isMobile }) => !isMobile, 'phone flow: the pane sheet of the header identity')
 
 // The new pane shows up in Herdr's snapshots only after this long, so the
 // server gets the pane id before its pane list has it.
@@ -23,7 +23,7 @@ test('a split with a shell command opens the pane with no error toast', async ({
   await page.goto(`/#/a/${OMP_CHAT_PANE}`)
   await expect(page.locator('.chat').getByText('Ready when you are.')).toBeVisible()
 
-  await page.getByRole('button', { name: 'Options' }).click()
+  await page.locator('.phone-identity').click()
   await page.locator('.hw-sheet').getByText('Split right').click()
   const sheet = page.getByRole('dialog').filter({ hasText: 'Start in a new pane' })
   await expect(sheet).toBeVisible()
