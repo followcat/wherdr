@@ -180,6 +180,14 @@ describe('messages sent to omp during the dialog', () => {
     expect(viaPrompt({ agent: 'codex', status: 'blocked', prompt: null })).toBe(true)
     expect(viaPrompt({ agent: 'omp', status: 'idle', prompt: null })).toBe(true)
   })
+  // OpenCode's permission/question dialog owns the keys while blocked — a
+  // composer Enter would answer it. Always the prompt route: it also keeps
+  // new sends ordered behind an entry already held.
+  it('OpenCode always takes the prompt route, blocked or not', () => {
+    expect(viaPrompt({ agent: 'opencode', status: 'blocked', prompt: null })).toBe(true)
+    expect(viaPrompt({ agent: 'opencode', status: 'idle', prompt: null })).toBe(true)
+    expect(viaPrompt({ agent: 'opencode', status: 'working', prompt: null })).toBe(true)
+  })
   it('are held by the server while the input field is hidden', () => {
     expect(shouldHold('omp', 'idle', false, false)).toBe(true)
     expect(shouldHold('omp', 'idle', true, false)).toBe(false)

@@ -125,6 +125,21 @@ describe('inputVisible', () => {
     // A "❭" echoed in the scrollback is followed by the reply, not a rule.
     expect(inputVisible('❭ a scrolled-off message\n\n   the reply text')).toBe(false)
   })
+
+  // OpenCode 2.x: its composer is a box — "┃" input lines ending on a "╹▀"
+  // bottom rule, just above the status footer.
+  it('sees OpenCode’s composer field (┃ lines ending on its ╹▀ rule)', () => {
+    const idle = ` some output\n\n┃ Ask anything…\n┃\n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n opencode 2.0 · gpt-5 · ~/repo\n`
+    expect(inputVisible(idle)).toBe(true)
+  })
+  it('does not see OpenCode’s field during a permission dialog', () => {
+    // The dialog keeps the composer box on screen — its markers must fail it.
+    const dialog = `△ Permission required\n\n❯ Allow once   Always   Reject\n\n┃ run tests\n┃\n╹▀▀▀▀▀▀▀▀▀▀▀▀▀\n↑↓ select · enter confirm · esc dismiss\n`
+    expect(inputVisible(dialog)).toBe(false)
+    // No composer at all: no ┃ above the rule.
+    const scrolled = `output\n╹▀▀▀▀▀▀▀▀▀▀▀▀▀\nfooter\n`
+    expect(inputVisible(scrolled)).toBe(false)
+  })
 })
 
 describe('panelOpen', () => {

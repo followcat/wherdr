@@ -20,5 +20,9 @@ export function viaPrompt(p: Pick<Pane, 'agent' | 'status' | 'prompt' | 'stopped
   // their Enter would answer it. The prompt route holds the message instead,
   // until the composer's field is back.
   if (p.agent === 'devin') return true
+  // OpenCode's permission/question dialog owns the keys while the pane is
+  // blocked — same hold needed, and the prompt route also keeps send order
+  // behind an entry already held.
+  if (p.agent === 'opencode') return true
   return !p.prompt && (p.agent === 'claude' || p.agent === 'codex')
 }
