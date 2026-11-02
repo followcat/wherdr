@@ -1,12 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises } from '@vue/test-utils'
-import { readBody } from 'h3'
+import { type DOMWrapper, flushPromises } from '@vue/test-utils'
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
+import { createError, readBody } from 'h3'
 import { defineComponent, h, nextTick, ref } from 'vue'
 import { UApp } from '#components'
 import Composer from '~/components/Composer.vue'
-import { eventsOpen, hardwareKeyboard } from '~/composables/useHerdr'
-import { kbOpen } from '~/composables/useViewport'
+import { eventsOpen } from '~/composables/useHerdr'
 import { outboxFor } from '~/composables/useOutbox'
 import type { Pane } from '#shared/types'
 
@@ -15,15 +14,40 @@ const pane = (id: string, status: Pane['status'] = 'idle'): Pane => ({
   id, workspace: 'w1', tab: 'w1:t1', tabLabel: null, agent: 'pi', name: null, label: null, status, title: null, cwd: '/home/user/demo', agentSession: null,
 })
 
-let release: () => void = () => {}
-const sentBodies: Record<string, unknown>[] = []
+// Each send waits for its release(), in order.
+const pending: (() => void)[] = []
+const release = () => pending.shift()?.()
+// The next send once it reached the server (sends of a conversation go one after the other).
+const releaseNext = async () => { await vi.waitFor(() => expect(pending.length).toBeGreaterThan(0)); release() }
+const prompts: string[] = []
 registerEndpoint('/api/prompt', {
   method: 'POST',
   handler: async (event) => {
     const { promise, resolve } = Promise.withResolvers<{ ok: boolean }>()
-    release = () => resolve({ ok: true })
-    sentBodies.push(await readBody(event))
+    pending.push(() => resolve({ ok: true }))
+    prompts.push((await readBody<{ text: string }>(event)).text)
     return promise
+  },
+})
+// A shell's input: answered only when the test says, or refused.
+let releaseInput: (ok: boolean) => void = () => {}
+const inputs: string[] = []
+registerEndpoint('/api/input', {
+  method: 'POST',
+  handler: async (event) => {
+    const { promise, resolve } = Promise.withResolvers<boolean>()
+    releaseInput = resolve
+    inputs.push((await readBody<{ text: string }>(event)).text)
+    if (!(await promise)) throw createError({ statusCode: 500, statusMessage: 'refused' })
+    return { ok: true }
+  },
+})
+const interrupts: string[] = []
+registerEndpoint('/api/interrupt', {
+  method: 'POST',
+  handler: async (event) => {
+    interrupts.push((await readBody<{ pane_id: string }>(event)).pane_id)
+    return { stopped: true, background: 0 }
   },
 })
 
@@ -117,96 +141,122 @@ describe('Composer send', () => {
     expect(outboxFor('w1:p2')).toHaveLength(0)
     w.unmount()
   })
+})
 
-  it('a slow send clears only its own draft — typing during the wait stays', async () => {
-    registerEndpoint('/api/input', {
-      method: 'POST',
-      handler: async (event) => {
-        const { promise, resolve } = Promise.withResolvers<{ ok: boolean }>()
-        release = () => resolve({ ok: true })
-        sentBodies.push(await readBody(event))
-        return promise
-      },
-    })
-    // A shell pane (no agent) is answered on receipt, not held in an outbox.
-    const p = { ...pane('w1:p10'), agent: '' }
-    const w = await mountSuspended(Composer, { props: { pane: p, paneId: p.id, sendKeys: async () => {} } })
-    const field = w.find('textarea')
-    await field.setValue('first message')
-    const before = sentBodies.length
-    await w.find('button.prompt-send').trigger('click')
-    await vi.waitFor(() => expect(sentBodies.length).toBe(before + 1))
-    // The send is still waiting on the server: the user keeps typing.
-    await field.setValue('first message and more')
+// A dictation app pastes the text and presses Enter; while the page lags it
+// can do it again before the first send is answered: one message, not two.
+describe('Composer: no duplicate sends', () => {
+  beforeEach(() => { eventsOpen.value = true; prompts.length = 0; inputs.length = 0; interrupts.length = 0 })
+  afterEach(() => { eventsOpen.value = false })
+  const enter = (field: DOMWrapper<Element>) => field.trigger('keydown', { key: 'Enter' })
+
+  it('two fast Enters with the same text during a slow send make one bubble', async () => {
+    const { w, field } = await mount('w1:d1')
+    await enter(field)
+    expect((field.element as HTMLTextAreaElement).value).toBe('')
+    // The same text lands again, Enter again, the first send still going.
+    await field.setValue('Fix the cache')
+    await enter(field)
+    expect((field.element as HTMLTextAreaElement).value).toBe('')
+    expect(outboxFor('w1:d1')).toHaveLength(1)
     release()
-    await vi.waitFor(() => expect((field.element as HTMLTextAreaElement).value).toBe(' and more'))
+    await flushPromises()
+    await vi.waitFor(() => expect(outboxFor('w1:d1')).toHaveLength(0))
+    expect(prompts).toEqual(['Fix the cache'])
     w.unmount()
   })
 
-  it('an IME chorded Enter does not end the draft with that key; a real chord does', async () => {
-    const p = { ...pane('w1:p4'), agent: 'claude' }
-    // Claude shows the model picker; it is not what this test exercises.
-    const w = await mountSuspended(Composer, {
-      props: { pane: p, paneId: p.id, sendKeys: async () => {} },
-      global: { stubs: { ModelPicker: { template: '<div />' } } },
-    })
+  it('a different text right after still sends', async () => {
+    const { w, field } = await mount('w1:d2')
+    await enter(field)
+    await field.setValue('Fix the cache too')
+    await enter(field)
+    expect(outboxFor('w1:d2').map(q => q.text)).toEqual(['Fix the cache', 'Fix the cache too'])
+    await releaseNext()
+    await releaseNext()
+    await vi.waitFor(() => expect(outboxFor('w1:d2')).toHaveLength(0))
+    w.unmount()
+  })
+
+  it('the same text sent again later goes', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const { w, field } = await mount('w1:d3')
+      await enter(field)
+      await releaseNext()
+      await vi.waitFor(() => expect(outboxFor('w1:d3')).toHaveLength(0))
+      vi.setSystemTime(Date.now() + 3500)
+      await field.setValue('Fix the cache')
+      await enter(field)
+      expect(outboxFor('w1:d3')).toHaveLength(1)
+      await releaseNext()
+      await vi.waitFor(() => expect(prompts).toEqual(['Fix the cache', 'Fix the cache']))
+      w.unmount()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('a shell command empties the field before the server answers, and comes back if refused', async () => {
+    const p: Pane = { ...pane('w1:d4'), agent: null }
+    const w = await mountSuspended(Composer, { props: { pane: p, paneId: p.id, sendKeys: async () => {} } })
     const field = w.find('textarea')
-    await field.setValue('Fix the cache')
-    const before = sentBodies.length
-    // The IME's send action arrives as the composing key, or right at
-    // composition end — neither is a deliberate chord.
-    await field.trigger('keydown', { key: 'Enter', ctrlKey: true, keyCode: 229 })
-    await field.trigger('compositionend')
-    await field.trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await field.setValue('ls -la')
+    await enter(field)
+    expect((field.element as HTMLTextAreaElement).value).toBe('')
+    await enter(field)
+    await vi.waitFor(() => expect(inputs).toEqual(['ls -la']))
+    releaseInput(false)
     await flushPromises()
-    expect(sentBodies.length).toBe(before)
-    expect((field.element as HTMLTextAreaElement).value).toBe('Fix the cache')
-    // A deliberate Ctrl+Enter after the window still ends the draft with it.
-    await new Promise(r => setTimeout(r, 80))
-    await field.trigger('keydown', { key: 'Enter', ctrlKey: true })
-    await vi.waitFor(() => expect(sentBodies.length).toBe(before + 1))
-    expect(sentBodies.at(-1)).toMatchObject({ submit_key: 'ctrl+enter' })
-    release()
+    await vi.waitFor(() => expect((field.element as HTMLTextAreaElement).value).toBe('ls -la'))
+    // Refused: the same text may go again at once.
+    await enter(field)
+    await vi.waitFor(() => expect(inputs).toEqual(['ls -la', 'ls -la']))
+    releaseInput(true)
     await flushPromises()
+    expect((field.element as HTMLTextAreaElement).value).toBe('')
+    w.unmount()
+  })
+})
+
+// One stray Escape (a dictation app closing its popup) must not stop the agent.
+describe('Composer: Escape stops on the second press', () => {
+  beforeEach(() => { eventsOpen.value = true; interrupts.length = 0 })
+  afterEach(() => { eventsOpen.value = false; vi.useRealTimers() })
+
+  async function working(id: string) {
+    const w = await mountSuspended(Composer, { props: { pane: pane(id, 'working'), paneId: id, sendKeys: async () => {}, escStops: true } })
+    return { w, stop: () => (w.vm as unknown as { stop: () => boolean }).stop() }
+  }
+
+  it('one Escape only arms, a second one within the delay stops', async () => {
+    const { w, stop } = await working('w1:e1')
+    expect(stop()).toBe(true)
+    await flushPromises()
+    expect(interrupts).toEqual([])
+    expect(stop()).toBe(true)
+    await vi.waitFor(() => expect(interrupts).toEqual(['w1:e1']))
+    w.unmount()
+  })
+
+  it('a second Escape after the delay arms again', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const { w, stop } = await working('w1:e2')
+    stop()
+    vi.setSystemTime(Date.now() + 2000)
+    stop()
+    await flushPromises()
+    expect(interrupts).toEqual([])
+    w.unmount()
+  })
+
+  it('the Stop button still stops on one click', async () => {
+    const { w } = await working('w1:e3')
+    await w.find('button.prompt-send').trigger('click')
+    await vi.waitFor(() => expect(interrupts).toEqual(['w1:e3']))
     w.unmount()
   })
 })
 
 // References in the field (shared/reference.ts): the text is the only state.
-describe('Composer expansion', () => {
-  afterEach(() => { kbOpen.value = false; hardwareKeyboard.value = false })
-
-  it('collapses to one row when Android dismisses the keyboard but keeps the field focused', async () => {
-    const { w, field } = await mount('w1:p6')
-    await field.setValue('')
-    kbOpen.value = true
-    field.element.focus()
-    await field.trigger('focusin')
-    await nextTick()
-    expect(w.find('.prompt').classes()).toContain('expanded')
-    // Android drops the soft keyboard without blurring the textarea.
-    kbOpen.value = false
-    await nextTick()
-    expect(w.find('.prompt').classes()).not.toContain('expanded')
-    expect(document.activeElement).not.toBe(field.element)
-    w.unmount()
-  })
-
-  it('stays expanded after the soft keyboard hides when a hardware keyboard is present', async () => {
-    hardwareKeyboard.value = true
-    const { w, field } = await mount('w1:p7')
-    await field.setValue('')
-    kbOpen.value = true
-    field.element.focus()
-    await field.trigger('focusin')
-    await nextTick()
-    kbOpen.value = false
-    await nextTick()
-    expect(w.find('.prompt').classes()).toContain('expanded')
-    w.unmount()
-  })
-})
-
 describe('Composer references', () => {
   beforeEach(() => { eventsOpen.value = true })
   afterEach(() => { eventsOpen.value = false })

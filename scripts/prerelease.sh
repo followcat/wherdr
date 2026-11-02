@@ -2,7 +2,8 @@
 # Rolling prerelease of the develop branch (.github/workflows/develop-prerelease.yml).
 # PRERELEASE_TAG=develop selects the fixed channel, including stable versions.
 # Without it, the historical suffix-only channel remains available.
-# Commands: version | package <tgz> <sha> | publish <tgz> <sha>
+# Commands: version | gate <sha> | package <tgz> <sha> | publish <tgz> <sha>
+# gate decides whether <sha> may be published (see cmd_gate).
 # package checks the archive and writes its checksum, COMMIT and notes.
 # publish needs gh, GH_REPO and a token that can write contents.
 # Existing releases must be published prereleases; stable tags are never moved.
@@ -83,7 +84,7 @@ cmd_package() {
   fi
   {
     echo
-    echo "Rolling prerelease of the \`develop\` branch, rebuilt on every push. Not a stable release: never marked latest, never offered as an update."
+    echo "Rolling prerelease of the \`develop\` branch, rebuilt for each develop commit that passes CI. Not a stable release: never marked latest, never offered as an update."
     echo
     echo "Commit: \`$sha\`"
     echo
@@ -92,6 +93,56 @@ cmd_package() {
     echo "\`COMMIT\` holds the commit of \`$name\`. It is removed while the files are replaced and attached last: when it is present, the archive matches it."
   } >> "$dir/prerelease-notes.md"
   echo "prerelease: $name for $sha checked"
+}
+
+# A develop commit is published only when:
+# - a push run of ci.yml on develop for exactly this commit succeeded, with its
+#   `checks` and `e2e` jobs green (the checks the branch protection requires);
+# - it is on develop (develop's head or one of its ancestors);
+# - it is not older than the commit the develop tag already names: runs can
+#   finish out of order, and a newer build is never replaced by an older one.
+# Writes publish=true|false to $GITHUB_OUTPUT. Fails when CI is not green or the
+# commit is not on develop; an older commit is skipped without failing.
+cmd_gate() {
+  local sha="${1:?usage: prerelease.sh gate <sha>}" repo runs run run_ok="" jobs head published status
+  check_sha "$sha"
+  repo="${GH_REPO:?GH_REPO is required}"
+  # Every API call fails closed: an error stops the gate, never lets a commit through.
+  runs="$(gh api "repos/$repo/actions/workflows/ci.yml/runs?head_sha=$sha&event=push&branch=develop&status=success&per_page=20" \
+    --jq '.workflow_runs[] | select(.head_sha == "'"$sha"'" and .conclusion == "success") | .id')" \
+    || die "could not list the ci runs of $sha"
+  for run in $runs; do
+    jobs="$(gh api "repos/$repo/actions/runs/$run/jobs?per_page=100" --jq '.jobs[] | select(.conclusion == "success") | .name')" \
+      || die "could not read the jobs of ci run $run"
+    if printf '%s\n' "$jobs" | grep -qx checks && printf '%s\n' "$jobs" | grep -qx e2e; then
+      run_ok="$run"; break
+    fi
+  done
+  [ -n "$run_ok" ] || die "no successful ci run (checks and e2e) on develop for $sha"
+  head="$(gh api "repos/$repo/branches/develop" --jq .commit.sha)" || die "could not read the head of develop"
+  check_sha "$head"
+  if [ "$head" != "$sha" ]; then
+    status="$(gh api "repos/$repo/compare/$head...$sha" --jq .status)" || die "could not compare $sha with develop"
+    [ "$status" = behind ] || die "$sha is not on develop ($status relative to $head)"
+  fi
+  # matching-refs answers an empty list when the tag does not exist yet, so a
+  # failed call is never mistaken for a missing tag.
+  published="$(gh api "repos/$repo/git/matching-refs/tags/develop" --jq '.[] | select(.ref == "refs/tags/develop") | .object.sha')" \
+    || die "could not read the develop tag"
+  if [ -n "$published" ] && [ "$published" != "$sha" ]; then
+    check_sha "$published"
+    status="$(gh api "repos/$repo/compare/$published...$sha" --jq .status)" || die "could not compare $sha with the published $published"
+    case "$status" in
+      behind)
+        echo "prerelease: develop already names $published, newer than $sha: skipped"
+        [ -z "${GITHUB_OUTPUT:-}" ] || echo "publish=false" >> "$GITHUB_OUTPUT"
+        return ;;
+      ahead|diverged) ;;
+      *) die "unexpected comparison of $sha with the published $published: $status" ;;
+    esac
+  fi
+  echo "prerelease: $sha passed ci run $run_ok and may be published"
+  [ -z "${GITHUB_OUTPUT:-}" ] || echo "publish=true" >> "$GITHUB_OUTPUT"
 }
 
 cmd_publish() {
@@ -147,7 +198,8 @@ cmd_publish() {
 
 case "${1:-}" in
   version) cmd_version ;;
+  gate) shift; cmd_gate "$@" ;;
   package) shift; cmd_package "$@" ;;
   publish) shift; cmd_publish "$@" ;;
-  *) die "usage: $0 version | package <tgz> <sha> | publish <tgz> <sha>" ;;
+  *) die "usage: $0 version | gate <sha> | package <tgz> <sha> | publish <tgz> <sha>" ;;
 esac

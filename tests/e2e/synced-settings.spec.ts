@@ -7,7 +7,7 @@ import { expect, test, type Page } from './test'
 
 const serverSettings = async (page: Page) => (await (await page.request.get('/api/settings')).json()).settings as Record<string, string>
 const themeOf = (page: Page) => page.evaluate(() => document.documentElement.dataset.theme)
-const groupBy = (page: Page, language: string) => page.getByRole('radio', { name: language === 'fr' ? 'État' : 'State', exact: true })
+const groupBy = (page: Page, language: string) => page.getByRole('radio', { name: 'State', exact: true })
 
 test('migration: each browser merges in its settings once, not the device ones', async ({ page }) => {
   await page.addInitScript(() => {
@@ -44,7 +44,8 @@ test('migration: each browser merges in its settings once, not the device ones',
   await other.close()
 })
 
-for (const language of ['en', 'fr']) {
+test.describe('English interface', () => {
+  const language = 'en'
   test(`two devices: a change on one shows on the other without reloading (${language})`, async ({ page, browser }, info) => {
     const setLanguage = (l: string) => { localStorage.setItem('herdrLanguage', l) }
     await page.addInitScript(setLanguage, language)
@@ -73,7 +74,7 @@ for (const language of ['en', 'fr']) {
     expect(await b.evaluate(() => localStorage.getItem('contentWidth'))).toBe('normal')
 
     // Back on B: its change reaches A (last write wins, setting by setting).
-    await b.getByRole('radio', { name: language === 'fr' ? 'Machine' : 'Machine', exact: true }).check()
+    await b.getByRole('radio', { name: 'Machine', exact: true }).check()
     await expect(groupBy(page, language)).not.toBeChecked()
     await expect.poll(() => themeOf(page)).toBe('wherdr-graphite')
 
@@ -85,7 +86,7 @@ for (const language of ['en', 'fr']) {
     await b.screenshot({ path: `.shots/synced-home-${language}-${info.project.name}.png` })
     await other.close()
   })
-}
+})
 
 test('a change made right before a reload is kept', async ({ page }) => {
   await page.goto('/#/settings?section=appearance')

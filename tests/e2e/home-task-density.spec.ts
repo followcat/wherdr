@@ -8,14 +8,15 @@ test.afterEach(async () => {
 })
 
 // Real home layout with neutral board links; no user's Board is read or written.
-for (const language of ['en', 'fr']) {
+for (const theme of ['wherdr-titanium', 'catppuccin-latte']) {
+  const language = 'en'
   for (const compact of [true, false]) {
-    test(`board task density: ${compact ? 'compact' : 'normal'}, ${language}`, async ({ page }, info) => {
-      await page.addInitScript(({ language, compact }) => {
+    test(`board task density: ${compact ? 'compact' : 'normal'}, ${theme}`, async ({ page }, info) => {
+      await page.addInitScript(({ language, compact, theme }) => {
         localStorage.setItem('herdrLanguage', language)
-        localStorage.setItem('theme', language === 'fr' ? 'catppuccin-latte' : 'wherdr-titanium')
+        localStorage.setItem('theme', theme)
         localStorage.setItem('compactListV2', compact ? '1' : '0')
-      }, { language, compact })
+      }, { language, compact, theme })
       // Give the repo a main space so its real options menu shares the summary bar.
       await page.routeWebSocket('**/ws/events', ws => {
         const server = ws.connectToServer()
@@ -31,19 +32,19 @@ for (const language of ['en', 'fr']) {
           repos: [{ repo: 'demo', root: '/project', branch: 'feature/compact-project-header', behind: 2 }],
           coordinators: [{ level: 'project', repo: 'demo', pane: 'w3:p1', workspace: null }],
           tasks: [{ id: 'demo/9', repo: 'demo', n: 9, key: 'DEMO-9',
-            title: language === 'fr' ? 'Adapter la navigation et vérifier les petits écrans' : 'Adapt navigation and check smaller screens',
+            title: 'Adapter la navigation et vérifier les petits écrans',
             panes: [{ id: 'w1:p1', role: 'worker' }], workspace: 'w1', stage: 'working', group: 'working',
-            progress: 30, msg: language === 'fr' ? 'Vérification des espacements' : 'Checking the spacing', since: Date.now() - 450000,
+            progress: 30, msg: 'Vérification des espacements', since: Date.now() - 450000,
           }, {
             id: 'demo/10', repo: 'demo', n: 10, key: 'DEMO-10',
-            title: language === 'fr' ? 'Simplifier les filtres' : 'Simplify filters',
+            title: 'Simplifier les filtres',
             panes: [{ id: 'w2:p1', role: 'reviewer', kind: 'codex' }], workspace: 'w2', stage: 'reviewing', group: 'working', review: 'work',
-            progress: 85, msg: language === 'fr' ? 'Relecture du changement' : 'Reviewing the change', since: Date.now() - 150000,
+            progress: 85, msg: 'Relecture du changement', since: Date.now() - 150000,
           }, {
             id: 'demo/11', repo: 'demo', n: 11, key: 'DEMO-11',
-            title: language === 'fr' ? 'Valider le menu' : 'Approve the menu',
+            title: 'Valider le menu',
             panes: [{ id: OMP_ASK_PANE, role: 'worker' }], workspace: 'w11', stage: 'asks', group: 'needs',
-            progress: 60, msg: language === 'fr' ? 'Attente de validation' : 'Waiting for approval', since: Date.now() - 210000,
+            progress: 60, msg: 'Attente de validation', since: Date.now() - 210000,
           }],
         }],
       } }))
@@ -57,20 +58,20 @@ for (const language of ['en', 'fr']) {
       await expect(card.locator('.home-task-line')).toHaveCount(compact ? 0 : 1)
       await expect(card.locator('.card-more, .card-main, .card-tab-dots')).toHaveCount(0)
       const waiting = page.locator('.project-tree .card', { hasText: 'DEMO-11' })
-      await expect(waiting.locator('.task-state')).toHaveText(language === 'fr' ? 'À toi' : 'Needs you')
+      await expect(waiting.locator('.task-state')).toHaveText('Needs you')
       await expect(waiting.locator('.card-more')).toHaveCount(0)
       const review = page.locator('.project-tree .card', { hasText: 'DEMO-10' })
       await expect(review.locator('.home-task-stage')).toHaveCount(compact ? 0 : 1)
       // The stage stays short; the reviewer has its own mark beside it.
-      if (!compact) await expect(review.locator('.home-task-stage')).toHaveText(language === 'fr' ? 'En relecture' : 'Under review')
-      await expect(review.locator('.task-agent-reviewer')).toHaveAttribute('aria-label', language === 'fr' ? 'Relu par Codex' : 'Reviewed by Codex')
+      if (!compact) await expect(review.locator('.home-task-stage')).toHaveText('Under review')
+      await expect(review.locator('.task-agent-reviewer')).toHaveAttribute('aria-label', 'Reviewed by Codex')
       const title = card.locator('.card-title')
       expect(await title.evaluate(el => el.scrollWidth >= el.clientWidth)).toBe(true)
       expect(await card.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
       const height = (await card.boundingBox())!.height
       expect(height).toBeLessThan(compact ? 45 : 65)
       await fs.mkdir('.shots', { recursive: true })
-      await page.screenshot({ path: `.shots/home-tasks-${compact ? 'compact' : 'normal'}-${language}-${info.project.name}.png` })
+      await page.screenshot({ path: `.shots/home-tasks-${compact ? 'compact' : 'normal'}-${theme}-${info.project.name}.png` })
       // Project hierarchy stays compact in both list modes and at both viewport sizes.
       const project = page.locator('.project', { has: card })
       const lead = project.locator('.home-lead')
@@ -105,7 +106,7 @@ for (const language of ['en', 'fr']) {
         expect(await summary.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
         expect((await bar.boundingBox())!.height).toBeLessThanOrEqual(44)
         expect((await card.boundingBox())!.x).toBeGreaterThan((await lead.boundingBox())!.x)
-        await page.screenshot({ path: `.shots/home-project-${compact ? 'compact' : 'normal'}-${language}-${width}.png` })
+        await page.screenshot({ path: `.shots/home-project-${compact ? 'compact' : 'normal'}-${theme}-${width}.png` })
       }
       // The old persisted 0/1 setting survives reload and selects the new task layout.
       await page.reload()

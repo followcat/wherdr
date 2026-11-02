@@ -1,7 +1,8 @@
 import { expect, test } from './test'
 import fs from 'node:fs/promises'
 
-for (const language of ['en', 'fr']) {
+test.describe('English interface', () => {
+  const language = 'en'
   test(`machine groups: filter, edit, drag and persist (${language})`, { tag: '@webkit-phone' }, async ({ page }, info) => {
     await expect.poll(async () => (await (await page.request.get('/api/state')).json()).ok).toBe(true)
     const base = await (await page.request.get('/api/state')).json()
@@ -55,4 +56,4 @@ for (const language of ['en', 'fr']) {
     await page.goto('/')
     await expect(page.locator('.machine-bar-item', { hasText: 'Studio' })).toBeVisible()
   })
-}
+})

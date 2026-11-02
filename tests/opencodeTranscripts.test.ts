@@ -151,3 +151,58 @@ it('serves only a current session image and rejects stale files or arbitrary pat
   expect(await reader.image(pane, r.file!, '/etc/passwd', 0)).toBeNull()
   expect(await reader.image(pane, r.file!, r.items![0]!.ref!, -1)).toBeNull()
 })
+
+it('carries the session inbox as the queue — and omits it when the read fails', async () => {
+  const { state, reader, tick } = await fixture()
+  state.messages = [opencodeMessage(1, 'assistant', 'Working')]
+  state.inbox = [{ id: 'msg_q1', type: 'user', payload: { text: 'queued one' }, time: { created: 1700000050000 } },
+    { id: 'msg_q2', type: 'assistant', payload: {} },
+    { id: 'msg_q3', type: 'user', payload: { text: 'queued two' } }]
+  const r = await reader.chat(pane)
+  expect(r.queue).toEqual([
+    expect.objectContaining({ text: 'queued one' }),
+    expect.objectContaining({ text: 'queued two' }),
+  ])
+  // A failed inbox read means unknown: no queue key at all, never "empty".
+  state.inboxFail = true
+  tick()
+  const r2 = await reader.chat(pane)
+  expect('queue' in r2).toBe(false)
+})
+
+it('reports session tokens and cost as the composer status', async () => {
+  const { state, reader, tick } = await fixture()
+  state.messages = [opencodeMessage(1, 'assistant', 'Working')]
+  expect(await reader.opencodeStatus(pane)).toBeNull()
+  state.tokens = { input: 448249, output: 58819, reasoning: 62856, cache: { read: 58993664, write: 1458 } }
+  state.cost = 0
+  tick()
+  expect(await reader.opencodeStatus(pane)).toEqual({ line: 'OpenCode · sample-model', meters: '448k in · 59k out · 63k reason' })
+  state.cost = 1.237
+  tick()
+  expect(await reader.opencodeStatus(pane)).toEqual({ line: 'OpenCode · sample-model', meters: '448k in · 59k out · 63k reason · $1.24' })
+})
+
+it('answers a screen-parsed permission by matching its action/resources — never a guess', async () => {
+  const { state, reader, tick } = await fixture()
+  state.permissions = [{ id: 'per_abc123', action: 'bash', resources: ['echo hello'] }]
+  expect(await reader.opencodePermissionMatch(pane, { action: 'bash', resources: ['echo hello'], decision: 'once' })).toBe(true)
+  expect(state.permissions).toEqual([])
+  // Two requests with the same action/resource: refuse rather than pick one.
+  state.permissions = [
+    { id: 'per_one', action: 'bash', resources: ['echo hello'] },
+    { id: 'per_two', action: 'bash', resources: ['echo hello'] },
+  ]
+  tick()
+  expect(await reader.opencodePermissionMatch(pane, { action: 'bash', resources: ['echo hello'], decision: 'reject' })).toBe(false)
+  expect(state.permissions).toHaveLength(2)
+  // The dialog shows a basename; the service stores the full path.
+  state.permissions = [{ id: 'per_edit', action: 'edit', resources: ['/projects/demo/notes.txt'] }]
+  tick()
+  expect(await reader.opencodePermissionMatch(pane, { action: 'edit', resources: ['notes.txt'], decision: 'always' })).toBe(true)
+  // A stale screen (no matching action) never replies.
+  state.permissions = [{ id: 'per_other', action: 'webfetch', resources: ['https://example.com'] }]
+  tick()
+  expect(await reader.opencodePermissionMatch(pane, { action: 'bash', resources: ['echo hello'], decision: 'once' })).toBe(false)
+  expect(state.permissions).toHaveLength(1)
+})

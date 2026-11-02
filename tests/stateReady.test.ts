@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { HerdrState, Pane } from '../shared/types'
-import { READY_MAX_MS, serverReady, settleState } from '../shared/stateReady'
+import type { HerdrState, MachineInfo, Pane } from '../shared/types'
+import { READY_MAX_MS, publishedMachine, serverReady, settleState } from '../shared/stateReady'
+import { tabRouteStatus } from '../app/utils/tabRoute'
 
 const pane = (id: string): Pane => ({ id, workspace: id.replace(/:p\d+$/, ''), status: 'idle', agent: 'claude' } as unknown as Pane)
 const st = (panes: string[], extra: Partial<HerdrState> = {}): HerdrState => ({
@@ -11,10 +12,12 @@ const st = (panes: string[], extra: Partial<HerdrState> = {}): HerdrState => ({
   ...extra,
 })
 const REMOTE = 'abcd1234'
-const machines = (status: 'online' | 'connecting' | 'offline') => [
-  { key: '', label: 'local', local: true, status: 'online' as const, error: null },
-  { key: REMOTE, label: 'remote', local: false, status, error: null },
+const machines = (status: 'online' | 'connecting' | 'offline', polled?: boolean): MachineInfo[] => [
+  { key: '', label: 'local', local: true, status: 'online' as const, error: null, ...(polled === undefined ? {} : { polled: true }) },
+  { key: REMOTE, label: 'remote', local: false, status, error: null, ...(polled === undefined ? {} : { polled }) },
 ]
+// What AgentView does with a pane's machine: anything but online disables input.
+const usable = (s: HerdrState, key: string) => s.machines!.find(m => m.key === key)!.status === 'online'
 
 describe('serverReady', () => {
   const base = { machinesListed: true, localPolled: true, remotes: [], elapsedMs: 0 }
@@ -33,6 +36,21 @@ describe('serverReady', () => {
   })
 })
 
+describe('publishedMachine', () => {
+  const info: MachineInfo = { key: REMOTE, label: 'remote', local: false, status: 'online', error: null }
+  it('says, while the server is not ready, whether the machine has been read', () => {
+    // SSH back (status online) before the first snapshot: not read yet.
+    expect(publishedMachine(info, undefined, false)).toMatchObject({ status: 'online', polled: false })
+    expect(publishedMachine(info, st([]), false)).toMatchObject({ status: 'online', polled: true })
+  })
+  it('adds nothing once the server is ready', () => {
+    expect(publishedMachine(info, st([]), true)).not.toHaveProperty('polled')
+  })
+  it('shows a connected machine whose Herdr is silent as offline', () => {
+    expect(publishedMachine(info, st([], { ok: false, error: 'down' }), true)).toMatchObject({ status: 'offline', error: 'down' })
+  })
+})
+
 describe('settleState', () => {
   const prev = st(['w1:p1', `${REMOTE}~w1:p1`], { machines: machines('online') })
 
@@ -45,32 +63,49 @@ describe('settleState', () => {
       expect(r.machines!.find(m => m.key === REMOTE)!.status).toBe('connecting')
     }
   })
-  it.each([false, true])('keeps an online machine until its first panes arrive (local session: %s)', local => {
-    // SSH connects (or a secondary local session is listed) before its poll.
+  // Server restart: SSH comes back (status online) up to seconds before the
+  // machine's first snapshot is read. A secondary local session is always
+  // listed online. Neither may drop the machine's panes or unmount its open tab.
+  describe.each([false, true])('an online machine not read yet (local session: %s)', (local) => {
     const prior = st(['w1:p1', `${REMOTE}~w1:p1`], {
       machines: machines('online').map(m => m.key === REMOTE ? { ...m, local } : m),
       tabs: [{ id: `${REMOTE}~w1:t1`, workspace: `${REMOTE}~w1`, label: 'Agent', number: 1, layout: null }],
     })
-    for (const settling of [true, false]) {
-      const next = st(['w2:p1'], { ready: false, machines: prior.machines })
-      const result = settleState(prior, next, settling)!
-      expect(result.panes.map(p => p.id)).toEqual(['w2:p1', `${REMOTE}~w1:p1`])
-      expect(result.workspaces.map(w => w.id)).toEqual(['w2', `${REMOTE}~w1`])
-      expect(result.tabs).toEqual(prior.tabs)
-      // The real snapshot replaces the retained content without duplicates,
-      // even if another machine still holds the server's readiness latch.
-      const recovered = st(['w2:p1', `${REMOTE}~w2:p1`], { ready: false, machines: prior.machines })
-      expect(settleState(result, recovered, settling)).toBe(recovered)
-    }
+    // `polled: false` from this server, absent from an older one.
+    it.each([false, undefined])('keeps its panes and its open tab (polled: %s)', (polled) => {
+      for (const settling of [true, false]) {
+        const listed = machines('online', polled).map(m => m.key === REMOTE ? { ...m, local } : m)
+        const next = st(['w2:p1'], { ready: false, machines: listed })
+        const result = settleState(prior, next, settling)!
+        expect(result.panes.map(p => p.id)).toEqual(['w2:p1', `${REMOTE}~w1:p1`])
+        expect(result.workspaces.map(w => w.id)).toEqual(['w2', `${REMOTE}~w1`])
+        expect(result.tabs).toEqual(prior.tabs)
+        const found = result.tabs!.some(t => t.id === `${REMOTE}~w1:t1`)
+        expect(tabRouteStatus(found, result.ok, result.ready !== false, true, true)).toBe('open')
+        // Its snapshot then replaces the retained content without duplicates,
+        // even while another machine still holds the server's readiness latch.
+        const read = listed.map(m => ({ ...m, polled: true }))
+        const recovered = st(['w2:p1', `${REMOTE}~w2:p1`], { ready: false, machines: read })
+        expect(settleState(result, recovered, settling)).toBe(recovered)
+      }
+    })
+    it('drops its panes once the server has read it with none', () => {
+      for (const settling of [true, false]) {
+        const read = machines('online', true).map(m => m.key === REMOTE ? { ...m, local } : m)
+        const next = st(['w2:p1'], { ready: false, machines: read })
+        expect(settleState(prior, next, settling)).toBe(next)
+      }
+    })
   })
-  it('keeps a successful local machine online before the machine list arrives', () => {
+  it('keeps a successful local machine usable before the machine list arrives', () => {
     for (const settling of [true, false]) {
       for (const status of ['online', 'connecting'] as const) {
-        const prior = { ...prev, machines: machines('online').map(m => m.key === '' ? { ...m, status } : m) }
+        const prior = { ...prev, machines: machines('online').map(m => m.key === '' ? { ...m, status, error: status === 'online' ? null : 'starting' } : m) }
         const result = settleState(prior, st(['w2:p1'], { ready: false }), settling)!
         expect(result.panes.map(p => p.id)).toEqual(['w2:p1', `${REMOTE}~w1:p1`])
-        expect(result.machines!.find(m => m.key === '')!.status).toBe('online')
-        expect(result.machines!.find(m => m.key === REMOTE)!.status).toBe('connecting')
+        expect(usable(result, '')).toBe(true)
+        expect(result.machines!.find(m => m.key === '')!.error).toBeNull()
+        expect(usable(result, REMOTE)).toBe(false)
       }
     }
   })
@@ -83,7 +118,15 @@ describe('settleState', () => {
       expect(result.machines!.find(m => m.key === REMOTE)!.status).toBe('connecting')
     }
   })
-  it('defers an empty online local result until the server is ready', () => {
+  it('applies an empty local result the server has read', () => {
+    for (const settling of [true, false]) {
+      const next = st([], { ready: false, machines: machines('connecting', false).map(m => m.key === '' ? { ...m, polled: true } : m) })
+      const result = settleState(prev, next, settling)!
+      expect(result.panes.map(p => p.id)).toEqual([`${REMOTE}~w1:p1`])
+      expect(usable(result, '')).toBe(true)
+    }
+  })
+  it('defers an empty online local result from an older server until it is ready', () => {
     for (const settling of [true, false]) {
       const next = st([], { ready: false, machines: machines('connecting') })
       const result = settleState(prev, next, settling)!

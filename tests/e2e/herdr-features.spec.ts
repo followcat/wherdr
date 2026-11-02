@@ -2,7 +2,8 @@ import { expect, test, type Page } from './test'
 import fs from 'node:fs/promises'
 import { OMP_CHAT_PANE, fakeHerdr } from './scenario.mjs'
 
-for (const language of ['en', 'fr']) {
+test.describe('English interface', () => {
+  const language = 'en'
   test(`machine connection diagnostics and legacy fallback (${language})`, async ({ page }) => {
     await expect.poll(async () => (await (await page.request.get('/api/state')).json()).ok).toBe(true)
     const base = await (await page.request.get('/api/state')).json()
@@ -28,21 +29,21 @@ for (const language of ['en', 'fr']) {
     })
     await page.goto('/')
     await page.locator('[data-machine="abcdef01"] .machine-options').click()
-    await page.getByRole('menuitem', { name: language === 'fr' ? 'État de la connexion' : 'Connection status' }).click()
+    await page.getByRole('menuitem', { name: 'Connection status' }).click()
     const sheet = page.locator('.machine-connection')
-    await expect(sheet).toContainText(language === 'fr' ? 'Authentification requise' : 'Authentication required')
+    await expect(sheet).toContainText('Authentication required')
     await expect(sheet.locator('code')).toContainText('herdr machine reconnect')
     await fs.mkdir('.shots', { recursive: true })
     await page.screenshot({ path: `.shots/machine-connection-${language}-phone.png` })
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.screenshot({ path: `.shots/machine-connection-${language}-desktop.png` })
     supported = false
-    await sheet.getByRole('button', { name: language === 'fr' ? 'Réessayer la connexion' : 'Retry connection' }).click()
-    await expect(sheet).toContainText(language === 'fr' ? 'nécessite Herdr 0.9.2' : 'require Herdr 0.9.2')
+    await sheet.getByRole('button', { name: 'Retry connection' }).click()
+    await expect(sheet).toContainText('require Herdr 0.9.2')
     await expect(sheet.locator('code')).toHaveCount(0)
     expect(calls).toEqual(['status', 'retry', 'status'])
   })
-}
+})
 
 test('structured terminal mouse: touch tap, desktop drag, Shift selection and old Herdr', async ({ page, browser }) => {
   await fs.mkdir('.shots', { recursive: true })
@@ -55,8 +56,8 @@ test('structured terminal mouse: touch tap, desktop drag, Shift selection and ol
     const output = page.locator('#term .xterm-rows')
     await expect(page.locator('.chat').getByText('Ready when you are.').or(output)).toBeVisible()
     if (!await output.isVisible()) {
-      const tabs = page.locator('.view-tabs')
-      if (await tabs.count()) await tabs.getByRole('tab', { name: 'Terminal' }).click()
+      const tabs = page.locator('.view-toggle')
+      if (await tabs.count()) await tabs.click()
       else await page.locator('button[aria-label="Terminal"]').first().click()
     }
     await expect(page.locator('#term .xterm-rows')).toContainText('fake terminal')

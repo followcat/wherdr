@@ -303,7 +303,8 @@ export function keysFor(choices: Choices, index: number): string[] {
   const to = choices.options[index]?.n
   const d = from && to ? to - from : index - choices.cursor
   const keys: string[] = []
-  for (let i = 0; i < Math.abs(d); i++) keys.push(d > 0 ? 'down' : 'up')
+  const step = choices.horizontal ? (d > 0 ? 'right' : 'left') : (d > 0 ? 'down' : 'up')
+  for (let i = 0; i < Math.abs(d); i++) keys.push(step)
   keys.push(choices.multi && choices.options[index]?.checked !== undefined ? 'space' : 'enter')
   return keys
 }
@@ -813,7 +814,10 @@ export function sameQuestion(a: string | null | undefined, b: string | null | un
 // Permission details are part of the question; checkbox/cursor state is not.
 const identity = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 export function promptIdentity(text: string | null | undefined, agent?: string | null): string {
-  const c = agent === 'omp' ? parseOmpPrompt(text, true) : agent ? parseChoices(text, { full: true }) : parseChoices(text, { full: true }) || parseOmpPrompt(text, true)
+  const c = agent === 'devin' ? parseDevinDialog(text)
+    : agent === 'omp' ? parseOmpPrompt(text, true)
+    : agent === 'opencode' ? parseOpenCodePermission(text)
+    : agent ? parseChoices(text, { full: true }) : parseChoices(text, { full: true }) || parseOmpPrompt(text, true)
   return identity(c ? { question: c.question, options: c.options.map(({ label, hint, n, free }) => ({ label, hint, n, free })), detail: c.detail, multi: c.multi, tabs: c.tabs } : null)
 }
 export function menuIdentity(menu: InteractiveMenu, target: MenuEntry | undefined = menu.cursor === null ? undefined : menu.items[menu.cursor]): string {
@@ -826,7 +830,13 @@ export function waitIdentity(screen: WaitScreen): string {
 // On-screen prompt re-read before choose/nav; Claude questions can be
 // completed by the pending transcript call after their screen identity is set.
 export function screenChoices(text: string | null | undefined, agent: string | null | undefined, asked: ClaudeAsked[] = []): Choices | null {
-  const c = agent === 'omp' ? parseOmpPrompt(text) : parseChoices(text) || parseChoices(text, { strict: true })
+  const c = agent === 'devin' ? parseDevinDialog(text)
+    : agent === 'omp' ? parseOmpPrompt(text)
+    // OpenCode's boxed dialog does not speak the Claude/Codex option grammar;
+    // only its own permission shape is accepted (a generic match is a misread,
+    // see inputVisible's agent scoping).
+    : agent === 'opencode' ? parseOpenCodePermission(text)
+    : parseChoices(text) || parseChoices(text, { strict: true })
   if (c) c.identity = promptIdentity(text, agent)
   return c && agent === 'claude' ? completeClaudeAsk(c, asked) : c
 }
@@ -854,9 +864,14 @@ const bashInput = (line: string, above: string | undefined) => /^!(\s|$)/.test(l
 // ("❯ 1. Yes, proceed", /mcp, /hooks…) is not its input field. omp's field
 // ends with a "╰─" line followed by the text typed, under its status line
 // ("π > Opus > ~/demo ▶─1%────1M─"); a box's bottom is a longer rule.
-export function inputVisible(text: string | null | undefined): boolean {
+export function inputVisible(text: string | null | undefined, agent?: string | null): boolean {
   if (ompApprovalOpen(text)) return false
   const t = String(text || '')
+  // Devin and OpenCode have their own composers: the ›/❯/╰─ recognizers can
+  // match glyphs inside their output, so only their box anchors count — and
+  // an OpenCode dialog marker anywhere on screen rules its field out.
+  if (agent === 'devin') return devinFieldOnScreen(t)
+  if (agent === 'opencode') return opencodeFieldOnScreen(t)
   const lines = t.replace(/\s+$/, '').split('\n').slice(-12)
   return lines.some((l, i) => /^\s*›(\s|$)/.test(l)
     || (/^\s*❯(\s|$)/.test(l) && /^\s*─{3,}/.test(lines[i - 1] || ''))
@@ -876,8 +891,16 @@ function devinFieldOnScreen(text: string): boolean {
   let at = -1
   for (let i = lines.length - 1; i >= 0 && at < 0; i--) if (/^❭(?: |$)/.test(lines[i]!.replace(/\s+$/, ''))) at = i
   if (at < 0) return false
-  const below = lines.slice(at + 1).find(l => l.trim() !== '')
-  return Boolean(below && /^─{2,}/.test(below.replace(/\s+$/, '')))
+  // Below the field: blank rows and indented wrap continuations precede the
+  // box's bottom rule — a BARE "───" line. A titled rule ("─── Title ───")
+  // or the dialog's unindented legend ends the scan without a field.
+  for (let i = at + 1; i < lines.length; i++) {
+    const l = lines[i]!.replace(/\s+$/, '')
+    if (!l.trim()) continue
+    if (/^\s{2,}\S/.test(l)) continue
+    return /^─{2,}$/.test(l)
+  }
+  return false
 }
 
 // OpenCode 2.x composer: its "┃" input lines sit directly above the box's
@@ -885,13 +908,189 @@ function devinFieldOnScreen(text: string): boolean {
 // question dialog keeps that box on screen, so its markers must also be
 // absent — the same dialog rows herdr's opencode.toml detects as "blocked"
 // (the pane is an alternate-screen TUI: no scrollback replays to exclude).
-const OPENCODE_DIALOG = /△ Permission required|esc dismiss|↑↓ select|⇆ tab|enter (confirm|submit|toggle)/
+// Same conjunction herdr's opencode.toml uses for "blocked" — a lone word
+// like "enter confirm" in ordinary output must not keep a message held.
+const OPENCODE_DIALOG_TITLE = /△ Permission required/
+const OPENCODE_DIALOG_DISMISS = /esc dismiss/
+const OPENCODE_DIALOG_ACTION = /enter (confirm|submit|toggle)/
+const OPENCODE_DIALOG_NAV = /↑↓ select|⇆ tab/
 function opencodeFieldOnScreen(text: string): boolean {
   const lines = String(text || '').split('\n')
   const last = lines.length - 1
-  if (lines.slice(Math.max(0, last - 12)).some(l => OPENCODE_DIALOG.test(l))) return false
+  const bottom = lines.slice(Math.max(0, last - 12))
+  const dialog = bottom.some(l => OPENCODE_DIALOG_TITLE.test(l))
+    || (bottom.some(l => OPENCODE_DIALOG_DISMISS.test(l)) && bottom.some(l => OPENCODE_DIALOG_ACTION.test(l)) && bottom.some(l => OPENCODE_DIALOG_NAV.test(l)))
+  if (dialog) return false
   for (let i = last; i >= Math.max(1, last - 8); i--) {
     if (/^\s*╹▀{3,}/.test(lines[i]!.replace(/\s+$/, ''))) return /^\s*┃/.test(lines[i - 1]!)
   }
   return false
+}
+
+// Devin's permission dialog (v3000.x), captured on a live pane:
+//
+//    ⏺ Running command
+//    └ $ sleep 45
+//
+//   ❭ Allow       ← ◼◼◼◼ → Once     Exec(sleep)
+//     Bypass mode
+//     Deny
+//
+//   ↑↓ select · ←→ scope · e edit · ↵ confirm · esc cancel
+//
+// The ❭ row is the cursor; "← ◼…◼ → <scope>" is Allow's scope slider, not a
+// separate option, and the right-aligned word is the requested action. Only
+// this exact legend marks the dialog — a scrollback "❭" echo of a sent
+// message must not read as a prompt.
+const DEVIN_LEGEND = /^\s*↑↓ select · ←→ scope · (?:e edit · )?↵ confirm · esc cancel\s*$/
+const DEVIN_OPTION = /^\s*(❭ )?(Allow|Bypass mode|Deny)(?:\s|←|$)/
+// "Allow       ← ◼◼◼◼ → Once     Exec(sleep)" → scope "Once", action
+// "Exec(sleep)". The scope is part of the question so a re-scoped dialog
+// fails the identity check at answer time.
+const DEVIN_ACTION = /→\s*(\S+)(?:\s{2,}(\S.*))?\s*$/
+
+export function parseDevinDialog(text: string | null | undefined): Choices | null {
+  if (!text) return null
+  const lines = String(text).split('\n').map(l => l.replace(/\s+$/, ''))
+  const legend = lines.findLastIndex(l => DEVIN_LEGEND.test(l))
+  if (legend < 0) return null
+  // A composer field (❭ + bottom rule, wrap continuations allowed) BELOW
+  // the legend means the dialog is scrollback replay above a live input.
+  if (devinFieldOnScreen(lines.slice(legend + 1).join('\n'))) return null
+  // The three option rows above the legend (blank rows may separate).
+  const opts: { label: string, cursor: boolean, i: number }[] = []
+  for (let i = legend - 1; i >= 0 && opts.length < 3; i--) {
+    const l = lines[i]!
+    if (!l.trim()) { if (opts.length) break; continue }
+    const m = DEVIN_OPTION.exec(l)
+    if (!m) break
+    opts.unshift({ label: m[2]!, cursor: Boolean(m[1]), i })
+  }
+  if (opts.length !== 3 || opts[0]!.label !== 'Allow' || opts[1]!.label !== 'Bypass mode' || opts[2]!.label !== 'Deny') return null
+  const cursor = opts.findIndex(o => o.cursor)
+  if (cursor < 0) return null
+  const m = DEVIN_ACTION.exec(lines[opts[0]!.i]!)
+  const scope = m?.[1]?.trim()
+  const action = m?.[2]?.trim()
+  const question = `Allow Devin to run${action ? `: ${action}` : ''}${scope ? ` — ${scope}` : '?'}`
+  return { question, cursor, options: opts.map(o => ({ label: o.label, hint: null })) }
+}
+
+// OpenCode 2.x permission dialog (captured live; 100 and 60 columns):
+//
+//   ┃
+//   ┃  △ Permission required
+//   ┃    # Shell command
+//   ┃
+//   ┃  - echo probe
+//   ┃
+//   ┃
+//   ┃   Allow once   Always allow   Reject
+//   ┃
+//   ┃  ctrl+f fullscreen  ⇆ select  enter confirm
+//   ┃
+//
+// "→ Edit probe.txt" replaces "# Shell command" / "- …" for file edits. The
+// cursor is only a background colour (no glyph), so the caller may pass the
+// ANSI screen to read it; without it the cursor stays -1. Answering does not
+// depend on the cursor: the permission API replies by decision.
+const OC_PERMISSION = /^\s*[┃│]?\s*△\s*Permission required\b/
+const OC_SELECT = /⇆\s*select|ctrl\+f\s+fullscreen/
+const OC_BOX = /^\s*[┃│]\s?/
+const OC_ACTION = /^(?:#|→|➜)\s+(\S.*)$/
+const OC_RESOURCE = /^-\s+(\S.*)$/
+const OC_DECISION: Record<string, string> = { 'Allow once': 'once', 'Always allow': 'always', 'Reject': 'reject' }
+
+export function opencodeDecision(label: string): 'once' | 'always' | 'reject' | null {
+  const d = OC_DECISION[String(label || '').trim()]
+  return d === 'once' || d === 'always' || d === 'reject' ? d : null
+}
+
+function opencodeCursor(ansi: string | null | undefined, labels: string[]): number {
+  if (!ansi) return -1
+  const rows = String(ansi).split('\n').map(ansiCells)
+  for (let r = rows.length - 1; r >= 0; r--) {
+    const row = rows[r]!
+    if (!labels.every(l => row.text.includes(l))) continue
+    // The row's background dominates; the selected label is painted on
+    // another one (the theme's accent, or reverse video).
+    const counts = new Map<string, number>()
+    for (const mark of row.marks) counts.set(mark, (counts.get(mark) || 0) + 1)
+    let base = ''
+    let most = -1
+    for (const [mark, n] of counts) if (n > most) { most = n; base = mark }
+    const lit: number[] = []
+    labels.forEach((label, i) => {
+      const at = row.text.indexOf(label)
+      if (at > 0 && row.marks.slice(at, at + label.length).some(m => m && m !== base)) lit.push(i)
+    })
+    if (lit.length === 1) return lit[0]!
+    return -1
+  }
+  return -1
+}
+
+export function parseOpenCodePermission(text: string | null | undefined, ansi?: string | null): Choices | null {
+  // The plain read gives the rows; the ANSI read is the same screen with the
+  // colours the cursor hides in. A caller with only ANSI passes null as text:
+  // its stripped text then supplies the rows.
+  const plain = text ? String(text) : ansi ? String(ansi).split('\n').map(l => ansiCells(l).text).join('\n') : ''
+  if (!plain.trim()) return null
+  const lines = plain.split('\n').map(l => l.replace(/\s+$/, ''))
+  const title = lines.findLastIndex(l => OC_PERMISSION.test(l))
+  if (title < 0) return null
+  const legend = lines.findIndex((l, i) => i > title && OC_SELECT.test(l))
+  if (legend < 0) return null
+  // Options sit on the legend row (wide pane) or on the last content row
+  // above it (narrow pane). Known labels only: the rest of the legend is
+  // "ctrl+f fullscreen", "⇆ select", "enter confirm".
+  const optionRows = [lines[legend]!, ...lines.slice(title + 1, legend).reverse()]
+  let labels: string[] = []
+  for (const l of optionRows) {
+    const parts = l.replace(OC_BOX, '').split(/\s{2,}/).map(s => s.trim()).filter(Boolean)
+    const hit = parts.filter(p => OC_DECISION[p])
+    if (hit.length >= 2) { labels = hit; break }
+  }
+  if (!labels.length) return null
+  let action = ''
+  let actionLabel = ''
+  const resources: string[] = []
+  const notes: string[] = []
+  for (const l of lines.slice(title + 1, legend)) {
+    const s = l.replace(OC_BOX, '').trim()
+    if (!s || OC_SELECT.test(s) || l === lines[legend]) continue
+    const a = OC_ACTION.exec(s)
+    if (a) {
+      actionLabel = a[1]!.trim()
+      if (/^edit\b/i.test(actionLabel)) {
+        action = 'edit'
+        const file = actionLabel.replace(/^edit\s*/i, '').trim()
+        if (file) resources.push(file)
+      } else if (/shell|command|bash/i.test(actionLabel)) action = 'bash'
+      // Other actions (web fetch, read, MCP…) have no captured screen yet:
+      // leave them to the terminal rather than inventing a mapping.
+      else return null
+      continue
+    }
+    const r = OC_RESOURCE.exec(s)
+    if (r) { resources.push(r[1]!.trim()); continue }
+    if (!labels.includes(s)) notes.push(s)
+  }
+  if (!action) return null
+  const resource = resources.join(' · ').slice(0, 400)
+  const detail: PromptDetail = { tool: actionLabel || action, ...(resource ? action === 'edit' ? { file: resource } : { command: resource } : {}), ...(notes.length ? { description: notes.join(' ').slice(0, 600) } : {}) }
+  const question = action === 'bash'
+    ? `Allow OpenCode to run${resource ? `: ${resource}` : ' a command'}?`
+    : action === 'edit'
+      ? `Allow OpenCode to edit${resource ? `: ${resource}` : ' a file'}?`
+      : `Allow OpenCode to ${actionLabel.toLowerCase() || action}${resource ? `: ${resource}` : ''}?`
+  return {
+    question,
+    // Never guess a colour-only cursor: callers that need it pass ANSI.
+    cursor: opencodeCursor(ansi, labels),
+    options: labels.map(label => ({ label, hint: null })),
+    detail,
+    horizontal: true,
+    permission: { action, resources },
+  }
 }

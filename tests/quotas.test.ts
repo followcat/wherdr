@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { machineQuotaRows, quotaRows, tabQuotaRows } from '../app/utils/quotas'
 import type { Quota } from '../shared/types'
 import { type CodexScreenWeekly, weekFromScreen } from '../shared/codexStatus'
 import { createShellFs, localFs } from '../server/utils/fsx'
@@ -95,7 +96,7 @@ describe('quota Codex sur plusieurs conversations', () => {
     const t = (min: number) => new Date(now.getTime() - min * 60000)
     const write = (name: string, lines: string[], mtime: Date) => {
       const f = path.join(dir, `rollout-${name}.jsonl`)
-      fs.writeFileSync(f, lines.join('\n') + '\n' + '{"type":"response_item"}\n'.repeat(50))
+      fs.writeFileSync(f, JSON.stringify({ type: 'session_meta', payload: { creator_account_id: 'account-a' } }) + '\n' + lines.join('\n') + '\n' + '{"type":"response_item"}\n'.repeat(50))
       fs.utimesSync(f, mtime, mtime)
     }
     const reset = Math.round(now.getTime() / 1000) + 7200
@@ -219,7 +220,7 @@ describe('Claude status line set up?', () => {
 
 describe('quotas Codex par compte', () => {
   const cx = (at: number, account?: string | null, used = 10) => ({ five: { used, resetsAt: 1790395200000, minutes: 300 }, week: null, at, account })
-  const r = (key: string, label: string, codex: ReturnType<typeof cx> | null) => ({ key, label, claude: null, codex })
+  const r = (key: string, label: string, codex: (Quota & { account?: string | null }) | null) => ({ key, label, claude: null, codex })
 
   it('fingerprint taken from session_meta, never the raw value', () => {
     const head = `${JSON.stringify({ type: 'session_meta', payload: { id: 'x', creator_account_id: 'acct-test-1' } })}\n{"type":"x"}`
@@ -244,17 +245,97 @@ describe('quotas Codex par compte', () => {
     expect(out.codex).not.toHaveProperty('account')
   })
 
-  it('without a fingerprint: previous behaviour (the most recent)', () => {
+  it('without fingerprints: each machine keeps its own reading', () => {
     const out = mergeQuotas([r('', 'Server', cx(1, null)), r('0a1b2c3d', 'Laptop', cx(4))])
-    expect(out.codexAccounts).toBeUndefined()
-    expect(out.codex!.at).toBe(4)
+    expect(out.codexAccounts!.map(a => [a.machines.map(m => m.key), a.at])).toEqual([[[''], 1], [['0a1b2c3d'], 4]])
+  })
+
+  it.each([null, 'bbbbbbbbbbbbbbbb'])('keeps a newer personal reading out of the work machine (%s)', (account) => {
+    for (const readings of [
+      [r('host-a', 'Host A', cx(5, 'aaaaaaaaaaaaaaaa', 52)), r('host-b', 'Host B', cx(3, account, 8))],
+      [r('host-b', 'Host B', cx(3, account, 8)), r('host-a', 'Host A', cx(5, 'aaaaaaaaaaaaaaaa', 52))],
+    ]) {
+      const out = mergeQuotas(readings)
+      expect(out.codexAccounts!.find(a => a.machines.some(m => m.key === 'host-b'))!.five!.used).toBe(8)
+    }
+  })
+
+  it('a missing or changed fingerprint field never inherits an older account', () => {
+    for (const payload of [{}, { account_id: 'account-b' }]) {
+      const account = codexAccount(JSON.stringify({ type: 'session_meta', payload }))
+      const q = machineCodexQuota([
+        { q: cx(1, null, 90), stamp: 1, account: 'aaaaaaaaaaaaaaaa' },
+        { q: cx(2, null, 8), stamp: 2, account },
+      ])!
+      expect(q.account).toBeNull()
+      expect(q.five!.used).toBe(8)
+    }
+  })
+
+  it.each([
+    { creator_account_id: 'account-b' }, {}, { account_id: 'account-b' },
+  ])('reads two machine fixtures and shows only the selected account: %j', async (payload) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-machines-'))
+    const now = new Date()
+    const write = (machine: string, meta: object, used: number, age: number) => {
+      const home = path.join(root, machine)
+      const dir = path.join(home, '.codex/sessions', String(now.getFullYear()), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0'))
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(path.join(dir, 'rollout-test.jsonl'), [
+        JSON.stringify({ type: 'session_meta', payload: meta }),
+        JSON.stringify({ timestamp: new Date(now.getTime() - age).toISOString(), type: 'event_msg', payload: { rate_limits: { primary: { used_percent: used, window_minutes: 300 } } } }),
+      ].join('\n'))
+      return home
+    }
+    try {
+      const a = write('host-a', { creator_account_id: 'account-a' }, 52, 0)
+      const b = write('host-b', payload, 8, 1000)
+      const out = mergeQuotas([
+        r('host-a', 'Host A', await readCodex(localFs, a)),
+        r('host-b', 'Host B', await readCodex(localFs, b)),
+      ])
+      expect(tabQuotaRows(quotaRows(out), machineQuotaRows(out, 'host-b')).map(r => r.q.five!.used)).toEqual([8])
+      expect(JSON.stringify(out)).not.toContain('account-')
+    } finally { fs.rmSync(root, { recursive: true, force: true }) }
+  })
+
+  it.each([{}, { creator_account_id: 'account-b' }, { account_id: 'account-b' }])('account switch: a new session without limits blocks the previous account (%j)', async (payload) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-switch-'))
+    const now = new Date()
+    const dir = path.join(home, '.codex/sessions', String(now.getFullYear()), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0'))
+    fs.mkdirSync(dir, { recursive: true })
+    const before = new Date(now.getTime() - 60000).toISOString()
+    const old = path.join(dir, 'rollout-old.jsonl')
+    const current = path.join(dir, 'rollout-current.jsonl')
+    fs.writeFileSync(old, [
+      JSON.stringify({ type: 'session_meta', timestamp: before, payload: { creator_account_id: 'account-a' } }),
+      JSON.stringify({ timestamp: before, payload: { rate_limits: { primary: { used_percent: 52, window_minutes: 300 } } } }),
+    ].join('\n'))
+    const header = JSON.stringify({ type: 'session_meta', timestamp: now.toISOString(), payload })
+    fs.writeFileSync(current, header + '\n')
+    try {
+      const pending = await readCodex(localFs, home)
+      expect(pending).toBeNull()
+      const out = mergeQuotas([r('host-a', 'Host A', cx(1, 'aaaaaaaaaaaaaaaa', 52)), r('host-b', 'Host B', pending)])
+      expect(tabQuotaRows(quotaRows(out), machineQuotaRows(out, 'host-b'))).toEqual([])
+      fs.appendFileSync(current, JSON.stringify({ timestamp: now.toISOString(), payload: { rate_limits: { primary: { used_percent: 8, window_minutes: 300 } } } }))
+      const q = await readCodex(localFs, home)
+      expect(q).toMatchObject({ account: codexAccount(header), five: { used: 8 } })
+    } finally { fs.rmSync(home, { recursive: true, force: true }) }
+  })
+
+  it('an unidentified reading stays under its machine even when it is the only reading', () => {
+    const out = mergeQuotas([r('host-a', 'Host A', cx(1, null, 8)), r('host-b', 'Host B', null)])
+    expect(quotaRows(out)).toEqual([])
+    expect(machineQuotaRows(out, 'host-b')).toEqual([])
+    expect(machineQuotaRows(out, 'host-a').map(r => r.q.five!.used)).toEqual([8])
   })
 
   it('one machine: the account of the most recent conversation', () => {
     const rd = (stamp: number, account: string | null, used: number) => ({ q: { five: { used, resetsAt: 1790395200000, minutes: 300 }, week: null, at: stamp }, stamp, account })
     const q = machineCodexQuota([rd(1, 'aaaaaaaaaaaaaaaa', 90), rd(2, 'bbbbbbbbbbbbbbbb', 5), rd(0, null, 7)])!
     expect(q.account).toBe('bbbbbbbbbbbbbbbb')
-    expect(q.five!.used).toBe(7)
+    expect(q.five!.used).toBe(5)
     expect(machineCodexQuota([])).toBeNull()
   })
 })
@@ -262,16 +343,32 @@ describe('quotas Codex par compte', () => {
 describe('Codex week checked against /status', () => {
   const now = new Date(2026, 9, 3, 10, 37).getTime()
   // A `/status` gauge on screen, as remembered for the machine.
-  const applyCodexScreen = (q: Quota, w: CodexScreenWeekly | null) => applyCodexKnown(q, weekFromScreen(w, now), now)
+  const applyCodexScreen = (q: Quota & { account?: string | null }, w: CodexScreenWeekly | null) => applyCodexKnown(q, weekFromScreen(w, now, q.account ?? null), now)
   const H = 3600000
   // Last conversation: 10 h old, 88 % of the week used, reset in 17 h.
-  const stale: Quota = { five: { used: 30, resetsAt: now - 5 * H, minutes: 300 }, week: { used: 88, resetsAt: now + 17 * H, minutes: 10080 }, at: now - 10 * H }
+  const stale: Quota & { account: string } = { account: 'aaaaaaaaaaaaaaaa', five: { used: 30, resetsAt: now - 5 * H, minutes: 300 }, week: { used: 88, resetsAt: now + 17 * H, minutes: 10080 }, at: now - 10 * H }
   it('regression: stale rollout + /status at 100 % after an early reset: the screen wins', () => {
     const q = applyCodexScreen(stale, { left: 100, exact: true, resets: '10:33 on 10 Oct' })
     expect(q.week).toEqual({ used: 0, resetsAt: new Date(2026, 9, 10, 10, 33).getTime(), minutes: 10080 })
     expect(q.five).toBe(stale.five)
     expect(q.at).toBe(stale.at) // age of the conversations kept
   })
+  it.each([
+    [null, 'aaaaaaaaaaaaaaaa'], ['aaaaaaaaaaaaaaaa', null], ['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb'],
+  ])('does not apply a remembered week across an identity change (%s, %s)', (account, previous) => {
+    const q = { ...stale, account }
+    const known = { used: 99, resetsAt: now + 18 * H, at: now, source: 'screen' as const, account: previous }
+    expect(applyCodexKnown(q, known, now)).toBe(q)
+  })
+
+  it.each([null, undefined, ''])('does not replace an unidentified account’s 8 percent with a previous 90 percent (%s)', (account) => {
+    const q = { ...stale, account, week: { ...stale.week!, used: 8 } }
+    for (const resetsAt of [q.week.resetsAt!, q.week.resetsAt! + H]) {
+      const known = { used: 90, resetsAt, at: now - 60000, source: 'rollout' as const, account }
+      expect(applyCodexKnown(q, known, now)).toBe(q)
+    }
+  })
+
   it('same window: the higher usage wins', () => {
     const at = new Date(now + 17 * H)
     const resets = `${at.getHours()}:${String(at.getMinutes()).padStart(2, '0')} on ${at.getDate()} Oct`

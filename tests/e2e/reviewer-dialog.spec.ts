@@ -95,14 +95,14 @@ test('a reviewer\'s dialog: the banner opens the reviewer, never the agent', asy
   await expect(banner.locator('.task-needs-reviewer')).toHaveText('The reviewer shows no dialog now: the board moves on by itself in a few seconds.')
 })
 
-test('a reviewer wherdr cannot reach, or whose pane is closed: said plainly (French)', async ({ page }, testInfo) => {
+test('a reviewer wherdr cannot reach, or whose pane is closed: said plainly (legacy French preference)', async ({ page }, testInfo) => {
   await page.addInitScript(() => localStorage.setItem('herdrLanguage', 'fr'))
   const banner = page.locator('.board-panel .task-needs')
   // Its session is not open in wherdr.
   write(task, { socket: '/elsewhere/.config/herdr/sessions/other/herdr.sock', pane: CLAUDE_PANE, reviewer: { pane: OMP_APPROVAL_PANE } })
-  await shows(page, 'Actions de la tâche')
-  await expect(banner.locator('.task-needs-reviewer')).toContainText('wherdr ne peut pas joindre le pane du relecteur. Réponds-y sur')
-  await expect(page.locator('.board-panel-tabs').getByRole('button', { name: 'Relecteur' })).toHaveCount(0)
+  await shows(page, 'Task actions')
+  await expect(banner.locator('.task-needs-reviewer')).toContainText('wherdr cannot reach the reviewer’s pane. Answer it on')
+  await expect(page.locator('.board-panel-tabs').getByRole('button', { name: 'Reviewer' })).toHaveCount(0)
   await page.screenshot({ path: `.shots/reviewer-away-fr-${testInfo.project.name}.png` })
   await desktopShot(page, '.shots/reviewer-away-fr-desktop.png')
 
@@ -113,10 +113,10 @@ test('a reviewer wherdr cannot reach, or whose pane is closed: said plainly (Fre
     await page.goto(OPEN)
     await expect(banner.locator('.task-needs-reviewer')).toHaveAttribute('data-wait', 'gone', { timeout: 2000 })
   }).toPass({ timeout: 25_000 })
-  await expect(banner.locator('.task-needs-reviewer')).toContainText('Le pane du relecteur est fermé')
+  await expect(banner.locator('.task-needs-reviewer')).toContainText('The reviewer’s pane is closed')
   await page.screenshot({ path: `.shots/reviewer-gone-fr-${testInfo.project.name}.png` })
-  await banner.getByRole('button', { name: 'Actions de la tâche' }).click()
-  await expect(page.locator('.board-panel-tabs').getByRole('button', { name: 'Tâche' })).toHaveAttribute('aria-pressed', 'true')
+  await banner.getByRole('button', { name: 'Task actions' }).click()
+  await expect(page.locator('.board-panel-tabs').getByRole('button', { name: 'Task' })).toHaveAttribute('aria-pressed', 'true')
 })
 
 test('an agent\'s own dialog keeps its buttons', async ({ page }) => {

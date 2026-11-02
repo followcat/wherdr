@@ -1004,23 +1004,14 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 #agent { overflow: hidden; }
 /* Phone chrome: the tab picker, title and state share one row. Extra
    actions remain in Options; the tab picker retains tab management. */
-.phone-chrome .agent-top { container: phone-header / inline-size; grid-template-columns: 44px minmax(0, 1fr) auto; grid-template-areas: "back head actions"; gap: 2px; padding: max(4px, var(--safe-top)) 4px 4px; min-height: 52px; }
+.phone-chrome .agent-top { container: phone-header / inline-size; grid-template-columns: 44px minmax(0, 1fr) auto; grid-template-areas: "back head actions"; gap: 2px; border-bottom: 0; box-shadow: inset 0 -1px var(--line-soft); padding: var(--safe-top) 4px 0; min-height: calc(44px + var(--safe-top)); }
 .phone-chrome .agent-top :is(.back, .agent-actions .icon-btn) { width: 44px; height: 44px; flex: none; }
-.space-tab-picker { grid-area: space; display: inline-flex; align-items: center; gap: 4px; height: 36px; max-width: 24vw; padding: 0 7px; border: 1px solid var(--line); color: var(--text-2); font: 12px/1 var(--mono); }
-.space-tab-picker span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.space-tab-picker .iconify { width: 12px; height: 12px; flex: none; }
-.phone-chrome .agent-head { display: flex; align-items: center; gap: 6px; padding: 0 2px; }
-.phone-chrome .agent-title { flex: 1 1 auto; min-width: 0; font-size: 14px; }
-.phone-chrome .agent-meta { flex: 0 1 auto; min-width: 0; max-width: 48%; margin: 0; max-height: none; flex-wrap: nowrap; }
-.phone-chrome .agent-meta .pill { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; font-size: 10px; }
-.phone-chrome .agent-meta .pill-kind { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.phone-chrome .agent-meta .pill-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.phone-chrome .agent-meta :is(.agent-subtitle, .agent-machine, .where) { display: none; }
 .phone-keybar-controls { position: relative; height: 0; flex: none; z-index: 5; }
-.phone-keybar-toggle { position: absolute; right: 12px; bottom: 8px; width: 40px; height: 36px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 18px; background: var(--bg-2); color: var(--muted); touch-action: manipulation; }
+.phone-keybar-toggle { position: absolute; right: 12px; bottom: 8px; width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 0; background: var(--bg-2); color: var(--muted); touch-action: manipulation; }
+.phone-keybar-toggle::after { content: ''; position: absolute; inset: -5px; }
 .phone-keybar-toggle .iconify { width: 20px; height: 20px; }
 .phone-keybar-toggle.on { color: var(--accent); border-color: var(--accent); }
-.phone-keybar-toggle:focus-visible, .space-tab-picker:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.phone-keybar-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* File dragged from the Finder / file explorer: drop zone over the whole view. */
 .file-drop {
   position: absolute; inset: 8px; z-index: 60; pointer-events: none;
@@ -1039,8 +1030,8 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 .agent-top .back { grid-area: back; }
 .agent-head { grid-area: head; min-width: 0; padding: 0 4px; }
 .agent-actions { grid-area: actions; display: flex; align-items: center; gap: 2px; flex: none; }
-.agent-top .view-tabs { grid-area: tabs; }
-.agent-actions .view-tabs { width: 220px; margin-right: 10px; }
+.agent-top .view-toggle { grid-area: tabs; }
+.agent-actions .view-toggle { margin-right: 10px; }
 /* Header toggle (phone): terminal `>_`. Lit = shown. */
 .agent-actions .mode-btn.on { border-color: var(--mauve); background: color-mix(in srgb, var(--mauve) 14%, transparent); color: var(--mauve); }
 @media (max-width: 380px) { .agent-actions .icon-btn { width: 36px; } }
@@ -1072,18 +1063,9 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 .machine-banner > .term-banner-icon { color: var(--rose); }
 .machine-banner small { display: block; margin-top: 2px; font: 400 11px/1.35 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 
-/* Selector (UTabs): discreet bordered block, active tab filled, like INK / PAPER. */
-.hw-tabs { padding: 0; border: 1px solid var(--line); background: transparent; width: 100%; }
-.hw-tab {
-  flex: 1; justify-content: center; padding: 6px 8px;
-  font: 500 10.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
-}
-.hw-tab[data-state="inactive"] { color: var(--muted); }
-/* Active tab in mauve, dark text (phone and computer). */
-.hw-tab[data-state="active"] { color: var(--on-accent); }
-.hw-tab-ind { background: var(--mauve); inset-block: 0; }
-/* Its icons only show where the labels do not fit (narrow side-by-side cell). */
-.hw-tab-icon { display: none; }
+/* One action to switch between conversation and terminal. */
+.view-toggle { justify-content: center; border-radius: 0; }
+.view-toggle-label { font: 500 10.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
 
 /* No scroll container here: the window body (AppSheet) scrolls. A nested one
    that never overflows would keep the wheel and the finger for itself. */
@@ -1251,6 +1233,9 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 .msg-c { padding-bottom: 0; gap: 0; }
 .msg-ai .msg-c { padding-bottom: 0; }
 .msg-ai:has(.msg-actions) .msg-c { padding-bottom: 36px; }
+
+/* An assistant turn that ended in an error keeps its text but reads as one. */
+.msg-ai.err .md-body { border-left: 2px solid var(--rose); padding-left: 10px; }
 
 /* User message: square block on the right. */
 .msg-user-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; margin-top: 6px; }
@@ -1586,6 +1571,10 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
 /* Scheduled task prompt: one line until opened. */
 .msg-notice.scheduled:not(.open) .msg-notice-body { max-height: 1.6em; mask-image: none; -webkit-mask-image: none; white-space: nowrap; text-overflow: ellipsis; }
 .msg-notice.scheduled:not(.open) .msg-notice-body > * { margin: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Failed agent turn: the provider's message, as it came. */
+.msg-error { border-left-color: var(--danger); }
+.msg-error .msg-notice-head { color: var(--danger); }
+.msg-error-text { color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; font: 400 12.5px/1.5 var(--mono); }
 .msg-system, .day-sep {
   display: flex; align-items: center; gap: 12px; margin: 6px 0;
   font: 500 10.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--dim);
@@ -1844,6 +1833,8 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
 .composer { flex: none; background: var(--bg); padding: 6px 12px max(10px, calc(var(--safe-bottom) - 6px)); }
 body.kb .composer { padding-bottom: 8px; }
 .composer { position: relative; }
+/* The open phone key strip already ends with 5 px under its keys (their touch zones). */
+.virtual-keyboard + .composer { padding-top: 0; }
 /* Claude Code status ("✔ Update installed · Restart to update"): small
    blue text on the right, just above the field, as in the terminal. */
 .composer-notice {
@@ -2797,6 +2788,23 @@ body.kb .composer { padding-bottom: 8px; }
 .bar-pref-state.offline { background: var(--rose); }
 .bar-pref-reset { margin-top: 12px; border-radius: 0; }
 @media (prefers-reduced-motion: reduce) { .bar-pref-row { transition: none; } }
+/* Settings › Terminal › Phone key bar (PhoneKeyOrderSettings.vue). The preview
+   is as wide as a phone row and draws the keys like PhoneKeybar.vue. */
+.key-order-preview { display: flex; gap: 6px; max-width: 390px; padding: 5px 11px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; border: 1px solid var(--line); background: var(--bg); }
+.key-order-preview::-webkit-scrollbar { display: none; }
+.key-order-cap { display: grid; place-items: center; flex: none; min-width: 38px; height: 36px; padding: 0 3px; border: 1px solid var(--line-soft); background: var(--bg-2); color: var(--text-2); font: 500 12px/1 var(--mono); user-select: none; -webkit-user-select: none; }
+.key-order-cap.danger { color: var(--rose); border-color: var(--rose); }
+.key-order-cap svg { width: 19px; height: 19px; }
+.key-order-label { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 0 10px 0 12px; }
+.key-order-label .key-order-cap { min-width: 34px; height: 30px; font-size: 11px; }
+.key-order-label .key-order-cap svg { width: 16px; height: 16px; }
+.key-order-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: var(--text); }
+.key-order-step { flex: none; width: 44px; display: grid; place-items: center; border: 0; border-left: 1px solid var(--line-soft); border-radius: 0; background: none; color: var(--text-2); cursor: pointer; touch-action: manipulation; }
+.key-order-step svg { width: 18px; height: 18px; }
+.key-order-step:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
+.key-order-step:disabled { color: var(--dim); opacity: .45; cursor: default; }
+.key-order-step:focus-visible { outline: 1px solid var(--accent); outline-offset: -3px; }
+.key-order-announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .settings-stepper { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 58px; padding: 8px 12px 8px 16px; }
 .settings-stepper > span { font-size: 15px; }
 .settings-stepper > div { display: flex; align-items: center; border: 1px solid var(--line); }
@@ -3017,20 +3025,17 @@ ol[data-slot="viewport"] { top: calc(var(--safe-top) + 12px) !important; bottom:
 .cell-view::after { content: ""; position: absolute; inset: 0; z-index: 5; pointer-events: none; box-shadow: inset 0 0 0 1px transparent; }
 .cell-view.active::after { box-shadow: inset 0 0 0 1px var(--mauve); }
 .cell-view .agent-title { font-size: 14px; }
-.cell-view .agent-top .view-tabs { width: 220px; }
+.cell-view .agent-top .view-toggle { min-width: 140px; }
 /* Agent question in a short cell: it scrolls instead of eating the cell. */
 .cell-view .choices { max-height: 58%; overflow-y: auto; overscroll-behavior: contain; }
 .cell-view .agent-actions { justify-self: end; }
 .cell-view .agent-actions .icon-btn { width: 34px; height: 34px; }
 .cell-view .agent-actions .icon-btn .iconify { width: 17px; height: 17px; }
-/* Narrow cell: the selector shrinks to its two icons (the labels stay for
-   screen readers); narrower still, the header keeps the title and the menu. */
+/* Narrow cells keep the action icon and accessible name. */
 .cell-view .agent-top { container: cell-top / inline-size; }
 @container cell-top (max-width: 500px) {
-  .cell-view .agent-top .view-tabs { width: 72px; }
-  .cell-view .hw-tab { padding: 6px 0; }
-  .cell-view .hw-tab-icon { display: block; width: 14px; height: 14px; }
-  .cell-view .hw-tab-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .cell-view .agent-top .view-toggle { min-width: 44px; width: 44px; padding-inline: 0; }
+  .cell-view .view-toggle-label { display: none; }
 }
 @container cell-top (max-width: 250px) {
   .cell-view .agent-actions .cell-extra { display: none; }
@@ -3391,6 +3396,13 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
 
 /* Images in replies: clickable (large preview). */
 .md-body img { max-width: 100%; height: auto; cursor: zoom-in; border: 1px solid var(--line); }
+/* An image that cannot show (refused, unreachable): a note with its link (utils/imageFallback.ts). */
+.md-body img.md-img-broken { display: none; }
+.md-img-fallback { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; max-width: 100%; margin: 4px 0; padding: 10px 12px; border: 1px solid var(--line); background: var(--bg-2); color: var(--text-3); font-size: .9em; line-height: 1.4; cursor: auto; }
+.md-img-fallback-tag { font: 600 10px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.md-img-fallback-alt { color: var(--text); }
+.md-body .md-img-fallback a { display: inline-flex; align-items: center; min-height: 44px; font-weight: 600; }
+.md-img-fallback-url { font: 12px/1.4 var(--mono); color: var(--dim); overflow-wrap: anywhere; }
 
 /* Tabs of a space (at the top of its view): state dot for a tab with a
    single pane, mini-map otherwise. */
@@ -4324,7 +4336,7 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
   .keybar button { height: 44px; }
   /* Side by side: cell buttons, selector and grip at finger size. */
   .cell-view .agent-actions .icon-btn { width: 44px; height: 44px; }
-  .cell-view .agent-top .hw-tab { min-height: 44px; }
+  .agent-top .view-toggle { min-width: 44px; min-height: 44px; }
   .cell-grip { width: 32px; height: 44px; }
   /* Dividers: wider touch area, line marked with a notch (as in the plan). */
   .split .divider.right { width: 24px; }
@@ -4528,3 +4540,25 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
 /* Contain the terminal grid; the terminal frame and composer stay fixed. */
 #termWrap.smooth-touch #term { overflow: hidden; }
 #termWrap.smooth-touch .xterm { overflow-y: hidden; overscroll-behavior: none; }
+
+/* Only tab content moves; the header and footer are outside this clipped viewport. */
+.home-content { position: relative; flex: 1; min-height: 0; overflow: hidden; isolation: isolate; background: inherit; }
+.home-content > .scroll { position: absolute; inset: 0; padding-bottom: 16px; background: inherit; }
+#home > .fab-wrap { position: static; flex: none; display: flex; justify-content: flex-end; padding: 12px 16px calc(var(--safe-bottom) + 18px); }
+.home-next-enter-active, .home-next-leave-active,
+.home-prev-enter-active, .home-prev-leave-active { transition-property: transform, opacity; transition-duration: 260ms; transition-timing-function: cubic-bezier(.22,.68,0,1); will-change: transform, opacity; }
+.home-next-enter-from { transform: translateX(calc(100% + var(--home-release, 0px))); opacity: 0; }
+.home-prev-enter-from { transform: translateX(calc(-100% + var(--home-release, 0px))); opacity: 0; }
+.home-next-leave-from, .home-prev-leave-from { transform: translateX(var(--home-release, 0px)); }
+.home-prev-leave-to { transform: translateX(100%); opacity: 0; }
+.home-next-leave-to { transform: translateX(-100%); opacity: 0; }
+.home-returning > .scroll:not([class*="-active"]) { transition: transform 260ms cubic-bezier(.22,.68,0,1); }
+.home-dragging > .scroll { transform: translateX(var(--home-touch)); transition: none !important; }
+.home-next-leave-active, .home-prev-leave-active { pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .machine-bar-indicator { transition: none; }
+  .home-content > .scroll { transition: none !important; transform: none !important; opacity: 1 !important; }
+}
+
+.phone-chrome .mode-btn { border: 1px solid transparent; border-radius: 0; }
+.phone-chrome .mode-btn.on { border-color: var(--accent); }

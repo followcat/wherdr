@@ -67,6 +67,17 @@ describe.each([80, 120])('real Claude Code 2.1.296 at %i columns', width => {
     await n.run()
     expect(n.keys).toEqual(['right', 'right', 'right'])
   })
+  // Every source and destination with the real tab frames (formerly an e2e loop).
+  const order = ['Status', 'Config', 'Usage', 'Stats']
+  const frameOf: Record<string, string> = { Status: 'status-{w}', Config: 'config-{w}-returned', Usage: 'usage-{w}', Stats: 'stats-{w}' }
+  it.each(order.flatMap(from => order.map(target => [from, target])))('goes from %s to %s with arrows only', async (from, target) => {
+    const i = order.indexOf(from!), j = order.indexOf(target!)
+    const dir = j > i ? 'right' : 'left'
+    const passed = (j > i ? order.slice(i + 1, j + 1) : order.slice(j, i).reverse()).map(tab => screen(frameOf[tab]!))
+    const n = await navigate(screen(frameOf[from!]!), target!, { [dir]: passed })
+    await expect(n.run()).resolves.toEqual({ ok: true, tab: target })
+    expect(n.keys).toEqual(Array(Math.abs(j - i)).fill(dir))
+  })
   it('does nothing when the requested tab is already active', async () => {
     const n = await navigate(screen('config-{w}-bottom'), 'Config')
     await n.run()

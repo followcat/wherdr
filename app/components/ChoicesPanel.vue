@@ -112,7 +112,7 @@ function onFreeKey(e: KeyboardEvent, i: number, label: string) {
 // keyboard is its own.
 const disabled = computed(() => busy.value || props.prompt?.unavailable || props.screen?.unavailable || !eventsOpen.value || offlineView.value)
 const keyboard = computed(() => Boolean(props.keys && desk.value && props.prompt && !props.prompt.kind && props.prompt.options.length && freeAt.value === null && !disabled.value))
-useCardKeys(() => keyboard.value, () => ({ digits: Math.min(9, props.prompt?.options.length || 0), enter: true, tabs: Boolean(tabs.value) }), (k) => {
+useCardKeys(() => keyboard.value, () => ({ digits: Math.min(9, props.prompt?.options.length || 0), enter: true, tabs: Boolean(tabs.value) || Boolean(props.prompt?.horizontal) }), (k) => {
   const p = props.prompt
   if (!p) return
   if (k.kind === 'digit') {
@@ -121,9 +121,24 @@ useCardKeys(() => keyboard.value, () => ({ digits: Math.min(9, props.prompt?.opt
     else pick(k.n - 1, o.label)
     return
   }
-  // Like ↑/↓: key by key, in typing order (without waiting for the state).
-  if (k.kind === 'tab') return navKey(props.paneId, k.dir > 0 ? 'right' : 'left')
+  // Like ←/→: key by key, in typing order (without waiting for the state).
+  if (k.kind === 'tab') {
+    if (p.horizontal && cursor.value !== null && cursor.value !== undefined) {
+      cursor.value = (cursor.value + (k.dir > 0 ? 1 : -1) + p.options.length) % p.options.length
+    }
+    if (p.horizontal) {
+      navPending++
+      navKey(props.paneId, k.dir > 0 ? 'right' : 'left').then((ok) => {
+        navPending--
+        if (!ok) cursor.value = props.prompt?.cursor
+      })
+      return
+    }
+    return navKey(props.paneId, k.dir > 0 ? 'right' : 'left')
+  }
   if (k.kind === 'nav') {
+    // OpenCode's permission dialog only moves with ←/→ (⇆ select).
+    if (p.horizontal) return
     if ((k.key === 'up' || k.key === 'down') && cursor.value !== null && cursor.value !== undefined) {
       cursor.value = Math.max(0, Math.min(p.options.length - 1, cursor.value + (k.key === 'down' ? 1 : -1)))
     }
@@ -189,7 +204,7 @@ useCardKeys(() => keyboard.value, () => ({ digits: Math.min(9, props.prompt?.opt
       >
         {{ screenActionText(a) }}<kbd>{{ screenKeyName(a.key) }}</kbd>
       </button>
-      <span v-if="keyboard" class="card-kbd" aria-hidden="true"><kbd v-if="tabs">←→</kbd><kbd>↑↓</kbd><kbd>{{ screenKeyName('enter') }}</kbd><kbd>1–{{ Math.min(9, prompt!.options.length) }}</kbd></span>
+      <span v-if="keyboard" class="card-kbd" aria-hidden="true"><kbd v-if="tabs || prompt!.horizontal">←→</kbd><kbd v-if="!prompt!.horizontal">↑↓</kbd><kbd>{{ screenKeyName('enter') }}</kbd><kbd>1–{{ Math.min(9, prompt!.options.length) }}</kbd></span>
     </div>
   </div>
 </template>

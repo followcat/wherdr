@@ -91,13 +91,13 @@ test('a failed review: send it back first, its findings shown, then Approve anyw
   await expect.poll(() => fs.existsSync(path.join(root, 'sent')) && fs.readFileSync(path.join(root, 'sent'), 'utf8')).toBe('review -- shop/85')
 })
 
-test('a failed review, in French', async ({ page }, testInfo) => {
+test('a failed review, with a legacy French preference', async ({ page }, testInfo) => {
   await page.addInitScript(() => localStorage.setItem('herdrLanguage', 'fr'))
   const banner = await open(page)
-  await expect(banner.locator('.task-needs-actions button').first()).toHaveText('Renvoyer les remarques à l’agent')
-  await expect(banner.locator('.task-needs-anyway')).toHaveText('Approuver quand même')
-  await expect(banner.locator('.task-needs-findings-head')).toHaveText('Remarques de relecture')
-  await expect(banner.locator('.task-needs-findings li').first()).toHaveText('CritiqueThe coupon code is written to the server log in clear')
+  await expect(banner.locator('.task-needs-actions button').first()).toHaveText('Send the review back to the agent')
+  await expect(banner.locator('.task-needs-anyway')).toHaveText('Approve anyway')
+  await expect(banner.locator('.task-needs-findings-head')).toHaveText('Review findings')
+  await expect(banner.locator('.task-needs-findings li').first()).toHaveText('CriticalThe coupon code is written to the server log in clear')
   await page.screenshot({ path: `.shots/review-send-back-fr-${testInfo.project.name}.png` })
   await desktopShot(page, '.shots/review-send-back-fr-desktop.png')
 })

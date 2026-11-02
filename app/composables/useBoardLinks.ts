@@ -3,7 +3,7 @@
 // uses it is mounted and the page is shown (`same` when nothing changed), and
 // again when Herdr's spaces change (a task's space opens). Kept at module
 // level: the list comes back with the last links at once.
-import type { BoardLinks, BoardLinksReply, MachineLinks } from '#shared/boardLinks'
+import { type BoardLinks, type BoardLinksReply, type MachineLinks, resolveCoordinators } from '#shared/boardLinks'
 
 const POLL_MS = 15000
 const links = shallowRef<BoardLinks | null>(null)
@@ -21,8 +21,11 @@ async function load() {
   } catch { /* the list stays as it is: ungrouped rows are still listed */ }
 }
 
+// The links read, each coordinator on the pane Herdr shows it in now (its
+// file's ids may be those of a pane closed since: resolveCoordinators).
+const resolved = computed<MachineLinks[]>(() => resolveCoordinators(links.value?.machines ?? [], herdrState.value.panes))
 // The last links read (the close confirmation names the tasks it stops).
-export const boardLinksNow = (): MachineLinks[] => links.value?.machines ?? []
+export const boardLinksNow = (): MachineLinks[] => resolved.value
 // Read now (before a close is confirmed: the list may not be on screen).
 export const refreshBoardLinks = () => load()
 
@@ -41,7 +44,7 @@ export function useBoardLinks() {
     if (spaces && now !== spaces) setTimeout(load, 1500)
     spaces = now
   })
-  return computed<MachineLinks[]>(() => links.value?.machines ?? [])
+  return resolved
 }
 
 // The clock of the elapsed times on the board's cards: one for every card, every 20 s.

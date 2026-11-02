@@ -1,3 +1,8 @@
+// The Codex self-update journey in a browser: the card, its buttons, the held
+// message and the restart. The edge cases are unit tests in
+// tests/agentSelfUpdate.test.ts: the fresh-start arguments (conversation choice),
+// another foreground program, continuation drafts, a replaced process, a failed
+// final transcript read and a guessed session.
 import { expect, test, type Page } from './test'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -9,23 +14,6 @@ const record = () => {
     const records = JSON.parse(fs.readFileSync(path.join(path.dirname(SOCK_FILE), 'data/last-agents.json'), 'utf8'))
     return records.find(([id]: [string]) => id === CODEX_UPDATE_PANE)?.[1]
   } catch { return null }
-}
-// Next to the transcript the launcher wrote: its folder is dated from the
-// start of the run, which may be yesterday by now (a run crossing midnight UTC).
-function transcriptFile(session = CODEX_UPDATE_SESSION) {
-  const root = path.join(path.dirname(fs.readFileSync(SOCK_FILE, 'utf8')), 'home/.codex/sessions')
-  const seeded = (fs.readdirSync(root, { recursive: true }) as string[]).find(f => path.basename(f) === `rollout-test-${CODEX_UPDATE_SESSION}.jsonl`)
-  if (!seeded) throw new Error(`no seeded Codex transcript under ${root}`)
-  return path.join(root, path.dirname(seeded), `rollout-test-${session}.jsonl`)
-}
-// A directory at the retained path fails reads even as root, unlike chmod(0).
-// Keep the transcript next to it, outside the rollout filename pattern.
-function failTranscriptRead(file: string) {
-  const saved = `${file}.saved`
-  fs.renameSync(file, saved)
-  try { fs.mkdirSync(file) }
-  catch (error) { fs.renameSync(saved, file); throw error }
-  return () => { fs.rmdirSync(file); fs.renameSync(saved, file) }
 }
 const stats = () => fakeHerdr('e2e.update_starts', { pane_id: CODEX_UPDATE_PANE })
 const post = (page: Page, endpoint: string, data: object) => page.request.post(`/api/${endpoint}`, {
@@ -168,25 +156,6 @@ test('an existing Codex resumes its exact session', { tag: '@chromium-desktop' }
   await expect.poll(async () => (await stats()).prompts.map((p: { text: string }) => p.text)).toEqual(['Held until exact resume'])
 })
 
-test('an existing conversation can explicitly start fresh', async ({ page }) => {
-  await stopAfterUpdate(page, true)
-  expect((await (await post(page, 'prompt', { text: 'Held until fresh start' })).json()).queued.state).toBe('held')
-  await card(page).getByRole('button', { name: /Start fresh/ }).click()
-  await expect.poll(async () => (await fakeHerdr('e2e.update_starts', { pane_id: CODEX_UPDATE_PANE })).starts.length).toBe(1)
-  const { starts } = await fakeHerdr('e2e.update_starts', { pane_id: CODEX_UPDATE_PANE })
-  expect(starts[0].args).toEqual(['--profile', 'work', '-m', 'gpt-x'])
-  await expect.poll(async () => (await stats()).prompts.map((p: { text: string }) => p.text)).toEqual(['Held until fresh start'])
-})
-
-test('the restart card and both conversation choices are translated into French', async ({ page }, info) => {
-  await page.addInitScript(() => localStorage.setItem('herdrLanguage', 'fr'))
-  await stopAfterUpdate(page, true, 'Codex s’est mis à jour et s’est arrêté')
-  await expect(card(page).getByRole('button', { name: /Reprendre la conversation/ })).toBeVisible()
-  await expect(card(page).getByRole('button', { name: /Démarrer une nouvelle conversation/ })).toBeVisible()
-  await expect(card(page).getByRole('button', { name: 'Ignorer', exact: true })).toBeVisible()
-  if (info.project.name.startsWith('chromium')) await page.screenshot({ path: `.shots/codex-update-fr-${info.project.name}.png`, fullPage: true })
-})
-
 test('a shell draft refuses restart and keyboard navigation sends nothing', async ({ page }) => {
   await stopAfterUpdate(page)
   await fakeHerdr('e2e.update_draft', { pane_id: CODEX_UPDATE_PANE, text: 'echo hello' })
@@ -197,89 +166,3 @@ test('a shell draft refuses restart and keyboard navigation sends nothing', asyn
   const nav = await page.request.post('/api/nav', { headers: { Origin: new URL(page.url()).origin }, data: { pane_id: CODEX_UPDATE_PANE, key: 'enter' } })
   expect(nav.status()).toBe(400)
 })
-
-test('another foreground program refuses restart', async ({ page }) => {
-  await stopAfterUpdate(page)
-  await fakeHerdr('e2e.update_foreground', { pane_id: CODEX_UPDATE_PANE })
-  const response = page.waitForResponse(r => r.url().endsWith('/api/choose'))
-  await card(page).getByRole('button', { name: /Restart Codex/ }).click()
-  expect((await response).status()).toBe(400)
-  expect((await fakeHerdr('e2e.update_starts', { pane_id: CODEX_UPDATE_PANE })).starts).toEqual([])
-})
-
-for (const draft of ["echo '\n> ", 'cat <<EOF\n> ']) {
-  test(`a continuation draft present before the first exit check never allows a restart: ${draft.split('\n')[0]}`, async ({ page }) => {
-    await stopAfterUpdate(page)
-    // Re-arm a new invocation, then atomically exit with a pre-existing draft.
-    const { pid } = await fakeHerdr('e2e.update_reset', { onSnapshot: true, pane_id: CODEX_UPDATE_PANE })
-    await expect.poll(record, { timeout: 15000 }).toMatchObject({ pid, conversation: 'empty' })
-    await fakeHerdr('e2e.update_exit', { pane_id: CODEX_UPDATE_PANE, draft })
-    await expect.poll(record, { timeout: 15000 }).toMatchObject({ pid, checked: true })
-    expect(record().signature).toBeUndefined()
-    await expect(card(page)).toHaveCount(0)
-    const r = await post(page, 'choose', { index: 0, label: 'Restart Codex' })
-    expect(r.status()).toBe(400)
-    expect(await stats()).toMatchObject({ starts: [], writes: [], prompts: [] })
-  })
-}
-
-test('a rapidly replaced process keeps its own arguments through the restart API', async ({ page }) => {
-  await stopAfterUpdate(page)
-  const first = await fakeHerdr('e2e.update_reset', { onSnapshot: true, pane_id: CODEX_UPDATE_PANE })
-  await expect.poll(record, { timeout: 15000 }).toMatchObject({ pid: first.pid, conversation: 'empty' })
-  const second = await fakeHerdr('e2e.update_replace', { pane_id: CODEX_UPDATE_PANE, argv: ['codex', '--profile', 'second', 'second task'] })
-  await expect.poll(record, { timeout: 15000 }).toMatchObject({ pid: second.pid, argv: ['codex', '--profile', 'second', 'second task'] })
-  await fakeHerdr('e2e.update_exit', { pane_id: CODEX_UPDATE_PANE })
-  await expect(card(page).getByRole('button', { name: /Restart Codex/ })).toBeVisible()
-  await card(page).getByRole('button', { name: /Restart Codex/ }).click()
-  await expect.poll(async () => (await stats()).starts).toMatchObject([{ args: ['--profile', 'second', 'second task'] }])
-})
-
-test('an empty transcript followed by a failed final read offers Resume with the exact ID', async ({ page }) => {
-  const file = transcriptFile()
-  const original = fs.readFileSync(file, 'utf8')
-  try {
-    fs.writeFileSync(file, original.split('\n')[0] + '\n')
-    const { pid } = await fakeHerdr('e2e.update_reset', { onSnapshot: true, pane_id: CODEX_UPDATE_PANE, session: CODEX_UPDATE_SESSION })
-    await page.goto(`/#/a/${CODEX_UPDATE_PANE}`)
-    await expect.poll(record, { timeout: 15000 }).toMatchObject({ pid, conversation: 'empty', session: CODEX_UPDATE_SESSION })
-    // First messages arrive, but the final re-read cannot read the transcript.
-    fs.writeFileSync(file, original)
-    const restore = failTranscriptRead(file)
-    try {
-      expect(() => fs.readFileSync(file)).toThrow(/EISDIR/)
-      await fakeHerdr('e2e.update_exit', { pane_id: CODEX_UPDATE_PANE })
-      await expect(card(page).getByRole('button', { name: /Resume conversation/ })).toBeVisible()
-      expect(record().conversation).toBe('unknown')
-      await expect(card(page).getByRole('button', { name: /Start fresh/ })).toBeVisible()
-    } finally { restore() }
-    await card(page).getByRole('button', { name: /Resume conversation/ }).click()
-    await expect.poll(async () => (await stats()).starts).toMatchObject([{ args: ['resume', '--profile', 'work', '-m', 'gpt-x', CODEX_UPDATE_SESSION] }])
-  } finally { fs.writeFileSync(file, original) }
-})
-
-test('guessed B invalidates exact A before a final read failure and Resume opens the picker', async ({ page }) => {
-  await stopAfterUpdate(page, true)
-  const { pid } = await fakeHerdr('e2e.update_reset', { onSnapshot: true, pane_id: CODEX_UPDATE_PANE, session: CODEX_UPDATE_SESSION })
-  await expect.poll(record, { timeout: 15000 }).toMatchObject({ pid, session: CODEX_UPDATE_SESSION, conversation: 'existing' })
-  const sessionB = `00000000-0000-4000-8000-${String(pid).padStart(12, '0')}`
-  const file = transcriptFile(sessionB)
-  const meta = JSON.parse(fs.readFileSync(transcriptFile(), 'utf8').split('\n')[0]!)
-  meta.payload.id = sessionB; meta.payload.timestamp = new Date().toISOString()
-  fs.writeFileSync(file, [meta, { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Conversation B is current.' }] } }].map(x => JSON.stringify(x)).join('\n') + '\n')
-  try {
-    await fakeHerdr('e2e.update_session', { pane_id: CODEX_UPDATE_PANE, session: null })
-    await expect(page.locator('.chat').getByText('Conversation B is current.')).toBeVisible()
-    await expect.poll(record, { timeout: 15000 }).toMatchObject({ pid, session: null, conversation: 'existing' })
-    const restore = failTranscriptRead(file)
-    try {
-      expect(() => fs.readFileSync(file)).toThrow(/EISDIR/)
-      await fakeHerdr('e2e.update_exit', { pane_id: CODEX_UPDATE_PANE })
-      await expect(card(page).getByRole('button', { name: /Resume conversation/ })).toBeVisible()
-      expect(record().session).toBeNull()
-    } finally { restore() }
-    await card(page).getByRole('button', { name: /Resume conversation/ }).click()
-    await expect.poll(async () => (await stats()).starts).toMatchObject([{ args: ['resume', '--profile', 'work', '-m', 'gpt-x'] }])
-  } finally { fs.unlinkSync(file) }
-})
-

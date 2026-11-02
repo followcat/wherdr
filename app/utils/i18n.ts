@@ -1,6 +1,5 @@
-// UI translations: the English text is the key and is shown as-is in English;
-// FR maps it to French. A missing French entry falls back to English (tests/i18n.test.ts
-// checks that every key used in the code has one). The choice is saved on the device.
+// Interface text uses English keys. Keep the inactive French dictionary for now;
+// new interface text does not require a French translation.
 
 const FR: Record<string, string> = {
   'Smooth touch scrolling (beta)': 'Défilement tactile fluide (bêta)',
@@ -170,6 +169,8 @@ const FR: Record<string, string> = {
   'Use the restart buttons for this stopped agent.': 'Utilise les boutons de relance de cet agent arrêté.',
   'Restart Codex before sending a command.': 'Relance Codex avant d’envoyer une commande.',
   'Codex just stopped. Try again in a few seconds.': 'Codex vient de s’arrêter. Réessaie dans quelques secondes.',
+  'OpenCode is asking something — answer it in its terminal.': 'OpenCode pose une question — réponds-y dans son terminal.',
+  'Devin is asking something — answer it in its terminal.': 'Devin pose une question — réponds-y dans son terminal.',
   'The pane is not at an empty shell prompt. Check its terminal.': 'Le panneau n’est pas sur une invite de shell vide. Vérifie son terminal.',
   'Restart agent': 'Redémarrer l’agent', 'Restart': 'Redémarrer', 'Restart anyway': 'Redémarrer quand même',
   'Restart to update': 'Redémarrer pour mettre à jour', 'Restarting': 'Redémarrage',
@@ -228,6 +229,10 @@ const FR: Record<string, string> = {
   'Last known state': 'Dernier état connu', 'Offline reading': 'Lecture hors ligne',
   'Image unavailable offline': 'Image non disponible hors ligne',
   'Image': 'Image',
+  'Image not shown': 'Image non affichée',
+  'wherdr only shows images from its own address and from HTTPS addresses on your tailnet.': 'wherdr n’affiche que les images de sa propre adresse et des adresses HTTPS de ton tailnet.',
+  'The image could not be loaded.': 'L’image n’a pas pu être chargée.',
+  'Open image': 'Ouvrir l’image',
   'Previous image': 'Image précédente', 'Next image': 'Image suivante',
   'Zoom in': 'Zoomer', 'Zoom out': 'Dézoomer', 'Fit to screen': 'Ajuster à l’écran', 'Actual size': 'Taille réelle',
   'Terminal unavailable offline': 'Terminal indisponible hors ligne',
@@ -244,6 +249,8 @@ const FR: Record<string, string> = {
   'Coordinator': 'Coordinateur',
   'review': 'revue',
   'Hide': 'Masquer',
+  'Show terminal': 'Afficher le terminal',
+  'Show conversation': 'Afficher la conversation',
   'Show terminals': 'Afficher les terminaux',
   'Compact list': 'Liste compacte',
   'Tasks: one line in Compact, two in Normal with current activity and relevant labels. Details stay in the task sheet. Follows you on every device.': 'Tâches : une ligne en compact, deux en normal avec l’activité et les étiquettes utiles. Les détails restent dans la fiche de la tâche. Te suit sur tous tes appareils.',
@@ -320,6 +327,7 @@ const FR: Record<string, string> = {
   'Notifications enabled ✓': 'Notifications activées ✓', 'Failed': 'Échec',
   'Notification sent': 'Notification envoyée',
   'No device accepted the notification': 'Aucun appareil n’a accepté la notification',
+  'Unknown device': 'Appareil inconnu',
   'Agents': 'Agents', 'Menu': 'Menu', 'No agents yet.': 'Aucun agent pour l’instant.',
   'Start one here, or from': 'Lance-en un ici, ou depuis', 'in a terminal.': 'dans un terminal.',
   'New': 'Nouveau', 'Options': 'Options', 'Conversation': 'Conversation',
@@ -424,6 +432,7 @@ const FR: Record<string, string> = {
   'Settings have changed.': 'Les réglages ont changé.',
   'Use the terminal to focus the settings tabs.': 'Utilise le terminal pour revenir aux onglets des réglages.',
   'The screen has changed — check the current screen.': 'L’écran a changé entre-temps — regarde l’écran à jour.',
+  'The request has changed — check the current screen.': 'La requête a changé entre-temps — regarde l’écran à jour.',
   'Write your answer before sending it.': 'Écris ta réponse avant de l’envoyer.',
   'An answer is already being sent.': 'Une réponse est déjà en cours d’envoi.',
   'omp’s answer field did not open — check the current screen.': 'Le champ de réponse d’omp ne s’est pas ouvert — regarde l’écran à jour.',
@@ -497,21 +506,21 @@ const FR: Record<string, string> = {
   'Counted from the last passkey unlock, used or not, for every device. Never in the middle of use: at the next opening of the app.': 'Compté depuis le dernier déverrouillage par clé d’accès, utilisée ou non, pour tous les appareils. Jamais en pleine utilisation : à la prochaine ouverture de l’app.',
   'The passkey will be asked again the next time the app opens.': 'La clé d’accès sera redemandée à la prochaine ouverture de l’app.',
   'Parent': 'Parent',
-  'Confirm': 'Confirmer', 'Close pane': 'Fermer le pane', 'Turn off': 'Désactiver',
+  'Confirm': 'Confirmer', 'Turn off': 'Désactiver',
   'Worktrees': 'Worktrees', 'Worktree not found': 'Worktree introuvable', 'No worktrees.': 'Aucun worktree.', 'folder missing': 'dossier disparu', 'closed': 'fermé', 'Delete': 'Supprimer', 'Force delete': 'Forcer la suppression', 'Delete this worktree': 'Supprimer ce worktree', 'Deleting a worktree removes its folder; the Git branch is kept.': 'Supprimer un worktree efface son dossier ; la branche Git est gardée.',
   'Preview': 'Aperçu', 'Replay': 'Rejouer',
   'Mark as read': 'Marquer comme lu', 'Mark as unread': 'Marquer comme non lu',
   'Commands': 'Commandes', 'Resets': 'Réinitialisation', 'left': 'restant', 'Week': 'Semaine', 'reset': 'réinitialisé', 'new window': 'fenêtre neuve', 'just now': 'à l’instant', 'Remaining quotas': 'Quotas restants', 'Install': 'Installer', 'Copy command': 'Copier la commande', 'this machine': 'cette machine', 'They will show after the next exchange with a Claude.': 'Ils apparaîtront après le prochain échange avec un Claude.', 'updated': 'mis à jour', 'used': 'utilisé',
   'Agent': 'Agent', 'Previous': 'Précédent', 'Next': 'Suivant',
-  'Reconnecting…': 'Reconnexion…', 'Offline': 'Hors ligne', 'Pane': 'Panneau', 'Panes': 'Panneaux',
-  'Conversation compacted': 'Conversation compactée', 'Conversation cleared': 'Conversation effacée', 'Interrupted': 'Interrompu',
+  'Panes': 'Panneaux',
+    'Conversation compacted': 'Conversation compactée', 'Conversation cleared': 'Conversation effacée', 'Interrupted': 'Interrompu', 'Retried after an error': 'Relancé après une erreur', 'Error': 'Erreur',
   'App is locked': 'app verrouillée', 'Origin refused': 'origine refusée', 'Not found': 'introuvable',
   'Waiting for your reply — details in the Terminal tab': 'En attente de ta réponse — détail dans l’onglet Terminal',
   'Copy': 'Copier', 'Reply': 'Répondre', 'Reply to this passage': 'Répondre à ce passage', 'Show original message': 'Voir le message d’origine', 'Original message not found (further up the conversation?)': 'Message d’origine introuvable (plus haut dans la conversation ?)', 'Copy reply': 'Copier la réponse', 'No output': 'Aucune sortie', 'Copied': 'Copié', 'Copy pane ID': 'Copier l’ID du pane', 'Copy failed': 'Copie impossible', 'Copy ID': 'Copier l’identifiant',
   'Copy mode': 'Mode copie',
   'Quoted': 'Citée', 'Discuss': 'Discuter', 'Yes': 'Oui', 'No': 'Non', 'OK to all': 'Ok tout', 'Decisions': 'Décisions', 'Quoted questions': 'Citations', 'Remove quote': 'Retirer la citation',
   '⌘+click to open': '⌘+clic pour ouvrir', 'Ctrl+click to open': 'Ctrl+clic pour ouvrir',
-  'Enter': 'Entrée', 'send': 'envoyer', 'suggestion': 'suggestion', 'Use suggestion': 'Utiliser la suggestion', 'new line': 'nouvelle ligne',
+  'Enter': 'Entrée', 'send': 'envoyer', 'suggestion': 'suggestion', 'Use suggestion': 'Utiliser la suggestion', 'new line': 'nouvelle ligne', 'again to stop': 'encore pour arrêter', 'Already sent': 'Déjà envoyé',
   'Image not found': 'image introuvable', 'Invalid JSON': 'JSON invalide', 'Request too large': 'requête trop grosse',
   // Model
   'Model': 'Modèle', 'Unknown model': 'Modèle inconnu',
@@ -535,7 +544,13 @@ const FR: Record<string, string> = {
   '“This session only” option not found — nothing was changed.': 'Validation « cette session seulement » introuvable — rien n’a été changé.',
   'Unexpected /model menu — nothing was changed.': 'Menu /model inattendu — rien n’a été changé.',
   'Unexpected effort menu — nothing was changed.': 'Choix de l’effort inattendu — rien n’a été changé.',
-  'Not a Claude, Codex or omp agent': 'pas un agent Claude, Codex ou omp',
+  'This agent’s model cannot be changed from wherdr': 'Le modèle de cet agent ne peut pas être changé depuis wherdr',
+  'This agent’s effort cannot be changed from wherdr': 'L’effort de cet agent ne peut pas être changé depuis wherdr',
+  'Model not found in /models: {model}': 'Modèle introuvable dans /models : {model}',
+  'The model did not change — try again.': 'Le modèle n’a pas changé — réessaie.',
+  'Devin set a different model ({model}) — check the session.': 'Devin a choisi un autre modèle ({model}) — vérifie la session.',
+  'OpenCode did not confirm the shell command — check the transcript.': 'OpenCode n’a pas confirmé la commande shell — vérifie la transcription.',
+  'OpenCode did not remove the queued message': 'OpenCode n’a pas retiré le message en file',
   'View image': 'Voir l’image',
   // Themes
   'Change theme': 'Changer de thème', 'Hide themes': 'Masquer les thèmes',
@@ -565,7 +580,10 @@ const FR: Record<string, string> = {
   'running': 'en cours', 'stopped': 'arrêtée', 'No sessions found.': 'Aucune session trouvée.',
   'Session unavailable: back to the default session': 'Session indisponible : retour à la session par défaut',
   // Spaces (workspaces, tabs, side-by-side panes)
-  'Tab': 'Onglet', 'Tabs': 'Onglets',
+  'Tab': 'Onglet', 'Tabs': 'Onglets', 'Pane': 'Panneau',
+  'Current pane': 'Panneau actuel', 'Current tab': 'Onglet actuel',
+  'Close this conversation': 'Fermer cette conversation', 'Close entire space…': 'Fermer tout l’espace…',
+  'Reconnecting…': 'Reconnexion…', 'Offline': 'Hors ligne',
   'This tab is unavailable.': 'Cet onglet est indisponible.',
   'Active pane in Herdr': 'Pane actif dans Herdr', 'A pane is zoomed in Herdr': 'Un pane est agrandi dans Herdr',
   'Tab overview': 'Plan de l’onglet', 'Side by side': 'Côte à côte', 'Open alone': 'Ouvrir seul',
@@ -705,22 +723,8 @@ const FR: Record<string, string> = {
 export type Lang = 'en' | 'fr'
 export const LANG_KEY = 'herdrLanguage'
 
-function readLang(): Lang {
-  try {
-    const saved = localStorage.getItem(LANG_KEY)
-    if (saved === 'fr' || saved === 'en') return saved
-    // The browser's first preferred language we speak wins (English when it comes first).
-    for (const l of navigator.languages ?? [navigator.language]) {
-      const code = l?.toLowerCase().slice(0, 2)
-      if (code === 'fr' || code === 'en') return code
-    }
-    return 'en'
-  }
-  catch { return 'en' }
-}
-
-// Changing the language reloads the app: no reactivity needed.
-export const language: Lang = import.meta.client ? readLang() : 'en'
+// English is the only active interface language. Ignore browser and saved preferences.
+export const language: Lang = 'en'
 
 // Keys with {name} placeholders (server messages built with fmt(), shared/message.ts),
 // compiled once into patterns that recover the values from the filled English text.
@@ -753,8 +757,8 @@ export function t(en: string): string {
   return language === 'fr' ? (french(en) ?? en) : en
 }
 
-// Sentence with variable parts: both versions written in full, English first.
-export function tl(en: string, fr: string): string {
+// Sentence with variable parts; the inactive French version is optional.
+export function tl(en: string, fr: string = en): string {
   return language === 'fr' ? fr : en
 }
 

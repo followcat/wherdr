@@ -5,6 +5,7 @@ import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { splitShellHooks } from '../server/utils/splitShell'
 import { runSplitCommand } from '../server/utils/splitCommand'
+import { closeProcess, closeProcessMessage } from '../shared/closeProcess'
 import { hasCommands } from './helpers/commands'
 
 // A real interactive PTY, including a readline builtin (`read -e`), whose
@@ -33,7 +34,7 @@ try:
     wait(b'PROMPT> ')
     idle = sample()
     busy = []
-    for read in ['read -r response', 'read -e -r response']:
+    for read in ['read -r -p "Waiting for input: " response', 'read -e -r response']:
         os.write(fd, (read + '; printf "READ_RECEIVED=<%s>\\n" "$response"\n').encode())
         end = time.monotonic() + 5
         while time.monotonic() < end:
@@ -62,11 +63,16 @@ describe.skipIf(!supported)('split shell prompt attestation', () => {
       const hooks = splitShellHooks(binary, 'test')
       const sample = JSON.parse(execFileSync('python3', ['-c', probe, dir, hooks.bash], { timeout: 15000, encoding: 'utf8' }))
       expect(sample.idle.token).toBe(String(sample.idle.pid))
+      const info = (s: typeof sample.idle) => ({ shell_pid: s.pid, foreground_process_group_id: s.group, foreground_processes: s.procs.map((pid: number) => ({ pid })) })
+      expect(closeProcess(info(sample.idle), sample.idle.token)).toEqual({ state: 'idle' })
       expect(sample.resumed.token).toBe(String(sample.idle.pid))
       for (const busy of sample.busy) {
         expect(busy.group).toBe(busy.pid)
         expect(busy.procs).toEqual([busy.pid])
         expect(busy.token).toBe('')
+        const state = closeProcess(info(busy), busy.token)
+        expect(state).toEqual({ state: 'unknown' })
+        expect(closeProcessMessage({ agent: null }, state, en => en)).toBe('Anything running in it will be stopped.')
         const call = vi.fn(async (_machine: string, method: string, params: Record<string, unknown>) => {
           const pane = { pane_id: 'w1:p2', tab_id: 'w1:t1', agent: null, agent_status: 'unknown', tokens: { wherdr_split_terminal: '1', wherdr_split_prompt: busy.token } }
           if (method === 'session.snapshot') return { panes: [{ ...pane, pane_id: 'w1:p1', agent: 'claude', cwd: '/project' }, pane] }

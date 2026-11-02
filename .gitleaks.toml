@@ -1,0 +1,11 @@
+[extend]
+useDefault = true
+
+# Synthetic ElevenLabs credentials in the unchanged upstream test fixtures.
+# Keep the exception limited to these files and literal dummy values.
+[[allowlists]]
+description = "Upstream voice tests use deterministic dummy API keys"
+condition = "AND"
+paths = ['''(^|/)(engine/)?tests/voice(_key)?\.rs$''']
+regexTarget = "line"
+regexes = ['''sk_test_0123456789abcdef''', '''sk_tokens_0123456789abcd''']

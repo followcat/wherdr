@@ -5,3 +5,6 @@ language, testing and leak-check conventions.
 
 For every interface change, follow [docs/design.md](docs/design.md), the single
 design reference. Check the existing components before introducing a new pattern.
+
+The interface is English only. Always pass interface text through `t()` / `tl()`;
+French translations are optional and the existing French dictionary stays inactive.

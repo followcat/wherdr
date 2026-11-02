@@ -62,7 +62,7 @@ const submitPrompt: Parameters<typeof defineApi<{ ok: boolean, queued?: QueuedMe
     // known from the screen, like at rest — never assumed.
     const input = earlier || (!INPUT_STATES.has(p.status || '') && !(p.agent === 'devin' && p.status === 'blocked')) ? true
       : await herdr('pane.read', { pane_id: b.pane_id, source: 'detection' }, 4000)
-        .then(r => inputVisible(r.read && r.read.text), () => true)
+        .then(r => inputVisible(r.read && r.read.text, p.agent), () => true)
     if (shouldHold(p.agent, p.status, input, earlier)) {
       // Behind a message waiting for the turn's end: waits for it too.
       const q = addQueued(b.pane_id, text, { held: true, id, submitKey, turn: inTurn(b.pane_id) })

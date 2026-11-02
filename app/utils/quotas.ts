@@ -32,18 +32,18 @@ export function quotaRows(q: Quotas | null, hidden: readonly string[] = []): Quo
   if (!q) return []
   const rows: QuotaRow[] = []
   if (q.claude && !hidden.includes('claude') && !claudeSplit(q)) rows.push({ key: 'claude', agent: 'claude', q: q.claude })
-  if (q.codex && !hidden.includes('codex') && !((q.codexAccounts?.length || 0) > 1)) rows.push({ key: 'codex', agent: 'codex', q: q.codex })
+  if (q.codex && !hidden.includes('codex') && !((q.codexAccounts?.length || 0) > 0)) rows.push({ key: 'codex', agent: 'codex', q: q.codex })
   return rows
 }
 
 // Rows specific to a machine (key '' = local): its Claude account, its Codex
-// account, each only when the machines do not use the same one.
+// account, when accounts differ or the Codex identity is unknown.
 export function machineQuotaRows(q: Quotas | null, key: string, hidden: readonly string[] = []): QuotaRow[] {
   if (!q) return []
   const rows: QuotaRow[] = []
   for (const agent of ['claude', 'codex'] as const) {
     const list = agent === 'claude' ? q.claudeAccounts : q.codexAccounts
-    if (hidden.includes(agent) || !(agent === 'claude' ? claudeSplit(q) : (list?.length || 0) > 1)) continue
+    if (hidden.includes(agent) || !(agent === 'claude' ? claudeSplit(q) : (list?.length || 0) > 0)) continue
     const a = list!.find(a => a.machines.some(m => m.key === key))
     if (!a) continue
     const { machines: _, ...quota } = a
