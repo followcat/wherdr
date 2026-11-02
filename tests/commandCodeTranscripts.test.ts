@@ -61,7 +61,7 @@ it('reads a Command Code session: messages, thinking, tools and their results', 
   // The 120 input tokens already include the 80 cached ones.
   expect(await reader.commandCodeStats(pane)).toMatchObject({
     session: 'sess-1',
-    status: { line: expect.stringContaining('Command Code'), meters: expect.stringContaining('120 context') },
+    status: { contextTokens: 120, costUsd: 0.004 },
   })
   expect(r.items!.some(i => i.text.includes('Monitor wake-up'))).toBe(false)
   expect(r.items!.some(i => i.text.includes('Hidden string automation'))).toBe(false)
@@ -85,8 +85,7 @@ it('finds the last usage through a trailing record larger than the status window
     ],
   })
   const stats = await reader.commandCodeStats(pane)
-  expect(stats.status?.meters).toContain('1.0k context')
-  expect(stats.status?.meters).not.toContain('1.8k')
+  expect(stats.status?.contextTokens).toBe(1000)
 })
 
 it('keeps a tool result when its call and result straddle read windows', async () => {
@@ -176,7 +175,7 @@ it('does not rescan unchanged usage', async () => {
     ],
   })
   const first = await reader.commandCodeStats(pane)
-  expect(first.status?.meters).toContain('42 context')
+  expect(first.status?.contextTokens).toBe(42)
   const after = reads
   expect(await reader.commandCodeStats(pane)).toEqual(first)
   expect(reads).toBe(after)
@@ -223,6 +222,23 @@ it('reports a new session even before its first usage', async () => {
   ], new Date(1_700_000_000_000))
   write('sess-new', [commandCodeSession('sess-new', pane.cwd), commandCodeUser('u2', null, 'New question', 3000)], new Date(1_700_000_100_000))
   expect(await reader.commandCodeStats(pane)).toMatchObject({ session: 'sess-new', status: null })
+})
+
+it('keeps a tool result across a pagination boundary', async () => {
+  const { home, reader } = fixture()
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+  ]
+  const filler = 'z'.repeat(32 * 1024)
+  for (let i = 0; i < 200; i++) lines.push(commandCodeUser(`filler-${i}`, 'a1', filler, 3000 + i))
+  lines.push(commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'ok' }] }], 4000))
+  writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
+  const tail = await reader.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+  const older = await reader.chat(pane, { before: tail.start })
+  expect(older.items!.find(i => i.name === 'shell_command')?.out).toBe('ok')
 })
 
 it('marks a failed tool result', async () => {

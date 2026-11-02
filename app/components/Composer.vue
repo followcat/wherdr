@@ -235,6 +235,19 @@ onBeforeUnmount(() => {
 // cached on this device. A recording belongs to this pane's draft — leaving
 // the pane drops the take, so a result never lands in another draft; the
 // loaded engine is shared and stays warm across panes.
+// Command Code's status is data, not a captured terminal line: format it in
+// the interface language here (the model name stays as the agent reports it).
+const cmdMeters = computed(() => {
+  const s = props.pane?.cmdStatus
+  if (!s) return null
+  const n = s.contextTokens
+  const tokens = n === null ? '' : (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
+  const parts = [
+    tokens ? tl(`${tokens} context`, `${tokens} de contexte`) : '',
+    s.costUsd === null ? '' : `$${s.costUsd.toFixed(4)}`,
+  ].filter(Boolean)
+  return parts.join(' · ') || null
+})
 const sp = useSpeech()
 onMounted(() => { refreshAsrInstalled() })
 onBeforeUnmount(() => sp.dispose())
@@ -935,9 +948,9 @@ defineExpose({
       <span v-if="pane.ompStatus.meters" class="composer-status-meters">{{ pane.ompStatus.meters }}</span>
     </div>
     <!-- Command Code: the model and context of its last turn. -->
-    <div v-if="pane?.cmdStatus" class="composer-status" :title="[pane.cmdStatus.line, pane.cmdStatus.meters].filter(Boolean).join('\n')">
-      <span class="composer-status-line">{{ pane.cmdStatus.line }}</span>
-      <span v-if="pane.cmdStatus.meters" class="composer-status-meters">{{ pane.cmdStatus.meters }}</span>
+    <div v-if="pane?.cmdStatus" class="composer-status" :title="[`Command Code${pane.model?.label ? ` · ${pane.model.label}` : ''}`, cmdMeters].filter(Boolean).join('\n')">
+      <span class="composer-status-line">Command Code<span v-if="pane.model?.label"> · {{ pane.model.label }}</span></span>
+      <span v-if="cmdMeters" class="composer-status-meters">{{ cmdMeters }}</span>
     </div>
   </div>
 </template>
