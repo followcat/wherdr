@@ -205,6 +205,25 @@ it('keeps image data out of pages and reads only images of the reported main cha
   expect(await reader.image(pane, r.file!, '1:u', -1)).toBeNull()
 })
 
+it('hashes image payloads so the view can collapse a repeated picture', async () => {
+  const { home, reader } = fixture()
+  const image = { type: 'image', data: Buffer.from('same-shot').toString('base64'), mimeType: 'image/png' }
+  writeDevinFixture(home, { rows: [
+    { id: 0, message: devinMessage('user', 'Here', { metadata: { is_user_input: true, extensions: { 'chisel/acp-content-blocks': [{ type: 'text', text: 'Here' }, image] } } }) },
+    { id: 1, parent: 0, message: devinMessage('assistant', [{ type: 'text', text: 'Echoing it' }, image]) },
+  ] })
+  const r = await reader.chat(pane)
+  const withImages = r.items!.filter(i => i.images)
+  expect(withImages).toHaveLength(2)
+  expect(withImages.map(i => i.hashes)).toEqual([[expect.any(String)], [expect.any(String)]])
+  expect(withImages[0]!.hashes).toEqual(withImages[1]!.hashes)
+  // The view hides a later copy of a picture already shown higher up.
+  const { duplicateImages } = await import('../shared/imageDupes')
+  const dupes = duplicateImages(r.items!)
+  expect(dupes.size).toBe(1)
+  expect([...dupes][0]).toBe(`${withImages[1]!.ref}:0`)
+})
+
 it('reads tool and assistant images while refusing active image MIME types', async () => {
   const { home, reader } = fixture()
   const image = { type: 'image', data: Buffer.from('<svg></svg>').toString('base64'), mimeType: 'image/svg+xml' }

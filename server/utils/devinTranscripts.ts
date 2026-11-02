@@ -146,9 +146,15 @@ function resultImages(hit: { step: Step, result: Json } | undefined): ImagePaylo
   return payloads(hit.result.content).concat(payloads(hit.result.extra), payloads(hit.result.metadata))
 }
 
-export function parseDevin(steps: Step[], all: Step[] = steps): ChatItem[] {
+export function parseDevin(steps: Step[], all: Step[] = steps, imagesByRef?: Map<string, ImagePayload[]>): ChatItem[] {
   const results = observations(all)
   const items: ChatItem[] = []
+  // Same payload bytes a /chat/image request serves — hashed so the view can
+  // collapse a picture repeated in a later message (shared/imageDupes.ts).
+  const imageHashes = (ref: string) => {
+    const list = imagesByRef?.get(ref)
+    return list && list.length ? list.map(i => hash12(i.data || i.path || i.mimeType)) : undefined
+  }
   for (const step of steps) {
     if (step.is_copied_context === true || step.source === 'system') continue
     const ts = typeof step.timestamp === 'string' ? step.timestamp
@@ -162,7 +168,7 @@ export function parseDevin(steps: Step[], all: Step[] = steps): ChatItem[] {
       const blocks = extraBlocks(step)
       const text = contentText(parts) || contentText(blocks)
       const count = images(parts).length + images(blocks).length
-      if (text || count) items.push({ role: 'user', text, ts, ref: ref('u'), ...(count ? { images: count } : {}) })
+      if (text || count) items.push({ role: 'user', text, ts, ref: ref('u'), ...(count ? { images: count } : {}), ...(imageHashes(ref('u')) ? { hashes: imageHashes(ref('u')) } : {}) })
       continue
     }
     if (step.source !== 'agent' && step.source !== undefined) continue
@@ -170,7 +176,7 @@ export function parseDevin(steps: Step[], all: Step[] = steps): ChatItem[] {
     if (thinking) items.push({ role: 'thinking', text: clip(thinking), ts, ref: ref('h') })
     const text = contentText(step.message)
     const count = images(step.message).length + images(extraBlocks(step)).length
-    if (text || count) items.push({ role: 'assistant', text, ts, ref: ref('a'), ...(count ? { images: count } : {}) })
+    if (text || count) items.push({ role: 'assistant', text, ts, ref: ref('a'), ...(count ? { images: count } : {}), ...(imageHashes(ref('a')) ? { hashes: imageHashes(ref('a')) } : {}) })
     for (const [index, call] of toolCalls(step).entries()) {
       const hit = results.get(call.id)
       const output = hit ? contentText(hit.result.content) : ''
@@ -179,9 +185,11 @@ export function parseDevin(steps: Step[], all: Step[] = steps): ChatItem[] {
       const summary = input.command || input.file_path || input.path || input.query || input.pattern || title
       const imgCount = resultImages(hit).length
       const resultId = hit ? Number(hit.step.step_id) : id
+      const imgRef = imgCount && hit ? `${resultId}:r` : null
       items.push({
         role: 'tool', name: title, text: clip(String(summary || title)), ts,
-        ref: imgCount && hit ? `${resultId}:r` : ref(`t${index}`),
+        ref: imgRef || ref(`t${index}`),
+        ...(imgRef && imageHashes(imgRef) ? { hashes: imageHashes(imgRef) } : {}),
         ...(output ? { out: output } : {}),
         ...(toolError(hit?.result) ? { error: true } : {}),
         ...(imgCount ? { images: imgCount } : {}),
@@ -229,7 +237,7 @@ function pageTooLarge(steps: Step[], maxPageBytes: number): boolean {
   return false
 }
 
-function takeVisible(steps: Step[], all: Step[], limit: number): { steps: Step[], start: number, items: ChatItem[] } {
+function takeVisible(steps: Step[], all: Step[], limit: number, imagesByRef?: Map<string, ImagePayload[]>): { steps: Step[], start: number, items: ChatItem[] } {
   const kept: Step[] = []
   let visible = 0
   for (let i = steps.length - 1; i >= 0; i--) {
@@ -239,7 +247,7 @@ function takeVisible(steps: Step[], all: Step[], limit: number): { steps: Step[]
     if (visible >= limit) break
   }
   kept.reverse()
-  const items = parseDevin(kept, all)
+  const items = parseDevin(kept, all, imagesByRef)
   const start = kept.length < steps.length && items[0]?.ref ? Number(String(items[0].ref).split(':')[0]) || 0 : 0
   return { steps: kept, start, items }
 }
@@ -403,16 +411,16 @@ export function createDevinTranscripts({
         selected = lo < 0 ? doc.steps : doc.steps.slice(lo)
         if (pageTooLarge(selected, maxPageBytes)) {
           rewritten = true
-          const page = takeVisible(doc.steps, doc.steps, PAGE_ITEMS)
+          const page = takeVisible(doc.steps, doc.steps, PAGE_ITEMS, doc.images)
           selected = page.steps
           start = page.start
           items = page.items
         } else {
-          items = parseDevin(selected, doc.steps)
+          items = parseDevin(selected, doc.steps, doc.images)
           start = selected[0] && selected.length < doc.steps.length ? Number(selected[0].step_id) || 0 : 0
         }
       } else {
-        const page = takeVisible(doc.steps, doc.steps, PAGE_ITEMS)
+        const page = takeVisible(doc.steps, doc.steps, PAGE_ITEMS, doc.images)
         selected = page.steps
         start = page.start
         items = page.items
