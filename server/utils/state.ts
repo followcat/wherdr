@@ -345,6 +345,7 @@ export const codexStatus = createCodexStatus({
     }
   },
   readScreen: id => readPassiveScreen(herdr, id),
+  readProcesses: async id => (await herdr('pane.process_info', { pane_id: id }, 4000))?.process_info?.foreground_processes || [],
   rolloutOf: async p => (await transcripts.locate(p))?.file || null,
   runLocal,
   writable: dirWritable,
