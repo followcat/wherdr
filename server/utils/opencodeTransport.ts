@@ -3,6 +3,8 @@
 // (the CLI's `api` command would auto-start one); writes are the fixed,
 // whitelisted operations below — model PATCH, permission/form replies, an
 // inbox delete verified against a fresh listing, and a shell run.
+// Keep the -c payload ASCII for service/SSH launchers that decode argv before
+// applying Python's UTF-8 setting.
 export const OPENCODE_READ = String.raw`
 import base64, hashlib, json, os, pathlib, re, shutil, subprocess, sys, urllib.request, urllib.error, urllib.parse
 
@@ -21,7 +23,7 @@ def discover():
     own = os.path.realpath(os.environ.get('HOME', '')) == os.path.realpath(home)
     state = pathlib.Path(os.environ.get('XDG_STATE_HOME', '') if own else '')
     # A relative XDG_STATE_HOME would resolve against our cwd, not the
-    # user's — only an absolute one is honored.
+    # user's; only an absolute one is honored.
     if not str(state) or str(state) == '.' or not state.is_absolute():
         state = pathlib.Path(home) / '.local' / 'state'
     file = state / 'opencode' / 'service.json'
@@ -164,7 +166,7 @@ try:
             sys.exit(0)
         elif op == 'inbox_delete':
             # Cancel a queued message: DELETE /inbox/<id>, but only an id a
-            # fresh listing still shows — never a blind delete.
+            # fresh listing still shows; never a blind delete.
             iid = str(request.get('item', ''))
             if not re.fullmatch(r'[\w-]{1,128}', iid):
                 raise ValueError('Invalid OpenCode reply')
@@ -241,7 +243,7 @@ try:
                         with get(root + '/inbox') as box:
                             items = json.loads(box.read(limit + 1))
                         data['inbox'] = items.get('data') if isinstance(items.get('data'), list) else []
-                    # Auxiliary read: any failure means unknown, never empty —
+                    # Auxiliary read: any failure means unknown, never empty;
                     # an empty list would make a queued message look lost.
                     except Exception:
                         data['inbox'] = None
@@ -251,7 +253,7 @@ try:
                     mime_pattern = r'image/(png|jpeg|gif|webp|avif)'
                     if slot == 'u' and message.get('type') == 'user':
                         # User attachments arrive inline or as a file:/data: URI
-                        # on the agent machine — resolved below like tool files.
+                        # on the agent machine; resolved below like tool files.
                         files = [f for f in message.get('files', []) if re.fullmatch(mime_pattern, f.get('mime', '')) and (isinstance(f.get('data'), str) or isinstance(f.get('uri'), str))]
                     else:
                         part = next((p for p in message.get('content', []) if p.get('type') == 'tool' and 't' + p.get('id', '') == slot), {})
