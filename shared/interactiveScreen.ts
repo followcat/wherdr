@@ -65,9 +65,10 @@ export function classifyScreen(o: {
   // Unsupported agents already have their permanent Terminal view. An absent
   // transcript/input recognizer is not evidence of an interactive screen.
   if (o.status === 'unknown' || !hasTranscript(o.agent) || !o.text.trim()) return 'unknown'
-  // OpenCode's input UI has no reliable screen recognizer yet. A readable
-  // transcript alone must not turn its ordinary idle screen into a modal.
-  if (o.agent === 'opencode') return o.status === 'blocked' ? 'terminal' : 'unknown'
+  // OpenCode and Command Code have no reliable screen recognizer yet. A
+  // readable transcript alone must not turn an ordinary idle screen into a
+  // modal; a blocked one is a dialog the terminal must own.
+  if (o.agent === 'opencode' || o.agent === 'cmd') return o.status === 'blocked' ? 'terminal' : 'unknown'
   if (confirmedInput(o.text)) return 'input'
   return 'terminal'
 }

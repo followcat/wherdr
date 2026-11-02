@@ -2,7 +2,7 @@
 
 [Documentation](README.md) · [Project](../README.md)
 
-- **Conversation view**: the agent's real transcript (Claude Code, Codex, omp, Devin and OpenCode 2.x), rendered as
+- **Conversation view**: the agent's real transcript (Claude Code, Codex, omp, Devin, OpenCode 2.x and Command Code), rendered as
   Markdown, with grouped tool calls, images (full-screen viewer with pinch / wheel zoom and pan), timestamps, search and infinite scroll back to the
   first message. Reading a conversation never touches the terminal, so it never resizes a pane.
   A command the agent proposes (shell code block, or inline `! command`) can be copied without
@@ -36,6 +36,15 @@
   image files are served; remote image URLs are not fetched. Sending, stopping,
   questions and approvals retain the existing terminal controls. Version 1.x,
   `--standalone` and explicit `--server` instances are not supported by this reader.
+- **Command Code conversations**: read the local CLI's JSONL sessions on the machine
+  running the agent (local or SSH): `~/.commandcode/projects/<project>/<session>.jsonl`.
+  Herdr already reports the pane as `cmd`; no separate integration is needed. Text,
+  reasoning, tool calls and their results, saved images, search, previews, model and
+  pagination are read from the same file the CLI appends to. The CLI reports no session
+  id: the reader finds the project through the `cwd` in the session header and takes its
+  most recently written session, so two live Command Code panes in the same folder share
+  the newest one. Command Code's `/model`, `/effort` and `/permissions` stay terminal
+  controls; version 1 sessions and checkpoints are not read.
 - **Interactive agent screens**: in a conversation, an uncertain menu or panel opens the
   pane's real terminal in a modal window, with arrows, Enter, Escape, Tab, digits and y/n.
   The rest of the app waits behind a scrim (the window fills the screen on a phone); in a
