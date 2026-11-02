@@ -6,6 +6,7 @@ export const AGENT_ICON: Record<string, string> = {
   omp: 'i-herdr-omp',
   gemini: 'i-lucide-sparkles',
   opencode: 'i-lucide-code-xml',
+  cmd: 'i-lucide-square-terminal',
   kimi: 'i-lucide-moon-star',
 }
 

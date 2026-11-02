@@ -16,5 +16,16 @@ export function viaPrompt(p: Pick<Pane, 'agent' | 'status' | 'prompt' | 'stopped
   if (!p || !p.agent) return false
   if (p.status !== 'blocked') return true
   if (p.agent === 'omp') return !p.prompt?.typing
+<<<<<<< HEAD
+=======
+  // Devin's dialogs (permission, plan…) take no typed text: sent as input
+  // their Enter would answer it. The prompt route holds the message instead,
+  // until the composer's field is back.
+  if (p.agent === 'devin') return true
+  // OpenCode's permission/question dialog owns the keys while the pane is
+  // blocked — same hold needed, and the prompt route also keeps send order
+  // behind an entry already held.
+  if (p.agent === 'opencode' || p.agent === 'cmd') return true
+>>>>>>> 566dcec0 (feat(conversation): read Command Code sessions)
   return !p.prompt && (p.agent === 'claude' || p.agent === 'codex')
 }

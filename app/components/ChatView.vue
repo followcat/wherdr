@@ -353,7 +353,12 @@ const TOOL_COMMAND = tl('Command', 'Commande'), TOOL_EDIT = tl('Edit', 'Modif'),
 const TOOL_LABEL: Record<string, string> = {
   Bash: TOOL_COMMAND, Read: tl('Read', 'Lecture'), Write: tl('Write', 'Écriture'), Edit: TOOL_EDIT, MultiEdit: TOOL_EDIT, Grep: tl('Search', 'Recherche'),
   Glob: tl('Files', 'Fichiers'), WebFetch: 'Web', WebSearch: tl('Web search', 'Recherche web'), Task: TOOL_SUBAGENT, Agent: TOOL_SUBAGENT,
-  TodoWrite: tl('Tasks', 'Tâches'), exec: TOOL_COMMAND, shell: TOOL_COMMAND, apply_patch: TOOL_EDIT,
+  TodoWrite: tl('Tasks', 'Tâches'), exec: TOOL_COMMAND, shell: TOOL_COMMAND, bash: TOOL_COMMAND, read: tl('Read', 'Lecture'), write: tl('Write', 'Écriture'), edit: TOOL_EDIT, grep: tl('Search', 'Recherche'), glob: tl('Files', 'Fichiers'), apply_patch: TOOL_EDIT,
+  // OpenCode's lowercase tool names (its parts carry e.g. webfetch, todoread).
+  webfetch: 'Web', websearch: tl('Web search', 'Recherche web'), task: TOOL_SUBAGENT, todoread: tl('Tasks', 'Tâches'), todowrite: tl('Tasks', 'Tâches'), list: tl('Files', 'Fichiers'), patch: TOOL_EDIT,
+  // Command Code's tool names.
+  shell_command: TOOL_COMMAND, read_file: tl('Read', 'Lecture'), write_file: tl('Write', 'Écriture'), edit_file: TOOL_EDIT,
+  agent: TOOL_SUBAGENT, ask_user_question: tl('Question', 'Question'), search_tools: tl('Search', 'Recherche'),
 }
 const TOOL_ICON: Record<string, string> = {
   Bash: 'i-lucide-terminal', exec: 'i-lucide-terminal', shell: 'i-lucide-terminal',
@@ -361,6 +366,9 @@ const TOOL_ICON: Record<string, string> = {
   apply_patch: 'i-lucide-file-pen', NotebookEdit: 'i-lucide-file-pen', Grep: 'i-lucide-text-search', Glob: 'i-lucide-folder-search',
   WebFetch: 'i-lucide-globe', WebSearch: 'i-lucide-search', Task: 'i-lucide-bot', Agent: 'i-lucide-bot',
   TodoWrite: 'i-lucide-list-todo', AskUserQuestion: 'i-lucide-message-circle-question',
+  webfetch: 'i-lucide-globe', websearch: 'i-lucide-search', task: 'i-lucide-bot', todoread: 'i-lucide-list-todo', todowrite: 'i-lucide-list-todo', list: 'i-lucide-folder-search', patch: 'i-lucide-file-pen',
+  shell_command: 'i-lucide-terminal', read_file: 'i-lucide-file-text', write_file: 'i-lucide-file-plus', edit_file: 'i-lucide-file-pen',
+  agent: 'i-lucide-bot', ask_user_question: 'i-lucide-message-circle-question', search_tools: 'i-lucide-search',
 }
 // Codex "exec" runs code: a shell command, or another tool (write_stdin…).
 // Tool summary: the task count comes from the server in English ("3 tasks").

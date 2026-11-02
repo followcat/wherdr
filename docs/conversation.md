@@ -2,12 +2,49 @@
 
 [Documentation](README.md) · [Project](../README.md)
 
-- **Conversation view**: the agent's real transcript (Claude Code, Codex and omp), rendered as
+- **Conversation view**: the agent's real transcript (Claude Code, Codex, omp, Devin, OpenCode 2.x and Command Code), rendered as
   Markdown, with grouped tool calls, images (full-screen viewer with pinch / wheel zoom and pan), timestamps, search and infinite scroll back to the
   first message. Reading a conversation never touches the terminal, so it never resizes a pane.
   A command the agent proposes (shell code block, or inline `! command`) can be copied without
   its prompt, or run in the agent's shell mode (`!`, Claude Code, Codex and omp) after you
   confirm the full command.
+- **Devin conversations**: read the local CLI's SQLite history on the machine running
+  the agent, including its current main branch, tool results and saved images. Python 3.7 or later
+  is required on that machine. Install the Herdr integration with
+  `herdr integration install devin`, then start or resume Devin so it reports its session.
+  Same-directory sessions are never selected by recency. The reader follows
+  `DEVIN_SESSIONS_DIR`, then `XDG_DATA_HOME/devin/cli`, otherwise
+  `~/.local/share/devin/cli`. It opens `sessions.db` read-only, including committed WAL
+  data; no export flag or database copy is needed. New text appears when Devin saves
+  it, which may be less frequent than the terminal's streaming display. Cloud sessions
+  and the experimental file-based session store are not supported by this reader.
+- **OpenCode 2.x conversations**: read the existing background service's projected
+  history on the agent's machine (local or SSH), with native pagination, reasoning,
+  tool progress/results/errors, saved images, previews and search. Python 3 is required
+  on that machine. Install `herdr integration install opencode`, then start or resume
+  OpenCode so Herdr reports its exact session ID. Same-directory sessions are never
+  guessed. The reader discovers `service.json` in OpenCode's state directory
+  (`XDG_STATE_HOME/opencode`, normally `~/.local/state/opencode`, with
+  `opencode debug paths state` as a fallback), authenticates on the machine, and
+  checks `/api/info` for version 2.x. It never starts, restarts or reconfigures the
+  service. Credentials and service URLs are never sent to the browser.
+  One SSE subscription per machine invalidates the cache; canonical HTTP pages are
+  re-read on reconnect and regularly even when no event arrives. Revert, compaction
+  and service changes discard old page anchors. Temporary read failures preserve
+  already displayed messages. Search uses a 40-page / 8 MB scan budget within the shared deadline
+  and reports incomplete results; the last page may exceed the byte budget. Only session-referenced inline or local
+  image files are served; remote image URLs are not fetched. Sending, stopping,
+  questions and approvals retain the existing terminal controls. Version 1.x,
+  `--standalone` and explicit `--server` instances are not supported by this reader.
+- **Command Code conversations**: read the local CLI's JSONL sessions on the machine
+  running the agent (local or SSH): `~/.commandcode/projects/<project>/<session>.jsonl`.
+  Herdr already reports the pane as `cmd`; no separate integration is needed. Text,
+  reasoning, tool calls and their results, saved images, search, previews, model and
+  pagination are read from the same file the CLI appends to. The CLI reports no session
+  id: the reader finds the project through the `cwd` in the session header and takes its
+  most recently written session, so two live Command Code panes in the same folder share
+  the newest one. Command Code's `/model`, `/effort` and `/permissions` stay terminal
+  controls; version 1 sessions and checkpoints are not read.
 - **Interactive agent screens**: in a conversation, an uncertain menu or panel opens the
   pane's real terminal in a modal window, with arrows, Enter, Escape, Tab, digits and y/n.
   The rest of the app waits behind a scrim (the window fills the screen on a phone); in a
