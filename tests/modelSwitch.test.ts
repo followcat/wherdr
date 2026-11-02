@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const calls = vi.hoisted(() => ({ sent: [] as { method: string, params: Record<string, unknown> }[], screen: '', afterAltEnter: '', pane: {} as Record<string, unknown> }))
+const calls = vi.hoisted(() => ({ sent: [] as { method: string, params: Record<string, unknown> }[], screen: '', afterAltEnter: '', pane: {} as Record<string, unknown>, afterMove: '' }))
 const MENU = `
 ──────────────────────────────────────────
 / 
@@ -30,6 +30,7 @@ vi.mock('../server/utils/state', () => ({
 vi.mock('../server/utils/herdr', () => {
   const herdr = async (method: string, params: Record<string, unknown>) => {
     calls.sent.push({ method, params })
+    if (method === 'pane.send_input' && calls.afterMove && (params.keys as string[]).some(k => k === 'up' || k === 'down')) calls.screen = calls.afterMove
     if (method === 'pane.send_input' && (params.keys as string[]).includes('alt+enter')) calls.screen = calls.afterAltEnter
     return method === 'pane.read' ? { read: { text: calls.screen } } : {}
   }
@@ -46,7 +47,7 @@ vi.mock('../server/utils/herdr', () => {
 import { listModels, setModel } from '../server/utils/modelctl'
 
 beforeEach(() => {
-  calls.sent = []; calls.screen = ''; calls.afterAltEnter = ''
+  calls.sent = []; calls.screen = ''; calls.afterAltEnter = ''; calls.afterMove = ''
   calls.pane = { id: 'w1:p1', agent: 'devin', status: 'done' }
 })
 
@@ -114,4 +115,26 @@ describe('opencodeSetModel identity', () => {
     await expect(setModel('w1:p1', 'Solo')).rejects.toMatchObject({ code: 'stale' })
     spy.mockRestore()
   })
+})
+
+it('a terminal-only interaction owns the pane even with ready status', async () => {
+  calls.pane.interaction = 'terminal'
+  calls.screen = MENU
+  await expect(listModels('w1:p1', true)).rejects.toMatchObject({ code: 'busy' })
+  await expect(setModel('w1:p1', 'Grok 4.7')).rejects.toMatchObject({ code: 'busy' })
+  expect(calls.sent).toEqual([])
+})
+
+it('rechecks the selected row before confirming after a cursor move', async () => {
+  calls.screen = MENU
+  calls.afterMove = MENU.replace('❭ Grok', '  Grok')
+  calls.afterAltEnter = '✓ Model set to SWE-2 for this session'
+  await expect(setModel('w1:p1', 'SWE-2')).rejects.toMatchObject({ code: 'stale' })
+  expect(calls.sent.some(c => (c.params.keys as string[] | undefined)?.includes('alt+enter'))).toBe(false)
+})
+
+it('does not accept an older successful echo above the latest mismatched echo', async () => {
+  calls.screen = MENU
+  calls.afterAltEnter = '✓ Model set to Grok 4.7 for this session\n✓ Model set to SWE-2 for this session'
+  await expect(setModel('w1:p1', 'Grok 4.7')).rejects.toMatchObject({ code: 'stale' })
 })
