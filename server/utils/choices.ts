@@ -813,7 +813,10 @@ export function sameQuestion(a: string | null | undefined, b: string | null | un
 // Permission details are part of the question; checkbox/cursor state is not.
 const identity = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 export function promptIdentity(text: string | null | undefined, agent?: string | null): string {
-  const c = agent === 'omp' ? parseOmpPrompt(text, true) : agent ? parseChoices(text, { full: true }) : parseChoices(text, { full: true }) || parseOmpPrompt(text, true)
+  const c = agent === 'devin' ? parseDevinDialog(text)
+    : agent === 'omp' ? parseOmpPrompt(text, true)
+    : agent === 'opencode' ? null
+    : agent ? parseChoices(text, { full: true }) : parseChoices(text, { full: true }) || parseOmpPrompt(text, true)
   return identity(c ? { question: c.question, options: c.options.map(({ label, hint, n, free }) => ({ label, hint, n, free })), detail: c.detail, multi: c.multi, tabs: c.tabs } : null)
 }
 export function menuIdentity(menu: InteractiveMenu, target: MenuEntry | undefined = menu.cursor === null ? undefined : menu.items[menu.cursor]): string {
@@ -886,8 +889,16 @@ function devinFieldOnScreen(text: string): boolean {
   let at = -1
   for (let i = lines.length - 1; i >= 0 && at < 0; i--) if (/^❭(?: |$)/.test(lines[i]!.replace(/\s+$/, ''))) at = i
   if (at < 0) return false
-  const below = lines.slice(at + 1).find(l => l.trim() !== '')
-  return Boolean(below && /^─{2,}/.test(below.replace(/\s+$/, '')))
+  // Below the field: blank rows and indented wrap continuations precede the
+  // box's bottom rule — a BARE "───" line. A titled rule ("─── Title ───")
+  // or the dialog's unindented legend ends the scan without a field.
+  for (let i = at + 1; i < lines.length; i++) {
+    const l = lines[i]!.replace(/\s+$/, '')
+    if (!l.trim()) continue
+    if (/^\s{2,}\S/.test(l)) continue
+    return /^─{2,}$/.test(l)
+  }
+  return false
 }
 
 // OpenCode 2.x composer: its "┃" input lines sit directly above the box's
@@ -931,21 +942,19 @@ function opencodeFieldOnScreen(text: string): boolean {
 // message must not read as a prompt.
 const DEVIN_LEGEND = /^\s*↑↓ select · ←→ scope · (?:e edit · )?↵ confirm · esc cancel\s*$/
 const DEVIN_OPTION = /^\s*(❭ )?(Allow|Bypass mode|Deny)(?:\s|←|$)/
-// "Allow       ← ◼◼◼◼ → Once     Exec(sleep)" → "Exec(sleep)"
-const DEVIN_ACTION = /→\s*\S+\s{2,}(\S.*)$/
+// "Allow       ← ◼◼◼◼ → Once     Exec(sleep)" → scope "Once", action
+// "Exec(sleep)". The scope is part of the question so a re-scoped dialog
+// fails the identity check at answer time.
+const DEVIN_ACTION = /→\s*(\S+)(?:\s{2,}(\S.*))?\s*$/
 
 export function parseDevinDialog(text: string | null | undefined): Choices | null {
   if (!text) return null
   const lines = String(text).split('\n').map(l => l.replace(/\s+$/, ''))
   const legend = lines.findLastIndex(l => DEVIN_LEGEND.test(l))
   if (legend < 0) return null
-  // A composer field (❭ + bottom rule) BELOW the legend means the dialog is
-  // scrollback replay above a live input — not a prompt.
-  for (let i = legend + 1; i < lines.length; i++) {
-    if (!/^\s*❭(?:\s|$)/.test(lines[i]!)) continue
-    const below = lines.slice(i + 1).find(l => l.trim() !== '')
-    if (below && /^─{2,}/.test(below.trimStart())) return null
-  }
+  // A composer field (❭ + bottom rule, wrap continuations allowed) BELOW
+  // the legend means the dialog is scrollback replay above a live input.
+  if (devinFieldOnScreen(lines.slice(legend + 1).join('\n'))) return null
   // The three option rows above the legend (blank rows may separate).
   const opts: { label: string, cursor: boolean, i: number }[] = []
   for (let i = legend - 1; i >= 0 && opts.length < 3; i--) {
@@ -958,6 +967,9 @@ export function parseDevinDialog(text: string | null | undefined): Choices | nul
   if (opts.length !== 3 || opts[0]!.label !== 'Allow' || opts[1]!.label !== 'Bypass mode' || opts[2]!.label !== 'Deny') return null
   const cursor = opts.findIndex(o => o.cursor)
   if (cursor < 0) return null
-  const action = DEVIN_ACTION.exec(lines[opts[0]!.i]!)?.[1]?.trim()
-  return { question: `Allow Devin to run${action ? `: ${action}` : '?'}`, cursor, options: opts.map(o => ({ label: o.label, hint: null })) }
+  const m = DEVIN_ACTION.exec(lines[opts[0]!.i]!)
+  const scope = m?.[1]?.trim()
+  const action = m?.[2]?.trim()
+  const question = `Allow Devin to run${action ? `: ${action}` : ''}${scope ? ` — ${scope}` : '?'}`
+  return { question, cursor, options: opts.map(o => ({ label: o.label, hint: null })) }
 }
