@@ -21,10 +21,10 @@ const TABLE: Record<string, (ctx: { working: boolean }) => string[]> = {
   // drain/flush key it was suspected to be.
   claude: () => ['ctrl+enter'],
   // Devin: no alternate terminator. Ctrl+Enter is what its TUI would queue a
-  // draft on, but the chord never reaches it over the API: send_input encodes
-  // it as an enhanced-keyboard report the TUI drops (checked on v3000.11.234 —
-  // the draft just sits in the field). Offered as "Send with Ctrl+Enter", the
-  // send left the typed text stranded in the input box, where the next
+  // draft on, but over send_input the chord is not a queue action: on an idle
+  // pane it submits the draft like Enter; mid-turn it leaves the draft in the
+  // field (both measured on v3000.11.234). Offered as "Send with Ctrl+Enter",
+  // the send left the typed text stranded in the input box, where the next
   // message's text accumulated until a real Enter flushed the pile as one
   // merged/queued delivery. Plain Send stays Enter: on a working Devin it
   // steers the running turn.

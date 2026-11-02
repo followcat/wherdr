@@ -157,7 +157,7 @@ const widthItems = computed(() => [
 const scale = uiScale
 const scaleItems = computed(() => [
   { label: tl('Standard', 'Standard'), description: tl('The usual density.', 'La densité habituelle.'), value: 'md' },
-  { label: tl('Large', 'Grande'), description: tl('Interface and text enlarged by about a fifth, terminal included; the terminal text size stays the base.', 'Interface et textes agrandis d’environ un cinquième, terminal compris ; sa taille de texte sert de base.'), value: 'lg' },
+  { label: tl('Large', 'Grande'), description: tl('Interface and text enlarged by about 15%, terminal included; the terminal text size stays the base.', 'Interface et textes agrandis d’environ 15 %, terminal compris ; sa taille de texte sert de base.'), value: 'lg' },
 ])
 // What an agent pane opens on: the Conversation, or the Terminal.
 const defaultPane = defaultViewMode

@@ -3,7 +3,7 @@
 # Run once per deployment (files survive redeploys — the route /models/** reads
 # them from disk, they are not part of the npm tarball).
 #
-#   DATA_DIR=/home/followcat/wherdr/data scripts/fetch-asr-models.sh [model|all]
+#   DATA_DIR=~/wherdr/data scripts/fetch-asr-models.sh [model|all]
 #
 # Sources: the official sherpa-onnx release tarballs (HF direct links are
 # gated in some networks). SenseVoice is the default; the rest are options —

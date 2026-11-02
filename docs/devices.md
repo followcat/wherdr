@@ -17,7 +17,8 @@
 - **Keyboard shortcuts** (`Mod` is ⌘ on macOS, Ctrl elsewhere; `Mod+/` or `?` lists them all,
   also in Settings › Computer):
   - `Ctrl/⌘+K` global search across agents and conversations, `Alt+↑/↓` previous / next agent
-    in the list, `Mod+,` settings, `H` the [Board](board.md#works-great-with-herdr-projects) (outside a
+    in the list and `Alt+←/→` previous / next tab of the space — the Alt+arrows also work while
+    a field or the terminal has focus — `Mod+,` settings, `H` the [Board](board.md#works-great-with-herdr-projects) (outside a
     text field and the terminal).
   - `Mod+Alt+N` new agent in a new space, `Mod+Alt+T` new tab in the current space,
     `Mod+Alt+W` close the current pane (after confirmation). They work from the terminal too.

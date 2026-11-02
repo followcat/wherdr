@@ -880,21 +880,16 @@ export async function cancelQueued(paneId: string, text: string, id?: string): P
     setTimeout(poll, 50)
     return { text: pend.text }
   }
-  // Devin's own queue (↑ pulls an entry back for editing, Ctrl+Enter queues
-  // again): the message is taken out of it, the ones after it re-queued.
+  // Devin's own queue: its "↑" pulls the newest "○" entry back for editing —
+  // only that entry can be cancelled, nothing over the API re-queues a draft.
   if (p.agent === 'devin') {
     if (unqueueBusy.has(p.id)) throw new HerdrError('busy', 'Already cancelling')
     unqueueBusy.add(p.id)
     try {
-      const own = [...(queued.get(p.id) || [])]
       await withPaneLock(p.id, () => unqueueDevin({
         screen: async () => String(((await herdr('pane.read', { pane_id: p.id, source: 'detection' }, 4000)).read || {}).text || ''),
-        type: async (t) => { await herdr('pane.send_input', { pane_id: p.id, text: t }) },
         keys: async (keys) => { await herdr('pane.send_input', { pane_id: p.id, keys }) },
         sleep,
-        // A screen row is the message's first line, possibly cut: another of
-        // wherdr's records may know the full text.
-        full: t => own.find(q => q !== mine && sameMsg(msgText(q.text), msgText(t)))?.full ?? null,
       }, text))
       drop()
       log(`queued message cancelled on ${p.id}`)
@@ -1257,8 +1252,13 @@ async function enrich(next: HerdrState, snap: Json, machine: string, publish?: (
     } else codexStatus.forget(p.id)
     // Devin's composer screen: its queue shows while it works or while it
     // compacts (the pane then reads done), and our own messages on their way
-    // ask for a faster read. The queue section only clears on screen.
-    if (p.agent === 'devin' && isViewed(p.id)) {
+    // ask for a faster read. The queue section only clears on screen — so it
+    // is also watched while a queue is listed or a message is in flight,
+    // even unviewed: checkQueue/checkSent keep their alive-predicate and a
+    // held message is not misjudged as lost after a switch-away. A screen
+    // that comes back empty (or unreadable) ends the watch by itself.
+    const devinWatched = isViewed(p.id) || queued.has(p.id) || Boolean(devinScreens.get(p.id)?.screen?.queued.length)
+    if (p.agent === 'devin' && devinWatched) {
       const d = devinScreens.get(p.id)
       const fast = p.status === 'working' || queued.has(p.id) || Boolean(d?.screen?.queued.length)
       if (!d || Date.now() - d.at >= (fast ? ACTIVITY_MS : NOTICE_MS)) refreshDevinScreen(p)

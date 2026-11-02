@@ -5,6 +5,13 @@
 // one of its glyphs is displayed.
 export const TERM_FONT = '"Wherdr Symbols", "JetBrains Mono Variable", "JetBrains Mono", "Wherdr Nerd Symbols", ui-monospace, "SF Mono", Menlo, monospace'
 
+// Settings › Desktop › Interface size › Large enlarges the terminal text by
+// ~15% on a computer (`desk`); the device's own text size stays the base.
+// Phones have no Interface size setting and are never scaled.
+export function scaledTermFont(n: number, desk: boolean, scale: 'md' | 'lg'): number {
+  return Math.min(30, Math.round(n * (desk && scale === 'lg' ? 1.15 : 1)))
+}
+
 /** Run `redraw` each time the document finishes loading a font face. */
 export function onFontsLoaded(redraw: () => void): () => void {
   const fonts = typeof document !== 'undefined' ? document.fonts : undefined

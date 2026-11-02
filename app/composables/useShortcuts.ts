@@ -6,6 +6,7 @@
 // conversation / terminal, Stop (usePaneShortcuts, AgentView).
 import type { Ref } from 'vue'
 import { type ShortcutContext, type ShortcutFocus, type ShortcutId, matchShortcut } from '~/utils/shortcuts'
+import { stepAgent, stepTab } from '~/utils/stepNav'
 import { openFolderOnMachine } from './useHerdr'
 import { describeFocus } from '~/utils/cardKeys'
 
@@ -23,29 +24,8 @@ export function usePaneShortcuts(pane: () => string, live: () => boolean, run: P
 
 export const shortcutsOpen = ref(false)
 
-// The next or previous card of the sidebar, as shown, and what a click on it does.
-// Collapsed machines, projects and repositories render no cards; the rail only hides them.
-function stepAgent(step: 1 | -1): boolean {
-  const cards = [...document.querySelectorAll<HTMLElement>('#home .card[data-pane]')]
-  if (!cards.length) return false
-  const at = cards.findIndex(c => c.classList.contains('sel'))
-  // Nothing selected: from the top (↓) or the bottom (↑). At the ends: nothing, key still taken.
-  const next = cards[at < 0 ? (step > 0 ? 0 : cards.length - 1) : at + step]
-  next?.click()
-  next?.scrollIntoView({ block: 'nearest' })
-  return true
-}
-
-// The next or previous tab chip of the viewed space, as shown
-// (AgentView header, or the TabView strip); the ends stop.
-function stepTab(step: 1 | -1): boolean {
-  const chips = [...document.querySelectorAll<HTMLElement>('.space-tabs .tab-chip[data-tab]')]
-  if (!chips.length) return false
-  const at = chips.findIndex(c => c.getAttribute('aria-current') === 'page')
-  const next = chips[at < 0 ? (step > 0 ? 0 : chips.length - 1) : at + step]
-  next?.click()
-  return true
-}
+// Alt+arrow navigation steps the card/chip a click would act on, in shown
+// order — see utils/stepNav.ts (shared so the DOM tests can reach it).
 
 function run(id: Exclude<ShortcutId, 'search-all'>, overlay: boolean): boolean {
   // The view registered last wins: the next view of a pane mounts before the previous one leaves.

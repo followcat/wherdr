@@ -8,6 +8,7 @@ const groups: Group[] = [
   { title: tl('Anywhere', 'Partout'), rows: [
     { label: tl('Search agents and conversations', 'Rechercher agents et conversations'), keys: [shortcutKbds('search-all')] },
     { label: tl('Previous / next agent in the list', 'Agent précédent / suivant de la liste'), keys: [shortcutKbds('prev-agent'), shortcutKbds('next-agent')] },
+    { label: tl('Previous / next tab of this space', 'Onglet précédent / suivant de cet espace'), keys: [shortcutKbds('prev-tab'), shortcutKbds('next-tab')] },
     { label: tl('New agent, in a new space', 'Nouvel agent, dans un nouvel espace'), keys: [shortcutKbds('new-space')] },
     { label: tl('New tab in this space', 'Nouvel onglet dans cet espace'), keys: [shortcutKbds('new-tab')] },
     { label: tl('Close this pane', 'Fermer ce pane'), keys: [shortcutKbds('close-pane')] },

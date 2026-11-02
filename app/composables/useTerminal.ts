@@ -18,7 +18,7 @@ import { OSC52_MAX_BYTES, bindTerminalOsc52, copyAgentText } from '~/utils/termi
 import { uploadPhoto } from '~/utils/photoUpload'
 import { terminalClosedText, terminalUnavailableText } from '~/utils/terminalClosed'
 import { bindTerminalMouse, terminalCell } from '~/utils/terminalMouse'
-import { TERM_FONT, onFontsLoaded } from '~/utils/terminalFont'
+import { TERM_FONT, onFontsLoaded, scaledTermFont } from '~/utils/terminalFont'
 import { createCompositionTracker, displayVirtualChord, toggleVirtualModifier, virtualChord, virtualInputAction, virtualNavigationBytes, type VirtualModifier } from '~/utils/virtualKeys'
 
 export interface Banner { text: string, btn: string, fn: () => void }
@@ -100,6 +100,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     term = new Terminal({
       fontFamily: TERM_FONT,
       fontSize: scaledFont(fontSize.value),
+      // (scaledFont is defined below in this composable's setup scope; attach
+      // runs later, so it is initialized by then.)
       // Line height 1: block characters (Claude Code logo) and
       // box-drawing lines must touch from one line to the next.
       lineHeight: 1,
@@ -146,8 +148,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     // JetBrains Mono (bundled): once loaded, xterm re-measures its cells.
     const t0 = term
     Promise.all([
-      document.fonts?.load(`${fontSize.value}px "JetBrains Mono Variable"`),
-      document.fonts?.load(`${fontSize.value}px "Wherdr Symbols"`, '─▀█⎿⏵⏺✻✳'),
+      document.fonts?.load(`${scaledFont(fontSize.value)}px "JetBrains Mono Variable"`),
+      document.fonts?.load(`${scaledFont(fontSize.value)}px "Wherdr Symbols"`, '─▀█⎿⏵⏺✻✳'),
     ]).then(() => {
       if (disposed || term !== t0) return
       t0.options.fontFamily = TERM_FONT
@@ -329,15 +331,16 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   watch(terminalRenderer, setRenderer)
 
   // Settings › Desktop › Interface size › Large also enlarges the terminal
-  // text by ~15%; its own text size stays the base (8–20).
-  const scaledFont = (n: number) => Math.min(30, Math.round(n * (uiScale.value === 'lg' ? 1.15 : 1)))
+  // text by ~15%; its own text size stays the base (8–20). Computer only —
+  // uiScale is a desk media preference and phones have no such setting.
+  const scaledFont = (n: number) => scaledTermFont(n, desk.value, uiScale.value)
 
   function setFontSize(n: number) {
     if (!term) return
     term.options.fontSize = scaledFont(n)
     fitNow(true)
   }
-  watch(uiScale, () => setFontSize(fontSize.value))
+  watch([uiScale, desk], () => setFontSize(fontSize.value))
 
   function connect(takeover: boolean) {
     if (disposed || !term) return

@@ -258,19 +258,17 @@ export async function unqueueClaude(d: UnqueueDeps, text: string): Promise<{ req
 export interface DevinUnqueueDeps {
   // Visible screen, detection text (no ANSI needed by parseDevinScreen).
   screen: () => Promise<string>
-  // Text typed into the composer's field (not submitted).
-  type: (text: string) => Promise<void>
   keys: (keys: string[]) => Promise<void>
   sleep: (ms: number) => Promise<void>
-  // Full text of a queue entry the screen may have truncated: ours is known.
-  full?: (entry: string) => string | null
 }
 
 // Removes `text` from Devin's own queue (v3000.x). Its "↑" pulls the NEWEST
-// "○" entry back into the composer's field for editing; entries queued after
-// ours are popped first, remembered, then typed back and queued again
-// (Ctrl+Enter is Devin's queue chord — verified on 3000.11.234), in their
-// original order. Returns the texts queued again.
+// "○" entry back into the composer's field for editing — and nothing over the
+// API puts a draft back into the queue: Ctrl+Enter submits it as a steer on
+// an idle pane, or leaves it in the field mid-turn (both measured on
+// 3000.11.234). Cancelling anything but the newest entry would pop the newer
+// ones with no way back, so only the last queued row can be pulled out.
+// Returns the texts queued again (always none — kept for the caller's shape).
 export async function unqueueDevin(d: DevinUnqueueDeps, text: string): Promise<{ requeued: string[] }> {
   const wanted = msgText(text)
   const isIt = (entry: string) => sameMsg(msgText(entry), wanted) || sameMsg(wanted, msgText(entry))
@@ -281,7 +279,8 @@ export async function unqueueDevin(d: DevinUnqueueDeps, text: string): Promise<{
   if (box0) throw new HerdrError('input_busy', 'The agent’s input field is not empty')
   const idx = s0.queued.findIndex(isIt)
   if (idx < 0) throw already()
-  const above = s0.queued.slice(idx + 1) // entries newer than ours, display order
+  if (idx !== s0.queued.length - 1)
+    throw new HerdrError('queue_tail', 'Only the newest queued message can be pulled back — cancel the newer ones first')
   // One row of the screen may be a cut first line: a loose match, never "is".
   const loose = (box: string, entry: string) => {
     const b = box.replace(/\s+/g, ' ').trim()
@@ -301,56 +300,22 @@ export async function unqueueDevin(d: DevinUnqueueDeps, text: string): Promise<{
     await d.sleep(150)
     if (await field()) throw new HerdrError('clear_failed', 'Agent input not cleared: check its terminal')
   }
-  // Pop each entry above ours (newest first), then ours; each landed in the
-  // field is emptied before the next ↑.
-  const popped: string[] = []
-  const requeued: string[] = []
-  try {
-    for (let i = above.length - 1; i >= -1; i--) {
-      const expect = i < 0 ? s0.queued[idx]! : above[i]!
-      await d.keys(['up'])
-      const box = await field()
-      if (!box || !loose(box, expect)) {
-        // Not the entry expected: the queue changed under us (flushed, or a
-        // new one came in). What the field holds is put back below — unless
-        // the queue is gone entirely, in which case ↑ pulled history and it
-        // is simply emptied. Ours delivered → already_read; still listed →
-        // busy, the caller's record stays queued.
-        if (box) {
-          const s1 = parseDevinScreen(await d.screen())
-          if (s1?.queued.length) popped.push(box)
-          try { await clear(box.split('\n').length) } catch { /* emptied or left: the requeue loop checks first */ }
-          throw s1?.queued.some(isIt)
-            ? new HerdrError('busy', 'Devin’s queue changed: try again')
-            : already()
-        }
-        const s1 = parseDevinScreen(await d.screen())
-        throw s1?.queued.some(isIt)
-          ? new HerdrError('busy', 'Devin’s queue changed: try again')
-          : already()
-      }
-      if (i < 0) { // ours sits in the field: emptied, its text back to wherdr's
-        await clear(box.split('\n').length)
-        break
-      }
-      popped.push(box)
-      await clear(box.split('\n').length)
-    }
+  // Pop the newest entry into the field; it should be ours.
+  await d.keys(['up'])
+  const box = await field()
+  const changed = async (): Promise<never> => {
+    // The queue changed under us: flushed (ours delivered → already_read) or
+    // reshuffled (still listed → busy). A field left holding another entry is
+    // NOT emptied — popped and cleared would lose it; kept, it is a draft.
+    const s1 = parseDevinScreen(await d.screen())
+    throw s1?.queued.some(isIt)
+      ? new HerdrError('busy', 'Devin’s queue changed: try again')
+      : already()
   }
-  finally {
-    // Whatever was pulled out is queued again, oldest first — on success and
-    // on failure alike, so a queue changed mid-way loses nothing. A field
-    // that still holds text is left alone rather than mixed into.
-    for (const t of popped.reverse()) {
-      try {
-        if (devinFieldLine(await d.screen())) break
-        await d.type(d.full?.(t) || t)
-        await d.keys(['ctrl+enter'])
-        await d.sleep(200)
-        requeued.push(t)
-      }
-      catch { break }
-    }
+  // Ours sits in the field: emptied, its text back to wherdr's.
+  if (box && loose(box, s0.queued[idx]!)) {
+    await clear(box.split('\n').length)
+    return { requeued: [] }
   }
-  return { requeued }
+  return await changed()
 }
