@@ -36,6 +36,17 @@ function stepAgent(step: 1 | -1): boolean {
   return true
 }
 
+// The next or previous tab chip of the viewed space, as shown
+// (AgentView header, or the TabView strip); the ends stop.
+function stepTab(step: 1 | -1): boolean {
+  const chips = [...document.querySelectorAll<HTMLElement>('.space-tabs .tab-chip[data-tab]')]
+  if (!chips.length) return false
+  const at = chips.findIndex(c => c.getAttribute('aria-current') === 'page')
+  const next = chips[at < 0 ? (step > 0 ? 0 : chips.length - 1) : at + step]
+  next?.click()
+  return true
+}
+
 function run(id: Exclude<ShortcutId, 'search-all'>, overlay: boolean): boolean {
   // The view registered last wins: the next view of a pane mounts before the previous one leaves.
   let view: PaneShortcuts | undefined
@@ -49,6 +60,8 @@ function run(id: Exclude<ShortcutId, 'search-all'>, overlay: boolean): boolean {
     case 'stop': return view?.stop() ?? false
     case 'prev-agent': return stepAgent(-1)
     case 'next-agent': return stepAgent(1)
+    case 'prev-tab': return stepTab(-1)
+    case 'next-tab': return stepTab(1)
     case 'new-space':
       if (!writable) return false
       haptic()
