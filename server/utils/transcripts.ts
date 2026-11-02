@@ -36,7 +36,7 @@ interface CodexRollout { file: string, id: string, ts: number, mtimeMs: number }
 // Window in which a Codex's conversation is created around its appearance.
 const CODEX_BIRTH_BEFORE = 5000
 const CODEX_BIRTH_AFTER = 120000
-type Lines = string[] & { refs?: string[] }
+type Lines = string[] & { refs?: string[], raw?: string[] }
 type Parsed = ChatItem[] & { queue?: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[] }
 // `anchor`: fingerprint of the bytes just above `start` (see anchorAt).
 interface TailResult { start: number, items: ChatItem[], queue: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], anchor?: string }
@@ -960,7 +960,7 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
             const [at, len] = ref.split(':')
             rec.at = Number(at)
             rec.len = Number(len)
-            rec.hash = createHash('sha256').update(lines[i]!).digest('hex').slice(0, 16)
+            rec.hash = createHash('sha256').update(lines.raw?.[i] ?? lines[i]!).digest('hex').slice(0, 16)
           }
           if (n && ref) {
             rec.images = n
@@ -996,6 +996,7 @@ export function parseLines(text: string, kind: string | null, base = 0, home = '
   }
   const lines: Lines = raw.map(stripBlobs)
   lines.refs = refs
+  lines.raw = raw
   const items = kind === 'omp' ? parseOmp(lines, home, templates, cwd) : kind === 'codex' ? parseCodex(lines) : kind === 'cmd' ? parseCommandCode(lines, cmdResults) : parseClaude(lines, home)
   // Content hash of each image, to spot one shown twice (see shared/imageDupes.ts).
   const byRef = new Map<string, number>()
@@ -1156,18 +1157,34 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   async function cmdResultsValid(file: string): Promise<boolean> {
     const results = cmdResults.get(file)
     if (!results || !results.size) return true
-    const seen = new Set<string>()
+    const records = new Map<string, { at: number, len: number, hash: string }>()
     for (const [, r] of results) {
       if (r.at === undefined || r.len === undefined || !r.hash) return false
-      // Several tool results can live in one JSONL record: hash it once.
-      const key = `${r.at}:${r.len}:${r.hash}`
-      if (seen.has(key)) continue
-      seen.add(key)
+      records.set(`${r.at}:${r.len}:${r.hash}`, { at: r.at, len: r.len, hash: r.hash })
+    }
+    if (!records.size) return true
+    if (exec) {
+      // One remote pass for every retained record, not one SSH command each.
+      const specs = [...records.values()].map(r => `${r.at}:${r.len}:${r.hash}`)
       try {
-        const raw = (await fs.read(file, r.at, r.len)).toString('utf8')
-        const h = createHash('sha256').update(stripBlobs(raw)).digest('hex').slice(0, 16)
-        if (h !== r.hash) return false
-      } catch { return true } // transient read failure: keep, do not lose output
+        const r = await exec('f="$1"; shift; H=sha256sum; command -v "$H" >/dev/null 2>&1 || H="shasum -a 256"; for s in "$@"; do at=${s%%:*}; rest=${s#*:}; len=${rest%%:*}; h=${rest#*:}; printf "%s\\t" "$h"; tail -c +$((at+1)) "$f" | head -c "$len" | $H | cut -c1-16; done', [file, ...specs], { timeoutMs: 8000 })
+        if (r.code === 0) {
+          const got = new Map<string, string>()
+          for (const line of r.stdout.toString('utf8').split('\n')) {
+            const tab = line.indexOf('\t')
+            if (tab > 0) got.set(line.slice(0, tab), line.slice(tab + 1).trim())
+          }
+          for (const rec of records.values()) if (got.get(rec.hash) !== rec.hash) return false
+          return true
+        }
+      } catch { return true } // transient remote failure: keep
+    }
+    for (const rec of records.values()) {
+      try {
+        const raw = (await fs.read(file, rec.at, rec.len)).toString('utf8')
+        const h = createHash('sha256').update(raw).digest('hex').slice(0, 16)
+        if (h !== rec.hash) return false
+      } catch { return true }
     }
     return true
   }
@@ -1408,7 +1425,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     if (!paths.length) return out
     if (exec) {
       try {
-        const r = await exec('for f in "$@"; do printf "%s\\t" "$f"; head -c 65536 "$f" | head -n 1; done', paths, { timeoutMs: 4000 })
+        const r = await exec('for f in "$@"; do printf "%s\\t" "$f"; head -c 65536 "$f" | head -n 1; printf "\\n"; done', paths, { timeoutMs: 4000 })
         if (r.code === 0) {
           for (const line of r.stdout.toString('utf8').split('\n')) {
             const tab = line.indexOf('\t')
