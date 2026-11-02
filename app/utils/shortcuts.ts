@@ -47,13 +47,12 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: 'stop', mods: [], key: 'escape', fields: 'empty', terminal: false, kbds: ['escape'] },
   { id: 'prev-agent', mods: ['alt'], key: 'arrowup', fields: 'empty', terminal: false, repeat: true, kbds: ['alt', 'arrowup'] },
   { id: 'next-agent', mods: ['alt'], key: 'arrowdown', fields: 'empty', terminal: false, repeat: true, kbds: ['alt', 'arrowdown'] },
-  // Same with Ctrl (Alt+arrows are taken by some window managers and browsers).
-  // In a field, Ctrl+arrow is a word/paragraph jump: it still fires only empty.
-  { id: 'prev-agent', mods: ['ctrl'], key: 'arrowup', fields: 'empty', terminal: false, repeat: true, kbds: ['ctrl', 'arrowup'] },
-  { id: 'next-agent', mods: ['ctrl'], key: 'arrowdown', fields: 'empty', terminal: false, repeat: true, kbds: ['ctrl', 'arrowdown'] },
-  // Space tabs (the chips above a pane): previous / next, as shown.
-  { id: 'prev-tab', mods: ['ctrl'], key: 'arrowleft', fields: 'empty', terminal: false, repeat: true, kbds: ['ctrl', 'arrowleft'] },
-  { id: 'next-tab', mods: ['ctrl'], key: 'arrowright', fields: 'empty', terminal: false, repeat: true, kbds: ['ctrl', 'arrowright'] },
+  // Space tabs (the chips above a pane): previous / next, as shown. Taken
+  // before everything — Alt+←/→ is the browser's Back/Forward, so fields and
+  // the terminal must not see it either (caught at capture, like Mod+Alt).
+  // (macOS: this takes ⌥←/→ word jumps out of text fields — personal fork.)
+  { id: 'prev-tab', mods: ['alt'], key: 'arrowleft', fields: 'any', terminal: true, capture: true, repeat: true, kbds: ['alt', 'arrowleft'] },
+  { id: 'next-tab', mods: ['alt'], key: 'arrowright', fields: 'any', terminal: true, capture: true, repeat: true, kbds: ['alt', 'arrowright'] },
   // Ctrl/⌘+N, T, W belong to the browser (pages never see them in Chromium).
   { id: 'new-space', mods: ['mod', 'alt'], key: 'n', fields: 'any', terminal: true, capture: true, kbds: ['meta', 'alt', 'N'] },
   { id: 'new-tab', mods: ['mod', 'alt'], key: 't', fields: 'any', terminal: true, capture: true, kbds: ['meta', 'alt', 'T'] },

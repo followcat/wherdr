@@ -99,7 +99,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     twsRetry = 0
     term = new Terminal({
       fontFamily: TERM_FONT,
-      fontSize: fontSize.value,
+      fontSize: scaledFont(fontSize.value),
       // Line height 1: block characters (Claude Code logo) and
       // box-drawing lines must touch from one line to the next.
       lineHeight: 1,
@@ -328,11 +328,16 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   }
   watch(terminalRenderer, setRenderer)
 
+  // Settings › Desktop › Interface size › Large also enlarges the terminal
+  // text by ~15%; its own text size stays the base (8–20).
+  const scaledFont = (n: number) => Math.min(30, Math.round(n * (uiScale.value === 'lg' ? 1.15 : 1)))
+
   function setFontSize(n: number) {
     if (!term) return
-    term.options.fontSize = n
+    term.options.fontSize = scaledFont(n)
     fitNow(true)
   }
+  watch(uiScale, () => setFontSize(fontSize.value))
 
   function connect(takeover: boolean) {
     if (disposed || !term) return
