@@ -61,6 +61,20 @@ export default defineApi(async (event, b) => {
           return q
         }
       }
+      // Command Code reports no "blocked": a dialog, a "/" menu, or a draft
+      // all read idle/unknown while owning the keys. Same re-read guard.
+      if (now?.agent === 'cmd' && !b.native) {
+        const r = await herdr('pane.read', { pane_id: b.pane_id, source: 'detection' }, 4000)
+        if (!inputVisible(r.read?.text, 'cmd')) {
+          if (typeof b.text !== 'string' || !b.text.trim() || isSlashCommand(b.text)
+            || !Array.isArray(b.keys) || b.keys.length !== 1 || b.keys[0] !== 'enter') {
+            throw new HerdrError('stale', 'Command Code is asking something — answer it in its terminal.')
+          }
+          const q = addQueued(b.pane_id, b.text, { held: true })
+          setTimeout(poll, 50)
+          return q
+        }
+      }
       if (typeof b.text === 'string' && b.text) await herdr('pane.send_input', { pane_id: b.pane_id, text: b.text })
       if (Array.isArray(b.keys) && b.keys.length) await herdr('pane.send_input', { pane_id: b.pane_id, keys: b.keys.map(String) })
     } finally {

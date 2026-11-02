@@ -47,6 +47,18 @@ describe('shouldHold', () => {
     expect(shouldHold('opencode', 'working', false, false)).toBe(false)
     expect(shouldHold('opencode', 'working', true, true)).toBe(true)
   })
+  // Command Code reports no "blocked": its trust/permission dialogs read
+  // "unknown", its "/" menu and drafts read "idle" — only the composer
+  // recognizer's verdict keeps text+Enter out of them.
+  it('holds a Command Code message whenever its composer is not empty on screen', () => {
+    expect(shouldHold('cmd', 'unknown', false, false)).toBe(true)
+    expect(shouldHold('cmd', 'idle', false, false)).toBe(true)
+    expect(shouldHold('cmd', 'done', false, false)).toBe(true)
+    expect(shouldHold('cmd', 'blocked', true, false)).toBe(true)
+    // An empty boxed field releases it; a working turn types straight in.
+    expect(shouldHold('cmd', 'idle', true, false)).toBe(false)
+    expect(shouldHold('cmd', 'working', true, false)).toBe(false)
+  })
 })
 
 describe('nextHeld', () => {
