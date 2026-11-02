@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -234,7 +234,7 @@ it('keeps a tool result across a pagination boundary', async () => {
   const filler = 'z'.repeat(32 * 1024)
   for (let i = 0; i < 200; i++) lines.push(commandCodeUser(`filler-${i}`, 'a1', filler, 3000 + i))
   lines.push(commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'ok' }] }], 4000))
-  writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
+  const file = writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
   const tail = await reader.chat(pane)
   expect(tail.start).toBeGreaterThan(0)
   const older = await reader.chat(pane, { before: tail.start })
@@ -243,6 +243,22 @@ it('keeps a tool result across a pagination boundary', async () => {
   reader.forget(pane.id)
   const afterForget = await reader.chat(pane, { before: tail.start })
   expect(afterForget.items!.find(i => i.name === 'shell_command')?.out).toBeUndefined()
+
+  // Replacing the file (new inode) with a larger transcript without that
+  // result must invalidate the remembered entry too.
+  const replacement = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+  ]
+  for (let i = 0; i < 250; i++) replacement.push(commandCodeUser(`replacement-${i}`, 'a1', filler, 5000 + i))
+  const fresh = `${file}.replacement`
+  writeFileSync(fresh, replacement.map(line => JSON.stringify(line)).join('\n') + '\n')
+  renameSync(fresh, file)
+  const tail2 = await reader.chat(pane)
+  expect(tail2.start).toBeGreaterThan(0)
+  const older2 = await reader.chat(pane, { before: tail2.start })
+  expect(older2.items!.find(i => i.name === 'shell_command')?.out).toBeUndefined()
 })
 
 it('reads past trailing tool results with no displayable message', async () => {
