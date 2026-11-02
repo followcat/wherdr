@@ -170,9 +170,9 @@ async function readChoices(p: Pane, rev: unknown, strict: boolean, watch = false
     // A live quota footer keeps the input usable. Ignore lists in scrollback.
     const usageLimit = p.status === 'unknown' ? null : parseUsageLimit(String(text || ''), p.agent)
     // omp: its select dialog (tool approval) or "Ask" box.
-    let choices = usageLimit ? null : p.agent === 'omp' ? parseOmpPrompt(text) : parseChoices(text, { strict })
+    let choices = usageLimit ? null : p.agent === 'omp' ? parseOmpPrompt(text) : p.agent === 'cmd' ? null : parseChoices(text, { strict })
     if (choices) choices.identity = promptIdentity(text, p.agent)
-    const menu = !usageLimit && p.agent !== 'omp' && framed && (strict || !choices || !parseChoices(text, { strict: true })) ? await readMenu(p.id) : null
+    const menu = !usageLimit && p.agent !== 'omp' && p.agent !== 'cmd' && framed && (strict || !choices || !parseChoices(text, { strict: true })) ? await readMenu(p.id) : null
     if (menu) {
       menu.identity = menuIdentity(menu)
       for (const item of menu.items) item.identity = menuIdentity(menu, item)
@@ -552,11 +552,12 @@ function deliverHeld(p: Pane) {
   deliverBusy.add(p.id)
   herdr('pane.read', { pane_id: p.id, source: 'detection' }, 4000)
     .then(async (r) => {
-      // Command Code has no screen recognizer: its idle/done status is the
-      // readiness signal (a blocked pane is the one that held the message).
+      // Command Code has no "blocked" report: its idle/done status gates the
+      // delivery, and the composer recognizer keeps text out of any dialog or
+      // draft the screen shows while the pane rests.
       const ready = p.agent === 'cmd'
-        ? p.status === 'idle' || p.status === 'done'
-        : inputVisible(r.read && r.read.text)
+        ? (p.status === 'idle' || p.status === 'done') && inputVisible(r.read && r.read.text, p.agent)
+        : inputVisible(r.read && r.read.text, p.agent)
       if (!ready) return
       if (p.agent === 'claude') {
         const box = await fieldDeps(p, inputBox).box()
@@ -637,7 +638,7 @@ function heldFailed(p: Pane, q: QueueEntry, e: HerdrError) {
 export async function closeLeftMenu(paneId: string, send: boolean): Promise<{ closed: boolean, sent: number }> {
   const p = findPane(paneId)
   if (!p || !p.agent || !HOLD_AGENTS.has(p.agent) || p.stopped || restarting(paneId)) throw new HerdrError('stale', 'No menu to close')
-  const shown = async () => inputVisible(((await herdr('pane.read', { pane_id: paneId, source: 'detection' }, 4000)).read || {}).text)
+  const shown = async () => inputVisible(((await herdr('pane.read', { pane_id: paneId, source: 'detection' }, 4000)).read || {}).text, p.agent)
   const closed = await withPaneLock(paneId, async () => {
     if (await shown()) return false
     await herdr('pane.send_input', { pane_id: paneId, keys: ['esc'] })
@@ -737,7 +738,7 @@ export async function clearQueuedInput(paneId: string, id: string, expected: str
     if (!p || p.agent !== 'claude' || p.stopped || p.leaving || !['idle', 'done'].includes(p.status || '') || restarting(paneId)
       || p.menu || p.prompt || !q?.held || !q.busy || q.failed) throw new HerdrError('stale', 'Agent is not ready')
     const detection = await herdr('pane.read', { pane_id: paneId, source: 'detection' }, 4000)
-    if (!inputVisible(detection.read?.text)) throw new HerdrError('stale', 'Agent is not ready')
+    if (!inputVisible(detection.read?.text, p.agent)) throw new HerdrError('stale', 'Agent is not ready')
     const d = fieldDeps(p, inputBox)
     const box = await d.box()
     if (box === null) throw new HerdrError('no_input', 'Agent input field not found')
@@ -1159,7 +1160,7 @@ async function enrich(next: HerdrState, snap: Json, machine: string, publish?: (
     // (see lookForLeftMenu): the conversation says so, with Close / Send anyway.
     if (lookForLeftMenu(p)) {
       const r = await herdr('pane.read', { pane_id: p.id, source: 'detection' }, 4000).catch(() => null)
-      if (r && !inputVisible(r.read && r.read.text)) p.menuLeftOpen = true
+      if (r && !inputVisible(r.read && r.read.text, p.agent)) p.menuLeftOpen = true
     }
     const pv = previews.get(p.id)
     if (!pv || pv.status !== p.status || (p.status === 'working' && Date.now() - pv.at > 10000)) refreshPreview(p)

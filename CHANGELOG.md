@@ -10,6 +10,10 @@ All notable changes to this project are documented here. The format follows
 
 - **Command Code conversations.** wherdr reads the Command Code CLI's local JSONL sessions (`~/.commandcode/projects/<project>/<session>.jsonl`) on the machine running the agent, over SSH too: text, reasoning, tool calls and results, saved images, search, previews, model, pagination, and a composer status line with the last turn's model and context. Its `/model`, `/effort`, `/permissions`, `/compact`, `/clear` and `/config` appear in the `/` menu; `/model` and `/effort` set the default for new sessions only, so the running session's model stays read-only. Herdr already reports the pane as `cmd`, so no integration is needed; without a session id the reader takes the most recently written session for the pane's folder (two live panes in one folder share the newest). Permission dialogs stay in the terminal.
 
+### Fixed
+
+- **A Command Code dialog can no longer eat a send — or take one.** Command Code never reports "blocked": its trust and permission dialogs read "unknown" or "idle" while their ❯ option rows own the keys, its "/" command menu and drafts read "idle", and its dialogs match the generic numbered-choice grammar — so a held message could be typed straight into them, and a phantom card could answer them. Its composer is now recognized like omp's: only an empty boxed ❯ field takes typed text, an option cursor, selection hints or any draft on screen holds the message instead, the same guard applies on the raw input route, and its screens never produce a choice card or a menu.
+
 ## [2.5.0] — 2026-11-02
 
 ### Added and improved

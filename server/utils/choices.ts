@@ -826,7 +826,11 @@ export function waitIdentity(screen: WaitScreen): string {
 // On-screen prompt re-read before choose/nav; Claude questions can be
 // completed by the pending transcript call after their screen identity is set.
 export function screenChoices(text: string | null | undefined, agent: string | null | undefined, asked: ClaudeAsked[] = []): Choices | null {
-  const c = agent === 'omp' ? parseOmpPrompt(text) : parseChoices(text) || parseChoices(text, { strict: true })
+  // Command Code's own dialogs look like the generic grammar ("❯ 1. …")
+  // but are answered by their own keys — the terminal keeps them.
+  const c = agent === 'omp' ? parseOmpPrompt(text)
+    : agent === 'cmd' ? null
+    : parseChoices(text) || parseChoices(text, { strict: true })
   if (c) c.identity = promptIdentity(text, agent)
   return c && agent === 'claude' ? completeClaudeAsk(c, asked) : c
 }
@@ -854,11 +858,45 @@ const bashInput = (line: string, above: string | undefined) => /^!(\s|$)/.test(l
 // ("❯ 1. Yes, proceed", /mcp, /hooks…) is not its input field. omp's field
 // ends with a "╰─" line followed by the text typed, under its status line
 // ("π > Opus > ~/demo ▶─1%────1M─"); a box's bottom is a longer rule.
-export function inputVisible(text: string | null | undefined): boolean {
+export function inputVisible(text: string | null | undefined, agent?: string | null): boolean {
   if (ompApprovalOpen(text)) return false
-  const lines = String(text || '').replace(/\s+$/, '').split('\n').slice(-12)
+  const t = String(text || '')
+  // Command Code's composer is a ❯ line inside its ─ box; its dialogs use the
+  // same glyph on option rows, so the box anchors alone cannot tell them apart.
+  if (agent === 'cmd') return cmdFieldOnScreen(t)
+  const lines = t.replace(/\s+$/, '').split('\n').slice(-12)
   return lines.some((l, i) => /^\s*›(\s|$)/.test(l)
     || (/^\s*❯(\s|$)/.test(l) && /^\s*─{3,}/.test(lines[i - 1] || ''))
     || /^╰─(\s|$)/.test(l)
     || bashInput(l, lines[i - 1]))
+}
+
+// Command Code's composer (v1.88.x), captured on a live pane:
+//
+//   ───────────────────────────
+//   ❯ Ask your question...
+//   ───────────────────────────
+//     ? for shortcuts
+//
+// The "❯" line is the input field only while boxed by bare rules AND holding
+// no text: a draft ("❯ /" opening the command menu below, or typed text)
+// receives whatever is typed and its Enter runs the highlighted menu entry —
+// never type over it. Its dialogs draw the same glyph on option rows
+// ("❯ 1. Yes, proceed" with "↑/↓ to navigate · enter to select" hints), and a
+// permission dialog can leave the composer box on screen below it, so any
+// option cursor or selection hints rule the whole screen out. An empty field
+// shows its placeholder text instead; other locales' placeholders read as a
+// draft and simply hold (fail closed).
+const CMD_OPTION_CURSOR = /^\s*❯\s*\d{1,2}\.\s/
+const CMD_DIALOG_HINTS = /↑\/↓ to navigate|enter to select|esc to exit/i
+function cmdFieldOnScreen(text: string): boolean {
+  const lines = String(text || '').split('\n').map(l => l.replace(/\s+$/, ''))
+  for (const l of lines) {
+    if (CMD_OPTION_CURSOR.test(l) || CMD_DIALOG_HINTS.test(l)) return false
+  }
+  let at = -1
+  for (let i = lines.length - 1; i >= 0 && at < 0; i--) if (/^\s*❯/.test(lines[i]!)) at = i
+  if (at < 1 || !/^\s*─{3,}/.test(lines[at - 1]!) || !/^\s*─{3,}/.test(lines[at + 1] || '')) return false
+  const content = lines[at]!.replace(/^\s*❯\s*/, '').trim()
+  return content === '' || /^ask your question/i.test(content)
 }

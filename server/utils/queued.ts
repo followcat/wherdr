@@ -164,9 +164,10 @@ export function shouldHold(agent: string | null | undefined, status: string | nu
   if (!agent || !HOLD_AGENTS.has(agent)) return false
   // Keep the order: behind a held message, everything waits.
   if (earlierHeld) return true
-  // Command Code's input UI is not recognized yet: only a blocked pane (a
-  // permission/question dialog) holds; an idle one must never wait forever.
-  if (agent === 'cmd') return status === 'blocked'
+  // Command Code never reports "blocked" (no manifest): its idle/unknown
+  // reads hold whenever the composer recognizer does not see an empty field —
+  // a dialog's option cursor, a "/" command menu, or a draft all own the keys.
+  if (agent === 'cmd') return status === 'blocked' || (INPUT_STATES.has(status || '') && !input)
   return INPUT_STATES.has(status || '') && !input
 }
 
