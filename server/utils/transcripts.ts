@@ -61,14 +61,22 @@ export function anchorOf(token: string | null | undefined): { start: number, has
 const genOf = (st: { mtimeMs: number, ino?: number }) => `${st.ino ? `${st.ino}-` : ''}${Math.round(st.mtimeMs * 1000)}`
 // State a client's token was read from: file, size, cursor, inode, mtime
 // (`!`: read before its mtime second was over, see SETTLE_MS).
-const HEAD = /^(.*):(\d+):(null|\d+):(?:(\d+)-)?(\d+)(!?)(?=[/@~#]|$)/
+const HEAD = /^(.*):(\d+):(null|\d+):(?:(\d+)-)?(\d+)(!?)(?=[@/%~#]|$)/
 // Command Code invalidation generation carried by a token (`@N`, before the
 // anchor): a client whose generation is behind rebuilds the older pages it
 // kept. `~` stays the taken-back marker of server/api/chat.get.ts.
-const EPOCH = /@(\d+)(?=[/~#]|$)/
+const EPOCH = /@(\d+)(?=[/%~#]|$)/
 export function cmdEpochOf(token: string | null | undefined): number | null {
   const m = EPOCH.exec(String(token || ''))
   return m ? Number(m[1]) : null
+}
+// A restart drops the reader's remembered cross-page results: the instance
+// nonce makes an old token reload the pages instead of showing a tool without
+// its output.
+const READER = /%([a-z0-9]+)(?=[/~#]|$)/
+export function cmdReaderOf(token: string | null | undefined): string | null {
+  const m = READER.exec(String(token || ''))
+  return m ? m[1]! : null
 }
 export function headOf(token: string | null | undefined): { file: string, size: number, from: number | null, ino: number | null, gen: string, unsettled: boolean } | null {
   const m = HEAD.exec(String(token || ''))
@@ -868,8 +876,9 @@ function commandCodeTool(name: string, input: Json): string {
 }
 
 export type CommandCodeResult = { out?: string, error?: boolean, images?: number, ref?: string, imageAt?: number, at?: number, len?: number, hash?: string }
+export type CommandCodeWatch = { at: number, len: number, hash: string }
 
-export function parseCommandCode(lines: Lines, results?: Map<string, CommandCodeResult>): Parsed {
+export function parseCommandCode(lines: Lines, results?: Map<string, CommandCodeResult>, updates?: CommandCodeToolUpdate[], watches?: Map<string, CommandCodeWatch>): Parsed {
   const items: Parsed = []
   const tools = new Map<string, ChatItem>()
   for (let i = 0; i < lines.length; i++) {
@@ -950,6 +959,18 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
         const t = tools.get(part.tool_use_id)
         const n = Array.isArray(part.content) ? part.content.filter((p: Json) => p && p.type === 'image').length : 0
         const out = commandCodeText(part.content)
+        // Watch every result record, whether its call is in this page or an
+        // older one: an in-place rewrite of shown output must invalidate the
+        // client pages that display it.
+        let watch: CommandCodeWatch | null = null
+        if (ref) {
+          const [at, len] = ref.split(':')
+          watch = { at: Number(at), len: Number(len), hash: createHash('sha256').update(lines.raw?.[i] ?? lines[i]!).digest('hex').slice(0, 16) }
+          if (watches) {
+            watches.set(part.tool_use_id, watch)
+            if (watches.size > 4096) watches.delete(watches.keys().next().value!)
+          }
+        }
         if (t) {
           if (out) t.out = clip(out, 8000)
           if (part.is_error) t.error = true
@@ -964,11 +985,10 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
           const rec: CommandCodeResult = {}
           if (out) rec.out = clip(out, 8000)
           if (part.is_error) rec.error = true
-          if (ref) {
-            const [at, len] = ref.split(':')
-            rec.at = Number(at)
-            rec.len = Number(len)
-            rec.hash = createHash('sha256').update(lines.raw?.[i] ?? lines[i]!).digest('hex').slice(0, 16)
+          if (watch) {
+            rec.at = watch.at
+            rec.len = watch.len
+            rec.hash = watch.hash
           }
           if (n && ref) {
             rec.images = n
@@ -993,7 +1013,7 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
   return items
 }
 
-export function parseLines(text: string, kind: string | null, base = 0, home = '', templates?: readonly CommandTemplate[], cwd = '', cmdResults?: Map<string, CommandCodeResult>): Parsed {
+export function parseLines(text: string, kind: string | null, base = 0, home = '', templates?: readonly CommandTemplate[], cwd = '', cmdResults?: Map<string, CommandCodeResult>, cmdWatches?: Map<string, CommandCodeWatch>): Parsed {
   const raw = text.split('\n')
   const refs: string[] = []
   let off = base
@@ -1005,7 +1025,9 @@ export function parseLines(text: string, kind: string | null, base = 0, home = '
   const lines: Lines = raw.map(stripBlobs)
   lines.refs = refs
   lines.raw = raw
-  const items = kind === 'omp' ? parseOmp(lines, home, templates, cwd) : kind === 'codex' ? parseCodex(lines) : kind === 'cmd' ? parseCommandCode(lines, cmdResults) : parseClaude(lines, home)
+  const cmdUpdates: CommandCodeToolUpdate[] = []
+  const items = kind === 'omp' ? parseOmp(lines, home, templates, cwd) : kind === 'codex' ? parseCodex(lines) : kind === 'cmd' ? parseCommandCode(lines, cmdResults, cmdUpdates, cmdWatches) : parseClaude(lines, home)
+  if (cmdUpdates.length) items.updates = cmdUpdates
   // Content hash of each image, to spot one shown twice (see shared/imageDupes.ts).
   const byRef = new Map<string, number>()
   refs.forEach((r, i) => byRef.set(r, i))
@@ -1104,10 +1126,17 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   // the call's page applies them when it is read. Scoped per transcript so a
   // truncated or another session's call id cannot resurrect an old result.
   const cmdResults = new Map<string, Map<string, CommandCodeResult>>()
+  // Fingerprints of every parsed tool result (matched or orphan), used to
+  // detect an in-place rewrite of output already shown in a loaded page.
+  const cmdWatches = new Map<string, Map<string, CommandCodeWatch>>()
   const cmdSizes = new Map<string, { size: number, gen: string, ino?: number }>()
   // Per-file invalidation generation: carried by tokens so a client that did
   // not witness the rewrite still rebuilds the older pages it kept.
   const cmdEpochs = new Map<string, number>()
+  // Identifies this reader instance: a restart empties the cross-page result
+  // map, so an old token must reload the pages instead of showing a tool
+  // without output that was parsed in another, now-forgotten page.
+  const readerId = Math.random().toString(36).slice(2, 10)
   function cmdResultsFor(file: string) {
     let m = cmdResults.get(file)
     if (!m) {
@@ -1117,7 +1146,17 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
         const oldest = cmdResults.keys().next().value!
         forgetCmdFile(oldest)
         cmdSizes.delete(oldest)
+        cmdEpochs.delete(oldest)
       }
+    }
+    return m
+  }
+  function cmdWatchesFor(file: string) {
+    let m = cmdWatches.get(file)
+    if (!m) {
+      m = new Map()
+      cmdWatches.set(file, m)
+      if (cmdWatches.size > 64) cmdWatches.delete(cmdWatches.keys().next().value!)
     }
     return m
   }
@@ -1160,17 +1199,17 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   // without the other would serve a cached page that no longer has them.
   function forgetCmdFile(file: string) {
     cmdResults.delete(file)
+    cmdWatches.delete(file)
     for (const key of [...parseCache.keys()]) if (key.startsWith(`${file}|`)) parseCache.delete(key)
   }
 
-  // A larger same-inode file may still be an in-place rewrite: the remembered
-  // result lines must still carry the same tool_use_id before keeping them.
+  // A larger same-inode file may still be an in-place rewrite: every parsed
+  // result record (matched or orphan) must still fingerprint the same bytes.
   async function cmdResultsValid(file: string): Promise<boolean> {
-    const results = cmdResults.get(file)
-    if (!results || !results.size) return true
+    const watches = cmdWatches.get(file)
+    if (!watches || !watches.size) return true
     const records = new Map<string, { at: number, len: number, hash: string }>()
-    for (const [, r] of results) {
-      if (r.at === undefined || r.len === undefined || !r.hash) return false
+    for (const r of watches.values()) {
       records.set(`${r.at}:${r.len}:${r.hash}`, { at: r.at, len: r.len, hash: r.hash })
     }
     if (!records.size) return true
@@ -1603,7 +1642,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
       if (r.start === start) break // giant line beyond the cap: stop there
       // Each window is parsed alone; Command Code orphans are carried in the
       // per-file results map, so a later window's call still gets its output.
-      const parsed = parseLines(r.text, kind, r.start, home, ompTemplates.list, cwd, results)
+      const parsed = parseLines(r.text, kind, r.start, home, ompTemplates.list, cwd, results, cmdWatchesFor(file))
       if (!queue) queue = parsed.queue || [] // the queue lives in the most recent window
       if (!popped) popped = parsed.popped || []
       items = parsed.concat(items)
@@ -1632,7 +1671,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
         const nl = buf.indexOf(0x0a, off)
         off = nl < 0 ? buf.length : nl + 1
       }
-      const items = parseLines(buf.subarray(off).toString('utf8'), kind, s0 + off, home, ompTemplates.list, kind === 'omp' ? await ompCwd(file) : '', cmdResultsFor(file))
+      const items = parseLines(buf.subarray(off).toString('utf8'), kind, s0 + off, home, ompTemplates.list, kind === 'omp' ? await ompCwd(file) : '', cmdResultsFor(file), cmdWatchesFor(file))
       // Start kept even when it moved to the next line: the client then sees a
       // stale anchor (or another start) and reloads from the bottom.
       r = { start: from, items, queue: items.queue || [], popped: items.popped || [], anchor: off === from - s0 ? anchorHash(above) : '' }
@@ -1703,6 +1742,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
         const oldest = cmdSizes.keys().next().value!
         cmdSizes.delete(oldest)
         cmdEpochs.delete(oldest)
+        cmdWatches.delete(oldest)
       }
     }
     const base = { available: true, file: fileId, session: loc.session, guessed: Boolean(loc.guessed) }
@@ -1722,13 +1762,17 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     const prev = headOf(sent)
     const same = prev !== null && prev.file === fileId
     const sentEpoch = cmdEpochOf(opts.since || opts.anchor)
-    // A client that did not witness the invalidation (a preview read or
-    // another client consumed it) still has an older generation in its token.
-    const epochChanged = kind === 'cmd' && same && (sentEpoch === null ? epoch > 0 : sentEpoch !== epoch)
+    const sentReader = cmdReaderOf(opts.since || opts.anchor)
+    // A client that did not witness an invalidation (a preview read or
+    // another client consumed it), or that outlived a reader restart, still
+    // has an older state in its token: rebuild its pages.
+    const readerChanged = kind === 'cmd' && same && sentReader !== readerId
+    const staleState = kind === 'cmd' && same && (readerChanged || (sentEpoch === null ? epoch > 0 : sentEpoch !== epoch))
     // Token: file, size, cursor, generation (unchanged as long as these are,
-    // once settled), Command Code invalidation generation, then the anchor.
-    const head = `${fileId}:${st.size}:${from}:${gen}${settled ? '' : '!'}${epoch ? `@${epoch}` : ''}`
-    if (settled && !epochChanged && opts.since && opts.since.split('/')[0] === head) return { ...base, unchanged: true, token: opts.since }
+    // once settled), Command Code invalidation generation and reader, then
+    // the anchor.
+    const head = `${fileId}:${st.size}:${from}:${gen}${settled ? '' : '!'}${epoch ? `@${epoch}` : ''}${kind === 'cmd' ? `%${readerId}` : ''}`
+    if (settled && !staleState && opts.since && opts.since.split('/')[0] === head) return { ...base, unchanged: true, token: opts.since }
     let r = await tail(loc.file, kind, st.size, gen, from, settled)
     // The client's list starts at the cursor, and the file was rewritten
     // above it: replaced by another file (inode), shorter, rewritten at the
@@ -1738,7 +1782,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     const at = anchorOf(sent)
     // A list read before its state settled (whole-second mtimes): rewritten
     // within that second if its part of the file changed since.
-    const rewritten = epochChanged || (from !== null && from > 0 && at !== null && at.start === from && (cmdInvalidated
+    const rewritten = staleState || (from !== null && from > 0 && at !== null && at.start === from && (cmdInvalidated
       || r.anchor !== at.hash
       || (same && prev.ino !== null && st.ino !== undefined && prev.ino !== st.ino)
       || (same && st.size < prev.size)

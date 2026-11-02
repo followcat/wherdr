@@ -513,6 +513,57 @@ it('keeps an invalidation visible to a client that did not detect it', async () 
   expect(next.rewritten).toBe(true)
 })
 
+it('invalidates a page whose matched result is rewritten in place', async () => {
+  const { home, reader } = fixture()
+  const filler = 'm'.repeat(32 * 1024)
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+    commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'old' }] }], 3000),
+  ]
+  for (let i = 0; i < 200; i++) lines.push(commandCodeUser(`filler-${i}`, 'a1', filler, 4000 + i))
+  const file = writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
+  const tail = await reader.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+  const older = await reader.chat(pane, { before: tail.start })
+  expect(older.items!.find(i => i.toolId === 'call_1')?.out).toBe('old')
+
+  // Rewrite the matched result (not an orphan this time), keeping the bytes
+  // above the client's tail anchor identical.
+  const newResult = commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'new and longer' }] }], 3000)
+  writeFileSync(file, [...lines.slice(0, 3), newResult, ...lines.slice(4)].map(line => JSON.stringify(line)).join('\n') + '\n')
+  const next = await reader.chat(pane, { since: tail.token, from: tail.start })
+  expect(next.rewritten).toBe(true)
+})
+
+it('restarts pagination when a reader is replaced', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-reader-'))
+  homes.push(home)
+  const filler = 'n'.repeat(32 * 1024)
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+  ]
+  for (let i = 0; i < 100; i++) lines.push(commandCodeUser(`before-${i}`, 'a1', filler, 3000 + i))
+  lines.push(commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'ok' }] }], 4000))
+  for (let i = 0; i < 300; i++) lines.push(commandCodeUser(`after-${i}`, 'a1', filler, 5000 + i))
+  writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
+
+  const before = createTranscripts({ home, herdr: async () => ({}) })
+  const tail = await before.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+  // The client scrolled one page up: the result was parsed, its call is older.
+  const older = await before.chat(pane, { before: tail.start })
+  expect(older.items!.some(i => i.toolId === 'call_1')).toBe(false)
+
+  // A restarted reader lost the remembered result: the old token must make
+  // the client reload its pages rather than keep the call without output.
+  const after = createTranscripts({ home, herdr: async () => ({}) })
+  expect((await after.chat(pane, { since: tail.token, from: tail.start })).rewritten).toBe(true)
+})
+
 it('reads past trailing tool results with no displayable message', async () => {
   const { home, reader } = fixture()
   const big = 'q'.repeat(1.5 * 1024 * 1024)
