@@ -195,7 +195,11 @@ try:
                 data=json.dumps({'command': cmd}, ensure_ascii=True).encode(), method='POST',
                 headers={'Authorization': auth, 'Accept': 'application/json', 'Content-Type': 'application/json'})
             try:
-                with opener.open(req, timeout=timeout) as response:
+                # The service answers when the command ends; that can be
+                # minutes, not the read budget's ten seconds. Still bounded:
+                # a longer run keeps going server-side while we report it
+                # unconfirmed (the transcript shows it land later).
+                with opener.open(req, timeout=max(1, min(290, request.get('seconds', 290)))) as response:
                     response.read(limit)
                 emit({'server': server, 'status': 200, 'data': None})
             except urllib.error.HTTPError as e:
