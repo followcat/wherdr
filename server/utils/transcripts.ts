@@ -6,7 +6,7 @@ import { ompToolCall, ompToolResult, ompUserRun } from './ompTools'
 import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDetail'
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
 import { cleanModelName, lastModel, mergeOmpModel, ompLastModel, ompModelComplete, ompModelLabel, ompModelResult } from './models'
-import { type MachineFs, localFs } from './fsx'
+import { type MachineFs, chunksByBytes, localFs } from './fsx'
 import { searchFile } from './conversationSearch'
 import { hasTranscript, transcriptKind } from '../../shared/agentKind'
 import { type CommandTemplate, ompCommandTemplates } from './slash'
@@ -1164,19 +1164,20 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     }
     if (!records.size) return true
     if (exec) {
-      // One remote pass for every retained record, not one SSH command each.
+      // One remote pass per byte-bounded batch, not one SSH command per record.
       const specs = [...records.values()].map(r => `${r.at}:${r.len}:${r.hash}`)
+      const got = new Map<string, string>()
       try {
-        const r = await exec('f="$1"; shift; H=sha256sum; command -v "$H" >/dev/null 2>&1 || H="shasum -a 256"; for s in "$@"; do at=${s%%:*}; rest=${s#*:}; len=${rest%%:*}; h=${rest#*:}; printf "%s\\t" "$h"; tail -c +$((at+1)) "$f" | head -c "$len" | $H | cut -c1-16; done', [file, ...specs], { timeoutMs: 8000 })
-        if (r.code === 0) {
-          const got = new Map<string, string>()
+        for (const chunk of chunksByBytes(specs)) {
+          const r = await exec('f="$1"; shift; H=sha256sum; command -v "$H" >/dev/null 2>&1 || H="shasum -a 256"; for s in "$@"; do at=${s%%:*}; rest=${s#*:}; len=${rest%%:*}; h=${rest#*:}; printf "%s\\t" "$h"; tail -c +$((at+1)) "$f" | head -c "$len" | $H | cut -c1-16; done', [file, ...chunk], { timeoutMs: 8000 })
+          if (r.code !== 0) return true
           for (const line of r.stdout.toString('utf8').split('\n')) {
             const tab = line.indexOf('\t')
             if (tab > 0) got.set(line.slice(0, tab), line.slice(tab + 1).trim())
           }
-          for (const rec of records.values()) if (got.get(rec.hash) !== rec.hash) return false
-          return true
         }
+        for (const rec of records.values()) if (got.get(rec.hash) !== rec.hash) return false
+        return true
       } catch { return true } // transient remote failure: keep
     }
     for (const rec of records.values()) {
@@ -1418,21 +1419,30 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     return out.sort((a, b) => b.mtimeMs - a.mtimeMs)
   }
 
-  // First line of every candidate in one remote shell pass (one SSH command
-  // for 100 sessions, not 100 awaited reads), falling back to the local fs.
+  // First line of every candidate in byte-bounded remote shell passes (one
+  // SSH command per batch, not one per session), falling back to local reads.
+  // `M` marks a missing file (not a candidate, as on disk); `E` marks a read
+  // failure, which must reach locate()'s last-known fallback instead of
+  // silently choosing an older session in the same folder.
   async function commandCodeHeaders(paths: string[]): Promise<Map<string, string>> {
     const out = new Map<string, string>()
     if (!paths.length) return out
     if (exec) {
       try {
-        const r = await exec('for f in "$@"; do printf "%s\\t" "$f"; head -c 65536 "$f" | head -n 1; printf "\\n"; done', paths, { timeoutMs: 4000 })
-        if (r.code === 0) {
+        for (const chunk of chunksByBytes(paths)) {
+          const r = await exec('for f in "$@"; do if [ ! -e "$f" ]; then printf "%s\\tM\\n" "$f"; elif [ ! -r "$f" ]; then printf "%s\\tE\\n" "$f"; else printf "%s\\tH%s\\n" "$f" "$(head -c 65536 "$f" 2>/dev/null | head -n 1)"; fi; done', chunk, { timeoutMs: 4000 })
+          if (r.code !== 0) throw new Error(`header batch failed: ${r.stderr || r.code}`)
           for (const line of r.stdout.toString('utf8').split('\n')) {
             const tab = line.indexOf('\t')
-            if (tab > 0) out.set(line.slice(0, tab), line.slice(tab + 1))
+            if (tab <= 0) continue
+            const file = line.slice(0, tab)
+            const rest = line.slice(tab + 1)
+            if (rest === 'E') throw new Error(`read failed: ${file}`)
+            if (rest === 'M') continue
+            if (rest.startsWith('H')) out.set(file, rest.slice(1))
           }
-          return out
         }
+        return out
       } catch { /* fall back to per-file reads */ }
     }
     for (const p of paths) {

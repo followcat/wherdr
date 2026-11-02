@@ -1,9 +1,9 @@
-import { appendFileSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createTranscripts } from '../server/utils/transcripts'
-import { localFs } from '../server/utils/fsx'
+import { MAX_ARG_BYTES, localFs } from '../server/utils/fsx'
 import {
   commandCodeAssistant, commandCodeModel, commandCodePNG, commandCodePNG2, commandCodeSession,
   commandCodeToolResults, commandCodeUser, writeCommandCodeSession,
@@ -135,6 +135,80 @@ it('keeps the last session when a header read fails', async () => {
   }
 })
 
+it('keeps the last remote session when a batched header read fails', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-remote-fail-'))
+  homes.push(home)
+  const write = (id: string, text: string, mtime: Date) => writeCommandCodeSession(home, {
+    id, cwd: pane.cwd, lines: [commandCodeSession(id, pane.cwd), commandCodeUser(`${id}-u`, null, text)], mtime,
+  })
+  const oldFile = write('sess-old', 'Old conversation', new Date(1_700_000_000_000))
+  const newFile = write('sess-new', 'New conversation', new Date(1_700_000_100_000))
+  let fail = false
+  let headerBatches = 0
+  const exec = async (script: string, args: string[] = []) => {
+    if (script.startsWith('find')) return { code: 0, stdout: Buffer.from(`${newFile}\n${oldFile}\n`), stderr: '' }
+    headerBatches++
+    const lines = args.map((f) => {
+      if (fail && f === newFile) return `${f}\tE`
+      const header = readFileSync(f, 'utf8').split('\n')[0]!
+      return `${f}\tH${header}`
+    })
+    return { code: 0, stdout: Buffer.from(lines.join('\n') + '\n'), stderr: '' }
+  }
+  const fs = {
+    ...localFs,
+    read: (file: string, start: number, len: number, timeout?: number) => {
+      if (fail && file === newFile && start === 0 && len === 64 * 1024) {
+        return Promise.reject(Object.assign(new Error('ssh read failed'), { code: 'remote' }))
+      }
+      return localFs.read(file, start, len, timeout)
+    },
+  }
+  const reader = createTranscripts({ home, exec, herdr: async () => ({}), fs })
+
+  expect((await reader.chat(pane))?.items?.[0]?.text).toBe('New conversation')
+  // Refresh the newest header: only its batched read now fails, so the old
+  // cache would fall through to the older session without the last-known fallback.
+  utimesSync(newFile, new Date(1_700_000_200_000), new Date(1_700_000_200_000))
+  fail = true
+  const before = headerBatches
+  vi.useFakeTimers()
+  try {
+    vi.setSystemTime(Date.now() + 9000)
+    expect((await reader.chat(pane))?.items?.[0]?.text).toBe('New conversation')
+  } finally {
+    vi.useRealTimers()
+  }
+  expect(headerBatches).toBeGreaterThan(before)
+})
+
+it('bounds remote header batches by argument bytes', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-header-batch-'))
+  homes.push(home)
+  const paths = Array.from({ length: 1200 }, (_, i) => path.join(home, '.commandcode/projects/p', `s${i}.jsonl`))
+  const batches: string[][] = []
+  const exec = async (script: string, args: string[] = []) => {
+    if (script.startsWith('find')) return { code: 0, stdout: Buffer.from(paths.join('\n') + '\n'), stderr: '' }
+    batches.push(args)
+    const lines = args.map((f) => {
+      const i = paths.indexOf(f)
+      const cwd = f === paths[1199] ? pane.cwd : `/home/user/other-${i}`
+      return `${f}\tH${JSON.stringify({ type: 'session', version: 3, id: `s${i}`, cwd })}`
+    })
+    return { code: 0, stdout: Buffer.from(lines.join('\n') + '\n'), stderr: '' }
+  }
+  const fs = {
+    ...localFs,
+    statMany: async (ps: string[]) => ps.map((_, i) => ({ size: 10 + i, mtimeMs: 1_700_000_000_000 + i, isFile: true, isDir: false })),
+  }
+  const reader = createTranscripts({ home, fs, exec, herdr: async () => ({}) })
+  expect(await reader.locate({ id: 'batched', agent: 'cmd', cwd: pane.cwd })).toMatchObject({ session: 's1199' })
+  expect(batches.length).toBeGreaterThan(1)
+  for (const args of batches) {
+    expect(args.reduce((n, p) => n + Buffer.byteLength(p) + 1, 0)).toBeLessThanOrEqual(MAX_ARG_BYTES)
+  }
+})
+
 it('keeps an assistant image on its text reply', async () => {
   const { home, reader } = fixture()
   writeCommandCodeSession(home, {
@@ -245,7 +319,7 @@ it('enumerates remote projects with one find', async () => {
       return { code: 0, stdout: Buffer.from(`${file}\n`), stderr: '' }
     }
     headerBatches++
-    return { code: 0, stdout: Buffer.from(args.map(p => `${p}\t${header}`).join('\n') + '\n'), stderr: '' }
+    return { code: 0, stdout: Buffer.from(args.map(p => `${p}\tH${header}`).join('\n') + '\n'), stderr: '' }
   }
   const fs = {
     ...localFs,
