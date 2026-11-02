@@ -4,9 +4,10 @@
 // (claude-trust, claude-security-guide, codex-trust: the machine already trusts ~).
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { completeOmpAsk, inputVisible, panelOpen, keysFor, ompActiveTab, parseChoices, parseOmpAsk, parseOmpField, pendingOmpAsk, sameQuestion, screenChoices } from '../server/utils/choices'
+import { completeOmpAsk, inputVisible, panelOpen, keysFor, ompActiveTab, opencodeDecision, parseChoices, parseOmpAsk, parseOmpField, parseOpenCodePermission, pendingOmpAsk, sameQuestion, screenChoices } from '../server/utils/choices'
 
 const fx = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
+const cap = (name: string) => readFileSync(new URL(`./captures/${name}`, import.meta.url), 'utf8')
 
 describe('parseChoices', () => {
   it('reads a Claude AskUserQuestion question (numbered options, descriptions, separator)', () => {
@@ -409,5 +410,69 @@ describe('parseDevinDialog (screenChoices, devin)', () => {
     const reScoped = dialog.replace('→ Once', '→ Always')
     expect(screenChoices(reScoped, 'devin')!.question).toBe('Allow Devin to run: Exec(sleep) — Always')
     expect(screenChoices(reScoped, 'devin')!.identity).not.toBe(screenChoices(dialog, 'devin')!.identity)
+  })
+})
+
+describe('parseOpenCodePermission (screenChoices, opencode)', () => {
+  // Live captures: OpenCode 2.2.5 permission dialog (100 and 60 columns).
+  const shell = cap('opencode-permission-shell.txt')
+  const edit = cap('opencode-permission-edit.txt')
+  const narrow = cap('opencode-permission-narrow.txt')
+
+  it('reads the shell request, its command and the three decisions', () => {
+    const c = parseOpenCodePermission(shell)!
+    expect(c.options.map(o => o.label)).toEqual(['Allow once', 'Always allow', 'Reject'])
+    expect(c.question).toBe('Allow OpenCode to run: echo hello?')
+    expect(c.detail).toMatchObject({ tool: 'Shell command', command: 'echo hello' })
+    expect(c.permission).toEqual({ action: 'bash', resources: ['echo hello'] })
+    expect(c.horizontal).toBe(true)
+    // The cursor is colour-only: without an ANSI read it is unknown, not 0.
+    expect(c.cursor).toBe(-1)
+  })
+
+  it('reads a file edit and keeps its resource for the API match', () => {
+    const c = parseOpenCodePermission(edit)!
+    expect(c.question).toBe('Allow OpenCode to edit: notes.txt?')
+    expect(c.detail).toMatchObject({ tool: 'Edit notes.txt', file: 'notes.txt', description: 'No diff provided' })
+    expect(c.permission).toEqual({ action: 'edit', resources: ['notes.txt'] })
+  })
+
+  it('finds options on the row above a separate legend (narrow pane)', () => {
+    expect(parseOpenCodePermission(narrow)!.options.map(o => o.label)).toEqual(['Allow once', 'Always allow', 'Reject'])
+  })
+
+  it('reads the colour-only cursor from ANSI, and only when exactly one is lit', () => {
+    const row = '  ┃  \x1b[48;2;30;30;30m   Allow once   \x1b[48;2;250;178;131m Always allow \x1b[48;2;30;30;30m  Reject   \x1b[0m'
+    expect(parseOpenCodePermission(shell, row)!.cursor).toBe(1)
+    const none = '\x1b[48;2;30;30;30m   Allow once   Always allow   Reject   \x1b[0m'
+    expect(parseOpenCodePermission(shell, none)!.cursor).toBe(-1)
+  })
+
+  it('maps labels to the permission API decision and never invents one', () => {
+    expect(opencodeDecision('Allow once')).toBe('once')
+    expect(opencodeDecision('Always allow')).toBe('always')
+    expect(opencodeDecision('Reject')).toBe('reject')
+    expect(opencodeDecision('Allow')).toBeNull()
+  })
+
+  it('is a native prompt, not an input field or a generic choice list', () => {
+    expect(screenChoices(shell, 'opencode')!.options).toHaveLength(3)
+    expect(inputVisible(shell, 'opencode')).toBe(false)
+    // An OpenCode form/question is not this shape: keep it in the terminal.
+    const form = `
+  ┃  Choose a flavour
+  ┃  Which flavour?  Note  Submit
+  ┃  1. [ ] Vanilla
+  ┃  2. [ ] Mint
+  ┃  ⇆ tab  ↑↓ select  enter toggle  esc dismiss
+`
+    expect(parseOpenCodePermission(form)).toBeNull()
+    expect(screenChoices(form, 'opencode')).toBeNull()
+  })
+
+  it('leaves an uncaptured permission action to the terminal', () => {
+    const web = shell.replace('# Shell command', '# Web fetch').replace('- echo hello', '- https://example.com')
+    expect(parseOpenCodePermission(web)).toBeNull()
+    expect(screenChoices(web, 'opencode')).toBeNull()
   })
 })

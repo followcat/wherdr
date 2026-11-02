@@ -426,6 +426,7 @@ const FR: Record<string, string> = {
   'Settings have changed.': 'Les réglages ont changé.',
   'Use the terminal to focus the settings tabs.': 'Utilise le terminal pour revenir aux onglets des réglages.',
   'The screen has changed — check the current screen.': 'L’écran a changé entre-temps — regarde l’écran à jour.',
+  'The request has changed — check the current screen.': 'La requête a changé entre-temps — regarde l’écran à jour.',
   'Write your answer before sending it.': 'Écris ta réponse avant de l’envoyer.',
   'An answer is already being sent.': 'Une réponse est déjà en cours d’envoi.',
   'omp’s answer field did not open — check the current screen.': 'Le champ de réponse d’omp ne s’est pas ouvert — regarde l’écran à jour.',

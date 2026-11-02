@@ -6,6 +6,7 @@
 import { usesTerminalException } from '../../shared/interactiveScreen'
 import { updateChoices, updateRestartPlan, UPDATE_LABELS } from '../../shared/selfUpdate'
 import { opencodeCard } from '../utils/opencodePrompts'
+import { opencodeDecision } from '../utils/choices'
 
 export default defineApi(async (event, b) => {
   if (!PANE_RE.test(b.pane_id || '')) throw new HerdrError('bad_pane', 'Invalid pane')
@@ -47,23 +48,41 @@ export default defineApi(async (event, b) => {
       const i = Number(b.index)
       const option = card?.choices.options[i]
       const answer = typeof b.text === 'string' ? b.text.trim() : ''
-      // A free-text option's label is generic ("Type something."), so its
-      // question is the extra identity check: different question, stale card.
-      if (!card || !b.identity || card.choices.identity !== b.identity || !option || option.label !== b.label
-        || (option.free && !sameQuestion(card.choices.question, typeof b.question === 'string' ? b.question : null))) {
+      if (card) {
+        // A free-text option's label is generic ("Type something."), so its
+        // question is the extra identity check: different question, stale card.
+        if (!b.identity || card.choices.identity !== b.identity || !option || option.label !== b.label
+          || (option.free && !sameQuestion(card.choices.question, typeof b.question === 'string' ? b.question : null))) {
+          throw new HerdrError('stale', 'The question has changed — check the current screen.')
+        }
+        if (card.dispatch.kind === 'permission') {
+          const decision = card.dispatch.decisions[i]
+          if (!decision || !(await transcripts.opencodeReplyPermission(pane, card.dispatch.id, decision, answer || undefined))) {
+            throw new HerdrError('stale', 'The question has changed — check the current screen.')
+          }
+        } else {
+          if (option.free && !answer) throw new HerdrError('bad_text', 'Write your answer before sending it.')
+          const value = option.free ? answer : card.dispatch.values[i]
+          if (value === undefined || !(await transcripts.opencodeReplyForm(pane, card.dispatch.id, card.dispatch.key, value))) {
+            throw new HerdrError('stale', 'The question has changed — check the current screen.')
+          }
+        }
+        return { ok: true }
+      }
+      // No API card (service unreachable, or a request the pending list does
+      // not carry): the screen-parsed permission card answers by matching its
+      // displayed action/resources to one pending request — never by typing.
+      const r = await herdr('pane.read', { pane_id: b.pane_id, source: 'detection' }, 4000)
+      const screenText = String(r.read && r.read.text || '')
+      const choices = screenChoices(screenText, 'opencode')
+      const screenOption = choices?.options[i]
+      if (!choices?.permission || !b.identity || choices.identity !== b.identity || !screenOption || screenOption.label !== b.label || answer
+        || usesTerminalException({ text: screenText, agent: 'opencode', status: pane.status })) {
         throw new HerdrError('stale', 'The question has changed — check the current screen.')
       }
-      if (card.dispatch.kind === 'permission') {
-        const decision = card.dispatch.decisions[i]
-        if (!decision || !(await transcripts.opencodeReplyPermission(pane, card.dispatch.id, decision, answer || undefined))) {
-          throw new HerdrError('stale', 'The question has changed — check the current screen.')
-        }
-      } else {
-        if (option.free && !answer) throw new HerdrError('bad_text', 'Write your answer before sending it.')
-        const value = option.free ? answer : card.dispatch.values[i]
-        if (value === undefined || !(await transcripts.opencodeReplyForm(pane, card.dispatch.id, card.dispatch.key, value))) {
-          throw new HerdrError('stale', 'The question has changed — check the current screen.')
-        }
+      const decision = opencodeDecision(screenOption.label)
+      if (!decision || !(await transcripts.opencodePermissionMatch(pane, { ...choices.permission, decision }))) {
+        throw new HerdrError('stale', 'The request has changed — check the current screen.')
       }
       return { ok: true }
     }

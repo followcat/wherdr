@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { parseLines, unwrapPasted } from '../server/utils/transcripts'
-import { queuedDone } from '../server/utils/queued'
+import { landed, queuedDone } from '../server/utils/queued'
 import type { ChatItem } from '../shared/types'
 
 const items = parseLines(readFileSync(new URL('./fixtures/claude-queue.jsonl', import.meta.url), 'utf8'), 'claude', 0, '/home/user')
@@ -65,5 +65,25 @@ describe('envoi en attente de wherdr', () => {
     expect(queuedDone(late, items, true, late.at + 1000)).toBe(false)
     // Two hours later: still not taken (checkSent reports it as not seen).
     expect(queuedDone(late, items, true, late.at + 2 * 3600e3)).toBe(false)
+  })
+})
+
+describe('OpenCode shell mode', () => {
+  const at = Date.parse('2026-11-02T09:00:00.000Z')
+  const shell: ChatItem[] = [{ role: 'tool', name: 'shell', text: 'echo hi', out: 'hi\n', ts: '2026-11-02T09:00:01.000Z' }]
+
+  it('matches "!cmd" with the shell transcript row, not a user message', () => {
+    expect(queuedDone({ text: '!echo hi', at }, shell, false, at + 60000, 'opencode')).toBe(true)
+    expect(landed({ text: '!echo hi', at }, shell, at + 60000, 'opencode')).toBe(true)
+  })
+
+  it("keeps another agent's \"!cmd\" out of OpenCode's shell rows", () => {
+    expect(queuedDone({ text: '!echo hi', at }, shell, false, at + 60000, 'claude')).toBe(false)
+    expect(landed({ text: '!echo hi', at }, shell, at + 60000, 'claude')).toBe(false)
+  })
+
+  it('does not take a different command as the same run', () => {
+    expect(queuedDone({ text: '!echo bye', at }, shell, false, at + 60000, 'opencode')).toBe(false)
+    expect(landed({ text: '!echo bye', at }, shell, at + 60000, 'opencode')).toBe(false)
   })
 })

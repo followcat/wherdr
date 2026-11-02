@@ -31,6 +31,8 @@ function permissionChoices(req: Json): OcCard | null {
   const choices: Choices = {
     question: message || `Allow ${req.action}?`,
     cursor: 0,
+    // The dialog under this card moves with ⇆ — arrows are left/right.
+    horizontal: true,
     options,
     detail: { tool: str(req.action, 60) || 'tool', ...(resources.length ? { command: resources.join('\n') + (more ? `\n… ${more} more` : '') } : {}) },
     identity: identity({ oc: 'permission', id: req.id, session: str(req.sessionID, 80), action: req.action, resources: all, save: strs(req.save, 64), message }),
