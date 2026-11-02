@@ -10,7 +10,7 @@ import { mayReadOffline, readOfflineAccess } from '~/utils/offlineAccess'
 import { queueReason, canClearQueued } from '~/utils/queuedReason'
 import { canCancelQueued, lostPhotosText, restoreDraft } from '~/utils/queuedCancel'
 import { isUploadLine, uploadSrc } from '#shared/queuedMatch'
-import { pendingQueue, rememberSent } from '~/utils/pendingQueue'
+import { pendingQueue, queuedRowMatches, rememberSent } from '~/utils/pendingQueue'
 import { clampRange, createSelectionSettler, lastLineRect, selectionReplyPos } from '~/utils/selectionReply'
 import { addAnswer, addQuote, answerEnd, answerOf, forgetReply, isQuoted, replyTargets, rowOf, rowRef, rowSettled, tableRank, tableRef, tappedAnswer, toggleOkAll, unansweredCount, withQuestions, type Answer } from '~/utils/questionReply'
 import { CHAT_READ_MS, createTailLoader, hasOlder, needsOlderForHit, olderCursor, nextTail, restartsTail, tailQuery } from '~/utils/chatTail' 
@@ -1018,6 +1018,13 @@ const pendingParts = (q: { srcs: string[], missing: number, body: string, files:
 // "Cancel": the message leaves the agent's queue and comes back into the input
 // field. Already read in the meantime: the server refuses, we say so.
 const canCancel = computed(() => !readOnly.value && canCancelQueued(props.pane))
+// Devin's queue only lets go of its newest entry (↑ recalls that one); the
+// server refuses anything older, so the button only exists on that row.
+const canCancelItem = (q: { raw: string }) => {
+  if (props.pane.agent !== 'devin') return canCancel.value
+  const rows = props.pane.devinScreen?.queued
+  return Boolean(rows?.length && queuedRowMatches(q.raw, rows[rows.length - 1]!))
+}
 const cancelling = ref<string | null>(null)
 async function cancelQueued(q: { id: string, raw: string, mine: boolean, local?: boolean, pasted?: string[] }) {
   if (cancelling.value) return
@@ -1680,7 +1687,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
               <UIcon name="i-lucide-clock" /><span>{{ queuedLabel(q) }}</span>
               <button v-if="canClearQueued(pane, q)" type="button" class="queued-cancel" :disabled="Boolean(clearing)" @click="clearAndSend(q)">{{ t('Clear and send') }}</button>
               <button v-if="q.state === 'held' && queueReason(pane, q) !== 'working'" type="button" class="queued-cancel" @click="emit('gotoTerm')">{{ t('Open terminal') }}</button>
-              <button v-if="q.state !== 'sending' && (canCancel || q.state === 'held') && q.raw" type="button" class="queued-cancel" :disabled="Boolean(cancelling)" @click="cancelQueued(q)">
+              <button v-if="q.state !== 'sending' && (canCancelItem(q) || q.state === 'held') && q.raw" type="button" class="queued-cancel" :disabled="Boolean(cancelling)" @click="cancelQueued(q)">
                 <UIcon :name="cancelling === q.id ? 'i-lucide-loader-circle' : 'i-lucide-undo-2'" :class="{ spin: cancelling === q.id }" />{{ t('Cancel') }}
               </button>
             </div>

@@ -11,13 +11,15 @@ import { cleanModelName } from './models'
 type Json = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
 type Stream = (script: string, args: string[]) => ChildProcessWithoutNullStreams | null
 interface Cursor { file: string, kind: 'tail' | 'page', value: string }
-interface Snapshot { file: string, server: string, info: Json, pages: Map<string, Json>, bytes: number, at: number, epoch: number }
+interface Snapshot { file: string, server: string, info: Json, pages: Map<string, { data: Json, at: number, bytes: number }>, bytes: number, at: number, epoch: number }
 export interface OpenCodeOptions { since?: string, from?: ChatCursor | null, before?: ChatCursor | null, anchor?: string }
 const hash = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 24)
 const clip = (s: unknown) => typeof s === 'string' ? s.slice(0, 20000) : ''
 const ascii = (value: unknown) => JSON.stringify(value).replace(/[\u007f-\uffff]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
 const tsOf = (m: Json) => Number.isFinite(m.time?.created) && Math.abs(m.time.created) <= 8.64e15 ? new Date(m.time.created).toISOString() : null
-const imageFiles = (files: unknown): Json[] => Array.isArray(files) ? files.filter(f => /^image\/(png|jpeg|gif|webp|avif)$/.test(f?.mime) && typeof f.data === 'string') : []
+// User attachments count as images when they carry inline data or a local
+// file:/data: URI — the transport resolves session-referenced URIs only.
+const imageFiles = (files: unknown): Json[] => Array.isArray(files) ? files.filter(f => /^image\/(png|jpeg|gif|webp|avif)$/.test(f?.mime) && (typeof f.data === 'string' || typeof f.uri === 'string')) : []
 const toolImages = (content: unknown): Json[] => Array.isArray(content) ? content.filter(f => f?.type === 'file' && /^image\/(png|jpeg|gif|webp|avif)$/.test(f.mime) && /^(?:file:|data:image\/)/.test(f.uri)) : []
 const toolText = (content: unknown) => typeof content === 'string' ? clip(content) : Array.isArray(content)
   ? content.filter(p => p?.type === 'text').map(p => clip(p.text)).join('\n').slice(0, 20000) : ''
@@ -65,7 +67,12 @@ export function createOpenCodeTranscripts({ home, exec, stream }: { home: string
   let failures = 0
   let disposed = false
   let streamBuffer = ''
-  const invalidate = (reset = false) => { for (const s of cache.values()) s.at = 0; if (reset) epoch++ }
+  // Invalidation must reach the carried pages too, or an SSE event would be
+  // masked by a page still inside its own freshness window.
+  const invalidate = (reset = false) => {
+    for (const s of cache.values()) { s.at = 0; for (const p of s.pages.values()) p.at = 0 }
+    if (reset) epoch++
+  }
   function dispose() { disposed = true; child?.kill(); child = null; cache.clear(); pageBytes = 0; cursors.clear() }
   function cursor(file: string, kind: Cursor['kind'], value: string): string {
     const key = 'oc_' + createHmac('sha256', secret).update(JSON.stringify([file, kind, value])).digest('base64url').slice(0, 32)
@@ -144,21 +151,31 @@ export function createOpenCodeTranscripts({ home, exec, stream }: { home: string
     if (r.status !== 200 || r.data?.data?.id !== session) throw new Error('Unable to read OpenCode session')
     const info = r.data.data
     const file = 'opencode-' + hash(JSON.stringify([r.server, session, info.revert || null, epoch]))
-    const s: Snapshot = { file, info, server: r.server, pages: new Map(), bytes: 0, at: Date.now(), epoch }
-    pageBytes -= cache.get(session)?.bytes || 0
+    // An unchanged file identity means the pages fetched under it are still
+    // the same address space: carry them over (each keeps its own freshness
+    // window in page()) instead of dropping the whole map every 800 ms —
+    // over SSH every refetch is another shim process.
+    const prev = cache.get(session)
+    const carried = prev && prev.file === file && prev.epoch === epoch
+    const s: Snapshot = { file, info, server: r.server, pages: carried ? prev!.pages : new Map(), bytes: carried ? prev!.bytes : 0, at: Date.now(), epoch }
+    if (!carried) pageBytes -= prev?.bytes || 0
     cache.set(session, s)
     if (cache.size > 32) { const id = cache.keys().next().value!; pageBytes -= cache.get(id)!.bytes; cache.delete(id) }
     return s
   }
   async function page(session: string, s: Snapshot, native = '', seconds?: number): Promise<Json> {
+    // A cached page is good for the same window the snapshot revalidation
+    // uses — identical staleness bound to the old drop-and-refetch, minus
+    // the refetch.
     const known = s.pages.get(native)
-    if (known) return known
+    if (known && Date.now() - known.at < 800) return known.data
+    if (known) { s.pages.delete(native); s.bytes -= known.bytes; pageBytes -= known.bytes }
     const r = await query(session, 'page', { cursor: native, seconds })
     if (r.server !== s.server || r.status === 400 || r.status === 404) return { invalid: true }
     if (r.status !== 200 || !Array.isArray(r.data?.data) || !r.data?.cursor) throw new Error('Unable to read OpenCode messages')
     const bytes = Buffer.byteLength(JSON.stringify(r.data))
     if (cache.get(session) === s && !s.pages.has(native) && pageBytes + bytes <= 16 * 1024 * 1024) {
-      s.pages.set(native, r.data); s.bytes += bytes; pageBytes += bytes
+      s.pages.set(native, { data: r.data, at: Date.now(), bytes }); s.bytes += bytes; pageBytes += bytes
     }
     return r.data
   }
