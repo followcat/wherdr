@@ -949,6 +949,8 @@ const screen = computed<ClaudeScreen | null>(() => {
   if (readOnly.value) return null
   const p = props.pane
   if (p.agent === 'omp') return p.ompShell ? { shell: p.ompShell, sent: null, queued: [] } : null
+  // Devin's queue also shows while it compacts — the pane then reads done.
+  if (p.agent === 'devin') return p.devinScreen || null
   return p.agent === 'claude' && p.status === 'working' ? p.claudeScreen || null : null
 })
 const liveShell = computed(() => (screen.value && screen.value.shell) || null)
@@ -972,9 +974,15 @@ const queuedList = computed(() => {
   const mine = withOutbox(readOnly.value ? [] : (p.queued || []).filter(q => !q.back), props.localQueued)
   const memory = rememberSent(p.id, mine)
   const replies = blocks.value.filter(b => b.k === 'assistant')
-  // Agent idle, nothing holding it: Claude's own queue is empty by now.
-  const idle = queueReason(p, {}) === 'sending'
-  return pendingQueue({ mine, claude: chat.value.queue || [], items: items.value, screen: screen.value, memory, idle }).map((q) => {
+  // Agent idle, nothing holding it: the agent's own queue is empty by now —
+  // except Devin's, which outlives the "done" reading while it compacts.
+  const idle = queueReason(p, {}) === 'sending' && !(p.agent === 'devin' && p.devinScreen?.queued.length)
+  // Devin's on-screen queue entries not sent from wherdr (typed and queued
+  // in its terminal): shown like Claude's own queue, keyed by row order.
+  const own = p.agent === 'devin' && !readOnly.value
+    ? (p.devinScreen?.queued || []).map((text, i) => ({ text, ts: `dvn-${i}` }))
+    : []
+  return pendingQueue({ mine, claude: [...(chat.value.queue || []), ...own], items: items.value, screen: screen.value, memory, idle }).map((q) => {
     const lines = q.raw.split('\n')
     const text = lines.filter(l => !isUploadLine(l) && !isAttachmentLine(l)).join('\n').trim()
     const parsed = parseReply(text)
@@ -1079,8 +1087,11 @@ async function clearAndSend(q: { id: string, inputText?: string }) {
   catch (err) { toast((err as Error).message, true) }
   finally { clearing.value = null }
 }
-function queuedLabel(q: { reason?: QueuedMessage['reason'], inputText?: string, state: string | null }) {
+function queuedLabel(q: { reason?: QueuedMessage['reason'], inputText?: string, state: string | null, phase?: string }) {
   if (q.state === 'sending') return t('Queued · ') + t('sending…')
+  // In Devin's own queue, whatever the pane's status says (a compaction
+  // reads "done"): not "sending", queued by the agent.
+  if (props.pane.agent === 'devin' && q.phase === 'queued' && !q.state) return t('Queued')
   switch (queueReason(props.pane, q)) {
     case 'busy': return q.inputText
       ? tl(`Not sent: the agent’s input already contains text (“${q.inputText}”)`, `Pas envoyé : la saisie de l’agent contient déjà du texte (« ${q.inputText} »)`)

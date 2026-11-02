@@ -274,6 +274,7 @@ const FR: Record<string, string> = {
   'Agent is not ready': 'L’agent n’est pas au repos', 'Agent input changed': 'La saisie de l’agent a changé',
   'Agent input field not found': 'Champ de saisie de l’agent introuvable', 'Agent input not cleared: check its terminal': 'Champ de l’agent pas vidé : vérifie son terminal',
   'This agent can’t cancel queued messages': 'Annulation impossible pour cet agent', 'Already cancelling': 'Annulation déjà en cours',
+  'This agent has no send-now': 'Envoi immédiat impossible pour cet agent', 'Devin’s queue changed: try again': 'La file de Devin a changé : réessaie',
   'after you answer the question': 'après ta réponse à la question', 'sending…': 'envoi…',
   'Photo is uploading…': 'Photo en cours d’envoi…', 'Remove': 'Retirer',
   'Photo upload failed': 'Photo non envoyée',

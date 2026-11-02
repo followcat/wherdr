@@ -27,11 +27,12 @@ import { parseUsageLimit, type UsageLimit } from '../../shared/usageLimit'
 import { classifyScreen, type ScreenInteraction } from '../../shared/interactiveScreen'
 import { parseClaudeActivity } from './activity'
 import { parseClaudeNotice, parseClaudeScreen, parseClaudeSuggestion } from './claudeScreen'
+import { parseDevinScreen } from './devinScreen'
 import { type QueueEntry, HOLD_AGENTS, INPUT_STATES, checkQueue, checkSent, giveBackHeld, isUploadLine, landed, leftForGood, lookForLeftMenu, QUEUED_TEXT_MAX, loadQueued, nextHeld, ompRunShown, publicEntry, queuedDone } from './queued'
 import { inputVisible } from './choices'
 import { isSlashCommand, photosOnly } from '../../shared/queuedMatch'
 import { isSubmitKey } from '../../shared/submitKeys'
-import { clearKeys, codexFieldLine, devinFieldLine, findQueued, inputBox, msgText, unqueueClaude } from './unqueue'
+import { clearKeys, codexFieldLine, devinFieldLine, findQueued, inputBox, msgText, unqueueClaude, unqueueDevin } from './unqueue'
 import { takeBackInterrupted, unansweredTurn } from './interruptRestore'
 import { interruptAgent } from './interruptSeq'
 import { queuedPasted } from './pastes'
@@ -274,6 +275,28 @@ function refreshActivity(p: Pane) {
       if ((old2?.notice ?? null) !== notice || (old2?.suggestion ?? null) !== (working ? null : suggestion)) setTimeout(poll, 0)
     })
     .finally(() => activityBusy.delete(p.id))
+}
+
+// Devin's composer screen (see devinScreen.ts): its own queue — sent there
+// by the pane itself while it compacts, a connection retries, or Enter is
+// typed on them in the terminal — and the messages it already echoed, read
+// while its conversation is shown. Its transcript only tells afterwards.
+type DevinActivity = { screen: ClaudeScreen | null, at: number }
+const devinScreens = new Map<string, DevinActivity>()
+const devinScreenBusy = new Set<string>()
+function refreshDevinScreen(p: Pane) {
+  if (devinScreenBusy.has(p.id)) return
+  devinScreenBusy.add(p.id)
+  herdr('pane.read', { pane_id: p.id, source: 'detection' }, 4000)
+    .then(r => parseDevinScreen(r.read && r.read.text), () => null)
+    .then((screen) => {
+      const old = devinScreens.get(p.id)?.screen
+      devinScreens.set(p.id, { screen, at: Date.now() })
+      const same = (a: ClaudeScreen | null | undefined, b: ClaudeScreen | null | undefined) =>
+        (a?.sent ?? null) === (b?.sent ?? null) && (a?.queued || []).join('\n') === (b?.queued || []).join('\n') && Boolean(a?.sendNow) === Boolean(b?.sendNow)
+      if (!same(old, screen)) setTimeout(poll, 0)
+    })
+    .finally(() => devinScreenBusy.delete(p.id))
 }
 
 // Codex resting, conversation shown: text left in its input field (typed in
@@ -804,7 +827,10 @@ function reconcileQueued(p: Pane) {
       // queued again, or not seen for an hour (see checkSent). Claude's queue
       // is only trusted from its own transcript, not a guessed one.
       const claude = r.available && !r.guessed ? { queue: r.queue || [], popped: r.popped || [] } : null
-      if (checkSent(left, { agent: p.agent, claude, now })) {
+      // Devin's queue is only on its screen (see devinScreen.ts): a message
+      // still listed there is being held by the agent, not unseen.
+      const devinQueue = p.agent === 'devin' ? devinScreens.get(p.id)?.screen?.queued || null : null
+      if (checkSent(left, { agent: p.agent, claude, devinQueue, now })) {
         log(`message not seen on ${p.id}`)
         setTimeout(poll, 50)
       }
@@ -853,6 +879,35 @@ export async function cancelQueued(paneId: string, text: string, id?: string): P
     drop()
     setTimeout(poll, 50)
     return { text: pend.text }
+  }
+  // Devin's own queue (↑ pulls an entry back for editing, Ctrl+Enter queues
+  // again): the message is taken out of it, the ones after it re-queued.
+  if (p.agent === 'devin') {
+    if (unqueueBusy.has(p.id)) throw new HerdrError('busy', 'Already cancelling')
+    unqueueBusy.add(p.id)
+    try {
+      const own = [...(queued.get(p.id) || [])]
+      await withPaneLock(p.id, () => unqueueDevin({
+        screen: async () => String(((await herdr('pane.read', { pane_id: p.id, source: 'detection' }, 4000)).read || {}).text || ''),
+        type: async (t) => { await herdr('pane.send_input', { pane_id: p.id, text: t }) },
+        keys: async (keys) => { await herdr('pane.send_input', { pane_id: p.id, keys }) },
+        sleep,
+        // A screen row is the message's first line, possibly cut: another of
+        // wherdr's records may know the full text.
+        full: t => own.find(q => q !== mine && sameMsg(msgText(q.text), msgText(t)))?.full ?? null,
+      }, text))
+      drop()
+      log(`queued message cancelled on ${p.id}`)
+      return { text: mine ? (mine.full ?? mine.text) : text }
+    }
+    catch (e) {
+      if ((e as HerdrError).code === 'already_read') drop()
+      throw e
+    }
+    finally {
+      unqueueBusy.delete(p.id)
+      setTimeout(poll, 50)
+    }
   }
   if (p.agent !== 'claude') throw new HerdrError('unsupported', 'This agent can’t cancel queued messages')
   if (p.status !== 'working') throw new HerdrError('already_read', 'Already read by the agent')
@@ -1111,7 +1166,11 @@ async function enrich(next: HerdrState, snap: Json, machine: string, publish?: (
       const menu = Boolean(before && (before.menu || before.prompt || before.screen || before.interaction === 'terminal')) || restarting(p.id)
       // omp running the user's "!" command: idle for Herdr, but busy.
       if (list && TURN.has(p.status || '')) for (const q of list) if (!q.held && !q.failed) q.turnSeen = true
-      if (list && checkQueue(list, before?.ompShell ? 'working' : p.status, Date.now(), menu)) log(`message not sent on ${p.id}`)
+      // A message sitting in Devin's own queue (compaction holds the pane
+      // "done" the whole time) is not lost: its wait is the agent's.
+      const devq = p.agent === 'devin' ? devinScreens.get(p.id)?.screen?.queued : undefined
+      const alive = devq?.length ? (q: QueueEntry) => devq.some(t => sameMsg(msgText(t), msgText(q.text)) || sameMsg(msgText(q.text), msgText(t))) : undefined
+      if (list && checkQueue(list, before?.ompShell ? 'working' : p.status, Date.now(), menu, alive)) log(`message not sent on ${p.id}`)
       if (list) deliverHeld(p)
       if (list && list.length) p.queued = list.map(q => queuedPasted(publicEntry(q)))
     }
@@ -1196,6 +1255,16 @@ async function enrich(next: HerdrState, snap: Json, machine: string, publish?: (
       const c = codexStatus.statusOf(p)
       if (c) p.codexStatus = c
     } else codexStatus.forget(p.id)
+    // Devin's composer screen: its queue shows while it works or while it
+    // compacts (the pane then reads done), and our own messages on their way
+    // ask for a faster read. The queue section only clears on screen.
+    if (p.agent === 'devin' && isViewed(p.id)) {
+      const d = devinScreens.get(p.id)
+      const fast = p.status === 'working' || queued.has(p.id) || Boolean(d?.screen?.queued.length)
+      if (!d || Date.now() - d.at >= (fast ? ACTIVITY_MS : NOTICE_MS)) refreshDevinScreen(p)
+      if (d?.screen) p.devinScreen = d.screen
+      else delete p.devinScreen
+    } else { devinScreens.delete(p.id); delete p.devinScreen }
     if (p.agent === 'codex' && isViewed(p.id) && (p.status === 'idle' || p.status === 'done') && !p.prompt && !p.menu && !p.restart) {
       const f = codexFields.get(p.id)
       if (!f || Date.now() - f.at >= NOTICE_MS) refreshCodexField(p)
@@ -1208,6 +1277,7 @@ async function enrich(next: HerdrState, snap: Json, machine: string, publish?: (
   for (const id of askChecks.keys()) if (!alive(id)) askChecks.delete(id)
   for (const id of pendingPrompts.keys()) if (!alive(id)) pendingPrompts.delete(id)
   for (const id of queued.keys()) if (!alive(id)) queued.delete(id)
+  for (const id of devinScreens.keys()) if (!alive(id)) devinScreens.delete(id)
   for (const id of takenBack.keys()) if (!alive(id)) takenBack.delete(id)
   for (const id of restarts.keys()) if (!alive(id)) restarts.delete(id)
   for (const id of agentBorn.keys()) if (!alive(id)) { agentBorn.delete(id); bornDirty = true }

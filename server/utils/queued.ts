@@ -117,7 +117,7 @@ export const LOST_MS = 60 * 1000
 // (unknown screen). Reported as not sent, with that reason, instead of
 // waiting "until the menu closes" for nothing.
 export const NO_INPUT_MS = 30 * 1000
-export const HOLD_AGENTS = new Set(['claude', 'codex', 'omp'])
+export const HOLD_AGENTS = new Set(['claude', 'codex', 'omp', 'devin'])
 // Agent at rest, whose input field may be checked on screen (see closePanel).
 export const INPUT_STATES = new Set(['idle', 'done', 'unknown'])
 
@@ -171,6 +171,11 @@ export function shouldHold(agent: string | null | undefined, status: string | nu
   if (!agent || !HOLD_AGENTS.has(agent)) return false
   // Keep the order: behind a held message, everything waits.
   if (earlierHeld) return true
+  // Devin: typed while its composer is off screen (a permission or question
+  // dialog — the pane reads "done", never "blocked"), a message is lost and
+  // its Enter answers the dialog in the user's place. Only a visible field
+  // releases it — whatever the pane's status.
+  if (agent === 'devin') return !input
   return INPUT_STATES.has(status || '') && !input
 }
 
@@ -194,7 +199,10 @@ export function lookForLeftMenu(p: Pick<Pane, 'agent' | 'status' | 'stopped' | '
 // Updates timers in place on each poll; true when an entry just failed.
 // `menu`: a menu, question or panel recognized on the agent's screen (or a
 // restart running): something a held message legitimately waits for.
-export function checkQueue(list: QueueEntry[], status: string | null | undefined, now: number, menu = true): boolean {
+// `alive`: a sent message the agent still holds in its own queue (Devin's
+// on-screen "N queued" section while it compacts — a pane then reads done
+// however long the wait): it is not lost, only not read yet.
+export function checkQueue(list: QueueEntry[], status: string | null | undefined, now: number, menu = true, alive?: (q: QueueEntry) => boolean): boolean {
   let changed = false
   const ready = status === 'idle' || status === 'done'
   for (const q of list) {
@@ -215,6 +223,7 @@ export function checkQueue(list: QueueEntry[], status: string | null | undefined
       continue
     }
     if (!ready) { delete q.readySince; continue }
+    if (alive && alive(q)) { delete q.readySince; continue }
     q.readySince ??= now
     if (now - Math.max(q.readySince, q.at) > LOST_MS) {
       q.failed = true
@@ -243,7 +252,7 @@ export function checkQueue(list: QueueEntry[], status: string | null | undefined
 // Either way it gets Retry / Cancel. Retry waits for the end of a turn and
 // first looks at the transcript again (see landed): a message the agent did
 // take is not typed twice.
-export function checkSent(list: QueueEntry[], o: { agent: string | null | undefined, claude: { queue: ClaudeQueueEntry[], popped: ClaudeQueueEntry[] } | null, now: number }): boolean {
+export function checkSent(list: QueueEntry[], o: { agent: string | null | undefined, claude: { queue: ClaudeQueueEntry[], popped: ClaudeQueueEntry[] } | null, devinQueue?: string[] | null, now: number }): boolean {
   let changed = false
   for (const q of list) {
     if (q.held || q.failed) { delete q.lostSince; delete q.popped; continue }
@@ -259,7 +268,12 @@ export function checkSent(list: QueueEntry[], o: { agent: string | null | undefi
       ? (cut ? flat(e.text).startsWith(text) : flat(e.text) === text)
       : !e.text && (e.images || 0) === photos)
     const c = o.agent === 'claude' ? o.claude : null
+    // Devin's queue is read on its screen (see devinScreen.ts), never in its
+    // transcript: an entry keeps only the message's first line — matched the
+    // same way, whole text against whole text, screen cut allowed.
+    const d = o.agent === 'devin' ? o.devinQueue : null
     const inQueue = Boolean(c && c.queue.some(isIt))
+      || Boolean(d && text && d.some(t => flat(t) === text || (flat(t).length >= 8 && text.startsWith(flat(t)))))
     if (inQueue) { delete q.popped; delete q.lostSince }
     else if (c && c.popped.some(isIt)) q.popped = true
     if (!inQueue && o.now - q.at > QUEUED_TTL_MS) {

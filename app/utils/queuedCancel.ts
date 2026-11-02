@@ -13,10 +13,13 @@ const UPLOAD = '/.cache/herdr-web/uploads/'
 
 // Not sent yet (agent starting): always. Otherwise only for a working
 // Claude: its queue is recalled with ↑; Codex's has no verified
-// recall. When not working, the message is already read (or about to be).
+// recall. Devin's "○" rows are recalled the same way (its own ↑ edit), as
+// long as its queue still lists them on screen. When not working, the
+// message is already read (or about to be).
 export function canCancelQueued(p: Pane | undefined): boolean {
   if (!p || !p.agent) return false
   return Boolean(p.pendingPrompt) || (p.agent === 'claude' && p.status === 'working')
+    || (p.agent === 'devin' && Boolean(p.devinScreen?.queued.length))
 }
 
 // Puts a cancelled message back into the draft, as if it had never been

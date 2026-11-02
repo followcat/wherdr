@@ -110,6 +110,21 @@ describe('inputVisible', () => {
     expect(inputVisible(fx('claude-model-1.txt'))).toBe(false)
     expect(inputVisible(' Manage MCP servers\n\n ❯ 1. demo-server · authenticate\n   2. other-server\n\n Esc to cancel')).toBe(false)
   })
+
+  // Devin v3000.x screens (probe): its composer is a boxed "❭" line — the
+  // last such line counts only with the box's bottom rule below it.
+  it('sees Devin’s composer field (boxed ❭ line), never a dialog’s ❭ row', () => {
+    const idle = ` done\n\n ⏺ /tmp\n─── Run a 60-Second Sleep Command ───\n❭ Ask Devin to build features, fix bugs, or work on your code\n───\nSWE-2 Max   Context: 16k / 262k tokens (6%)\n`
+    expect(inputVisible(idle)).toBe(true)
+    const workingQueue = `❭ do the thing\n\n⠀⡀ Running tools · 31s\n── 1 queued ─── ↑ edit · ↵ send now ──\n○ while it works\n─── Title ───\n❭ Press Enter to send queued messages now\n───\nSWE-2 Max\n`
+    expect(inputVisible(workingQueue)).toBe(true)
+  })
+  it('does not see Devin’s field during a permission dialog', () => {
+    const dialog = `❭ Use your exec tool to run: sleep 45.\n\n ⏺ Running command\n └ $ sleep 45\n\n❭ Allow       ← ◼◼◼◼ → Once     Exec(sleep)\n  Bypass mode\n  Deny\n\n↑↓ select · ←→ scope · e edit · ↵ confirm · esc cancel\n`
+    expect(inputVisible(dialog)).toBe(false)
+    // A "❭" echoed in the scrollback is followed by the reply, not a rule.
+    expect(inputVisible('❭ a scrolled-off message\n\n   the reply text')).toBe(false)
+  })
 })
 
 describe('panelOpen', () => {
