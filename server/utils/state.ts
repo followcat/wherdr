@@ -28,6 +28,7 @@ import { parseUsageLimit, type UsageLimit } from '../../shared/usageLimit'
 import { classifyScreen, type ScreenInteraction } from '../../shared/interactiveScreen'
 import { parseClaudeActivity } from './activity'
 import { parseClaudeNotice, parseClaudeScreen, parseClaudeSuggestion } from './claudeScreen'
+import { opencodeCard } from './opencodePrompts'
 import { type QueueEntry, HOLD_AGENTS, INPUT_STATES, checkQueue, checkSent, giveBackHeld, isUploadLine, landed, leftForGood, lookForLeftMenu, QUEUED_TEXT_MAX, loadQueued, nextHeld, ompRunShown, publicEntry, queuedDone } from './queued'
 import { inputVisible } from './choices'
 import { isSlashCommand, photosOnly } from '../../shared/queuedMatch'
@@ -67,6 +68,15 @@ export const transcripts = {
   pendingAsk: (p: TranscriptPane) => trFor(p).pendingAsk(p),
   pendingClaudeQuestions: (p: TranscriptPane) => trFor(p).pendingClaudeQuestions(p),
   forget: (id: string) => machineOfPane(id)?.transcripts.forget(id),
+  opencodeModels: (p: TranscriptPane) => trFor(p).opencodeModels(p),
+  opencodePatchModel: (p: TranscriptPane, m: { id: string, providerID: string, variant?: string }) => trFor(p).opencodePatchModel(p, m),
+  opencodePending: (p: TranscriptPane) => trFor(p).opencodePending(p),
+  opencodeReplyPermission: (p: TranscriptPane, requestID: string, decision: string, message?: string) => trFor(p).opencodeReplyPermission(p, requestID, decision, message),
+  opencodeReplyForm: (p: TranscriptPane, formID: string, key: string, value: unknown) => trFor(p).opencodeReplyForm(p, formID, key, value),
+  opencodeInbox: (p: TranscriptPane) => trFor(p).opencodeInbox(p),
+  opencodeInboxDelete: (p: TranscriptPane, itemID: string) => trFor(p).opencodeInboxDelete(p, itemID),
+  opencodeShell: (p: TranscriptPane, command: string) => trFor(p).opencodeShell(p, command),
+  opencodeStatus: (p: TranscriptPane) => trFor(p).opencodeStatus(p),
 }
 
 export { isUploadLine }
@@ -184,6 +194,14 @@ async function readChoices(p: Pane, rev: unknown, strict: boolean, watch = false
       askChecks.set(p.id, checks)
       choices = completeClaudeAsk(choices, await transcripts.pendingClaudeQuestions(p).catch(() => []), checks)
     } else if (!choices) askChecks.delete(p.id)
+    // OpenCode's permission/question dialogs belong to the session, not the
+    // screen: read them from the service so the card answers by API. Only a
+    // blocked pane can be holding one; anything else costs no shim call.
+    if (!choices && !menu && p.agent === 'opencode' && p.status === 'blocked' && transcripts.opencodePending) {
+      const pending = await transcripts.opencodePending(p).catch(() => null)
+      const card = pending ? opencodeCard(pending) : null
+      if (card) choices = card.choices
+    }
     // Claude Code's settings panel (/usage…): read-only, shown by the settings
     // card of the command result; its "Esc to cancel" is not a question.
     const settings = p.agent === 'claude' && settingsTabs(text) !== null
@@ -308,6 +326,19 @@ const OMP_STATUS_MS = 3000
 type OmpScreenState = { status: OmpStatus | null, activity: OmpActivity | null, shell: ShellRun | null, at: number }
 const ompStatuses = new Map<string, OmpScreenState>()
 const ompStatusBusy = new Set<string>()
+// OpenCode's session-derived status (tokens/cost), same refresh discipline.
+const ocStatuses = new Map<string, { status: OmpStatus | null, at: number }>()
+const ocStatusBusy = new Set<string>()
+// OpenCode's inbox from the last good chat read, for checkQueue's alive grace.
+const ocInboxes = new Map<string, string[]>()
+function refreshOcStatus(p: Pane) {
+  if (ocStatusBusy.has(p.id)) return
+  ocStatusBusy.add(p.id)
+  transcripts.opencodeStatus(p)
+    .then(status => { ocStatuses.set(p.id, { status, at: Date.now() }) })
+    .catch(() => {})
+    .finally(() => ocStatusBusy.delete(p.id))
+}
 function refreshOmpStatus(p: Pane) {
   if (ompStatusBusy.has(p.id)) return
   ompStatusBusy.add(p.id)
@@ -478,6 +509,12 @@ export function sendPrompt(p: Pane, text: string, opts: { retry?: boolean } = {}
     const now = findPane(p.id)
     if (now?.stopped || now?.leaving) {
       throw new HerdrError(isSlashCommand(text) ? 'stale' : 'no_input', 'Restart Codex before sending a command.')
+    }
+    // OpenCode's "!" runs through its service, not a typed bash-mode field —
+    // the run lands in the transcript as a shell message either way.
+    if (p.agent === 'opencode' && /^!\s*\S/.test(text)) {
+      if (await transcripts.opencodeShell(p, text.replace(/^!\s*/, ''))) return
+      throw new HerdrError('stale', 'OpenCode refused the shell command')
     }
     // Herdr may still call a quota wait blocked. Its visible field also takes
     // slash commands, using the same checked send rather than agent.prompt.
@@ -779,7 +816,13 @@ function reconcileQueued(p: Pane) {
       // queued again, or not seen for an hour (see checkSent). Claude's queue
       // is only trusted from its own transcript, not a guessed one.
       const claude = r.available && !r.guessed ? { queue: r.queue || [], popped: r.popped || [] } : null
-      if (checkSent(left, { agent: p.agent, claude, now })) {
+      // OpenCode's inbox is in its chat read already (see opencodeTranscripts).
+      const ocQueue = p.agent === 'opencode' && r.available ? r.queue || null : null
+      // What checkQueue below reads as "the agent still holds it": fail-closed —
+      // a read that did not happen keeps nothing alive.
+      if (ocQueue) ocInboxes.set(p.id, ocQueue.map(q => q.text))
+      else ocInboxes.delete(p.id)
+      if (checkSent(left, { agent: p.agent, claude, ocQueue, now })) {
         log(`message not seen on ${p.id}`)
         setTimeout(poll, 50)
       }
@@ -828,6 +871,26 @@ export async function cancelQueued(paneId: string, text: string, id?: string): P
     drop()
     setTimeout(poll, 50)
     return { text: pend.text }
+  }
+  // OpenCode's queue is its session inbox: matching entry deleted through
+  // the service (the transport only deletes an id a fresh listing shows).
+  if (p.agent === 'opencode') {
+    if (unqueueBusy.has(p.id)) throw new HerdrError('busy', 'Already cancelling')
+    unqueueBusy.add(p.id)
+    try {
+      const items = await transcripts.opencodeInbox(p)
+      const match = items.find(i => i?.type === 'user' && typeof i?.id === 'string' && sameMsg(String(i.payload?.text || ''), msgText(text)))
+      if (!match) throw new HerdrError('already_read', 'Already read by the agent')
+      const gone = await transcripts.opencodeInboxDelete(p, String(match.id))
+      if (!gone) throw new HerdrError(gone === null ? 'already_read' : 'stale', gone === null ? 'Already read by the agent' : 'OpenCode did not remove the queued message')
+      drop()
+      log(`queued message cancelled on ${p.id}`)
+      return { text: mine ? mine.text : String(match.payload?.text || text) }
+    }
+    finally {
+      unqueueBusy.delete(p.id)
+      setTimeout(poll, 50)
+    }
   }
   if (p.agent !== 'claude') throw new HerdrError('unsupported', 'This agent can’t cancel queued messages')
   if (p.status !== 'working') throw new HerdrError('already_read', 'Already read by the agent')
@@ -1084,7 +1147,11 @@ async function enrich(next: HerdrState, snap: Json, machine: string, publish?: (
       const menu = Boolean(before && (before.menu || before.prompt || before.screen || before.interaction === 'terminal')) || restarting(p.id)
       // omp running the user's "!" command: idle for Herdr, but busy.
       if (list && TURN.has(p.status || '')) for (const q of list) if (!q.held && !q.failed) q.turnSeen = true
-      if (list && checkQueue(list, before?.ompShell ? 'working' : p.status, Date.now(), menu)) log(`message not sent on ${p.id}`)
+      // OpenCode's inbox (last good chat read): a message it still lists is
+      // being held by the agent, not unseen.
+      const ocq = p.agent === 'opencode' ? ocInboxes.get(p.id) : undefined
+      const alive = ocq?.length ? (q: QueueEntry) => ocq.some(t => sameMsg(msgText(t), msgText(q.text)) || sameMsg(msgText(q.text), msgText(t))) : undefined
+      if (list && checkQueue(list, before?.ompShell ? 'working' : p.status, Date.now(), menu, alive)) log(`message not sent on ${p.id}`)
       if (list) deliverHeld(p)
       if (list && list.length) p.queued = list.map(q => queuedPasted(publicEntry(q)))
     }
@@ -1169,6 +1236,14 @@ async function enrich(next: HerdrState, snap: Json, machine: string, publish?: (
       const c = codexStatus.statusOf(p)
       if (c) p.codexStatus = c
     } else codexStatus.forget(p.id)
+    // OpenCode's tokens/cost live on its session record — one snapshot read
+    // a poll while the pane is watched, formatted like the omp status.
+    if (p.agent === 'opencode' && isViewed(p.id)) {
+      const o = ocStatuses.get(p.id)
+      if (!o || Date.now() - o.at >= (p.status === 'working' ? ACTIVITY_MS : NOTICE_MS)) refreshOcStatus(p)
+      if (o?.status) p.opencodeStatus = o.status
+      else delete p.opencodeStatus
+    } else { ocStatuses.delete(p.id); ocInboxes.delete(p.id); delete p.opencodeStatus }
     if (p.agent === 'codex' && isViewed(p.id) && (p.status === 'idle' || p.status === 'done') && !p.prompt && !p.menu && !p.restart) {
       const f = codexFields.get(p.id)
       if (!f || Date.now() - f.at >= NOTICE_MS) refreshCodexField(p)
@@ -1181,6 +1256,7 @@ async function enrich(next: HerdrState, snap: Json, machine: string, publish?: (
   for (const id of askChecks.keys()) if (!alive(id)) askChecks.delete(id)
   for (const id of pendingPrompts.keys()) if (!alive(id)) pendingPrompts.delete(id)
   for (const id of queued.keys()) if (!alive(id)) queued.delete(id)
+  for (const id of ocInboxes.keys()) if (!alive(id)) ocInboxes.delete(id)
   for (const id of takenBack.keys()) if (!alive(id)) takenBack.delete(id)
   for (const id of restarts.keys()) if (!alive(id)) restarts.delete(id)
   for (const id of agentBorn.keys()) if (!alive(id)) { agentBorn.delete(id); bornDirty = true }

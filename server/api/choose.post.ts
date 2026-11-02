@@ -5,6 +5,7 @@
 // question shown (the option's label is the same for every question).
 import { usesTerminalException } from '../../shared/interactiveScreen'
 import { updateChoices, updateRestartPlan, UPDATE_LABELS } from '../../shared/selfUpdate'
+import { opencodeCard } from '../utils/opencodePrompts'
 
 export default defineApi(async (event, b) => {
   if (!PANE_RE.test(b.pane_id || '')) throw new HerdrError('bad_pane', 'Invalid pane')
@@ -37,6 +38,35 @@ export default defineApi(async (event, b) => {
   }
   try {
     const pane = findPane(b.pane_id)
+    // OpenCode's card is answered through the service, not the screen:
+    // re-read the pending requests, refuse when the one shown is gone, and
+    // let the API confirm it actually left the pending set.
+    if (pane?.agent === 'opencode') {
+      const pending = await transcripts.opencodePending(pane).catch(() => null)
+      const card = pending ? opencodeCard(pending) : null
+      const i = Number(b.index)
+      const option = card?.choices.options[i]
+      const answer = typeof b.text === 'string' ? b.text.trim() : ''
+      // A free-text option's label is generic ("Type something."), so its
+      // question is the extra identity check: different question, stale card.
+      if (!card || !b.identity || card.choices.identity !== b.identity || !option || option.label !== b.label
+        || (option.free && !sameQuestion(card.choices.question, typeof b.question === 'string' ? b.question : null))) {
+        throw new HerdrError('stale', 'The question has changed — check the current screen.')
+      }
+      if (card.dispatch.kind === 'permission') {
+        const decision = card.dispatch.decisions[i]
+        if (!decision || !(await transcripts.opencodeReplyPermission(pane, card.dispatch.id, decision, answer || undefined))) {
+          throw new HerdrError('stale', 'The question has changed — check the current screen.')
+        }
+      } else {
+        if (option.free && !answer) throw new HerdrError('bad_text', 'Write your answer before sending it.')
+        const value = option.free ? answer : card.dispatch.values[i]
+        if (value === undefined || !(await transcripts.opencodeReplyForm(pane, card.dispatch.id, card.dispatch.key, value))) {
+          throw new HerdrError('stale', 'The question has changed — check the current screen.')
+        }
+      }
+      return { ok: true }
+    }
     const asked = pane && pane.agent === 'claude' ? await transcripts.pendingClaudeQuestions(pane).catch(() => []) : []
     // Transcript reads can be slow over SSH: read the screen after them,
     // immediately before validating and sending the answer.

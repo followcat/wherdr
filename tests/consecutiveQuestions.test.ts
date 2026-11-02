@@ -100,8 +100,7 @@ it('bounds eight slow pane readings to two at once', async () => {
   restarts:map(),leftForGood:()=>false,lookForLeftMenu:()=>false,findPane:()=>null,pendingPrompts:map(),queued:map(),
   screenVersions:new WeakMap(),mapScreenPanes,choicesFor,previews:new Map(panes.map(p=>[p.id,{status:'blocked',at:Date.now()}])),
   models:new Map(panes.map(p=>[p.id,{status:'blocked',at:Date.now()}])),isViewed:()=>false,
-  activities:map(),ompStatuses:map(),codexFields:map(),codexStatus:{forget:()=>{}},chatDelta:{ids:()=>[],forget:()=>{}},choicesCache:new ScreenCache(),askChecks:map(),
-  takenBack:map(),seen:map(),saveBorn:()=>{},saveSeen:()=>{},saveQueued:()=>{},machineOf:()=>'',
+activities:map(),ompStatuses:map(),ocStatuses:map(),ocInboxes:map(),refreshOcStatus:()=>{},codexFields:map(),codexStatus:{forget:()=>{}},chatDelta:{ids:()=>[],forget:()=>{}},choicesCache:new ScreenCache(),askChecks:map(),  takenBack:map(),seen:map(),saveBorn:()=>{},saveSeen:()=>{},saveQueued:()=>{},machineOf:()=>'',
  }
  const enrich = bindFunction(source,'enrich',bind)
  let published = false

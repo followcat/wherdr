@@ -187,7 +187,9 @@ export function lookForLeftMenu(p: Pick<Pane, 'agent' | 'status' | 'stopped' | '
 // Updates timers in place on each poll; true when an entry just failed.
 // `menu`: a menu, question or panel recognized on the agent's screen (or a
 // restart running): something a held message legitimately waits for.
-export function checkQueue(list: QueueEntry[], status: string | null | undefined, now: number, menu = true): boolean {
+// `alive`: a sent message the agent still holds in its own queue (OpenCode's
+// session inbox while it is blocked or working): not lost, only not read yet.
+export function checkQueue(list: QueueEntry[], status: string | null | undefined, now: number, menu = true, alive?: (q: QueueEntry) => boolean): boolean {
   let changed = false
   const ready = status === 'idle' || status === 'done'
   for (const q of list) {
@@ -208,6 +210,7 @@ export function checkQueue(list: QueueEntry[], status: string | null | undefined
       continue
     }
     if (!ready) { delete q.readySince; continue }
+    if (alive && alive(q)) { delete q.readySince; continue }
     q.readySince ??= now
     if (now - Math.max(q.readySince, q.at) > LOST_MS) {
       q.failed = true
@@ -236,7 +239,7 @@ export function checkQueue(list: QueueEntry[], status: string | null | undefined
 // Either way it gets Retry / Cancel. Retry waits for the end of a turn and
 // first looks at the transcript again (see landed): a message the agent did
 // take is not typed twice.
-export function checkSent(list: QueueEntry[], o: { agent: string | null | undefined, claude: { queue: ClaudeQueueEntry[], popped: ClaudeQueueEntry[] } | null, now: number }): boolean {
+export function checkSent(list: QueueEntry[], o: { agent: string | null | undefined, claude: { queue: ClaudeQueueEntry[], popped: ClaudeQueueEntry[] } | null, ocQueue?: ClaudeQueueEntry[] | null, now: number }): boolean {
   let changed = false
   for (const q of list) {
     if (q.held || q.failed) { delete q.lostSince; delete q.popped; continue }
@@ -252,7 +255,11 @@ export function checkSent(list: QueueEntry[], o: { agent: string | null | undefi
       ? (cut ? flat(e.text).startsWith(text) : flat(e.text) === text)
       : !e.text && (e.images || 0) === photos)
     const c = o.agent === 'claude' ? o.claude : null
+    // OpenCode's queue is its session inbox, read through the service (see
+    // opencodeTranscripts.ts): entries keep the whole text and a timestamp.
+    const oc = o.agent === 'opencode' ? o.ocQueue : null
     const inQueue = Boolean(c && c.queue.some(isIt))
+      || Boolean(oc && oc.some(isIt))
     if (inQueue) { delete q.popped; delete q.lostSince }
     else if (c && c.popped.some(isIt)) q.popped = true
     if (!inQueue && o.now - q.at > QUEUED_TTL_MS) {

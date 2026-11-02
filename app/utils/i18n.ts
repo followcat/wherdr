@@ -532,7 +532,12 @@ const FR: Record<string, string> = {
   '“This session only” option not found — nothing was changed.': 'Validation « cette session seulement » introuvable — rien n’a été changé.',
   'Unexpected /model menu — nothing was changed.': 'Menu /model inattendu — rien n’a été changé.',
   'Unexpected effort menu — nothing was changed.': 'Choix de l’effort inattendu — rien n’a été changé.',
-  'Not a Claude, Codex or omp agent': 'pas un agent Claude, Codex ou omp',
+  'This agent’s model cannot be changed from wherdr': 'Le modèle de cet agent ne peut pas être changé depuis wherdr',
+  'This agent’s effort cannot be changed from wherdr': 'L’effort de cet agent ne peut pas être changé depuis wherdr',
+  'Model not found in /models: {model}': 'Modèle introuvable dans /models : {model}',
+  'The model did not change — try again.': 'Le modèle n’a pas changé — réessaie.',
+  'Devin set a different model ({model}) — check the session.': 'Devin a choisi un autre modèle ({model}) — vérifie la session.',
+  'OpenCode refused the shell command': 'OpenCode a refusé la commande shell',
   'View image': 'Voir l’image',
   // Themes
   'Change theme': 'Changer de thème', 'Hide themes': 'Masquer les thèmes',
