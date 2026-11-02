@@ -859,7 +859,7 @@ function commandCodeTool(name: string, input: Json): string {
   }
 }
 
-export type CommandCodeResult = { out?: string, error?: boolean, images?: number, ref?: string, imageAt?: number, at?: number }
+export type CommandCodeResult = { out?: string, error?: boolean, images?: number, ref?: string, imageAt?: number, at?: number, len?: number, hash?: string }
 
 export function parseCommandCode(lines: Lines, results?: Map<string, CommandCodeResult>): Parsed {
   const items: Parsed = []
@@ -956,7 +956,12 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
           const rec: CommandCodeResult = {}
           if (out) rec.out = clip(out, 8000)
           if (part.is_error) rec.error = true
-          if (ref) rec.at = Number(ref.split(':')[0])
+          if (ref) {
+            const [at, len] = ref.split(':')
+            rec.at = Number(at)
+            rec.len = Number(len)
+            rec.hash = createHash('sha256').update(lines[i]!).digest('hex').slice(0, 16)
+          }
           if (n && ref) {
             rec.images = n
             rec.ref = ref
@@ -1151,11 +1156,12 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   async function cmdResultsValid(file: string): Promise<boolean> {
     const results = cmdResults.get(file)
     if (!results || !results.size) return true
-    for (const [id, r] of results) {
-      if (r.at === undefined) return false
+    for (const [, r] of results) {
+      if (r.at === undefined || r.len === undefined || !r.hash) return false
       try {
-        const text = (await fs.read(file, r.at, 4096)).toString('utf8')
-        if (!text.includes('tool_result') || !text.includes(id)) return false
+        const raw = (await fs.read(file, r.at, r.len)).toString('utf8')
+        const h = createHash('sha256').update(stripBlobs(raw)).digest('hex').slice(0, 16)
+        if (h !== r.hash) return false
       } catch { return true } // transient read failure: keep, do not lose output
     }
     return true
@@ -1367,15 +1373,26 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   // still share the newest file (see docs/conversation.md).
   async function commandCodeSessions() {
     const root = path.join(home, '.commandcode/projects')
-    const out: { file: string, mtimeMs: number, size: number }[] = []
-    for (const d of await listDir(root)) {
-      const dir = path.join(root, d)
-      const files = (await listDir(dir)).filter(n => n.endsWith('.jsonl') && !n.endsWith('.checkpoints.jsonl'))
-      if (!files.length) continue
-      const paths = files.map(n => path.join(dir, n))
-      const stats = await fs.statMany(paths)
-      for (let i = 0; i < paths.length; i++) if (stats[i]?.isFile) out.push({ file: paths[i]!, mtimeMs: stats[i]!.mtimeMs, size: stats[i]!.size })
+    let paths: string[] = []
+    // Remote: one `find` for every project, then one batched stat. Listing
+    // each project directory separately costs an SSH round-trip per folder.
+    if (exec) {
+      try {
+        const r = await exec('find "$1" -type f -name "*.jsonl" ! -name "*.checkpoints.jsonl" -print', [root], { timeoutMs: 4000 })
+        if (r.code === 0) paths = r.stdout.toString('utf8').split('\n').filter(Boolean)
+      } catch { paths = [] }
     }
+    if (!paths.length) {
+      for (const d of await listDir(root)) {
+        const dir = path.join(root, d)
+        const files = (await listDir(dir)).filter(n => n.endsWith('.jsonl') && !n.endsWith('.checkpoints.jsonl'))
+        for (const n of files) paths.push(path.join(dir, n))
+      }
+    }
+    if (!paths.length) return []
+    const stats = await fs.statMany(paths)
+    const out: { file: string, mtimeMs: number, size: number }[] = []
+    for (let i = 0; i < paths.length; i++) if (stats[i]?.isFile) out.push({ file: paths[i]!, mtimeMs: stats[i]!.mtimeMs, size: stats[i]!.size })
     return out.sort((a, b) => b.mtimeMs - a.mtimeMs)
   }
 
