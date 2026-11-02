@@ -92,15 +92,21 @@ def build(*handlers):
     return Peer()
 urllib.request.build_opener = build
 `
-async function read(home: string, request: Record<string, unknown> = { session: 'ses_example', op: 'session' }, peer: Record<string, unknown> = {}) {
+async function read(home: string, request: Record<string, unknown> = { session: 'ses_example', op: 'session' }, peer: Record<string, unknown> = {}, env: NodeJS.ProcessEnv = {}) {
   try {
-    const r = await run('python3', ['-X', 'utf8', '-c', VIRTUAL_HTTP + '\n' + OPENCODE_READ, home, JSON.stringify(request), JSON.stringify(peer)], { env: { ...process.env, HOME: home, XDG_STATE_HOME: '', XDG_DATA_HOME: path.join(home, 'data') }, timeout: 5000 })
+    const r = await run('python3', ['-X', 'utf8', '-c', VIRTUAL_HTTP + '\n' + OPENCODE_READ, home, JSON.stringify(request), JSON.stringify(peer)], { env: { ...process.env, HOME: home, XDG_STATE_HOME: '', XDG_DATA_HOME: path.join(home, 'data'), ...env }, timeout: 5000 })
     return r.stdout.trim().split('\n').map(line => JSON.parse(line))
   } catch (error) {
     const e = error as { stdout: string }
     return e.stdout.trim().split('\n').map(line => JSON.parse(line))
   }
 }
+
+it('reads a session when launched from a C-locale service or SSH shell', async () => {
+  const { home } = fixture()
+  const [r] = await read(home, undefined, {}, { LC_ALL: 'C', LANG: 'C', PYTHONCOERCECLOCALE: '0', PYTHONUTF8: '0' })
+  expect(r).toMatchObject({ status: 200, data: { data: { id: 'ses_example' } } })
+})
 
 it('discovers and authenticates an existing 2.x service, keeping credentials out of its replies', async () => {
   const { home } = fixture()
