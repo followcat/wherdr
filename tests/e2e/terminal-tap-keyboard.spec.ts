@@ -34,7 +34,7 @@ for (const smooth of [false, true]) {
           document.documentElement.dataset.tapFocusedTerminal = '1'
       })
     })
-    await page.locator('#touch').tap()
+    await page.locator('#termWrap').tap()
     await expect(input).not.toBeFocused()
     await expect(page.locator('html')).toHaveAttribute('data-tap-focused-terminal', '0')
     await page.getByRole('button', { name: 'Show or hide terminal keys', exact: true }).click()
@@ -48,7 +48,7 @@ for (const smooth of [false, true]) {
     await page.getByRole('button', { name: 'Show or hide the phone keyboard' }).tap()
     await expect(page.locator('html')).toHaveAttribute('data-focus-at-touchend', 'true')
     await expect(input).toBeFocused()
-    await page.locator('#touch').tap()
+    await page.locator('#termWrap').tap()
     await expect(input).not.toBeFocused()
   })
 }

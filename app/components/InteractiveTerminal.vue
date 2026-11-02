@@ -54,7 +54,7 @@ const ui = { overlay: 'hw-scrim interactive-terminal-scrim', content: 'interacti
         <UButton size="xs" color="warning" variant="outline" @click="banner.fn()">{{ banner.btn }}</UButton>
       </div>
       <TerminalView :ctl="ctl" @copying="copying = $event" @keydown.stop />
-      <Keybar :ctl="ctl" :inert="copying" :compact="!desk && !tablet" all-digits @keydown.stop />
+      <Keybar :ctl="ctl" :inert="copying" :compact="!desk && !tablet" terminal all-digits @keydown.stop />
     </template>
   </UModal>
 </template>

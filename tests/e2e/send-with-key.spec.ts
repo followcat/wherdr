@@ -32,7 +32,7 @@ test('keybar Tab on a draft sends it with Tab to a working Codex', { tag: '@webk
   const field = page.locator('.prompt').locator('textarea, [contenteditable="true"]').first()
   await field.fill('Summarize the diff.')
   await page.getByRole('button', { name: 'Show or hide terminal keys', exact: true }).click()
-  const tab = page.locator('.vk-tab')
+  const tab = page.locator('[data-key="tab"]')
   // The draft's terminator is annotated on its key, not hidden behind a menu.
   await expect(tab).toHaveClass(/send-with/)
   const promptSent = page.waitForRequest(r => r.url().endsWith('/api/prompt'))
@@ -46,7 +46,7 @@ test('keybar Tab without a draft stays the literal terminal key', { tag: '@webki
   await setup()
   await page.goto(`/#/a/${pane}`)
   await page.getByRole('button', { name: 'Show or hide terminal keys', exact: true }).click()
-  const tab = page.locator('.vk-tab')
+  const tab = page.locator('[data-key="tab"]')
   await expect(tab).not.toHaveClass(/send-with/)
   let prompts = 0
   page.on('request', r => { if (r.url().endsWith('/api/prompt')) prompts++ })

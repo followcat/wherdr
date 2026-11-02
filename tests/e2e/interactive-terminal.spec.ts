@@ -10,8 +10,8 @@ const size = () => fakeHerdr('e2e.pane_size', { pane_id: pane })
 const sentKeys = async () => (await fakeHerdr('e2e.terminal_screen', { pane_id: pane }) as { keys: string[] }).keys
 async function escapeKey(page: Page) {
   const window = page.getByRole('dialog', { name: 'Interactive terminal', exact: true })
-  await expect(window.locator('.vk-more')).toHaveAttribute('aria-expanded', 'false')
-  await window.locator('.vk-strip').getByRole('button', { name: 'Esc', exact: true }).click()
+  const phone = await window.locator('.vk-strip').count() > 0
+  await window.getByRole('button', { name: phone ? 'Esc' : 'esc', exact: true }).click()
 }
 // What a tap at the middle of `selector` would reach: the window or its scrim, or the app.
 const coveredAt = (page: Page, selector: string) => page.locator(selector).first().evaluate((el) => {
@@ -48,8 +48,9 @@ test('shows only the live TUI, sends real keys and closes when its field returns
   expect(fitted.cols).not.toBe(original.cols)
   if (info.project.name === 'chromium-phone') expect(fitted.cols).toBeLessThan(60)
   await page.screenshot({ path: `.shots/interactive-terminal-${info.project.name}.png` })
-  await window.getByRole('button', { name: '↓', exact: true }).click()
-  await window.getByRole('button', { name: 'Enter', exact: true }).click()
+  const phone = info.project.name.endsWith('phone')
+  await window.getByRole('button', { name: phone ? 'Down arrow' : '↓', exact: true }).click()
+  await window.getByRole('button', { name: phone ? 'Enter' : '⏎', exact: true }).click()
   await expect.poll(async () => (await fakeHerdr('e2e.terminal_screen', { pane_id: pane }) as { keys: string[] }).keys).toEqual(['down', 'enter'])
   await escapeKey(page)
   await expect(window).toHaveCount(0)
@@ -61,41 +62,44 @@ test('shows only the live TUI, sends real keys and closes when its field returns
   await expect.poll(size, { timeout: 15_000 }).toEqual(original)
 })
 
-test('phone terminal keys keep Esc visible and fit the primary row on narrow screens', async ({ page, isMobile }) => {
+// Key matrices and saved ordering are covered by PhoneKeybar.test.ts and
+// phone-key-order.spec.ts; this journey checks the modal's narrow-screen scroll.
+test('phone terminal keys keep Esc reachable in one scrolling row on narrow screens', async ({ page, isMobile }) => {
   test.skip(!isMobile, 'Checks the single-row phone layout')
   const window = page.getByRole('dialog', { name: 'Interactive terminal', exact: true })
   await expect(window).toBeVisible()
   const bar = window.locator('.keybar')
   const main = bar.locator('.vk-strip')
-  const more = bar.locator('.vk-more')
   await expect(main.getByRole('button', { name: 'Esc', exact: true })).toBeVisible()
-  await expect(more).toHaveAttribute('aria-expanded', 'false')
-  await expect(bar.getByRole('button', { name: 'PgUp', exact: true })).toHaveCount(0)
+  const keyboard = main.getByRole('button', { name: 'Show or hide the phone keyboard' })
+  await keyboard.tap()
+  await expect(window.locator('.xterm-helper-textarea')).toBeFocused()
+  await keyboard.tap()
+  await expect(window.locator('.xterm-helper-textarea')).not.toBeFocused()
   const viewport = page.viewportSize()!
   for (const width of [320, 360, 390]) {
     await page.setViewportSize({ ...viewport, width })
+    await main.evaluate(el => { el.scrollLeft = 0 })
     const rects = await main.locator('button').evaluateAll(buttons => buttons.map(el => {
       const r = el.getBoundingClientRect()
       return { label: el.getAttribute('aria-label'), x: r.x, y: r.y, width: r.width, height: r.height, right: r.right }
     }))
-    expect(rects.map(r => r.label)).toEqual(['Esc', 'Shift', 'Tab', '←', '↑', '↓', '→', 'Enter', 'Show or hide function keys'])
     for (const rect of rects) {
       expect(Math.abs(rect.y - rects[0]!.y)).toBeLessThan(1)
       expect(rect.height).toBeGreaterThanOrEqual(36)
-      // Mobile uses nine primary keys; preserve their existing compact layout.
-      expect(rect.width).toBeGreaterThanOrEqual((width - 48) / 9)
-      expect(rect.x).toBeGreaterThanOrEqual(0)
-      expect(rect.right).toBeLessThanOrEqual(width)
+      expect(rect.width).toBeGreaterThanOrEqual(38)
     }
+    const bounds = (await main.boundingBox())!
+    expect(bounds.x).toBeGreaterThanOrEqual(0)
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+    expect(await main.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true)
     await bar.screenshot({ path: `.shots/terminal-keybar-${width}.png` })
   }
-  await more.click()
-  await expect(bar.getByRole('button', { name: 'PgUp', exact: true })).toBeVisible()
-  await expect(bar.getByRole('button', { name: 'PgDn', exact: true })).toBeVisible()
-  await expect(bar.getByRole('button', { name: 'Tab', exact: true })).toBeVisible()
+  await bar.getByRole('button', { name: 'F12', exact: true }).scrollIntoViewIfNeeded()
+  await expect(bar.getByRole('button', { name: 'F12', exact: true })).toBeInViewport()
+  await bar.getByRole('button', { name: 'Esc', exact: true }).scrollIntoViewIfNeeded()
+  await expect(bar.getByRole('button', { name: 'Esc', exact: true })).toBeInViewport()
   await expect(bar.getByRole('button', { name: 'Esc', exact: true })).toHaveCount(1)
-  await bar.screenshot({ path: '.shots/terminal-keybar-expanded.png' })
-  await more.click()
   await escapeKey(page)
   await expect.poll(sentKeys).toEqual(['esc'])
   await expect(window).toHaveCount(0)
