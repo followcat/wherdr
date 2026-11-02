@@ -143,8 +143,8 @@ async function withPane<T>(paneId: string, fn: (p: Pane) => Promise<T>): Promise
   const p = findPane(paneId)
   if (!p) throw new HerdrError('bad_pane', 'Pane not found')
   if (!p.agent || !SWITCH_AGENTS.has(p.agent)) throw new HerdrError('unsupported', 'This agent’s model cannot be changed from wherdr')
-  if (!READY.has(p.status || '')) {
-    throw new HerdrError('busy', p.status === 'blocked' ? 'The agent is waiting for an answer — reply first.' : 'The agent is working — change the model once it’s done.')
+  if (!READY.has(p.status || '') || p.prompt || p.menu || p.screen) {
+    throw new HerdrError('busy', p.status === 'blocked' || p.prompt || p.menu || p.screen ? 'The agent is waiting for an answer — reply first.' : 'The agent is working — change the model once it’s done.')
   }
   if (busy.has(paneId)) throw new HerdrError('busy', 'Model change already in progress')
   busy.add(paneId)
@@ -227,7 +227,7 @@ export async function listModels(paneId: string, refresh = false): Promise<Model
   if (!p0 || !p0.agent) throw new HerdrError('bad_pane', 'Pane not found')
   if (p0.agent === 'omp') return ompListModels(p0, refresh)
   if (p0.agent === 'opencode') return opencodeListModels(p0)
-  if (p0.agent === 'devin') return devinListModels(p0)
+  if (p0.agent === 'devin') return devinListModels(p0, refresh)
   const hit = listCache.get(listKey(p0.id, p0.agent))
   if (hit && !refresh && Date.now() - hit.at < LIST_TTL_MS) return hit
   return withPane(paneId, async (p) => {
@@ -791,9 +791,9 @@ async function devinOpenMenu(paneId: string): Promise<DevinModelMenu> {
   return m
 }
 
-async function devinListModels(p: Pane): Promise<ModelList> {
+async function devinListModels(p: Pane, refresh = false): Promise<ModelList> {
   const hit = listCache.get(listKey(p.id, 'devin'))
-  if (hit && Date.now() - hit.at < LIST_TTL_MS) return hit
+  if (hit && !refresh && Date.now() - hit.at < LIST_TTL_MS) return hit
   return withPane(p.id, async () => {
     const cur = await transcripts.model(p).catch(() => null)
     let m = await devinOpenMenu(p.id)
