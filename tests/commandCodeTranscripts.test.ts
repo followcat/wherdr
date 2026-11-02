@@ -688,6 +688,87 @@ it('does not reset an open chat when other transcripts are evicted', async () =>
   expect(next.rewritten).toBeUndefined()
 })
 
+it('retries a failed result validation before trusting the new size', async () => {
+  const { home } = fixture()
+  // Wide uniform fillers keep the 4 KiB anchor above the tail byte-identical
+  // after the result record grows, so only result validation can see it.
+  const filler = 'f'.repeat(64 * 1024)
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+    commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'old' }] }], 3000),
+  ]
+  for (let i = 0; i < 200; i++) lines.push(commandCodeUser(`filler-${i}`, 'a1', filler, 4000 + i))
+  // Sub-second mtime: the token is settled, so the whole-file checksum does
+  // not also detect the rewrite.
+  const file = writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines, mtime: new Date(1_700_000_000_123) })
+  let fail = false
+  const fs = {
+    ...localFs,
+    read: (f: string, start: number, len: number, timeout?: number) => {
+      if (fail) {
+        fail = false
+        return Promise.reject(Object.assign(new Error('read failed'), { code: 'remote' }))
+      }
+      return localFs.read(f, start, len, timeout)
+    },
+  }
+  const reader = createTranscripts({ home, fs, herdr: async () => ({}) })
+  const tail = await reader.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+  const older = await reader.chat(pane, { before: tail.start })
+  expect(older.items!.find(i => i.toolId === 'call_1')?.out).toBe('old')
+
+  // Same-length change above the tail (no byte shift), then an append below
+  // it: the file grows in place, but the anchor above the client's cursor is
+  // unchanged, so only result validation can detect the changed output.
+  const newResult = commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'new' }] }], 3000)
+  writeFileSync(file, [...lines.slice(0, 3), newResult, ...lines.slice(4)].map(line => JSON.stringify(line)).join('\n'))
+  appendFileSync(file, '\n' + JSON.stringify(commandCodeAssistant('a2', 'u2', [{ type: 'text', text: 'done' }], { ms: 9000 })) + '\n')
+  fail = true
+  // The first poll cannot validate: it must keep the previous size so the
+  // next one retries instead of trusting the unvalidated state.
+  expect((await reader.chat(pane, { since: tail.token, from: tail.start })).rewritten).toBeUndefined()
+  expect((await reader.chat(pane, { since: tail.token, from: tail.start })).rewritten).toBe(true)
+})
+
+it('does not reread a huge watched result on every append', async () => {
+  const { home } = fixture()
+  const big = 'b'.repeat(6 * 1024 * 1024)
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+    commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: big }] }], 3000),
+  ]
+  const filler = 'g'.repeat(32 * 1024)
+  for (let i = 0; i < 200; i++) lines.push(commandCodeUser(`filler-${i}`, 'a1', filler, 4000 + i))
+  const file = writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
+  let early = 0
+  const fs = {
+    ...localFs,
+    read: (f: string, start: number, len: number, timeout?: number) => {
+      if (start < 1024 * 1024) early = Math.max(early, len)
+      return localFs.read(f, start, len, timeout)
+    },
+  }
+  const reader = createTranscripts({ home, fs, herdr: async () => ({}) })
+  const tail = await reader.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+  let page = await reader.chat(pane, { before: tail.start })
+  while (!page.items!.some(i => i.toolId === 'call_1') && page.start > 0) {
+    page = await reader.chat(pane, { before: page.start })
+  }
+  expect(page.items!.some(i => i.toolId === 'call_1')).toBe(true)
+
+  appendFileSync(file, JSON.stringify(commandCodeAssistant('a2', 'u2', [{ type: 'text', text: 'done' }], { ms: 9000 })) + '\n')
+  early = 0
+  await reader.chat(pane, { since: tail.token, from: tail.start })
+  // Validation fingerprints the first 64 KiB of the 6 MiB result, not all of it.
+  expect(early).toBeLessThanOrEqual(4 * 1024 * 1024)
+})
+
 it('reads past trailing tool results with no displayable message', async () => {
   const { home, reader } = fixture()
   const big = 'q'.repeat(1.5 * 1024 * 1024)
