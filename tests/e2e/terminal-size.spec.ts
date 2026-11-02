@@ -6,10 +6,10 @@ import { OMP_CHAT_PANE, fakeHerdr } from './scenario.mjs'
 const ORIGINAL = { cols: 120, rows: 40 }
 const paneSize = () => fakeHerdr('e2e.pane_size', { pane_id: OMP_CHAT_PANE }) as Promise<{ cols: number, rows: number, attached: boolean }>
 
-// Phone: the terminal icon of the header toggles; computer: Conversation / Terminal tabs.
+// Phone: the terminal icon toggles; computer: the button names the opposite view.
 async function show(page: Page, view: 'Terminal' | 'Conversation') {
-  const tabs = page.locator('.view-tabs')
-  if (await tabs.count()) await tabs.getByRole('tab', { name: view }).click()
+  const tabs = page.locator('.view-toggle')
+  if (await tabs.count()) await page.getByRole('button', { name: `Show ${view.toLowerCase()}`, exact: true }).click()
   else await page.locator('button[aria-label="Terminal"]').first().click()
 }
 
@@ -38,7 +38,10 @@ test('closing the terminal gives the pane its original size back', async ({ page
   await expect.poll(async () => (await paneSize()).rows).toBeLessThan(open.rows)
 
   await show(page, 'Conversation')
-  await expect(page.locator('.chat').getByText('Ready when you are.')).toBeVisible()
+  // The conversation is back. Not a given message: earlier specs add to this pane, and
+  // on the shortened screen its first message can lie above the loaded tail.
+  await expect(page.locator('#term')).toHaveCount(0)
+  await expect(page.locator('.chat .chat-list article').last()).toBeVisible()
   await expect.poll(paneSize, { timeout: 10_000 }).toEqual({ ...ORIGINAL, attached: false })
 })
 

@@ -19,7 +19,8 @@ import { uploadPhoto } from '~/utils/photoUpload'
 import { terminalClosedText, terminalUnavailableText } from '~/utils/terminalClosed'
 import { bindTerminalMouse, terminalCell } from '~/utils/terminalMouse'
 import { TERM_FONT, onFontsLoaded, scaledTermFont } from '~/utils/terminalFont'
-import { createCompositionTracker, displayVirtualChord, toggleVirtualModifier, virtualChord, virtualInputAction, virtualNavigationBytes, type VirtualModifier } from '~/utils/virtualKeys'
+import { createCompositionTracker, displayVirtualChord, toggleVirtualModifier, virtualChord, virtualInputAction, type VirtualModifier } from '~/utils/virtualKeys'
+import { virtualNavigationBytes, virtualNavigationKeys } from '~/utils/keybarKeys'
 
 export interface Banner { text: string, btn: string, fn: () => void }
 
@@ -263,7 +264,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     lastVirtualChord.value = displayVirtualChord(chord)
     const navigation = virtualNavigationBytes(chord)
     if (navigation) {
-      if (!sendTerm({ type: 'terminal.input', text: navigation })) toast(tl('Terminal is still connecting — try again', 'Le terminal se connecte encore — réessaie'), true)
+      if (!sendTerm({ type: 'terminal.input', text: navigation })) await sendKeys(virtualNavigationKeys(chord))
       return
     }
     await sendKeys([chord])

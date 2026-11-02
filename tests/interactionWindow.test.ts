@@ -27,6 +27,20 @@ describe('interactive terminal episode', () => {
     w.update('terminal', 3200)
     expect(w.update('terminal', 3700)).toBe(true)
   })
+  it('a window reopened after a manual close still closes on a stable field', () => {
+    const w = createInteractionWindow()
+    w.update('terminal', 0)
+    w.update('terminal', 500)
+    w.dismiss()
+    expect(w.update('terminal', 4000)).toBe(false)
+    w.reopen()
+    expect(w.update('terminal', 4100)).toBe(true)
+    expect(w.update('input', 4200)).toBe(true)
+    expect(w.update('input', 5100)).toBe(false)
+    // A new episode opens normally again: the reopening left no dismissal.
+    w.update('terminal', 5200)
+    expect(w.update('terminal', 5700)).toBe(true)
+  })
   it('yields on lost state and debounces a fresh terminal observation', () => {
     const w = createInteractionWindow()
     w.update('terminal', 0)

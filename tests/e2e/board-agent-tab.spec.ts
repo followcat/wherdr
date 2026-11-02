@@ -2,12 +2,12 @@ import fs from 'node:fs/promises'
 import { expect, test } from './test'
 import { OMP_CHAT_PANE, CLAUDE_PANE } from './scenario.mjs'
 
-for (const [width, lang] of [[390, 'en'], [1440, 'en'], [390, 'fr']] as const) {
+for (const [width, lang] of [[390, 'en'], [1440, 'en']] as const) {
   test(`Agent switches views and accepts legacy destinations at ${width}px (${lang})`, async ({ page }) => {
     await page.addInitScript(l => localStorage.setItem('herdrLanguage', l), lang)
     const terminal = 'Terminal'
     const conversation = 'Conversation'
-    const taskLabel = lang === 'fr' ? 'Tâche' : 'Task'
+    const taskLabel = 'Task'
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 })
     const task = { id: 'demo/9', repo: 'demo', n: 9, title: 'Improve navigation', group: 'working', stage: 'working', state: 'working', app: 'omp', msg: '' }
     await page.route(/\/api\/tasks(\?.*)?$/, route => route.fulfill({ json: { version: 'agent-tab', machines: [{ machine: '', status: 'ready', version: '1.2.21', tasks: [task] }] } }))
@@ -15,7 +15,7 @@ for (const [width, lang] of [[390, 'en'], [1440, 'en'], [390, 'fr']] as const) {
     await page.goto('/#/board?machine=&task=demo%2F9&view=chat')
     const panel = page.locator('.board-panel[data-kind="task"]')
     const tabs = panel.locator('.board-panel-tabs')
-    await expect(tabs.locator('button')).toHaveText([taskLabel, 'Agent', lang === 'fr' ? 'Relecteur' : 'Reviewer', lang === 'fr' ? 'Réglages' : 'Settings'])
+    await expect(tabs.locator('button')).toHaveText([taskLabel, 'Agent', 'Reviewer', 'Settings'])
     const bar = panel.locator('.board-panel-agent-bar')
     await expect(bar.getByRole('button', { name: terminal, exact: true })).toBeVisible()
     await bar.getByRole('button', { name: terminal, exact: true }).click()

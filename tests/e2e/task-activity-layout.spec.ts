@@ -16,7 +16,8 @@ async function contained(badge: Locator, container: Locator) {
   await expect(badge).toHaveAttribute('aria-label', new RegExp(dependency))
 }
 
-for (const lang of ['en', 'fr']) {
+test.describe('English interface', () => {
+  const lang = 'en'
   test(`long queued references stay inside cards and panels (${lang})`, async ({ page }) => {
     await page.addInitScript(l => localStorage.setItem('herdrLanguage', l), lang)
     await page.route('**/api/tasks**', route => {
@@ -48,10 +49,11 @@ for (const lang of ['en', 'fr']) {
       await page.screenshot({ path: `.shots/activity-panel-${lang}-${width}.png` })
     }
   })
-}
+})
 
 // Home list rows, one-line and two-line: the badge gives way, the title stays readable.
-for (const lang of ['en', 'fr']) {
+test.describe('English interface', () => {
+  const lang = 'en'
   for (const compact of [true, false]) {
     test(`a long queued reference leaves the home row title readable (${compact ? 'compact' : 'two lines'}, ${lang})`, async ({ page }) => {
       await page.addInitScript(({ l, c }) => {
@@ -82,4 +84,4 @@ for (const lang of ['en', 'fr']) {
       }
     })
   }
-}
+})

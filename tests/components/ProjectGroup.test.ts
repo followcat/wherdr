@@ -139,6 +139,22 @@ describe('a repo group on the home list', () => {
     w.unmount()
   })
 
+  it('the summary and task badges ignore leftover working terminals', async () => {
+    const groups = ['done', 'todo', 'ready', 'working'] as const
+    const ms: Member[] = groups.map((group, i) => {
+      const p = pane(`w${i + 6}:p1`, { status: 'working' })
+      return { row: row(p), task: { ...task(i + 6, p), group }, role: 'worker' }
+    })
+    herdrState.value = { ok: true, workspaces: [], panes: ms.map(m => m.row.lead) }
+    const w = await mountSuspended(ProjectGroup, {
+      props: { group: section({ members: ms }) },
+      global: { stubs: { UContextMenu: { template: '<div><slot /></div>' } } },
+    })
+    expect(w.find('.project-sum').text()).toBe('4 tasks·1 your turn·1 working')
+    expect(w.findAll('.project-tree .task-state').map(s => s.text())).toEqual(['Done', 'To do', 'Ready to approve', 'Working'])
+    w.unmount()
+  })
+
   it('the summary counts the tasks waiting for you, working and at a provider quota', async () => {
     const asking = pane('w4:p1', { status: 'blocked' })
     const limited = pane('w5:p1', { status: 'idle', usageLimit: { text: 'limit' } as Pane['usageLimit'] })

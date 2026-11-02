@@ -30,6 +30,27 @@ So a message from the Board is the user's own words: answer and act on it as on 
 from them. Report your progress with `herdr-projects report` as usual: the Board shows the
 state, the message and the progress you report, the pull request and the review.
 
+## Links
+
+- **Files:** verify that the file exists and is readable on the agent's machine, then
+  write its absolute path in inline code (backticks), optionally with `:line` or
+  `:line:column` (these suffixes are stripped, not navigated to). Chat recognizes
+  paths; Markdown file links do not use its file viewer. `~/` means that machine's
+  home; relative paths use the pane's working folder, falling back to home when
+  unknown or outside home. Never use a path relative to another folder (such as a
+  vault). The file and its symlink target must stay inside that machine's home.
+  Terminal links open only HTTP(S) URLs, not file paths.
+- **Web:** give an absolute HTTPS URL reachable from the user's phone and other
+  machines (for example through their tailnet). Never offer localhost, loopback
+  addresses (including `127.0.0.1`) or relative URLs as portable links. Follow
+  redirects and verify a successful HTTP status and the final destination; a local
+  response alone does not prove access from another device.
+- **Images:** prefer displaying them directly in chat (web images must come from
+  wherdr's own origin or an HTTPS tailnet address). For an image URL, verify
+  that the final response serves the image itself with an `image/*` Content-Type,
+  rather than an HTML page.
+- If no verified link is available, say so clearly instead of offering a broken one.
+
 ## What the Board does not do
 
 No task is added, delegated, stopped, archived or cleared from wherdr: the user asks the

@@ -97,7 +97,7 @@ implementations.
 ## Text and layout checks
 
 Follow [Contributing: Conventions](../CONTRIBUTING.md#conventions) for English
-keys, mandatory French translations and `t()` / `tl()` usage. Do not duplicate
+only interface text and `t()` / `tl()` usage; French translations are optional. Do not duplicate
 those translation rules here. Examples: the translated Send label in
 [Composer.vue](../app/components/Composer.vue) and Back in
 [AgentView.vue](../app/components/AgentView.vue).

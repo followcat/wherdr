@@ -17,8 +17,51 @@ test('a long agent name and state truncate with an ellipsis in the header at 390
   await fakeHerdr('e2e.workspace_label', { workspace_id: 'w3', label: LONG_NAME })
   await fakeHerdr('e2e.interaction_screen', { pane_id: pane, text: quota, agent: 'claude', status: 'blocked' })
   await page.setViewportSize({ width: 390, height: 844 })
+  // The phone identity shows the pane name independently of its tab name.
+  await page.routeWebSocket('**/ws/events', ws => {
+    const server = ws.connectToServer()
+    server.onMessage(message => {
+      const state = JSON.parse(message.toString())
+      const named = state.panes?.find((p: { id: string }) => p.id === pane)
+      if (named) named.label = LONG_NAME
+      ws.send(JSON.stringify(state))
+    })
+  })
   await page.goto(`/#/a/${pane}`)
+  await expect(page.locator('.phone-identity-kind, .agent-meta .pill-kind')).toHaveText(/claude/i)
   const top = page.locator('.agent-top')
+  const identity = top.locator('.phone-identity')
+  if (await identity.count()) {
+    await expect(identity.locator('.phone-identity-title')).toHaveText(LONG_NAME)
+    await expect(identity.locator('.phone-identity-kind')).toHaveText('Claude')
+    await expect(identity).toHaveAccessibleName(/quota reached/i)
+    const layout = await identity.evaluate(el => {
+      const title = el.querySelector<HTMLElement>('.phone-identity-title')!
+      const kind = el.querySelector<HTMLElement>('.phone-identity-kind')!
+      const style = getComputedStyle(title)
+      const r = el.getBoundingClientRect()
+      return {
+        ellipsis: title.scrollWidth > title.clientWidth && style.textOverflow === 'ellipsis',
+        kindFits: kind.scrollWidth <= kind.clientWidth,
+        left: r.left, right: r.right,
+        actionsLeft: el.parentElement!.querySelector('.agent-actions')!.getBoundingClientRect().left,
+      }
+    })
+    expect(layout.ellipsis).toBe(true)
+    expect(layout.kindFits).toBe(true)
+    expect(layout.left).toBeGreaterThanOrEqual(44)
+    expect(layout.right).toBeLessThanOrEqual(layout.actionsLeft)
+    // A lone pane has no pane list in the sheet: its own line keeps the full,
+    // unclipped name and the state (not the space name, which matches here).
+    await identity.click()
+    const current = page.locator('.phone-identity-details .phone-identity-current')
+    await expect(current.locator('.phone-identity-current-title')).toHaveText(LONG_NAME)
+    await expect(current.locator('.pill')).toHaveText(/quota reached/i)
+    await expect(current).toContainText('Claude')
+    expect(await current.locator('.phone-identity-current-title').evaluate(el => el.scrollWidth <= el.clientWidth && getComputedStyle(el).textOverflow !== 'ellipsis')).toBe(true)
+    await page.screenshot({ path: `.shots/agent-header-long-name-sheet-${info.project.name}.png` })
+    return
+  }
   await expect(top.locator('.agent-title')).toHaveText(LONG_NAME)
   await expect(top.locator('.agent-meta .pill')).toHaveText(/quota reached·claude/i)
 

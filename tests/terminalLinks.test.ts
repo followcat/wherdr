@@ -135,6 +135,14 @@ describe('terminal link destinations', () => {
     expect(b.assign).not.toHaveBeenCalled()
     expect(b.open).not.toHaveBeenCalled()
   })
+  it('navigates other same-origin paths or query strings in the same window', () => {
+    const b = browser()
+    openTerminalLink('https://app.example.com/help?from=terminal')
+    expect(b.assign).toHaveBeenCalledWith('https://app.example.com/help?from=terminal')
+    expect(b.open).not.toHaveBeenCalled()
+    openTerminalLink('https://app.example.com/?view=help')
+    expect(b.assign).toHaveBeenLastCalledWith('https://app.example.com/?view=help')
+  })
   it('keeps external sites and mouse modifier clicks in a separate tab', () => {
     const b = browser()
     openTerminalLink('https://other.example.com/docs')

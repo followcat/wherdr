@@ -20,7 +20,7 @@ export type PanelTarget =
   | { machine: string, kind: 'coordinator', to: CoordinatorTarget, freshProject?: boolean }
 
 // `reachable`: its machine's board answers now (a message waits while it does not).
-const props = defineProps<{ overlay?: boolean, target: PanelTarget, task: TaskRow | null, machineLabel: string, reachable?: boolean, refresh?: () => Promise<unknown>, refreshKey?: number }>()
+const props = defineProps<{ overlay?: boolean, backLabel?: string, target: PanelTarget, task: TaskRow | null, machineLabel: string, reachable?: boolean, refresh?: () => Promise<unknown>, refreshKey?: number }>()
 const desk = computed(() => desktop.value && !props.overlay)
 // A switch's action: the Scheduled section reads the Autopilot again.
 const { actions: autopilotActions } = useAutopilot()
@@ -610,7 +610,7 @@ const style = computed(() => (!desk.value && kbOpen.value ? { height: `${vvHeigh
     <header class="board-panel-head" :class="activityClass">
       <UButton
         v-if="!desk" icon="i-lucide-chevron-left" color="neutral" variant="ghost" size="lg" class="icon-btn board-panel-back"
-        :aria-label="tl('Back to the Board', 'Retour au Board')" @click="emit('close')"
+        :aria-label="backLabel || tl('Back to the Board', 'Retour au Board')" @click="emit('close')"
       />
       <div class="board-panel-who">
         <p class="board-panel-path">

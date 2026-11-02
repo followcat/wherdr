@@ -1,7 +1,8 @@
 import { expect, test } from './test'
 import fs from 'node:fs/promises'
 
-for (const language of ['en', 'fr']) {
+test.describe('English interface', () => {
+  const language = 'en'
   for (const compact of [true, false]) {
     test(`state grouping, ${language}, ${compact ? 'compact' : 'normal'}`, async ({ page }) => {
       await expect.poll(async () => (await (await page.request.get('/api/state')).json()).ok).toBe(true)
@@ -36,7 +37,7 @@ for (const language of ['en', 'fr']) {
       await expect(page.locator('section.machine')).toHaveCount(4)
       await expect(page.locator('.project-tree .card', { hasText: 'DEMO-1' })).toBeVisible()
       await page.goto('/#/settings?section=appearance')
-      await page.getByRole('radio', { name: language === 'fr' ? 'État' : 'State', exact: true }).check()
+      await page.getByRole('radio', { name: 'State', exact: true }).check()
       await page.goto('/')
       const tasks = page.locator('.state-group.blocked .task-row')
       await expect(tasks).toHaveCount(2)
@@ -53,11 +54,11 @@ for (const language of ['en', 'fr']) {
       await expect(page.locator('.state-machine')).toHaveText([/Server/, /Laptop/])
       const away = page.locator('.state-away-item')
       await expect(away).toHaveCount(2)
-      await expect(away.nth(0)).toContainText(language === 'fr' ? 'hors ligne' : 'offline')
+      await expect(away.nth(0)).toContainText('offline')
       await expect(away.nth(0)).toContainText('Sleeping')
       await expect(away.nth(0).locator('.state-away-known')).toHaveText('1')
       await expect(away.nth(1)).toHaveClass(/connecting/)
-      await expect(away.nth(1)).toContainText(language === 'fr' ? 'reconnexion' : 'reconnecting')
+      await expect(away.nth(1)).toContainText('reconnecting')
       expect(await page.locator('.state-away').evaluate(el => {
         const groups = [...document.querySelectorAll('.state-group')]
         return groups.every(g => g.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)
@@ -68,11 +69,11 @@ for (const language of ['en', 'fr']) {
       })).toBe(true)
       // A machine's own menu stays reachable from its chip.
       await page.locator('.state-machine-chip', { hasText: 'Laptop' }).click()
-      await expect(page.getByRole('menuitem', { name: language === 'fr' ? 'Sessions Herdr' : 'Herdr sessions' })).toBeVisible()
-      await expect(page.getByRole('menuitem', { name: language === 'fr' ? 'Ouvrir le board' : 'Open the board' })).toBeVisible()
+      await expect(page.getByRole('menuitem', { name: 'Herdr sessions' })).toBeVisible()
+      await expect(page.getByRole('menuitem', { name: 'Open the board' })).toBeVisible()
       await page.keyboard.press('Escape')
       await away.nth(0).click()
-      await expect(page.getByRole('menuitem', { name: language === 'fr' ? 'État de la connexion' : 'Connection status' })).toBeVisible()
+      await expect(page.getByRole('menuitem', { name: 'Connection status' })).toBeVisible()
       await page.keyboard.press('Escape')
       await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
       expect(await page.locator('.state-away').evaluate(el => new Set([...el.children].map(c => Math.round(c.getBoundingClientRect().top))).size)).toBe(1)
@@ -102,4 +103,4 @@ for (const language of ['en', 'fr']) {
       await expect(page.locator('section.machine')).toHaveCount(1)
     })
   }
-}
+})

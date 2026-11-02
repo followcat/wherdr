@@ -4,6 +4,7 @@ import { OMP_SHELL_PANE } from './scenario.mjs'
 // omp writes nothing for a "!" command cancelled before its first prompt: the
 // message must not come back as "Queued · sending…" once the run is gone.
 test('Stop cancels an omp "!" command and the message does not go back to the queue', async ({ page }) => {
+  await page.clock.install()
   await page.goto(`/#/a/${OMP_SHELL_PANE}`)
   const field = page.locator('.prompt').locator('textarea, [contenteditable="true"]').first()
   await expect(field).toBeEditable()
@@ -25,7 +26,9 @@ test('Stop cancels an omp "!" command and the message does not go back to the qu
   // Observe actual conversation polls: a fixed sleep can finish before even
   // one response on a slow machine. Nothing returns to the queue in between.
   for (let poll = 0; poll < 3; poll++) {
-    const update = await page.waitForResponse(r => new URL(r.url()).pathname === '/api/chat' && new URL(r.url()).searchParams.get('pane') === OMP_SHELL_PANE)
+    const next = page.waitForResponse(r => new URL(r.url()).pathname === '/api/chat' && new URL(r.url()).searchParams.get('pane') === OMP_SHELL_PANE)
+    await page.clock.fastForward(2000)
+    const update = await next
     expect(update.ok()).toBe(true)
     await update.finished()
     await expect(page.locator('.msg-pending')).toHaveCount(0)

@@ -2,14 +2,15 @@ import { expect, test } from './test'
 
 for (const device of ['desktop', 'phone']) test.describe(device, () => {
   if (device === 'desktop') test.use({ viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false, userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36' })
-  for (const language of ['en', 'fr']) {
+  test.describe('English interface', () => {
+    const language = 'en'
     test(`Conversation preference and inline shortcuts (${language})`, async ({ page }) => {
       test.setTimeout(60_000)
       await page.addInitScript(l => localStorage.setItem('herdrLanguage', l), language)
       await page.goto('/#/settings?section=conversation')
       const desktop = await page.evaluate(() => matchMedia('(min-width: 900px)').matches && !matchMedia('(pointer: coarse)').matches)
-      const title = language === 'fr' ? 'Vue par défaut du volet' : 'Default pane view'
-      const shortcuts = language === 'fr' ? 'Raccourcis' : 'Shortcuts'
+      const title = 'Default pane view'
+      const shortcuts = 'Shortcuts'
       const group = page.locator('.settings-group').filter({ has: page.getByRole('heading', { name: title, exact: true }) })
       await expect(group).toBeVisible()
       await group.getByRole('radio', { name: /Terminal/ }).check()
@@ -17,7 +18,7 @@ for (const device of ['desktop', 'phone']) test.describe(device, () => {
       await page.screenshot({ path: `.shots/settings-conversation-${language}-${desktop ? 'desktop' : 'phone'}.png` })
       await page.goto('/#/settings')
       const nav = page.locator('.settings-nav')
-      await expect(nav).not.toContainText(language === 'fr' ? 'Ordinateur' : 'Desktop')
+      await expect(nav).not.toContainText('Desktop')
       const link = nav.getByRole('button', { name: shortcuts, exact: true })
       if (desktop) {
         await link.click()
@@ -40,5 +41,5 @@ for (const device of ['desktop', 'phone']) test.describe(device, () => {
         await expect(group).toBeVisible()
       }
     })
-  }
+  })
 })
