@@ -45,12 +45,13 @@ export const SHORTCUTS: readonly Shortcut[] = [
   // the key left of 1 as IntlBackslash (elsewhere it is the < key next to Shift).
   { id: 'toggle-term', mods: ['ctrl'], codes: ['Backquote'], macCodes: ['Backquote', 'IntlBackslash'], fields: 'any', terminal: true, kbds: ['ctrl', '`'] },
   { id: 'stop', mods: [], key: 'escape', fields: 'empty', terminal: false, kbds: ['escape'] },
-  { id: 'prev-agent', mods: ['alt'], key: 'arrowup', fields: 'empty', terminal: false, repeat: true, kbds: ['alt', 'arrowup'] },
-  { id: 'next-agent', mods: ['alt'], key: 'arrowdown', fields: 'empty', terminal: false, repeat: true, kbds: ['alt', 'arrowdown'] },
-  // Space tabs (the chips above a pane): previous / next, as shown. Taken
-  // before everything — Alt+←/→ is the browser's Back/Forward, so fields and
-  // the terminal must not see it either (caught at capture, like Mod+Alt).
-  // (macOS: this takes ⌥←/→ word jumps out of text fields — personal fork.)
+  // Alt+arrows are global navigation in this fork — agents ↕, space tabs ↔.
+  // Taken at capture before fields and the terminal: Alt+←/→ is the browser's
+  // Back/Forward, and a focused xterm would otherwise eat Alt+↑/↓ and make
+  // agent stepping look stuck. Programs lose their own alt-arrow bindings
+  // (macOS: also ⌥-arrow word jumps in fields) — accepted for this fork.
+  { id: 'prev-agent', mods: ['alt'], key: 'arrowup', fields: 'any', terminal: true, capture: true, repeat: true, kbds: ['alt', 'arrowup'] },
+  { id: 'next-agent', mods: ['alt'], key: 'arrowdown', fields: 'any', terminal: true, capture: true, repeat: true, kbds: ['alt', 'arrowdown'] },
   { id: 'prev-tab', mods: ['alt'], key: 'arrowleft', fields: 'any', terminal: true, capture: true, repeat: true, kbds: ['alt', 'arrowleft'] },
   { id: 'next-tab', mods: ['alt'], key: 'arrowright', fields: 'any', terminal: true, capture: true, repeat: true, kbds: ['alt', 'arrowright'] },
   // Ctrl/⌘+N, T, W belong to the browser (pages never see them in Chromium).
