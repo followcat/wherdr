@@ -25,8 +25,8 @@ fixture = json.loads(sys.argv[3])
 class Response(io.BytesIO):
     status = 200
 class Peer:
+    patched = None
     def open(self, req, timeout=None):
-        assert req.get_method() == 'GET'
         expected = 'Basic ' + base64.b64encode(('opencode:' + fixture.get('password', 'fixture-password')).encode()).decode()
         assert req.get_header('Authorization') == expected
         url = urllib.parse.urlsplit(req.full_url)
@@ -34,10 +34,22 @@ class Peer:
             return Response(json.dumps({'version': fixture.get('version', '2.0.27'), 'pid': fixture.get('pid', 10)}).encode())
         if url.path == '/api/event':
             return Response(('event: message' + chr(10) + 'data: ' + json.dumps(json.dumps({'type': 'session.revert.committed'})) + chr(10) * 2).encode())
+        if url.path == '/api/model':
+            assert req.get_method() == 'GET'
+            return Response(json.dumps(fixture.get('models', {'data': []})).encode())
         assert url.path.startswith('/api/session/ses_example')
+        if req.get_method() == 'PATCH':
+            # Only {"model": {...}} may leave the helper; echo it on the verify GET.
+            Peer.patched = json.loads((req.data or b'{}').decode())
+            if set(Peer.patched) != {'model'}: raise urllib.error.HTTPError(req.full_url, 400, 'fixture', {}, None)
+            return Response(b'')
+        assert req.get_method() == 'GET'
         if fixture.get('status'):
             raise urllib.error.HTTPError(req.full_url, fixture['status'], 'fixture', {}, None)
-        return Response(json.dumps(fixture.get('response', {'data': {'id': 'ses_example'}})).encode())
+        resp = fixture.get('response', {'data': {'id': 'ses_example'}})
+        if Peer.patched and 'model' in Peer.patched:
+            resp = {'data': dict(resp.get('data', {}), model=Peer.patched['model'])}
+        return Response(json.dumps(resp).encode())
 def build(*handlers):
     assert any(isinstance(h, urllib.request.ProxyHandler) and h.proxies == {} for h in handlers)
     assert any(type(h).__name__ == 'NoRedirect' and h.redirect_request(None) is None for h in handlers)
@@ -115,4 +127,22 @@ it('uses debug paths only when discovery needs it, without starting a service', 
   const bin = path.join(home, '.opencode/bin'); mkdirSync(bin, { recursive: true })
   writeFileSync(path.join(bin, 'opencode'), `#!/bin/sh\n[ "$1 $2 $3" = 'debug paths state' ] || exit 99\nprintf '%s\\n' '${custom}/opencode'\n`, { mode: 0o755 })
   expect((await read(home))[0]).toMatchObject({ status: 200 })
+})
+
+it('PATCHes only a whitelisted model body, then returns the verified session', async () => {
+  const { home } = fixture()
+  const model = { id: 'deepseek-v4.1-flash', providerID: 'opencode-go', variant: 'max' }
+  const [r] = await read(home, { session: 'ses_example', op: 'model', model })
+  expect(r).toMatchObject({ status: 200, data: { data: { model } } })
+  // Extra or missing fields are refused before any request goes out.
+  expect(await read(home, { session: 'ses_example', op: 'model', model: { id: 'x', providerID: 'y', hack: true } })).toEqual([{ error: 'Invalid OpenCode model' }])
+  expect(await read(home, { session: 'ses_example', op: 'model', model: { id: 'x' } })).toEqual([{ error: 'Invalid OpenCode model' }])
+  expect(await read(home, { session: 'ses_example', op: 'model', model: 'str' })).toEqual([{ error: 'Invalid OpenCode model' }])
+})
+
+it('reads the model catalog without a session', async () => {
+  const { home } = fixture()
+  const models = { data: [{ id: 'iceman-free', providerID: 'opencode-go', name: 'Iceman Free' }] }
+  const [r] = await read(home, { session: 'ses_example', op: 'models' }, { models })
+  expect(r).toMatchObject({ status: 200, data: models })
 })
