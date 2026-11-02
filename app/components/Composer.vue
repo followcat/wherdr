@@ -233,7 +233,8 @@ onBeforeUnmount(() => {
 
 // Voice input (utils/asrModel.ts): the mic stays dim until the model is
 // cached on this device. A recording belongs to this pane's draft — leaving
-// the pane disposes the worker, so a result never lands in another draft.
+// the pane drops the take, so a result never lands in another draft; the
+// loaded engine is shared and stays warm across panes.
 const sp = useSpeech()
 onMounted(() => { refreshAsrInstalled() })
 onBeforeUnmount(() => sp.dispose())
