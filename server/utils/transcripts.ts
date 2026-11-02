@@ -740,7 +740,7 @@ function commandCodeTool(name: string, input: Json): string {
   }
 }
 
-export type CommandCodeResult = { out?: string, error?: boolean, images?: number, ref?: string, imageAt?: number }
+export type CommandCodeResult = { out?: string, error?: boolean, images?: number, ref?: string, imageAt?: number, at?: number }
 
 export function parseCommandCode(lines: Lines, results?: Map<string, CommandCodeResult>): Parsed {
   const items: Parsed = []
@@ -837,6 +837,7 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
           const rec: CommandCodeResult = {}
           if (out) rec.out = clip(out, 8000)
           if (part.is_error) rec.error = true
+          if (ref) rec.at = Number(ref.split(':')[0])
           if (n && ref) {
             rec.images = n
             rec.ref = ref
@@ -980,7 +981,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
       cmdResults.set(file, m)
       if (cmdResults.size > 64) {
         const oldest = cmdResults.keys().next().value!
-        cmdResults.delete(oldest)
+        forgetCmdFile(oldest)
         cmdSizes.delete(oldest)
       }
     }
@@ -1026,6 +1027,21 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
   function forgetCmdFile(file: string) {
     cmdResults.delete(file)
     for (const key of [...parseCache.keys()]) if (key.startsWith(`${file}|`)) parseCache.delete(key)
+  }
+
+  // A larger same-inode file may still be an in-place rewrite: the remembered
+  // result lines must still carry the same tool_use_id before keeping them.
+  async function cmdResultsValid(file: string): Promise<boolean> {
+    const results = cmdResults.get(file)
+    if (!results || !results.size) return true
+    for (const [id, r] of results) {
+      if (r.at === undefined) return false
+      try {
+        const text = (await fs.read(file, r.at, 4096)).toString('utf8')
+        if (!text.includes('tool_result') || !text.includes(id)) return false
+      } catch { return true } // transient read failure: keep, do not lose output
+    }
+    return true
   }
   const metaCache = new Map<string, Json>()
   // omp file commands of this machine (see parseOmp), re-read every 5 min.
@@ -1473,7 +1489,8 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
         || (prev.ino !== undefined && st.ino !== undefined && prev.ino !== st.ino)
         || (st.size === prev.size && prev.gen !== g)
       )
-      if (replaced) forgetCmdFile(loc.file)
+      const grewInPlace = prev && st.size > prev.size && prev.ino === st.ino
+      if (replaced || (grewInPlace && !await cmdResultsValid(loc.file))) forgetCmdFile(loc.file)
       cmdSizes.set(loc.file, { size: st.size, gen: g, ino: st.ino })
       if (cmdSizes.size > 64) cmdSizes.delete(cmdSizes.keys().next().value!)
     }
