@@ -11,6 +11,39 @@ export function nextTail(tail: ChatItem[], r: Pick<ChatResponse, 'items' | 'keep
   return r.keep === tail.length && !items.length ? tail : tail.slice(0, r.keep).concat(items)
 }
 
+// Apply Command Code results that arrived after their tool call was already
+// shown (a page older than the re-read tail): the client keeps those pages,
+// so the matching item is updated in place instead of waiting for a reopen.
+export function applyToolUpdates(items: ChatItem[], updates: CommandCodeToolUpdate[] | undefined): ChatItem[] {
+  if (!updates?.length || !items.length) return items
+  const byId = new Map(updates.map(u => [u.id, u]))
+  return items.map((it) => {
+    const u = it.toolId ? byId.get(it.toolId) : undefined
+    if (!u) return it
+    return {
+      ...it,
+      ...(u.out !== undefined ? { out: u.out } : {}),
+      ...(u.error ? { error: true } : {}),
+      ...(u.images ? { images: u.images, ref: u.ref, imageAt: u.imageAt } : {}),
+    }
+  })
+}
+
+// Keep tool updates whose call is not on screen yet (an older page is still
+// in flight): the page arrives with the stale call, and the pending update is
+// applied when it is inserted. Bounded so a long session cannot grow them.
+export function retainToolUpdates(pending: Map<string, CommandCodeToolUpdate>, items: ChatItem[], updates: CommandCodeToolUpdate[] | undefined): void {
+  if (!updates?.length) return
+  const shown = new Set(items.map(i => i.toolId).filter(Boolean))
+  for (const u of updates) {
+    if (shown.has(u.id)) pending.delete(u.id)
+    else {
+      pending.set(u.id, u)
+      if (pending.size > 256) pending.delete(pending.keys().next().value!)
+    }
+  }
+}
+
 // Whether a reply means starting again from the bottom, dropping the older
 // pages loaded above: another file (/clear, new session), or a bottom the
 // server read from another byte. The latter happens when the file grew more
