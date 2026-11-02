@@ -961,10 +961,18 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
   // the call's page applies them when it is read. Scoped per transcript so a
   // truncated or another session's call id cannot resurrect an old result.
   const cmdResults = new Map<string, Map<string, CommandCodeResult>>()
-  const cmdSizes = new Map<string, { size: number, gen: string }>()
+  const cmdSizes = new Map<string, { size: number, gen: string, ino?: number }>()
   function cmdResultsFor(file: string) {
     let m = cmdResults.get(file)
-    if (!m) { m = new Map(); cmdResults.set(file, m) }
+    if (!m) {
+      m = new Map()
+      cmdResults.set(file, m)
+      if (cmdResults.size > 64) {
+        const oldest = cmdResults.keys().next().value!
+        cmdResults.delete(oldest)
+        cmdSizes.delete(oldest)
+      }
+    }
     return m
   }
   // File -> state (size, generation) and when this server first saw it, for
@@ -1443,8 +1451,14 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
       // page; a still-growing file keeps them.
       const prev = cmdSizes.get(loc.file)
       const g = genOf(st)
-      if (prev && (st.size < prev.size || (st.size === prev.size && prev.gen !== g))) cmdResults.delete(loc.file)
-      cmdSizes.set(loc.file, { size: st.size, gen: g })
+      const replaced = prev && (
+        st.size < prev.size
+        || (prev.ino !== undefined && st.ino !== undefined && prev.ino !== st.ino)
+        || (st.size === prev.size && prev.gen !== g)
+      )
+      if (replaced) cmdResults.delete(loc.file)
+      cmdSizes.set(loc.file, { size: st.size, gen: g, ino: st.ino })
+      if (cmdSizes.size > 64) cmdSizes.delete(cmdSizes.keys().next().value!)
     }
     const base = { available: true, file: fileId, session: loc.session, guessed: Boolean(loc.guessed) }
     // The transcript path tells the real kind: a pane whose agent changed while
@@ -1479,7 +1493,10 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
       || (same && st.size < prev.size)
       || (same && st.size === prev.size && prev.gen !== gen)
       || (same && prev.unsettled && !await stillThere(loc.file, prev)))
-    if (rewritten) r = await tail(loc.file, kind, st.size, gen, null, settled)
+    if (rewritten) {
+      if (kind === 'cmd') cmdResults.delete(loc.file)
+      r = await tail(loc.file, kind, st.size, gen, null, settled)
+    }
     const mark = `${head}${settled ? '' : '!'}`
     const token = r.anchor ? `${mark}/${r.start}.${r.anchor}` : mark
     return { ...base, token, items: r.items, start: r.start, queue: r.queue || [], ...(r.popped?.length ? { popped: r.popped } : {}), ...(rewritten ? { rewritten: true } : {}) }
@@ -1631,10 +1648,12 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
       // Cache the "no usage yet" answer too: a new session with no assistant
       // turn must not rescan the file every five seconds.
       cmdStatsCache.set(pane.id, { file: loc.file, size, gen, stats: null, session: loc.session })
+      if (cmdStatsCache.size > 256) cmdStatsCache.delete(cmdStatsCache.keys().next().value!)
       return { status: null, session: loc.session }
     }
     const status: CommandCodeStatus = { contextTokens: context, costUsd: cost }
     cmdStatsCache.set(pane.id, { file: loc.file, size, gen, stats: status, session: loc.session })
+    if (cmdStatsCache.size > 256) cmdStatsCache.delete(cmdStatsCache.keys().next().value!)
     return { status, session: loc.session }
   }
 
