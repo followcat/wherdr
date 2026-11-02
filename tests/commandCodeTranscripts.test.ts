@@ -29,12 +29,14 @@ it('reads a Command Code session: messages, thinking, tools and their results', 
       { type: 'text', text: 'I will inspect the form.' },
       { type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'rg login' } },
       { type: 'tool_use', id: 'call_2', name: 'edit_file', input: { file_path: 'src/login.ts' } },
-    ], { ms: 2000, usage: { inputTokens: 120, outputTokens: 20, costUsd: 0.004 } }),
+    ], { ms: 2000, usage: { inputTokens: 120, cacheReadTokens: 80, outputTokens: 20, costUsd: 0.004 } }),
     commandCodeToolResults('u2', 'a1', [
       { tool_use_id: 'call_1', content: [{ type: 'text', text: 'src/login.ts:12' }] },
       { tool_use_id: 'call_2', content: [{ type: 'text', text: 'patched' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: commandCodePNG } }] },
     ], 3000),
     commandCodeAssistant('a2', 'u2', [{ type: 'text', text: 'Fixed.' }], { model: 'example/model-b', ms: 4000 }),
+    commandCodeUser('hidden', 'a2', 'Monitor wake-up: check the queue', 5000, { isMeta: true }),
+    { type: 'message', id: 'hidden-string', parentId: 'a2', timestamp: '2026-01-01T00:00:06.000Z', message: { role: 'user', content: 'Hidden string automation', meta: { source: 'user', isMeta: true } } },
   ]
   writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
 
@@ -55,14 +57,35 @@ it('reads a Command Code session: messages, thinking, tools and their results', 
   expect(edit.images).toBe(1)
   expect(JSON.stringify(r)).not.toContain('private-signature')
   expect((await reader.model(pane))?.id).toBe('example/model-b')
+  // The 120 input tokens already include the 80 cached ones.
   expect(await reader.commandCodeStats(pane)).toMatchObject({
     line: expect.stringContaining('Command Code'),
     meters: expect.stringContaining('120 context'),
   })
+  expect(r.items!.some(i => i.text.includes('Monitor wake-up'))).toBe(false)
+  expect(r.items!.some(i => i.text.includes('Hidden string automation'))).toBe(false)
 
   const img = await reader.image(pane, r.file!, edit.ref!, 0)
   expect(img?.type).toBe('image/png')
   expect(img?.body.equals(Buffer.from(commandCodePNG, 'base64'))).toBe(true)
+})
+
+it('finds the last usage through a trailing record larger than the status window', async () => {
+  const { home, reader } = fixture()
+  const big = 'x'.repeat(300 * 1024)
+  writeCommandCodeSession(home, {
+    id: 'sess-1', cwd: pane.cwd, lines: [
+      commandCodeSession('sess-1', pane.cwd),
+      commandCodeUser('u1', null, 'Take a screenshot', 1000),
+      commandCodeAssistant('a1', 'u1', [
+        { type: 'tool_use', id: 'call_1', name: 'read_file', input: { file_path: 'shot.png' } },
+      ], { ms: 2000, usage: { inputTokens: 1000, cacheReadTokens: 800, costUsd: 0.002 } }),
+      commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: big }] }], 3000),
+    ],
+  })
+  const stats = await reader.commandCodeStats(pane)
+  expect(stats?.meters).toContain('1.0k context')
+  expect(stats?.meters).not.toContain('1.8k')
 })
 
 it('marks a failed tool result', async () => {

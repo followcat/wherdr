@@ -401,7 +401,12 @@ function refreshCmdStatus(p: Pane) {
   if (cmdStatusBusy.has(p.id)) return
   cmdStatusBusy.add(p.id)
   transcripts.commandCodeStats(p)
-    .then((status) => { cmdStatuses.set(p.id, { status, at: Date.now() }) })
+    .then((status) => {
+      // A cut trailing record returns null: keep the last good line instead
+      // of dropping the composer status on every oversized screenshot.
+      const old = cmdStatuses.get(p.id)?.status ?? null
+      cmdStatuses.set(p.id, { status: status ?? old, at: Date.now() })
+    })
     .catch(() => {})
     .finally(() => cmdStatusBusy.delete(p.id))
 }

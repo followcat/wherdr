@@ -17,10 +17,10 @@ export function commandCodeModel(model, ms = 0) {
   return { type: 'model_change', id: `model-${ms}`, parentId: null, timestamp: at(ms), model }
 }
 
-export function commandCodeUser(id, parentId, text, ms = 0) {
+export function commandCodeUser(id, parentId, text, ms = 0, meta = {}) {
   return {
     type: 'message', id, parentId, timestamp: at(ms),
-    message: { role: 'user', content: [{ type: 'text', text }], meta: { source: 'user', createdAt: created(ms) } },
+    message: { role: 'user', content: [{ type: 'text', text }], meta: { source: 'user', createdAt: created(ms), ...meta } },
   }
 }
 
