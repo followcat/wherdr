@@ -3,68 +3,41 @@ import { buildAsrContext } from '../app/utils/asrContext'
 
 describe('buildAsrContext', () => {
   it('is empty without any input', () => {
-    expect(buildAsrContext({})).toBe('')
     expect(buildAsrContext({ draft: '' })).toBe('')
   })
-
-  it('leads with pane identity terms', () => {
-    const ctx = buildAsrContext({ agent: 'devin', machine: 'fvps', name: 'wherdr-mobile' })
-    expect(ctx).toBe('devin, fvps, wherdr-mobile')
+  it.each([
+    '这里有一个新的名字，要保持原来的拼写。',
+    '呢个编号同名称都保留原文。',
+    'Réviser le numéro et le nom du projet.',
+    'Keep the names, numbers 317 and punctuation as written.',
+    '名前と番号はそのまま使ってください。',
+  ])('keeps source text intact without a language-specific vocabulary: %s', draft => {
+    expect(buildAsrContext({ draft })).toBe(draft)
   })
-
-  it('harvests technical tokens from the draft', () => {
-    const ctx = buildAsrContext({ draft: 'check terminalTouch in Composer.vue and restart wherdr.service' })
-    expect(ctx).toContain('terminalTouch')
-    expect(ctx).toContain('Composer.vue')
-    expect(ctx).toContain('wherdr.service')
+  it('includes recent source text in newest-first order', () => {
+    const recent = ['Older topic', 'A previous message', 'Current topic: AlphaBeta 317']
+    const ctx = buildAsrContext({ recent })
+    expect(ctx).toContain(recent[2])
+    expect(ctx.indexOf(recent[2]!)).toBeLessThan(ctx.indexOf(recent[1]!))
   })
-
-  it('drops common english words and short tokens', () => {
-    expect(buildAsrContext({ draft: 'can you check the thing and fix it up for me' })).toBe('')
+  it('bounds history by recency instead of collecting unrelated old words', () => {
+    const ctx = buildAsrContext({ recent: ['OutdatedSubject', 'First', 'Second', 'Latest'] })
+    expect(ctx).not.toContain('OutdatedSubject')
+    expect(ctx).toContain('Latest')
   })
-
-  it('uses cwd tail segments only', () => {
-    const ctx = buildAsrContext({ cwd: '~/AIcontrol/phone/wherdr' })
-    expect(ctx).toContain('phone')
-    expect(ctx).toContain('wherdr')
-    expect(ctx).not.toContain('AIcontrol') // tail two only
+  it('preserves identity and file spellings while omitting the private cwd prefix', () => {
+    const ctx = buildAsrContext({ agent: 'agent-a', machine: 'Laptop', name: 'Équipe', cwd: '/home/user/projects/acme', files: ['data_model.ts'] })
+    for (const s of ['agent-a', 'Laptop', 'Équipe', 'projects/acme', 'data_model.ts']) expect(ctx).toContain(s)
+    expect(ctx).not.toContain('/home/user')
   })
-
-  it('keeps non-ASCII pane names via identity fields', () => {
-    const ctx = buildAsrContext({ name: 'Réunion-Équipe', machine: 'böx' })
-    expect(ctx).toContain('Réunion-Équipe')
-    expect(ctx).toContain('böx')
+  it('keeps room for history when the draft is long and does not cut Unicode pairs', () => {
+    const ctx = buildAsrContext({ draft: '🙂'.repeat(500), recent: ['RecentTerm'], name: 'NamedProject' })
+    expect(ctx.length).toBeLessThanOrEqual(400)
+    expect(ctx).toContain('RecentTerm')
+    expect(ctx).toContain('NamedProject')
+    expect(ctx.isWellFormed()).toBe(true)
   })
-
-  it('dedupes case-insensitively keeping first surface form', () => {
-    const ctx = buildAsrContext({ name: 'WherDr', draft: 'wherdr WHERDR' })
-    expect((ctx.match(/wherdr/gi) || []).length).toBe(1)
-  })
-
-  it('weights draft terms over transcript ones', () => {
-    const ctx = buildAsrContext({
-      draft: 'scrollback bug',
-      recent: ['zzzzZebra'],
-    })
-    // draft weight (3) beats transcript weight (1)
-    expect(ctx.indexOf('scrollback')).toBeLessThan(ctx.indexOf('zzzzZebra'))
-  })
-
-  it('harvests attachment file names', () => {
-    const ctx = buildAsrContext({ files: ['prompt_config.json', '/tmp/asr-worker.js'] })
-    expect(ctx).toContain('prompt_config.json')
-    expect(ctx).toContain('asr-worker.js')
-  })
-
-  it('caps at 30 terms', () => {
-    const draft = Array.from({ length: 60 }, (_, i) => `TechWord${i}xx`).join(' ')
-    const ctx = buildAsrContext({ draft })
-    expect(ctx.split(', ').length).toBe(30)
-  })
-
-  it('strips punctuation edges off tokens', () => {
-    const ctx = buildAsrContext({ draft: 'edit ./asrContext.ts, then run.' })
-    expect(ctx).toContain('asrContext.ts')
-    expect(ctx).not.toMatch(/,\./)
+  it('deduplicates identical source paragraphs without inventing vocabulary', () => {
+    expect(buildAsrContext({ draft: 'Same paragraph', recent: ['Same paragraph'] })).toBe('Same paragraph')
   })
 })

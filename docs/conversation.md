@@ -49,6 +49,11 @@
   pane and opens a new one for the same agent (the same conversation, or the same herdr-projects
   coordinator or task, as after `coordinator restart`), the view moves to the new pane and the
   draft comes along. A pane closed for good keeps it under its banner, with **Copy draft**.
+- **On-device voice input**: install a speech model in Settings › Conversation, then use
+  the microphone beside the message field. Context-capable models receive a bounded snapshot
+  of the draft, pane information, attachment names and the last three messages sent from this
+  device to this pane. Source text keeps its original words, numbers and writing system.
+  Context is a recognition hint; it does not guarantee a spelling or number format.
 - **Model and effort pickers** for Claude Code, Codex and omp (omp: its
   "Switch Model" selector, `/switch` or `/model`, and its thinking level, changed with its own
   ⇧⇥ cycle). Changes apply **to the current session only**; wherdr never changes your default
