@@ -1221,14 +1221,12 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     // bounded whatever the session size.
     const CAP = 4 * 1024 * 1024
     if (end - first > CAP) {
-      let start = end
+      // Compare every candidate against the fixed end: adjacent records may
+      // be close while the whole watched span is much larger than the cap.
       let i = all.length - 1
-      for (; i >= 0; i--) {
-        if (start - all[i]!.at > CAP) break
-        start = all[i]!.at
-      }
-      selected = all.slice(i + 1)
-      first = start
+      while (i > 0 && end - all[i - 1]!.at <= CAP) i--
+      selected = all.slice(i)
+      first = selected[0]!.at
     }
     let buf: Buffer
     try { buf = await fs.read(file, first, end - first) } catch { return true }
@@ -1783,14 +1781,17 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     const at = anchorOf(sent)
     // A list read before its state settled (whole-second mtimes): rewritten
     // within that second if its part of the file changed since.
-    const rewritten = staleState || (from !== null && from > 0 && at !== null && at.start === from && (cmdInvalidated
+    const fileRewritten = from !== null && from > 0 && at !== null && at.start === from && (cmdInvalidated
       || r.anchor !== at.hash
       || (same && prev.ino !== null && st.ino !== undefined && prev.ino !== st.ino)
       || (same && st.size < prev.size)
       || (same && st.size === prev.size && prev.gen !== gen)
-      || (same && prev.unsettled && !await stillThere(loc.file, prev))))
+      || (same && prev.unsettled && !await stillThere(loc.file, prev)))
+    const rewritten = staleState || fileRewritten
     if (rewritten) {
-      if (kind === 'cmd') forgetCmdFile(loc.file)
+      // A stale token only means this client must reload; it must not erase
+      // results another client collected from the unchanged transcript.
+      if (kind === 'cmd' && fileRewritten) forgetCmdFile(loc.file)
       r = await tail(loc.file, kind, st.size, gen, null, settled)
     }
     const mark = `${head}${settled ? '' : '!'}`
