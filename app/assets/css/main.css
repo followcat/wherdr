@@ -1844,7 +1844,10 @@ body.kb .composer { padding-bottom: 8px; }
 /* omp status line below the field: one line, cut, gauges on the right. */
 .composer-status { display: flex; gap: 12px; padding: 5px 2px 0; min-width: 0; font: 400 11px/1.3 var(--mono); color: var(--muted); white-space: nowrap; }
 .composer-status-line { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.composer-status-meters { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
+/* The right half carries the live numbers (context gauge, cost): it keeps its
+   width while the model/mode half gives way — ellipsizing both left "3…" and
+   "tok…" halves read as nothing. An over-wide meter alone still ellipsizes. */
+.composer-status-meters { flex: 0 0 auto; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
 /* Clickable line ("Restart to update") and restart progress. */
 .composer-notice:has(.notice-btn), .composer-notice.restart {
   display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0;
