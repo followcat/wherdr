@@ -154,6 +154,9 @@ export interface Pane {
   // Devin, conversation shown: its composer screen — own queue ("○" rows),
   // last echoed message, send-now (see server/utils/devinScreen.ts).
   devinScreen?: ClaudeScreen
+  // Devin's composer footer (model · mode · shells + context gauge), parsed
+  // like omp's status — Composer shows whichever is set (server/utils/devinScreen.ts).
+  devinStatus?: OmpStatus
   // Claude Code status near the input field ("✔ Update installed · Restart to update").
   claudeNotice?: string
   // Restart requested from wherdr (see server/utils/restart.ts): the agent

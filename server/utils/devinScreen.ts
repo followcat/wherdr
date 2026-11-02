@@ -14,7 +14,7 @@
 // "○" rows are the queued messages (newest last); "↵ send now" in the header
 // is Devin's flush (Enter on the empty field). A steered or sent message is
 // echoed "❭" in the scrollback — the last such row above the queue section.
-import type { ClaudeScreen } from '../../shared/types'
+import type { ClaudeScreen, OmpStatus } from '../../shared/types'
 
 const FIELD = /^❭(?: |$)/
 const BOX_RULE = /^─{2,}/
@@ -86,4 +86,23 @@ export function parseDevinScreen(text: string | null | undefined): ClaudeScreen 
   }
 
   return { shell: null, sent, queued, ...sendNow }
+}
+
+// Devin's status footer, the last row under the composer's bottom rule:
+//
+//   SWE-2 Max                    Context: 16k / 262k tokens (6%)
+//   Model · mode · 1 shell ↓     Context: 12k / 262k tokens (4%)
+//
+// `line` carries the left side (model, mode, shells); `meters` the context
+// gauge — the same split OmpStatus makes and Composer renders for omp.
+export function parseDevinStatus(text: string | null | undefined): OmpStatus | null {
+  if (!text) return null
+  const lines = String(text).split('\n').map(l => l.replace(/\s+$/, '')).filter(l => l.trim() !== '')
+  const last = lines[lines.length - 1] || ''
+  const i = last.indexOf('Context:')
+  if (i <= 0) return null
+  const line = last.slice(0, i).trim()
+  const meters = last.slice(i).trim()
+  if (!line || !/\d/.test(meters)) return null
+  return { line: line.slice(0, 300), meters: meters.slice(0, 200) }
 }

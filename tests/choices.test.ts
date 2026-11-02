@@ -362,3 +362,42 @@ describe('completeOmpAsk', () => {
     expect(completeOmpAsk(shown, pendingOmpAsk([call('t2', 'Something else entirely?')]))).toEqual(shown)
   })
 })
+
+describe('parseDevinDialog (screenChoices, devin)', () => {
+  // Live capture: Devin 3000.11.234 permission dialog (tests/devinScreen.test.ts DIALOG).
+  const dialog = `❭ Use your exec tool to run: sleep 45. Nothing else.
+
+ ⏺ Running command
+ └ $ sleep 45
+
+❭ Allow       ← ◼◼◼◼ → Once     Exec(sleep)
+  Bypass mode
+  Deny
+
+↑↓ select · ←→ scope · e edit · ↵ confirm · esc cancel
+`
+  it('reads the three options, cursor, and the requested action', () => {
+    const c = screenChoices(dialog, 'devin')!
+    expect(c.options.map(o => o.label)).toEqual(['Allow', 'Bypass mode', 'Deny'])
+    expect(c.cursor).toBe(0)
+    expect(c.question).toBe('Allow Devin to run: Exec(sleep)')
+    expect(keysFor(c, 2)).toEqual(['down', 'down', 'enter'])
+  })
+
+  it('cursor may sit on another option', () => {
+    const moved = dialog.replace('❭ Allow', '  Allow').replace('  Deny', '❭ Deny')
+    const c = screenChoices(moved, 'devin')!
+    expect(c.cursor).toBe(2)
+    expect(keysFor(c, 0)).toEqual(['up', 'up', 'enter'])
+  })
+
+  it('a live composer below the legend = scrollback replay, not a prompt', () => {
+    const replayed = dialog + '\n─── composer ───\n❭ Ask Devin to build features\n───\nSWE-2 Max    Context: 12k / 262k tokens (4%)\n'
+    expect(screenChoices(replayed, 'devin')).toBeNull()
+  })
+
+  it('a ❭ echo without the legend or options is not a dialog', () => {
+    expect(screenChoices('❭ sent message\n  Bypass mode\n───\n❭ field\n───\n', 'devin')).toBeNull()
+    expect(screenChoices('some text', 'devin')).toBeNull()
+  })
+})

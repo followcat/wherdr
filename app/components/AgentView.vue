@@ -254,7 +254,9 @@ function onSent(q: QueuedMessage | null) {
 // As soon as the server knows them (or 10 s after its answer), the server state wins.
 watch(pane, p => outboxPrune(props.paneId, p?.queued || []))
 
-const prompt = computed(() => (pane.value && pane.value.status === 'blocked' && pane.value.prompt && pane.value.prompt.options ? pane.value.prompt : null))
+// Devin's permission dialog leaves the pane "done" (never "blocked"): gate
+// on the published interaction, not only the status.
+const prompt = computed(() => (pane.value && (pane.value.status === 'blocked' || pane.value.interaction === 'native') && pane.value.prompt && pane.value.prompt.options ? pane.value.prompt : null))
 const screen = computed(() => knownScreen(pane.value))
 // Menu interactif de Claude Code ouvert (/resume…), agent au repos.
 const menu = computed(() => (pane.value && pane.value.menu && pane.value.status !== 'working' && !prompt.value && !screen.value ? pane.value.menu : null))
@@ -602,7 +604,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
         <div v-else class="agent-head">
           <div class="agent-title">{{ headTitle }} <UIcon v-if="pane && paneNotificationsMuted(pane)" name="i-lucide-bell-off" class="notification-muted" :title="t('Muted')" /></div>
           <div class="agent-meta">
-            <StatusPill :pane="pane" kind :compact="compactPhone" />
+            <StatusPill :pane="pane" kind model :compact="compactPhone" />
             <span v-if="subtitle" class="agent-subtitle">{{ subtitle }}</span>
             <span v-if="command" class="agent-subtitle agent-command">{{ command }}</span>
             <span v-if="tabName" class="agent-subtitle">{{ tabName }}</span>

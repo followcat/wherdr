@@ -27,7 +27,7 @@ import { parseUsageLimit, type UsageLimit } from '../../shared/usageLimit'
 import { classifyScreen, type ScreenInteraction } from '../../shared/interactiveScreen'
 import { parseClaudeActivity } from './activity'
 import { parseClaudeNotice, parseClaudeScreen, parseClaudeSuggestion } from './claudeScreen'
-import { parseDevinScreen } from './devinScreen'
+import { parseDevinScreen, parseDevinStatus } from './devinScreen'
 import { type QueueEntry, HOLD_AGENTS, INPUT_STATES, checkQueue, checkSent, giveBackHeld, isUploadLine, landed, leftForGood, lookForLeftMenu, QUEUED_TEXT_MAX, loadQueued, nextHeld, ompRunShown, publicEntry, queuedDone } from './queued'
 import { inputVisible } from './choices'
 import { isSlashCommand, photosOnly } from '../../shared/queuedMatch'
@@ -281,17 +281,21 @@ function refreshActivity(p: Pane) {
 // by the pane itself while it compacts, a connection retries, or Enter is
 // typed on them in the terminal — and the messages it already echoed, read
 // while its conversation is shown. Its transcript only tells afterwards.
-type DevinActivity = { screen: ClaudeScreen | null, at: number }
+type DevinActivity = { screen: ClaudeScreen | null, status: OmpStatus | null, at: number }
 const devinScreens = new Map<string, DevinActivity>()
 const devinScreenBusy = new Set<string>()
 function refreshDevinScreen(p: Pane) {
   if (devinScreenBusy.has(p.id)) return
   devinScreenBusy.add(p.id)
   herdr('pane.read', { pane_id: p.id, source: 'detection' }, 4000)
-    .then(r => parseDevinScreen(r.read && r.read.text), () => null)
-    .then((screen) => {
+    .then(r => {
+      const text = r.read && r.read.text
+      return { screen: parseDevinScreen(text), status: parseDevinStatus(text) }
+    }, () => null)
+    .then((d) => {
+      const screen = d?.screen ?? null
       const old = devinScreens.get(p.id)?.screen
-      devinScreens.set(p.id, { screen, at: Date.now() })
+      devinScreens.set(p.id, { screen, status: d?.status ?? null, at: Date.now() })
       const same = (a: ClaudeScreen | null | undefined, b: ClaudeScreen | null | undefined) =>
         (a?.sent ?? null) === (b?.sent ?? null) && (a?.queued || []).join('\n') === (b?.queued || []).join('\n') && Boolean(a?.sendNow) === Boolean(b?.sendNow)
       if (!same(old, screen)) setTimeout(poll, 0)
@@ -1264,7 +1268,9 @@ async function enrich(next: HerdrState, snap: Json, machine: string, publish?: (
       if (!d || Date.now() - d.at >= (fast ? ACTIVITY_MS : NOTICE_MS)) refreshDevinScreen(p)
       if (d?.screen) p.devinScreen = d.screen
       else delete p.devinScreen
-    } else { devinScreens.delete(p.id); delete p.devinScreen }
+      if (d?.status) p.devinStatus = d.status
+      else delete p.devinStatus
+    } else { devinScreens.delete(p.id); delete p.devinScreen; delete p.devinStatus }
     if (p.agent === 'codex' && isViewed(p.id) && (p.status === 'idle' || p.status === 'done') && !p.prompt && !p.menu && !p.restart) {
       const f = codexFields.get(p.id)
       if (!f || Date.now() - f.at >= NOTICE_MS) refreshCodexField(p)

@@ -826,7 +826,12 @@ export function waitIdentity(screen: WaitScreen): string {
 // On-screen prompt re-read before choose/nav; Claude questions can be
 // completed by the pending transcript call after their screen identity is set.
 export function screenChoices(text: string | null | undefined, agent: string | null | undefined, asked: ClaudeAsked[] = []): Choices | null {
-  const c = agent === 'omp' ? parseOmpPrompt(text) : parseChoices(text) || parseChoices(text, { strict: true })
+  const c = agent === 'devin' ? parseDevinDialog(text)
+    : agent === 'omp' ? parseOmpPrompt(text)
+    // OpenCode's boxed dialog does not speak the Claude/Codex option grammar;
+    // a generic match there is a misread (see inputVisible's agent scoping).
+    : agent === 'opencode' ? null
+    : parseChoices(text) || parseChoices(text, { strict: true })
   if (c) c.identity = promptIdentity(text, agent)
   return c && agent === 'claude' ? completeClaudeAsk(c, asked) : c
 }
@@ -907,4 +912,52 @@ function opencodeFieldOnScreen(text: string): boolean {
     if (/^\s*╹▀{3,}/.test(lines[i]!.replace(/\s+$/, ''))) return /^\s*┃/.test(lines[i - 1]!)
   }
   return false
+}
+
+// Devin's permission dialog (v3000.x), captured on a live pane:
+//
+//    ⏺ Running command
+//    └ $ sleep 45
+//
+//   ❭ Allow       ← ◼◼◼◼ → Once     Exec(sleep)
+//     Bypass mode
+//     Deny
+//
+//   ↑↓ select · ←→ scope · e edit · ↵ confirm · esc cancel
+//
+// The ❭ row is the cursor; "← ◼…◼ → <scope>" is Allow's scope slider, not a
+// separate option, and the right-aligned word is the requested action. Only
+// this exact legend marks the dialog — a scrollback "❭" echo of a sent
+// message must not read as a prompt.
+const DEVIN_LEGEND = /^\s*↑↓ select · ←→ scope · (?:e edit · )?↵ confirm · esc cancel\s*$/
+const DEVIN_OPTION = /^\s*(❭ )?(Allow|Bypass mode|Deny)(?:\s|←|$)/
+// "Allow       ← ◼◼◼◼ → Once     Exec(sleep)" → "Exec(sleep)"
+const DEVIN_ACTION = /→\s*\S+\s{2,}(\S.*)$/
+
+export function parseDevinDialog(text: string | null | undefined): Choices | null {
+  if (!text) return null
+  const lines = String(text).split('\n').map(l => l.replace(/\s+$/, ''))
+  const legend = lines.findLastIndex(l => DEVIN_LEGEND.test(l))
+  if (legend < 0) return null
+  // A composer field (❭ + bottom rule) BELOW the legend means the dialog is
+  // scrollback replay above a live input — not a prompt.
+  for (let i = legend + 1; i < lines.length; i++) {
+    if (!/^\s*❭(?:\s|$)/.test(lines[i]!)) continue
+    const below = lines.slice(i + 1).find(l => l.trim() !== '')
+    if (below && /^─{2,}/.test(below.trimStart())) return null
+  }
+  // The three option rows above the legend (blank rows may separate).
+  const opts: { label: string, cursor: boolean, i: number }[] = []
+  for (let i = legend - 1; i >= 0 && opts.length < 3; i--) {
+    const l = lines[i]!
+    if (!l.trim()) { if (opts.length) break; continue }
+    const m = DEVIN_OPTION.exec(l)
+    if (!m) break
+    opts.unshift({ label: m[2]!, cursor: Boolean(m[1]), i })
+  }
+  if (opts.length !== 3 || opts[0]!.label !== 'Allow' || opts[1]!.label !== 'Bypass mode' || opts[2]!.label !== 'Deny') return null
+  const cursor = opts.findIndex(o => o.cursor)
+  if (cursor < 0) return null
+  const action = DEVIN_ACTION.exec(lines[opts[0]!.i]!)?.[1]?.trim()
+  return { question: `Allow Devin to run${action ? `: ${action}` : '?'}`, cursor, options: opts.map(o => ({ label: o.label, hint: null })) }
 }

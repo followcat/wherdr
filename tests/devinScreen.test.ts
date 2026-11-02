@@ -2,7 +2,7 @@
 // the messages it echoes "❭" in the scrollback, and its "↵ send now" flush.
 // Captured on Devin 3000.11.234 (probe workspace).
 import { describe, expect, it } from 'vitest'
-import { parseDevinScreen } from '../server/utils/devinScreen'
+import { parseDevinScreen, parseDevinStatus } from '../server/utils/devinScreen'
 
 const WORKING_QUEUE = `❭ Use your exec tool to run: sleep 90. Then reply done.
 
@@ -162,5 +162,23 @@ describe('Devin screen', () => {
   it('no field anchored → null, never a guess', () => {
     expect(parseDevinScreen('')).toBeNull()
     expect(parseDevinScreen('❭ a scrolled-off message\n   reply text')).toBeNull()
+  })
+})
+
+describe('Devin status footer', () => {
+  it('reads model + context meter (live capture shape)', () => {
+    expect(parseDevinStatus('❭ field\n───\nSWE-2 Max · 1 shell ↓                  Context: 16k / 262k tokens (6%)\n'))
+      .toEqual({ line: 'SWE-2 Max · 1 shell ↓', meters: 'Context: 16k / 262k tokens (6%)' })
+  })
+
+  it('reads the fixture shape (Model · mode · N shell ↓)', () => {
+    expect(parseDevinStatus('Model · mode · 1 shell ↓          Context: 12k / 262k tokens (4%)'))
+      .toEqual({ line: 'Model · mode · 1 shell ↓', meters: 'Context: 12k / 262k tokens (4%)' })
+  })
+
+  it('null without a Context meter, or on a dialog screen', () => {
+    expect(parseDevinStatus('SWE-2 Max · 1 shell ↓')).toBeNull()
+    expect(parseDevinStatus(DIALOG)).toBeNull()
+    expect(parseDevinStatus('')).toBeNull()
   })
 })
