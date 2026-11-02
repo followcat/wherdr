@@ -38,18 +38,66 @@ describe('settleState', () => {
 
   it('keeps the last state per machine while the server is not ready', () => {
     // A restart still probing: nothing is answered for, so every pane and
-    // machine stays, marked connecting, until the probes land.
+    // machine stays until the probes land. A successful local poll stays online.
     for (const settling of [true, false]) {
       const r = settleState(prev, st([], { ready: false }), settling)!
       expect(r.panes.map(p => p.id)).toEqual(['w1:p1', `${REMOTE}~w1:p1`])
       expect(r.machines!.find(m => m.key === REMOTE)!.status).toBe('connecting')
     }
   })
-  it('a machine the "not ready" state answers for is authoritative', () => {
-    // The remote is already 'online' in the partial state: its (empty) pane
-    // list wins -- only the still-connecting machines keep their content.
-    const next = st(['w1:p1'], { ready: false, machines: machines('online') })
-    expect(settleState(prev, next, true)).toBe(next)
+  it.each([false, true])('keeps an online machine until its first panes arrive (local session: %s)', local => {
+    // SSH connects (or a secondary local session is listed) before its poll.
+    const prior = st(['w1:p1', `${REMOTE}~w1:p1`], {
+      machines: machines('online').map(m => m.key === REMOTE ? { ...m, local } : m),
+      tabs: [{ id: `${REMOTE}~w1:t1`, workspace: `${REMOTE}~w1`, label: 'Agent', number: 1, layout: null }],
+    })
+    for (const settling of [true, false]) {
+      const next = st(['w2:p1'], { ready: false, machines: prior.machines })
+      const result = settleState(prior, next, settling)!
+      expect(result.panes.map(p => p.id)).toEqual(['w2:p1', `${REMOTE}~w1:p1`])
+      expect(result.workspaces.map(w => w.id)).toEqual(['w2', `${REMOTE}~w1`])
+      expect(result.tabs).toEqual(prior.tabs)
+      // The real snapshot replaces the retained content without duplicates,
+      // even if another machine still holds the server's readiness latch.
+      const recovered = st(['w2:p1', `${REMOTE}~w2:p1`], { ready: false, machines: prior.machines })
+      expect(settleState(result, recovered, settling)).toBe(recovered)
+    }
+  })
+  it('keeps a successful local machine online before the machine list arrives', () => {
+    for (const settling of [true, false]) {
+      for (const status of ['online', 'connecting'] as const) {
+        const prior = { ...prev, machines: machines('online').map(m => m.key === '' ? { ...m, status } : m) }
+        const result = settleState(prior, st(['w2:p1'], { ready: false }), settling)!
+        expect(result.panes.map(p => p.id)).toEqual(['w2:p1', `${REMOTE}~w1:p1`])
+        expect(result.machines!.find(m => m.key === '')!.status).toBe('online')
+        expect(result.machines!.find(m => m.key === REMOTE)!.status).toBe('connecting')
+      }
+    }
+  })
+  it('shows a recovered local pane immediately without dropping a slow remote', () => {
+    for (const settling of [true, false]) {
+      const next = st(['w2:p1'], { ready: false, machines: machines('connecting') })
+      const result = settleState(prev, next, settling)!
+      expect(result.panes.map(p => p.id)).toEqual(['w2:p1', `${REMOTE}~w1:p1`])
+      expect(result.workspaces.map(w => w.id)).toEqual(['w2', `${REMOTE}~w1`])
+      expect(result.machines!.find(m => m.key === REMOTE)!.status).toBe('connecting')
+    }
+  })
+  it('defers an empty online local result until the server is ready', () => {
+    for (const settling of [true, false]) {
+      const next = st([], { ready: false, machines: machines('connecting') })
+      const result = settleState(prev, next, settling)!
+      expect(result.panes.map(p => p.id)).toEqual(prev.panes.map(p => p.id))
+      const ready = st([], { ready: true, machines: machines('online') })
+      expect(settleState(result, ready, settling)).toBe(ready)
+    }
+  })
+  it('accepts a remote offline result instead of reviving removed panes', () => {
+    const next = st(['w2:p1'], { ready: false, machines: machines('offline') })
+    expect(settleState(prev, next, false)).toBe(next)
+  })
+  it('retains the last state for an empty unsuccessful restart response', () => {
+    expect(settleState(prev, st([], { ok: false, ready: false }), true)).toBeNull()
   })
   it('applies a "not ready" state on first load', () => {
     const next = st([], { ready: false })
