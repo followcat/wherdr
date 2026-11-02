@@ -110,6 +110,39 @@ describe('inputVisible', () => {
     expect(inputVisible(fx('claude-model-1.txt'))).toBe(false)
     expect(inputVisible(' Manage MCP servers\n\n ❯ 1. demo-server · authenticate\n   2. other-server\n\n Esc to cancel')).toBe(false)
   })
+
+
+  // OpenCode 2.x: its composer is a box — "┃" input lines ending on a "╹▀"
+  // bottom rule, just above the status footer.
+  it('sees OpenCode’s composer field (┃ lines ending on its ╹▀ rule)', () => {
+    const idle = ` some output
+
+┃ Ask anything…
+┃
+╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ opencode 2.0 · gpt-5 · ~/repo
+`
+    expect(inputVisible(idle)).toBe(true)
+  })
+  it('does not see OpenCode’s field during a permission dialog', () => {
+    // The dialog keeps the composer box on screen — its markers must fail it.
+    const dialog = `△ Permission required
+
+❯ Allow once   Always   Reject
+
+┃ run tests
+┃
+╹▀▀▀▀▀▀▀▀▀▀▀▀▀
+↑↓ select · enter confirm · esc dismiss
+`
+    expect(inputVisible(dialog)).toBe(false)
+    // No composer at all: no ┃ above the rule.
+    const scrolled = `output
+╹▀▀▀▀▀▀▀▀▀▀▀▀▀
+footer
+`
+    expect(inputVisible(scrolled)).toBe(false)
+  })
 })
 
 describe('panelOpen', () => {

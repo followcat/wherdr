@@ -25,6 +25,19 @@ describe('shouldHold', () => {
     expect(shouldHold('gemini', 'idle', false, false)).toBe(false)
     expect(shouldHold(null, 'idle', false, false)).toBe(false)
   })
+
+  // OpenCode reports "blocked" by event while its permission/question dialog
+  // owns the keys — typed text and its Enter would answer it.
+  it('holds an OpenCode message while its pane is blocked', () => {
+    expect(shouldHold('opencode', 'blocked', true, false)).toBe(true)
+    expect(shouldHold('opencode', 'blocked', false, false)).toBe(true)
+    // Not blocked: the input-visible result still holds it when its composer
+    // is off screen, and releases when the field is confirmed.
+    expect(shouldHold('opencode', 'idle', false, false)).toBe(true)
+    expect(shouldHold('opencode', 'idle', true, false)).toBe(false)
+    expect(shouldHold('opencode', 'working', false, false)).toBe(false)
+    expect(shouldHold('opencode', 'working', true, true)).toBe(true)
+  })
 })
 
 describe('nextHeld', () => {

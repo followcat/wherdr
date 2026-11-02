@@ -16,5 +16,9 @@ export function viaPrompt(p: Pick<Pane, 'agent' | 'status' | 'prompt' | 'stopped
   if (!p || !p.agent) return false
   if (p.status !== 'blocked') return true
   if (p.agent === 'omp') return !p.prompt?.typing
+  // OpenCode's permission/question dialog owns the keys while the pane is
+  // blocked — same hold needed, and the prompt route also keeps send order
+  // behind an entry already held.
+  if (p.agent === 'opencode') return true
   return !p.prompt && (p.agent === 'claude' || p.agent === 'codex')
 }
