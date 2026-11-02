@@ -36,6 +36,10 @@ const SKIP = /^(?:FREE\b|✱\s|Input\s+Cached|●━|━*●|\$\d)/
 // "  Claude Opus 4.6                                  Thinking On      1M Context Off"
 const OPTION = /^(❭|  ) *(\S(?:.*?\S)?)(?:\s{2,}((?:✱\s*)?(?:←\s*)?[◼·\s]*(?:→\s*)?(?:Low|Medium|High|Max)?)\s*(.*?))?$/
 
+// The picker is open whenever its key legend is on screen — even when a
+// search leaves zero options, so close detection must not rely on parsing.
+export const devinMenuOpen = (text: string | null | undefined) => Boolean(text && LEGEND.test(text))
+
 export function parseDevinModelMenu(text: string | null | undefined): DevinModelMenu | null {
   if (!text) return null
   const lines = String(text).split('\n').map(l => l.replace(/\s+$/, ''))
@@ -67,9 +71,9 @@ export function parseDevinModelMenu(text: string | null | undefined): DevinModel
     if (!m || !m[2]) continue
     // The quota bar or an effort word must follow the name — plain prose is
     // not an option row.
-    const rest = m[3] || ''
+    const rest = [m[3], m[4]].filter(Boolean).join(' ')
     if (!rest && !BARE.test(m[2]!)) continue
-    if (rest && !/[◼←→]/.test(rest) && !/\b(Low|Medium|High|Max|Thinking On|Off|FREE)\b/.test(rest) && !/✱/.test(rest)) continue
+    if (rest && !/[◼←→]/.test(rest) && !/\b(Low|Medium|High|Max|Thinking On|Thinking|Off|FREE)\b/.test(rest) && !/✱/.test(rest)) continue
     const hint = [m[3]?.replace(/[◼·←→\s]+/g, ' ').trim(), m[4]?.trim()].filter(Boolean).join(' · ') || null
     const opt = { label: m[2].slice(0, 80), hint, n: 0, here: m[1] === '❭' }
     options.unshift(opt)
@@ -78,7 +82,8 @@ export function parseDevinModelMenu(text: string | null | undefined): DevinModel
   for (const o of options) delete (o as { here?: boolean }).here
   options.forEach((o, i) => { o.n = i + 1 })
   if (!options.length) return null
-  return { search, options, cursor: cursor < 0 ? options.length - 1 : cursor }
+  // cursor stays -1 when no ❭ marker parsed — callers must not guess it.
+  return { search, options, cursor }
 }
 
 // The confirmation Devin echoes after alt+↵:

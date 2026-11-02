@@ -100,7 +100,7 @@ async function choose(o: ModelOption) {
   } finally {
     switching.value = false
   }
-  if (!why.value) await loadEfforts()
+  if (!why.value && ['claude', 'codex', 'omp'].includes(props.pane!.agent || '')) await loadEfforts()
 }
 
 async function chooseEffort(level: string) {

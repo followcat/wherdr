@@ -17,7 +17,7 @@ import { machineOfPane } from './machines'
 import { resizePane } from './terminal'
 import { type ClaudeEffortSlider, type ModelMenu, type OmpCycleKnowledge, type OmpSelector, OMP_EFFORT_ORDER, claudeEffortCommand, claudeEffortLevels, cleanModelName, codexCachedEfforts, codexConfigModel, claudeScreenEffort, claudeScreenModel, codexFooterModel, effortMatches, effortValue, learnOmpCycle, ompEffortLevels, ompModelLabel, ompScreenEffort, ompScreenModel, ompSelectorCaption, parseClaudeEffortScreen, parseModelMenu, parseOmpSelector, sameModel, switchConfirmKeys } from './models'
 import { fmt } from '../../shared/message'
-import { type DevinModelMenu, devinModelSetEcho, parseDevinModelMenu } from './devinMenu'
+import { type DevinModelMenu, devinMenuOpen, devinModelSetEcho, parseDevinModelMenu } from './devinMenu'
 import { parseDevinStatus } from './devinScreen'
 
 // ---------------------------------------------------------------- current model
@@ -611,8 +611,13 @@ async function ompCycleTo(p: Pane, before: ModelInfo, level: string) {
   }
 }
 
+// Devin/OpenCode have a model picker but no wherdr effort control yet —
+// keep them out of the Claude/Codex menu paths entirely.
+const EFFORT_AGENTS = new Set(['claude', 'codex', 'omp'])
+
 export async function listEfforts(paneId: string): Promise<EffortList> {
   return withPane(paneId, async p => {
+    if (!EFFORT_AGENTS.has(p.agent!)) return { levels: [], current: null }
     const model = await currentModel(p)
     if (!model) return { levels: [], current: null }
     // omp: levels of its ⇧⇥ cycle, as far as the presses have shown them.
@@ -644,6 +649,7 @@ export async function listEfforts(paneId: string): Promise<EffortList> {
 
 export async function setEffort(paneId: string, level: string): Promise<ModelInfo> {
   return withPane(paneId, async p => {
+    if (!EFFORT_AGENTS.has(p.agent!)) throw new HerdrError('unsupported', 'This agent’s effort cannot be changed from wherdr')
     const before = await currentModel(p)
     if (!before) throw new HerdrError('bad_model', 'Unknown model')
     const started = Date.now()
@@ -711,12 +717,19 @@ export async function setEffort(paneId: string, level: string): Promise<ModelInf
 // /api/session/<id> {model:{id,providerID,variant}} (opencodeTransport only
 // allows that body, then re-GETs the session for verification).
 
+// An option label must identify one catalog entry: providers can offer the
+// same display name, so duplicates carry their provider.
+type OpenCodeEntry = { id: string, providerID: string, name?: string, modelID?: string, enabled?: boolean, variants?: string[] }
+const opencodeEntryLabel = (e: OpenCodeEntry, dup: boolean) => dup ? `${e.name || e.id} (${e.providerID})` : String(e.name || e.id)
+
 async function opencodeListModels(p: Pane): Promise<ModelList> {
-  const entries = await transcripts.opencodeModels(p)
+  const entries = (await transcripts.opencodeModels(p) as OpenCodeEntry[])
+    .filter(e => e && e.enabled !== false && typeof e.id === 'string' && typeof e.providerID === 'string')
+  const names = new Map<string, number>()
+  for (const e of entries) names.set(String(e.name || e.id), (names.get(String(e.name || e.id)) || 0) + 1)
   const cur = await transcripts.model(p).catch(() => null)
   const options = entries
-    .filter(e => e && e.enabled !== false && typeof e.id === 'string' && typeof e.providerID === 'string')
-    .map((e): ModelOption => ({ label: String(e.name || e.id), hint: `${e.providerID}/${e.modelID || e.id}`, current: e.id === cur?.id }))
+    .map((e): ModelOption => ({ label: opencodeEntryLabel(e, (names.get(String(e.name || e.id)) || 0) > 1), hint: `${e.providerID}/${e.modelID || e.id}`, current: e.id === cur?.id }))
   return { agent: 'opencode', options, at: Date.now() }
 }
 
@@ -726,15 +739,22 @@ async function opencodeSetModel(p: Pane, wanted: string): Promise<ModelInfo> {
   if (busy.has(p.id)) throw new HerdrError('busy', 'Model change already in progress')
   busy.add(p.id)
   try {
-    const entries = await transcripts.opencodeModels(p)
+    const entries = (await transcripts.opencodeModels(p) as OpenCodeEntry[])
+      .filter(e => e && e.enabled !== false && typeof e.id === 'string' && typeof e.providerID === 'string')
+    const names = new Map<string, number>()
+    for (const e of entries) names.set(String(e.name || e.id), (names.get(String(e.name || e.id)) || 0) + 1)
     const wantedL = wanted.toLowerCase()
-    const e = entries.find(e => e && e.enabled !== false && (e.name === wanted || e.id === wanted || `${e.providerID}/${e.modelID || e.id}` === wanted || String(e.name || '').toLowerCase() === wantedL))
-    if (!e || typeof e.id !== 'string' || typeof e.providerID !== 'string') throw new HerdrError('bad_model', fmt('Model not found in /models: {model}', { model: wanted }))
+    const matches = (e: OpenCodeEntry) => opencodeEntryLabel(e, (names.get(String(e.name || e.id)) || 0) > 1) === wanted
+      || e.id === wanted || `${e.providerID}/${e.modelID || e.id}` === wanted
+      || (names.get(String(e.name || e.id)) === 1 && String(e.name || '').toLowerCase() === wantedL)
+    const hits = entries.filter(matches)
+    const e = hits[0]
+    if (!e || hits.length > 1) throw new HerdrError('bad_model', fmt('Model not found in /models: {model}', { model: wanted }))
     const cur = await transcripts.model(p).catch(() => null)
     const variant = cur?.id === e.id && cur.effort ? cur.effort : (Array.isArray(e.variants) ? String(e.variants[0] || '') : '') || undefined
     const patched = await transcripts.opencodePatchModel(p, { id: e.id, providerID: e.providerID, ...(variant ? { variant } : {}) })
-    const now = patched?.model
-    if (now?.id !== e.id) throw new HerdrError('stale', 'The model did not change — try again.')
+    const now = patched?.model as { id?: string, providerID?: string, variant?: string } | undefined
+    if (now?.id !== e.id || now?.providerID !== e.providerID || (variant && now?.variant !== variant)) throw new HerdrError('stale', 'The model did not change — try again.')
     const info: ModelInfo = { id: String(now.id), label: String(e.name || now.id), ...(now.variant ? { effort: now.variant } : {}) }
     setTimeout(poll, 100)
     return info
@@ -755,7 +775,8 @@ async function devinMenu(paneId: string, timeoutMs = 6000): Promise<DevinModelMe
 
 async function devinCloseMenu(paneId: string) {
   for (let i = 0; i < 3; i++) {
-    if (!parseDevinModelMenu(await screen(paneId))) return
+    // The legend marks an open picker even when a search left zero options.
+    if (!devinMenuOpen(await screen(paneId))) return
     await herdr('pane.send_input', { pane_id: paneId, keys: ['esc'] })
     await sleep(400)
   }
@@ -781,15 +802,14 @@ async function devinListModels(p: Pane): Promise<ModelList> {
       // Collect across scrolls until "↓ more below" disappears.
       for (let pages = 0; pages < 12; pages++) {
         for (const o of m.options) seen.set(o.label, { label: o.label, hint: o.hint, current: o.label === cur?.label })
+        if (!/↓ more below/.test(await screen(p.id))) break
+        if (m.cursor < 0) break // unknown cursor: don't guess a position
         const last = m.options.length - 1
-        if (!m || pages === 0 && !/(↓ more below)/.test(await screen(p.id))) break
-        const scr = await screen(p.id)
-        if (!/↓ more below/.test(scr)) break
         await herdr('pane.send_input', { pane_id: p.id, keys: moveKeys(m.cursor, last) })
         await sleep(350)
         await herdr('pane.send_input', { pane_id: p.id, keys: ['down'] })
         await sleep(350)
-        m = await devinMenu(p.id, 2000) || m
+        m = (await devinMenu(p.id, 2000)) || m
       }
     } finally { await devinCloseMenu(p.id) }
     const list: ModelList = { agent: 'devin', options: [...seen.values()], at: Date.now() }
@@ -812,25 +832,30 @@ async function devinSetModel(paneId: string, wanted: string): Promise<ModelInfo>
       const m = await devinMenu(p.id, 3000)
       const n = m?.options.findIndex(o => o.label.toLowerCase() === label) ?? -1
       if (!m || n < 0) throw new HerdrError('bad_model', fmt('Model not found in /model: {model}', { model: wanted }))
+      const target = m.options[n]!.label
+      // Never guess the cursor: a missing ❭ makes any move land on a wrong row.
+      if (m.cursor < 0) throw new HerdrError('stale', 'The /model menu changed — try again.')
       const keys = moveKeys(m.cursor, n)
       if (keys.length) { await herdr('pane.send_input', { pane_id: p.id, keys }); await sleep(300) }
       await herdr('pane.send_input', { pane_id: p.id, keys: ['alt+enter'] })
-      // Verify: the menu closes and Devin echoes the session-scoped change.
+      // Verify: the menu closes, and only an echo of THIS model counts.
       const end = Date.now() + 4000
       let echo: string | null = null
       do {
         const t = await screen(p.id)
-        if (!parseDevinModelMenu(t)) { echo = devinModelSetEcho(t); if (echo || true) break }
+        if (!devinMenuOpen(t)) { echo = devinModelSetEcho(t); break }
         await sleep(300)
       } while (Date.now() < end)
+      const echoOk = echo && sameModel(echo, target)
+      if (echo && !echoOk) throw new HerdrError('stale', fmt('Devin set a different model ({model}) — check the session.', { model: echo }))
       const now = await transcripts.model(p).catch(() => null)
-      if (!sameModel(now?.label || '', m.options[n]!.label) && !(now?.id && now.id === m.options[n]!.label)) {
+      if (!echoOk && !sameModel(now?.label || '', target)) {
         // Fall back on the footer/status reader when the transcript lags.
         const st = parseDevinStatus(await screen(p.id))
         const got = st?.line?.split('·')[0]?.trim() || ''
-        if (!got.toLowerCase().includes(m.options[n]!.label.toLowerCase()) && !echo) throw new HerdrError('stale', 'The model did not change — try again.')
+        if (!got.toLowerCase().includes(target.toLowerCase())) throw new HerdrError('stale', 'The model did not change — try again.')
       }
-      const info: ModelInfo = { id: m.options[n]!.label, label: m.options[n]!.label }
+      const info: ModelInfo = { id: target, label: target }
       setTimeout(poll, 100)
       return info
     } finally { await devinCloseMenu(p.id) }
