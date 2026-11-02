@@ -11,7 +11,7 @@ import { cleanModelName } from './models'
 type Json = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
 type Stream = (script: string, args: string[]) => ChildProcessWithoutNullStreams | null
 interface Cursor { file: string, kind: 'tail' | 'page', value: string }
-interface Snapshot { file: string, server: string, info: Json, pages: Map<string, { data: Json, at: number, bytes: number }>, bytes: number, at: number, epoch: number }
+interface Snapshot { file: string, server: string, info: Json, inbox?: Json[], pages: Map<string, { data: Json, at: number, bytes: number }>, bytes: number, at: number, epoch: number }
 export interface OpenCodeOptions { since?: string, from?: ChatCursor | null, before?: ChatCursor | null, anchor?: string }
 const hash = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 24)
 const clip = (s: unknown) => typeof s === 'string' ? s.slice(0, 20000) : ''
@@ -33,7 +33,9 @@ export function parseOpenCode(messages: Json[]): ChatItem[] {
       const images = imageFiles(m.files).length
       return m.text || images ? [{ role: 'user', text: clip(m.text), ts, ref: ref('u'), ...(images ? { images } : {}) } as ChatItem] : []
     }
-    if (m.type === 'shell') return [{ role: 'tool', name: 'shell', text: clip(m.command), out: clip(m.output?.output), ts, ref: ref('s'), toolStatus: m.status === 'running' ? 'running' : 'completed', ...(m.exit || m.status === 'timeout' ? { error: true } : {}) } as ChatItem]
+    // A shell message is the same "!" run Claude renders as a bash card —
+    // the role also lets a sent "! cmd" land on it (see queued.ts landed).
+    if (m.type === 'shell') return [{ role: 'bash', text: clip(m.command), out: clip(m.output?.output), ts, ref: ref('s'), ...(m.exit || m.status === 'timeout' ? { error: true } : {}) } as ChatItem]
     if (m.type !== 'assistant') return []
     const items: ChatItem[] = []
     for (const [index, part] of (Array.isArray(m.content) ? m.content : []).entries()) {
@@ -157,7 +159,9 @@ export function createOpenCodeTranscripts({ home, exec, stream }: { home: string
     // over SSH every refetch is another shim process.
     const prev = cache.get(session)
     const carried = prev && prev.file === file && prev.epoch === epoch
-    const s: Snapshot = { file, info, server: r.server, pages: carried ? prev!.pages : new Map(), bytes: carried ? prev!.bytes : 0, at: Date.now(), epoch }
+    const s: Snapshot = { file, info, server: r.server,
+      inbox: Array.isArray(r.data?.inbox) ? r.data.inbox : prev?.inbox,
+      pages: carried ? prev!.pages : new Map(), bytes: carried ? prev!.bytes : 0, at: Date.now(), epoch }
     if (!carried) pageBytes -= prev?.bytes || 0
     cache.set(session, s)
     if (cache.size > 32) { const id = cache.keys().next().value!; pageBytes -= cache.get(id)!.bytes; cache.delete(id) }
@@ -214,10 +218,14 @@ export function createOpenCodeTranscripts({ home, exec, stream }: { home: string
     messages.reverse()
     const start = valid && at >= 0 ? opts.from! : cursor(s.file, 'tail', messages[0]?.id || '')
     const items = parseOpenCode(messages)
-    const token = `opencode:${s.file}:${hash(JSON.stringify([start, items, s.info.model]))}`
+    // The session inbox is the real queue: user entries still waiting to be
+    // delivered (typed on the computer, or sent while it works).
+    const inbox = (s.inbox || []).filter(i => i?.type === 'user' && typeof i?.payload?.text === 'string')
+    const queue = inbox.map(i => ({ text: clip(i.payload.text), ts: tsOf(i), ...(imageFiles(i.payload?.files).length ? { images: imageFiles(i.payload.files).length } : {}) }))
+    const token = `opencode:${s.file}:${hash(JSON.stringify([start, items, s.info.model, inbox.map(i => i.id)]))}`
     const olderCursor = initial.cursor.next ? cursor(s.file, 'page', initial.cursor.next) : null
     if (!rewritten && token === opts.since) return { ...base, token, unchanged: true }
-    return { ...base, token, start, olderCursor, items, queue: [], ...(rewritten ? { rewritten: true } : {}) }
+    return { ...base, token, start, olderCursor, items, queue, ...(rewritten ? { rewritten: true } : {}) }
   }
   async function model(pane: TranscriptPane): Promise<ModelInfo | null> {
     if (!pane.agentSession) return null
@@ -267,7 +275,7 @@ export function createOpenCodeTranscripts({ home, exec, stream }: { home: string
     if (r.status !== 200 || !Array.isArray(r.data?.data)) return []
     return r.data.data
   }
-  // The one whitelisted write: PATCH /api/session/<id> {model} — verified by
+  // Whitelisted write: PATCH /api/session/<id> {model} — verified by
   // the transport's re-GET, which is the data returned here.
   async function patchModel(pane: TranscriptPane, model: { id: string, providerID: string, variant?: string }): Promise<Json | null> {
     if (!pane.agentSession) return null
@@ -277,8 +285,78 @@ export function createOpenCodeTranscripts({ home, exec, stream }: { home: string
     if (r.server !== s.server || r.status !== 200) return null
     return r.data?.data ?? null
   }
+  // Pending permission requests and unanswered forms (the native API owns
+  // the same dialogs the TUI draws — answering here resolves both).
+  async function pendingRequests(pane: TranscriptPane): Promise<{ permissions: Json[], forms: Json[] }> {
+    const empty = { permissions: [] as Json[], forms: [] as Json[] }
+    if (!pane.agentSession) return empty
+    const s = await snapshot(pane.agentSession)
+    if (!s) return empty
+    const r = await query(pane.agentSession, 'pending')
+    if (r.server !== s.server || r.status !== 200) return empty
+    return {
+      permissions: Array.isArray(r.data?.permissions) ? r.data.permissions : [],
+      forms: Array.isArray(r.data?.forms) ? r.data.forms : [],
+    }
+  }
+  // A reply is only confirmed by the request leaving the pending list.
+  async function replyPermission(pane: TranscriptPane, requestID: string, decision: string, message?: string): Promise<boolean> {
+    if (!pane.agentSession) return false
+    const s = await snapshot(pane.agentSession)
+    if (!s) return false
+    const r = await query(pane.agentSession, 'reply', { request: requestID, decision, ...(message ? { message } : {}) })
+    if (r.server !== s.server || r.status !== 200) return false
+    return !Array.isArray(r.data?.pending) || !r.data.pending.some((x: Json) => x?.id === requestID)
+  }
+  async function replyForm(pane: TranscriptPane, formID: string, key: string, value: unknown): Promise<boolean> {
+    if (!pane.agentSession) return false
+    const s = await snapshot(pane.agentSession)
+    if (!s) return false
+    const r = await query(pane.agentSession, 'form_reply', { form: formID, key, value })
+    if (r.server !== s.server || r.status !== 200) return false
+    return !Array.isArray(r.data?.pending) || !r.data.pending.some((x: Json) => x?.id === formID)
+  }
+  // The queued-message inbox (its own GET, for the cancel path — chat's copy
+  // arrives on the session snapshot instead).
+  async function inbox(pane: TranscriptPane): Promise<Json[]> {
+    if (!pane.agentSession) return []
+    const s = await snapshot(pane.agentSession)
+    if (!s) return []
+    const r = await query(pane.agentSession, 'inbox')
+    if (r.server !== s.server || r.status !== 200) return []
+    return Array.isArray(r.data?.data) ? r.data.data : []
+  }
+  async function inboxDelete(pane: TranscriptPane, itemID: string): Promise<boolean | null> {
+    if (!pane.agentSession) return false
+    const s = await snapshot(pane.agentSession)
+    if (!s) return false
+    const r = await query(pane.agentSession, 'inbox_delete', { item: itemID })
+    if (r.server !== s.server) return false
+    if (r.status === 404) return null
+    if (r.status !== 200) return false
+    return !Array.isArray(r.data?.items) || !r.data.items.some((x: Json) => x?.id === itemID)
+  }
+  async function shell(pane: TranscriptPane, command: string): Promise<boolean> {
+    if (!pane.agentSession) return false
+    const s = await snapshot(pane.agentSession)
+    if (!s) return false
+    const r = await query(pane.agentSession, 'shell', { command })
+    return r.server === s.server && r.status === 200
+  }
+  // Composer status from the session record itself: total tokens and cost.
+  async function status(pane: TranscriptPane): Promise<{ line: string, meters: string | null } | null> {
+    if (!pane.agentSession) return null
+    const s = await snapshot(pane.agentSession)
+    if (!s) return null
+    const t = s.info.tokens
+    const total = ['input', 'output', 'reasoning'].reduce((n, k) => n + (Number.isFinite(t?.[k]) ? t[k] : 0), 0)
+    if (!total && !Number.isFinite(s.info.cost)) return null
+    const tok = total >= 1e6 ? `${(total / 1e6).toFixed(1)}M` : total >= 1e3 ? `${(total / 1e3).toFixed(1)}k` : String(total)
+    const cost = Number.isFinite(s.info.cost) && s.info.cost > 0 ? ` · $${s.info.cost.toFixed(2)}` : ''
+    return { line: `${tok} tok${cost}`, meters: null }
+  }
   function observe(panes: TranscriptPane[]) {
     if (!panes.some(p => p.agent === 'opencode' && p.agentSession)) { child?.kill(); child = null; cache.clear(); pageBytes = 0 }
   }
-  return { chat, model, image, search, models, patchModel, dispose, observe }
+  return { chat, model, image, search, models, patchModel, pending: pendingRequests, replyPermission, replyForm, inbox, inboxDelete, shell, status, dispose, observe }
 }

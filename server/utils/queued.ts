@@ -260,7 +260,7 @@ export function checkQueue(list: QueueEntry[], status: string | null | undefined
 // Either way it gets Retry / Cancel. Retry waits for the end of a turn and
 // first looks at the transcript again (see landed): a message the agent did
 // take is not typed twice.
-export function checkSent(list: QueueEntry[], o: { agent: string | null | undefined, claude: { queue: ClaudeQueueEntry[], popped: ClaudeQueueEntry[] } | null, devinQueue?: string[] | null, now: number }): boolean {
+export function checkSent(list: QueueEntry[], o: { agent: string | null | undefined, claude: { queue: ClaudeQueueEntry[], popped: ClaudeQueueEntry[] } | null, devinQueue?: string[] | null, ocQueue?: ClaudeQueueEntry[] | null, now: number }): boolean {
   let changed = false
   for (const q of list) {
     if (q.held || q.failed) { delete q.lostSince; delete q.popped; continue }
@@ -280,8 +280,12 @@ export function checkSent(list: QueueEntry[], o: { agent: string | null | undefi
     // transcript: an entry keeps only the message's first line — matched the
     // same way, whole text against whole text, screen cut allowed.
     const d = o.agent === 'devin' ? o.devinQueue : null
+    // OpenCode's queue is its session inbox, read through the service (see
+    // opencodeTranscripts.ts): entries keep the whole text and a timestamp.
+    const oc = o.agent === 'opencode' ? o.ocQueue : null
     const inQueue = Boolean(c && c.queue.some(isIt))
       || Boolean(d && text && d.some(t => flat(t) === text || (flat(t).length >= 8 && text.startsWith(flat(t)))))
+      || Boolean(oc && oc.some(isIt))
     if (inQueue) { delete q.popped; delete q.lostSince }
     else if (c && c.popped.some(isIt)) q.popped = true
     if (!inQueue && o.now - q.at > QUEUED_TTL_MS) {
