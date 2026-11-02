@@ -1360,6 +1360,21 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
       return !(c && c.size === s.size && c.mtimeMs === s.mtimeMs)
     }).map(s => s.file)
     const headers = await commandCodeHeaders(missing)
+    // Cache the whole fetched batch before selecting: the loop stops at the
+    // newest exact match, and that break must not leave the other headers to
+    // be read again on the next pass.
+    for (const s of sessions) {
+      const cached = cmdHeaders.get(s.file)
+      if (cached && cached.size === s.size && cached.mtimeMs === s.mtimeMs) continue
+      const first = headers.get(s.file)
+      if (first === undefined) continue
+      let d: Json | null = null
+      try { d = JSON.parse(first) } catch { d = null }
+      if (d && d.type === 'session' && typeof d.cwd === 'string') {
+        cmdHeaders.set(s.file, { size: s.size, mtimeMs: s.mtimeMs, cwd: d.cwd, id: typeof d.id === 'string' ? d.id : null })
+        if (cmdHeaders.size > 4096) cmdHeaders.delete(cmdHeaders.keys().next().value!)
+      }
+    }
     let best: { file: string, id: string, cwdLength: number } | null = null
     for (const s of sessions) {
       const cached = cmdHeaders.get(s.file)
@@ -1367,13 +1382,9 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
       if (cached && cached.size === s.size && cached.mtimeMs === s.mtimeMs) {
         d = cached.cwd === null ? null : { type: 'session', cwd: cached.cwd, id: cached.id }
       } else {
-        const first = headers.get(s.file)
-        if (first === undefined) continue
-        try { d = JSON.parse(first) } catch { d = null }
-        if (d && d.type === 'session' && typeof d.cwd === 'string') {
-          cmdHeaders.set(s.file, { size: s.size, mtimeMs: s.mtimeMs, cwd: d.cwd, id: typeof d.id === 'string' ? d.id : null })
-          if (cmdHeaders.size > 4096) cmdHeaders.delete(cmdHeaders.keys().next().value!)
-        }
+        // Fetched, but not a valid session header (or a fresh file whose first
+        // line is still being written): retry on the next pass.
+        continue
       }
       if (!d || d.type !== 'session' || typeof d.cwd !== 'string') continue
       if (d.cwd !== pane.cwd && !pane.cwd.startsWith(d.cwd + '/')) continue
@@ -1568,18 +1579,22 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
       return { available: false, reason: 'not_found' }
     }
     const fileId = path.basename(loc.file)
+    let cmdInvalidated = false
     if (transcriptKind(loc.file) === 'cmd') {
       // A rewrite/truncation invalidates results remembered for the removed
-      // page; a still-growing file keeps them.
+      // page; a still-growing file keeps them unless the bytes of a retained
+      // result changed (an in-place rewrite). Either way the client must
+      // rebuild its older pages, which may show the superseded output.
       const prev = cmdSizes.get(loc.file)
       const g = genOf(st)
-      const replaced = prev && (
-        st.size < prev.size
-        || (prev.ino !== undefined && st.ino !== undefined && prev.ino !== st.ino)
-        || (st.size === prev.size && prev.gen !== g)
+      const replaced = Boolean(prev) && (
+        st.size < prev!.size
+        || (prev!.ino !== undefined && st.ino !== undefined && prev!.ino !== st.ino)
+        || (st.size === prev!.size && prev!.gen !== g)
       )
-      const grewInPlace = prev && st.size > prev.size && prev.ino === st.ino
-      if (replaced || (grewInPlace && !await cmdResultsValid(loc.file))) forgetCmdFile(loc.file)
+      const grewInPlace = Boolean(prev) && st.size > prev!.size && prev!.ino === st.ino
+      cmdInvalidated = replaced || (grewInPlace && !await cmdResultsValid(loc.file))
+      if (cmdInvalidated) forgetCmdFile(loc.file)
       cmdSizes.set(loc.file, { size: st.size, gen: g, ino: st.ino })
       if (cmdSizes.size > 64) cmdSizes.delete(cmdSizes.keys().next().value!)
     }
@@ -1611,7 +1626,8 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     const same = prev !== null && prev.file === fileId
     // A list read before its state settled (whole-second mtimes): rewritten
     // within that second if its part of the file changed since.
-    const rewritten = from !== null && from > 0 && at !== null && at.start === from && (r.anchor !== at.hash
+    const rewritten = from !== null && from > 0 && at !== null && at.start === from && (cmdInvalidated
+      || r.anchor !== at.hash
       || (same && prev.ino !== null && st.ino !== undefined && prev.ino !== st.ino)
       || (same && st.size < prev.size)
       || (same && st.size === prev.size && prev.gen !== gen)
