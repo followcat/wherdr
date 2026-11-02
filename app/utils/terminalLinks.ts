@@ -173,7 +173,11 @@ export function bindTerminalLinks(term: Terminal, tr: (en: string) => string): T
     if (!el) return false
     opened = false
     const init: MouseEventInit = { bubbles: true, cancelable: true, view: window, clientX, clientY, button: 0 }
-    for (const type of ['mousemove', 'mousedown', 'mouseup']) el.dispatchEvent(new MouseEvent(type, { ...init, buttons: type === 'mousedown' ? 1 : 0 }))
+    // Linkifier listens on the screen itself. Keep its synthetic press there:
+    // bubbling to xterm's outer mouse handler would focus the textarea and open
+    // the iOS keyboard, even for a link (or a tap with no link under it).
+    for (const type of ['mousemove', 'mousedown', 'mouseup'])
+      el.dispatchEvent(new MouseEvent(type, { ...init, bubbles: type !== 'mousedown', buttons: type === 'mousedown' ? 1 : 0 }))
     term.element?.dispatchEvent(new MouseEvent('mouseleave', init))
     term.clearSelection()
     return opened

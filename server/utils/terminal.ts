@@ -85,12 +85,17 @@ export async function readPaneSize(pane: string): Promise<PaneSize | null> {
 // minutes so a reopened terminal (or a second pane on the same machine) does
 // not pay the CLI again -- an SSH round trip on a remote machine.
 const VERSION_TTL_MS = 5 * 60 * 1000
-const versionCache = new Map<string, { at: number, p: Promise<ExecResult | null> }>()
+const versionCache = new Map<string, { at: number, serverVersion: string, p: Promise<ExecResult | null> }>()
+function terminalServerVersion(m: Machine): string {
+  const state = getState()
+  return state.machines?.find(item => item.key === m.key)?.version ?? (m.key === '' ? state.version || '' : '')
+}
 function herdrVersion(m: Machine): Promise<ExecResult | null> {
+  const serverVersion = terminalServerVersion(m)
   const hit = versionCache.get(m.key)
-  if (hit && Date.now() - hit.at < VERSION_TTL_MS) return hit.p
+  if (hit && hit.serverVersion === serverVersion && Date.now() - hit.at < VERSION_TTL_MS) return hit.p
   const p = runHerdrCli(m, ['--version'], 4000).catch(() => null)
-  versionCache.set(m.key, { at: Date.now(), p })
+  versionCache.set(m.key, { at: Date.now(), serverVersion, p })
   return p
 }
 
@@ -347,8 +352,7 @@ export function openTerm(ws: WsLike, url: URL): TermSession | null {
     hold = h
     const version = await versionP
     if (closed) return
-    const state = getState()
-    const serverVersion = state.machines?.find(m => m.key === machine!.key)?.version ?? (machine!.key === '' ? state.version : '')
+    const serverVersion = machine ? terminalServerVersion(machine) : ''
     mouse = version?.code === 0 && hasTerminalMouse(version.stdout.toString('utf8')) && hasTerminalMouse(serverVersion || '')
     if (ws.isOpen()) ws.send(JSON.stringify({ type: 'web.capabilities', mouse, scroll: 2 }))
     start()

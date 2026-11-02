@@ -18,6 +18,21 @@ export function setServedHosts(urls: string[]) {
   servedHosts = urls.flatMap((url) => { try { return [new URL(url).hostname.toLowerCase()] } catch { return [] } })
 }
 
+// This machine's own tailnet name (machine.tailnet.ts.net), as Tailscale last
+// reported it (server/utils/phone.ts, onTailnetName). Kept when Tailscale stops
+// answering: it only widens which images a reply may show (server/utils/csp.ts).
+let tailnetSelf = ''
+export function setTailnetSelf(name: string | null | undefined) {
+  if (name) tailnetSelf = name.toLowerCase().replace(/\.$/, '')
+}
+
+// Names wherdr is reached on that may belong to a tailnet: the allowed hosts
+// (APP_URL, HERDR_WEB_ALLOWED_HOSTS, what `tailscale serve` publishes) and this
+// machine's tailnet name. Never read from a request.
+export function tailnetDomainHosts(names = allowedHosts(), self = tailnetSelf): string[] {
+  return self ? [...names, self] : [...names]
+}
+
 export function allowedHosts(appUrl = process.env.APP_URL || '', extra = process.env.HERDR_WEB_ALLOWED_HOSTS || '', interfaces = os.networkInterfaces(), served = servedHosts): Set<string> {
   const names = new Set(['localhost', '127.0.0.1', '::1', os.hostname().toLowerCase(), ...served])
   try { if (appUrl) names.add(new URL(appUrl).hostname.toLowerCase().replace(/^\[|\]$/g, '')) } catch { /* avertissement APP_URL ailleurs */ }
@@ -69,10 +84,8 @@ export function hostRefusedPage(install?: string, host?: string, port?: string):
   const kind = install ?? process.env.WHERDR_INSTALL ?? ''
   const command = phoneFixCommand(kind, port)
   const where = 'in <code>~/wherdr/wherdr.env</code>'
-  const whereFr = 'dans <code>~/wherdr/wherdr.env</code>'
   const other = !tailnetName(host)
   const serve = other ? 'If you reach wherdr through <code>tailscale serve</code>, wherdr enables that address by itself.' : 'wherdr enables by itself the address <code>tailscale serve</code> publishes for it.'
-  const serveFr = other ? 'Si tu passes par <code>tailscale serve</code>, wherdr active cette adresse tout seul.' : 'wherdr active tout seul l’adresse que <code>tailscale serve</code> publie pour lui.'
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex"><title>wherdr · address not enabled</title>
@@ -91,11 +104,6 @@ pre{margin:0;padding:10px 12px;border:1px solid #3a3f47;background:#15181d;white
 <p>${serve} On the machine that runs wherdr, run this, then reload:</p>
 <pre><code>${command}</code></pre>${other ? `
 <p>For any other private name or IP address, add it to <code>HERDR_WEB_ALLOWED_HOSTS</code> (comma-separated) ${where}, then restart wherdr.</p>` : ''}
-<hr>
-<h1 lang="fr">Cette adresse n’est pas encore activée.</h1>
-<p lang="fr">${serveFr} Sur la machine qui fait tourner wherdr, lance ceci, puis recharge :</p>
-<pre><code>${command}</code></pre>${other ? `
-<p lang="fr">Pour tout autre nom privé ou adresse IP, ajoute-le à <code>HERDR_WEB_ALLOWED_HOSTS</code> (séparés par des virgules) ${whereFr}, puis redémarre wherdr.</p>` : ''}
 </main></body></html>
 `
 }
@@ -110,14 +118,10 @@ export function networkRefusedPage(why?: 'funnel'): string {
     ? {
         title: 'Tailscale Funnel opens wherdr to the Internet.',
         body: '<p>Funnel relays connections from anywhere to this computer, where wherdr cannot tell them from yours, so wherdr refuses every connection while it lasts.</p><p>On the computer that runs wherdr, turn Funnel off for wherdr\'s port (<code>tailscale funnel status</code>, then <code>tailscale funnel … off</code>), then reload. To reach wherdr from your devices, use <code>tailscale serve</code>, which stays inside your tailnet.</p>',
-        titleFr: 'Tailscale Funnel ouvre wherdr à Internet.',
-        bodyFr: '<p lang="fr">Funnel relaie vers cet ordinateur des connexions venues de partout, que wherdr ne peut pas distinguer des tiennes : wherdr refuse donc toute connexion tant qu’il est actif.</p><p lang="fr">Sur l’ordinateur qui fait tourner wherdr, coupe Funnel pour le port de wherdr (<code>tailscale funnel status</code>, puis <code>tailscale funnel … off</code>), puis recharge. Pour joindre wherdr depuis tes appareils, utilise <code>tailscale serve</code>, qui reste dans ton tailnet.</p>',
       }
       : {
           title: 'wherdr only answers this computer and your tailnet.',
           body: `<p>This device reached it from another network (Wi-Fi, LAN, Internet), in plain HTTP: anyone there could control the agents, so wherdr refuses.</p><p>Open wherdr on its computer (<code>localhost</code>), or from your devices through Tailscale: Settings › Phone, or <code>wherdr phone</code> on that computer.</p><p>Another private network (ZeroTier, WireGuard…): its owner can name its range in ${opt}, then restart wherdr.</p>`,
-          titleFr: 'wherdr ne répond qu’à cet ordinateur et à ton tailnet.',
-          bodyFr: `<p lang="fr">Cet appareil l’a joint depuis un autre réseau (Wi-Fi, réseau local, Internet), en HTTP non chiffré : n’importe qui sur ce réseau pourrait piloter les agents, donc wherdr refuse.</p><p lang="fr">Ouvre wherdr sur son ordinateur (<code>localhost</code>), ou depuis tes appareils par Tailscale : Réglages › Téléphone, ou <code>wherdr phone</code> sur cet ordinateur.</p><p lang="fr">Autre réseau privé (ZeroTier, WireGuard…) : son propriétaire peut nommer sa plage dans ${opt}, puis redémarrer wherdr.</p>`,
         }
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -134,9 +138,6 @@ code{font:13px/1.45 "JetBrains Mono",ui-monospace,monospace;overflow-wrap:anywhe
 <p class="tag">wherdr · 403 · network</p>
 <h1>${copy.title}</h1>
 ${copy.body}
-<hr>
-<h1 lang="fr">${copy.titleFr}</h1>
-${copy.bodyFr}
 </main></body></html>
 `
 }

@@ -1,8 +1,17 @@
 # Fixed rolling develop channel, independent of the package version.
+# Published only for a develop commit whose ci run succeeded: it starts when the
+# `ci` workflow (ci.yml, `name: ci`) completes for a push to develop, and builds
+# exactly the commit that run tested, never the current head of develop.
+# GitHub reads workflow_run triggers from the default branch (main): a change to
+# this trigger takes effect once it is released to main.
+# A manual run builds the head of the chosen ref, which must be develop, under
+# the same gate (scripts/prerelease.sh gate).
 name: develop prerelease
 
 on:
-  push:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
     branches: [develop]
   workflow_dispatch:
 
@@ -16,39 +25,67 @@ concurrency:
 
 jobs:
   prerelease:
-    if: github.ref == 'refs/heads/develop'
+    # A ci run of a push to develop in this repository that succeeded (a pull
+    # request from a branch named develop does not count), or a manual run on develop.
+    if: >-
+      (github.event_name == 'workflow_run'
+        && github.event.workflow_run.conclusion == 'success'
+        && github.event.workflow_run.event == 'push'
+        && github.event.workflow_run.head_branch == 'develop'
+        && github.event.workflow_run.head_repository.full_name == github.repository)
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/develop')
     permissions:
       contents: write
+      actions: read
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       PRERELEASE_TAG: develop
+      # The commit ci tested, not the head of develop now.
+      COMMIT_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.COMMIT_SHA }}
+
+      # Green ci (checks and e2e) for this commit, on develop, not older than
+      # the published one; otherwise nothing below runs.
+      - name: Gate
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash scripts/prerelease.sh gate "$COMMIT_SHA"
 
       - uses: actions/setup-node@v7
+        if: steps.gate.outputs.publish == 'true'
         with:
           node-version: 22
           cache: npm
 
       - name: Version
         id: v
+        if: steps.gate.outputs.publish == 'true'
         run: |
           version="$(bash scripts/prerelease.sh version)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - run: npm ci
+        if: steps.gate.outputs.publish == 'true'
 
       - name: Package
+        if: steps.gate.outputs.publish == 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/prerelease"
           npm pack --pack-destination "$RUNNER_TEMP/prerelease"
 
       - name: Check the package
-        run: bash scripts/prerelease.sh package "$RUNNER_TEMP/prerelease/wherdr-${{ steps.v.outputs.version }}.tgz" "$GITHUB_SHA"
+        if: steps.gate.outputs.publish == 'true'
+        run: bash scripts/prerelease.sh package "$RUNNER_TEMP/prerelease/wherdr-${{ steps.v.outputs.version }}.tgz" "$COMMIT_SHA"
 
       - name: Publish the prerelease
+        if: steps.gate.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: bash scripts/prerelease.sh publish "$RUNNER_TEMP/prerelease/wherdr-${{ steps.v.outputs.version }}.tgz" "$GITHUB_SHA"
+        run: bash scripts/prerelease.sh publish "$RUNNER_TEMP/prerelease/wherdr-${{ steps.v.outputs.version }}.tgz" "$COMMIT_SHA"

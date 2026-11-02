@@ -25,6 +25,7 @@ import { kbOpen } from '~/composables/useViewport'
 import { PromptHistory, historyDirection } from '~/utils/promptHistory'
 import { createTouchTap } from '~/utils/touchTap'
 import { tracePaste } from '~/utils/pasteJournal'
+import { ESC_CONFIRM_MS, type EscapeArm, pressEscape } from '~/utils/escapeStop'
 import { pasteHtmlText } from '~/utils/pasteHtml'
 
 // `escStops`: Escape is free for Stop (the conversation search, which closes on it, is shut).
@@ -72,21 +73,50 @@ const text = toRef(draft, 'text')
 const promptRef = ref<{ textareaRef?: HTMLTextAreaElement } | null>(null)
 const ta = computed(() => promptRef.value?.textareaRef || null)
 const fieldFocused = ref(false)
-// Stay expanded while focus is anywhere inside the composer — tabbing from
-// the field into the toolbar must not hide the selectors under the finger.
 const withinPrompt = (el: Element | null) => !!(el && ta.value?.closest('.prompt')?.contains(el))
-// Android can dismiss the keyboard while leaving the textarea focused:
-// the composer would stay expanded over a field nothing can type into —
-// drop that focus so it collapses back to one row. A hardware keyboard
-// keeps typing with the soft one hidden, so it keeps the composer open.
+let pointerHeld = false
+let collapseAfterPress = false
+let collapseFrame = 0
+function fieldFocus() {
+  cancelAnimationFrame(collapseFrame)
+  collapseAfterPress = false
+  fieldFocused.value = true
+}
+function fieldBlur(e?: FocusEvent) {
+  if (withinPrompt(e?.relatedTarget as Element | null)) return
+  // A press outside the empty editor blurs it before the click is delivered.
+  // Keep that press's target still; collapsing now can move an answer away
+  // from the finger and lose the first quote. Keyboard blur stays immediate.
+  if (coarse.value && pointerHeld) collapseAfterPress = true
+  else fieldFocused.value = false
+}
+function holdEditor() { pointerHeld = true }
+function releaseEditor() {
+  pointerHeld = false
+  if (!collapseAfterPress) return
+  collapseAfterPress = false
+  collapseFrame = requestAnimationFrame(() => {
+    collapseFrame = 0
+    fieldFocused.value = withinPrompt(document.activeElement)
+  })
+}
+onMounted(() => {
+  document.addEventListener('pointerdown', holdEditor, true)
+  window.addEventListener('pointerup', releaseEditor, true)
+  window.addEventListener('pointercancel', releaseEditor, true)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', holdEditor, true)
+  window.removeEventListener('pointerup', releaseEditor, true)
+  window.removeEventListener('pointercancel', releaseEditor, true)
+  cancelAnimationFrame(collapseFrame)
+})
+// Android can dismiss the keyboard while leaving the textarea focused.
 watch(kbOpen, open => {
   if (open || hardwareKeyboard.value) return
   if (document.activeElement === ta.value) { ta.value?.blur(); fieldFocused.value = false }
   else if (!withinPrompt(document.activeElement)) fieldFocused.value = false
 })
-function onFocusOut(e: FocusEvent) {
-  if (!withinPrompt(e.relatedTarget as Element | null)) fieldFocused.value = false
-}
 const fileInput = ref<HTMLInputElement | null>(null)
 const anyFileInput = ref<HTMLInputElement | null>(null)
 const sending = ref(false)
@@ -114,6 +144,7 @@ onBeforeUnmount(() => { mirror?.destroy(); mirror = null })
 
 const canSend = computed(() => Boolean(text.value.trim() || attachments.value.length))
 const readOnly = computed(() => Boolean(props.pane?.stopped || props.pane?.prompt?.unavailable) || !eventsOpen.value || offlineView.value || paneStale(props.pane))
+const composerStatus = computed(() => props.pane?.ompStatus ?? props.pane?.devinStatus ?? props.pane?.opencodeStatus)
 // Offline, no Stop: UChatPromptSubmit ignores `disabled` in "streaming" mode.
 // omp running the user's "!" / "$" command stays idle: Stop cancels the command.
 const shellRun = computed(() => Boolean(props.pane && props.pane.agent === 'omp' && props.pane.ompShell && props.pane.status !== 'working'))
@@ -381,6 +412,14 @@ async function submit(submitKey?: string) {
   const body = messageBody(typed, pastes, paths)
   const msg = body
   if (!msg || sending.value) return
+  // The same text sent here a moment ago: an echo (a dictation app pressing
+  // Enter again while the page lags), not a new message. Its copy goes.
+  if (!claimSend(props.paneId, msg)) {
+    text.value = ''
+    clearAttachments()
+    toast(t('Already sent'))
+    return
+  }
   const p = props.pane
   // omp question with "Other": the message is its free answer.
   const prompt = p && p.status === 'blocked' ? p.prompt : null
@@ -401,18 +440,25 @@ async function submit(submitKey?: string) {
   sending.value = true
   // Before the send: it tells the server where they sit (see sendMessage).
   rememberPastes(pastes)
-  // What was sent, for the receipt: the send awaits an answer, and typing or
-  // attaching may go on meanwhile — the receipt clears only what it sent.
-  const sentAtts = attachments.value.slice()
+  // The field empties before the request: another Enter while it runs finds
+  // nothing to send. Not sent: the message comes back.
+  const atts = attachments.value
+  text.value = ''
+  attachments.value = []
+  const giveBack = () => {
+    releaseSend(props.paneId, msg)
+    if (!text.value && !attachments.value.length) {
+      text.value = typed
+      attachments.value = atts
+    } else restoreDraft(draft, msg, pastes)
+  }
   try {
     let queued: QueuedMessage | null = null
     if (prompt && free >= 0) {
-      if (!(await choose(props.paneId, free, prompt.options[free]!.label, prompt.identity, { text: msg, question: prompt.question }))) return
+      if (!(await choose(props.paneId, free, prompt.options[free]!.label, prompt.identity, { text: msg, question: prompt.question }))) return giveBack()
     } else queued = await sendMessage(p, props.paneId, msg, undefined, submitKey)
     rememberSent(typed)
-    if (text.value === typed) text.value = ''
-    else if (text.value.startsWith(typed)) text.value = text.value.slice(typed.length)
-    dropAttachments(sentAtts)
+    for (const a of atts) if (a.url) URL.revokeObjectURL(a.url)
     haptic()
     emit('sent', queued)
     // "/" command: its result (terminal screen), as from the + menu.
@@ -423,6 +469,7 @@ async function submit(submitKey?: string) {
       showCommandResult(props.paneId, cmd, listed.some(c => c.source === 'builtin' && `/${c.name}` === cmd))
     }
   } catch (err) {
+    giveBack()
     toast((err as Error).message, true)
   } finally {
     sending.value = false
@@ -466,13 +513,22 @@ async function interrupt() {
 watch(() => props.pane?.status, s => { if (interrupting.value === 'failed' && !stoppingShell.value && s !== 'working') interrupting.value = null })
 watch(shellRun, on => { if (interrupting.value === 'failed' && stoppingShell.value && !on) interrupting.value = null })
 // Escape (composables/useShortcuts.ts): the Stop button, only while it is shown and
-// clickable. The field blurs itself on Escape: it gets the focus back for what comes next.
+// clickable, on the second press within a moment (utils/escapeStop.ts): one stray
+// Escape from another app must not stop the agent. The field blurs itself on
+// Escape: it gets the focus back for what comes next.
+const escArm: EscapeArm = { at: null }
+const escArmed = ref(false)
+let escTimer: ReturnType<typeof setTimeout> | undefined
 function stop() {
   if (!props.escStops || !stopMode.value || sending.value || interrupting.value === 'running') return false
-  interrupt()
+  clearTimeout(escTimer)
+  escArmed.value = !pressEscape(escArm, Date.now())
+  if (escArmed.value) escTimer = setTimeout(() => { escArmed.value = false }, ESC_CONFIRM_MS)
+  else interrupt()
   ta.value?.focus()
   return true
 }
+onBeforeUnmount(() => clearTimeout(escTimer))
 
 // ------------------------------------------------------------ photos
 function clearAttachments() {
@@ -880,7 +936,7 @@ defineExpose({
       :rows="1" :maxrows="7" :autofocus="false" :submit-on-enter="enterSends && !slashOpen"
       :enterkeyhint="enterSends ? 'send' : 'enter'" autocapitalize="sentences"
       class="prompt" :class="{ suggesting: suggestTap, expanded }" :style="suggestRoom ? { '--suggest-room': `${suggestRoom}px` } : undefined" :ui="{ header: 'prompt-head', body: 'prompt-body', base: 'prompt-input', footer: 'prompt-foot' }"
-      @focusin="fieldFocused = true" @focusout="onFocusOut" @focus="fieldFocused = true" @blur="onFocusOut"
+      @focusin="fieldFocus" @focusout="fieldBlur" @focus="fieldFocus" @blur="fieldBlur"
       @submit="submit()" @keydown="onKeydown" @compositionend="onCompositionEnd" @paste="onPaste" @beforeinput="onBeforeInput"
     >
       <template v-if="attachments.length" #header>
@@ -920,12 +976,15 @@ defineExpose({
         />
         <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onFiles">
         <input ref="anyFileInput" type="file" multiple hidden data-testid="attach-any" @change="onFiles">
-        <div v-if="pane && (pane.agent === 'claude' || pane.agent === 'codex' || pane.agent === 'omp')" class="prompt-models">
+        <div v-if="pane && (pane.agent === 'claude' || pane.agent === 'codex' || pane.agent === 'omp' || pane.agent === 'devin' || pane.agent === 'opencode')" class="prompt-models">
           <ModelPicker :pane="pane" />
         </div>
         <span v-if="hint && suggestion" class="prompt-hint"><UKbd value="tab" size="sm" /> {{ t('suggestion') }} <span class="sep">·</span> <UKbd value="enter" size="sm" /> {{ t('send') }}</span>
         <span v-else-if="hint" class="prompt-hint"><UKbd value="enter" size="sm" /> {{ t('send') }} <span class="sep">·</span> <UKbd value="shift" size="sm" /><UKbd value="enter" size="sm" /> {{ t('new line') }}</span>
-        <span v-else-if="desk && escStops && stopMode && interrupting !== 'running'" class="prompt-hint"><UKbd value="escape" size="sm" /> {{ tl('stop', 'arrêter') }}</span>
+        <span v-else-if="desk && escStops && stopMode && interrupting !== 'running'" class="prompt-hint" :class="{ armed: escArmed }" data-testid="esc-hint">
+          <template v-if="escArmed"><UKbd value="escape" size="sm" /> {{ t('again to stop') }}</template>
+          <template v-else><UKbd value="escape" size="sm" /><UKbd value="escape" size="sm" /> {{ tl('stop', 'arrêter') }}</template>
+        </span>
         <UButton
           :icon="asrRecording ? 'i-lucide-square' : asrInstalled ? 'i-lucide-mic' : 'i-lucide-mic-off'" color="neutral" variant="outline" size="sm"
           class="prompt-mic" :class="{ dim: !asrInstalled, rec: asrRecording }" :disabled="readOnly || asrBusy"
@@ -942,10 +1001,10 @@ defineExpose({
         />
       </template>
     </UChatPrompt>
-    <!-- omp: its status line, as at the bottom of the terminal. -->
-    <div v-if="pane?.ompStatus" class="composer-status" :title="[pane.ompStatus.line, pane.ompStatus.meters].filter(Boolean).join('\n')">
-      <span class="composer-status-line">{{ pane.ompStatus.line }}</span>
-      <span v-if="pane.ompStatus.meters" class="composer-status-meters">{{ pane.ompStatus.meters }}</span>
+    <!-- omp/Devin: the agent's status line, as at the bottom of its terminal. -->
+    <div v-if="composerStatus" class="composer-status" :title="[composerStatus.line, composerStatus.meters].filter(Boolean).join('\n')">
+      <span class="composer-status-line">{{ composerStatus.line }}</span>
+      <span v-if="composerStatus.meters" class="composer-status-meters">{{ composerStatus.meters }}</span>
     </div>
     <!-- Command Code: the model and context of its last turn. -->
     <div v-if="pane?.cmdStatus" class="composer-status" :title="[`Command Code${pane.model?.label ? ` · ${pane.model.label}` : ''}`, cmdMeters].filter(Boolean).join('\n')">

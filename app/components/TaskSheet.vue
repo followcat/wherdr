@@ -575,7 +575,7 @@ function chat() {
             <p v-if="handover.from"><span>{{ t('Previous agent') }}: </span>{{ handover.from }}</p>
             <p v-if="handover.to"><span>{{ t('Taken over by') }}: </span>{{ handover.to }}</p>
             <p v-if="handover.why">{{ handover.why }}</p>
-            <time v-if="handover.at !== null" :datetime="new Date(handover.at).toISOString()" class="task-handover-meta">{{ new Date(handover.at).toLocaleString() }}</time>
+            <time v-if="handover.at !== null" :datetime="new Date(handover.at).toISOString()" class="task-handover-meta">{{ new Date(handover.at).toLocaleString(language) }}</time>
           </li>
         </ol>
       </section>
@@ -585,7 +585,7 @@ function chat() {
       </div>
       <!-- A failure the task has moved on from: history, not where it stands. -->
       <section v-if="details?.failure && details.failureStale" class="task-sheet-block task-sheet-earlier">
-        <h4>{{ tl('Earlier failure', 'Échec précédent') }}<template v-if="details.failureAt"> · {{ new Date(details.failureAt).toLocaleString() }}</template></h4>
+        <h4>{{ tl('Earlier failure', 'Échec précédent') }}<template v-if="details.failureAt"> · {{ new Date(details.failureAt).toLocaleString(language) }}</template></h4>
         <p class="task-sheet-text">{{ details.failureTitle || details.failure }}</p>
       </section>
       <section v-if="details" class="task-sheet-block task-description">

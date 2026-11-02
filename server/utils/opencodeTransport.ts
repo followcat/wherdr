@@ -1,6 +1,10 @@
 // Runs on the agent's machine, locally or over SSH. Credentials and loopback
-// addresses stay there. Only GET requests against an already running v2 service
-// are permitted; the CLI's `api` command would auto-start a service.
+// addresses stay there. Reads are GETs against an already running v2 service
+// (the CLI's `api` command would auto-start one); writes are the fixed,
+// whitelisted operations below — model PATCH, permission/form replies, an
+// inbox delete verified against a fresh listing, and a shell run.
+// Keep the -c payload ASCII for service/SSH launchers that decode argv before
+// applying Python's UTF-8 setting.
 export const OPENCODE_READ = String.raw`
 import base64, hashlib, json, os, pathlib, re, shutil, subprocess, sys, urllib.request, urllib.error, urllib.parse
 
@@ -19,7 +23,7 @@ def discover():
     own = os.path.realpath(os.environ.get('HOME', '')) == os.path.realpath(home)
     state = pathlib.Path(os.environ.get('XDG_STATE_HOME', '') if own else '')
     # A relative XDG_STATE_HOME would resolve against our cwd, not the
-    # user's — only an absolute one is honored.
+    # user's; only an absolute one is honored.
     if not str(state) or str(state) == '.' or not state.is_absolute():
         state = pathlib.Path(home) / '.local' / 'state'
     file = state / 'opencode' / 'service.json'
@@ -84,7 +88,7 @@ try:
                     except (ValueError, TypeError):
                         emit({'changed': True})
     else:
-        session = urllib.parse.quote(request['session'], safe='')
+        session = urllib.parse.quote(str(request.get('session', '')), safe='')
         root = '/api/session/' + session
         path = root
         op = request.get('op')
@@ -95,6 +99,136 @@ try:
             path += '/message?' + urllib.parse.urlencode(query)
         elif op in ['message', 'image']:
             path += '/message/' + urllib.parse.quote(request['message'], safe='')
+        elif op == 'models':
+            path = '/api/model'
+        elif op == 'inbox':
+            path += '/inbox'
+        elif op == 'pending':
+            # Pending permission requests and unanswered forms, in one run.
+            out = {}
+            for name, sub in [('permissions', '/permission'), ('forms', '/form')]:
+                try:
+                    with get(root + sub) as response:
+                        data = json.loads(response.read(limit + 1))
+                    out[name] = data.get('data') if isinstance(data.get('data'), list) else []
+                except urllib.error.HTTPError as e:
+                    emit({'server': server, 'status': e.code})
+                    sys.exit(0)
+            emit({'server': server, 'status': 200, 'data': out})
+            sys.exit(0)
+        elif op == 'reply':
+            # Answer a pending permission request. The decision enum and the
+            # request id shape are fixed; then re-list so the caller sees the
+            # request really leave the pending set.
+            rid = str(request.get('request', ''))
+            decision = request.get('decision')
+            message = request.get('message')
+            if not re.fullmatch(r'[\w-]{1,128}', rid) or decision not in ['once', 'always', 'reject'] \
+                    or (message is not None and (not isinstance(message, str) or len(message) > 4000)):
+                raise ValueError('Invalid OpenCode reply')
+            body = {'decision': decision}
+            if message: body['message'] = message
+            req = urllib.request.Request(base + root + '/permission/' + urllib.parse.quote(rid, safe='') + '/reply',
+                data=json.dumps(body, ensure_ascii=True).encode(), method='POST',
+                headers={'Authorization': auth, 'Accept': 'application/json', 'Content-Type': 'application/json'})
+            try:
+                with opener.open(req, timeout=timeout) as response:
+                    response.read(limit)
+            except urllib.error.HTTPError as e:
+                emit({'server': server, 'status': e.code})
+                sys.exit(0)
+            with get(root + '/permission') as response:
+                data = json.loads(response.read(limit + 1))
+            emit({'server': server, 'status': 200, 'data': {'pending': data.get('data') if isinstance(data.get('data'), list) else []}})
+            sys.exit(0)
+        elif op == 'form_reply':
+            # Answer one field of a pending form: {answer: {<key>: <value>}}.
+            fid = str(request.get('form', ''))
+            key = str(request.get('key', ''))
+            value = request.get('value')
+            scalar = isinstance(value, str) and len(value) <= 8000 or isinstance(value, bool) \
+                or isinstance(value, (int, float)) and not isinstance(value, bool)
+            items = isinstance(value, list) and len(value) <= 32 and all(isinstance(v, str) and len(v) <= 2000 for v in value)
+            if not re.fullmatch(r'[\w-]{1,128}', fid) or not re.fullmatch(r'[\w.-]{1,128}', key) or not (scalar or items):
+                raise ValueError('Invalid OpenCode reply')
+            req = urllib.request.Request(base + root + '/form/' + urllib.parse.quote(fid, safe='') + '/reply',
+                data=json.dumps({'answer': {key: value}}, ensure_ascii=True).encode(), method='POST',
+                headers={'Authorization': auth, 'Accept': 'application/json', 'Content-Type': 'application/json'})
+            try:
+                with opener.open(req, timeout=timeout) as response:
+                    response.read(limit)
+            except urllib.error.HTTPError as e:
+                emit({'server': server, 'status': e.code})
+                sys.exit(0)
+            with get(root + '/form') as response:
+                data = json.loads(response.read(limit + 1))
+            emit({'server': server, 'status': 200, 'data': {'pending': data.get('data') if isinstance(data.get('data'), list) else []}})
+            sys.exit(0)
+        elif op == 'inbox_delete':
+            # Cancel a queued message: DELETE /inbox/<id>, but only an id a
+            # fresh listing still shows; never a blind delete.
+            iid = str(request.get('item', ''))
+            if not re.fullmatch(r'[\w-]{1,128}', iid):
+                raise ValueError('Invalid OpenCode reply')
+            with get(root + '/inbox') as response:
+                data = json.loads(response.read(limit + 1))
+            items = data.get('data') if isinstance(data.get('data'), list) else []
+            if not any(isinstance(i, dict) and i.get('id') == iid for i in items):
+                emit({'server': server, 'status': 404})
+                sys.exit(0)
+            req = urllib.request.Request(base + root + '/inbox/' + urllib.parse.quote(iid, safe=''), method='DELETE',
+                headers={'Authorization': auth, 'Accept': 'application/json'})
+            try:
+                with opener.open(req, timeout=timeout) as response:
+                    response.read(limit)
+            except urllib.error.HTTPError as e:
+                emit({'server': server, 'status': e.code})
+                sys.exit(0)
+            with get(root + '/inbox') as response:
+                data = json.loads(response.read(limit + 1))
+            emit({'server': server, 'status': 200, 'data': {'items': data.get('data') if isinstance(data.get('data'), list) else []}})
+            sys.exit(0)
+        elif op == 'shell':
+            # Run a shell command in the session (the "!" of its composer).
+            cmd = request.get('command')
+            if not isinstance(cmd, str) or not cmd.strip() or len(cmd) > 8000:
+                raise ValueError('Invalid OpenCode shell command')
+            req = urllib.request.Request(base + root + '/shell',
+                data=json.dumps({'command': cmd}, ensure_ascii=True).encode(), method='POST',
+                headers={'Authorization': auth, 'Accept': 'application/json', 'Content-Type': 'application/json'})
+            try:
+                # The service answers when the command ends; that can be
+                # minutes, not the read budget's ten seconds. Still bounded:
+                # a longer run keeps going server-side while we report it
+                # unconfirmed (the transcript shows it land later).
+                with opener.open(req, timeout=max(1, min(290, request.get('seconds', 290)))) as response:
+                    response.read(limit)
+                emit({'server': server, 'status': 200, 'data': None})
+            except urllib.error.HTTPError as e:
+                emit({'server': server, 'status': e.code})
+            sys.exit(0)
+        elif op == 'model':
+            # PATCH the session's model with an id/providerID/variant body,
+            # then re-GET the session so the caller verifies the result.
+            # Any other field is refused.
+            model = request.get('model')
+            keys = set(model) if isinstance(model, dict) else None
+            valid = keys is not None and keys <= {'id', 'providerID', 'variant'} \
+                and all(isinstance(v, str) for v in model.values()) \
+                and bool(model.get('id')) and bool(model.get('providerID'))
+            if not valid:
+                raise ValueError('Invalid OpenCode model')
+            body = json.dumps({'model': model}, ensure_ascii=True).encode()
+            try:
+                req = urllib.request.Request(base + path, data=body, method='PATCH', headers={'Authorization': auth, 'Accept': 'application/json', 'Content-Type': 'application/json'})
+                with opener.open(req, timeout=timeout) as response:
+                    response.read(limit)
+                with get(path) as response:
+                    data = json.loads(response.read(limit + 1))
+                emit({'server': server, 'status': 200, 'data': data})
+            except urllib.error.HTTPError as e:
+                emit({'server': server, 'status': e.code})
+            sys.exit(0)
         elif op != 'session':
             raise ValueError('Invalid OpenCode read operation')
         try:
@@ -102,13 +236,24 @@ try:
                 body = response.read(limit + 1)
                 if len(body) > limit: raise ValueError('OpenCode conversation exceeded its read limit')
                 data = json.loads(body)
+                # Every session read also carries the queued-message inbox:
+                # one shim run, coalesced, never a second process for it.
+                if op == 'session':
+                    try:
+                        with get(root + '/inbox') as box:
+                            items = json.loads(box.read(limit + 1))
+                        data['inbox'] = items.get('data') if isinstance(items.get('data'), list) else []
+                    # Auxiliary read: any failure means unknown, never empty;
+                    # an empty list would make a queued message look lost.
+                    except Exception:
+                        data['inbox'] = None
                 if op == 'image':
                     message = data.get('data', {})
                     slot = request.get('slot')
                     mime_pattern = r'image/(png|jpeg|gif|webp|avif)'
                     if slot == 'u' and message.get('type') == 'user':
                         # User attachments arrive inline or as a file:/data: URI
-                        # on the agent machine — resolved below like tool files.
+                        # on the agent machine; resolved below like tool files.
                         files = [f for f in message.get('files', []) if re.fullmatch(mime_pattern, f.get('mime', '')) and (isinstance(f.get('data'), str) or isinstance(f.get('uri'), str))]
                     else:
                         part = next((p for p in message.get('content', []) if p.get('type') == 'tool' and 't' + p.get('id', '') == slot), {})
@@ -134,7 +279,7 @@ try:
             emit({'server': server, 'status': e.code})
 except ValueError as e:
     # Only our fixed messages may leave this helper; JSON/URL errors may contain secrets.
-    allowed = ['OpenCode 2.x background service is not running', 'Invalid OpenCode service state', 'OpenCode service must use a loopback address', 'OpenCode 2.x is required for conversation reading', 'OpenCode service credentials are unavailable', 'OpenCode conversation exceeded its read limit', 'Invalid OpenCode read operation']
+    allowed = ['OpenCode 2.x background service is not running', 'Invalid OpenCode service state', 'OpenCode service must use a loopback address', 'OpenCode 2.x is required for conversation reading', 'OpenCode service credentials are unavailable', 'OpenCode conversation exceeded its read limit', 'Invalid OpenCode read operation', 'Invalid OpenCode model', 'Invalid OpenCode reply', 'Invalid OpenCode shell command']
     emit({'error': str(e) if str(e) in allowed else 'Unable to read OpenCode conversation'})
     sys.exit(1)
 except Exception:

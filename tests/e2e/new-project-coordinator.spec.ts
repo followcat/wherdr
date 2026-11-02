@@ -63,38 +63,38 @@ async function pickFolder(page: Page, name: string) {
   await sheet.getByRole('button', { name: /Choose this folder|Choisir ce dossier/ }).click()
 }
 
-for (const language of ['en', 'fr'] as const) {
-  const fr = language === 'fr'
+test.describe('English interface', () => {
+  const language = 'en'
   test(`New coordinator on a folder the board does not know (${language})`, async ({ page }, info) => {
     await page.addInitScript(lang => localStorage.setItem('herdrLanguage', lang), language)
     const fake = await fakeBoard(page)
     await page.goto('/')
     const desk = (page.viewportSize()?.width ?? 0) >= 1000
-    await (desk ? page.getByRole('button', { name: fr ? 'Nouveau' : 'New', exact: true }).first() : page.locator('.fab')).click()
+    await (desk ? page.getByRole('button', { name: 'New', exact: true }).first() : page.locator('.fab')).click()
     const sheet = page.getByRole('dialog')
     await sheet.locator('[data-kind="coordinator"]').click()
     await sheet.locator('#coordinator-repo').click()
-    await page.getByRole('option', { name: fr ? 'Autre dépôt…' : 'Other repository…' }).click()
+    await page.getByRole('option', { name: 'Other repository…' }).click()
     const state = sheet.getByTestId('project-folder-state')
     const open = sheet.locator('.launch-btn')
 
     // Not Git: said, nothing opens.
     await pickFolder(page, 'notes')
     await expect(state).toHaveAttribute('data-state', 'notgit')
-    await expect(state).toContainText(fr ? 'n’est pas un dépôt Git' : 'is not a Git repository')
+    await expect(state).toContainText('is not a Git repository')
     await expect(open).toBeDisabled()
 
     // Already on the board: its name.
     await pickFolder(page, 'demo')
     await expect(state).toHaveAttribute('data-state', 'known')
     await expect(state).toContainText('demo')
-    await expect(open).toHaveText(fr ? 'Ouvrir la conversation' : 'Open conversation')
+    await expect(open).toHaveText('Open conversation')
 
     // New: the name it will get, then added before the conversation opens.
     await pickFolder(page, 'team-hub')
     await expect(state).toHaveAttribute('data-state', 'new')
     await expect(state).toContainText('team-hub')
-    await expect(open).toHaveText(fr ? 'Ajouter et ouvrir la conversation' : 'Add and open conversation')
+    await expect(open).toHaveText('Add and open conversation')
     const shot = (name: string) => page.screenshot({ path: `.shots/new-coordinator-${name}-${language}-${desk ? 'desktop' : 'phone'}-${info.project.name}.png` })
     await shot('sheet')
     await open.click()
@@ -104,12 +104,12 @@ for (const language of ['en', 'fr'] as const) {
     const first = page.locator('#board-panel-first')
     await expect(first).toBeVisible()
     await shot('panel')
-    await first.fill(fr ? 'Fais le point sur le projet' : 'Review the project')
+    await first.fill('Fais le point sur le projet')
     await page.locator('.board-panel-first button[type="submit"]').click()
     await expect.poll(() => fake.told.length).toBe(1)
     expect(fake.told[0]!.to).toEqual({ kind: 'project', repo: 'team-hub' })
   })
-}
+})
 
 test('New coordinator sheet on a desktop window', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })

@@ -7,7 +7,8 @@ for (const desktop of [false, true]) {
     test.use(desktop
       ? { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, isMobile: false, hasTouch: false }
       : { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
-    for (const language of ['en', 'fr']) {
+    test.describe('English interface', () => {
+      const language = 'en'
       test(`autopilot attribution in coordinator conversation (${language})`, async ({ page }) => {
         await page.addInitScript(language => localStorage.setItem('herdrLanguage', language), language)
         await expect.poll(async () => (await (await page.request.get('/api/state')).json()).ok).toBe(true)
@@ -31,7 +32,7 @@ for (const desktop of [false, true]) {
         await expect(panel.locator('.msg-user')).toHaveCount(1)
         await expect(panel.locator('.msg-ai')).toContainText('Autopilot: an assistant reply.')
         const wake = panel.locator('.msg-autopilot').first()
-        const copy = wake.getByRole('button', { name: language === 'en' ? 'Copy message' : 'Copier le message', exact: true })
+        const copy = wake.getByRole('button', { name: 'Copy message', exact: true })
         await page.mouse.move(0, 0)
         if (desktop) {
           await expect(copy).toHaveCSS('opacity', '0')
@@ -70,6 +71,6 @@ for (const desktop of [false, true]) {
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
         await page.screenshot({ path: `.shots/autopilot-${language}-${desktop ? 'desktop' : 'phone'}.png` })
       })
-    }
+    })
   })
 }

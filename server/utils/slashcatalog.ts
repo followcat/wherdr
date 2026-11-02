@@ -256,3 +256,36 @@ export const OMP_BUILTIN: SlashEntry[] = [
   ["pause", "Freeze all agents (main, subagents, advisor) until resumed"],
   ["quit", "Quit the application"],
 ]
+
+// Devin v3000.x — only what its own screens tell ("Use /clear to start a
+// fresh conversation" footer; a sent "❭ /compact" echo). Its /menu, if any,
+// is not captured: keep the list to the evidenced commands.
+export const DEVIN_BUILTIN: SlashEntry[] = [
+  ["clear", "Start a fresh conversation"],
+  ["compact", "Compact the conversation context"],
+]
+
+// OpenCode 2.x builtin commands, from its docs (TUI menu not captured).
+export const OPENCODE_BUILTIN: SlashEntry[] = [
+  ["init", "Create or update the AGENTS.md file"],
+  ["undo", "Revert the last change"],
+  ["redo", "Re-apply the last undone change"],
+  ["share", "Share the session via a link"],
+  ["unshare", "Stop sharing the session"],
+  ["help", "Show help"],
+  ["models", "List and switch models"],
+  ["themes", "List and switch themes"],
+  ["clear", "Clear the conversation"],
+  ["new", "Start a new session"],
+  ["compact", "Compact the session context"],
+  ["details", "Toggle tool-call details"],
+  ["export", "Export the session transcript", "[path]"],
+  ["exit", "Exit OpenCode"],
+  ["review", "Review changes"],
+  ["connect", "Connect a provider"],
+  ["agents", "Manage agents"],
+  ["session", "Manage sessions"],
+  ["editor", "Open the external editor"],
+  ["fork", "Fork the session"],
+  ["mcp", "Manage MCP servers"],
+]

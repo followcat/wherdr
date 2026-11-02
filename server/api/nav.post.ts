@@ -2,8 +2,9 @@
 // prompt): ↑ ↓ Enter Escape sent as is to the terminal, like the key
 // bar. Arrows use the displayed card; confirming keys re-read the screen. Enter
 // is never sent to a menu where it is not a simple choice (/model:
-// "set as default"). ← →: only between the tabs of omp's "Ask" box. The
-// state is broadcast again right after (screen re-read).
+// "set as default"). ← →: between the tabs of omp's "Ask" box, or between
+// OpenCode's permission buttons. The state is broadcast again right after
+// (screen re-read).
 import { TOP, clickMovesOnly } from '../../shared/menuScreen'
 
 const KEYS = new Set(['up', 'down', 'enter', 'esc', 'left', 'right'])
@@ -18,7 +19,11 @@ export default defineApi(async (event, b) => {
     // Arrows cannot confirm a choice. Use the published card to avoid queued
     // detection reads before sending; Enter still validates the live screen.
     const shown = findPane(pane)
-    if ((key === 'up' || key === 'down') && shown && !shown.leaving && shown.status !== 'working'
+    // A horizontal prompt (OpenCode permission) only moves with ←/→.
+    const arrow = shown?.prompt?.horizontal
+      ? key === 'left' || key === 'right'
+      : key === 'up' || key === 'down'
+    if (arrow && shown && !shown.leaving && shown.status !== 'working'
       && !shown.menu?.unavailable && !shown.prompt?.unavailable
       && (shown.menu || shown.prompt)) {
       await herdr('pane.send_input', { pane_id: pane, keys: [key] })
@@ -40,7 +45,8 @@ export default defineApi(async (event, b) => {
       if (key === 'left' || key === 'right') throw new HerdrError('stale', 'The screen has changed — check the current screen.')
     } else {
       const choices = screenChoices(text, agent)
-      if (!choices || ((key === 'left' || key === 'right') && !(choices.tabs && !choices.typing))) {
+      if (!choices || (choices.horizontal && (key === 'up' || key === 'down'))
+        || ((key === 'left' || key === 'right') && !((choices.tabs && !choices.typing) || choices.horizontal))) {
         throw new HerdrError('stale', 'The screen has changed — check the current screen.')
       }
     }

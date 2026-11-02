@@ -9,7 +9,7 @@ const sheet = (page: Page) => page.locator('.hw-sheet')
 async function openMenu(page: Page) {
   await page.getByRole('button', { name: 'Options' }).click()
   await expect(sheet(page)).toBeVisible()
-  await expect(sheet(page).getByText('Rename pane')).toBeVisible()
+  await expect(sheet(page).getByText('Reconnect', { exact: true })).toBeVisible()
   await page.waitForTimeout(400) // opening animation
 }
 

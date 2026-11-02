@@ -29,7 +29,25 @@ export interface PromptDetail {
 // `typing`: omp's free-text answer field is open (single option: `free`).
 // `tabs`: tabs of omp's multi-question "Ask" box (the last one is Submit),
 // `tab` the one shown; ←/→ move between them.
-export interface Choices { identity?: string, unavailable?: boolean, question: string | null, cursor: number, options: ChoiceOption[], kind?: 'self-update', detail?: PromptDetail, multi?: boolean, typing?: boolean, tabs?: string[], tab?: number }
+export interface Choices {
+  identity?: string
+  unavailable?: boolean
+  question: string | null
+  cursor: number
+  options: ChoiceOption[]
+  kind?: 'self-update'
+  detail?: PromptDetail
+  multi?: boolean
+  typing?: boolean
+  tabs?: string[]
+  tab?: number
+  // OpenCode's permission dialog moves with ←/→ (⇆ select), not ↑/↓.
+  horizontal?: boolean
+  // OpenCode permission request behind a screen-parsed card (fallback when
+  // the service API is unreachable): answered through the service by
+  // action/resources match — never by guessing the colour-only cursor.
+  permission?: { action: string, resources: string[] }
+}
 
 // Waiting screen of an agent (Codex at startup: hooks, folder trust,
 // login…), see server/utils/waitScreen.ts. `other`: unrecognized screen,
@@ -154,6 +172,10 @@ export interface Pane {
   // Devin, conversation shown: its composer screen — own queue ("○" rows),
   // last echoed message, send-now (see server/utils/devinScreen.ts).
   devinScreen?: ClaudeScreen
+  // Devin's composer footer (model · mode · shells + context gauge), parsed
+  // like omp's status — Composer shows whichever is set (server/utils/devinScreen.ts).
+  devinStatus?: OmpStatus
+  opencodeStatus?: OmpStatus
   // Claude Code status near the input field ("✔ Update installed · Restart to update").
   claudeNotice?: string
   // Restart requested from wherdr (see server/utils/restart.ts): the agent
@@ -244,6 +266,9 @@ export interface MachineInfo {
   target?: string
   version?: string
   os?: string // `uname -s`: 'Darwin' (macOS), 'Linux'…
+  // Only while the server is not ready (see shared/stateReady.ts): whether
+  // this machine's state has been read since the server started.
+  polled?: boolean
 }
 
 export interface NamedSession { name: string, running: boolean, key: string }

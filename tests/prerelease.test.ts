@@ -205,24 +205,150 @@ esac
   })
 })
 
+describe.skipIf(!hasCommands('bash', 'grep'))('gate', () => {
+  const HEAD = 'b'.repeat(40)
+  const PUBLISHED = 'c'.repeat(40)
+  // A fake gh answering the queries of cmd_gate. RUNS: ids of successful ci
+  // runs for SHA; JOBS: names of their green jobs (JOBS1 for run 1); HEAD: develop's head;
+  // PUBLISHED: what the develop tag names ("" = no tag); ONDEV / VSPUB: compare
+  // statuses of SHA against develop's head and against the published commit;
+  // FAIL: a part of one call's arguments, that call then fails like an HTTP 503.
+  function gate(opts: { runs?: string, jobs?: string[], jobs1?: string[], head?: string, published?: string, onDev?: string, vsPub?: string, fail?: string } = {}) {
+    const home = workspace('2.1.0')
+    const bin = path.join(home, 'bin')
+    mkdirSync(bin)
+    writeFileSync(path.join(bin, 'gh'), `#!/bin/sh
+printf '%s\\n' "$*" >> "$CALLS"
+case "$*" in *"$FAIL"*) [ -z "$FAIL" ] || { echo 'gh: HTTP 503' >&2; exit 1; } ;; esac
+case "$*" in
+  'api repos/example/wherdr/actions/workflows/ci.yml/runs?head_sha=${SHA}&event=push&branch=develop&status=success&per_page=20 '*) printf '%s\\n' $RUNS ;;
+  'api repos/example/wherdr/actions/runs/1/jobs?per_page=100 '*) printf '%s\\n' $JOBS1 ;;
+  'api repos/example/wherdr/actions/runs/'*'/jobs?per_page=100 '*) printf '%s\\n' $JOBS ;;
+  'api repos/example/wherdr/branches/develop --jq .commit.sha') echo "$HEAD" ;;
+  'api repos/example/wherdr/git/matching-refs/tags/develop '*) [ -z "$PUBLISHED" ] || echo "$PUBLISHED" ;;
+  "api repos/example/wherdr/compare/$HEAD...${SHA} --jq .status") echo "$ONDEV" ;;
+  "api repos/example/wherdr/compare/$PUBLISHED...${SHA} --jq .status") echo "$VSPUB" ;;
+  *) exit 1 ;;
+esac
+`, { mode: 0o755 })
+    const out = path.join(home, 'output')
+    writeFileSync(out, '')
+    const calls = path.join(home, 'calls')
+    const r = run(home, ['gate', SHA], {
+      PATH: `${bin}:${process.env.PATH}`, GH_REPO: 'example/wherdr', GITHUB_OUTPUT: out, CALLS: calls,
+      RUNS: opts.runs ?? '42', JOBS: (opts.jobs ?? ['checks', 'changes', 'e2e']).join(' '), JOBS1: (opts.jobs1 ?? []).join(' '),
+      HEAD: opts.head ?? HEAD, PUBLISHED: opts.published ?? PUBLISHED, ONDEV: opts.onDev ?? 'behind', VSPUB: opts.vsPub ?? 'ahead', FAIL: opts.fail ?? '',
+    })
+    return { r, output: readFileSync(out, 'utf8'), calls: readFileSync(calls, 'utf8') }
+  }
+
+  it('publishes a develop commit newer than the published one once checks and e2e passed', () => {
+    const { r, output } = gate()
+    expect(r.status, r.stderr).toBe(0)
+    expect(output).toBe('publish=true\n')
+  })
+
+  it('publishes the head of develop, and when no prerelease exists yet', () => {
+    expect(gate({ head: SHA }).output).toBe('publish=true\n')
+    expect(gate({ published: '' }).output).toBe('publish=true\n')
+    expect(gate({ published: SHA }).output).toBe('publish=true\n')
+  })
+
+  it('never publishes an older commit over a newer one', () => {
+    const { r, output } = gate({ vsPub: 'behind' })
+    expect(r.status, r.stderr).toBe(0)
+    expect(output).toBe('publish=false\n')
+  })
+
+  for (const [name, opts] of [
+    ['no successful ci run', { runs: '' }],
+    ['e2e not green', { jobs: ['checks', 'changes'] }],
+    ['checks not green', { jobs: ['changes', 'e2e'] }],
+    ['a commit outside develop', { onDev: 'ahead' }],
+    ['a commit that diverged from develop', { onDev: 'diverged' }],
+  ] as const) {
+    it(`refuses ${name}`, () => {
+      const { r, output } = gate(opts)
+      expect(r.status).not.toBe(0)
+      expect(output).toBe('')
+    })
+  }
+
+  it('looks at the second successful run when the first lacks a green job', () => {
+    const { r, output, calls } = gate({ runs: '1 2', jobs1: ['checks', 'changes'], jobs: ['checks', 'e2e'] })
+    expect(r.status, r.stderr).toBe(0)
+    expect(output).toBe('publish=true\n')
+    expect(calls).toContain('actions/runs/1/jobs')
+    expect(calls).toContain('actions/runs/2/jobs')
+  })
+
+  it('refuses when no successful run has both green jobs', () => {
+    const { r, output } = gate({ runs: '1 2', jobs1: ['checks'], jobs: ['e2e'] })
+    expect(r.status).not.toBe(0)
+    expect(output).toBe('')
+  })
+
+  // An API error must never let an older commit through: a failed tag read
+  // could otherwise look like a missing tag.
+  for (const call of ['/ci.yml/runs?', '/actions/runs/42/jobs', '/branches/develop', '/git/matching-refs/tags/develop', `/compare/${HEAD}...`, `/compare/${PUBLISHED}...`]) {
+    it(`stops when the API fails on ${call}`, () => {
+      const { r, output, calls } = gate({ fail: call, vsPub: 'behind' })
+      expect(calls).toContain(call)
+      expect(r.status).not.toBe(0)
+      expect(output).toBe('')
+    })
+  }
+
+  it('refuses an unexpected comparison with the published commit', () => {
+    const { r, output } = gate({ vsPub: '' })
+    expect(r.status).not.toBe(0)
+    expect(output).toBe('')
+  })
+
+  it('publishes over a published commit develop no longer contains (rewritten history)', () => {
+    expect(gate({ vsPub: 'diverged' }).output).toBe('publish=true\n')
+  })
+
+  it('refuses a short SHA before calling gh', () => {
+    const r = run(workspace(), ['gate', 'abc'], { PATH: '/nonexistent', GH_REPO: 'example/wherdr' })
+    expect(r.status).not.toBe(0)
+  })
+})
+
 describe('workflow', () => {
   const wf = readFileSync('.github/workflows/develop-prerelease.yml', 'utf8')
 
-  it('runs on pushes to develop only, one at a time, never on tags', () => {
-    expect(wf).toMatch(/on:\n {2}push:\n {4}branches: \[develop\]\n {2}workflow_dispatch:\n\n/)
+  it('runs after a successful ci run of a push to develop, one at a time, never on tags', () => {
+    expect(wf).toMatch(/on:\n {2}workflow_run:\n {4}workflows: \[ci\]\n {4}types: \[completed\]\n {4}branches: \[develop\]\n {2}workflow_dispatch:\n\n/)
+    // workflow_run matches the workflow by its name.
+    expect(readFileSync('.github/workflows/ci.yml', 'utf8')).toMatch(/^name: ci\n/m)
+    expect(wf).not.toMatch(/^ {2}push:/m)
     expect(wf).not.toMatch(/tags:/)
-    expect(wf).toContain("if: github.ref == 'refs/heads/develop'")
+    for (const cond of [
+      "github.event.workflow_run.conclusion == 'success'", "github.event.workflow_run.event == 'push'",
+      "github.event.workflow_run.head_branch == 'develop'", 'github.event.workflow_run.head_repository.full_name == github.repository',
+      "(github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/develop')",
+    ]) expect(wf).toContain(cond)
     expect(wf).toContain('cancel-in-progress: false')
     expect(wf).toMatch(/^permissions:\n {2}contents: read\n/m)
   })
 
+  it('builds the commit ci tested, behind the gate', () => {
+    expect(wf).toContain("COMMIT_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}")
+    expect(wf).toContain('ref: ${{ env.COMMIT_SHA }}')
+    expect(wf).not.toContain('GITHUB_SHA')
+    const steps = wf.slice(wf.indexOf('bash scripts/prerelease.sh gate "$COMMIT_SHA"'))
+    expect(steps.match(/^ {6}- /gm)).toHaveLength(6)
+    expect(steps.match(/^ {8}if: steps\.gate\.outputs\.publish == 'true'$/gm)).toHaveLength(6)
+  })
+
   it('checks the version, packs like release.yml, checks then publishes the commit', () => {
-    const steps = ['bash scripts/prerelease.sh version', 'npm ci', 'npm pack', 'scripts/prerelease.sh package', 'scripts/prerelease.sh publish']
+    const steps = ['scripts/prerelease.sh gate', 'bash scripts/prerelease.sh version', 'npm ci', 'npm pack', 'scripts/prerelease.sh package', 'scripts/prerelease.sh publish']
     const jobs = wf.slice(wf.indexOf('\njobs:'))
     const at = steps.map(s => jobs.indexOf(s))
     expect(at.every(i => i > 0)).toBe(true)
     expect([...at].sort((a, b) => a - b)).toEqual(at)
-    expect(wf.match(/"\$GITHUB_SHA"/g)).toHaveLength(2)
+    expect(wf.match(/"\$COMMIT_SHA"/g)).toHaveLength(3)
   })
 
   for (const version of ['2.1.0', '2.1.0-dev']) {

@@ -1,5 +1,6 @@
 // Web Push notifications: device subscription, test, notification language.
 import { type Quiet, type QuietScope, quietActive } from '../../shared/quiet'
+import type { PushDeviceView } from '../../shared/pushDelivery'
 
 
 function urlB64ToUint8(b64: string) {
@@ -62,6 +63,16 @@ export async function testPush() {
     const r = await api<{ sent: number }>('/api/push/test', {})
     toast(t(r.sent ? 'Notification sent' : 'No device accepted the notification'), !r.sent)
   } catch (err) { toast((err as Error).message, true) }
+  await refreshPushDevices()
+}
+
+// Registered devices and the result of their last delivery (Settings › Notifications).
+export const pushDevices = ref<PushDeviceView[] | null>(null)
+export async function refreshPushDevices(remove?: string) {
+  try {
+    const r = await api<{ devices: PushDeviceView[] }>('/api/push/devices', { endpoint: await pushEndpoint(), remove })
+    pushDevices.value = r.devices
+  } catch (err) { if (remove) toast((err as Error).message, true) }
 }
 
 // ------------------------------------------------------------ quiet mode
@@ -82,8 +93,9 @@ export const quietCurrent = computed<{ scope: QuietScope, quiet: Quiet } | null>
 async function pushEndpoint(): Promise<string> {
   try {
     if (!('serviceWorker' in navigator)) return ''
-    const reg = await navigator.serviceWorker.ready
-    return (await reg.pushManager.getSubscription())?.endpoint || ''
+    // Not `ready`: it never settles in a browser without a registered worker.
+    const reg = await navigator.serviceWorker.getRegistration()
+    return (await reg?.pushManager?.getSubscription())?.endpoint || ''
   } catch { return '' }
 }
 

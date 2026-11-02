@@ -22,6 +22,17 @@ export function serverReady(i: ReadyInput): boolean {
   return i.machinesListed && i.localPolled && i.remotes.every(r => r.polled || r.status === 'offline')
 }
 
+// A machine as the server publishes it. `ms`: its last read state, if any.
+// While not ready, `polled` says whether that state exists: 'online' only
+// proves the connection is back (SSH, or a secondary local session, which
+// is always online), not that the machine has been read yet.
+export function publishedMachine(info: MachineInfo, ms: HerdrState | undefined, ready: boolean): MachineInfo {
+  const flag = ready ? {} : { polled: Boolean(ms) }
+  // Machine connected but Herdr server silent: "attention".
+  if (info.status === 'online' && ms && !ms.ok) return { ...info, status: 'offline', error: ms.error || null, version: ms.version, ...flag }
+  return { ...info, version: ms && ms.version, ...flag }
+}
+
 // State to show: null = keep the current state. `settling`: recent
 // reconnection (the server may have restarted).
 export function settleState(prev: HerdrState | null, next: HerdrState, settling: boolean): HerdrState | null {
@@ -30,13 +41,14 @@ export function settleState(prev: HerdrState | null, next: HerdrState, settling:
   if (next.ready === false && !next.ok) return null
   const partial = next.ready === false
   if (!partial && (!settling || !next.ok)) return next
-  // During a restart, 'online' only proves that the connection is back, not
-  // that its first snapshot has been read. Keep the previous content until
-  // panes arrive or the machine is offline. An empty online snapshot only
-  // becomes authoritative once the server is ready.
+  // During a restart, only a machine the server has read (`polled`) or
+  // declared offline answers for its content; any machine with panes in the
+  // new state was read too. The others keep their previous content, so an
+  // open view stays mounted. Without `polled` (older server), an online
+  // machine with no panes waits for the server to be ready.
   const present = new Set(next.panes.map(p => machineOf(p.id)))
   const certain = new Set(partial
-    ? (next.machines || []).filter(m => m.status === 'offline' || (m.status === 'online' && present.has(m.key))).map(m => m.key)
+    ? (next.machines || []).filter(m => m.status === 'offline' || m.polled).map(m => m.key)
     : [LOCAL, ...(next.machines || []).filter(m => m.status === 'online').map(m => m.key)])
   const localListed = (next.machines || []).some(m => m.key === LOCAL)
   const keep = (id: string) => {

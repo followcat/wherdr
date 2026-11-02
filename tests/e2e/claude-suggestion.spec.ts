@@ -67,11 +67,11 @@ test.describe('phone', () => {
     await expect(field).toHaveValue(SUGGEST_PLAIN)
   })
 
-  test('in French: Utiliser, and the suggestion stops before it', async ({ page }, testInfo) => {
+  test('with a legacy French preference: Use, and the suggestion stops before it', async ({ page }, testInfo) => {
     await page.addInitScript(() => localStorage.setItem('herdrLanguage', 'fr'))
     const { field, use } = await open(page, CLAUDE_SUGGEST_ASK_PANE, SUGGEST_ASK)
-    await expect(use).toHaveText('Utiliser')
-    await expect(use).toHaveAccessibleName('Utiliser la suggestion')
+    await expect(use).toHaveText('Use')
+    await expect(use).toHaveAccessibleName('Use suggestion')
     const b = await box(page, '.prompt-suggest')
     const textEnd = await field.evaluate((el) => {
       const r = el.getBoundingClientRect()

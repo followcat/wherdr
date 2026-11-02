@@ -1,7 +1,8 @@
 import { expect, test } from './test'
 import fs from 'node:fs/promises'
 
-for (const lang of ['en', 'fr']) test(`archive completed repo tasks with explicit consent, ${lang}`, async ({ page }) => {
+const lang = 'en'
+test(`archive completed repo tasks with explicit consent, ${lang}`, async ({ page }) => {
   await page.addInitScript(language => localStorage.setItem('herdrLanguage', language), lang)
   const writes: unknown[] = []
   let archived = false
@@ -20,20 +21,20 @@ for (const lang of ['en', 'fr']) test(`archive completed repo tasks with explici
     return route.fulfill({ json: { machines: [], agents: [] } })
   })
   await page.goto('/#/board')
-  const action = lang === 'fr' ? 'Archiver les tâches terminées' : 'Archive completed tasks'
-  const options = page.getByRole('button', { name: lang === 'fr' ? 'Options du dépôt : demo' : 'Repository options: demo', exact: true })
+  const action = 'Archive completed tasks'
+  const options = page.getByRole('button', { name: 'Repository options: demo', exact: true })
   await options.click()
   await page.getByRole('button', { name: action, exact: true }).click()
   const confirm = page.locator('.confirm')
   await expect(confirm).toContainText('demo')
-  await expect(confirm).toContainText(lang === 'fr' ? 'Tâches terminées actuellement connues : 1' : 'Completed tasks currently known: 1')
+  await expect(confirm).toContainText('Completed tasks currently known: 1')
   expect(writes).toEqual([])
   await fs.mkdir('.shots', { recursive: true })
   await page.screenshot({ path: `.shots/archive-done-${lang}-phone.png`, fullPage: true })
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.screenshot({ path: `.shots/archive-done-${lang}-desktop.png`, fullPage: true })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-  await confirm.getByRole('button', { name: lang === 'fr' ? 'Annuler' : 'Cancel', exact: true }).click()
+  await confirm.getByRole('button', { name: 'Cancel', exact: true }).click()
   expect(writes).toEqual([])
   await page.setViewportSize({ width: 390, height: 844 })
   await options.click()

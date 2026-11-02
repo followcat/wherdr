@@ -66,7 +66,7 @@ it('S4: publishes the viewed pane at 250ms while the twenty-pane batch still tak
  getMachine:()=>({transcripts:{observe:()=>{}}}),joinId:(_:string,id:string)=>id,restarts:map(),leftForGood:()=>false,lookForLeftMenu:()=>false,
  findPane:()=>null,pendingPrompts:map(),queued:map(),screenVersions:versions,mapScreenPanes,choicesFor,refreshModel:()=>{},refreshPreview:()=>{},
  previews:new Map(panes.map(p=>[p.id,{status:'blocked',at:Date.now()}])),models:new Map(panes.map(p=>[p.id,{status:'blocked',at:Date.now()}])),
- isViewed:(id:string)=>id==='w1:p20',activities:map(),ompStatuses:map(),codexFields:map(),codexStatus:{forget:()=>{},statusOf:()=>null},devinScreens:map(),refreshDevinScreen:()=>{},
+ isViewed:(id:string)=>id==='w1:p20',activities:map(),ompStatuses:map(),ocStatuses:map(),ocInboxes:map(),refreshOcStatus:()=>{},codexFields:map(),codexStatus:{forget:()=>{},statusOf:()=>null},devinScreens:map(),refreshDevinScreen:()=>{},
  choicesCache:new ScreenCache(),askChecks:map(),takenBack:map(),seen:map(),saveBorn:()=>{},saveSeen:()=>{},saveQueued:()=>{},machineOf:()=>''})
  const publish=vi.fn(()=>JSON.parse(JSON.stringify(states.get(''))))
  const pollMachine=bindFunction(source,'pollMachine',{mstates:states,screenVersions:versions,choicesCache:cache,screenFields:(p:any)=>p,herdrOn:async()=>({panes:panes.map(p=>({pane_id:p.id,revision:7}))}),
@@ -119,4 +119,21 @@ it('S6: typed native-card answers reject changed or missing identity; raw termin
  await handler({}, {pane_id:'w1:p1',text:'raw',keys:['enter']})
  expect(call.mock.calls.some(c=>c[0]==='pane.read')).toBe(false)
  expect(call).toHaveBeenCalledWith('pane.send_input',{pane_id:'w1:p1',text:'raw'})
+})
+
+it('S7: the raw input route cannot answer a blocked OpenCode dialog — old clients included',async()=>{
+ // A tab opened before viaPrompt routed OpenCode still posts /api/input:
+ // server-side the message holds; a bare Enter is refused outright.
+ const call=vi.fn(async()=>({read:{text:''}}));const queued={id:'held-oc'}
+ const handler=await route('input',call,{withPaneLock:async(_:string,work:any)=>work(),addQueued:()=>queued,
+  findPane:()=>({id:'w1:p1',agent:'opencode',status:'blocked'})})
+ await expect(handler({}, {pane_id:'w1:p1',text:'looks good',keys:['enter']})).resolves.toEqual({ok:true,queued})
+ expect(call).not.toHaveBeenCalledWith('pane.send_input',expect.anything())
+ await expect(handler({}, {pane_id:'w1:p1',keys:['enter']})).rejects.toMatchObject({code:'stale'})
+ expect(call).not.toHaveBeenCalledWith('pane.send_input',expect.anything())
+ // Not blocked: the raw route types into the composer like before.
+ const idle=await route('input',call,{withPaneLock:async(_:string,work:any)=>work(),addQueued:()=>queued,
+  findPane:()=>({id:'w1:p1',agent:'opencode',status:'idle'})})
+ await idle({}, {pane_id:'w1:p1',text:'hello',keys:['enter']})
+ expect(call).toHaveBeenCalledWith('pane.send_input',{pane_id:'w1:p1',text:'hello'})
 })

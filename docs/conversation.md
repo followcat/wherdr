@@ -6,18 +6,17 @@
   Markdown, with grouped tool calls, images (full-screen viewer with pinch / wheel zoom and pan), timestamps, search and infinite scroll back to the
   first message. Reading a conversation never touches the terminal, so it never resizes a pane.
   A command the agent proposes (shell code block, or inline `! command`) can be copied without
-  its prompt, or run in the agent's shell mode (`!`, Claude Code, Codex and omp) after you
+  its prompt, or run in the agent's shell mode (`!`, Claude Code, Codex, omp and OpenCode) after you
   confirm the full command.
-- **Devin conversations**: read the local CLI's SQLite history on the machine running
-  the agent, including its current main branch, tool results and saved images. Python 3.7 or later
-  is required on that machine. Install the Herdr integration with
-  `herdr integration install devin`, then start or resume Devin so it reports its session.
-  Same-directory sessions are never selected by recency. The reader follows
-  `DEVIN_SESSIONS_DIR`, then `XDG_DATA_HOME/devin/cli`, otherwise
-  `~/.local/share/devin/cli`. It opens `sessions.db` read-only, including committed WAL
-  data; no export flag or database copy is needed. New text appears when Devin saves
-  it, which may be less frequent than the terminal's streaming display. Cloud sessions
-  and the experimental file-based session store are not supported by this reader.
+- **Devin conversations**: read the local CLI's ATIF transcript on the machine running
+  the agent (`~/.local/share/devin/cli/transcripts/<session-id>.json`, ATIF-v1.7 as written
+  by Devin CLI 3000.11.234), including tool results and saved images. Install the Herdr
+  integration with `herdr integration install devin`, then start or resume Devin so it
+  reports its session. Same-directory sessions are never selected by recency. The reader
+  follows `DEVIN_SESSIONS_DIR`, then `XDG_DATA_HOME/devin/cli`, otherwise
+  `~/.local/share/devin/cli`. No export flag is needed: Devin writes the JSON file next
+  to its CLI data. New text appears when Devin saves it, which may be less frequent than
+  the terminal's streaming display. Cloud sessions are not supported by this reader.
 - **OpenCode 2.x conversations**: read the existing background service's projected
   history on the agent's machine (local or SSH), with native pagination, reasoning,
   tool progress/results/errors, saved images, previews and search. Python 3 is required
@@ -157,7 +156,7 @@ same lines as text, a fallback if the tokens misbehave. The message sent is the 
 
 A **closed question**, one that yes or no answers in full, also gets **Yes** and **No** next to
 its `↳` (at the end of its row in the list style). A tap refers to the question and writes the
-answer under it, in the language of the interface, exactly as Reply and typing would; nothing is sent, so several questions can be
+answer under it (`Yes` or `No`), exactly as Reply and typing would; nothing is sent, so several questions can be
 answered in a row before sending. On a computer a click hands the field the focus, the caret
 right after the answer, so Enter sends it at once; the keyboard stays down on a phone, and a
 button pressed with the keyboard keeps the focus. Tapping the other answer
@@ -172,8 +171,7 @@ them, gets a panel right under it: **OK to all** refers to the whole table and w
 under it (a second tap takes it back), and each row has **Yes**, **No** and `↳`, which refer to
 the row by its number and write `Yes` or `No` under it, or nothing for an answer in words; a row
 that asks an open question has `↳` alone. Every answer names the message and the row, even for
-the last message: the agent may write another one before you send. In French: `OK tout`, `Oui`,
-`Non`. Here too everything is composed in the field and you send; on a computer the field takes the focus
+the last message: the agent may write another one before you send. Here too everything is composed in the field and you send; on a computer the field takes the focus
 after a click, so Enter sends. A table qualifies when it has a
 number column (a header `#`, `N°`, `No`, `Num`, `ID` or `Q` over short numbers, each once) and a
 question column, known by its header (`Question`, `Decision`, `Choix`…), by cells that all end

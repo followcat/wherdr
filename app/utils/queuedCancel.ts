@@ -22,6 +22,9 @@ export function canCancelQueued(p: Pane | undefined): boolean {
   if (!p || !p.agent) return false
   return Boolean(p.pendingPrompt) || (p.agent === 'claude' && p.status === 'working')
     || (p.agent === 'devin' && Boolean(p.devinScreen?.queued.length))
+    // OpenCode's session inbox is the queue; a listed row is its own evidence
+    // and the server deletes only an id a fresh listing still shows.
+    || p.agent === 'opencode'
 }
 
 // Puts a cancelled message back into the draft, as if it had never been

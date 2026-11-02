@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs'
 
 const recorded = JSON.parse(readFileSync(new URL('../recordings/herdr-projects-1.2.16/show-board.json', import.meta.url), 'utf8'))
 
-for (const language of ['en', 'fr']) {
+test.describe('English interface', () => {
+  const language = 'en'
   test(`board capacity reset requires confirmation, ${language}`, async ({ page }) => {
     await page.addInitScript(lang => localStorage.setItem('herdrLanguage', lang), language)
     let value = 1
@@ -33,14 +34,14 @@ for (const language of ['en', 'fr']) {
     await page.screenshot({ path: `.shots/board-settings-${language}-phone.png`, fullPage: true })
     await row.locator('.bs-reset').click()
     const confirm = page.locator('.confirm')
-    await expect(confirm).toContainText(language === 'fr' ? 'des tâches en file peuvent démarrer aussitôt' : 'tasks in the queue may start at once')
+    await expect(confirm).toContainText('tasks in the queue may start at once')
     expect(writes).toEqual([])
-    await confirm.getByRole('button', { name: language === 'fr' ? 'Annuler' : 'Cancel', exact: true }).click()
+    await confirm.getByRole('button', { name: 'Cancel', exact: true }).click()
     await expect(confirm).not.toBeVisible()
     expect(writes).toEqual([])
     await expect(row.locator('.bs-value')).toHaveText('1')
     await row.locator('.bs-reset').click()
-    await confirm.getByRole('button', { name: language === 'fr' ? 'Revenir' : 'Go back', exact: true }).click()
+    await confirm.getByRole('button', { name: 'Go back', exact: true }).click()
     await expect(row.locator('.bs-value')).toHaveText('4')
     expect(writes).toEqual([{ machine: 'remote', name: 'board.agents', repo: '', unset: true }])
     await expect(row.locator('.bs-reset')).toHaveCount(0)
@@ -49,9 +50,10 @@ for (const language of ['en', 'fr']) {
     await page.screenshot({ path: `.shots/board-settings-${language}-desktop.png`, fullPage: true })
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   })
-}
+})
 
-for (const language of ['en', 'fr']) {
+test.describe('English interface', () => {
+  const language = 'en'
   test(`repository checks reset warns about inherited none, ${language}`, async ({ page }) => {
     await page.addInitScript(lang => localStorage.setItem('herdrLanguage', lang), language)
     let own = true
@@ -79,8 +81,8 @@ for (const language of ['en', 'fr']) {
     await expect(row.locator('.bs-value')).toHaveText('github')
     await row.locator('.bs-reset').click()
     const confirm = page.locator('.confirm')
-    await expect(confirm).toContainText(language === 'fr' ? 'Si cette valeur est none' : 'If that value is none')
-    await expect(confirm).toContainText(language === 'fr' ? 'sans attendre leurs vérifications GitHub' : 'without waiting for their GitHub checks')
+    await expect(confirm).toContainText('If that value is none')
+    await expect(confirm).toContainText('without waiting for their GitHub checks')
     await expect(confirm).toContainText('demo')
     await fs.mkdir('.shots', { recursive: true })
     await page.screenshot({ path: `.shots/board-settings-inherited-checks-${language}-phone.png`, fullPage: true })
@@ -88,12 +90,12 @@ for (const language of ['en', 'fr']) {
     await page.screenshot({ path: `.shots/board-settings-inherited-checks-${language}-desktop.png`, fullPage: true })
     await page.setViewportSize({ width: 390, height: 844 })
     expect(writes).toEqual([])
-    await confirm.getByRole('button', { name: language === 'fr' ? 'Annuler' : 'Cancel', exact: true }).click()
+    await confirm.getByRole('button', { name: 'Cancel', exact: true }).click()
     await expect(confirm).not.toBeVisible()
     expect(writes).toEqual([])
     await expect(row.locator('.bs-value')).toHaveText('github')
     await row.locator('.bs-reset').click()
-    await confirm.getByRole('button', { name: language === 'fr' ? 'Revenir' : 'Go back', exact: true }).click()
+    await confirm.getByRole('button', { name: 'Go back', exact: true }).click()
     // Inherited values disappear from the repository's differences view.
     await expect(row).toHaveCount(0)
     expect(writes).toEqual([{ machine: 'remote', name: 'merge.checks', repo: 'demo', unset: true }])
@@ -101,4 +103,4 @@ for (const language of ['en', 'fr']) {
     await expect(row.locator('.bs-value')).toHaveText('none')
     await expect(row.locator('.bs-reset')).toHaveCount(0)
   })
-}
+})

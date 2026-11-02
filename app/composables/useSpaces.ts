@@ -64,26 +64,32 @@ export async function saveSpaceName(label: string) {
 export async function closeTab(id: string) {
   const e = tabOf(id)
   if (!e) return
-  const ws = herdrState.value.workspaces.find(w => w.id === e.tab.workspace)
-  const siblings = (herdrState.value.tabs || []).filter(x => x.workspace === e.tab.workspace)
-  const c = closeConfirm({
-    kind: 'tab', label: e.tab.label || String(e.tab.number), panes: e.panes,
-    lastTab: siblings.length <= 1, workspaceLabel: ws?.label,
-  }, tl)
-  const plan = await confirmClose('tab', id, c.message, c.action)
+  const workspace = e.tab.workspace
+  const plan = await confirmClose('tab', id, () => {
+    const now = tabOf(id) || e
+    const ws = herdrState.value.workspaces.find(w => w.id === workspace)
+    const siblings = (herdrState.value.tabs || []).filter(x => x.workspace === workspace)
+    return closeConfirm({
+      kind: 'tab', label: now.tab.label || String(now.tab.number), panes: now.panes,
+      lastTab: siblings.length <= 1, workspaceLabel: ws?.label,
+    }, tl)
+  })
   if (!plan) return
-  const done = prepareClose(plan.group ? { workspace: e.tab.workspace } : { tab: id }, plan.group ? plan.workspaces.map(w => w.id) : [])
+  const done = prepareClose(plan.group ? { workspace } : { tab: id }, plan.group ? plan.workspaces.map(w => w.id) : [])
   if (!(await spaceApi({ op: 'tab.close', tab_id: id, close_group: plan.group }))) return done(false)
   toast(plan.group ? tl('Group closed', 'Groupe fermé') : t('Tab closed'))
   done(true)
 }
 
 export async function closeWorkspace(id: string) {
-  const w = herdrState.value.workspaces.find(x => x.id === id)
-  if (!w) return
-  const panes = herdrState.value.panes.filter(p => p.workspace === id)
-  const c = closeConfirm({ kind: 'workspace', label: w.label, panes }, tl)
-  const plan = await confirmClose('workspace', id, c.message, c.action)
+  if (!herdrState.value.workspaces.some(x => x.id === id)) return
+  const plan = await confirmClose('workspace', id, () => {
+    const s = herdrState.value
+    const w = s.workspaces.find(x => x.id === id)
+    const panes = s.panes.filter(p => p.workspace === id)
+    const tabs = (s.tabs || []).filter(x => x.workspace === id && panes.some(p => p.tab === x.id))
+    return closeConfirm({ kind: 'workspace', label: w?.label || id, panes, tabs: tabs.map(x => x.label || String(x.number)) }, tl)
+  })
   if (!plan) return
   const done = prepareClose({ workspace: id }, plan.group ? plan.workspaces.map(w => w.id) : [])
   if (!(await spaceApi({ op: 'workspace.close', workspace_id: id, close_group: plan.group }))) return done(false)
@@ -237,7 +243,55 @@ export function tabItems(tabId: string): MenuItem[] {
     newTabItem(e.tab.workspace),
     // One entry per pane of the tab (its Herdr ID is shown under each).
     ...(e.panes.length ? [{ kind: 'separator' as const }, ...e.panes.map(p => copyPaneIdItem(p)), { kind: 'separator' as const }] : []),
-    { label: t('Close tab'), icon: 'i-lucide-x', danger: true, run: () => closeTab(tabId) },
+    {
+      label: t('Close tab'), icon: 'i-lucide-x', danger: true, run: () => closeTab(tabId),
+      // Explicit scope: every pane of the tab goes.
+      desc: e.panes.length === 1 ? tl('Closes its pane', 'Ferme son panneau') : tl(`Closes its ${e.panes.length} panes`, `Ferme ses ${e.panes.length} panneaux`),
+    },
+  ]
+}
+// Close a pane: stops its agent, or closes its terminal.
+export function closePaneItem(p: Pane, kbds?: string[]): MenuItem {
+  return {
+    label: p.agent ? tl(`Close this pane (stops ${kindLabel(p.agent)})`, `Fermer ce pane (arrête ${kindLabel(p.agent)})`) : t('Close this terminal'),
+    icon: 'i-lucide-trash-2', danger: true, kbds, run: () => closePane(p),
+  }
+}
+// Phone pane sheet (the header identity): everything that manages the pane
+// being viewed, then its tab. The Options menu keeps the agent's own actions.
+export function currentPaneItems(p: Pane): MenuItem[] {
+  return [
+    { label: t('Rename pane'), icon: 'i-lucide-pencil', run: () => { renameTarget.value = p.id } },
+    ...paneSpaceItems(p),
+    copyPaneIdItem(p),
+    // Conversation or its terminal view: the same pane, only this one.
+    { ...closePaneItem(p), label: p.agent ? t('Close this conversation') : t('Close this terminal') },
+  ]
+}
+// No "Close tab" here: a tab closes from its overview, where its panes show.
+export function currentTabItems(tabId: string, overview?: MenuItem): MenuItem[] {
+  const e = tabOf(tabId)
+  if (!e) return []
+  return [
+    { label: t('Rename tab'), icon: 'i-lucide-pencil', run: () => renameTab(tabId) },
+    newTabItem(e.tab.workspace),
+    ...(overview ? [overview] : []),
+  ]
+}
+// The whole space, apart from the pane actions. Absent when the pane is its
+// only one: closing the pane already closes the space (a single close action).
+export function currentSpaceItems(p: Pane): MenuItem[] {
+  const ws = herdrState.value.workspaces.find(w => w.id === p.workspace)
+  const panes = herdrState.value.panes.filter(x => x.workspace === p.workspace)
+  if (!ws || panes.length <= 1) return []
+  const tabs = new Set(panes.map(x => x.tab)).size
+  return [
+    { kind: 'group', label: tl(`Space “${ws.label}”`, `Espace « ${ws.label} »`) },
+    {
+      label: t('Close entire space…'), icon: 'i-lucide-trash-2', danger: true,
+      desc: tl(`${tabs === 1 ? '1 tab' : `${tabs} tabs`} · ${panes.length} panes`, `${tabs === 1 ? '1 onglet' : `${tabs} onglets`} · ${panes.length} panneaux`),
+      run: () => closeWorkspace(ws.id),
+    },
   ]
 }
 export function workspaceItems(id: string, project = false): MenuItem[] {
@@ -270,10 +324,7 @@ export function paneItems(p: Pane): MenuItem[] {
     { label: t('Rename pane'), icon: 'i-lucide-pencil', run: () => { renameTarget.value = p.id } },
     ...paneSpaceItems(p),
     { kind: 'separator' },
-    {
-      label: p.agent ? tl(`Close this pane (stops ${kindLabel(p.agent)})`, `Fermer ce pane (arrête ${kindLabel(p.agent)})`) : t('Close this terminal'),
-      icon: 'i-lucide-trash-2', danger: true, run: () => closePane(p),
-    },
+    closePaneItem(p),
   ]
 }
 // Menu of a tab's plan: the tab, then its space.

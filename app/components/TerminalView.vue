@@ -1,11 +1,13 @@
 <script setup lang="ts">
 // Raw terminal of the pane: xterm.js + touch layer (scrolling with a finger or
 // the wheel -> terminal.scroll, the history lives in Herdr; never ↑/↓
-// sent to the agent; click = keyboard to the terminal).
+// sent to the agent; click = keyboard to the terminal, a tap too except on
+// iOS: see utils/terminalTapFocus.ts).
 import '@xterm/xterm/css/xterm.css'
 import { createTerminalTouch } from '~/utils/terminalTouch'
 import { ansiToLines } from '~/utils/ansiToHtml'
 import type { TerminalCopySnapshot } from '~/utils/terminalCopy'
+import { mouseFromTouch, tapFocusesTerminal } from '~/utils/terminalTapFocus'
 
 const props = defineProps<{ ctl: TerminalCtl }>()
 const emit = defineEmits<{ copying: [active: boolean] }>()
@@ -31,6 +33,7 @@ const legacyQueue = (n: number) => {
   legacyPendingLines += n
   if (!legacyRaf) legacyRaf = requestAnimationFrame(legacyFlush)
 }
+const tapFocuses = import.meta.client ? tapFocusesTerminal(navigator.vendor) : true
 function legacyOnTouchStart(e: TouchEvent) {
   legacyLastY = e.touches[0]!.clientY
   legacyLastX = e.touches[0]!.clientX
@@ -72,10 +75,11 @@ function legacyOnTouchEnd(e: TouchEvent) {
   legacyLastY = null
   legacyLastX = null
   if (!legacyMoved && !lpEntered && t && Math.hypot(t.clientX - legacyStartX, t.clientY - legacyStartY) < 5) {
-    if (!props.ctl.tapLink(t.clientX, t.clientY)) props.ctl.tapMouse(t.clientX, t.clientY)
+    const linked = props.ctl.tapLink(t.clientX, t.clientY)
+    if (!linked) props.ctl.tapMouse(t.clientX, t.clientY)
     // Same as the smooth path: the cursor's own row asks for the keyboard,
     // other taps close it.
-    if (props.ctl.tapOnCursor(t.clientX, t.clientY)) props.ctl.focus()
+    if (!linked && tapFocuses && props.ctl.tapOnCursor(t.clientX, t.clientY)) props.ctl.focus()
     else {
       props.ctl.blur()
       ;(document.activeElement as HTMLElement | null)?.blur?.()
@@ -304,11 +308,12 @@ function onTouchEnd(e: TouchEvent) {
   // Flush the drag before any momentum tick so both directions retain order.
   if (raf) { cancelAnimationFrame(raf); raf = 0; flush() }
   if (tapped && !stoppingScroll && !lpEntered && t) {
-    if (!props.ctl.tapLink(t.clientX, t.clientY)) props.ctl.tapMouse(t.clientX, t.clientY)
+    const linked = props.ctl.tapLink(t.clientX, t.clientY)
+    if (!linked) props.ctl.tapMouse(t.clientX, t.clientY)
     // A tap on the cursor's own row is a request to type at the field —
     // focus it. Taps anywhere else act on the pane only: scroll-adjacent
     // taps must not keep reopening the keyboard.
-    if (props.ctl.tapOnCursor(t.clientX, t.clientY)) props.ctl.focus()
+    if (!linked && tapFocuses && props.ctl.tapOnCursor(t.clientX, t.clientY)) props.ctl.focus()
     else {
       props.ctl.blur()
       ;(document.activeElement as HTMLElement | null)?.blur?.()
@@ -319,8 +324,9 @@ function onTouchEnd(e: TouchEvent) {
   e.preventDefault()
 }
 function onMouseDown(e: MouseEvent) {
-  const fromTouch = (e as MouseEvent & { sourceCapabilities?: { firesTouchEvents?: boolean } }).sourceCapabilities?.firesTouchEvents
-  if (fromTouch || (fromTouch === undefined && performance.now() - lastTouchAt < 700)) return
+  if (copyMode.value) return
+  const fromTouch = mouseFromTouch((e as MouseEvent & { sourceCapabilities?: { firesTouchEvents?: boolean } }).sourceCapabilities?.firesTouchEvents, performance.now() - lastTouchAt)
+  if (fromTouch) return
   props.ctl.focus()
 }
 function onWheel(e: WheelEvent) {
