@@ -145,8 +145,8 @@ async function withPane<T>(paneId: string, fn: (p: Pane) => Promise<T>): Promise
   if (!p.agent || !SWITCH_AGENTS.has(p.agent)) throw new HerdrError('unsupported', 'This agent’s model cannot be changed from wherdr')
   // A dialog or menu owns the terminal even when the status stays "done" —
   // typing /model would answer it (Devin's permission prompt, /resume…).
-  if (!READY.has(p.status || '') || p.prompt || p.menu || p.screen) {
-    throw new HerdrError('busy', p.status === 'blocked' || p.prompt || p.menu || p.screen ? 'The agent is waiting for an answer — reply first.' : 'The agent is working — change the model once it’s done.')
+  if (!READY.has(p.status || '') || p.prompt || p.menu || p.screen || p.interaction === 'terminal') {
+    throw new HerdrError('busy', p.status === 'blocked' || p.prompt || p.menu || p.screen || p.interaction === 'terminal' ? 'The agent is waiting for an answer — reply first.' : 'The agent is working — change the model once it’s done.')
   }
   if (busy.has(paneId)) throw new HerdrError('busy', 'Model change already in progress')
   busy.add(paneId)
@@ -785,6 +785,10 @@ async function devinSetModel(paneId: string, wanted: string): Promise<ModelInfo>
       if (m.cursor < 0) throw new HerdrError('stale', 'The /model menu changed — try again.')
       const keys = moveKeys(m.cursor, n)
       if (keys.length) { await herdr('pane.send_input', { pane_id: p.id, keys }); await sleep(300) }
+      const selected = await devinMenu(p.id, 3000)
+      if (!selected || selected.cursor < 0 || selected.options[selected.cursor]?.label !== target) {
+        throw new HerdrError('stale', 'The /model menu changed — try again.')
+      }
       await herdr('pane.send_input', { pane_id: p.id, keys: ['alt+enter'] })
       // Verify: the menu closes, and only an echo of THIS model counts — a
       // different "Model set to …" is a failure, never success.

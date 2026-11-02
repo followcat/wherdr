@@ -11,12 +11,13 @@ import { HerdrError } from './herdr'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = Record<string, any>
 type Step = Json
-interface ImagePayload { mimeType: string, data?: string, path?: string }
+interface ImagePayload { mimeType: string, data?: string, path?: string, hash?: string }
 interface AtifDoc {
   file: string
   model: string | null
   steps: Step[]
   images: Map<string, ImagePayload[]>
+  fingerprints: Map<number, string>
 }
 export interface DevinOptions { since?: string, from?: number | null, before?: number | null, anchor?: string }
 
@@ -113,12 +114,14 @@ function toolCalls(step: Step): Json[] {
   })).filter(call => typeof call.id === 'string')
 }
 
-function observations(steps: Step[]): Map<string, { step: Step, result: Json }> {
-  const found = new Map<string, { step: Step, result: Json }>()
+interface ToolResult { step: Step, result: Json, index: number }
+const resultRef = (hit: ToolResult) => `${Number(hit.step.step_id)}:r${hit.index || ''}`
+function observations(steps: Step[]): Map<string, ToolResult> {
+  const found = new Map<string, ToolResult>()
   for (const step of steps) {
-    for (const result of asList(step.observation?.results)) {
+    for (const [index, result] of asList(step.observation?.results).entries()) {
       const id = result.source_call_id
-      if (typeof id === 'string' && !found.has(id)) found.set(id, { step, result })
+      if (typeof id === 'string' && !found.has(id)) found.set(id, { step, result, index })
     }
   }
   return found
@@ -141,7 +144,7 @@ function latestModel(doc: AtifDoc): string | null {
   return doc.model
 }
 
-function resultImages(hit: { step: Step, result: Json } | undefined): ImagePayload[] {
+function resultImages(hit: ToolResult | undefined): ImagePayload[] {
   if (!hit) return []
   return payloads(hit.result.content).concat(payloads(hit.result.extra), payloads(hit.result.metadata))
 }
@@ -153,7 +156,7 @@ export function parseDevin(steps: Step[], all: Step[] = steps, imagesByRef?: Map
   // collapse a picture repeated in a later message (shared/imageDupes.ts).
   const imageHashes = (ref: string) => {
     const list = imagesByRef?.get(ref)
-    return list && list.length ? list.map(i => hash12(i.data || i.path || i.mimeType)) : undefined
+    return list && list.length ? list.map((i, n) => i.hash || hash12(i.data || `${ref}:${n}`)) : undefined
   }
   for (const step of steps) {
     if (step.is_copied_context === true || step.source === 'system') continue
@@ -184,8 +187,7 @@ export function parseDevin(steps: Step[], all: Step[] = steps, imagesByRef?: Map
       const title = call.name || 'Tool'
       const summary = input.command || input.file_path || input.path || input.query || input.pattern || title
       const imgCount = resultImages(hit).length
-      const resultId = hit ? Number(hit.step.step_id) : id
-      const imgRef = imgCount && hit ? `${resultId}:r` : null
+      const imgRef = imgCount && hit ? resultRef(hit) : null
       items.push({
         role: 'tool', name: title, text: clip(String(summary || title)), ts,
         ref: imgRef || ref(`t${index}`),
@@ -216,7 +218,7 @@ function collectImages(steps: Step[]): Map<string, ImagePayload[]> {
     for (const call of toolCalls(step)) {
       const hit = results.get(call.id)
       const rich = resultImages(hit)
-      if (rich.length && hit) add(`${Number(hit.step.step_id)}:r`, rich)
+      if (rich.length && hit) add(resultRef(hit), rich)
     }
   }
   return found
@@ -225,7 +227,7 @@ function collectImages(steps: Step[]): Map<string, ImagePayload[]> {
 function normalize(raw: Json, file: string): AtifDoc {
   const steps = Array.isArray(raw.steps) ? raw.steps.filter((s: unknown) => s && typeof s === 'object') as Step[] : []
   const model = typeof raw.agent?.model_name === 'string' ? raw.agent.model_name : null
-  return { file, model, steps, images: collectImages(steps) }
+  return { file, model, steps, images: collectImages(steps), fingerprints: new Map() }
 }
 
 function pageTooLarge(steps: Step[], maxPageBytes: number): boolean {
@@ -252,8 +254,8 @@ function takeVisible(steps: Step[], all: Step[], limit: number, imagesByRef?: Ma
   return { steps: kept, start, items }
 }
 
-function prefixOf(steps: Step[], start: number): string {
-  return hash12(JSON.stringify(steps.filter(s => Number(s.step_id) < start).map(s => s.step_id)))
+function prefixOf(doc: AtifDoc, start: number): string {
+  return hash12(JSON.stringify(doc.steps.filter(s => Number(s.step_id) < start).map(s => [s.step_id, doc.fingerprints.get(Number(s.step_id))])))
 }
 
 function stripImages(value: unknown): unknown {
@@ -318,10 +320,10 @@ export function createDevinTranscripts({
     return st
   }
 
-  async function readDoc(file: string, size: number, gen: string): Promise<AtifDoc> {
-    const hit = loaded.get(file)
+  async function readDoc(file: string, size: number, gen: string, withImages = false): Promise<AtifDoc> {
+    const hit = withImages ? null : loaded.get(file)
     if (hit && hit.gen === gen && hit.size === size) return hit.doc
-    const key = `${file}|${gen}|${size}`
+    const key = `${file}|${gen}|${size}|${withImages}`
     const known = inflight.get(key)
     if (known) return known
     const work = (async () => {
@@ -333,8 +335,17 @@ export function createDevinTranscripts({
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Unsupported Devin transcript format')
       const doc = normalize(stripImages(raw) as Json, path.basename(file))
       doc.images = collectImages(Array.isArray(raw.steps) ? raw.steps : [])
-      loaded.set(file, { gen, size, doc })
-      if (loaded.size > 32) loaded.delete(loaded.keys().next().value!)
+      for (const step of asList(raw.steps)) doc.fingerprints.set(Number(step.step_id), hash12(JSON.stringify(step)))
+      if (!withImages) {
+        // Polling retains only metadata and hashes; image views re-read the
+        // bounded source on demand rather than pinning base64 across sessions.
+        doc.images = new Map([...doc.images].map(([ref, list]) => [ref, list.map((img, n) => ({
+          mimeType: img.mimeType, ...(img.path ? { path: img.path } : {}),
+          hash: hash12(img.data || `${ref}:${n}`),
+        }))]))
+        loaded.set(file, { gen, size, doc })
+        if (loaded.size > 32) loaded.delete(loaded.keys().next().value!)
+      }
       return doc
     })()
     inflight.set(key, work)
@@ -357,11 +368,11 @@ export function createDevinTranscripts({
     throw new HerdrError('internal', 'Unable to read Devin conversation')
   }
 
-  async function load(session: string): Promise<{ st: Awaited<ReturnType<typeof statFile>>, file: string, doc: AtifDoc } | null> {
+  async function load(session: string, withImages = false): Promise<{ st: Awaited<ReturnType<typeof statFile>>, file: string, doc: AtifDoc } | null> {
     const file = pathOf(session)
     if (!file) return null
     const st = await statFile(file)
-    const doc = await readDoc(file, st.size, genOf(st))
+    const doc = await readDoc(file, st.size, genOf(st), withImages)
     return { st, file, doc }
   }
 
@@ -369,7 +380,11 @@ export function createDevinTranscripts({
     const session = pane.agentSession
     if (!session) return { available: false, reason: 'not_found' }
     const base = { available: true as const, session }
-    if (quiet(session)) return failOpen(session, new HerdrError('internal', 'Unable to read Devin conversation'), opts, base)
+    if (quiet(session)) {
+      const good = lastGood.get(session)
+      if (good) return { ...base, file: good.file, token: opts.since || good.token, unchanged: true }
+      throw new HerdrError('internal', 'Unable to read Devin conversation')
+    }
     try {
       const got = await load(session)
       if (!got) return { available: false, reason: 'not_found' }
@@ -388,7 +403,8 @@ export function createDevinTranscripts({
       const at = anchorOf(sent)
       const before = opts.before
       let invalid = (before != null && !hasStep(doc.steps, before)) || (from != null && !hasStep(doc.steps, from))
-      if (!invalid && from != null && from > 0 && at && at.start === from && prefixOf(doc.steps, from) !== at.hash) invalid = true
+        || (from != null && Boolean(sent) && !headOf(sent))
+      if (!invalid && from != null && from > 0 && at && at.start === from && prefixOf(doc, from) !== at.hash) invalid = true
       if (!invalid && from != null && from > 0 && prev && prev.file === fileId && st.size < prev.size) invalid = true
       if (invalid && before != null) {
         const r = { ...base, file: fileId, older: true as const, items: [] as ChatItem[], start: 0, rewritten: true as const }
@@ -402,7 +418,7 @@ export function createDevinTranscripts({
       if (before != null) {
         const end = before === 0 ? 0 : doc.steps.findIndex(s => Number(s.step_id) >= before)
         const slice = end < 0 ? doc.steps : doc.steps.slice(0, end)
-        const page = takeVisible(slice, doc.steps, PAGE_ITEMS)
+        const page = takeVisible(slice, doc.steps, PAGE_ITEMS, doc.images)
         selected = page.steps
         start = page.start
         items = page.items
@@ -426,7 +442,7 @@ export function createDevinTranscripts({
         items = page.items
       }
       const head = `${fileId}:${st.size}:${from}:${gen}`
-      const token = `${head}/${start}.${prefixOf(doc.steps, start)}`
+      const token = `${head}/${start}.${prefixOf(doc, start)}`
       const reply: ChatResponse = before != null
         ? { ...base, file: fileId, older: true, items, start, ...(rewritten ? { rewritten: true } : {}) }
         : { ...base, file: fileId, token, items, start, queue: [], ...(rewritten ? { rewritten: true } : {}) }
@@ -440,9 +456,9 @@ export function createDevinTranscripts({
   }
 
   async function image(pane: TranscriptPane, fileId: string | null, ref: string | null, index: number) {
-    const m = /^(\d+):(u|a|r|t\d+)$/.exec(ref || '')
+    const m = /^(\d+):(u|a|r\d*|t\d+)$/.exec(ref || '')
     if (!pane.agentSession || !m || !Number.isSafeInteger(index) || index < 0) return null
-    const got = await load(pane.agentSession).catch(e => { if (isMissing(e)) return null; throw e })
+    const got = await load(pane.agentSession, true).catch(e => { if (isMissing(e)) return null; throw e })
     if (!got || path.basename(got.file) !== fileId) return null
     const img = got.doc.images.get(ref!)?.[index]
     if (!img) return null

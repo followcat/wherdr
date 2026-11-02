@@ -345,3 +345,91 @@ it('reads an anonymized ATIF-v1.7 transcript from Devin CLI 3000.11.234', async 
   expect(img?.type).toBe('image/png')
   expect(img?.body.length).toBeGreaterThan(0)
 })
+
+
+it('rewrites the bottom when retained history changes without changing step IDs', async () => {
+  const { home } = fixture()
+  const rows = Array.from({ length: 150 }, (_, id) => ({ id, parent: id ? id - 1 : null, message: devinMessage('assistant', `Reply ${id}`) }))
+  const file = writeDevinFixture(home, { rows })
+  const reader = createDevinTranscripts({ home })
+  const first = await reader.chat(pane)
+  expect(first.start).toBeGreaterThan(0)
+  const doc = JSON.parse(readFileSync(file, 'utf8'))
+  doc.steps[0].message = 'Rewritten earlier reply ' + 'x'.repeat(200)
+  writeFileSync(file, JSON.stringify(doc))
+  expect(await reader.chat(pane, { from: first.start, anchor: first.token, since: first.token })).toMatchObject({ rewritten: true })
+})
+
+it('preserves image hashes when paging into older history', async () => {
+  const { home } = fixture()
+  const image = { type: 'image', data: Buffer.from('older-shot').toString('base64'), mimeType: 'image/png' }
+  const rows = Array.from({ length: 150 }, (_, id) => ({ id, parent: id ? id - 1 : null, message: devinMessage('assistant', id ? `Reply ${id}` : [{ type: 'text', text: 'Older picture' }, image]) }))
+  writeDevinFixture(home, { rows })
+  const reader = createDevinTranscripts({ home })
+  const first = await reader.chat(pane)
+  const older = await reader.chat(pane, { before: first.start })
+  expect(older.items?.find(i => i.images)).toMatchObject({ hashes: [expect.any(String)] })
+})
+
+it('loads image bytes on demand instead of retaining payloads in the polling cache', async () => {
+  const { home } = fixture()
+  const image = { type: 'image', data: Buffer.from('on-demand-shot').toString('base64'), mimeType: 'image/png' }
+  writeDevinFixture(home, { rows: [{ id: 0, message: devinMessage('assistant', [image]) }] })
+  const { fs, counts } = countingFs()
+  const reader = createDevinTranscripts({ home, fs })
+  const page = await reader.chat(pane)
+  expect(counts.read).toBe(1)
+  expect((await reader.image(pane, page.file!, page.items![0]!.ref!, 0))?.body.toString()).toBe('on-demand-shot')
+  expect(counts.read).toBe(2)
+  expect(await reader.chat(pane, { since: page.token })).toMatchObject({ unchanged: true })
+  expect(counts.read).toBe(2)
+})
+
+it('keeps images from different tool results in the same step separate', async () => {
+  const { home } = fixture()
+  const file = writeDevinFixture(home)
+  const doc = JSON.parse(readFileSync(file, 'utf8'))
+  const image = (text: string) => ({ type: 'image', data: Buffer.from(text).toString('base64'), mimeType: 'image/png' })
+  doc.steps = [{ step_id: 1, source: 'agent', tool_calls: [
+    { tool_call_id: 'first', function_name: 'read', arguments: { path: 'first.png' } },
+    { tool_call_id: 'second', function_name: 'read', arguments: { path: 'second.png' } },
+  ], observation: { results: [
+    { source_call_id: 'first', content: [image('first-shot')] },
+    { source_call_id: 'second', content: [image('second-shot')] },
+  ] } }]
+  writeFileSync(file, JSON.stringify(doc))
+  const reader = createDevinTranscripts({ home })
+  const page = await reader.chat(pane)
+  const tools = page.items!.filter(i => i.role === 'tool')
+  expect(tools[0]!.ref).not.toBe(tools[1]!.ref)
+  expect((await reader.image(pane, page.file!, tools[0]!.ref!, 0))?.body.toString()).toBe('first-shot')
+  expect((await reader.image(pane, page.file!, tools[1]!.ref!, 0))?.body.toString()).toBe('second-shot')
+})
+
+it('retries after the original failure deadline even when quiet polls keep arriving', async () => {
+  const { home } = fixture()
+  const file = writeDevinFixture(home, { rows: [{ id: 0, message: devinMessage('assistant', 'Before reconnect') }] })
+  let clock = 1000
+  let down = false
+  const fs: MachineFs = { ...localFs, stat: async p => { if (down) throw new Error('temporarily unavailable'); return localFs.stat(p) } }
+  const reader = createDevinTranscripts({ home, fs, now: () => clock, failQuietMs: 100 })
+  const first = await reader.chat(pane)
+  down = true
+  await reader.chat(pane, { since: first.token })
+  clock = 1050
+  await reader.chat(pane, { since: first.token })
+  down = false
+  const doc = JSON.parse(readFileSync(file, 'utf8'))
+  doc.steps[0].message = 'After reconnect with another reply'
+  writeFileSync(file, JSON.stringify(doc))
+  clock = 1101
+  expect((await reader.chat(pane, { since: first.token })).items?.[0]?.text).toBe('After reconnect with another reply')
+})
+
+it('replaces a cursor page from the former SQLite reader instead of mixing protocols', async () => {
+  const { home } = fixture()
+  writeDevinFixture(home, { rows: [{ id: 0, message: devinMessage('assistant', 'ATIF history') }] })
+  const reader = createDevinTranscripts({ home })
+  const previous = 'devin:devin-' + '1'.repeat(24) + ':0:' + 'a'.repeat(24) + ':' + 'b'.repeat(24)
+  expect(await reader.chat(pane, { from: 0, since: previous, anchor: previous })).toMatchObject({ rewritten: true, items: [{ text: 'ATIF history' }] })
+})
