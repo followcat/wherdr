@@ -599,7 +599,12 @@ function deliverHeld(p: Pane) {
   deliverBusy.add(p.id)
   herdr('pane.read', { pane_id: p.id, source: 'detection' }, 4000)
     .then(async (r) => {
-      if (!inputVisible(r.read && r.read.text)) return
+      // Command Code has no screen recognizer: its idle/done status is the
+      // readiness signal (a blocked pane is the one that held the message).
+      const ready = p.agent === 'cmd'
+        ? p.status === 'idle' || p.status === 'done'
+        : inputVisible(r.read && r.read.text)
+      if (!ready) return
       if (p.agent === 'claude') {
         const box = await fieldDeps(p, inputBox).box()
         q.busy = Boolean(box && box !== BASH_EMPTY)

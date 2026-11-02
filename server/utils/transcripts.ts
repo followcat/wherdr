@@ -1185,7 +1185,15 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     let best: { file: string, id: string, cwdLength: number } | null = null
     for (const s of await commandCodeSessions()) {
       let first: string
-      try { first = (await fs.read(s.file, 0, 64 * 1024)).toString('utf8').split('\n')[0]! } catch { continue }
+      try {
+        first = (await fs.read(s.file, 0, 64 * 1024)).toString('utf8').split('\n')[0]!
+      } catch (e) {
+        // A missing file is not a candidate; a transient read failure must
+        // reach locate()'s last-known-session fallback instead of silently
+        // selecting an older session in the same folder.
+        if (isMissing(e)) continue
+        throw e
+      }
       let d: Json
       try { d = JSON.parse(first) } catch { continue }
       if (!d || d.type !== 'session' || typeof d.cwd !== 'string') continue
@@ -1268,6 +1276,11 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     let items: ChatItem[] = []
     let queue: ClaudeQueueEntry[] | null = null
     let popped: ClaudeQueueEntry[] | null = null
+    // Command Code's tool result may sit in the newer window while its call
+    // is in the older one: keep the raw windows and parse the assembled page
+    // once, instead of giving each window a fresh tool map.
+    let raw = ''
+    let pageStart = end
     while (start > 0 && end - start < MAX_READ_BYTES) {
       // Window widened as long as it contains no line start (a
       // multi-MB line: message with images), within the cap.
@@ -1280,6 +1293,15 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
         w *= 2
       }
       if (r.start === start) break // giant line beyond the cap: stop there
+      if (kind === 'cmd') {
+        raw = r.text + raw
+        pageStart = r.start
+        start = r.start
+        // Two windows: the first can cut a tool call from its result at the
+        // 2 MiB boundary; the assembled page keeps both.
+        if (start === 0 || end - start >= 2 * WINDOW_BYTES) break
+        continue
+      }
       // Each window is parsed alone (a tool result in error whose
       // call is in the previous window just loses its red mark).
       const parsed = parseLines(r.text, kind, r.start, home, ompTemplates.list, cwd)
@@ -1288,6 +1310,12 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
       items = parsed.concat(items)
       start = r.start
       if (items.length >= PAGE_ITEMS) break
+    }
+    if (kind === 'cmd') {
+      const parsed = parseLines(raw, kind, pageStart, home, ompTemplates.list, cwd)
+      items = parsed
+      queue = parsed.queue || []
+      popped = parsed.popped || []
     }
     return { start, items, queue: queue || [], popped: popped || [] }
   }
