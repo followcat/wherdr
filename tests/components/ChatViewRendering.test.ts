@@ -100,6 +100,17 @@ describe('conversation rendering', () => {
     } finally { w.unmount() }
   })
 
+  it('renders a Command Code assistant image without an empty message bubble', async () => {
+    const cmd = { ...pane, agent: 'cmd', status: 'done' as const }
+    herdrState.value = { ok: true, workspaces: [], panes: [cmd] }
+    items = [{ role: 'assistant', text: '', images: 1, ts: '2026-01-01T00:00:01Z', ref: '12:34' }]
+    const w = await mountSuspended(ChatView, { props: { pane: cmd, localQueued: [] } })
+    try {
+      await expect.poll(() => w.findAll('.tool-thumbs .msg-img').length).toBe(1)
+      expect(w.find('.msg-ai .md-body').exists()).toBe(false)
+    } finally { w.unmount() }
+  })
+
   it('keeps a folded omp tool image outside the hidden calls and opens its viewer', async () => {
     const idle = { ...pane, status: 'idle' as const }
     herdrState.value = { ok: true, workspaces: [], panes: [idle] }
