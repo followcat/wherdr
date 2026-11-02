@@ -239,6 +239,30 @@ it('keeps a tool result across a pagination boundary', async () => {
   expect(tail.start).toBeGreaterThan(0)
   const older = await reader.chat(pane, { before: tail.start })
   expect(older.items!.find(i => i.name === 'shell_command')?.out).toBe('ok')
+  // Forgetting the pane must not let the remembered result resurrect.
+  reader.forget(pane.id)
+  const afterForget = await reader.chat(pane, { before: tail.start })
+  expect(afterForget.items!.find(i => i.name === 'shell_command')?.out).toBeUndefined()
+})
+
+it('reads past trailing tool results with no displayable message', async () => {
+  const { home, reader } = fixture()
+  const big = 'q'.repeat(1.5 * 1024 * 1024)
+  const calls = [1, 2, 3, 4].map(i => ({ type: 'tool_use', id: `call_${i}`, name: 'read_file', input: { file_path: `shot-${i}.png` } }))
+  const results = [1, 2, 3, 4].map(i => commandCodeToolResults(`u${i}`, 'a1', [{ tool_use_id: `call_${i}`, content: [{ type: 'text', text: big }] }], 2000 + i))
+  writeCommandCodeSession(home, {
+    id: 'sess-1', cwd: pane.cwd, lines: [
+      commandCodeSession('sess-1', pane.cwd),
+      commandCodeUser('u0', null, 'Take screenshots', 1000),
+      commandCodeAssistant('a1', 'u0', [{ type: 'text', text: 'Old reply' }, ...calls], { ms: 2000 }),
+      ...results,
+    ],
+  })
+  const r = await reader.chat(pane)
+  expect(r.items!.some(i => i.text === 'Old reply')).toBe(true)
+  const out = r.items!.find(i => i.name === 'read_file')?.out
+  expect(out?.length).toBe(8001)
+  expect(out?.startsWith('qqqq')).toBe(true)
 })
 
 it('marks a failed tool result', async () => {

@@ -958,8 +958,15 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
   const cmdHeaders = new Map<string, { size: number, mtimeMs: number, cwd: string | null, id: string | null }>()
   const cmdStatsCache = new Map<string, { file: string, size: number, gen: string, stats: CommandCodeStatus | null, session: string | null }>()
   // Tool results parsed in a newer page than their call (a page boundary):
-  // the call's page applies them when it is read.
-  const cmdResults = new Map<string, CommandCodeResult>()
+  // the call's page applies them when it is read. Scoped per transcript so a
+  // truncated or another session's call id cannot resurrect an old result.
+  const cmdResults = new Map<string, Map<string, CommandCodeResult>>()
+  const cmdSizes = new Map<string, { size: number, gen: string }>()
+  function cmdResultsFor(file: string) {
+    let m = cmdResults.get(file)
+    if (!m) { m = new Map(); cmdResults.set(file, m) }
+    return m
+  }
   // File -> state (size, generation) and when this server first saw it, for
   // whole-second mtimes (see SETTLE_MS); `file|size|gen` -> checksum of the
   // file at first sight (null: could not be taken).
@@ -1324,11 +1331,9 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     let items: ChatItem[] = []
     let queue: ClaudeQueueEntry[] | null = null
     let popped: ClaudeQueueEntry[] | null = null
-    // Command Code's tool result may sit in the newer window while its call
-    // is in the older one: keep the raw windows and parse the assembled page
-    // once, instead of giving each window a fresh tool map.
-    let raw = ''
-    let pageStart = end
+    // Command Code's result may sit in the newer window while its call is in
+    // the older one: the per-file results map bridges the windows.
+    const results = cmdResultsFor(file)
     while (start > 0 && end - start < MAX_READ_BYTES) {
       // Window widened as long as it contains no line start (a
       // multi-MB line: message with images), within the cap.
@@ -1341,29 +1346,14 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
         w *= 2
       }
       if (r.start === start) break // giant line beyond the cap: stop there
-      if (kind === 'cmd') {
-        raw = r.text + raw
-        pageStart = r.start
-        start = r.start
-        // Two windows: the first can cut a tool call from its result at the
-        // 2 MiB boundary; the assembled page keeps both.
-        if (start === 0 || end - start >= 2 * WINDOW_BYTES) break
-        continue
-      }
-      // Each window is parsed alone (a tool result in error whose
-      // call is in the previous window just loses its red mark).
-      const parsed = parseLines(r.text, kind, r.start, home, ompTemplates.list, cwd, cmdResults)
+      // Each window is parsed alone; Command Code orphans are carried in the
+      // per-file results map, so a later window's call still gets its output.
+      const parsed = parseLines(r.text, kind, r.start, home, ompTemplates.list, cwd, results)
       if (!queue) queue = parsed.queue || [] // the queue lives in the most recent window
       if (!popped) popped = parsed.popped || []
       items = parsed.concat(items)
       start = r.start
       if (items.length >= PAGE_ITEMS) break
-    }
-    if (kind === 'cmd') {
-      const parsed = parseLines(raw, kind, pageStart, home, ompTemplates.list, cwd, cmdResults)
-      items = parsed
-      queue = parsed.queue || []
-      popped = parsed.popped || []
     }
     return { start, items, queue: queue || [], popped: popped || [] }
   }
@@ -1387,7 +1377,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
         const nl = buf.indexOf(0x0a, off)
         off = nl < 0 ? buf.length : nl + 1
       }
-      const items = parseLines(buf.subarray(off).toString('utf8'), kind, s0 + off, home, ompTemplates.list, kind === 'omp' ? await ompCwd(file) : '', cmdResults)
+      const items = parseLines(buf.subarray(off).toString('utf8'), kind, s0 + off, home, ompTemplates.list, kind === 'omp' ? await ompCwd(file) : '', cmdResultsFor(file))
       // Start kept even when it moved to the next line: the client then sees a
       // stale anchor (or another start) and reloads from the bottom.
       r = { start: from, items, queue: items.queue || [], popped: items.popped || [], anchor: off === from - s0 ? anchorHash(above) : '' }
@@ -1448,6 +1438,14 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
       return { available: false, reason: 'not_found' }
     }
     const fileId = path.basename(loc.file)
+    if (transcriptKind(loc.file) === 'cmd') {
+      // A rewrite/truncation invalidates results remembered for the removed
+      // page; a still-growing file keeps them.
+      const prev = cmdSizes.get(loc.file)
+      const g = genOf(st)
+      if (prev && (st.size < prev.size || (st.size === prev.size && prev.gen !== g))) cmdResults.delete(loc.file)
+      cmdSizes.set(loc.file, { size: st.size, gen: g })
+    }
     const base = { available: true, file: fileId, session: loc.session, guessed: Boolean(loc.guessed) }
     // The transcript path tells the real kind: a pane whose agent changed while
     // its session stayed must not read the file as another agent's (no message).
@@ -1702,6 +1700,8 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
   }
 
   function forget(paneId: string) {
+    const last = lastLoc.get(paneId)
+    if (last) { cmdResults.delete(last.file); cmdSizes.delete(last.file) }
     locCache.delete(paneId)
     lastLoc.delete(paneId)
     modelCache.delete(paneId)
