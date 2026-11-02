@@ -8,12 +8,37 @@ export const opencodeMessage = (id, type, text) => ({ id: `msg_${String(id).padS
   }) })
 
 export const opencodeState = () => ({ messages: [], session: 'ses_example', password: 'fixture-password', version: '2.0.27',
-  pid: 123, revert: undefined, fail: 0, requests: [], streams: new Set(), connections: 0 })
+  pid: 123, revert: undefined, fail: 0, requests: [], streams: new Set(), connections: 0,
+  inbox: undefined, inboxFail: false, permissions: [], forms: [], tokens: undefined, cost: undefined })
 export function opencodeReply(state, session, op, options = {}) {
   const base = { server: `fixture-server-${state.pid}`, status: 200 }
   if (state.fail) return { ...base, status: state.fail }
   if (session !== state.session) return { ...base, status: 404 }
-  if (op === 'session') return { ...base, data: { data: { id: session, model: { id: 'sample-model', providerID: 'example' }, revert: state.revert } } }
+  if (op === 'session') return { ...base, data: { data: { id: session, model: { id: 'sample-model', providerID: 'example' }, revert: state.revert,
+    ...(state.tokens ? { tokens: state.tokens } : {}), ...(state.cost !== undefined ? { cost: state.cost } : {}) },
+    // The real shim attaches the inbox read beside the session payload;
+    // null means that read failed — unknown, not empty.
+    inbox: state.inboxFail ? null : (state.inbox || []) } }
+  if (op === 'pending') return { ...base, data: { permissions: state.permissions, forms: state.forms } }
+  if (op === 'inbox') return { ...base, data: { data: state.inbox || [] } }
+  if (op === 'inbox_delete') {
+    const before = state.inbox || []
+    state.inbox = before.filter(i => i.id !== options.item)
+    return { ...base, status: before.length === (state.inbox || []).length ? 404 : 200, data: { items: state.inbox || [] } }
+  }
+  if (op === 'reply') {
+    const still = state.permissions.filter(r => r.id !== options.request)
+    const removed = still.length !== state.permissions.length
+    state.permissions = still
+    return { ...base, data: { pending: state.permissions }, ...(removed ? {} : { status: 404 }) }
+  }
+  if (op === 'form_reply') {
+    const still = state.forms.filter(r => r.id !== options.form)
+    const removed = still.length !== state.forms.length
+    state.forms = still
+    return { ...base, data: { pending: state.forms }, ...(removed ? {} : { status: 404 }) }
+  }
+  if (op === 'shell') return { ...base, status: options.command?.trim() ? 200 : 400, data: null }
   if (op === 'page') {
     let end = state.messages.length
     if (options.cursor) {
