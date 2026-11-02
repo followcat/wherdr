@@ -114,6 +114,7 @@ onBeforeUnmount(() => { mirror?.destroy(); mirror = null })
 
 const canSend = computed(() => Boolean(text.value.trim() || attachments.value.length))
 const readOnly = computed(() => Boolean(props.pane?.stopped || props.pane?.prompt?.unavailable) || !eventsOpen.value || offlineView.value || paneStale(props.pane))
+const composerStatus = computed(() => props.pane?.ompStatus ?? props.pane?.devinStatus)
 // Offline, no Stop: UChatPromptSubmit ignores `disabled` in "streaming" mode.
 // omp running the user's "!" / "$" command stays idle: Stop cancels the command.
 const shellRun = computed(() => Boolean(props.pane && props.pane.agent === 'omp' && props.pane.ompShell && props.pane.status !== 'working'))
@@ -929,10 +930,10 @@ defineExpose({
         />
       </template>
     </UChatPrompt>
-    <!-- omp: its status line, as at the bottom of the terminal. -->
-    <div v-if="pane?.ompStatus" class="composer-status" :title="[pane.ompStatus.line, pane.ompStatus.meters].filter(Boolean).join('\n')">
-      <span class="composer-status-line">{{ pane.ompStatus.line }}</span>
-      <span v-if="pane.ompStatus.meters" class="composer-status-meters">{{ pane.ompStatus.meters }}</span>
+    <!-- omp/Devin: the agent's status line, as at the bottom of its terminal. -->
+    <div v-if="composerStatus" class="composer-status" :title="[composerStatus.line, composerStatus.meters].filter(Boolean).join('\n')">
+      <span class="composer-status-line">{{ composerStatus.line }}</span>
+      <span v-if="composerStatus.meters" class="composer-status-meters">{{ composerStatus.meters }}</span>
     </div>
   </div>
 </template>
