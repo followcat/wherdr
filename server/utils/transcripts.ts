@@ -796,16 +796,19 @@ export function parseCommandCode(lines: Lines): Parsed {
         images++
       } else if (part.type === 'tool_result' && typeof part.tool_use_id === 'string') {
         const t = tools.get(part.tool_use_id)
-        if (!t) continue
-        const out = commandCodeText(part.content)
-        if (out) t.out = clip(out, 8000)
-        if (part.is_error) t.error = true
         const n = Array.isArray(part.content) ? part.content.filter((p: Json) => p && p.type === 'image').length : 0
-        if (n && ref) {
-          t.images = n
-          t.ref = ref
-          if (toolImages) t.imageAt = toolImages
+        if (t) {
+          const out = commandCodeText(part.content)
+          if (out) t.out = clip(out, 8000)
+          if (part.is_error) t.error = true
+          if (n && ref) {
+            t.images = n
+            t.ref = ref
+            if (toolImages) t.imageAt = toolImages
+          }
         }
+        // lineImages() counts this result's images even when its call is
+        // outside the loaded page: the next matched tool's offset must skip them.
         toolImages += n
       }
     }
@@ -921,6 +924,10 @@ export function isMissing(e: unknown): boolean {
 export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, exec, stream }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number, exec?: ShellExec, stream?: (script: string, args: string[]) => ChildProcessWithoutNullStreams | null }) {
   const devin = createDevinTranscripts({ home, exec })
   const opencode = createOpenCodeTranscripts({ home, exec, stream })
+  // Command Code discovery/status caches: project headers change rarely, and
+  // an unchanged session must not be re-read on every 5 s status refresh.
+  const cmdHeaders = new Map<string, { size: number, mtimeMs: number, cwd: string | null, id: string | null }>()
+  const cmdStatsCache = new Map<string, { file: string, size: number, gen: string, stats: OmpStatus | null, session: string | null }>()
   // File -> state (size, generation) and when this server first saw it, for
   // whole-second mtimes (see SETTLE_MS); `file|size|gen` -> checksum of the
   // file at first sight (null: could not be taken).
@@ -1164,14 +1171,14 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
   // still share the newest file (see docs/conversation.md).
   async function commandCodeSessions() {
     const root = path.join(home, '.commandcode/projects')
-    const out: { file: string, mtimeMs: number }[] = []
+    const out: { file: string, mtimeMs: number, size: number }[] = []
     for (const d of await listDir(root)) {
       const dir = path.join(root, d)
       const files = (await listDir(dir)).filter(n => n.endsWith('.jsonl') && !n.endsWith('.checkpoints.jsonl'))
       if (!files.length) continue
       const paths = files.map(n => path.join(dir, n))
       const stats = await fs.statMany(paths)
-      for (let i = 0; i < paths.length; i++) if (stats[i]?.isFile) out.push({ file: paths[i]!, mtimeMs: stats[i]!.mtimeMs })
+      for (let i = 0; i < paths.length; i++) if (stats[i]?.isFile) out.push({ file: paths[i]!, mtimeMs: stats[i]!.mtimeMs, size: stats[i]!.size })
     }
     return out.sort((a, b) => b.mtimeMs - a.mtimeMs)
   }
@@ -1184,18 +1191,27 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     if (!pane.cwd) return null
     let best: { file: string, id: string, cwdLength: number } | null = null
     for (const s of await commandCodeSessions()) {
-      let first: string
-      try {
-        first = (await fs.read(s.file, 0, 64 * 1024)).toString('utf8').split('\n')[0]!
-      } catch (e) {
-        // A missing file is not a candidate; a transient read failure must
-        // reach locate()'s last-known-session fallback instead of silently
-        // selecting an older session in the same folder.
-        if (isMissing(e)) continue
-        throw e
+      const cached = cmdHeaders.get(s.file)
+      let d: Json | null = null
+      if (cached && cached.size === s.size && cached.mtimeMs === s.mtimeMs) {
+        d = cached.cwd === null ? null : { type: 'session', cwd: cached.cwd, id: cached.id }
+      } else {
+        let first: string
+        try {
+          first = (await fs.read(s.file, 0, 64 * 1024)).toString('utf8').split('\n')[0]!
+        } catch (e) {
+          // A missing file is not a candidate; a transient read failure must
+          // reach locate()'s last-known-session fallback instead of silently
+          // selecting an older session in the same folder.
+          if (isMissing(e)) continue
+          throw e
+        }
+        try { d = JSON.parse(first) } catch { d = null }
+        if (d && d.type === 'session' && typeof d.cwd === 'string') {
+          cmdHeaders.set(s.file, { size: s.size, mtimeMs: s.mtimeMs, cwd: d.cwd, id: typeof d.id === 'string' ? d.id : null })
+          if (cmdHeaders.size > 4096) cmdHeaders.delete(cmdHeaders.keys().next().value!)
+        }
       }
-      let d: Json
-      try { d = JSON.parse(first) } catch { continue }
       if (!d || d.type !== 'session' || typeof d.cwd !== 'string') continue
       if (d.cwd !== pane.cwd && !pane.cwd.startsWith(d.cwd + '/')) continue
       const hit = { file: s.file, id: typeof d.id === 'string' ? d.id : path.basename(s.file, '.jsonl'), cwdLength: d.cwd.length }
@@ -1546,12 +1562,18 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
   // Command Code: the last assistant turn's model and context, for the
   // composer's status line. `/model` and `/effort` only change the default
   // for new sessions, so this stays a read-only display.
-  async function commandCodeStats(pane: TranscriptPane): Promise<OmpStatus | null> {
-    if (pane.agent !== 'cmd') return null
+  async function commandCodeStats(pane: TranscriptPane): Promise<{ status: OmpStatus | null, session: string | null }> {
+    if (pane.agent !== 'cmd') return { status: null, session: null }
     const loc = await locate(pane)
-    if (!loc) return null
-    let size: number
-    try { size = (await fs.stat(loc.file)).size } catch { return null }
+    if (!loc) return { status: null, session: null }
+    let st
+    try { st = await fs.stat(loc.file) } catch { return { status: null, session: loc.session } }
+    const gen = genOf(st)
+    const hit = cmdStatsCache.get(pane.id)
+    if (hit && hit.file === loc.file && hit.size === st.size && hit.gen === gen) {
+      return { status: hit.stats, session: hit.session }
+    }
+    const size = st.size
     let model: string | null = null
     let context: number | null = null
     let cost: number | null = null
@@ -1561,7 +1583,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     for (let length = 256 * 1024; ; length *= 2) {
       const start = Math.max(0, size - length)
       let text: string
-      try { text = (await fs.read(loc.file, start, size - start)).toString('utf8') } catch { return null }
+      try { text = (await fs.read(loc.file, start, size - start)).toString('utf8') } catch { return { status: null, session: loc.session } }
       const from = start > 0 ? text.indexOf('\n') + 1 : 0
       for (const line of text.slice(from).split('\n')) {
         let d: Json
@@ -1577,13 +1599,20 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
       }
       if (context !== null || start === 0 || length >= 16 * 1024 * 1024) break
     }
-    if (!model && context === null) return null
+    if (!model && context === null) {
+      // Cache the "no usage yet" answer too: a new session with no assistant
+      // turn must not rescan the file every five seconds.
+      cmdStatsCache.set(pane.id, { file: loc.file, size, gen, stats: null, session: loc.session })
+      return { status: null, session: loc.session }
+    }
     const tokens = context === null ? '' : `${context >= 1000 ? `${(context / 1000).toFixed(1)}k` : context} context`
     const money = cost === null ? '' : `$${cost.toFixed(4)}`
-    return {
+    const status: OmpStatus = {
       line: `Command Code · ${model ? cleanModelName(model) : 'session'}`,
       meters: [tokens, money].filter(Boolean).join(' · ') || null,
     }
+    cmdStatsCache.set(pane.id, { file: loc.file, size, gen, stats: status, session: loc.session })
+    return { status, session: loc.session }
   }
 
   // Tool call waiting for a permission: the last one without a result, read
@@ -1654,6 +1683,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     pendingCache.delete(paneId)
     askCache.delete(paneId)
     claudeAskCache.delete(paneId)
+    cmdStatsCache.delete(paneId)
   }
 
   return { chat, preview, latestReply, image, forget, locate, model, commandCodeStats, observe, dispose: opencode.dispose, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions }

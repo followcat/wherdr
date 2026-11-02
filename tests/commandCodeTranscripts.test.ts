@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { createTranscripts } from '../server/utils/transcripts'
 import { localFs } from '../server/utils/fsx'
 import {
-  commandCodeAssistant, commandCodeModel, commandCodePNG, commandCodeSession,
+  commandCodeAssistant, commandCodeModel, commandCodePNG, commandCodePNG2, commandCodeSession,
   commandCodeToolResults, commandCodeUser, writeCommandCodeSession,
 } from './helpers/command-code-fixture.mjs'
 
@@ -60,8 +60,8 @@ it('reads a Command Code session: messages, thinking, tools and their results', 
   expect((await reader.model(pane))?.id).toBe('example/model-b')
   // The 120 input tokens already include the 80 cached ones.
   expect(await reader.commandCodeStats(pane)).toMatchObject({
-    line: expect.stringContaining('Command Code'),
-    meters: expect.stringContaining('120 context'),
+    session: 'sess-1',
+    status: { line: expect.stringContaining('Command Code'), meters: expect.stringContaining('120 context') },
   })
   expect(r.items!.some(i => i.text.includes('Monitor wake-up'))).toBe(false)
   expect(r.items!.some(i => i.text.includes('Hidden string automation'))).toBe(false)
@@ -85,8 +85,8 @@ it('finds the last usage through a trailing record larger than the status window
     ],
   })
   const stats = await reader.commandCodeStats(pane)
-  expect(stats?.meters).toContain('1.0k context')
-  expect(stats?.meters).not.toContain('1.8k')
+  expect(stats.status?.meters).toContain('1.0k context')
+  expect(stats.status?.meters).not.toContain('1.8k')
 })
 
 it('keeps a tool result when its call and result straddle read windows', async () => {
@@ -134,6 +134,95 @@ it('keeps the last session when a header read fails', async () => {
   } finally {
     vi.useRealTimers()
   }
+})
+
+it('offsets images for a tool result whose call is outside the page', async () => {
+  const { home, reader } = fixture()
+  writeCommandCodeSession(home, {
+    id: 'sess-1', cwd: pane.cwd, lines: [
+      commandCodeSession('sess-1', pane.cwd),
+      commandCodeUser('u1', null, 'Patch it', 1000),
+      commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_2', name: 'edit_file', input: { file_path: 'src/login.ts' } }], { ms: 2000 }),
+      commandCodeToolResults('u2', 'a1', [
+        { tool_use_id: 'call_missing', content: [{ type: 'text', text: 'gone' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: commandCodePNG2 } }] },
+        { tool_use_id: 'call_2', content: [{ type: 'text', text: 'kept' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: commandCodePNG } }] },
+      ], 3000),
+    ],
+  })
+  const r = await reader.chat(pane)
+  const tool = r.items!.find(i => i.name === 'edit_file')!
+  expect(tool).toMatchObject({ out: 'kept', images: 1, imageAt: 1 })
+  const img = await reader.image(pane, r.file!, tool.ref!, 1)
+  expect(img?.body.equals(Buffer.from(commandCodePNG, 'base64'))).toBe(true)
+})
+
+it('does not rescan unchanged usage', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-cache-'))
+  homes.push(home)
+  let reads = 0
+  const fs = {
+    ...localFs,
+    read: (file: string, start: number, len: number, timeout?: number) => {
+      reads++
+      return localFs.read(file, start, len, timeout)
+    },
+  }
+  const reader = createTranscripts({ home, herdr: async () => ({}), fs })
+  writeCommandCodeSession(home, {
+    id: 'sess-1', cwd: pane.cwd, lines: [
+      commandCodeSession('sess-1', pane.cwd),
+      commandCodeUser('u1', null, 'Usage', 1000),
+      commandCodeAssistant('a1', 'u1', [{ type: 'text', text: 'ok' }], { ms: 2000, usage: { inputTokens: 42, outputTokens: 1 } }),
+    ],
+  })
+  const first = await reader.commandCodeStats(pane)
+  expect(first.status?.meters).toContain('42 context')
+  const after = reads
+  expect(await reader.commandCodeStats(pane)).toEqual(first)
+  expect(reads).toBe(after)
+})
+
+it('caches session headers across discovery passes', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-headers-'))
+  homes.push(home)
+  const root = path.join(home, '.commandcode/projects')
+  const dir = path.join(root, 'history')
+  const files = new Map(Array.from({ length: 100 }, (_, i) => [path.join(dir, `s${i}.jsonl`), Buffer.from(JSON.stringify({ type: 'session', version: 3, id: `s${i}`, cwd: `/home/user/other${i}` }))]))
+  let reads = 0
+  const fs = {
+    ...localFs,
+    readdir: async (p: string) => p === root ? ['history'] : [...files.keys()].map(f => path.basename(f)),
+    statMany: async (ps: string[]) => ps.map(p => ({ size: files.get(p)!.length, mtimeMs: 1_700_000_000_000, isFile: true, isDir: false })),
+    read: async (p: string, start: number, len: number) => {
+      reads++
+      return files.get(p)!.subarray(start, start + len)
+    },
+  }
+  const reader = createTranscripts({ home, herdr: async () => ({}), fs })
+  const p = { id: 'p-headers', agent: 'cmd', cwd: '/home/user/new-project' }
+  vi.useFakeTimers()
+  try {
+    expect(await reader.locate(p)).toBeNull()
+    expect(reads).toBe(100)
+    reads = 0
+    vi.setSystemTime(Date.now() + 9000)
+    expect(await reader.locate(p)).toBeNull()
+    expect(reads).toBe(0)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('reports a new session even before its first usage', async () => {
+  const { home, reader } = fixture()
+  const write = (id: string, lines: unknown[], mtime: Date) => writeCommandCodeSession(home, { id, cwd: pane.cwd, lines, mtime })
+  write('sess-old', [
+    commandCodeSession('sess-old', pane.cwd),
+    commandCodeUser('u1', null, 'Old', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'text', text: 'old reply' }], { ms: 2000, usage: { inputTokens: 10, outputTokens: 1 } }),
+  ], new Date(1_700_000_000_000))
+  write('sess-new', [commandCodeSession('sess-new', pane.cwd), commandCodeUser('u2', null, 'New question', 3000)], new Date(1_700_000_100_000))
+  expect(await reader.commandCodeStats(pane)).toMatchObject({ session: 'sess-new', status: null })
 })
 
 it('marks a failed tool result', async () => {
