@@ -48,7 +48,9 @@ function formChoices(form: Json): OcCard | null {
   // terminal: submitting without it fails the service's own validation.
   if (raw.length !== 1 || raw.some((f: Json) => f?.hidden)) return null
   const f = raw[0]
-  const key = typeof f.key === 'string' ? f.key : ''
+  // The transport validates the same pattern before posting a reply — a
+  // key it would refuse must not become a card in the first place.
+  const key = typeof f.key === 'string' && /^[\w.-]{1,128}$/.test(f.key) ? f.key : ''
   if (!key || f.when) return null
   const question = str(f.title, 300) || str(form.title, 300) || 'Answer?'
   const hint = str(f.description, 300) || null

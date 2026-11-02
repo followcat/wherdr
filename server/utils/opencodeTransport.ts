@@ -241,8 +241,10 @@ try:
                         with get(root + '/inbox') as box:
                             items = json.loads(box.read(limit + 1))
                         data['inbox'] = items.get('data') if isinstance(items.get('data'), list) else []
-                    except urllib.error.HTTPError:
-                        data['inbox'] = []
+                    # Auxiliary read: any failure means unknown, never empty —
+                    # an empty list would make a queued message look lost.
+                    except Exception:
+                        data['inbox'] = None
                 if op == 'image':
                     message = data.get('data', {})
                     slot = request.get('slot')

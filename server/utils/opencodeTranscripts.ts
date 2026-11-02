@@ -160,7 +160,9 @@ export function createOpenCodeTranscripts({ home, exec, stream }: { home: string
     const prev = cache.get(session)
     const carried = prev && prev.file === file && prev.epoch === epoch
     const s: Snapshot = { file, info, server: r.server,
-      inbox: Array.isArray(r.data?.inbox) ? r.data.inbox : prev?.inbox,
+      // null/absent means the inbox read itself failed — never carried from a
+      // previous snapshot: "unknown" is honest, a stale list is not.
+      inbox: Array.isArray(r.data?.inbox) ? r.data.inbox : undefined,
       pages: carried ? prev!.pages : new Map(), bytes: carried ? prev!.bytes : 0, at: Date.now(), epoch }
     if (!carried) pageBytes -= prev?.bytes || 0
     cache.set(session, s)
@@ -219,13 +221,14 @@ export function createOpenCodeTranscripts({ home, exec, stream }: { home: string
     const start = valid && at >= 0 ? opts.from! : cursor(s.file, 'tail', messages[0]?.id || '')
     const items = parseOpenCode(messages)
     // The session inbox is the real queue: user entries still waiting to be
-    // delivered (typed on the computer, or sent while it works).
-    const inbox = (s.inbox || []).filter(i => i?.type === 'user' && typeof i?.payload?.text === 'string')
-    const queue = inbox.map(i => ({ text: clip(i.payload.text), ts: tsOf(i), ...(imageFiles(i.payload?.files).length ? { images: imageFiles(i.payload.files).length } : {}) }))
-    const token = `opencode:${s.file}:${hash(JSON.stringify([start, items, s.info.model, inbox.map(i => i.id)]))}`
+    // delivered (typed on the computer, or sent while it works). A failed
+    // inbox read omits the queue key entirely — unknown, not "no queue".
+    const inbox = Array.isArray(s.inbox) ? s.inbox.filter(i => i?.type === 'user' && typeof i?.payload?.text === 'string') : null
+    const queue = inbox?.map(i => ({ text: clip(i.payload.text), ts: tsOf(i), ...(imageFiles(i.payload?.files).length ? { images: imageFiles(i.payload.files).length } : {}) }))
+    const token = `opencode:${s.file}:${hash(JSON.stringify([start, items, s.info.model, inbox?.map(i => i.id) ?? null]))}`
     const olderCursor = initial.cursor.next ? cursor(s.file, 'page', initial.cursor.next) : null
     if (!rewritten && token === opts.since) return { ...base, token, unchanged: true }
-    return { ...base, token, start, olderCursor, items, queue, ...(rewritten ? { rewritten: true } : {}) }
+    return { ...base, token, start, olderCursor, items, ...(queue ? { queue } : {}), ...(rewritten ? { rewritten: true } : {}) }
   }
   async function model(pane: TranscriptPane): Promise<ModelInfo | null> {
     if (!pane.agentSession) return null
