@@ -114,7 +114,7 @@ onBeforeUnmount(() => { mirror?.destroy(); mirror = null })
 
 const canSend = computed(() => Boolean(text.value.trim() || attachments.value.length))
 const readOnly = computed(() => Boolean(props.pane?.stopped || props.pane?.prompt?.unavailable) || !eventsOpen.value || offlineView.value || paneStale(props.pane))
-const composerStatus = computed(() => props.pane?.ompStatus ?? props.pane?.devinStatus)
+const composerStatus = computed(() => props.pane?.ompStatus ?? props.pane?.devinStatus ?? props.pane?.opencodeStatus)
 // Offline, no Stop: UChatPromptSubmit ignores `disabled` in "streaming" mode.
 // omp running the user's "!" / "$" command stays idle: Stop cancels the command.
 const shellRun = computed(() => Boolean(props.pane && props.pane.agent === 'omp' && props.pane.ompShell && props.pane.status !== 'working'))

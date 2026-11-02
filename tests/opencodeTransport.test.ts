@@ -26,6 +26,9 @@ class Response(io.BytesIO):
     status = 200
 class Peer:
     patched = None
+    replied = None
+    formed = None
+    shelled = None
     def open(self, req, timeout=None):
         expected = 'Basic ' + base64.b64encode(('opencode:' + fixture.get('password', 'fixture-password')).encode()).decode()
         assert req.get_header('Authorization') == expected
@@ -38,6 +41,39 @@ class Peer:
             assert req.get_method() == 'GET'
             return Response(json.dumps(fixture.get('models', {'data': []})).encode())
         assert url.path.startswith('/api/session/ses_example')
+        if '/permission/' in url.path and url.path.endswith('/reply'):
+            body = json.loads((req.data or b'{}').decode())
+            assert req.get_method() == 'POST' and body.get('decision') in ['once', 'always', 'reject'] and set(body) <= {'decision', 'message'}
+            Peer.replied = (urllib.parse.unquote(url.path.rsplit('/', 2)[-2]), body)
+            return Response(b'')
+        if url.path.endswith('/permission'):
+            assert req.get_method() == 'GET'
+            data = [p for p in fixture.get('permissions', []) if not (Peer.replied and p.get('id') == Peer.replied[0])]
+            return Response(json.dumps({'data': data}).encode())
+        if '/form/' in url.path and url.path.endswith('/reply'):
+            body = json.loads((req.data or b'{}').decode())
+            assert req.get_method() == 'POST' and set(body) == {'answer'} and len(body['answer']) == 1
+            Peer.formed = (urllib.parse.unquote(url.path.rsplit('/', 2)[-2]), body)
+            return Response(b'')
+        if url.path.endswith('/form'):
+            assert req.get_method() == 'GET'
+            data = [f for f in fixture.get('forms', []) if not (Peer.formed and f.get('id') == Peer.formed[0])]
+            return Response(json.dumps({'data': data}).encode())
+        if url.path.endswith('/shell'):
+            body = json.loads((req.data or b'{}').decode())
+            assert req.get_method() == 'POST' and set(body) == {'command'} and body['command']
+            Peer.shelled = body['command']
+            return Response(b'')
+        if '/inbox/' in url.path:
+            assert req.get_method() == 'DELETE'
+            iid = urllib.parse.unquote(url.path.rsplit('/', 1)[-1])
+            items = fixture.get('inbox', [])
+            if not any(i.get('id') == iid for i in items): raise urllib.error.HTTPError(req.full_url, 404, 'fixture', {}, None)
+            fixture['inbox'] = [i for i in items if i.get('id') != iid]
+            return Response(b'')
+        if url.path.endswith('/inbox'):
+            assert req.get_method() == 'GET'
+            return Response(json.dumps({'data': fixture.get('inbox', [])}).encode())
         if req.get_method() == 'PATCH':
             # Only {"model": {...}} may leave the helper; echo it on the verify GET.
             Peer.patched = json.loads((req.data or b'{}').decode())
@@ -145,4 +181,55 @@ it('reads the model catalog without a session', async () => {
   const models = { data: [{ id: 'iceman-free', providerID: 'opencode-go', name: 'Iceman Free' }] }
   const [r] = await read(home, { session: 'ses_example', op: 'models' }, { models })
   expect(r).toMatchObject({ status: 200, data: models })
+})
+
+it('lists pending permission requests and forms in one run', async () => {
+  const { home } = fixture()
+  const permissions = [{ id: 'per_1', sessionID: 'ses_example', action: 'bash', resources: ['rm -rf /tmp/x'] }]
+  const forms = [{ id: 'frm_1', sessionID: 'ses_example', title: 'Pick', fields: [{ key: 'k', type: 'boolean' }] }]
+  const [r] = await read(home, { session: 'ses_example', op: 'pending' }, { permissions, forms })
+  expect(r).toMatchObject({ status: 200, data: { permissions, forms } })
+})
+
+it('replies only a whitelisted decision, then re-lists the pending requests', async () => {
+  const { home } = fixture()
+  const permissions = [{ id: 'per_1', sessionID: 'ses_example', action: 'bash', resources: ['ls'] }]
+  const [r] = await read(home, { session: 'ses_example', op: 'reply', request: 'per_1', decision: 'once' }, { permissions })
+  // The peer answered the POST and its permission list no longer holds it.
+  expect(r).toMatchObject({ status: 200, data: { pending: [] } })
+  expect(await read(home, { session: 'ses_example', op: 'reply', request: 'per_1', decision: 'yes' })).toEqual([{ error: 'Invalid OpenCode reply' }])
+  expect(await read(home, { session: 'ses_example', op: 'reply', request: '../escape', decision: 'once' })).toEqual([{ error: 'Invalid OpenCode reply' }])
+  expect(await read(home, { session: 'ses_example', op: 'reply', request: 'per_1', decision: 'once', message: 42 })).toEqual([{ error: 'Invalid OpenCode reply' }])
+})
+
+it('answers a form field with only whitelisted answer shapes', async () => {
+  const { home } = fixture()
+  const forms = [{ id: 'frm_1', sessionID: 'ses_example', title: 'Go?', fields: [{ key: 'ok', type: 'boolean' }] }]
+  const [r] = await read(home, { session: 'ses_example', op: 'form_reply', form: 'frm_1', key: 'ok', value: true }, { forms })
+  expect(r).toMatchObject({ status: 200, data: { pending: [] } })
+  expect(await read(home, { session: 'ses_example', op: 'form_reply', form: 'frm_1', key: 'ok', value: { hack: 1 } })).toEqual([{ error: 'Invalid OpenCode reply' }])
+  expect(await read(home, { session: 'ses_example', op: 'form_reply', form: 'frm_1', key: 'a b', value: 'x' })).toEqual([{ error: 'Invalid OpenCode reply' }])
+})
+
+it('deletes only an inbox item a fresh listing still shows', async () => {
+  const { home } = fixture()
+  const inbox = [{ id: 'msg_1', type: 'user', payload: { text: 'hi' } }]
+  expect((await read(home, { session: 'ses_example', op: 'inbox_delete', item: 'msg_gone' }, { inbox }))[0]).toMatchObject({ status: 404 })
+  const [r] = await read(home, { session: 'ses_example', op: 'inbox_delete', item: 'msg_1' }, { inbox })
+  expect(r).toMatchObject({ status: 200, data: { items: [] } })
+  expect(await read(home, { session: 'ses_example', op: 'inbox_delete', item: 'a/b' })).toEqual([{ error: 'Invalid OpenCode reply' }])
+})
+
+it('runs a shell command and refuses empty or oversized ones', async () => {
+  const { home } = fixture()
+  expect((await read(home, { session: 'ses_example', op: 'shell', command: 'ls -la' }))[0]).toMatchObject({ status: 200 })
+  expect(await read(home, { session: 'ses_example', op: 'shell', command: '  ' })).toEqual([{ error: 'Invalid OpenCode shell command' }])
+  expect(await read(home, { session: 'ses_example', op: 'shell', command: 7 })).toEqual([{ error: 'Invalid OpenCode shell command' }])
+})
+
+it('attaches the inbox to every session read', async () => {
+  const { home } = fixture()
+  const inbox = [{ id: 'msg_1', type: 'user', payload: { text: 'later' } }]
+  const [r] = await read(home, { session: 'ses_example', op: 'session' }, { inbox })
+  expect(r).toMatchObject({ status: 200, data: { data: { id: 'ses_example' }, inbox } })
 })
