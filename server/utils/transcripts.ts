@@ -61,7 +61,15 @@ export function anchorOf(token: string | null | undefined): { start: number, has
 const genOf = (st: { mtimeMs: number, ino?: number }) => `${st.ino ? `${st.ino}-` : ''}${Math.round(st.mtimeMs * 1000)}`
 // State a client's token was read from: file, size, cursor, inode, mtime
 // (`!`: read before its mtime second was over, see SETTLE_MS).
-const HEAD = /^(.*):(\d+):(null|\d+):(?:(\d+)-)?(\d+)(!?)(?=[/~#]|$)/
+const HEAD = /^(.*):(\d+):(null|\d+):(?:(\d+)-)?(\d+)(!?)(?=[/@~#]|$)/
+// Command Code invalidation generation carried by a token (`@N`, before the
+// anchor): a client whose generation is behind rebuilds the older pages it
+// kept. `~` stays the taken-back marker of server/api/chat.get.ts.
+const EPOCH = /@(\d+)(?=[/~#]|$)/
+export function cmdEpochOf(token: string | null | undefined): number | null {
+  const m = EPOCH.exec(String(token || ''))
+  return m ? Number(m[1]) : null
+}
 export function headOf(token: string | null | undefined): { file: string, size: number, from: number | null, ino: number | null, gen: string, unsettled: boolean } | null {
   const m = HEAD.exec(String(token || ''))
   if (!m) return null
@@ -1097,6 +1105,9 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   // truncated or another session's call id cannot resurrect an old result.
   const cmdResults = new Map<string, Map<string, CommandCodeResult>>()
   const cmdSizes = new Map<string, { size: number, gen: string, ino?: number }>()
+  // Per-file invalidation generation: carried by tokens so a client that did
+  // not witness the rewrite still rebuilds the older pages it kept.
+  const cmdEpochs = new Map<string, number>()
   function cmdResultsFor(file: string) {
     let m = cmdResults.get(file)
     if (!m) {
@@ -1466,37 +1477,40 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
       return !(c && c.size === s.size && c.mtimeMs === s.mtimeMs)
     }).map(s => s.file)
     const headers = await commandCodeHeaders(missing)
-    // Cache the whole fetched batch before selecting: the loop stops at the
-    // newest exact match, and that break must not leave the other headers to
-    // be read again on the next pass.
+    // Resolve the complete batch for this pass. The shared cache caps its
+    // size, so eviction must not hide a candidate from the selection below
+    // (newest-first insertion would otherwise drop the newest headers).
+    const resolved = new Map<string, Json | null>()
     for (const s of sessions) {
       const cached = cmdHeaders.get(s.file)
-      if (cached && cached.size === s.size && cached.mtimeMs === s.mtimeMs) continue
+      if (cached && cached.size === s.size && cached.mtimeMs === s.mtimeMs) {
+        resolved.set(s.file, cached.cwd === null ? null : { type: 'session', cwd: cached.cwd, id: cached.id })
+        continue
+      }
       const first = headers.get(s.file)
       if (first === undefined) continue
-      let d: Json | null = null
-      try { d = JSON.parse(first) } catch { d = null }
-      if (d && d.type === 'session' && typeof d.cwd === 'string') {
-        cmdHeaders.set(s.file, { size: s.size, mtimeMs: s.mtimeMs, cwd: d.cwd, id: typeof d.id === 'string' ? d.id : null })
-        if (cmdHeaders.size > 4096) cmdHeaders.delete(cmdHeaders.keys().next().value!)
-      }
+      try { resolved.set(s.file, JSON.parse(first)) } catch { resolved.set(s.file, null) }
     }
     let best: { file: string, id: string, cwdLength: number } | null = null
     for (const s of sessions) {
-      const cached = cmdHeaders.get(s.file)
-      let d: Json | null = null
-      if (cached && cached.size === s.size && cached.mtimeMs === s.mtimeMs) {
-        d = cached.cwd === null ? null : { type: 'session', cwd: cached.cwd, id: cached.id }
-      } else {
-        // Fetched, but not a valid session header (or a fresh file whose first
-        // line is still being written): retry on the next pass.
-        continue
-      }
+      const d = resolved.get(s.file)
       if (!d || d.type !== 'session' || typeof d.cwd !== 'string') continue
       if (d.cwd !== pane.cwd && !pane.cwd.startsWith(d.cwd + '/')) continue
       const hit = { file: s.file, id: typeof d.id === 'string' ? d.id : path.basename(s.file, '.jsonl'), cwdLength: d.cwd.length }
       if (!best || hit.cwdLength > best.cwdLength) best = hit
       if (d.cwd === pane.cwd) break // newest exact match
+    }
+    // Cache the valid headers now that the choice is made. Insert the oldest
+    // first so the cap keeps the recent sessions, and so the next pass does
+    // not reread the headers the exact-match break skipped.
+    for (let i = sessions.length - 1; i >= 0; i--) {
+      const s = sessions[i]!
+      const d = resolved.get(s.file)
+      if (!d || d.type !== 'session' || typeof d.cwd !== 'string') continue
+      const cached = cmdHeaders.get(s.file)
+      if (cached && cached.size === s.size && cached.mtimeMs === s.mtimeMs) continue
+      cmdHeaders.set(s.file, { size: s.size, mtimeMs: s.mtimeMs, cwd: d.cwd, id: typeof d.id === 'string' ? d.id : null })
+      if (cmdHeaders.size > 4096) cmdHeaders.delete(cmdHeaders.keys().next().value!)
     }
     return best ? { file: best.file, session: best.id, guessed: true } : null
   }
@@ -1680,9 +1694,16 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
       )
       const grewInPlace = Boolean(prev) && st.size > prev!.size && prev!.ino === st.ino
       cmdInvalidated = replaced || (grewInPlace && !await cmdResultsValid(loc.file))
-      if (cmdInvalidated) forgetCmdFile(loc.file)
+      if (cmdInvalidated) {
+        cmdEpochs.set(loc.file, (cmdEpochs.get(loc.file) ?? 0) + 1)
+        forgetCmdFile(loc.file)
+      }
       cmdSizes.set(loc.file, { size: st.size, gen: g, ino: st.ino })
-      if (cmdSizes.size > 64) cmdSizes.delete(cmdSizes.keys().next().value!)
+      if (cmdSizes.size > 64) {
+        const oldest = cmdSizes.keys().next().value!
+        cmdSizes.delete(oldest)
+        cmdEpochs.delete(oldest)
+      }
     }
     const base = { available: true, file: fileId, session: loc.session, guessed: Boolean(loc.guessed) }
     // The transcript path tells the real kind: a pane whose agent changed while
@@ -1696,35 +1717,45 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     const from = opts.from === undefined ? null : opts.from
     const gen = genOf(st)
     const settled = await settledGen(loc.file, st, gen)
+    const epoch = kind === 'cmd' ? cmdEpochs.get(loc.file) ?? 0 : 0
+    const sent = opts.anchor ?? opts.since
+    const prev = headOf(sent)
+    const same = prev !== null && prev.file === fileId
+    const sentEpoch = cmdEpochOf(opts.since || opts.anchor)
+    // A client that did not witness the invalidation (a preview read or
+    // another client consumed it) still has an older generation in its token.
+    const epochChanged = kind === 'cmd' && same && (sentEpoch === null ? epoch > 0 : sentEpoch !== epoch)
     // Token: file, size, cursor, generation (unchanged as long as these are,
-    // once settled), then the anchor of the reply's start.
-    const head = `${fileId}:${st.size}:${from}:${gen}`
-    if (settled && opts.since && opts.since.split('/')[0] === head) return { ...base, unchanged: true, token: opts.since }
+    // once settled), Command Code invalidation generation, then the anchor.
+    const head = `${fileId}:${st.size}:${from}:${gen}${settled ? '' : '!'}${epoch ? `@${epoch}` : ''}`
+    if (settled && !epochChanged && opts.since && opts.since.split('/')[0] === head) return { ...base, unchanged: true, token: opts.since }
     let r = await tail(loc.file, kind, st.size, gen, from, settled)
     // The client's list starts at the cursor, and the file was rewritten
     // above it: replaced by another file (inode), shorter, rewritten at the
-    // same size (appends always grow it), or other bytes just above the cursor
+    // same size (appends always grow it), other bytes just above the cursor
     // (anchor), or no line start there any more. Read back from the end, and
     // say so: the client starts again.
-    const sent = opts.anchor ?? opts.since
     const at = anchorOf(sent)
-    const prev = headOf(sent)
-    const same = prev !== null && prev.file === fileId
     // A list read before its state settled (whole-second mtimes): rewritten
     // within that second if its part of the file changed since.
-    const rewritten = from !== null && from > 0 && at !== null && at.start === from && (cmdInvalidated
+    const rewritten = epochChanged || (from !== null && from > 0 && at !== null && at.start === from && (cmdInvalidated
       || r.anchor !== at.hash
       || (same && prev.ino !== null && st.ino !== undefined && prev.ino !== st.ino)
       || (same && st.size < prev.size)
       || (same && st.size === prev.size && prev.gen !== gen)
-      || (same && prev.unsettled && !await stillThere(loc.file, prev)))
+      || (same && prev.unsettled && !await stillThere(loc.file, prev))))
     if (rewritten) {
       if (kind === 'cmd') forgetCmdFile(loc.file)
       r = await tail(loc.file, kind, st.size, gen, null, settled)
     }
     const mark = `${head}${settled ? '' : '!'}`
     const token = r.anchor ? `${mark}/${r.start}.${r.anchor}` : mark
-    return { ...base, token, items: r.items, start: r.start, queue: r.queue || [], ...(r.popped?.length ? { popped: r.popped } : {}), ...(rewritten ? { rewritten: true } : {}) }
+    return {
+      ...base, token, items: r.items, start: r.start, queue: r.queue || [],
+      ...(r.popped?.length ? { popped: r.popped } : {}),
+      ...(r.updates?.length ? { toolUpdates: r.updates } : {}),
+      ...(rewritten ? { rewritten: true } : {}),
+    }
   }
 
   // Agent's last reply, for cards and notifications.
