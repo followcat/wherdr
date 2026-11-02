@@ -512,7 +512,7 @@ const FR: Record<string, string> = {
   'Mark as read': 'Marquer comme lu', 'Mark as unread': 'Marquer comme non lu',
   'Commands': 'Commandes', 'Resets': 'Réinitialisation', 'left': 'restant', 'Week': 'Semaine', 'reset': 'réinitialisé', 'new window': 'fenêtre neuve', 'just now': 'à l’instant', 'Remaining quotas': 'Quotas restants', 'Install': 'Installer', 'Copy command': 'Copier la commande', 'this machine': 'cette machine', 'They will show after the next exchange with a Claude.': 'Ils apparaîtront après le prochain échange avec un Claude.', 'updated': 'mis à jour', 'used': 'utilisé',
   'Agent': 'Agent', 'Previous': 'Précédent', 'Next': 'Suivant',
-  'Reconnecting…': 'Reconnexion…', 'Offline': 'Hors ligne', 'Pane': 'Panneau', 'Panes': 'Panneaux',
+  'Panes': 'Panneaux',
     'Conversation compacted': 'Conversation compactée', 'Conversation cleared': 'Conversation effacée', 'Interrupted': 'Interrompu', 'Retried after an error': 'Relancé après une erreur', 'Error': 'Erreur',
   'App is locked': 'app verrouillée', 'Origin refused': 'origine refusée', 'Not found': 'introuvable',
   'Waiting for your reply — details in the Terminal tab': 'En attente de ta réponse — détail dans l’onglet Terminal',

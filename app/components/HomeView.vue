@@ -56,6 +56,7 @@ useNotificationRekey()
 const counted = computed(() => countedPanes(agents.value, boardLinks.value))
 // Counters follow the selected machine or group; unreachable machines stay out.
 const baseOfPane = (p: Pane) => { const m = machineInfo(p.machine); return m ? m.baseKey ?? m.key : p.machine || '' }
+const shownCounted = computed(() => counted.value.filter(p => !paneStale(p) && (machineBarSelection.value === null || machineBarSelection.value.includes(baseOfPane(p)))))
 // A board task counts by its state on the Board, once; other agents by their own.
 const counts = computed(() => {
   const sel = machineBarSelection.value
