@@ -13,12 +13,12 @@ vi.mock('../server/utils/paneSizes', () => ({
 }))
 
 afterEach(() => { mocks.serverVersion = '0.9.2'; vi.useRealTimers() })
-async function relay(version: string) {
+async function relay(version: string, reset = true) {
   vi.useFakeTimers()
   // herdrVersion is cached per machine for five minutes — and fake timers
   // freeze the TTL clock — so each relay needs a fresh module to see its
   // own CLI version rather than a previous test's cached answer.
-  vi.resetModules()
+  if (reset) vi.resetModules()
   const { openTerm } = await import('../server/utils/terminal')
   const child = Object.assign(new EventEmitter(), {
     stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), exitCode: null, kill: vi.fn(),
@@ -34,6 +34,24 @@ async function relay(version: string) {
 }
 
 describe('terminal mouse relay', () => {
+  it('refreshes cached CLI capabilities when the server reports an upgrade', async () => {
+    mocks.serverVersion = '0.9.1'
+    const old = await relay('0.9.1')
+    expect(old.send).toHaveBeenCalledWith(JSON.stringify({ type: 'web.capabilities', mouse: false, scroll: 2 }))
+    old.session.onClose(true)
+    await vi.advanceTimersByTimeAsync(1500)
+    const calls = mocks.cli.mock.calls.length
+    const same = await relay('0.9.1', false)
+    expect(mocks.cli).toHaveBeenCalledTimes(calls)
+    same.session.onClose(true)
+    await vi.advanceTimersByTimeAsync(1500)
+    mocks.serverVersion = '0.9.5'
+    const upgraded = await relay('0.9.5', false)
+    expect(mocks.cli).toHaveBeenCalledTimes(calls + 1)
+    expect(upgraded.send).toHaveBeenCalledWith(JSON.stringify({ type: 'web.capabilities', mouse: true, scroll: 2 }))
+    upgraded.session.onClose(true)
+    await vi.advanceTimersByTimeAsync(1500)
+  })
   it('advertises capability and forwards validated mouse events to the owning CLI', async () => {
     const r = await relay('0.9.2')
     expect(r.send).toHaveBeenCalledWith(JSON.stringify({ type: 'web.capabilities', mouse: true, scroll: 2 }))
