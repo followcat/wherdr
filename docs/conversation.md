@@ -40,11 +40,16 @@
   running the agent (local or SSH): `~/.commandcode/projects/<project>/<session>.jsonl`.
   Herdr already reports the pane as `cmd`; no separate integration is needed. Text,
   reasoning, tool calls and their results, saved images, search, previews, model and
-  pagination are read from the same file the CLI appends to. The CLI reports no session
-  id: the reader finds the project through the `cwd` in the session header and takes its
-  most recently written session, so two live Command Code panes in the same folder share
-  the newest one. Command Code's `/model`, `/effort` and `/permissions` stay terminal
-  controls; version 1 sessions and checkpoints are not read.
+  pagination are read from the same file the CLI appends to; the composer shows the
+  last turn's model and context. Its built-in `/model`, `/effort`, `/permissions`,
+  `/compact`, `/clear` and `/config` are offered in the `/` menu. `/model` and
+  `/effort` set the default for **new** sessions only — the running session keeps its
+  model — so wherdr shows the model read-only and leaves the change to the terminal.
+  The CLI reports no session id: the reader finds the project through the `cwd` in the
+  session header and takes its most recently written session, so two live Command Code
+  panes in the same folder share the newest one. Herdr has no `cmd` launch kind yet:
+  start Command Code in a pane and wherdr reads it. Version 1 sessions and checkpoints
+  are not read.
 - **Interactive agent screens**: in a conversation, an uncertain menu or panel opens the
   pane's real terminal in a modal window, with arrows, Enter, Escape, Tab, digits and y/n.
   The rest of the app waits behind a scrim (the window fills the screen on a phone); in a
