@@ -17,7 +17,16 @@ const FLUSH_TIMEOUT_MS = 90_000
 // stale precached copies left behind by an older service worker.
 const WORKER_V = '5'
 
+// One worker for the whole app: loading a recognizer costs seconds (the
+// models stay in Cache Storage, but the engine init does not), so the worker
+// survives pane switches — a composer's dispose() drops its take and mic,
+// never the loaded engine.
+let shared: ReturnType<typeof createSpeech> | null = null
 export function useSpeech() {
+  return (shared ??= createSpeech())
+}
+
+function createSpeech() {
   const status = ref<SpeechStatus>('idle')
   const error = ref('')
   const phase = ref('')
@@ -38,6 +47,9 @@ export function useSpeech() {
 
   let worker: Worker | null = null
   let loadedModelId: string | null = null
+  // Set by cancel/dispose: a take the caller abandoned. Its flush answer is
+  // still coming — the 'final' for it is dropped, never shown or typed.
+  let takeDead = false
   let readyWaiter: { resolve: () => void, reject: (e: Error) => void } | null = null
   let ctx: AudioContext | null = null
   let node: ScriptProcessorNode | null = null
@@ -59,6 +71,7 @@ export function useSpeech() {
     else if (m.t === 'segment') { if (m.text) segments.value.push(m.text); partial.value = '' }
     else if (m.t === 'final') {
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
+      if (takeDead) { takeDead = false; return }
       finalText.value = m.text; decodeMs.value = m.decodeMs; take.value = m.take || null
       lastCtx.value = typeof m.ctx === 'string' ? m.ctx : lastCtx.value
       status.value = 'ready'
@@ -126,6 +139,7 @@ export function useSpeech() {
     // captured rate rather than feeding the engine a wrong-speed stream.
     const inRate = ctx.sampleRate
     pendingCtx = ctxText || ''
+    takeDead = false
     levels.value = []
     recMs.value = 0
     node.onaudioprocess = (e) => {
@@ -184,6 +198,7 @@ export function useSpeech() {
   // Cancel = drop the audio and the result immediately; no tail decode.
   function cancelMic() {
     micGen++
+    takeDead = true
     teardownAudio()
     worker?.postMessage({ t: 'reset' })
     partial.value = ''; finalText.value = ''; segments.value = []
@@ -201,6 +216,7 @@ export function useSpeech() {
     const decoded = await ac.decodeAudioData(await blob.arrayBuffer())
     const out = resampleTo16k(decoded.getChannelData(0), decoded.sampleRate)
     reset()
+    takeDead = false
     status.value = 'flushing'
     const CH = 1600 // 100 ms
     for (let at = 0; at < out.length; at += CH) {
@@ -210,13 +226,19 @@ export function useSpeech() {
     worker?.postMessage({ t: 'flush', ctx: ctx || '' })
   }
 
+  // The pane goes away: drop its take and mic so nothing lands in another
+  // draft — the shared worker stays loaded for the next pane to reuse.
   function dispose() {
     micGen++
+    takeDead = true
     teardownAudio()
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
-    worker?.terminate(); worker = null
+    const midTake = status.value === 'recording' || status.value === 'flushing'
+    if (midTake) worker?.postMessage({ t: 'reset' })
     readyWaiter?.reject(new Error('disposed')); readyWaiter = null
-    status.value = 'idle'
+    partial.value = ''; finalText.value = ''; segments.value = []
+    levels.value = []; recMs.value = 0
+    if (midTake) status.value = worker ? 'ready' : 'idle'
   }
 
   return { status, error, phase, dl, partial, segments, finalText, loadMs, decodeMs, take, levels, recMs, lastCtx, installed: asrInstalled, ensure, startMic, stopMic, cancelMic, reset, decodeBlob, dispose }
