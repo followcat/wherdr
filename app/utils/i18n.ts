@@ -171,6 +171,7 @@ const FR: Record<string, string> = {
   'Use the restart buttons for this stopped agent.': 'Utilise les boutons de relance de cet agent arrêté.',
   'Restart Codex before sending a command.': 'Relance Codex avant d’envoyer une commande.',
   'Codex just stopped. Try again in a few seconds.': 'Codex vient de s’arrêter. Réessaie dans quelques secondes.',
+  'OpenCode is asking something — answer it in its terminal.': 'OpenCode pose une question — réponds-y dans son terminal.',
   'The pane is not at an empty shell prompt. Check its terminal.': 'Le panneau n’est pas sur une invite de shell vide. Vérifie son terminal.',
   'Restart agent': 'Redémarrer l’agent', 'Restart': 'Redémarrer', 'Restart anyway': 'Redémarrer quand même',
   'Restart to update': 'Redémarrer pour mettre à jour', 'Restarting': 'Redémarrage',
