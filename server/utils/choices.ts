@@ -856,9 +856,25 @@ const bashInput = (line: string, above: string | undefined) => /^!(\s|$)/.test(l
 // ("π > Opus > ~/demo ▶─1%────1M─"); a box's bottom is a longer rule.
 export function inputVisible(text: string | null | undefined): boolean {
   if (ompApprovalOpen(text)) return false
-  const lines = String(text || '').replace(/\s+$/, '').split('\n').slice(-12)
+  const t = String(text || '')
+  const lines = t.replace(/\s+$/, '').split('\n').slice(-12)
   return lines.some((l, i) => /^\s*›(\s|$)/.test(l)
     || (/^\s*❯(\s|$)/.test(l) && /^\s*─{3,}/.test(lines[i - 1] || ''))
     || /^╰─(\s|$)/.test(l)
     || bashInput(l, lines[i - 1]))
+    || devinFieldOnScreen(t)
+}
+
+// Devin's composer (v3000.x): the last "❭" line on screen is its input field
+// only when the box's bottom rule follows — during a permission dialog the
+// last "❭" line is the dialog's ("❭ Allow ←…→ Once"), followed by its option
+// rows, not a rule. A "❭" replayed in the scrollback is followed by the
+// reply, not a rule either. Same anchor as devinFieldLine (unqueue.ts).
+function devinFieldOnScreen(text: string): boolean {
+  const lines = String(text || '').split('\n')
+  let at = -1
+  for (let i = lines.length - 1; i >= 0 && at < 0; i--) if (/^❭(?: |$)/.test(lines[i]!.replace(/\s+$/, ''))) at = i
+  if (at < 0) return false
+  const below = lines.slice(at + 1).find(l => l.trim() !== '')
+  return Boolean(below && /^─{2,}/.test(below.replace(/\s+$/, '')))
 }

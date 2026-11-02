@@ -27,7 +27,7 @@ async function poll(restart: Restart | null, agent: string | null, status: strin
     restarts, leftForGood: () => false, lookForLeftMenu: () => false, findPane: () => null, pendingPrompts: map(), queued: map(),
     screenVersions: new WeakMap(), mapScreenPanes, choicesFor, previews: new Map([['w1:p1', { status, at: Date.now() }]]),
     models: new Map([['w1:p1', { status, at: Date.now() }]]), isViewed: () => false,
-    activities: map(), ompStatuses: map(), codexFields: map(), codexStatus: { forget: () => {} }, chatDelta: { ids: () => [], forget: () => {} },
+    activities: map(), ompStatuses: map(), codexFields: map(), codexStatus: { forget: () => {} }, devinScreens: map(), refreshDevinScreen: () => {}, chatDelta: { ids: () => [], forget: () => {} },
     choicesCache: new ScreenCache(), askChecks: map(), takenBack: map(), seen: map(),
     saveBorn: () => {}, saveSeen: () => {}, saveQueued: () => {}, machineOf: () => '', paneCommand: () => '',
   })

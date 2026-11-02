@@ -151,6 +151,9 @@ export interface Pane {
   activity?: string
   // Claude working, conversation shown: what its screen shows.
   claudeScreen?: ClaudeScreen
+  // Devin, conversation shown: its composer screen — own queue ("○" rows),
+  // last echoed message, send-now (see server/utils/devinScreen.ts).
+  devinScreen?: ClaudeScreen
   // Claude Code status near the input field ("✔ Update installed · Restart to update").
   claudeNotice?: string
   // Restart requested from wherdr (see server/utils/restart.ts): the agent

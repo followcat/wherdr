@@ -66,7 +66,7 @@ it('S4: publishes the viewed pane at 250ms while the twenty-pane batch still tak
  getMachine:()=>({transcripts:{observe:()=>{}}}),joinId:(_:string,id:string)=>id,restarts:map(),leftForGood:()=>false,lookForLeftMenu:()=>false,
  findPane:()=>null,pendingPrompts:map(),queued:map(),screenVersions:versions,mapScreenPanes,choicesFor,refreshModel:()=>{},refreshPreview:()=>{},
  previews:new Map(panes.map(p=>[p.id,{status:'blocked',at:Date.now()}])),models:new Map(panes.map(p=>[p.id,{status:'blocked',at:Date.now()}])),
- isViewed:(id:string)=>id==='w1:p20',activities:map(),ompStatuses:map(),codexFields:map(),codexStatus:{forget:()=>{},statusOf:()=>null},
+ isViewed:(id:string)=>id==='w1:p20',activities:map(),ompStatuses:map(),codexFields:map(),codexStatus:{forget:()=>{},statusOf:()=>null},devinScreens:map(),refreshDevinScreen:()=>{},
  choicesCache:new ScreenCache(),askChecks:map(),takenBack:map(),seen:map(),saveBorn:()=>{},saveSeen:()=>{},saveQueued:()=>{},machineOf:()=>''})
  const publish=vi.fn(()=>JSON.parse(JSON.stringify(states.get(''))))
  const pollMachine=bindFunction(source,'pollMachine',{mstates:states,screenVersions:versions,choicesCache:cache,screenFields:(p:any)=>p,herdrOn:async()=>({panes:panes.map(p=>({pane_id:p.id,revision:7}))}),
