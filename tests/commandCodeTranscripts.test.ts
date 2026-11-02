@@ -583,6 +583,77 @@ it('restarts pagination when a reader is replaced', async () => {
   expect((await after.chat(pane, { since: tail.token, from: tail.start })).rewritten).toBe(true)
 })
 
+it('bounds result validation by the watched byte span', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-span-'))
+  homes.push(home)
+  const filler = 's'.repeat(32 * 1024)
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'First', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo one' } }], { ms: 2000 }),
+    commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'one' }] }], 3000),
+  ]
+  for (let i = 0; i < 200; i++) lines.push(commandCodeUser(`filler-${i}`, 'a1', filler, 4000 + i))
+  lines.push(commandCodeUser('u3', 'a1', 'Second', 5000))
+  lines.push(commandCodeAssistant('a2', 'u3', [{ type: 'tool_use', id: 'call_2', name: 'shell_command', input: { command: 'echo two' } }], { ms: 5100 }))
+  lines.push(commandCodeToolResults('u4', 'a2', [{ tool_use_id: 'call_2', content: [{ type: 'text', text: 'two' }] }], 5200))
+  for (let i = 0; i < 100; i++) lines.push(commandCodeUser(`after-${i}`, 'a2', filler, 6000 + i))
+  const file = writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
+
+  let early = 0
+  const fs = {
+    ...localFs,
+    read: (f: string, start: number, len: number, timeout?: number) => {
+      if (start < 1024 * 1024) early = Math.max(early, len)
+      return localFs.read(f, start, len, timeout)
+    },
+  }
+  const reader = createTranscripts({ home, fs, herdr: async () => ({}) })
+  const tail = await reader.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+  let page = await reader.chat(pane, { before: tail.start })
+  while (!page.items!.some(i => i.toolId === 'call_1') && page.start > 0) {
+    page = await reader.chat(pane, { before: page.start })
+  }
+  expect(page.items!.some(i => i.toolId === 'call_1')).toBe(true)
+
+  appendFileSync(file, JSON.stringify(commandCodeAssistant('a3', 'u4', [{ type: 'text', text: 'done' }], { ms: 9000 })) + '\n')
+  early = 0
+  await reader.chat(pane, { since: tail.token, from: tail.start })
+  // The two watched results are more than 4 MiB apart: only the newest fits
+  // the cap, so validation must not read the whole old span.
+  expect(early).toBeLessThanOrEqual(4 * 1024 * 1024)
+})
+
+it('keeps results collected by another client when a stale token arrives', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-stale-'))
+  homes.push(home)
+  const filler = 't'.repeat(32 * 1024)
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+  ]
+  for (let i = 0; i < 100; i++) lines.push(commandCodeUser(`before-${i}`, 'a1', filler, 3000 + i))
+  lines.push(commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'ok' }] }], 4000))
+  for (let i = 0; i < 300; i++) lines.push(commandCodeUser(`after-${i}`, 'a1', filler, 5000 + i))
+  writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
+
+  const before = createTranscripts({ home, herdr: async () => ({}) })
+  const tail = await before.chat(pane)
+  const fresh = createTranscripts({ home, herdr: async () => ({}) })
+  const freshTail = await fresh.chat(pane)
+  const middle = await fresh.chat(pane, { before: freshTail.start })
+  const resultPage = await fresh.chat(pane, { before: middle.start })
+  expect(resultPage.items!.some(i => i.toolId === 'call_1')).toBe(false)
+
+  // Another device still has its pre-restart token: the stale marker must
+  // reload its pages without discarding the result this reader collected.
+  expect((await fresh.chat(pane, { since: tail.token, from: tail.start })).rewritten).toBe(true)
+  const callPage = await fresh.chat(pane, { before: resultPage.start })
+  expect(callPage.items!.find(i => i.toolId === 'call_1')?.out).toBe('ok')
+})
+
 it('reads past trailing tool results with no displayable message', async () => {
   const { home, reader } = fixture()
   const big = 'q'.repeat(1.5 * 1024 * 1024)
