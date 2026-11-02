@@ -6,23 +6,27 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime};
 
-/// A repo with a main line, its worktrees beside it, and a cache folder of its own for the kept builds.
-struct Bench { base: PathBuf }
+/// A repo with a main line, its worktrees beside it, and a cache folder of its own for the kept builds. The program's
+/// folder is the repo's top, or `sub` in a larger repo (as engine/ of wherdr): `dir` is that folder in each worktree.
+struct Bench { base: PathBuf, sub: String }
 impl Bench {
-    fn new(name: &str) -> Bench {
+    fn new(name: &str) -> Bench { Bench::at(name, "") }
+    fn at(name: &str, sub: &str) -> Bench {
         let base = std::env::temp_dir().join(format!("sw-warm-start-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
-        std::fs::create_dir_all(base.join("repo/src")).unwrap();
+        std::fs::create_dir_all(base.join("repo").join(sub).join("src")).unwrap();
         // The folder as the script's `pwd` gives it: macOS's temp folder is under /var, which is /private/var.
-        let b = Bench { base: base.canonicalize().unwrap() };
-        b.git("repo", &["init", "-q", "-b", "main"]);
+        let b = Bench { base: base.canonicalize().unwrap(), sub: sub.into() };
+        let top = b.top("repo").display().to_string();
+        b.git("repo", &["init", "-q", "-b", "main", &top]);
         b.write("repo", "src/a.rs", "a");
         b.write("repo", "src/b.rs", "b");
         b.write("repo", ".gitignore", "/target/\n");
         b.commit("repo", "first");
         b
     }
-    fn dir(&self, wt: &str) -> PathBuf { self.base.join(wt) }
+    fn top(&self, wt: &str) -> PathBuf { self.base.join(wt) }
+    fn dir(&self, wt: &str) -> PathBuf { if self.sub.is_empty() { self.top(wt) } else { self.top(wt).join(&self.sub) } }
     fn git(&self, wt: &str, a: &[&str]) -> String {
         let o = Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).current_dir(self.dir(wt))
             .env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").output().unwrap();
@@ -34,10 +38,10 @@ impl Bench {
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(p, text).unwrap();
     }
-    fn commit(&self, wt: &str, msg: &str) { self.git(wt, &["add", "-A"]); self.git(wt, &["commit", "-q", "-m", msg]); }
+    fn commit(&self, wt: &str, msg: &str) { self.git(wt, &["add", "-A", ":/"]); self.git(wt, &["commit", "-q", "-m", msg]); }
     /// A new worktree of the repo, on a branch of its own from `from`.
     fn worktree(&self, wt: &str, from: &str) {
-        let at = self.dir(wt).display().to_string();
+        let at = self.top(wt).display().to_string();
         self.git("repo", &["worktree", "add", "-q", "-b", &format!("work/{wt}"), &at, from]);
     }
     /// A build as cargo leaves it: the program, built with this folder's path written into it, and a library whose
@@ -148,4 +152,27 @@ fn real_programs_no_build_is_kept_off_the_main_line_from_a_changed_folder_or_old
     assert!(b.changed("dirty", "src/a.rs") > long_ago(), "a file changed in the folder is built again");
     assert!(b.changed("dirty", "src/b.rs") < long_ago());
     assert_eq!(b.kept(), Some(second));
+}
+
+#[test]
+fn real_programs_inside_a_larger_repo_only_its_own_folders_changes_are_built_again_or_keep_a_build_from_being_kept() {
+    let b = Bench::at("nested", "engine");
+    b.write("repo", "../app.vue", "app");
+    b.commit("repo", "outside");
+    b.worktree("one", "main");
+    b.setup("one", true);
+    let first = b.git("repo", &["rev-parse", "HEAD"]);
+    assert_eq!(b.kept(), Some(first.clone()));
+    // the main line moves on, in its folder and outside it
+    b.write("repo", "src/b.rs", "b2");
+    b.write("repo", "../app.vue", "app2");
+    b.commit("repo", "b and the app change");
+    b.worktree("two", "main");
+    // a change of the larger repo's own, not committed, does not stop its build from being kept
+    b.write("two", "../app.vue", "mine");
+    let said = b.setup("two", true);
+    assert!(said.contains(&format!("Started from the warm build of {}", &first[..7])), "{said}");
+    assert!(b.changed("two", "src/a.rs") < long_ago(), "a file as it was built is taken as built");
+    assert!(b.changed("two", "src/b.rs") > long_ago(), "a file of its folder changed since is built again");
+    assert_eq!(b.kept(), Some(b.git("repo", &["rev-parse", "HEAD"])));
 }

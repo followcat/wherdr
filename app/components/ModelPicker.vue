@@ -244,7 +244,7 @@ watch(locked, (l) => { if (l) { modelOpen.value = false; effortOpen.value = fals
     </span>
   </component>
   <component :is="Tip" v-if="effortShown" v-bind="effortTip">
-    <span class="model-pick-wrap">
+    <span class="model-pick-wrap effort-pick-wrap">
       <UDropdownMenu
         :open="effortOpen" :items="shownEffortItems" :modal="false"
         :content="{ side: 'top', align: 'start', sideOffset: 6 }"
@@ -256,7 +256,7 @@ watch(locked, (l) => { if (l) { modelOpen.value = false; effortOpen.value = fals
           :aria-disabled="locked" :aria-label="`${t('Effort')} : ${shownEffortText || (launch ? t('Model’s default') : t('Unknown effort'))}`"
           :trailing-icon="switching ? 'i-lucide-loader-circle' : 'i-lucide-chevron-down'"
           :ui="{ trailingIcon: switching ? 'animate-spin model-caret' : 'model-caret' }"
-        >{{ shownEffortText || t('Effort') }}</UButton>
+        ><span class="model-name">{{ shownEffortText || t('Effort') }}</span></UButton>
       </UDropdownMenu>
     </span>
   </component>

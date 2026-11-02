@@ -59,3 +59,20 @@ export function prune(list: OutboxItem[], server: QueuedMessage[], now: number):
 export function withOutbox(server: QueuedMessage[], local: OutboxItem[]): OutboxItem[] {
   return [...server, ...local.filter(q => !server.some(x => x.id === q.id))]
 }
+
+// A dictation app pastes the text and presses Enter for the user; when the
+// page lags, that can happen more than once for one message. A submit whose
+// text is exactly the one sent to the same conversation less than REPEAT_MS
+// ago is that echo, not a new message. Any change in the text sends.
+export const REPEAT_MS = 3000
+
+export interface RecentSend { text: string, at: number }
+
+// The sends still recent enough to catch an echo.
+export function recentSends(list: RecentSend[], now: number): RecentSend[] {
+  return list.filter(s => now - s.at < REPEAT_MS && s.at <= now)
+}
+
+export function isRepeat(list: RecentSend[], text: string, now: number): boolean {
+  return recentSends(list, now).some(s => s.text === text)
+}

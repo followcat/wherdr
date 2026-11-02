@@ -13,7 +13,8 @@
 //    `comparing`: the reviewer compares the attempts (the Picker);
 //  - an attempt's `task.json` (data/tasks/<repo>/<n><letter>, `attemptOf`);
 //  - each coordinator's `state.json` (data/coordinator/<session>/state.json,
-//    `machine/state.json`, `projects/<repo>/state.json`): `pane`, `space`.
+//    `machine/state.json`, `projects/<repo>/state.json`): `pane`, `space`,
+//    and `session`, its conversation (resolveCoordinators: when the pane is gone).
 // Pure functions, tested in tests/boardLinks.test.ts.
 import { rowFromTaskFile, taskAgentIdentity, type TaskAgentIdentity, type TaskGroup } from './projectsTasks'
 import type { Pane, Workspace } from './types'
@@ -64,6 +65,9 @@ export interface LinkedCoordinator {
   session?: string
   pane: string | null // app id
   workspace: string | null // app id
+  // The conversation it resumes (its file's `session`): Herdr's integration
+  // reports the same on its pane (`agent_session`), whatever the pane's id.
+  agentSession?: string
 }
 // A repo of the board (data/repos.json) and its main checkout: its branch and
 // how many commits it is behind its upstream, as git last knew it (null: unknown).
@@ -178,10 +182,59 @@ export function coordinatorFromFile(level: CoordinatorLevel, s: unknown, session
   const pane = paneOf(key, r.pane)
   const workspace = spaceOf(key, r.space) || spaceOf(key, r.workspace)
   if (!pane && !workspace) return null
-  const named = session === undefined ? {} : { session: session.slice(0, 80) }
+  const conversation = str(r.session, 500)
+  const named = { ...(session === undefined ? {} : { session: session.slice(0, 80) }), ...(conversation ? { agentSession: conversation } : {}) }
   if (level !== 'project') return { level, pane, workspace, ...named }
   const repo = str(r.repo, 80) || folder
   return REPO_RE.test(repo) ? { level, repo, pane, workspace, ...named } : null
+}
+
+// A coordinator's file names the pane and space it had when it started. When
+// Herdr closes that pane (a restart of Herdr or of the agent), the ids it
+// wrote no longer say where it is, and may even name another agent's pane or
+// space. `panes`: what Herdr shows now. Each coordinator is found again by its
+// conversation (`agentSession`, the same on its pane): one pane of its machine
+// with that conversation, never one another coordinator's file rightly names.
+// Not found: a pane of another conversation is not its own, and its space is
+// kept only while no agent of another conversation is there (an ordinary
+// space never becomes a coordinator). Coordinators whose ids still hold, and
+// those without a conversation in their file, are left as they are.
+type LivePane = Pick<Pane, 'id' | 'workspace' | 'agent' | 'agentSession'>
+export function resolveCoordinators(machines: MachineLinks[], panes: readonly LivePane[]): MachineLinks[] {
+  const byId = new Map(panes.map(p => [p.id, p]))
+  const bySession = new Map<string, LivePane[]>()
+  for (const p of panes) if (p.agent && p.agentSession) bySession.set(p.agentSession, [...(bySession.get(p.agentSession) ?? []), p])
+  const fits = (c: LinkedCoordinator, p: LivePane) => !c.agentSession || !p.agentSession || p.agentSession === c.agentSession
+  const held = new Set<string>()
+  for (const m of machines) for (const c of m.coordinators) {
+    const p = c.pane ? byId.get(c.pane) : undefined
+    if (p && fits(c, p)) held.add(p.id)
+  }
+  // First each coordinator's conversation, then (the panes it found taken too) its space.
+  const found = new Map<LinkedCoordinator, LivePane>()
+  for (const m of machines) for (const c of m.coordinators) {
+    const now = c.pane ? byId.get(c.pane) : undefined
+    if ((now && fits(c, now)) || !c.agentSession) continue
+    const where = machineOf(c.pane ?? c.workspace)
+    const hits = (bySession.get(c.agentSession) ?? []).filter(p => machineOf(p.id) === where && !held.has(p.id))
+    if (hits.length === 1) found.set(c, hits[0]!)
+  }
+  for (const p of found.values()) held.add(p.id)
+  const resolve = (c: LinkedCoordinator): LinkedCoordinator => {
+    const hit = found.get(c)
+    if (hit) return { ...c, pane: hit.id, workspace: hit.workspace }
+    const now = c.pane ? byId.get(c.pane) : undefined
+    if ((now && fits(c, now)) || !c.agentSession) return c
+    const stranger = Boolean(c.workspace) && panes.some(p => p.workspace === c.workspace && p.agent && !held.has(p.id) && !fits(c, p))
+    const pane = now ? null : c.pane
+    const workspace = stranger ? null : c.workspace
+    return pane === c.pane && workspace === c.workspace ? c : { ...c, pane, workspace }
+  }
+  const out = machines.map((m) => {
+    const coordinators = m.coordinators.map(resolve)
+    return coordinators.some((c, i) => c !== m.coordinators[i]) ? { ...m, coordinators } : m
+  })
+  return out.some((m, i) => m !== machines[i]) ? out : machines
 }
 
 // ---------------------------------------------------------------- grouping
@@ -397,7 +450,17 @@ export function boardSections(
       const far = machines.flatMap(m => m.coordinators).find(c => c.level === 'project' && c.repo === g.repo && c.pane && live.has(c.pane) && !mine.has(c.pane))
       if (far?.pane) g.remote = { pane: far.pane, machine: machineOf(far.pane) }
     }
-    for (const r of [...(g.space ? [g.space] : []), ...(g.coordinator ? [g.coordinator] : []), ...g.members.map(m => m.row)]) {
+    const seen = new Set<string>()
+    for (const m of g.members) {
+      if (m.task) {
+        if (seen.has(m.task.id)) continue
+        seen.add(m.task.id)
+      }
+      if (!hasAgent(m.row)) continue
+      g.sum.total++
+      g.sum[m.task?.group ? taskStat(m.task.group) : rowGroup(m.row)]++
+    }
+    for (const r of [...(g.space ? [g.space] : []), ...(g.coordinator ? [g.coordinator] : [])]) {
       if (!hasAgent(r)) continue
       g.sum.total++
       g.sum[rowGroup(r)]++
@@ -445,18 +508,48 @@ function relead(row: Row, lead: Pane): Row {
   return { ...row, lead, leadTab: row.tabs.find(e => e.panes.some(p => p.id === lead.id)) ?? row.leadTab }
 }
 
-// The agents the list's counters count (summary, machine heading): a task's
-// helpers count once, as its row does (the pane it shows). Once per space it
-// is open in, as the rows (a reviewer an older board put in a space of its own).
+// Pane IDs can change while a kept task workspace stays open. Explicit pane
+// ownership wins; workspace fallback mirrors boardSections, including remote IDs.
+export function taskLinks(machines: MachineLinks[], live: Pick<Pane, 'id' | 'workspace'>[]) {
+  const panes = new Map<string, { task: LinkedTask, machine: string }>()
+  const spaces = new Map<string, { task: LinkedTask, machine: string }>()
+  for (const m of machines) for (const task of m.tasks) {
+    const link = { task, machine: m.machine }
+    for (const p of task.panes) if (!panes.has(p.id)) panes.set(p.id, link)
+    if (task.workspace && !spaces.has(task.workspace)) spaces.set(task.workspace, link)
+  }
+  // boardSections splits a workspace with several explicitly linked tasks:
+  // unlinked agents remain independent. With one task, its whole row belongs
+  // to it, even when only its pane (rather than its workspace) was linked.
+  const liveSpaces = new Map<string, { task: LinkedTask, machine: string } | null>()
+  for (const p of live) {
+    const link = panes.get(p.id)
+    if (!link) continue
+    if (!liveSpaces.has(p.workspace)) liveSpaces.set(p.workspace, link)
+    else if (liveSpaces.get(p.workspace)?.task !== link.task) liveSpaces.set(p.workspace, null)
+  }
+  return (p: Pick<Pane, 'id' | 'workspace'>) => panes.get(p.id)
+    ?? (liveSpaces.has(p.workspace) ? liveSpaces.get(p.workspace) ?? undefined : spaces.get(p.workspace))
+}
+
+export type HomeStat = 'blocked' | 'working' | 'ready'
+
+// WORKING means the Board's working group (including reviews and checks).
+export function taskStat(group: TaskGroup): HomeStat {
+  if (group === 'needs' || group === 'ready') return 'blocked'
+  return group === 'working' ? 'working' : 'ready'
+}
+
+// One representative pane per task, including helpers in separate spaces.
 export function countedPanes<P extends Pick<Pane, 'id' | 'agent' | 'status' | 'workspace'>>(panes: P[], machines: MachineLinks[]): P[] {
-  const taskOf = new Map<string, LinkedTask>()
-  for (const m of machines) for (const t of m.tasks) for (const p of t.panes) if (!taskOf.has(p.id)) taskOf.set(p.id, t)
+  const taskOf = taskLinks(machines, panes)
   const byTask = new Map<string, { t: LinkedTask, list: P[] }>()
   const out: P[] = []
   for (const p of panes) {
-    const t = taskOf.get(p.id)
-    if (!t) { out.push(p); continue }
-    const k = `${t.id}|${p.workspace}`
+    const link = taskOf(p)
+    if (!link) { out.push(p); continue }
+    const t = link.task
+    const k = `${link.machine}|${t.id}`
     const e = byTask.get(k)
     if (e) e.list.push(p)
     else byTask.set(k, { t, list: [p] })

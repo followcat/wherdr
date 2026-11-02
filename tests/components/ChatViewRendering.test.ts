@@ -4,6 +4,8 @@ import ChatView from '~/components/ChatView.vue'
 import { lightboxSet, lightboxSrc } from '~/composables/useUi'
 import { herdrState } from '~/composables/useHerdr'
 import type { ChatItem, Pane } from '#shared/types'
+import { parseLines } from '../../server/utils/transcripts'
+import ompErrors from '../fixtures/omp-errors.jsonl?raw'
 
 const pane: Pane = { id: 'w1:p1', workspace: 'w1', tab: 'w1:t1', tabLabel: null, agent: 'omp', name: null, label: null, status: 'blocked', title: null, cwd: '/tmp/demo', agentSession: null }
 let items: ChatItem[] = []
@@ -114,4 +116,34 @@ describe('conversation rendering', () => {
     } finally { w.unmount() }
   })
 
+  it('shows omp errors between the check-ins and actions, each once, in plain text', async () => {
+    const idle = { ...pane, status: 'idle' as const }
+    herdrState.value = { ok: true, workspaces: [], panes: [idle] }
+    // The conversation as the server reads it from omp's session file.
+    items = parseLines(ompErrors, 'omp', 0, '/home/user')
+    const w = await mountSuspended(ChatView, {
+      props: { pane: idle, localQueued: [] },
+      global: { stubs: { UTooltip: { template: '<slot />' } } },
+    })
+    try {
+      await expect.poll(() => w.findAll('.msg-error').length).toBe(4)
+      const errors = w.findAll('.msg-error')
+      expect(errors.map(e => e.find('.msg-notice-head').text())).toEqual(['Error', 'Error', 'Error', 'Error'])
+      const texts = errors.map(e => e.find('.msg-error-text').text())
+      expect(texts[0]).toContain('You have reached your specified API usage limits.')
+      expect(texts[1]).toContain('rate_limit_error')
+      expect(texts[2]).toBe('Retry budget exhausted after 2 retries: Anthropic stream stalled while waiting for the next event')
+      expect(texts[3]).toContain('Your credit balance is too low to access the Anthropic API.')
+      // Raw provider JSON stays as written (no Markdown).
+      expect(errors[0]!.find('.msg-error-text').element.textContent).toMatch(/^400 \{"type":"error"/)
+      // Check-ins and actions are still there, around the errors.
+      expect(w.findAll('.msg-autopilot')).toHaveLength(5)
+      expect(w.find('.omp-console .omp-tool-cmd').text()).toBe('tools/tasks.sh list')
+      expect(w.find('.msg-ai').text()).toContain('Checking the board.')
+      expect(w.findAll('.msg-system').map(s => s.text())).toEqual(expect.arrayContaining(['Retried after an error', 'Interrupted']))
+      // Order: each error right after the check-in that hit it.
+      const order = [...w.find('.chat').element.querySelectorAll('.msg-autopilot, .msg-error')].map(el => el.classList.contains('msg-error') ? 'E' : 'A')
+      expect(order.join('')).toBe('AEAEAEAAE')
+    } finally { w.unmount() }
+  })
 })

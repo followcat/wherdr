@@ -18,6 +18,7 @@ import type { MachineInfo, NamedSession, Pane } from '#shared/types'
 import { type ReadySort, type Row, readyLists, rowGroup, sortReady, spaceRows } from '#shared/spaces'
 import { spaceTitle } from '#shared/displayTitles'
 import { type BoardCard, type CoordinatorLevel, boardSections, countedPanes } from '#shared/boardLinks'
+import { homeCounts, withBoardGroups } from '#shared/homeCounts'
 import { claudeApiShown, claudeSuggestion, machineQuotaRows, quotaRows, tabQuotaRows } from '~/utils/quotas'
 import { longPress } from '~/utils/longPress'
 import { LIST_DEFAULT, LIST_MAX, LIST_MIN, LIST_RAIL, clampListWidth, listWidthCss, readListCollapsed, readListWidth, saveListCollapsed, saveListWidth } from '~/utils/sideWidth'
@@ -39,7 +40,11 @@ watch(eventsOpen, (v) => { if (v) everOpen.value = true })
 
 const st = herdrState
 const agents = computed(() => st.value.panes.filter(p => p.agent))
-const boardLinks = useBoardLinks()
+const fileLinks = useBoardLinks()
+// The Board's own list (herdr-projects' CLI): where each task stands, for its
+// card and the counters, as the Board shows it (shared/homeCounts.ts).
+const { board: tasksBoard } = useTasksBoard()
+const boardLinks = computed(() => withBoardGroups(fileLinks.value, tasksBoard.value))
 // Old notification exceptions keyed by a coordinator's pane move to its identity.
 useNotificationRekey()
 // What the counters count: a board task's helpers (reviewer, planner,
@@ -47,8 +52,13 @@ useNotificationRekey()
 const counted = computed(() => countedPanes(agents.value, boardLinks.value))
 // Counters follow the selected machine or group; unreachable machines stay out.
 const baseOfPane = (p: Pane) => { const m = machineInfo(p.machine); return m ? m.baseKey ?? m.key : p.machine || '' }
-const shownCounted = computed(() => (machineBarSelection.value === null ? counted.value : counted.value.filter(p => machineBarSelection.value!.includes(baseOfPane(p)))))
-const count = (s: string) => shownCounted.value.filter(p => p.status === s && !paneStale(p)).length
+// A board task counts by its state on the Board, once; other agents by their own.
+const counts = computed(() => {
+  const sel = machineBarSelection.value
+  return homeCounts(agents.value, boardLinks.value, tasksBoard.value,
+    p => !paneStale(p) && (sel === null || sel.includes(baseOfPane(p))),
+    m => sel === null || sel.includes(m))
+})
 
 const conn = computed(() => {
   if (offlineView.value) return { ok: false, text: t('offline'), idle: false }
@@ -60,9 +70,9 @@ const conn = computed(() => {
 
 // "Dashboard"-style counters: always all three, zeros dimmed.
 const stats = computed(() => ([
-  ['blocked', count('blocked'), t('your turn')],
-  ['working', count('working'), t('working')],
-  ['done', count('done') + count('idle'), t('ready')],
+  ['blocked', counts.value.blocked, t('your turn')],
+  ['working', counts.value.working, t('working')],
+  ['done', counts.value.ready, t('ready')],
 ] as [string, number, string][]).map(([s, n, label]) => ({ s, n, label })))
 
 // Herdr's order stays that of each repository list. The Ready group may
@@ -371,7 +381,7 @@ function durationLabel(seconds: number) {
 }
 function extendLabel(state?: AwakeState) {
   if (!state?.until) return ''
-  const at = new Date(Math.max(state.until, Date.now()) + 3600000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const at = new Date(Math.max(state.until, Date.now()) + 3600000).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' })
   return tl(`Until ${at}`, `Jusqu’à ${at}`)
 }
 function awakeLabel(state?: AwakeState) {

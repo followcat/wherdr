@@ -114,6 +114,30 @@ describe('terminal beta switch', () => {
     expect(r.ctl.tapMouse).toHaveBeenCalledOnce()
     expect(r.ctl.focus).toHaveBeenCalledOnce()
   })
+  it.each([false, true])('keeps the keyboard closed after a tap on WebKit with beta=%s', async enabled => {
+    vi.spyOn(navigator, 'vendor', 'get').mockReturnValue('Apple Computer, Inc.')
+    const r = await mounted(enabled)
+    await r.send('touchstart', 100)
+    await r.send('touchend', 100, 0)
+    await r.w.get('#touch').trigger('mousedown')
+    expect(r.ctl.tapMouse).toHaveBeenCalledOnce()
+    expect(r.ctl.focus).not.toHaveBeenCalled()
+  })
+  it.each([false, true])('keeps the keyboard closed for links with beta=%s', async enabled => {
+    const r = await mounted(enabled)
+    r.ctl.tapLink.mockReturnValue(true)
+    await r.send('touchstart', 100)
+    const end = new Event('touchend', { bubbles: true, cancelable: true })
+    Object.defineProperty(end, 'changedTouches', { value: [{ clientX: 50, clientY: 100 }] })
+    r.w.get('#touch').element.dispatchEvent(end)
+    expect(end.defaultPrevented).toBe(true)
+    // Legacy relies on the browser suppressing compatibility mouse events;
+    // beta additionally guards against a mouse event delivered anyway.
+    if (enabled) await r.w.get('#touch').trigger('mousedown')
+    expect(r.ctl.tapLink).toHaveBeenCalledOnce()
+    expect(r.ctl.tapMouse).not.toHaveBeenCalled()
+    expect(r.ctl.focus).not.toHaveBeenCalled()
+  })
   it('previews a small drag without inventing a full row at the gesture threshold', async () => {
     const r = await mounted(true)
     await r.send('touchstart', 100)

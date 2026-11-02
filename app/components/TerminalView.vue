@@ -1,9 +1,11 @@
 <script setup lang="ts">
 // Raw terminal of the pane: xterm.js + touch layer (scrolling with a finger or
 // the wheel -> terminal.scroll, the history lives in Herdr; never ↑/↓
-// sent to the agent; click = keyboard to the terminal).
+// sent to the agent; click = keyboard to the terminal, a tap too except on
+// iOS: see utils/terminalTapFocus.ts).
 import '@xterm/xterm/css/xterm.css'
 import { createTerminalTouch, touchPreviewOffset } from '~/utils/terminalTouch'
+import { mouseFromTouch, tapFocusesTerminal } from '~/utils/terminalTapFocus'
 
 const props = defineProps<{ ctl: TerminalCtl }>()
 const host = ref<HTMLElement | null>(null)
@@ -24,6 +26,7 @@ const legacyQueue = (n: number) => {
   legacyPendingLines += n
   if (!legacyRaf) legacyRaf = requestAnimationFrame(legacyFlush)
 }
+const tapFocuses = import.meta.client ? tapFocusesTerminal(navigator.vendor) : true
 function legacyOnTouchStart(e: TouchEvent) {
   legacyLastY = e.touches[0]!.clientY
   legacyLastX = e.touches[0]!.clientX
@@ -190,8 +193,8 @@ watch(smoothTouchScrolling, () => {
   legacyLastX = legacyLastY = null
 }, { flush: 'sync' })
 function onTouchStart(e: TouchEvent) {
-  if (!smoothTouchScrolling.value) return legacyOnTouchStart(e)
   lastTouchAt = performance.now()
+  if (!smoothTouchScrolling.value) return legacyOnTouchStart(e)
   // Retain this across pointerdown cancellation, which precedes touchstart.
   // A tap during or just after scrolling only stops the viewport.
   stoppingScroll = lastTouchAt - lastScrollAt < 700
@@ -206,8 +209,8 @@ function onTouchMove(e: TouchEvent) {
   touch.move(e.touches[0]!.clientX, e.touches[0]!.clientY)
 }
 function onTouchEnd(e: TouchEvent) {
-  if (!smoothTouchScrolling.value) return legacyOnTouchEnd(e)
   lastTouchAt = performance.now()
+  if (!smoothTouchScrolling.value) return legacyOnTouchEnd(e)
   const t = e.changedTouches[0]
   const tapped = touch.end()
   allowTouchFocus = tapped && !stoppingScroll
@@ -224,11 +227,13 @@ function onTouchEnd(e: TouchEvent) {
 // The layer only receives the mouse on a touch screen (main.css): on a
 // computer, xterm receives it directly (selection, mouse mode).
 function onMouseDown(e: MouseEvent) {
+  const fromTouch = mouseFromTouch((e as MouseEvent & { sourceCapabilities?: { firesTouchEvents?: boolean } }).sourceCapabilities?.firesTouchEvents, performance.now() - lastTouchAt)
+  // On iOS a tap never opens the keyboard: the composer or the key bar does.
+  if (fromTouch && !tapFocuses) { allowTouchFocus = false; return }
   if (!smoothTouchScrolling.value) return legacyOnMouseDown()
-  const fromTouch = (e as MouseEvent & { sourceCapabilities?: { firesTouchEvents?: boolean } }).sourceCapabilities?.firesTouchEvents
   // Preserve keyboard access for an intentional tap, but never refocus after
   // a drag, a link, or the tap that stopped inertia.
-  if ((fromTouch || (fromTouch === undefined && performance.now() - lastTouchAt < 700)) && !allowTouchFocus) return
+  if (fromTouch && !allowTouchFocus) return
   allowTouchFocus = false
   props.ctl.focus()
 }

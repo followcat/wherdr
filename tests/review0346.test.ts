@@ -207,3 +207,33 @@ it('R3: invalidation keeps a disabled display fallback until a fresh read succee
  expect(recovered.choices).toEqual(original.choices)
  expect(recovered.unavailable).toBeUndefined()
 })
+
+it('omp Continue refuses a different question without sending Enter', async () => {
+ const old = choices.screenChoices(fx('omp-ask-multi'), 'omp')!
+ const call = vi.fn(async () => ({ read: { text: fx('omp-approve-bash') } }))
+ const handler = await route('nav', call)
+ vi.stubGlobal('findPane', () => ({ id: 'w1:p1', agent: 'omp', status: 'blocked' }))
+ await expect(handler({}, { pane_id: 'w1:p1', key: 'enter', identity: old.identity })).rejects.toMatchObject({ code: 'stale' })
+ expect(call).not.toHaveBeenCalledWith('pane.send_input', expect.anything())
+})
+
+it('an ambiguous terminal menu refuses a stale native choice', async () => {
+ const text = fx('codex-usage-menu'), old = choices.screenChoices(text, 'codex')!
+ const call = vi.fn(async () => ({ read: { text } }))
+ const handler = await route('choose', call)
+ await expect(handler({}, { pane_id: 'w1:p1', index: 0, label: old.options[0]!.label, identity: old.identity })).rejects.toMatchObject({ code: 'stale' })
+ expect(call).not.toHaveBeenCalledWith('pane.send_input', expect.anything())
+})
+
+
+it.each([
+ ['codex-approve-command', 'Agent Command Center'],
+ ['codex-approve-edits', 'codex-command-center'],
+ ['codex-approve-command', 'codex-usage-menu'],
+])('answers a native approval below a quoted menu: %s / %s', async (file, quote) => {
+ const text = `${quote.startsWith('codex-') ? fx(quote) : quote}\n\n${fx(file)}`, prompt = choices.screenChoices(text, 'codex')!
+ const call = vi.fn(async () => ({ read: { text } }))
+ const handler = await route('choose', call)
+ await expect(handler({}, { pane_id: 'w1:p1', index: 0, label: prompt.options[0]!.label, identity: prompt.identity })).resolves.toEqual({ ok: true })
+ expect(call).toHaveBeenCalledWith('pane.send_input', { pane_id: 'w1:p1', keys: ['enter'] })
+})

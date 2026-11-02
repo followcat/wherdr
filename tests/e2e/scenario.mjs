@@ -38,6 +38,17 @@ export const CLAUDE_PANE = 'w1:p1'
 export const OMP_LONG_PANE = 'w2:p1'
 export const OMP_CHAT_PANE = 'w3:p1'
 export const OMP_IMAGE_PANE = 'w4:p1'
+// Markdown images an agent reply links to, on other machines and ports of the
+// tailnet, outside it, unreachable, and on wherdr itself (markdown-images.spec.ts).
+export const MD_IMAGES = {
+  otherPort: 'https://box.example.ts.net:8807/screenshots/login.png',
+  otherMachine: 'https://desk.example.ts.net/captures/dashboard.png',
+  outside: 'https://images.example.com/banner.png',
+  otherTailnet: 'https://box.other-tailnet.ts.net/shot.png',
+  plainHttp: 'http://box.example.ts.net:8808/plain.png',
+  missing: 'https://box.example.ts.net:8807/screenshots/missing.png',
+  local: '/icons/icon-192.png?v=5',
+}
 // A file named in the image pane's last reply, in its folder (CRLF kept as is).
 export const REVIEW_CSV = 'notes/login-review.csv'
 export const REVIEW_CSV_TEXT = 'screen,issue\r\nlogin,clipped button\r\n'
@@ -82,6 +93,13 @@ export const CLAUDE_SUGGEST_PANE = 'w19:p1'
 export const SUGGEST_ASK = 'yes add the teardown and check both'
 export const SUGGEST_PLAIN = 'run the nightly build again'
 export const CODEX_UPDATE_SESSION = '00000000-0000-4000-8000-000000000288'
+// Codex messages with photos (wrapped in its <image name=…>…</image> parts).
+export const CODEX_IMAGE_PANE = 'w20:p1'
+export const CODEX_IMAGE_SESSION = '00000000-0000-4000-8000-0000000001a9'
+export const CODEX_IMAGE_TEXT = 'Before and after the fix: which one is right?'
+export const CODEX_IMAGE_LITERAL = 'Close the tag with `</image>`, not [Image #1].'
+// Sent with a photo: the typed marker is text, the composer's placeholder is not.
+export const CODEX_IMAGE_TYPED = 'Explain `[Image #1]` literally in this example.'
 
 // Unique markers of the long omp transcript (asserted on by the specs).
 export const LONG_WORD = `Pneumono${'ultramicroscopicsilicovolcano'.repeat(12)}coniosis`
@@ -247,6 +265,40 @@ export function writeScenario(home) {
     { type: 'response_item', timestamp: iso(now - 50000), payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Check the build.' }] } },
     { type: 'response_item', timestamp: iso(now - 40000), payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'The build passes.' }] } },
   ]))
+  // Photo only, then two photos with text, then markers typed as text.
+  const codexImages = path.join(home, 'projects/codex-images')
+  fs.mkdirSync(codexImages, { recursive: true })
+  const photo = `data:image/png;base64,${gradientPng().toString('base64')}`
+  const codexPhoto = n => [
+    { type: 'input_text', text: `<image name=[Image #${n}] path="${home}/.cache/herdr-web/uploads/photo-${n}.jpg">` },
+    { type: 'input_image', image_url: photo, detail: 'high' },
+    { type: 'input_text', text: '</image>' },
+  ]
+  const codexMsg = (role, content, ago) => ({ type: 'response_item', timestamp: iso(now - ago), payload: { type: 'message', role, content } })
+  // Written by Codex after a message: its composer's placeholders as byte ranges
+  // (here the last occurrence of each label, the one the composer put there).
+  const codexTyped = (message, labels, ago) => ({ type: 'event_msg', timestamp: iso(now - ago), payload: {
+    type: 'user_message', message, images: [], local_images: [], text_elements: labels.map((label) => {
+      const start = Buffer.from(message).lastIndexOf(label)
+      return { byte_range: { start, end: start + Buffer.byteLength(label) }, placeholder: label }
+    }),
+  } })
+  const mixedText = 'Before and after the fix: [Image #1] [Image #2] which one is right?'
+  const typedText = `${CODEX_IMAGE_TYPED}\n[Image #1]`
+  write(path.join(home, `.codex/sessions/${new Date().toISOString().slice(0, 10).replaceAll('-', '/')}/rollout-test-${CODEX_IMAGE_SESSION}.jsonl`), jsonl([
+    { type: 'session_meta', payload: { id: CODEX_IMAGE_SESSION, cwd: codexImages, timestamp: iso(now - 90000), thread_source: 'user' } },
+    codexMsg('user', [...codexPhoto(1), { type: 'input_text', text: '[Image #1]' }], 80000),
+    codexTyped('[Image #1]', ['[Image #1]'], 80000),
+    codexMsg('assistant', [{ type: 'output_text', text: 'A login form with a clipped button.' }], 75000),
+    codexMsg('user', [...codexPhoto(1), ...codexPhoto(2), { type: 'input_text', text: mixedText }], 60000),
+    codexTyped(mixedText, ['[Image #1]', '[Image #2]'], 60000),
+    codexMsg('assistant', [{ type: 'output_text', text: 'The second one.' }], 55000),
+    codexMsg('user', [{ type: 'input_text', text: CODEX_IMAGE_LITERAL }], 40000),
+    codexMsg('assistant', [{ type: 'output_text', text: 'Noted.' }], 35000),
+    codexMsg('user', [...codexPhoto(1), { type: 'input_text', text: typedText }], 30000),
+    codexTyped(typedText, ['[Image #1]'], 30000),
+    codexMsg('assistant', [{ type: 'output_text', text: 'It is a placeholder.' }], 25000),
+  ]))
   claudeTranscript(home, api, claudeSid, now)
   const teardownSid = '00000000-0000-4000-8000-000000000018'
   claudeChat(home, teardown, teardownSid, now, [
@@ -276,6 +328,27 @@ export function writeScenario(home) {
       msg({ role: 'toolResult', toolCallId: `call-${k}`, toolName: 'bash', content: [{ type: 'text', text: 'ok' }] }),
     ]),
     msg({ role: 'assistant', content: [{ type: 'text', text: `The login button is clipped.\n\nThe review is in \`${REVIEW_CSV}\`.` }], stopReason: 'stop' }),
+  ])
+  // The same conversation, its reply showing Markdown images (MD_IMAGES):
+  // the pane switches to it with e2e.update_session (e2e.pane_field
+  // markdownImages gives its path).
+  const dot = gradientPng(8, 8).toString('base64')
+  const markdownImagesFile = ompTranscript(home, screens, 'e2e-markdown-images', now, msg => [
+    msg({ role: 'user', content: [{ type: 'text', text: 'Show me the captures.' }], attribution: 'user' }),
+    msg({ role: 'assistant', content: [{ type: 'toolCall', id: 'call-read', name: 'read', arguments: { i: 'Reading the screenshot', path: `${screens}/login.png` } }], stopReason: 'toolUse' }),
+    msg({ role: 'toolResult', toolCallId: 'call-read', toolName: 'read', content: [{ type: 'text', text: '' }, { type: 'image', mimeType: 'image/png', data: `blob:sha256:${hash}` }] }),
+    msg({ role: 'assistant', content: [{ type: 'text', text: [
+      'Here are the captures.',
+      `![Login on another port](${MD_IMAGES.otherPort})`,
+      `![Dashboard on another machine](${MD_IMAGES.otherMachine})`,
+      `![Outside banner](${MD_IMAGES.outside})`,
+      `![Other tailnet](${MD_IMAGES.otherTailnet})`,
+      `![Plain HTTP](${MD_IMAGES.plainHttp})`,
+      `![Missing capture](${MD_IMAGES.missing})`,
+      `![App icon](${MD_IMAGES.local})`,
+      `![Inline dot](data:image/png;base64,${dot})`,
+      'End of the captures.',
+    ].join('\n\n') }], stopReason: 'stop' }),
   ])
   // The file that reply names, previewed and downloaded from the conversation.
   write(path.join(screens, REVIEW_CSV), REVIEW_CSV_TEXT)
@@ -386,7 +459,7 @@ export function writeScenario(home) {
     { id: 'w1', label: 'acme-api', panes: [{ id: CLAUDE_PANE, agent: 'claude', status: 'idle', cwd: api, session: claudeSid }] },
     { id: 'w2', label: 'docs-site', panes: [{ id: OMP_LONG_PANE, agent: 'omp', status: 'idle', cwd: docs, session: longFile }] },
     { id: 'w3', label: 'demo', panes: [{ id: OMP_CHAT_PANE, agent: 'omp', status: 'idle', cwd: demo, session: chatFile, transcript: chatFile, reply: 'Got it.', devinHome: home }] },
-    { id: 'w4', label: 'screens', panes: [{ id: OMP_IMAGE_PANE, agent: 'omp', status: 'idle', cwd: screens, session: imageFile }] },
+    { id: 'w4', label: 'screens', panes: [{ id: OMP_IMAGE_PANE, agent: 'omp', status: 'idle', cwd: screens, session: imageFile, markdownImages: markdownImagesFile }] },
     { id: 'w5', label: 'approval', panes: [{ id: OMP_APPROVAL_PANE, agent: 'omp', status: 'blocked', cwd: approval, session: approvalFile }] },
     // A fresh omp (no transcript yet) that runs "!" commands.
     { id: 'w6', label: 'scratch', panes: [{ id: OMP_SHELL_PANE, agent: 'omp', status: 'idle', cwd: scratch, shell: true }] },
@@ -405,5 +478,6 @@ export function writeScenario(home) {
     { id: 'w17', label: 'rollout', panes: [{ id: OMP_TWO_TABLES_PANE, agent: 'omp', status: 'idle', cwd: twoTables, session: twoTablesFile }] },
     { id: 'w18', label: 'teardown', panes: [{ id: CLAUDE_SUGGEST_ASK_PANE, agent: 'claude', status: 'idle', cwd: teardown, session: teardownSid, customScreen: claudeSuggestionScreen(SUGGEST_ASK) }] },
     { id: 'w19', label: 'nightly', panes: [{ id: CLAUDE_SUGGEST_PANE, agent: 'claude', status: 'idle', cwd: nightly, session: nightlySid, customScreen: claudeSuggestionScreen(SUGGEST_PLAIN) }] },
+    { id: 'w20', label: 'codex-images', panes: [{ id: CODEX_IMAGE_PANE, agent: 'codex', status: 'idle', cwd: codexImages, session: CODEX_IMAGE_SESSION }] },
   ]
 }

@@ -28,6 +28,7 @@ import { flag, settingsSync, syncedRef } from './useSyncedSettings'
 import type { SettingsMap } from '#shared/settings'
 import type { QuotaDisplay } from '~/utils/quotas'
 import type { ContentWidth } from '~/utils/contentWidth'
+import { PHONE_KEY_ORDER_KEY, readKeyOrder, writeKeyOrder, type PhoneKeyId } from '~/utils/keybarOrder'
 
 const ls = {
   get(k: string) {
@@ -37,6 +38,10 @@ const ls = {
   set(k: string, v: string) {
     try { localStorage.setItem(k, v) }
     catch { /* stockage indisponible */ }
+  },
+  remove(k: string) {
+    try { localStorage.removeItem(k) }
+    catch { /* storage unavailable */ }
   },
 }
 
@@ -182,6 +187,14 @@ watch(terminalRenderer, v => ls.set('terminalRenderer', v))
 // OSC 52 copies of the agents written to this device's clipboard (on by default).
 export const agentClipboard = ref(ls.get('agentClipboard') !== '0')
 watch(agentClipboard, v => ls.set('agentClipboard', v ? '1' : '0'))
+// Order of the phone key bar (utils/keybarOrder.ts), the same in the
+// Conversation and the Terminal. The default order is not stored.
+export const phoneKeyOrder = ref<PhoneKeyId[]>(readKeyOrder(ls.get(PHONE_KEY_ORDER_KEY)))
+watch(phoneKeyOrder, (v) => {
+  const raw = writeKeyOrder(v)
+  if (raw === null) ls.remove(PHONE_KEY_ORDER_KEY)
+  else ls.set(PHONE_KEY_ORDER_KEY, raw)
+})
 // The engine actually loaded in xterm; kept after the terminal view
 // is closed so Settings can show the last observed result.
 export const terminalRenderStatus = ref<ActiveTerminalRenderer | null>(null)
@@ -208,6 +221,7 @@ export function refreshTerminalRenderStatus() {
 if (import.meta.client) {
   window.addEventListener('storage', (event) => {
     if (event.key === 'smoothTouchScrolling') smoothTouchScrolling.value = event.newValue === '1'
+    if (event.key === PHONE_KEY_ORDER_KEY) phoneKeyOrder.value = readKeyOrder(event.newValue)
     if (event.key === 'terminalRenderer') {
       terminalRenderer.value = parseTerminalRenderer(event.newValue)
       refreshTerminalRenderStatus()

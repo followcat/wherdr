@@ -1005,6 +1005,16 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
    Agent view
    ================================================================ */
 #agent { overflow: hidden; }
+/* Phone chrome: the tab picker, title and state share one row. Extra
+   actions remain in Options; the tab picker retains tab management. */
+.phone-chrome .agent-top { container: phone-header / inline-size; grid-template-columns: 44px minmax(0, 1fr) auto; grid-template-areas: "back head actions"; gap: 2px; border-bottom: 0; box-shadow: inset 0 -1px var(--line-soft); padding: var(--safe-top) 4px 0; min-height: calc(44px + var(--safe-top)); }
+.phone-chrome .agent-top :is(.back, .agent-actions .icon-btn) { width: 44px; height: 44px; flex: none; }
+.phone-keybar-controls { position: relative; height: 0; flex: none; z-index: 5; }
+.phone-keybar-toggle { position: absolute; right: 12px; bottom: 8px; width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 0; background: var(--bg-2); color: var(--muted); touch-action: manipulation; }
+.phone-keybar-toggle::after { content: ''; position: absolute; inset: -5px; }
+.phone-keybar-toggle .iconify { width: 20px; height: 20px; }
+.phone-keybar-toggle.on { color: var(--accent); border-color: var(--accent); }
+.phone-keybar-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* File dragged from the Finder / file explorer: drop zone over the whole view. */
 .file-drop {
   position: absolute; inset: 8px; z-index: 60; pointer-events: none;
@@ -1023,8 +1033,8 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 .agent-top .back { grid-area: back; }
 .agent-head { grid-area: head; min-width: 0; padding: 0 4px; }
 .agent-actions { grid-area: actions; display: flex; align-items: center; gap: 2px; flex: none; }
-.agent-top .view-tabs { grid-area: tabs; }
-.agent-actions .view-tabs { width: 220px; margin-right: 10px; }
+.agent-top .view-toggle { grid-area: tabs; }
+.agent-actions .view-toggle { margin-right: 10px; }
 /* Header toggle (phone): terminal `>_`. Lit = shown. */
 .agent-actions .mode-btn.on { border-color: var(--mauve); background: color-mix(in srgb, var(--mauve) 14%, transparent); color: var(--mauve); }
 @media (max-width: 380px) { .agent-actions .icon-btn { width: 36px; } }
@@ -1056,18 +1066,9 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 .machine-banner > .term-banner-icon { color: var(--rose); }
 .machine-banner small { display: block; margin-top: 2px; font: 400 11px/1.35 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 
-/* Selector (UTabs): discreet bordered block, active tab filled, like INK / PAPER. */
-.hw-tabs { padding: 0; border: 1px solid var(--line); background: transparent; width: 100%; }
-.hw-tab {
-  flex: 1; justify-content: center; padding: 6px 8px;
-  font: 500 10.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
-}
-.hw-tab[data-state="inactive"] { color: var(--muted); }
-/* Active tab in mauve, dark text (phone and computer). */
-.hw-tab[data-state="active"] { color: var(--on-accent); }
-.hw-tab-ind { background: var(--mauve); inset-block: 0; }
-/* Its icons only show where the labels do not fit (narrow side-by-side cell). */
-.hw-tab-icon { display: none; }
+/* One action to switch between conversation and terminal. */
+.view-toggle { justify-content: center; border-radius: 0; }
+.view-toggle-label { font: 500 10.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
 
 /* No scroll container here: the window body (AppSheet) scrolls. A nested one
    that never overflows would keep the wheel and the finger for itself. */
@@ -1548,6 +1549,10 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
 /* Scheduled task prompt: one line until opened. */
 .msg-notice.scheduled:not(.open) .msg-notice-body { max-height: 1.6em; mask-image: none; -webkit-mask-image: none; white-space: nowrap; text-overflow: ellipsis; }
 .msg-notice.scheduled:not(.open) .msg-notice-body > * { margin: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Failed agent turn: the provider's message, as it came. */
+.msg-error { border-left-color: var(--danger); }
+.msg-error .msg-notice-head { color: var(--danger); }
+.msg-error-text { color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; font: 400 12.5px/1.5 var(--mono); }
 .msg-system, .day-sep {
   display: flex; align-items: center; gap: 12px; margin: 6px 0;
   font: 500 10.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--dim);
@@ -1790,6 +1795,8 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
 .composer { flex: none; background: var(--bg); padding: 6px 12px max(10px, calc(var(--safe-bottom) - 6px)); }
 body.kb .composer { padding-bottom: 8px; }
 .composer { position: relative; }
+/* The open phone key strip already ends with 5 px under its keys (their touch zones). */
+.virtual-keyboard + .composer { padding-top: 0; }
 /* Claude Code status ("✔ Update installed · Restart to update"): small
    blue text on the right, just above the field, as in the terminal. */
 .composer-notice {
@@ -1878,7 +1885,8 @@ body.kb .composer { padding-bottom: 8px; }
 .slash-denied-label .iconify { width: 14px; height: 14px; color: var(--ochre); flex: none; }
 .slash-denied .dir-denied-path { font-size: 11.5px; }
 .prompt {
-  position: relative; padding: 4px 6px 6px; gap: 2px;
+  position: relative; display: flex; flex-direction: column; align-items: stretch; min-width: 0;
+  padding: 4px 6px 6px; gap: 2px;
   background: var(--bg-2); border: 1px solid var(--input-line); box-shadow: none; backdrop-filter: none;
   transition: border-color .15s ease;
 }
@@ -1953,7 +1961,7 @@ body.kb .composer { padding-bottom: 8px; }
   /* Still colored all around, frozen. */
   .fx-spin, :root:not([data-focus-border="off"]) .tools.omp-console.live .omp-ring .fx-spin { animation: none; transform: translate(-50%, -50%) rotate(135deg); }
 }
-.prompt-body { padding: 0; }
+.prompt-body { width: 100%; min-width: 0; padding: 0; }
 .prompt-input {
   padding: 8px 6px 4px; font-size: 16px; line-height: 1.45; color: var(--text);
   min-height: 38px; max-height: 40vh;
@@ -1961,8 +1969,12 @@ body.kb .composer { padding-bottom: 8px; }
   overflow-y: auto !important;
 }
 .prompt-input::placeholder { color: var(--dim); }
-.prompt-foot { gap: 8px; }
-.prompt-plus { width: 32px; height: 32px; justify-content: center; color: var(--text-2); border-color: var(--line); }
+.prompt-foot { display: flex; align-items: center; min-width: 0; gap: 8px; }
+.prompt-models { display: flex; align-items: center; min-width: 0; }
+.prompt-models .model-pick-wrap { flex: 0 1 auto; }
+.prompt-models .effort-pick-wrap { flex-shrink: 0; max-width: 130px; }
+.prompt-models .model-pick { max-width: 100%; }
+.prompt-plus { flex: none; width: 32px; height: 32px; justify-content: center; color: var(--text-2); border-color: var(--line); }
 .prompt-plus .iconify { width: 18px; height: 18px; }
 .prompt-hint {
   flex: 1; display: flex; align-items: center; gap: 4px; justify-content: flex-end;
@@ -1994,7 +2006,7 @@ body.kb .composer { padding-bottom: 8px; }
 .model-menu .model-hint { font-size: 11.5px; color: var(--dim); }
 .model-menu .model-menu-label { font: 500 10.5px/1.2 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
 .model-menu .model-loading .iconify { animation: spin 1s linear infinite; }
-.prompt-send { width: 32px; height: 32px; justify-content: center; margin-left: auto; position: relative; touch-action: manipulation; }
+.prompt-send { flex: none; width: 32px; height: 32px; justify-content: center; margin-left: auto; position: relative; touch-action: manipulation; }
 /* 48 px touch area (Apple: 44 minimum) without enlarging the button. The button does not
    take the focus (mousedown.prevent): the keyboard stays open, the bar does not move
    under the finger during the tap. */
@@ -2007,6 +2019,30 @@ body.kb .composer { padding-bottom: 8px; }
 .prompt-send.stop { background: var(--text); color: var(--bg); }
 /* Pressed by a touch (Composer's sendTap): its touchstart is cancelled, which can drop :active on iOS. */
 .prompt-send.pressed { opacity: .75; }
+
+/* Touch: one row at rest, a full-width editor over the toolbar while editing.
+   The compact row has only +, the field and send, so selectors cannot squeeze it. */
+@media (pointer: coarse) {
+  .prompt { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; gap: 4px; }
+  .prompt .prompt-body { grid-column: 2; grid-row: 1; }
+  .prompt .prompt-foot { display: contents; }
+  .prompt .prompt-plus { grid-column: 1; grid-row: 1; }
+  .prompt .prompt-send { grid-column: 3; grid-row: 1; margin-left: 0; }
+  .prompt .prompt-models, .prompt .prompt-hint { display: none; }
+  .prompt.expanded { display: flex; align-items: stretch; }
+  .prompt.expanded .prompt-foot, .prompt.expanded .prompt-models { display: flex; }
+  .prompt.expanded .prompt-send { margin-left: auto; }
+  .prompt .prompt-input {
+    min-height: 40px; padding: 8px 6px;
+    max-height: min(176px, calc(var(--vv-h, 100dvh) * .3));
+  }
+  .prompt .prompt-input:placeholder-shown { height: 40px; }
+  .prompt .prompt-foot { gap: 4px; }
+  .prompt .prompt-plus, .prompt .prompt-send { width: 44px; height: 44px; }
+  .prompt .prompt-plus::after, .prompt .prompt-send::after { inset: 0; }
+  .prompt .model-pick { height: 44px; }
+  .prompt:not(.expanded) .prompt-suggest { top: 12px; right: 58px; }
+}
 
 .prompt-head { padding: 4px 2px 2px; }
 .attachments { display: flex; gap: 8px; overflow-x: auto; }
@@ -2675,6 +2711,23 @@ body.kb .composer { padding-bottom: 8px; }
 .bar-pref-state.offline { background: var(--rose); }
 .bar-pref-reset { margin-top: 12px; border-radius: 0; }
 @media (prefers-reduced-motion: reduce) { .bar-pref-row { transition: none; } }
+/* Settings › Terminal › Phone key bar (PhoneKeyOrderSettings.vue). The preview
+   is as wide as a phone row and draws the keys like PhoneKeybar.vue. */
+.key-order-preview { display: flex; gap: 6px; max-width: 390px; padding: 5px 11px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; border: 1px solid var(--line); background: var(--bg); }
+.key-order-preview::-webkit-scrollbar { display: none; }
+.key-order-cap { display: grid; place-items: center; flex: none; min-width: 38px; height: 36px; padding: 0 3px; border: 1px solid var(--line-soft); background: var(--bg-2); color: var(--text-2); font: 500 12px/1 var(--mono); user-select: none; -webkit-user-select: none; }
+.key-order-cap.danger { color: var(--rose); border-color: var(--rose); }
+.key-order-cap svg { width: 19px; height: 19px; }
+.key-order-label { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 0 10px 0 12px; }
+.key-order-label .key-order-cap { min-width: 34px; height: 30px; font-size: 11px; }
+.key-order-label .key-order-cap svg { width: 16px; height: 16px; }
+.key-order-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: var(--text); }
+.key-order-step { flex: none; width: 44px; display: grid; place-items: center; border: 0; border-left: 1px solid var(--line-soft); border-radius: 0; background: none; color: var(--text-2); cursor: pointer; touch-action: manipulation; }
+.key-order-step svg { width: 18px; height: 18px; }
+.key-order-step:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
+.key-order-step:disabled { color: var(--dim); opacity: .45; cursor: default; }
+.key-order-step:focus-visible { outline: 1px solid var(--accent); outline-offset: -3px; }
+.key-order-announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .settings-stepper { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 58px; padding: 8px 12px 8px 16px; }
 .settings-stepper > span { font-size: 15px; }
 .settings-stepper > div { display: flex; align-items: center; border: 1px solid var(--line); }
@@ -2895,20 +2948,17 @@ ol[data-slot="viewport"] { top: calc(var(--safe-top) + 12px) !important; bottom:
 .cell-view::after { content: ""; position: absolute; inset: 0; z-index: 5; pointer-events: none; box-shadow: inset 0 0 0 1px transparent; }
 .cell-view.active::after { box-shadow: inset 0 0 0 1px var(--mauve); }
 .cell-view .agent-title { font-size: 14px; }
-.cell-view .agent-top .view-tabs { width: 220px; }
+.cell-view .agent-top .view-toggle { min-width: 140px; }
 /* Agent question in a short cell: it scrolls instead of eating the cell. */
 .cell-view .choices { max-height: 58%; overflow-y: auto; overscroll-behavior: contain; }
 .cell-view .agent-actions { justify-self: end; }
 .cell-view .agent-actions .icon-btn { width: 34px; height: 34px; }
 .cell-view .agent-actions .icon-btn .iconify { width: 17px; height: 17px; }
-/* Narrow cell: the selector shrinks to its two icons (the labels stay for
-   screen readers); narrower still, the header keeps the title and the menu. */
+/* Narrow cells keep the action icon and accessible name. */
 .cell-view .agent-top { container: cell-top / inline-size; }
 @container cell-top (max-width: 500px) {
-  .cell-view .agent-top .view-tabs { width: 72px; }
-  .cell-view .hw-tab { padding: 6px 0; }
-  .cell-view .hw-tab-icon { display: block; width: 14px; height: 14px; }
-  .cell-view .hw-tab-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .cell-view .agent-top .view-toggle { min-width: 44px; width: 44px; padding-inline: 0; }
+  .cell-view .view-toggle-label { display: none; }
 }
 @container cell-top (max-width: 250px) {
   .cell-view .agent-actions .cell-extra { display: none; }
@@ -3246,6 +3296,13 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
 
 /* Images in replies: clickable (large preview). */
 .md-body img { max-width: 100%; height: auto; cursor: zoom-in; border: 1px solid var(--line); }
+/* An image that cannot show (refused, unreachable): a note with its link (utils/imageFallback.ts). */
+.md-body img.md-img-broken { display: none; }
+.md-img-fallback { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; max-width: 100%; margin: 4px 0; padding: 10px 12px; border: 1px solid var(--line); background: var(--bg-2); color: var(--text-3); font-size: .9em; line-height: 1.4; cursor: auto; }
+.md-img-fallback-tag { font: 600 10px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.md-img-fallback-alt { color: var(--text); }
+.md-body .md-img-fallback a { display: inline-flex; align-items: center; min-height: 44px; font-weight: 600; }
+.md-img-fallback-url { font: 12px/1.4 var(--mono); color: var(--dim); overflow-wrap: anywhere; }
 
 /* Tabs of a space (at the top of its view): state dot for a tab with a
    single pane, mini-map otherwise. */
@@ -4179,7 +4236,7 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
   .keybar button { height: 44px; }
   /* Side by side: cell buttons, selector and grip at finger size. */
   .cell-view .agent-actions .icon-btn { width: 44px; height: 44px; }
-  .cell-view .agent-top .hw-tab { min-height: 44px; }
+  .agent-top .view-toggle { min-width: 44px; min-height: 44px; }
   .cell-grip { width: 32px; height: 44px; }
   /* Dividers: wider touch area, line marked with a notch (as in the plan). */
   .split .divider.right { width: 24px; }
@@ -4402,3 +4459,6 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
   .machine-bar-indicator { transition: none; }
   .home-content > .scroll { transition: none !important; transform: none !important; opacity: 1 !important; }
 }
+
+.phone-chrome .mode-btn { border: 1px solid transparent; border-radius: 0; }
+.phone-chrome .mode-btn.on { border-color: var(--accent); }

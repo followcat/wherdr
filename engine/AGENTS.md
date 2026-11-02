@@ -5,6 +5,8 @@ holds what, so that two tasks do not edit the same file.
 
 - Build the program once: `cargo build --profile quick` (the workspace setup, `scripts/setup.sh`, does it for you,
   through the build cache every worktree shares). It is then `./target/quick/herdr-projects`.
+- In wherdr the program is the folder `engine/`: run every command from there (`cd engine`), never from the top of
+  the repo ([testing](docs/testing.md#inside-a-larger-repo)).
 - `./target/quick/herdr-projects docs --where` prints all of the map; `… docs --where crates/board/src/board/view` only
   that folder.
 - It is also a page in your own folder, `docs/where-things-live.md`, written by the workspace setup and by

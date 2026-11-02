@@ -505,9 +505,97 @@ export function codexCommand(input: unknown): string {
   return firstLine(s)
 }
 
+// Codex writes an attached image as three content parts (codex-rs/protocol
+// models.rs): '<image name=[Image #1] path="…">' ('<image name=[Image #1]>' in
+// older versions, '<image>' for a remote one), the input_image, then '</image>'.
+// The user's text, after them, keeps the composer's "[Image #1]" placeholder.
+// Only parts right around an image are wrappers: the same text elsewhere is the user's.
+const CODEX_IMAGE_OPEN = /^<image(?: name=\[Image #\d+\][^\n]*)?>$/
+const CODEX_IMAGE_CLOSE = '</image>'
+function codexImageWrappers(content: Json[]): Set<number> {
+  const out = new Set<number>()
+  content.forEach((part, k) => {
+    if (part?.type !== 'input_image') return
+    const before = content[k - 1]
+    const after = content[k + 1]
+    if (before?.type === 'input_text' && CODEX_IMAGE_OPEN.test(String(before.text || '').trim())) out.add(k - 1)
+    if (after?.type === 'input_text' && String(after.text || '').trim() === CODEX_IMAGE_CLOSE) out.add(k + 1)
+  })
+  return out
+}
+// The composer's placeholders are not told apart by their text: "[Image #1]"
+// typed by the user looks the same. Codex records them separately, as
+// `text_elements` (UTF-8 byte ranges) of the text it was given, in the event
+// written after the message: `user_message` (legacy rollouts) or
+// `item_completed` with a `UserMessage` item (paginated ones). Only those
+// ranges are removed. Without such an event (older Codex, or a page that cut
+// it off), a text is kept unless it holds nothing but the placeholders of the
+// message's own images, each once (a photo sent alone).
+type Spans = [number, number][]
+const IMAGE_LABEL = /^\[Image #(\d+)\]$/
+function imageSpans(text: string, elements: unknown): Spans {
+  if (!Array.isArray(elements)) return []
+  const bytes = Buffer.from(text)
+  const out: Spans = []
+  for (const el of elements as Json[]) {
+    const start = el?.byte_range?.start
+    const end = el?.byte_range?.end
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > bytes.length || start >= end) continue
+    const slice = bytes.subarray(start, end).toString()
+    // The span must hold an image placeholder (not a mention or a paste).
+    if (!IMAGE_LABEL.test(slice) || (el.placeholder != null && el.placeholder !== slice)) continue
+    out.push([bytes.subarray(0, start).toString().length, bytes.subarray(0, end).toString().length])
+  }
+  return out
+}
+// Texts Codex declared with their image placeholders, from the turn events of
+// these lines; each event is used once (the same text may be sent twice).
+function codexPlaceholders(lines: Lines): Map<string, Spans[]> {
+  const out = new Map<string, Spans[]>()
+  const add = (text: unknown, elements: unknown) => {
+    if (typeof text !== 'string') return
+    // Kept even with no image span: the text is then known to be typed.
+    out.set(text, [...(out.get(text) || []), imageSpans(text, elements)])
+  }
+  for (const line of lines) {
+    if (!line || !line.includes('"event_msg"') || !line.includes('text_elements')) continue
+    let d: Json
+    try { d = JSON.parse(line) }
+    catch { continue }
+    const e = d?.payload
+    if (d?.type !== 'event_msg' || !e) continue
+    if (e.type === 'user_message') add(e.message, e.text_elements)
+    else if (e.type === 'item_completed' && e.item?.type === 'UserMessage' && Array.isArray(e.item.content)) {
+      for (const c of e.item.content) if (c?.type === 'text') add(c.text, c.text_elements)
+    }
+  }
+  return out
+}
+// The text without the [start, end) ranges, and without the spaces or line they leave.
+function dropSpans(text: string, spans: Spans): string {
+  for (const [start, end] of [...spans].sort((x, y) => y[0] - x[0])) {
+    let a = start
+    let b = end
+    while (text[b] === ' ' || text[b] === '\t') b++
+    if (b === text.length || text[b] === '\n') while (a > 0 && (text[a - 1] === ' ' || text[a - 1] === '\t')) a--
+    if ((a === 0 || text[a - 1] === '\n') && text[b] === '\n') b++
+    text = text.slice(0, a) + text.slice(b)
+  }
+  return text
+}
+// Nothing but the placeholders of the message's images, each once: "[Image #1]",
+// "[Image #1] [Image #2]"… (what the composer leaves when no text is typed).
+function onlyOwnLabels(text: string, images: number): boolean {
+  const t = text.trim()
+  if (!/^(?:\[Image #\d+\]\s*)+$/.test(t)) return false
+  const nums = [...t.matchAll(/\[Image #(\d+)\]/g)].map(m => Number(m[1]))
+  return nums.every(n => n >= 1 && n <= images) && new Set(nums).size === nums.length
+}
+
 export function parseCodex(lines: Lines): Parsed {
   const items: Parsed = []
   const calls = new Map<string, ChatItem>()
+  const placeholders = codexPlaceholders(lines)
   for (let li = 0; li < lines.length; li++) {
     const line = lines[li]
     const ref = lines.refs ? lines.refs[li] : undefined
@@ -527,7 +615,11 @@ export function parseCodex(lines: Lines): Parsed {
     if (p.type === 'message' && (p.role === 'user' || p.role === 'assistant')) {
       let text = ''
       let images = 0
-      for (const part of p.content || []) {
+      const content: Json[] = Array.isArray(p.content) ? p.content : []
+      const wrappers = p.role === 'user' ? codexImageWrappers(content) : new Set<number>()
+      const imageCount = content.filter(part => part?.type === 'input_image').length
+      for (const [k, part] of content.entries()) {
+        if (wrappers.has(k)) continue
         // "!cmd" typed in Codex: run at once, written as
         // <user_shell_command><command>…</command><result>Exit code: N … Output:\n…</result>.
         const run = p.role === 'user' && part.type === 'input_text' ? /^\s*<user_shell_command>\s*<command>\s*([\s\S]*?)\s*<\/command>\s*(?:<result>([\s\S]*?)<\/result>)?/.exec(part.text || '') : null
@@ -536,6 +628,10 @@ export function parseCodex(lines: Lines): Parsed {
           const exit = /Exit code: (-?\d+)/.exec(result)
           const out = /(?:^|\n)Output:\n?([\s\S]*)$/.exec(result)
           items.push({ role: 'bash', text: clip(run[1]!, 2000), out: out ? out[1]!.replace(/\s+$/, '').slice(-MAX_OUT) : '', err: '', error: Boolean(exit && exit[1] !== '0'), ts })
+        } else if (p.role === 'user' && imageCount && part.type === 'input_text' && part.text && !isNoise(part.text)) {
+          const declared = placeholders.get(part.text)?.shift()
+          const kept: string = declared ? dropSpans(part.text, declared) : onlyOwnLabels(part.text, imageCount) ? '' : part.text
+          if (kept.trim()) text += (text ? '\n' : '') + kept
         } else if ((part.type === 'input_text' || part.type === 'output_text') && part.text && !isNoise(part.text)) text += (text ? '\n' : '') + part.text
         else if (part.type === 'input_image') images++
       }
@@ -670,7 +766,8 @@ export function parseOmp(lines: Lines, home = '', templates: readonly CommandTem
           items.push(t)
         }
       }
-      if (m.stopReason === 'aborted' && /interrupt/i.test(String(m.errorMessage || ''))) items.push({ role: 'system', text: 'Interrupted', ts })
+      const end = ompTurnEnd(m)
+      if (end) items.push({ ...end, ts })
     } else if (m.role === 'bashExecution' || m.role === 'pythonExecution') {
       // "!cmd" / "$ code" typed in omp's input field: a user action, like
       // Claude's bash mode, drawn the way omp draws it.
@@ -691,6 +788,31 @@ export function parseOmp(lines: Lines, home = '', templates: readonly CommandTem
     }
   }
   return items
+}
+
+// How an omp assistant turn ended, when it failed: what omp's terminal shows
+// under it when it replays the session. A provider error (usage limit,
+// credit balance, stalled stream, "Retry budget exhausted…") is a turn with
+// `stopReason: "error"`, its `errorMessage` and often no content at all.
+// When omp retries, it later marks the failed attempt (`retryRecovery`, by
+// rewriting the file): "superseded" attempts are hidden, a "recovered" one
+// becomes a one-line note. Error ids carry omp's flags (pi-ai error/flags.ts).
+const OMP_SILENT_ABORT = 0x0200_0000
+const OMP_USER_INTERRUPT = 0x0400_0000
+const OMP_ABORT = 0x0800_0000
+function ompTurnEnd(m: Json): Pick<ChatItem, 'role' | 'text' | 'name' | 'error'> | null {
+  const status = m.retryRecovery && typeof m.retryRecovery === 'object' ? m.retryRecovery.status : null
+  if (status === 'superseded') return null
+  if (status === 'recovered') return { role: 'system', text: 'Retried after an error' }
+  const message = typeof m.errorMessage === 'string' ? m.errorMessage.trim() : ''
+  const id = Number.isInteger(m.errorId) ? m.errorId as number : 0
+  if (id & OMP_SILENT_ABORT || message === '__omp.silent_abort__') return null
+  if (id & OMP_USER_INTERRUPT || (m.stopReason === 'aborted' && /interrupt/i.test(message))) return { role: 'system', text: 'Interrupted' }
+  let text = ''
+  if (m.stopReason === 'error') text = message || 'Error'
+  else if (m.stopReason === 'aborted') text = id & OMP_ABORT || !message || message === 'Request was aborted' ? 'Operation aborted' : message
+  else text = message
+  return text ? { role: 'notice', name: 'error', text: clip(text), error: true } : null
 }
 
 // Text of an omp file command: "/name args". omp appends the arguments
@@ -963,13 +1085,33 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
       const f = await findSessionFile('codex', pane.agentSession)
       if (f) return { file: f, session: pane.agentSession }
     }
+    // `codex resume <uuid>` can keep writing a rollout created months ago.
+    // Missing hooks must not restrict that explicit session to the recent scan.
+    // Include it among candidates, rather than pinning it forever: /new can
+    // create a newer conversation without changing the process's launch args.
+    let resumed: string | null = null
+    try {
+      const proc = await paneProcess(pane.id, 'codex')
+      const args = Array.isArray(proc?.argv) ? proc.argv : []
+      const at = args.indexOf('resume')
+      const id = at >= 0 ? args[at + 1] : null
+      if (typeof id === 'string' && /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(id)) {
+        const file = await findSessionFile('codex', id)
+        const meta = file && await rolloutMeta(file)
+        const stat = file ? await fs.stat(file) : null
+        if (file && meta?.id === id && stat?.isFile) {
+          resumed = id
+          rolls.push({ file, id, ts: Date.parse(meta.timestamp || 0) || 0, mtimeMs: stat.mtimeMs })
+        }
+      }
+    } catch { /* process information is optional; retain the recent fallback */ }
     let best: CodexRollout | null = null
     for (const r of rolls) {
       if (taken.has(r.id)) continue
-      if (pane.bornAt && r.ts < pane.bornAt - 60000) continue
+      if (r.id !== resumed && pane.bornAt && r.ts < pane.bornAt - 60000) continue
       if (!best || r.mtimeMs > best.mtimeMs) best = r
     }
-    return best && { file: best.file, session: best.id, guessed: true }
+    return best && { file: best.file, session: best.id, ...(best.id !== resumed ? { guessed: true } : {}) }
   }
 
   // Codex panes of the machine (kept up to date by the state): for the claims.

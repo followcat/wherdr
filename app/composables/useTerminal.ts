@@ -18,6 +18,7 @@ import { uploadPhoto } from '~/utils/photoUpload'
 import { terminalClosedText, terminalUnavailableText } from '~/utils/terminalClosed'
 import { bindTerminalMouse, terminalCell } from '~/utils/terminalMouse'
 import { TERM_FONT, onFontsLoaded } from '~/utils/terminalFont'
+import { virtualNavigationBytes, virtualNavigationKeys } from '~/utils/keybarKeys'
 import { createCompositionTracker, toggleVirtualModifier, virtualChord, virtualInputKey, type VirtualModifier } from '~/utils/terminalModifiers'
 
 export interface Banner { text: string, btn: string, fn: () => void }
@@ -44,6 +45,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   const scrollAck = ref(0)
   let touchEpoch = 0
   const virtualModifiers = ref<VirtualModifier[]>([])
+  const lastVirtualChord = ref('')
   const composition = createCompositionTracker()
   const toggleModifier = (key: VirtualModifier) => { virtualModifiers.value = toggleVirtualModifier(virtualModifiers.value, key) }
   const clearVirtualModifiers = () => { virtualModifiers.value = [] }
@@ -208,6 +210,12 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     if (opts.input?.() === false) return
     const chord = virtualChord(key, virtualModifiers.value)
     clearVirtualModifiers()
+    lastVirtualChord.value = chord
+    const bytes = virtualNavigationBytes(chord)
+    if (bytes) {
+      if (!sendTerm({ type: 'terminal.input', text: bytes })) await sendKeys(virtualNavigationKeys(chord))
+      return
+    }
     await sendKeys([chord])
   }
 
@@ -465,7 +473,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     reset, scroll, focus, blur, tapLink, tapMouse: (x: number, y: number) => mouse?.tap(x, y), hasFocus, rowHeight, pageRows, setVisible, dispose, loading, kbdOn,
     hasBanner: opts.hasBanner, selectionHint,
     cancelTouchScroll, scrollInputVersion, frameTick, scrollAck,
-    virtualModifiers, toggleModifier, sendVirtualKey,
+    virtualModifiers, lastVirtualChord, toggleModifier, toggleVirtualModifier: toggleModifier, clearVirtualModifiers, sendVirtualKey,
   }
 }
 

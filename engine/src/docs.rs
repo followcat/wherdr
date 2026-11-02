@@ -16,9 +16,14 @@ use std::path::{Path, PathBuf};
 /// The repo this program was built in (`<repo>/target/<profile>/…`): the made pages are its, else the folder it runs
 /// in. Found when it runs, never written into the program when it is built: a new worktree starts from a copy of
 /// another's build (scripts/warm-start.sh), which would then read and write the other worktree's pages.
+/// `HERDR_PROJECTS_REPO` is followed only to this program's own folder, or to its `engine/` in a repo that holds it
+/// (wherdr): never to another repo's root, whose files these pages and rules are not.
 pub fn root() -> PathBuf {
-    if let Ok(r) = std::env::var("HERDR_PROJECTS_REPO") { return PathBuf::from(r); }
     let ours = |d: &Path| std::fs::read_to_string(d.join("Cargo.toml")).is_ok_and(|t| t.contains("name = \"herdr-projects\""));
+    if let Ok(r) = std::env::var("HERDR_PROJECTS_REPO") {
+        let r = PathBuf::from(r);
+        if let Some(d) = [r.clone(), r.join("engine")].into_iter().find(|d| ours(d)) { return d; }
+    }
     let exe = std::env::current_exe().ok().and_then(|e| e.canonicalize().ok());
     exe.as_deref().and_then(|e| e.ancestors().skip(1).find(|d| ours(d))).map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."))
 }

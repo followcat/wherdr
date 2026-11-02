@@ -1,6 +1,7 @@
 // Small display helpers (titles, paths, dates, durations).
 import type { HerdrState, Pane } from '#shared/types'
 import { cleanTitle, paneTitle as sharedPaneTitle } from '#shared/paneTitle'
+export { paneOwnTitle } from '#shared/paneTitle'
 import { hasTranscript } from '#shared/agentKind'
 export { spaceTitle, conversationSubtitle } from '#shared/displayTitles'
 

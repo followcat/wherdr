@@ -3,13 +3,15 @@
 # <commit>`, scripts/check.sh): one module of tests/main.rs a line, or the one word `all`, with why on stderr, where it
 # cannot tell. `sh scripts/changed-tests.sh <commit>`. What reaches what: docs/testing.md.
 set -e
+# This folder may sit inside a larger repo (engine/ of wherdr): only its own files count, by paths from here.
+cd "$(dirname -- "$0")/.."
 all() { echo "Every test runs: $1" >&2; echo all; exit 0; }
 rev="$1"
 [ -n "$rev" ] || all "no commit to start from."
 git rev-parse -q --verify "$rev^{commit}" >/dev/null 2>&1 || all "$rev is no commit here."
 git merge-base --is-ancestor "$rev" HEAD 2>/dev/null || all "the branch no longer holds $rev."
 # What changed: committed since, not committed yet, and new files.
-changed=$( { git diff --name-only "$rev" -- && git ls-files --others --exclude-standard; } | sort -u)
+changed=$( { git diff --name-only --relative "$rev" -- . && git ls-files --others --exclude-standard -- .; } | sort -u)
 out=$(mktemp)
 trap 'rm -f "$out"' EXIT
 count() { echo $(( $(wc -l < "$out") )); }

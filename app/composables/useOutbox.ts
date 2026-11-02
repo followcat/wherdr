@@ -3,12 +3,30 @@
 // the order they were typed, whatever each one takes on the server.
 import { reactive } from 'vue'
 import type { Pane, QueuedMessage } from '#shared/types'
-import { type OutboxItem, addSending, failLocal, newOutboxId, prune, resend, settle } from '~/utils/outbox'
+import { type OutboxItem, type RecentSend, addSending, failLocal, isRepeat, newOutboxId, prune, recentSends, resend, settle } from '~/utils/outbox'
 import { sendMessage } from './useActions'
 
 // Plain module state: it outlives the views (switching conversations while sending).
 const boxes = reactive(new Map<string, OutboxItem[]>())
 const chains = new Map<string, Promise<unknown>>()
+const recent = new Map<string, RecentSend[]>()
+
+// The composer's submit, before it sends: false when the same text went to
+// this conversation a moment ago (utils/outbox.ts isRepeat), true otherwise,
+// and the send is remembered for the next one.
+export function claimSend(paneId: string, text: string, now = Date.now()): boolean {
+  const list = recent.get(paneId) || []
+  if (isRepeat(list, text, now)) return false
+  recent.set(paneId, [...recentSends(list, now), { text, at: now }])
+  return true
+}
+
+// A send that did not go (refused, failed): the same text may go again at once.
+export function releaseSend(paneId: string, text: string) {
+  const list = (recent.get(paneId) || []).filter(s => s.text !== text)
+  if (list.length) recent.set(paneId, list)
+  else recent.delete(paneId)
+}
 
 const update = (paneId: string, f: (l: OutboxItem[]) => OutboxItem[]) => {
   const next = f(boxes.get(paneId) || [])

@@ -1,8 +1,5 @@
 import { readFileSync } from 'node:fs'
 import { expect, test } from './test'
-import { parseChoices, parseOmpPrompt } from '../../server/utils/choices'
-import { parseMenu } from '../../shared/menuScreen'
-import { parseWaitScreen } from '../../server/utils/waitScreen'
 import { OMP_CHAT_PANE as pane, fakeHerdr } from './scenario.mjs'
 
 const fx = (name: string) => readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8')
@@ -11,44 +8,21 @@ const show = (name: string | null, agent = 'omp', status = 'idle') =>
 
 test.afterEach(async () => { await show(null) })
 
-test('native questions, menus and waiting screens keep their cards in conversation', async ({ page }, info) => {
-  test.setTimeout(90_000)
-  const cases = [
-    ['claude-ask-long.txt', 'claude', 'blocked', '.choices-list'],
-    ['claude-ask-multi.txt', 'claude', 'blocked', '.choices-list.multi'],
-    ['claude-ask-tabs-1.txt', 'claude', 'blocked', '.choices-list'],
-    ['omp-ask-single.txt', 'omp', 'blocked', '.choices-list'],
-    ['omp-ask-multi.txt', 'omp', 'blocked', '.choices-list.multi'],
-    ['omp-ask-tabs.ansi', 'omp', 'blocked', '.choices-tabs'],
-    ['claude-resume.ansi', 'claude', 'idle', '.choices-menu'],
-    ['claude-resume-all.ansi', 'claude', 'idle', '.choices-menu'],
-    ['claude-model-1.txt', 'claude', 'idle', '.choices-menu'],
-    // main retains this as kind=other; an existing conversation keeps its composer.
-    ['claude-effort-medium.txt', 'claude', 'idle', '.composer'],
-    ['codex-login.txt', 'codex', 'idle', '.choices'],
-    ['codex-hooks-box.txt', 'codex', 'idle', '.choices-screen'],
-    ['claude-security-guide.txt', 'claude', 'blocked', '.choices'],
-    ['codex-approve-edits.txt', 'codex', 'blocked', '.choices-list'],
-  ] as const
+// Fixture recognition is covered by tests/nativeScreenParity.test.ts,
+// "all fixtures retain origin/main native recognition"; rendering variants by
+// tests/components/NativeScreenCards.test.ts. Keep one built-app card journey.
+test('a native question keeps its card and the effort screen keeps the composer', async ({ page }, info) => {
   await show('claude-ask-long.txt', 'claude', 'blocked')
   await page.goto(`/#/a/${pane}`)
-  for (const [file, agent, status, selector] of cases) {
-    await test.step(file, async () => {
-      await show(file, agent, status)
-      const text = fx(file).replace(/\x1b\[[0-9;]*m|\r/g, '')
-      const prompt = agent === 'omp' ? parseOmpPrompt(text) : parseChoices(text, { strict: status !== 'blocked' })
-      const menu = agent === 'claude' && status === 'idle' ? parseMenu(fx(file)) : null
-      const wait = parseWaitScreen(text, { choices: Boolean(prompt) })
-      await expect.poll(async () => {
-        const state = await (await page.request.get('/api/state')).json()
-        const current = state.panes.find((p: { id: string }) => p.id === pane)
-        return { interaction: current?.interaction, question: current?.prompt?.question ?? null, title: current?.menu?.title ?? current?.screen?.title ?? null }
-      }).toEqual({ interaction: 'native', question: menu ? null : prompt?.question ?? null, title: menu?.title ?? wait?.title ?? null })
-      await expect(page.locator(selector)).toBeVisible()
-      await expect(page.locator('.interactive-terminal')).toHaveCount(0)
-      if (file === 'claude-ask-long.txt') await page.screenshot({ path: `.shots/native-question-${info.project.name}.png` })
-    })
-  }
+  await expect(page.locator('.choices-list')).toBeVisible()
+  await expect(page.locator('.interactive-terminal')).toHaveCount(0)
+  await page.screenshot({ path: `.shots/native-question-${info.project.name}.png` })
+  // AgentView must keep the composer for this recognized kind=other screen;
+  // parser parity and ChoicesPanel mounts cannot prove this rendering rule.
+  await show('claude-effort-medium.txt', 'claude', 'idle')
+  await expect(page.locator('.choices-list')).toHaveCount(0)
+  await expect(page.locator('.composer')).toBeVisible()
+  await expect(page.locator('.interactive-terminal')).toHaveCount(0)
 })
 
 test('Claude usage keeps the immediate loading sheet and native settings tabs', async ({ page }) => {

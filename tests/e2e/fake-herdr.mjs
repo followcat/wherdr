@@ -74,7 +74,7 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
       })),
       panes: panes.map(p => ({
         pane_id: p.id, workspace_id: p.workspace, tab_id: `${p.workspace}:t1`,
-        agent: p.agent, agent_status: p.status, cwd: p.cwd, foreground_cwd: p.cwd, focused: false,
+        tokens: p.tokens || {}, agent: p.agent, agent_status: p.status, cwd: p.cwd, foreground_cwd: p.cwd, focused: false,
         terminal_title: p.agent || 'shell',
         terminal_id: `term_${p.id.replace(/\W/g, '')}`,
         scroll: { viewport_rows: p.size.rows, offset_from_bottom: 0, max_offset_from_bottom: 0 },
@@ -115,7 +115,7 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
   function resetUpdate(params) {
     const p = need(params.pane_id)
     p.agent = 'codex'; p.status = 'idle'; p.pid = (p.pid || 3000) + 1
-    p.updateOutput = params.session ? '' : '✨ Update available! 0.148.0 -> 0.162.1'; p.foreground = false; p.starts = []
+    p.updateOutput = params.session ? '' : '✨ Update available! 0.148.0 -> 0.162.1'; p.starts = []
     p.processReads = 0
     p.argv = null; p.writes = []; p.prompts = []
     p.baseCwd ||= p.cwd
@@ -174,17 +174,24 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
       const p = paneById(params.pane_id)
       if (p?.readFailure && params.source === 'detection') throw Object.assign(new Error('Transient detection read failure'), { code: 'timeout' })
       if (p?.readDelayMs) await new Promise(r => setTimeout(r, p.readDelayMs))
+      // Server state reads of the current fixture, so a test can wait for them.
+      if (p && params.source === 'detection') p.detectionReads = (p.detectionReads || 0) + 1
       const raw = screen(p)
       // Herdr detection/visible reads are plain unless ANSI was requested.
       // eslint-disable-next-line no-control-regex
       const text = params.format === 'ansi' ? raw : raw.replace(/\x1b\[[0-9;]*m|\r/g, '')
       return { read: { pane_id: params.pane_id, source: params.source || 'visible', text } }
     },
+    'pane.report_metadata': params => {
+      const p = paneById(params.pane_id)
+      if (p) p.tokens = { ...p.tokens, ...params.tokens }
+      return {}
+    },
     'pane.process_info': (params) => {
       const p = paneById(params.pane_id)
       if (p) p.processReads = (p.processReads || 0) + 1
       const procs = p?.agent ? [{ pid: p.pid || 2001, name: p.agent, argv: p.argv || [p.agent, ...(p.agent === 'codex' ? ['--profile', 'work', '-m', 'gpt-x'] : [])] }] : [{ pid: 2000, name: 'zsh' }]
-      return { process_info: { shell_pid: 2000, foreground_process_group_id: p?.foreground ? 4000 : p?.agent ? (p.pid || 2001) : 2000, foreground_processes: procs } }
+      return { process_info: { shell_pid: 2000, foreground_process_group_id: p?.agent ? (p.pid || 2001) : 2000, foreground_processes: procs } }
     },
     'e2e.update_reset': params => {
       need(params.pane_id)
@@ -198,11 +205,6 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
       // `plain`: Codex simply left (/exit), no update.
       p.updateOutput = (params.plain ? '' : 'Codex CLI 0.162.1 installed successfully.\n\n🎉 Update ran successfully! Please restart Codex.\n\n') + 'user@host project % ' + (params.draft || '')
       return {}
-    },
-    'e2e.update_replace': params => {
-      const p = need(params.pane_id)
-      p.pid++; p.argv = params.argv
-      return { pid: p.pid }
     },
     // Herdr integrations as `herdr integration status` reports them (all
     // installed unless a spec says otherwise): { codex: 'missing' }…
@@ -224,8 +226,9 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
     // Herdr closes the pane for good (`hidden: false` brings it back).
     'e2e.hide_pane': (params) => { need(params.pane_id).hidden = Boolean(params.hidden); return {} },
     'e2e.update_session': params => { need(params.pane_id).session = params.session; return {} },
+    // A scenario field of the pane (an alternate transcript, for instance).
+    'e2e.pane_field': params => ({ value: need(params.pane_id)[params.field] ?? null }),
     'e2e.update_draft': params => { need(params.pane_id).updateOutput += params.text; return {} },
-    'e2e.update_foreground': params => { need(params.pane_id).foreground = true; return {} },
     'e2e.update_starts': params => {
       const p = need(params.pane_id)
       return { starts: p.starts || [], reads: p.processReads || 0, writes: p.writes || [], prompts: p.prompts || [] }
@@ -289,6 +292,7 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
       p.sentKeys = []
       p.screenTransitions = params.transitions || null
       p.readDelayMs = params.readDelayMs || 0
+      p.detectionReads = 0
       return {}
     },
     // Explicit scroll fixture: mouse apps consume one tick per command;
@@ -311,7 +315,7 @@ export function startFakeHerdr({ sock, workspaces, log = () => {} }) {
       const p = need(params.pane_id)
       const osc = p.osc || []
       p.osc = []
-      return { text: p.touchScroll ? methods['e2e.touch_scroll'](params).text : p.customScreen || '', size: p.size, keys: p.sentKeys || [], osc }
+      return { text: p.touchScroll ? methods['e2e.touch_scroll'](params).text : p.customScreen || '', size: p.size, keys: p.sentKeys || [], osc, detectionReads: p.detectionReads || 0 }
     },
     // Raw sequences (OSC 52…) the control session writes once, after the screen.
     'e2e.terminal_osc': params => {

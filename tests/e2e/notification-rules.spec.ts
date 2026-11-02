@@ -166,7 +166,7 @@ test('notifications screenshots on phone and desktop, with no horizontal overflo
     await page.locator('#agent').getByRole('button', { name: 'Options', exact: true }).click()
     await notificationsItem(page).click({ timeout: 2000 })
   }).toPass({ timeout: 15000 })
-  await expect(page.getByRole('button', { name: 'Muet pendant 1 h', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Mute for 1 hour', exact: true })).toBeVisible()
   await page.screenshot({ path: '.shots/notifications-menu-mobile.png' })
 })
 

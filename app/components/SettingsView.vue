@@ -64,12 +64,6 @@ onMounted(async () => {
   await router.replace('/')
   await router.push(here)
 })
-const lang = ref<Lang>(language)
-watch(lang, (l) => {
-  if (l === language) return
-  setLanguage(l)
-  location.reload()
-})
 // Global refs bound in the template: local (assignable) aliases.
 const shellsOn = showShells
 const countersOn = showCounters
@@ -133,7 +127,6 @@ const backdropItems = computed(() => [
   { label: 'wherdr grid', description: t('Dotted grid with light packets, like wherdr.dev.'), value: 'wherdr' },
   { label: 'herdr grid', description: t('Flat line grid, like herdr.dev.'), value: 'herdr' },
 ])
-const langItems = [{ label: 'English', value: 'en' }, { label: 'Français', value: 'fr' }]
 
 // Inventory of the reachable machines; the preferences follow the user across devices.
 const agentMachines = computed(() => {
@@ -263,7 +256,7 @@ const deadlineText = computed(() => {
   const st = sec.value
   if (!st?.deadline) return ''
   const when = new Date(st.deadline + Date.now() - (st.now ?? Date.now()))
-    .toLocaleString(language === 'fr' ? 'fr-FR' : 'en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+    .toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
   return tl(`This device asks for the passkey again at the first opening after ${when}.`, `Cet appareil redemandera la clé d’accès à la première ouverture après le ${when}.`)
 })
 
@@ -338,12 +331,6 @@ onMounted(() => {
             <URadioGroup v-model="focusBorderMode" :items="focusBorderItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
             <p class="muted settings-hint">{{ t('Also on omp’s running actions (border only). Frozen when the system asks for reduced motion. Follows you on every device.') }}</p>
           </div>
-
-          <div class="settings-group">
-            <h3>{{ t('Language') }}</h3>
-            <URadioGroup v-model="lang" :items="langItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
-          </div>
-          <p class="muted settings-hint">{{ t('The interface language is saved on this device.') }}</p>
 
           <div class="settings-group">
             <h3>{{ t('Home screen') }}</h3>
@@ -473,6 +460,7 @@ onMounted(() => {
             <p class="muted settings-hint">{{ t('Rendering is saved on this device.') }}</p>
             <p class="settings-renderer-status" role="status">{{ rendererStatus }}</p>
           </div>
+          <PhoneKeyOrderSettings />
         </div>
 
         <div v-show="activeSection === 'agents'" class="settings-section">
@@ -512,6 +500,7 @@ onMounted(() => {
           <div class="settings-group">
             <h3>{{ tl('This device’s notifications', 'Notifications de cet appareil') }}</h3>
             <PushCard detailed />
+            <PushDevices v-if="activeSection === 'notifications'" />
           </div>
         </div>
 

@@ -22,14 +22,15 @@ ws_copy() {
   cp -cpR "$1" "$2" 2>/dev/null && return 0; rm -rf "$2"
   cp -pR "$1" "$2"
 }
-# Tracked files whose content here is not the commit's $1: changed since it, or changed in this folder.
+# Tracked files whose content here is not the commit's $1: changed since it, or changed in this folder. Only this
+# folder's, by paths from here: it may sit inside a larger repo (engine/ of wherdr).
 ws_changed() {
-  git -c core.quotePath=false diff --name-only --no-renames --diff-filter=d "$1" HEAD -- && git -c core.quotePath=false diff --name-only --no-renames --diff-filter=d HEAD --
+  git -c core.quotePath=false diff --name-only --relative --no-renames --diff-filter=d "$1" HEAD -- . && git -c core.quotePath=false diff --name-only --relative --no-renames --diff-filter=d HEAD -- .
 }
 ws_seed() {
   ws_clean=""
   [ -z "$HERDR_PROJECTS_NO_WARM$CARGO_TARGET_DIR" ] && [ ! -e target/quick ] && ws_dir || return 0
-  [ -z "$(git status --porcelain --untracked-files=no 2>/dev/null)" ] && ws_clean=$(git rev-parse HEAD) || ws_clean=""
+  [ -z "$(git status --porcelain --untracked-files=no -- . 2>/dev/null)" ] && ws_clean=$(git rev-parse HEAD) || ws_clean=""
   ws_name=$(cat "$ws_root/current" 2>/dev/null) && [ -n "$ws_name" ] && [ -d "$ws_root/$ws_name/target/quick" ] || return 0
   ws_src="$ws_root/$ws_name"
   [ "$(cat "$ws_src/rustc" 2>/dev/null)" = "$(ws_rustc)" ] || return 0
@@ -49,7 +50,7 @@ ws_seed() {
     h=${d##*-}; rm -rf target/quick/.fingerprint/*-"${h%.d}"
   done
   if [ "$ws_list" != "-" ]; then
-    git ls-files -z | xargs -0 touch -h -t "$ws_old" 2>/dev/null || true
+    git ls-files -z -- . | xargs -0 touch -h -t "$ws_old" 2>/dev/null || true
     printf '%s\n' "$ws_list" | while IFS= read -r f; do [ -z "$f" ] || touch -h -- "$f" 2>/dev/null || true; done
   fi
   echo "Started from the warm build of ${ws_from%"${ws_from#???????}"}: only what changed since is built again."
@@ -57,7 +58,7 @@ ws_seed() {
 ws_keep() {
   [ -z "$HERDR_PROJECTS_NO_WARM$CARGO_TARGET_DIR" ] && [ -n "$ws_clean" ] && [ -d target/quick ] && ws_dir || return 0
   # Kept only as built: from a commit of the main line, with nothing changed before or during the build.
-  [ "$(git rev-parse HEAD)" = "$ws_clean" ] && [ -z "$(git status --porcelain --untracked-files=no)" ] || return 0
+  [ "$(git rev-parse HEAD)" = "$ws_clean" ] && [ -z "$(git status --porcelain --untracked-files=no -- .)" ] || return 0
   ws_main=""
   for b in refs/remotes/origin/HEAD refs/heads/main refs/heads/master; do
     git merge-base --is-ancestor HEAD "$b" 2>/dev/null && { ws_main=1; break; }

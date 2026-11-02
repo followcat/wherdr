@@ -1,5 +1,7 @@
 # Documentation
 
+**Updating to 2.5.0?** Read the [2.5.0 release notes](release-notes-2.5.0.md) for phone key ordering, push delivery results, the English-only interface and cross-machine recovery fixes.
+
 **Updating to 2.4.0?** Read the [2.4.0 release notes](release-notes-2.4.0.md) for Shepherdr 2 protection, Board search, terminal controls and wake reconnection fixes.
 
 **Updating to 2.3.0?** Read the [2.3.0 release notes](release-notes-2.3.0.md) for grouped worktrees, project headers, notification menus and agent naming fixes.

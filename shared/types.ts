@@ -229,6 +229,9 @@ export interface MachineInfo {
   target?: string
   version?: string
   os?: string // `uname -s`: 'Darwin' (macOS), 'Linux'…
+  // Only while the server is not ready (see shared/stateReady.ts): whether
+  // this machine's state has been read since the server started.
+  polled?: boolean
 }
 
 export interface NamedSession { name: string, running: boolean, key: string }

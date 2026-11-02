@@ -45,6 +45,9 @@ onUnmounted(() => {
 })
 
 const pane = computed(() => herdrState.value.panes.find(p => p.id === props.paneId))
+const compactPhone = computed(() => !desk.value && !tablet.value && !props.cell)
+const phoneKeysOpen = ref(false)
+watch(() => props.paneId, () => { phoneKeysOpen.value = false })
 // Remember this optional hint for the same agent on this device. A different
 // agent in a reused pane gets its own choice; hiding it never hides errors.
 const transcriptNoteKey = computed(() => {
@@ -364,6 +367,13 @@ useNotificationClock()
 const agentMenu = computed<MenuItem[]>(() => {
   const p = pane.value
   const items: MenuItem[] = p ? [notificationMenuItem(p)] : []
+  if (compactPhone.value && hasChat(p)) {
+    items.unshift(
+      { label: mode.value === 'term' ? t('Conversation') : t('Terminal'), icon: mode.value === 'term' ? 'i-lucide-message-square' : 'i-lucide-square-terminal', run: () => toggleMode('term') },
+      { label: t('Search'), icon: 'i-lucide-search', run: toggleSearch },
+      { kind: 'separator' },
+    )
+  }
   if (canAttachTerminal.value) items.push({ label: t('Attach a file…'), icon: 'i-lucide-paperclip', run: () => attachInput.value?.click() })
   if (p) items.push({ label: t('View changes'), icon: 'i-lucide-file-diff', run: () => { changesOpen.value = true } })
   if (p) items.push({ label: t('Browse files'), icon: 'i-lucide-folder-tree', run: () => { filesOpen.value = true } })
@@ -374,10 +384,12 @@ const agentMenu = computed<MenuItem[]>(() => {
       kbds: live.value ? shortcutKbds('open-editor') : undefined, run: () => openFolderOnMachine(p),
     })
   }
-  if (p) items.push({ label: t('Rename pane'), icon: 'i-lucide-pencil', run: () => { renameTarget.value = p.id } })
-  // Split, move to another tab (never zoom or resize).
-  if (p) items.push(...paneSpaceItems(p))
-  if (p) items.push(copyPaneIdItem(p))
+  // Rename, split, move to another tab (never zoom or resize), copy the ID.
+  // Phone: these live in the pane sheet of the header identity instead.
+  if (p && !compactPhone.value) {
+    items.push({ label: t('Rename pane'), icon: 'i-lucide-pencil', run: () => { renameTarget.value = p.id } })
+    items.push(...paneSpaceItems(p), copyPaneIdItem(p))
+  }
   // The machine's Herdr plugin actions that apply to a workspace / pane.
   if (p && agentPluginActions(p.machine).length) {
     items.push({ label: t('Plugin actions'), icon: 'i-lucide-puzzle', run: () => openPluginMenu({ pane: p }) })
@@ -396,13 +408,10 @@ const agentMenu = computed<MenuItem[]>(() => {
   // or its title; new tab: the "+" of the header or of the tabs.
   if (!props.cell) items.push(...settingsMenuItems())
   if (p) {
-    items.push({ kind: 'separator' })
-    items.push({
-      label: p.agent ? tl(`Close this pane (stops ${kindLabel(p.agent)})`, `Fermer ce pane (arrête ${kindLabel(p.agent)})`) : t('Close this terminal'),
-      icon: 'i-lucide-trash-2', danger: true, kbds: live.value ? shortcutKbds('close-pane') : undefined, run: () => closePane(p),
-    })
-    // Pane in a worktree: remove the checkout (and close its workspace).
     const ws = herdrState.value.workspaces.find(w => w.id === p.workspace)
+    if (!compactPhone.value || ws?.worktree) items.push({ kind: 'separator' })
+    if (!compactPhone.value) items.push(closePaneItem(p, live.value ? shortcutKbds('close-pane') : undefined))
+    // Pane in a worktree: remove the checkout (and close its workspace).
     if (ws && ws.worktree) {
       items.push({ label: t('Delete this worktree'), icon: 'i-lucide-git-branch', danger: true, run: () => removeWorktreeOf(p.workspace) })
     }
@@ -419,22 +428,23 @@ const dropdownItems = computed(() => toDropdown(agentMenu.value))
 function openAgentMenu() { openMenu(agentMenu.value) }
 watch(() => pane.value && (pane.value.machine || ''), (m) => { if (m !== undefined) loadPluginActions(m) }, { immediate: true })
 
-// Conversation / Terminal selector (computer): in the pane header
-// or in the side-by-side cell's.
-// The icons replace the labels in a narrow cell (CSS).
-const tabs = computed(() => [
-  { label: t('Conversation'), value: 'chat', icon: 'i-lucide-message-square' },
-  { label: t('Terminal'), value: 'term', icon: 'i-lucide-square-terminal' },
-])
-const tabsUi = { list: 'hw-tabs', trigger: 'hw-tab', indicator: 'hw-tab-ind', leadingIcon: 'hw-tab-icon', label: 'hw-tab-label' }
-const tab = computed({
-  get: () => (mode.value === 'term' ? 'term' : 'chat'),
-  set: (v: string) => setMode(v === 'term' ? 'term' : 'chat'),
-})
 // Terminal keys: under the terminal, and in the active side-by-side cell on a
 // touch screen (iPad without a hardware keyboard: Esc, arrows, ^C).
-const keybarShown = computed(() => mode.value === 'term' && (!props.cell || Boolean(coarse.value && props.active))
-  && eventsOpen.value && !offlineView.value && !machineDown.value)
+const keysAvailable = computed(() => Boolean(pane.value) && live.value && eventsOpen.value && !offlineView.value && !machineDown.value)
+const keybarToggleShown = computed(() => compactPhone.value && keysAvailable.value && !interactionShown.value)
+const keybarId = computed(() => `pane-keys-${encodeURIComponent(props.paneId)}`)
+const keybarShown = computed(() => keysAvailable.value && (compactPhone.value ? phoneKeysOpen.value
+  : mode.value === 'term' && (!props.cell || Boolean(coarse.value && props.active))))
+watch(keybarToggleShown, on => { if (!on) phoneKeysOpen.value = false })
+watch(phoneKeysOpen, on => { if (!on) ctl.clearVirtualModifiers() })
+function toggleComposerKeyboard() {
+  if (document.activeElement?.matches('.composer textarea')) composer.value?.blur()
+  else composer.value?.focus()
+}
+function togglePhoneKeys() {
+  haptic()
+  phoneKeysOpen.value = !phoneKeysOpen.value
+}
 const controls = computed(() => viewControls({ desk: desk.value, cell: Boolean(props.cell), chat: hasChat(pane.value), live: live.value }))
 const headerAdd = computed(() => !props.cell && pane.value && spaceTabControls(spaceTabs(pane.value.workspace).length).headerAdd)
 
@@ -451,12 +461,8 @@ function openPlan() {
   if (desk.value) navigateTo({ path: tabPath(tabEnt.value.tab.id), query: { pane: props.paneId } })
   else backToTab(tabEnt.value.tab.id)
 }
-// Back: to the tab's plan or to the Board if we came from it, otherwise to the list.
-function goBack() {
-  const back = (history.state as { back?: string } | null)?.back
-  if (back === '/board' || (tabEnt.value && back === tabPath(tabEnt.value.tab.id))) router.back()
-  else navigateTo('/')
-}
+// Header and browser back share the same history entry.
+const goBack = useViewBack()
 
 // Swipe (phone, conversation): the conversation follows the finger, damped,
 // braked at the edge; far or fast enough, the neighbour replaces it (same
@@ -542,7 +548,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
 
 <template>
   <section
-    :id="cell ? undefined : 'agent'" :class="cell ? ['cell-view', { active, gripped: grip }] : 'view'" :style="cell ? undefined : viewStyle" :data-pane="cell ? paneId : undefined"
+    :id="cell ? undefined : 'agent'" :class="[cell ? ['cell-view', { active, gripped: grip }] : 'view', { 'phone-chrome': compactPhone }]" :style="cell ? undefined : viewStyle" :data-pane="cell ? paneId : undefined"
     @touchstart="onSwipeStart" @touchmove="onSwipeMove" @touchend="onSwipeEnd" @touchcancel="onSwipeEnd"
     @pointerdown.capture="cell && emit('activate')" @focusin="cell && emit('activate')" @click="refocus"
     @dragenter="onDrag" @dragover="onDrag" @dragleave="onDrag" @drop="onDrop"
@@ -552,7 +558,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
       <span class="file-drop-label">{{ t('Drop to attach') }}</span>
       <small>{{ dropTarget === 'term' ? t('The file path is sent to the terminal') : dropHint }}</small>
     </div>
-    <SpaceTabs v-if="!cell && pane" :workspace="pane.workspace" :current="pane.tab" />
+    <SpaceTabs v-if="!cell && pane && !compactPhone" :workspace="pane.workspace" :current="pane.tab" />
     <HeaderMenu v-if="!embedded" :items="() => agentMenu" :disabled="!pane">
       <header class="top bar agent-top">
         <span v-if="cell && grip" class="cell-grip" role="button" :aria-label="t('Drag to move the pane')" :title="t('Drag to move the pane')">
@@ -562,7 +568,8 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
           v-if="!cell" id="btnBack" icon="i-lucide-chevron-left" color="neutral" variant="ghost" size="lg" class="icon-btn back"
           :aria-label="t('Back')" @click="goBack"
         />
-        <div class="agent-head">
+        <PhoneIdentity v-if="compactPhone && pane" :pane="pane" :workspace="workspace" @overview="openPlan" />
+        <div v-else class="agent-head">
           <div class="agent-title">{{ headTitle }} <UIcon v-if="pane && paneNotificationsMuted(pane)" name="i-lucide-bell-off" class="notification-muted" :title="t('Muted')" /></div>
           <div class="agent-meta">
             <StatusPill :pane="pane" kind />
@@ -575,23 +582,17 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
             <span v-if="where" class="where">{{ where }}</span>
           </div>
         </div>
-        <UTabs
-          v-if="controls.selector === 'cell'" v-model="tab" :items="tabs" :content="false" color="neutral" variant="pill" size="xs"
-          class="view-tabs" :ui="tabsUi"
-        />
+        <ViewToggle v-if="controls.selector === 'cell'" :mode="mode" @toggle="toggleMode('term')" />
         <div class="agent-actions">
-          <UTabs
-            v-if="controls.selector === 'header'" v-model="tab" :items="tabs" :content="false" color="neutral" variant="pill" size="xs"
-            class="view-tabs" :ui="tabsUi"
-          />
+          <ViewToggle v-if="controls.selector === 'header'" :mode="mode" @toggle="toggleMode('term')" />
           <UButton
-            v-if="headerAdd && pane" icon="i-lucide-plus" color="neutral" variant="ghost" size="lg" class="icon-btn"
+            v-if="headerAdd && pane && !compactPhone" icon="i-lucide-plus" color="neutral" variant="ghost" size="lg" class="icon-btn"
             :aria-label="t('New tab')" :title="t('New tab')" :disabled="offlineView" @click="newTab(pane.workspace)"
           />
           <UTooltip v-if="cell" :text="t('Open alone')">
             <UButton icon="i-lucide-maximize-2" color="neutral" variant="ghost" size="md" class="icon-btn cell-extra" :aria-label="t('Open alone')" :to="panePath(paneId)" />
           </UTooltip>
-          <UTooltip v-else-if="inTab && tabEnt" :text="t('Side by side')" :disabled="!desk">
+          <UTooltip v-else-if="inTab && tabEnt && !compactPhone" :text="t('Side by side')" :disabled="!desk">
             <button type="button" class="map-btn" :aria-label="desk ? t('Side by side') : t('Tab overview')" @click="openPlan">
               <TabMap :layout="tabEnt.layout" :panes="tabEnt.panes" :current="paneId" />
             </button>
@@ -600,7 +601,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
             v-if="controls.term" icon="i-lucide-square-terminal" color="neutral" variant="ghost" size="lg" class="icon-btn mode-btn"
             :class="{ on: mode === 'term' }" :aria-label="t('Terminal')" :aria-pressed="mode === 'term'" @click="toggleMode('term')"
           />
-          <UTooltip v-if="hasChat(pane) && (live || cell)" :text="t('Search')" :kbds="mode === 'chat' ? shortcutKbds('search-chat') : undefined" :disabled="!desk">
+          <UTooltip v-if="hasChat(pane) && (live || cell) && !compactPhone" :text="t('Search')" :kbds="mode === 'chat' ? shortcutKbds('search-chat') : undefined" :disabled="!desk">
             <UButton icon="i-lucide-search" color="neutral" variant="ghost" size="lg" class="icon-btn cell-extra" :class="{ on: searchOpen }" :aria-label="t('Search')" @click="toggleSearch" />
           </UTooltip>
           <UDropdownMenu v-if="!sheetMenus" :items="dropdownItems" :content="{ align: 'end', sideOffset: 6 }" :ui="{ content: 'hw-dropdown' }">
@@ -654,7 +655,11 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
     </button>
     <ChoicesPanel v-if="(prompt || screen) && !interactionOpen && !interactive && !termShown && eventsOpen && !offlineView && !machineDown" :pane-id="paneId" :prompt="prompt" :screen="screen" :keys="live" />
     <MenuPanel v-else-if="menu && !interactionOpen && !interactive && !termShown && eventsOpen && !offlineView && !machineDown" :pane-id="paneId" :menu="menu" :keys="live" @terminal="setMode('term')" />
-    <Keybar v-if="keybarShown" :ctl="ctl" />
+    <div v-if="keybarToggleShown" class="phone-keybar-controls">
+      <button type="button" class="phone-keybar-toggle" :class="{ on: phoneKeysOpen }" :aria-label="t('Show or hide terminal keys')" :aria-expanded="phoneKeysOpen" :aria-controls="keybarId"
+        @pointerdown.prevent @mousedown.prevent @click.stop="togglePhoneKeys"><UIcon :name="phoneKeysOpen ? 'i-lucide-chevron-down' : 'i-lucide-chevron-up'" /></button>
+    </div>
+    <Keybar v-if="keybarShown" :id="keybarId" :ctl="ctl" :compact="compactPhone" :terminal="termShown" @keyboard="toggleComposerKeyboard" />
     <Composer v-if="composerShown" ref="composer" :pane="pane" :pane-id="paneId" :send-keys="ctl.sendKeys" :conversation="mode === 'chat'" :term-shown="termShown" :esc-stops="!searchOpen" :take-back="mode === 'chat'" :unanswered="mode === 'chat' ? unanswered : 0" @sent="onSent" @show-terminal="setMode('term')" @show-unanswered="chatRef?.gotoUnanswered()" />
     </div>
     </div>

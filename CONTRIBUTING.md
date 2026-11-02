@@ -47,6 +47,27 @@ sent request, a stored value), not the wiring.
 | Component | `tests/components/*.test.ts` | `npx vitest run --project components` | Vue components mounted in a Nuxt environment (auto-imports, Nuxt UI) on happy-dom, with `mountSuspended` and `registerEndpoint` from `@nuxt/test-utils/runtime`. |
 | End to end | `tests/e2e/*.spec.ts` | `npm run build && npm run test:e2e -- tests/e2e/<name>.spec.ts --project chromium-phone` | The built app in Chromium and WebKit (Safari's engine, for iOS bugs), at iPhone and desktop sizes, against a fake Herdr server with neutral data. |
 
+**Where a test goes.** Browser tests are slow (2-3 s each, against milliseconds for a unit
+test) and they set the CI time, so each check goes to the fastest level that can catch it:
+
+- **Unit**: anything that can be: parsers, pure logic, utilities, server routes and their
+  guards, state transitions, every combination of a matrix.
+- **Component**: anything about one component (what it renders for a state, what it emits,
+  its labels and translations).
+- **End to end**: only what nothing else can test: a real browser (layout, focus, scroll,
+  overlays), touch or the iOS/Android keyboard, navigation and reload, the built server with
+  the fake Herdr end to end, WebSockets. One e2e test covers a user journey, not a variant of
+  a label, a style or a matrix: test one case in the browser and the variants below it.
+
+When you remove an e2e test because a faster one covers it, name that test in a comment
+(for example `tests/e2e/codex-self-update.spec.ts`).
+
+An e2e test never sits through an app timer (a poll, a toast, a debounced write): it moves
+Playwright's fake clock past it (`page.clock.install()` before the page opens, then
+`page.clock.fastForward`), or waits for the state itself. `tests/e2e/waits.ts` has the
+common cases: `boardServes` (the server's list of this test, not the previous one's) and
+`skipToast`.
+
 `npx vitest run` runs the unit and component projects together. For the end-to-end tests,
 install the browsers once with `npx playwright install --with-deps chromium webkit`; a single
 project and spec run with `npm run test:e2e -- tests/e2e/<name>.spec.ts --project=webkit-phone`
@@ -61,15 +82,30 @@ Repeated runs of entire files can take tens of minutes on a small machine.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs all of them, the type check and the leak check
 (gitleaks only: your `.leak-patterns` stays local). Pull requests and pushes run a light
-end-to-end set: every test on `chromium-phone` (two shards) and, on the other three projects,
-only the tests tagged with that project's name: `{ tag: '@webkit-phone' }` for a Safari/iOS
+end-to-end set: every test on `chromium-phone` (six shards) and, on the other three projects,
+only the tests tagged with that project's name (two shards for `webkit-phone`): `{ tag: '@webkit-phone' }` for a Safari/iOS
 journey, `'@chromium-desktop'` for a keyboard or split-view case, `'@webkit-desktop'` for iPad
 and desktop Safari. A test skipped on phones must carry one of these tags, or the run fails
-(`tests/e2e/scope.ts`). The whole suite on all four projects runs only on a manual run of the
-workflow and on release tags `vX.Y.Z`.
+(`tests/e2e/scope.ts`). The whole suite on all four projects also runs nightly on develop (18:17 UTC), on a manual
+run of the workflow and on release tags `vX.Y.Z`. GitHub loads schedules from the default
+branch, so the schedule becomes active once this workflow reaches main; each nightly job
+checks out the same resolved develop commit. Browser jobs cache downloaded apt packages by
+Ubuntu release, Playwright version and browser; apt still installs and validates dependencies
+on each fresh runner.
 `E2E_SCOPE=light npm run test:e2e -- --project=webkit-phone` reproduces the light selection
 locally; without `E2E_SCOPE`, a local run is the whole suite. CI retries a failed test once (it
 then shows as flaky); local runs never retry.
+
+Engine inputs are selected by `scripts/engine-changes.mjs` in the existing `changes`
+job. Ordinary interface PRs skip Rust entirely. Engine sources and build, Board
+integration or distribution inputs run the upstream full Linux check and its macOS
+platform selection through `engine-ci.yml`, from `engine/`. Renames count both paths;
+an unavailable diff selects Rust conservatively. Manual runs and release tags also
+select it. Rust caches use `engine/target`, OS, host target, compiler version and
+`engine/Cargo.lock`. The always-present `engine-checks` result passes when Rust was
+intentionally skipped and fails for failed or cancelled required checks. Existing
+`checks` and `e2e` check names remain unchanged. No publishing is performed here.
+
 
 ## Agent test rule
 
@@ -137,22 +173,30 @@ both change the account's default model. wherdr itself only uses "this session" 
 
 - **English everywhere developers look**: code, identifiers, comments, test names, server
   logs, commit messages, pull requests, issues and docs (README, CHANGELOG, CONTRIBUTING).
-- **The interface is bilingual (English / French)**: keys are written in English and the
-  French text lives in the `FR` dictionary of `app/utils/i18n.ts` (see Conventions below).
+- **The interface is English only**: text always goes through `t()` / `tl()` in
+  `app/utils/i18n.ts`. French translations are optional; the existing dictionary is inactive.
 - French only appears as data: translations, regular expressions matching French screens,
   and test fixtures reproducing real French text.
 
 ## Conventions
 
 - **Interface text** goes through `t()` / `tl()` (`app/utils/i18n.ts`). Write the English
-  text as the key, `t('Rename pane')`, and add its French translation to the `FR` dictionary
-  in the same file: it is required, `tests/i18n.test.ts` fails on a `t()` key without a French
-  entry and on an entry nothing uses. Text with variable parts uses `tl(en, fr)`, both written
-  in full: ``tl(`${n} agents`, `${n} agents`)``. A missing translation shows English, never
-  another language. Error messages the server sends to the UI are English keys too.
+  text as the key, `t('Rename pane')`. Text with variable parts uses `tl(en)`, written
+  in full: ``tl(`${n} agents`)``. No French translation is required. Keep the existing
+  French dictionary and optional second argument inactive. Error messages the server
+  sends to the UI are English keys too.
 - **Design**: follow the [design rules](docs/design.md) for every interface change.
 - **iOS**: keep `apple-mobile-web-app-status-bar-style` on `black` (with `black-translucent`,
   iOS 26 shortens the installed app from the bottom), and mind the keyboard and safe areas.
+- **Terminal input and IME**: xterm's `onData` does not distinguish a keystroke from
+  committed composition text, even a single ASCII character. Preserve the composition
+  lifecycle and the guard for the first data event after `compositionend`; a keydown with
+  `isComposing` or `keyCode === 229` must not clear it. Handle ordinary keydown in capture
+  on the terminal element before xterm emits data, so cancelling composition does not
+  swallow the next shortcut. Composition output and paste clear virtual modifiers and
+  stay text; ordinary keys still consume one-shot modifiers and preserve real Shift.
+  Keybar layout changes must preserve input focus and these contracts. The browser
+  regressions are in `tests/e2e/terminal-ime.spec.ts` and `terminal-modifiers.spec.ts`.
 - Server code lives in `server/` (Nitro), shared types and pure helpers in `shared/`, the
   client in `app/`.
 

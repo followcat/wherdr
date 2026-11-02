@@ -34,6 +34,8 @@ test.afterEach(async () => {
 })
 test.afterAll(() => fs.rmSync(root, { recursive: true, force: true }))
 
+test.use({ locale: 'fr-FR' })
+
 test('worker identity stays consistent during review on Home, Board and conversation', async ({ page, request }) => {
   test.setTimeout(60_000)
   fs.mkdirSync(dir, { recursive: true })
@@ -98,6 +100,10 @@ test('worker identity stays consistent during review on Home, Board and conversa
   await expect(history).toContainText('Out of allowance until tomorrow')
   await expect(history).toContainText('Reviewer')
   await expect(history.locator('time')).toHaveCount(2)
+  for (const time of await history.locator('time').all()) {
+    const english = await time.evaluate(el => new Date(el.getAttribute('datetime')!).toLocaleString('en'))
+    await expect(time).toHaveText(english)
+  }
   expect(await history.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
   await page.screenshot({ path: '.shots/identity-fallback-phone.png' })
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -105,10 +111,10 @@ test('worker identity stays consistent during review on Home, Board and conversa
   await page.evaluate(() => localStorage.setItem('herdrLanguage', 'fr'))
   await page.reload()
   await page.goto('/#/board?machine=&task=demo%2F83')
-  await panel.getByRole('button', { name: 'Tâche', exact: true }).click()
-  await expect(history).toContainText('Reprises')
-  await expect(history).toContainText('Relecteur')
-  await expect(history).toContainText('Repris par')
+  await panel.getByRole('button', { name: 'Task', exact: true }).click()
+  await expect(history).toContainText('Handovers')
+  await expect(history).toContainText('Reviewer')
+  await expect(history).toContainText('Taken over by')
   await expect(panel.locator('.board-panel-name > .avatar')).toHaveClass(/claude/)
 
 })

@@ -3,20 +3,25 @@
 //! tell: a file every test shares, one no test names, one that is not code or a page, a commit the branch lost.
 use std::path::{Path, PathBuf};
 
-/// A small repo laid out as this one is, with the script, and a first commit to pick from.
-struct Repo { dir: PathBuf, first: String }
+/// A small repo laid out as this one is, with the script, and a first commit to pick from: at the top of its repo, or
+/// in a folder of a larger one (`sub`, as engine/ of wherdr), whose other files are `top`'s.
+struct Repo { top: PathBuf, dir: PathBuf, first: String }
 impl Repo {
-    fn new() -> Repo {
-        let dir = std::env::temp_dir().join(format!("sw-changed-tests-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let mut r = Repo { dir, first: String::new() };
+    fn new() -> Repo { Repo::at("top", "") }
+    fn at(name: &str, sub: &str) -> Repo {
+        let top = std::env::temp_dir().join(format!("sw-changed-tests-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&top);
+        let dir = if sub.is_empty() { top.clone() } else { top.join(sub) };
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut r = Repo { top, dir, first: String::new() };
         for f in ["tests/main.rs", "tests/sync.rs", "tests/sync_conflict.rs", "tests/board_keys.rs", "tests/web_board.rs", "tests/guard.rs", "tests/common/mod.rs",
             "tests/far/mod.rs", "src/lib.rs", "crates/flow/src/lib.rs", "crates/flow/src/sync/conflict.rs", "crates/flow/src/finish/wrapup.rs", "crates/flow/src/board/keys.rs", "crates/board/src/board/view/panel/mod.rs", "docs/keys.md", "Cargo.toml"] { r.write(f, "x\n"); }
         r.write("tests/web_board.rs", "use crate::far;\nuse sw::finish::wrapup;\n");
         r.write("tests/guard.rs", "// reads docs/keys.md\n");
         std::fs::create_dir_all(r.dir.join("scripts")).unwrap();
         std::fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/changed-tests.sh"), r.dir.join("scripts/changed-tests.sh")).unwrap();
-        r.git(&["init", "-q"]); r.git(&["add", "-A"]); r.git(&["commit", "-qm", "first"]);
+        let top = r.top.display().to_string();
+        r.git(&["init", "-q", &top]); r.git(&["add", "-A", ":/"]); r.git(&["commit", "-qm", "first"]);
         r.first = r.git(&["rev-parse", "HEAD"]);
         r
     }
@@ -34,9 +39,9 @@ impl Repo {
         (String::from_utf8_lossy(&o.stdout).split_whitespace().collect::<Vec<_>>().join(" "), String::from_utf8_lossy(&o.stderr).trim().to_string())
     }
     /// Each change alone, from the first commit: a fresh start for the next.
-    fn alone(&self, f: &str) -> (String, String) { self.write(f, "changed\n"); let p = self.pick(&self.first); self.git(&["reset", "-q", "--hard", &self.first]); self.git(&["clean", "-qfd"]); p }
+    fn alone(&self, f: &str) -> (String, String) { self.write(f, "changed\n"); let p = self.pick(&self.first); self.git(&["reset", "-q", "--hard", &self.first]); self.git(&["clean", "-qfd", ":/"]); p }
 }
-impl Drop for Repo { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.dir); } }
+impl Drop for Repo { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.top); } }
 
 #[test]
 fn real_programs_the_shorter_check_picks_the_test_files_a_change_reaches_and_all_where_it_cannot_tell() {
@@ -66,4 +71,22 @@ fn real_programs_the_shorter_check_picks_the_test_files_a_change_reaches_and_all
     let lost = r.git(&["rev-parse", "HEAD"]);
     r.git(&["reset", "-q", "--hard", &r.first]);
     assert_eq!(r.pick(&lost), ("all".to_string(), format!("Every test runs: the branch no longer holds {lost}.")));
+}
+
+#[test]
+fn real_programs_inside_a_larger_repo_the_shorter_check_counts_only_its_own_folders_files() {
+    let r = Repo::at("nested", "engine");
+    // the larger repo's own files, changed, committed or new, reach no test
+    for f in ["app/page.vue", "package.json", "tests/e2e/board.spec.ts"] { std::fs::create_dir_all(r.top.join(f).parent().unwrap()).unwrap(); std::fs::write(r.top.join(f), "x\n").unwrap(); }
+    assert_eq!(r.pick(&r.first).0, "", "nothing of its own changed: no test file");
+    r.git(&["add", "-A", ":/"]); r.git(&["commit", "-qm", "outside"]);
+    assert_eq!(r.pick(&r.first).0, "");
+    // its own, by the paths from its folder, as at the top of a repo
+    assert_eq!(r.alone("crates/flow/src/board/keys.rs").0, "board_keys web_board");
+    assert_eq!(r.alone("tests/new_one.rs").0, "new_one");
+    assert_eq!(r.alone("Cargo.toml").1, "Every test runs: Cargo.toml is not a test, the program or a page: what it reaches is not known.");
+    // run from the larger repo's top, it still reads its own folder
+    r.write("tests/sync.rs", "changed\n");
+    let o = std::process::Command::new("/bin/sh").args(["engine/scripts/changed-tests.sh", &r.first]).current_dir(&r.top).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "sync");
 }

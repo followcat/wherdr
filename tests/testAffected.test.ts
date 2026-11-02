@@ -62,6 +62,11 @@ describe('affected test selector', () => {
     expect(changes.warning).toMatch(/merge-base/)
     expect(select([], available, changes.warning).broad).toBe(true)
   })
+  it('leaves engine sources to the conditional Rust workflow', () => {
+    const plan = select(['engine/src/main.rs', 'engine/tests/board.rs'], available, undefined)
+    expect(plan.broad).toBe(false)
+    expect(plan.tests).toEqual({}); expect(plan.e2e).toEqual({})
+  })
   it('does not run a browser for documentation or an unchanged tree', () => {
     for (const files of [[], ['README.md', 'docs/guide.md']]) {
       const plan = select(files, available, undefined)
@@ -101,7 +106,7 @@ describe('affected test selector', () => {
     writeFileSync(join(cwd, 'README.md'), '# Fixture')
     const result = spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/test-affected.mjs', import.meta.url)), '--base', 'base', '--dry-run', '--safari'], { cwd, encoding: 'utf8' })
     expect(result.status, result.stderr).toBe(0)
-    expect(result.stdout).toContain('Documentation only: no tests or browser required.')
+    expect(result.stdout).toContain('Documentation or engine only: no JS tests or browser required.')
     expect(result.stdout).toContain('"project": "webkit-phone"')
   })
   it('refuses a selection covering the entire Playwright suite before building', () => {

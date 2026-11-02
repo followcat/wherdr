@@ -1,7 +1,7 @@
 // A message shows in the conversation from the tap on Send: one bubble, from
 // "sending" to the server's record to the transcript, never two, never lost.
 import { describe, expect, it } from 'vitest'
-import { type OutboxItem, SETTLED_MS, addSending, failLocal, newOutboxId, prune, resend, settle, withOutbox } from '../app/utils/outbox'
+import { type OutboxItem, REPEAT_MS, SETTLED_MS, addSending, failLocal, isRepeat, newOutboxId, prune, recentSends, resend, settle, withOutbox } from '../app/utils/outbox'
 import { pendingQueue } from '../app/utils/pendingQueue'
 import type { ChatItem, QueuedMessage } from '../shared/types'
 
@@ -85,4 +85,31 @@ it('makes ids the server accepts, all different', () => {
   const ids = Array.from({ length: 500 }, newOutboxId)
   expect(new Set(ids).size).toBe(500)
   for (const id of ids) expect(id).toMatch(/^w-[a-z0-9]{1,32}$/)
+})
+
+// A dictation app can press Enter again while the page lags: the same text,
+// sent again a moment later, is that echo and not a new message.
+describe('outbox: an echo of the message just sent', () => {
+  const sent = [{ text: 'Fix the cache', at: T0 }]
+
+  it('is the exact same text within REPEAT_MS', () => {
+    expect(isRepeat(sent, 'Fix the cache', T0)).toBe(true)
+    expect(isRepeat(sent, 'Fix the cache', T0 + REPEAT_MS - 1)).toBe(true)
+  })
+
+  it('any change in the text is a new message', () => {
+    expect(isRepeat(sent, 'Fix the cache.', T0 + 10)).toBe(false)
+    expect(isRepeat(sent, 'fix the cache', T0 + 10)).toBe(false)
+    expect(isRepeat(sent, 'Fix the cache ', T0 + 10)).toBe(false)
+  })
+
+  it('a deliberate resend later goes', () => {
+    expect(isRepeat(sent, 'Fix the cache', T0 + REPEAT_MS)).toBe(false)
+  })
+
+  it('forgets old sends and keeps recent ones', () => {
+    const list = [{ text: 'old', at: T0 - REPEAT_MS }, { text: 'new', at: T0 - 1 }]
+    expect(recentSends(list, T0)).toEqual([{ text: 'new', at: T0 - 1 }])
+    expect(isRepeat(list, 'old', T0)).toBe(false)
+  })
 })

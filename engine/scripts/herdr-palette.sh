@@ -3,11 +3,11 @@
 # theme's colours), the names it accepts for a theme and how it reads a colour (src/config/theme.rs). The board draws
 # with these exactly as herdr does, so nothing is copied by hand. Run it with a herdr version to take that one's:
 #   sh scripts/herdr-palette.sh v0.9.3
-# It writes rs/herdr/palette.rs. herdr is Apache-2.0 (https://github.com/herdrdev/herdr); the file says so.
+# It writes crates/core/src/herdr/palette.rs. herdr is Apache-2.0 (https://github.com/herdrdev/herdr); the file says so.
 set -eu
 tag=${1:-v0.9.3}
 base="https://raw.githubusercontent.com/herdrdev/herdr/$tag/src"
-out="$(dirname "$0")/../rs/herdr/palette.rs"
+out="$(dirname "$0")/../crates/core/src/herdr/palette.rs"
 tmp=$(mktemp -d)
 curl -fsSL "$base/app/state.rs" -o "$tmp/state.rs"
 curl -fsSL "$base/config/theme.rs" -o "$tmp/theme.rs"

@@ -47,7 +47,7 @@ jobs:
         run: npm run check -- --all
 
   macos:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
 
@@ -76,4 +76,8 @@ jobs:
           GIT_AUTHOR_EMAIL: ci@example.com
           GIT_COMMITTER_NAME: ci
           GIT_COMMITTER_EMAIL: ci@example.com
-        run: npm run check plan-sandbox plan-steps detached-jobs home-folder-more finish-commit warm-start take-over-more coordinator-levels board-coordinators-inks
+        # Warm-start probes rustc; other fixtures mutate HOME in the same test
+        # process. Separate invocations keep its compiler identity consistent.
+        run: |
+          npm run check plan-sandbox plan-steps detached-jobs home-folder-more finish-commit take-over-more coordinator-levels board-coordinators-inks
+          npm run check warm-start

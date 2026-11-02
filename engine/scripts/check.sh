@@ -45,8 +45,10 @@ command -v cargo >/dev/null 2>&1 || quit "The check needs Rust (cargo): https://
 cache="${XDG_CACHE_HOME:-$HOME/.cache}/herdr-projects-check"
 stamp=""
 if git rev-parse --git-dir >/dev/null 2>&1; then
+  # Only this folder's files: it may sit inside a larger repo (engine/ of wherdr), whose other files change nothing here.
   idx=$(mktemp); cp "$(git rev-parse --git-path index)" "$idx" 2>/dev/null || true
-  tree=$(GIT_INDEX_FILE="$idx" git add -A >/dev/null 2>&1 && GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null || true); rm -f "$idx"
+  pre=$(git rev-parse --show-prefix 2>/dev/null || true)
+  tree=$(GIT_INDEX_FILE="$idx" git add -A -- . >/dev/null 2>&1 && GIT_INDEX_FILE="$idx" git write-tree --prefix="$pre" 2>/dev/null || true); rm -f "$idx"
   [ -n "$tree" ] && stamp="$tree-$(rustc -V | tr -c 'A-Za-z0-9.\n' '_')-$(printf '%s' "$names" | tr -c 'A-Za-z0-9_\n' '_')"
 fi
 # The shorter check is remembered as itself, from its commit: what passed is its own pick of the tests. What the whole

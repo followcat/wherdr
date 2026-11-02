@@ -170,6 +170,16 @@ A shared `target/` instead of the cache was left out: cargo lets one build at a 
 wait on each other, and the program it builds for the tests is one file at one place there, which two tasks would
 overwrite under each other's tests.
 
+### Inside a larger repo
+
+The program may sit in a folder of a larger repo (`engine/` of wherdr) rather than at the top of its own. Its commands
+then run from that folder (`cd engine && npm run check`, `cargo build --profile quick`): `.cargo/config.toml` and the
+linker it names (`scripts/ld/`) are found from there, and `--manifest-path` from the top would miss them. The scripts
+count only that folder's files, by paths from it: the check's record of what passed (`scripts/check.sh`), the test
+files a change reaches (`scripts/changed-tests.sh`), and what a warm start builds again (`scripts/warm-start.sh`).
+`herdr-projects docs` follows `HERDR_PROJECTS_REPO` only to the program's own folder or to its `engine/`, so the made
+pages and the map are never written into the larger repo's files.
+
 ### A new worktree starts warm
 
 The cache keeps the libraries, not the program's own code, and a build of that alone took about 35 seconds. So the setup
