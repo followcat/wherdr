@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { devinModelSetEcho, parseDevinModelMenu } from '../server/utils/devinMenu'
+import { devinMenuOpen, devinModelSetEcho, parseDevinModelMenu } from '../server/utils/devinMenu'
 
 // Live capture (wA:p1, Devin v3000.11.x): /model opens a searchable picker.
 const MENU = `
@@ -56,4 +56,26 @@ it('reads the alt+↵ confirmation echo', () => {
   expect(devinModelSetEcho(CONFIRMED)).toBe('Grok 4.7')
   expect(devinModelSetEcho('✓ Model set to SWE-2 for this session')).toBe('SWE-2')
   expect(devinModelSetEcho('Model set to X globally')).toBeNull()
+})
+
+it('keeps Thinking/1M-Context rows and reports a missing cursor as -1', () => {
+  const m = parseDevinModelMenu(`
+  Claude Opus 4.6                                  Thinking On      1M Context Off
+  Claude Opus 4.7                                  ◼◼◼◼◼    Medium
+↑↓ select · ←→ effort · ↵ confirm · alt+↵ this session only · esc cancel
+`)
+  expect(m!.options.map(o => o.label)).toEqual(['Claude Opus 4.6', 'Claude Opus 4.7'])
+  expect(m!.options[0]!.hint).toContain('Thinking On')
+  expect(m!.cursor).toBe(-1) // no ❭ marker — callers must refuse to move
+})
+
+it('devinMenuOpen tracks the legend even with zero parsed options', () => {
+  const empty = `
+/ no-such-model
+────────────────────────────────────────
+↑↓ select · ←→ effort · ↵ confirm · alt+↵ this session only · esc cancel
+`
+  expect(devinMenuOpen(empty)).toBe(true)
+  expect(parseDevinModelMenu(empty)).toBeNull()
+  expect(devinMenuOpen(CONFIRMED)).toBe(false)
 })
