@@ -741,6 +741,11 @@ defineExpose({
         <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onFiles">
         <input ref="anyFileInput" type="file" multiple hidden data-testid="attach-any" @change="onFiles">
         <ModelPicker v-if="pane && (pane.agent === 'claude' || pane.agent === 'codex' || pane.agent === 'omp')" :pane="pane" />
+        <span v-else-if="pane?.agent === 'devin' && pane.model?.label" class="model-pick-wrap">
+          <span class="model-pick model-pick-static" role="status" :aria-label="`${t('Model')} : ${pane.model.label}`">
+            <span class="model-name">{{ pane.model.label }}</span>
+          </span>
+        </span>
         <span v-if="hint && suggestion" class="prompt-hint"><UKbd value="tab" size="sm" /> {{ t('suggestion') }} <span class="sep">·</span> <UKbd value="enter" size="sm" /> {{ t('send') }}</span>
         <span v-else-if="hint" class="prompt-hint"><UKbd value="enter" size="sm" /> {{ t('send') }} <span class="sep">·</span> <UKbd value="shift" size="sm" /><UKbd value="enter" size="sm" /> {{ t('new line') }}</span>
         <span v-else-if="desk && escStops && stopMode && interrupting !== 'running'" class="prompt-hint"><UKbd value="escape" size="sm" /> {{ tl('stop', 'arrêter') }}</span>

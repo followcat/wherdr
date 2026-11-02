@@ -8,16 +8,15 @@
   A command the agent proposes (shell code block, or inline `! command`) can be copied without
   its prompt, or run in the agent's shell mode (`!`, Claude Code, Codex and omp) after you
   confirm the full command.
-- **Devin conversations**: read the local CLI's SQLite history on the machine running
-  the agent, including its current main branch, tool results and saved images. Python 3.7 or later
-  is required on that machine. Install the Herdr integration with
-  `herdr integration install devin`, then start or resume Devin so it reports its session.
-  Same-directory sessions are never selected by recency. The reader follows
-  `DEVIN_SESSIONS_DIR`, then `XDG_DATA_HOME/devin/cli`, otherwise
-  `~/.local/share/devin/cli`. It opens `sessions.db` read-only, including committed WAL
-  data; no export flag or database copy is needed. New text appears when Devin saves
-  it, which may be less frequent than the terminal's streaming display. Cloud sessions
-  and the experimental file-based session store are not supported by this reader.
+- **Devin conversations**: read the local CLI's ATIF transcript on the machine running
+  the agent (`~/.local/share/devin/cli/transcripts/<session-id>.json`, ATIF-v1.7 as written
+  by Devin CLI 3000.11.234), including tool results and saved images. Install the Herdr
+  integration with `herdr integration install devin`, then start or resume Devin so it
+  reports its session. Same-directory sessions are never selected by recency. The reader
+  follows `DEVIN_SESSIONS_DIR`, then `XDG_DATA_HOME/devin/cli`, otherwise
+  `~/.local/share/devin/cli`. No export flag is needed: Devin writes the JSON file next
+  to its CLI data. New text appears when Devin saves it, which may be less frequent than
+  the terminal's streaming display. Cloud sessions are not supported by this reader.
 - **Interactive agent screens**: in a conversation, an uncertain menu or panel opens the
   pane's real terminal in a modal window, with arrows, Enter, Escape, Tab, digits and y/n.
   The rest of the app waits behind a scrim (the window fills the screen on a phone); in a

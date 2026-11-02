@@ -1,70 +1,69 @@
-import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { statSync } from 'node:fs'
-import { join } from 'node:path'
-import { DEVIN_QUERY } from './devinStore'
-import { boundedOutput, type ShellExec } from './fsx'
+import path from 'node:path'
 import type { ChatItem, ChatResponse, ModelInfo } from '../../shared/types'
 import type { TranscriptPane } from './transcripts'
 import { excerpt, matchAt } from '../../shared/searchText'
-import { cleanModelName } from './models'
+import { ompModelLabel } from './models'
+import { type MachineFs, localFs } from './fsx'
+import { HerdrError } from './herdr'
 
-// JSON saved by Devin is versioned independently of wherdr.
+// JSON saved by Devin is versioned independently of wherdr (ATIF-v1.7).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = Record<string, any>
-interface Row { id: number, message: Json, digest: string }
-interface Snapshot { available: boolean, file?: string, model?: string, rows?: Row[], context?: Row[], start?: number, prefix?: string, rewritten?: boolean, limited?: boolean }
+type Step = Json
+interface ImagePayload { mimeType: string, data?: string, path?: string }
+interface AtifDoc {
+  file: string
+  model: string | null
+  steps: Step[]
+  images: Map<string, ImagePayload[]>
+}
 export interface DevinOptions { since?: string, from?: number | null, before?: number | null, anchor?: string }
-const hash = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 24)
-// ASCII argv also works when SSH or a service starts under the C locale.
-const jsonArgument = (value: unknown) => JSON.stringify(value).replace(/[\u007f-\uffff]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
-const clip = (s: unknown) => typeof s === 'string' ? s.slice(0, 20000) : ''
-const tokenParts = (token = '') => {
-  const m = /^devin:(devin-[a-f0-9]{24}):(\d+):([a-f0-9]{24}):[a-f0-9]{24}(?=[~#]|$)/.exec(token)
-  return m ? { file: m[1]!, start: Number(m[2]), prefix: m[3]! } : null
-}
-// Same resolution the query script uses (devinStore.ts).
-function sessionsDb(home: string): string {
-  const dir = process.env.DEVIN_SESSIONS_DIR
-    || (process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, 'devin/cli') : join(home, '.local/share/devin/cli'))
-  return join(dir, 'sessions.db')
+
+const PAGE_ITEMS = 120
+const MAX_READ_BYTES = 24 * 1024 * 1024
+const MAX_TEXT = 20000
+const FAIL_QUIET_MS = 1500
+const IMAGE_TYPES = /^image\/(?:png|jpeg|gif|webp|avif)$/
+const hash12 = (s: string) => createHash('sha1').update(s).digest('hex').slice(0, 12)
+const clip = (s: unknown) => typeof s === 'string' ? s.slice(0, MAX_TEXT) : ''
+const genOf = (st: { mtimeMs: number, ino?: number }) => `${st.ino ? `${st.ino}-` : ''}${Math.round(st.mtimeMs * 1000)}`
+const HEAD = /^(.*):(\d+):(null|\d+):(?:(\d+)-)?(\d+)(!?)(?=[/~#]|$)/
+const ANCHOR = /\/(\d+)\.([0-9a-f]{12})(?=[~#]|$)/
+
+function isMissing(e: unknown): boolean {
+  const err = e as { code?: string, message?: string } | null
+  if (!err) return false
+  if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return true
+  return err.code === 'remote' && /no such file|not a directory|introuvable/i.test(err.message || '')
 }
 
-function localQuery(home: string, request: Json, maxBytes: number): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('python3', ['-X', 'utf8', '-c', DEVIN_QUERY, home, jsonArgument(request)], { stdio: ['ignore', 'pipe', 'pipe'] })
-    const out = boundedOutput(maxBytes)
-    const err = boundedOutput(4096)
-    let timedOut = false
-    const timer = setTimeout(() => { timedOut = true; child.kill() }, 15000)
-    child.stdout.on('data', (b: Buffer) => { if (!out.push(b)) child.kill() })
-    child.stderr.on('data', (b: Buffer) => { if (!err.push(b)) child.kill() })
-    child.on('error', () => { clearTimeout(timer); reject(new Error('Python 3 is required to read Devin conversations')) })
-    child.on('close', code => {
-      clearTimeout(timer)
-      if (timedOut || out.over) return reject(new Error('Devin conversation read exceeded its limit'))
-      const body = out.take()
-      if (code !== 0) {
-        let message = 'Unable to read Devin conversation'
-        try { message = JSON.parse(body.toString()).error || message } catch { /* process failed before JSON output */ }
-        reject(new Error(message))
-      } else resolve(body)
-    })
-  })
+export function cliDir(home: string, honorEnv = true): string {
+  if (honorEnv) {
+    const sessions = process.env.DEVIN_SESSIONS_DIR
+    if (sessions) return sessions
+    const xdg = process.env.XDG_DATA_HOME
+    if (xdg) return path.join(xdg, 'devin/cli')
+  }
+  return path.join(home, '.local/share/devin/cli')
 }
 
-function blocks(message: Json): Json[] {
-  const parts = message.metadata?.extensions?.['chisel/acp-content-blocks']
-  if (Array.isArray(parts)) return parts
-  return Array.isArray(message.content) ? message.content : []
+export function transcriptPath(home: string, session: string, honorEnv = true): string | null {
+  if (!session || /[/\\]|\0/.test(session)) return null
+  return path.join(cliDir(home, honorEnv), 'transcripts', `${session}.json`)
 }
-function images(value: unknown): Json[] {
-  if (Array.isArray(value)) return value.flatMap(images)
-  if (!value || typeof value !== 'object') return []
-  const obj = value as Json
-  if (obj.type === 'image' && typeof obj.data === 'string' && typeof obj.mimeType === 'string') return [obj]
-  return Object.values(obj).flatMap(images)
+
+function asList(value: unknown): Json[] {
+  return Array.isArray(value) ? value.filter(v => v && typeof v === 'object') as Json[] : []
 }
+
+function isUserStep(step: Step): boolean {
+  if (step.is_copied_context === true) return false
+  if (step.metadata?.is_user_input === false) return false
+  if (step.metadata?.is_user_input === true) return true
+  return step.source === 'user'
+}
+
 function contentText(value: unknown): string {
   if (typeof value === 'string') return clip(value)
   if (Array.isArray(value)) return value.map(contentText).filter(Boolean).join('\n')
@@ -75,145 +74,422 @@ function contentText(value: unknown): string {
   if (obj.type === 'content') return contentText(obj.content)
   return ''
 }
-function toolData(call: Json, result?: Row) {
-  const meta = result?.message.metadata?.extensions || {}
-  const rich = meta['chisel/tool_call_content'] || []
-  const output = result ? contentText(result.message.content) : ''
-  const exit = meta['chisel/terminal_output']?.exit?.exit_code ?? meta['chisel/tool_result_meta']?.exit_code
-  return { output, rich, error: meta['chisel/tool_result_meta']?.success === false || (typeof exit === 'number' && exit !== 0), title: call.name || 'Tool' }
+
+function images(value: unknown): Json[] {
+  if (Array.isArray(value)) return value.flatMap(images)
+  if (!value || typeof value !== 'object') return []
+  const obj = value as Json
+  if (obj.type === 'image') return [obj]
+  return Object.values(obj).flatMap(images)
 }
 
-export function parseDevin(snapshot: Snapshot): ChatItem[] {
-  const rows = snapshot.rows || []
-  const results = new Map<string, Row>()
-  for (const r of [...rows, ...snapshot.context || []]) if (r.message.role === 'tool' && typeof r.message.tool_call_id === 'string') results.set(r.message.tool_call_id, r)
-  const items: ChatItem[] = []
-  for (const row of rows) {
-    const m = row.message
-    const ts = typeof m.metadata?.created_at === 'string' ? m.metadata.created_at : null
-    const ref = (slot: string) => `${row.id}:${slot}`
-    if (m.role === 'user') {
-      if (m.metadata?.is_user_input !== true) continue
-      const parts = blocks(m)
-      const text = clip(m.content) || contentText(parts)
-      const count = images(parts).length
-      if (text || count) items.push({ role: 'user', text, ts, ref: ref('u'), ...(count ? { images: count } : {}) })
+function imagePayload(img: Json): ImagePayload | null {
+  const mime = String(img.mimeType || img.media_type || img.source?.media_type || 'image/png')
+  const data = typeof img.data === 'string' && img.data ? img.data
+    : typeof img.extra?.data === 'string' && img.extra.data ? img.extra.data
+      : typeof img.source?.data === 'string' && img.source.data ? img.source.data
+        : undefined
+  const file = typeof img.source?.path === 'string' && img.source.path !== 'inline' ? img.source.path
+    : typeof img.path === 'string' ? img.path
+      : undefined
+  if (!data && !file) return mime ? { mimeType: mime } : null
+  return { mimeType: mime, ...(data ? { data } : {}), ...(file ? { path: file } : {}) }
+}
+
+function payloads(value: unknown): ImagePayload[] {
+  return images(value).map(imagePayload).filter((img): img is ImagePayload => Boolean(img))
+}
+
+function extraBlocks(step: Step): unknown {
+  return step.metadata?.extensions?.['chisel/acp-content-blocks']
+}
+
+function toolCalls(step: Step): Json[] {
+  return asList(step.tool_calls).map(call => ({
+    id: typeof call.tool_call_id === 'string' ? call.tool_call_id : call.id,
+    name: call.function_name || call.name || 'Tool',
+    arguments: call.arguments && typeof call.arguments === 'object' ? call.arguments : {},
+    extra: call.extra,
+  })).filter(call => typeof call.id === 'string')
+}
+
+function observations(steps: Step[]): Map<string, { step: Step, result: Json }> {
+  const found = new Map<string, { step: Step, result: Json }>()
+  for (const step of steps) {
+    for (const result of asList(step.observation?.results)) {
+      const id = result.source_call_id
+      if (typeof id === 'string' && !found.has(id)) found.set(id, { step, result })
     }
-    if (m.role !== 'assistant') continue
-    const thinking = typeof m.thinking === 'string' ? m.thinking : m.thinking?.thinking
+  }
+  return found
+}
+
+function toolError(result: Json | undefined): boolean {
+  if (!result) return false
+  const extra = result.extra || result.metadata?.extensions || {}
+  const meta = extra['chisel/tool_result_meta'] || extra
+  const exit = meta.exit_code ?? extra.exit_code ?? extra.exit?.exit_code ?? extra['chisel/terminal_output']?.exit?.exit_code
+  return meta.success === false || extra.success === false || (typeof exit === 'number' && exit !== 0)
+}
+
+function latestModel(doc: AtifDoc): string | null {
+  for (let i = doc.steps.length - 1; i >= 0; i--) {
+    const step = doc.steps[i]!
+    const name = step.metadata?.generation_model || step.extra?.generation_model || step.model_name
+    if (typeof name === 'string' && name) return name
+  }
+  return doc.model
+}
+
+function resultImages(hit: { step: Step, result: Json } | undefined): ImagePayload[] {
+  if (!hit) return []
+  return payloads(hit.result.content).concat(payloads(hit.result.extra), payloads(hit.result.metadata))
+}
+
+export function parseDevin(steps: Step[], all: Step[] = steps): ChatItem[] {
+  const results = observations(all)
+  const items: ChatItem[] = []
+  for (const step of steps) {
+    if (step.is_copied_context === true || step.source === 'system') continue
+    const ts = typeof step.timestamp === 'string' ? step.timestamp
+      : typeof step.metadata?.created_at === 'string' ? step.metadata.created_at
+        : null
+    const id = Number(step.step_id)
+    if (!Number.isSafeInteger(id) || id < 1) continue
+    const ref = (slot: string) => `${id}:${slot}`
+    if (isUserStep(step)) {
+      const parts = step.message
+      const blocks = extraBlocks(step)
+      const text = contentText(parts) || contentText(blocks)
+      const count = images(parts).length + images(blocks).length
+      if (text || count) items.push({ role: 'user', text, ts, ref: ref('u'), ...(count ? { images: count } : {}) })
+      continue
+    }
+    if (step.source !== 'agent' && step.source !== undefined) continue
+    const thinking = typeof step.reasoning_content === 'string' ? step.reasoning_content : ''
     if (thinking) items.push({ role: 'thinking', text: clip(thinking), ts, ref: ref('h') })
-    const text = contentText(m.content)
-    const count = images(blocks(m)).length
+    const text = contentText(step.message)
+    const count = images(step.message).length + images(extraBlocks(step)).length
     if (text || count) items.push({ role: 'assistant', text, ts, ref: ref('a'), ...(count ? { images: count } : {}) })
-    for (const [index, call] of (Array.isArray(m.tool_calls) ? m.tool_calls : []).entries()) {
-      if (typeof call.id !== 'string') continue
-      const result = results.get(call.id)
-      const data = toolData(call, result)
+    for (const [index, call] of toolCalls(step).entries()) {
+      const hit = results.get(call.id)
+      const output = hit ? contentText(hit.result.content) : ''
       const input = call.arguments || {}
-      const summary = input.command || input.file_path || input.path || input.query || input.pattern || data.title
-      const rich = result?.message.metadata?.extensions?.['chisel/tool_call_content'] || data.rich
-      const count = images(rich).length
-      items.push({ role: 'tool', name: call.name || data.title, text: clip(summary), ts,
-        ref: count && result ? `${result.id}:r` : ref(`t${index}`), ...(data.output ? { out: data.output } : {}),
-        ...(data.error ? { error: true } : {}), ...(count ? { images: count } : {}) })
+      const title = call.name || 'Tool'
+      const summary = input.command || input.file_path || input.path || input.query || input.pattern || title
+      const imgCount = resultImages(hit).length
+      const resultId = hit ? Number(hit.step.step_id) : id
+      items.push({
+        role: 'tool', name: title, text: clip(String(summary || title)), ts,
+        ref: imgCount && hit ? `${resultId}:r` : ref(`t${index}`),
+        ...(output ? { out: output } : {}),
+        ...(toolError(hit?.result) ? { error: true } : {}),
+        ...(imgCount ? { images: imgCount } : {}),
+      })
     }
   }
   return items
 }
 
-export function createDevinTranscripts({ home, exec, cacheMs = 1500 }: { home: string, exec?: ShellExec, cacheMs?: number }) {
-  const pending = new Map<string, Promise<Snapshot>>()
-  // Each query is a python3 spawn + a SQLite read; the chat view polls a few
-  // times a second. Local reads cache against the store's own signature —
-  // sessions.db and its WAL — so any committed write re-reads while quiet
-  // polls stay free. Remote reads (SSH exec) have no cheap signature and
-  // fall back to a short TTL.
-  const cached = new Map<string, { at: number, sig: string, snapshot: Snapshot }>()
-  const sigOf = (suffix: string) => { try { const s = statSync(sessionsDb(home) + suffix); return `${s.size}:${s.mtimeMs}` } catch { return 'x' } }
-  const dbSignature = () => `${sigOf('')}/${sigOf('-wal')}`
-  function cachedGet(key: string): Snapshot | null {
-    const hit = cached.get(key)
-    if (!hit) return null
-    if (exec ? Date.now() - hit.at < cacheMs : hit.sig === dbSignature()) return hit.snapshot
-    if (!exec) cached.delete(key)
-    return null
+function collectImages(steps: Step[]): Map<string, ImagePayload[]> {
+  const results = observations(steps)
+  const found = new Map<string, ImagePayload[]>()
+  const add = (ref: string, list: ImagePayload[]) => { if (list.length) found.set(ref, list) }
+  for (const step of steps) {
+    if (step.is_copied_context === true || step.source === 'system') continue
+    const id = Number(step.step_id)
+    if (!Number.isSafeInteger(id) || id < 1) continue
+    if (isUserStep(step)) {
+      add(`${id}:u`, payloads(step.message).concat(payloads(extraBlocks(step))))
+      continue
+    }
+    if (step.source !== 'agent' && step.source !== undefined) continue
+    add(`${id}:a`, payloads(step.message).concat(payloads(extraBlocks(step))))
+    for (const call of toolCalls(step)) {
+      const hit = results.get(call.id)
+      const rich = resultImages(hit)
+      if (rich.length && hit) add(`${Number(hit.step.step_id)}:r`, rich)
+    }
   }
-  async function query(session: string, op: string, options: Json = {}): Promise<Snapshot> {
-    const request = { session, op, ...options }
-    const key = JSON.stringify(request)
-    const hit = cachedGet(key)
-    if (hit) return hit
-    const known = pending.get(key)
+  return found
+}
+
+function normalize(raw: Json, file: string): AtifDoc {
+  const steps = Array.isArray(raw.steps) ? raw.steps.filter((s: unknown) => s && typeof s === 'object') as Step[] : []
+  const model = typeof raw.agent?.model_name === 'string' ? raw.agent.model_name : null
+  return { file, model, steps, images: collectImages(steps) }
+}
+
+function pageTooLarge(steps: Step[], maxPageBytes: number): boolean {
+  let used = 0
+  for (const step of steps) {
+    used += Buffer.byteLength(JSON.stringify(step))
+    if (used > maxPageBytes) return true
+  }
+  return false
+}
+
+function takeVisible(steps: Step[], all: Step[], limit: number): { steps: Step[], start: number, items: ChatItem[] } {
+  const kept: Step[] = []
+  let visible = 0
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const step = steps[i]!
+    kept.push(step)
+    visible += parseDevin([step], all).length
+    if (visible >= limit) break
+  }
+  kept.reverse()
+  const items = parseDevin(kept, all)
+  const start = kept.length < steps.length && items[0]?.ref ? Number(String(items[0].ref).split(':')[0]) || 0 : 0
+  return { steps: kept, start, items }
+}
+
+function prefixOf(steps: Step[], start: number): string {
+  return hash12(JSON.stringify(steps.filter(s => Number(s.step_id) < start).map(s => s.step_id)))
+}
+
+function stripImages(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripImages)
+  if (!value || typeof value !== 'object') return value
+  const obj = value as Json
+  if (obj.type === 'image') {
+    const next = { ...obj }
+    if (typeof next.data === 'string') next.data = ''
+    if (next.extra && typeof next.extra === 'object') next.extra = { ...next.extra, data: '' }
+    if (next.source && typeof next.source === 'object') next.source = { ...next.source, data: '' }
+    return next
+  }
+  const next: Json = {}
+  for (const [k, v] of Object.entries(obj)) next[k] = stripImages(v)
+  return next
+}
+
+function headOf(token: string | null | undefined) {
+  const m = HEAD.exec(String(token || ''))
+  if (!m) return null
+  return { file: m[1]!, size: Number(m[2]), from: m[3] === 'null' ? null : Number(m[3]), ino: m[4] ? Number(m[4]) : null, gen: `${m[4] ? `${m[4]}-` : ''}${m[5]}` }
+}
+
+function anchorOf(token: string | null | undefined) {
+  const m = ANCHOR.exec(String(token || ''))
+  return m ? { start: Number(m[1]), hash: m[2]! } : null
+}
+
+function hasStep(steps: Step[], id: number): boolean {
+  return id === 0 || steps.some(s => Number(s.step_id) === id)
+}
+
+export function createDevinTranscripts({
+  home, fs = localFs, now = Date.now, maxPageBytes = MAX_READ_BYTES, failQuietMs = FAIL_QUIET_MS,
+}: {
+  home: string
+  fs?: MachineFs
+  now?: () => number
+  maxPageBytes?: number
+  failQuietMs?: number
+}) {
+  const honorEnv = fs === localFs
+  const loaded = new Map<string, { gen: string, size: number, doc: AtifDoc }>()
+  const lastGood = new Map<string, ChatResponse>()
+  const lastModel = new Map<string, ModelInfo | null>()
+  const failAt = new Map<string, number>()
+  const inflight = new Map<string, Promise<AtifDoc>>()
+
+  function pathOf(session: string): string | null {
+    return transcriptPath(home, session, honorEnv)
+  }
+
+  function quiet(session: string): boolean {
+    const at = failAt.get(session)
+    return at !== undefined && now() - at < failQuietMs
+  }
+
+  async function statFile(file: string) {
+    const st = await fs.stat(file)
+    if (!st.isFile) throw Object.assign(new Error('not found'), { code: 'ENOENT' })
+    return st
+  }
+
+  async function readDoc(file: string, size: number, gen: string): Promise<AtifDoc> {
+    const hit = loaded.get(file)
+    if (hit && hit.gen === gen && hit.size === size) return hit.doc
+    const key = `${file}|${gen}|${size}`
+    const known = inflight.get(key)
     if (known) return known
     const work = (async () => {
-      // Sampled before the read: a write landing mid-query mismatches the
-      // entry instead of caching a stale snapshot under a fresh signature.
-      const sig = exec ? '' : dbSignature()
-      const maxBytes = op === 'image' ? 84 * 1024 * 1024 : 24 * 1024 * 1024
-      let body: Buffer
-      if (exec) {
-        const r = await exec('python3 -X utf8 -c "$1" "$2" "$3"', [DEVIN_QUERY, home, jsonArgument(request)], { timeoutMs: 15000, maxBytes })
-        if (r.code !== 0) {
-          let error = r.code === 127 ? 'Python 3 is required to read Devin conversations' : 'Unable to read Devin conversation on the remote machine'
-          try { error = JSON.parse(r.stdout.toString()).error || error } catch { /* SSH or runtime unavailable */ }
-          throw new Error(error)
-        }
-        body = r.stdout
-      } else body = await localQuery(home, request, maxBytes)
-      const snapshot = JSON.parse(body.toString('utf8')) as Snapshot
-      // Errors are never cached: a transient SSH/runtime failure retries fast.
-      // Image payloads (up to 84 MiB) stay out — the 64-entry cap counts
-      // requests, not bytes.
-      if (op !== 'image') {
-        cached.set(key, { at: Date.now(), sig, snapshot })
-        if (cached.size > 64) cached.delete(cached.keys().next().value!)
-      }
-      return snapshot
+      if (size > MAX_READ_BYTES) throw new Error('Devin conversation exceeds the supported size limit')
+      const buf = await fs.read(file, 0, size)
+      let raw: Json
+      try { raw = JSON.parse(buf.toString('utf8')) }
+      catch { throw new Error('Unsupported Devin transcript format') }
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Unsupported Devin transcript format')
+      const doc = normalize(stripImages(raw) as Json, path.basename(file))
+      doc.images = collectImages(Array.isArray(raw.steps) ? raw.steps : [])
+      loaded.set(file, { gen, size, doc })
+      if (loaded.size > 32) loaded.delete(loaded.keys().next().value!)
+      return doc
     })()
-    pending.set(key, work)
-    try { return await work } finally { pending.delete(key) }
+    inflight.set(key, work)
+    try { return await work }
+    finally { inflight.delete(key) }
   }
+
+  function failOpen(session: string, e: unknown, opts: DevinOptions, base: { available: true, session: string }): never | ChatResponse {
+    if (isMissing(e)) {
+      lastGood.delete(session)
+      lastModel.delete(session)
+      failAt.delete(session)
+      return { available: false, reason: 'not_found' }
+    }
+    const good = lastGood.get(session)
+    const first = !failAt.has(session)
+    failAt.set(session, now())
+    if (good) return { available: true, file: good.file, session, token: opts.since || good.token, unchanged: true }
+    if (first) throw e
+    throw new HerdrError('internal', 'Unable to read Devin conversation')
+  }
+
+  async function load(session: string): Promise<{ st: Awaited<ReturnType<typeof statFile>>, file: string, doc: AtifDoc } | null> {
+    const file = pathOf(session)
+    if (!file) return null
+    const st = await statFile(file)
+    const doc = await readDoc(file, st.size, genOf(st))
+    return { st, file, doc }
+  }
+
   async function chat(pane: TranscriptPane, opts: DevinOptions = {}): Promise<ChatResponse> {
-    if (!pane.agentSession) return { available: false, reason: 'not_found' }
-    const r = await query(pane.agentSession, 'page', { from: opts.from, before: opts.before, anchor: tokenParts(opts.anchor || opts.since) })
-    if (!r.available) return { available: false, reason: 'not_found' }
-    const items = parseDevin(r)
-    const token = `devin:${r.file}:${r.start}:${r.prefix}:${hash(JSON.stringify([r.rows?.map(n => n.digest), r.context?.map(n => n.digest), r.model, items]))}`
-    const base = { available: true, file: r.file, session: pane.agentSession }
-    if (opts.before != null) return { ...base, older: true, items, start: r.start, ...(r.rewritten ? { rewritten: true } : {}) }
-    if (!r.rewritten && token === opts.since) return { ...base, token, unchanged: true }
-    return { ...base, token, items, start: r.start, queue: [], ...(r.rewritten ? { rewritten: true } : {}) }
+    const session = pane.agentSession
+    if (!session) return { available: false, reason: 'not_found' }
+    const base = { available: true as const, session }
+    if (quiet(session)) return failOpen(session, new HerdrError('internal', 'Unable to read Devin conversation'), opts, base)
+    try {
+      const got = await load(session)
+      if (!got) return { available: false, reason: 'not_found' }
+      const { st, file, doc } = got
+      failAt.delete(session)
+      const fileId = path.basename(file)
+      const gen = genOf(st)
+      const from = opts.from === undefined ? null : opts.from
+      const prev = headOf(opts.since)
+      if (!opts.before && prev && prev.file === fileId && prev.size === st.size && prev.gen === gen) {
+        const r = { ...base, file: fileId, token: opts.since, unchanged: true as const }
+        lastGood.set(session, r)
+        return r
+      }
+      const sent = opts.anchor ?? opts.since
+      const at = anchorOf(sent)
+      const before = opts.before
+      let invalid = (before != null && !hasStep(doc.steps, before)) || (from != null && !hasStep(doc.steps, from))
+      if (!invalid && from != null && from > 0 && at && at.start === from && prefixOf(doc.steps, from) !== at.hash) invalid = true
+      if (!invalid && from != null && from > 0 && prev && prev.file === fileId && st.size < prev.size) invalid = true
+      if (invalid && before != null) {
+        const r = { ...base, file: fileId, older: true as const, items: [] as ChatItem[], start: 0, rewritten: true as const }
+        lastGood.set(session, r)
+        return r
+      }
+      let rewritten = invalid
+      let selected: Step[]
+      let start: number
+      let items: ChatItem[]
+      if (before != null) {
+        const end = before === 0 ? 0 : doc.steps.findIndex(s => Number(s.step_id) >= before)
+        const slice = end < 0 ? doc.steps : doc.steps.slice(0, end)
+        const page = takeVisible(slice, doc.steps, PAGE_ITEMS)
+        selected = page.steps
+        start = page.start
+        items = page.items
+      } else if (from != null && !rewritten) {
+        const lo = from === 0 ? 0 : doc.steps.findIndex(s => Number(s.step_id) >= from)
+        selected = lo < 0 ? doc.steps : doc.steps.slice(lo)
+        if (pageTooLarge(selected, maxPageBytes)) {
+          rewritten = true
+          const page = takeVisible(doc.steps, doc.steps, PAGE_ITEMS)
+          selected = page.steps
+          start = page.start
+          items = page.items
+        } else {
+          items = parseDevin(selected, doc.steps)
+          start = selected[0] && selected.length < doc.steps.length ? Number(selected[0].step_id) || 0 : 0
+        }
+      } else {
+        const page = takeVisible(doc.steps, doc.steps, PAGE_ITEMS)
+        selected = page.steps
+        start = page.start
+        items = page.items
+      }
+      const head = `${fileId}:${st.size}:${from}:${gen}`
+      const token = `${head}/${start}.${prefixOf(doc.steps, start)}`
+      const reply: ChatResponse = before != null
+        ? { ...base, file: fileId, older: true, items, start, ...(rewritten ? { rewritten: true } : {}) }
+        : { ...base, file: fileId, token, items, start, queue: [], ...(rewritten ? { rewritten: true } : {}) }
+      lastGood.set(session, reply)
+      const model = latestModel(doc)
+      lastModel.set(session, model ? { id: model, label: ompModelLabel(model) } : null)
+      return reply
+    } catch (e) {
+      return failOpen(session, e, opts, base)
+    }
   }
-  async function image(pane: TranscriptPane, file: string | null, ref: string | null, index: number): Promise<{ type: string, body: Buffer } | null> {
+
+  async function image(pane: TranscriptPane, fileId: string | null, ref: string | null, index: number) {
     const m = /^(\d+):(u|a|r|t\d+)$/.exec(ref || '')
     if (!pane.agentSession || !m || !Number.isSafeInteger(index) || index < 0) return null
-    const r = await query(pane.agentSession, 'image', { node: Number(m[1]) })
-    if (!r.available || r.file !== file || !r.rows?.[0]) return null
-    const message = r.rows[0].message
-    const slot = m[2]!
-    let rich: unknown = blocks(message)
-    if (slot === 'r') rich = message.metadata?.extensions?.['chisel/tool_call_content']
-    if (slot.startsWith('t')) return null // Tool images reference their result node.
-    const img = images(rich)[index]
-    if (!img || img.data.length > 80 * 1024 * 1024) return null
-    const body = Buffer.from(img.data, 'base64')
-    if (body.length > 60 * 1024 * 1024) return null
+    const got = await load(pane.agentSession).catch(e => { if (isMissing(e)) return null; throw e })
+    if (!got || path.basename(got.file) !== fileId) return null
+    const img = got.doc.images.get(ref!)?.[index]
+    if (!img) return null
+    let body: Buffer | null = null
+    if (img.data) {
+      if (img.data.length > 80 * 1024 * 1024) return null
+      body = Buffer.from(img.data, 'base64')
+    } else if (img.path) {
+      const abs = path.isAbsolute(img.path) ? img.path : path.join(path.dirname(got.file), img.path)
+      try {
+        const st = await fs.stat(abs)
+        if (!st.isFile || st.size > 60 * 1024 * 1024) return null
+        body = await fs.read(abs, 0, st.size)
+      } catch { return null }
+    }
+    if (!body || body.length > 60 * 1024 * 1024) return null
     const mime = img.mimeType.toLowerCase()
-    return { type: /^image\/(?:png|jpeg|gif|webp|avif)$/.test(mime) ? mime : 'application/octet-stream', body }
+    return { type: IMAGE_TYPES.test(mime) ? mime : 'application/octet-stream', body }
   }
+
   async function search(pane: TranscriptPane, text: string, deadline: number) {
     if (!pane.agentSession || Date.now() >= deadline) return { hits: [], limited: Date.now() >= deadline, kind: 'devin' }
-    const r = await query(pane.agentSession, 'search', { seconds: Math.max(.1, (deadline - Date.now()) / 1000) })
-    const hits = parseDevin(r).filter(i => i.role === 'user' || i.role === 'assistant').flatMap(i => {
+    const got = await load(pane.agentSession).catch(e => { if (isMissing(e)) return null; throw e })
+    if (!got) return { hits: [], limited: false, kind: 'devin' }
+    const hits = parseDevin(got.doc.steps).filter(i => i.role === 'user' || i.role === 'assistant').reverse().flatMap(i => {
       const at = matchAt(i.text, text)
-      return at < 0 ? [] : [{ role: i.role, text: i.text.slice(0, 180), excerpt: excerpt(i.text, at, 120, text), ts: i.ts, offset: Number(i.ref!.split(':')[0]) + 1 }]
+      return at < 0 ? [] : [{ role: i.role, text: i.text.slice(0, 180), excerpt: excerpt(i.text, at, 120, text), ts: i.ts, offset: Number(i.ref!.split(':')[0]) }]
     }).slice(0, 8)
-    return { hits, limited: Boolean(r.limited), kind: 'devin' }
+    return { hits, limited: Date.now() >= deadline, kind: 'devin' }
   }
+
   async function model(pane: TranscriptPane): Promise<ModelInfo | null> {
-    if (!pane.agentSession) return null
-    const r = await query(pane.agentSession, 'model')
-    return typeof r.model === 'string' && r.model ? { id: r.model, label: cleanModelName(r.model) } : null
+    const session = pane.agentSession
+    if (!session) return null
+    if (quiet(session)) return lastModel.get(session) ?? null
+    try {
+      const got = await load(session)
+      if (!got) {
+        lastModel.delete(session)
+        return null
+      }
+      failAt.delete(session)
+      const name = latestModel(got.doc)
+      const info = name ? { id: name, label: ompModelLabel(name) } : null
+      lastModel.set(session, info)
+      return info
+    } catch (e) {
+      if (isMissing(e)) {
+        lastModel.delete(session)
+        return null
+      }
+      if (lastModel.has(session)) return lastModel.get(session)!
+      throw e
+    }
   }
+
   return { chat, image, search, model }
 }

@@ -6,7 +6,7 @@ import { ompToolCall, ompToolResult, ompUserRun } from './ompTools'
 import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDetail'
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
 import { cleanModelName, lastModel, mergeOmpModel, ompLastModel, ompModelComplete, ompModelLabel, ompModelResult } from './models'
-import { type MachineFs, type ShellExec, localFs } from './fsx'
+import { type MachineFs, localFs } from './fsx'
 import { createDevinTranscripts } from './devinTranscripts'
 import { searchFile } from './conversationSearch'
 import { hasTranscript, transcriptKind } from '../../shared/agentKind'
@@ -810,8 +810,8 @@ export function isMissing(e: unknown): boolean {
   return err.code === 'remote' && /no such file|not a directory|introuvable/i.test(err.message || '')
 }
 
-export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, exec }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number, exec?: ShellExec }) {
-  const devin = createDevinTranscripts({ home, exec })
+export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number }) {
+  const devin = createDevinTranscripts({ home, fs, now })
   // File -> state (size, generation) and when this server first saw it, for
   // whole-second mtimes (see SETTLE_MS); `file|size|gen` -> checksum of the
   // file at first sight (null: could not be taken).

@@ -17,6 +17,7 @@ import { machineOfPane } from './machines'
 import { resizePane } from './terminal'
 import { type ClaudeEffortSlider, type ModelMenu, type OmpCycleKnowledge, type OmpSelector, OMP_EFFORT_ORDER, claudeEffortCommand, claudeEffortLevels, cleanModelName, codexCachedEfforts, codexConfigModel, claudeScreenEffort, claudeScreenModel, codexFooterModel, effortMatches, effortValue, learnOmpCycle, ompEffortLevels, ompModelLabel, ompScreenEffort, ompScreenModel, ompSelectorCaption, parseClaudeEffortScreen, parseModelMenu, parseOmpSelector, sameModel, switchConfirmKeys } from './models'
 import { fmt } from '../../shared/message'
+import { hasTranscript } from '../../shared/agentKind'
 
 // ---------------------------------------------------------------- current model
 // Choice made from the phone: shown right away, until the
@@ -79,9 +80,10 @@ export function forgetModel(paneId: string) {
 }
 
 export async function currentModel(p: Pane): Promise<ModelInfo | null> {
-  if (!p.agent || !['claude', 'codex', 'omp'].includes(p.agent)) return null
+  if (!hasTranscript(p.agent)) return null
   // A failed read throws: the state keeps the model it showed (refreshModel).
   let fromFile = await transcripts.model(p)
+  if (p.agent === 'devin') return fromFile
   const f = footers.get(p.id)
   if (f && (!fromFile || !sameModel(fromFile.label, f.info.label) || fromFile.effort !== f.info.effort)) {
     // The status line wins over a lagging rollout (change not yet followed by a turn).

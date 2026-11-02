@@ -1985,6 +1985,8 @@ body.kb .composer { padding-bottom: 8px; }
 .effort-pick { color: var(--dim); max-width: 130px; }
 .effort-pick:hover { color: var(--text); }
 .model-pick .model-caret { width: 13px; height: 13px; color: var(--dim); }
+.model-pick-static { pointer-events: none; display: inline-flex; align-items: center; }
+.model-pick-static:hover { background: transparent; color: var(--text-2); }
 .model-menu { min-width: 280px; max-height: min(60vh, 460px); }
 .effort-menu { min-width: 180px; max-height: min(60vh, 400px); }
 .model-menu [data-slot="item"] { font-size: 13.5px; }

@@ -683,6 +683,7 @@ const FR: Record<string, string> = {
   'The agent’s input stays in shell mode (!)': 'Le champ de l’agent reste en mode shell (!)',
   'The message did not show in the agent’s input': 'Le message n’est pas apparu dans le champ de l’agent',
   'The agent did not take the message': 'L’agent n’a pas pris le message',
+  'Unable to read Devin conversation': 'Impossible de lire la conversation Devin',
   'Another writer keeps typing into the agent’s input': 'Un autre programme écrit sans arrêt dans le champ de l’agent',
   'message already being sent': 'message déjà en cours d’envoi',
   'same pane': 'même pane', 'pane in another tab': 'pane d’un autre onglet', 

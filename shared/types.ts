@@ -323,7 +323,7 @@ export interface ChatResponse {
   // first `keep` items and `items` replace the rest. Absent: `items` is the
   // whole bottom of the conversation.
   keep?: number
-  // Source cursor: JSONL byte offset, or Devin main-chain node id + 1.
+  // Source cursor: JSONL byte offset, or Devin ATIF step_id.
   // Zero means the beginning; callers pass it back without interpreting it.
   start?: number
   // The transcript was rewritten above the client's cursor (same size or

@@ -18,7 +18,7 @@ const rows = [
 test.beforeEach(async () => { await fakeHerdr('e2e.devin', { pane_id: pane, rows, head: 303 }) })
 test.afterEach(async () => { await fakeHerdr('e2e.devin', { pane_id: pane, reset: true }) })
 
-test('Devin reads real SQLite messages, tool results and images without attaching the terminal', async ({ page }) => {
+test('Devin reads real ATIF messages, tool results and images without attaching the terminal', async ({ page }) => {
   const writes: string[] = []
   page.on('request', r => { if (r.method() === 'POST' && /\/api\/(?:send|keys|choose|prompt)/.test(r.url())) writes.push(r.url()) })
   await page.goto(`/#/a/${pane}`)
@@ -58,9 +58,7 @@ test('Devin keeps the reading position on updates and replaces a rewound main ch
   await page.goto(`/#/a/${pane}`)
   const chat = page.locator('.chat')
   await expect(chat.getByRole('heading', { name: 'Devin reading ready' })).toBeVisible()
-  const box = (await chat.boundingBox())!
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
-  await page.mouse.wheel(0, -500)
+  await chat.evaluate(el => el.scrollBy(0, -500))
   await expect.poll(() => chat.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight)).toBeGreaterThan(350)
   const anchor = await chat.evaluate(el => {
     const bounds = el.getBoundingClientRect()
