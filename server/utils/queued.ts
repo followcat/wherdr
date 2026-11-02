@@ -187,9 +187,10 @@ export function shouldHold(agent: string | null | undefined, status: string | nu
   // owns the keys — typed text and its Enter would answer it. Its dialog
   // leaves the composer box on screen, so the generic input check alone
   // can't tell it; the status is event-driven and trusted.
-  // Command Code's input UI is not recognized yet: only a blocked pane (a
-  // permission/question dialog) holds; an idle one must never wait forever.
-  if (agent === 'cmd') return status === 'blocked'
+  // Command Code never reports "blocked" (no manifest): its idle/unknown
+  // reads hold whenever the composer recognizer does not see an empty field —
+  // a dialog's option cursor, a "/" command menu, or a draft all own the keys.
+  if (agent === 'cmd') return status === 'blocked' || (INPUT_STATES.has(status || '') && !input)
   if (agent === 'opencode' && status === 'blocked') return true
   return INPUT_STATES.has(status || '') && !input
 }
