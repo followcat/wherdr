@@ -29,6 +29,18 @@ export default defineApi(async (event, b) => {
         setTimeout(poll, 50)
         return q
       }
+      // OpenCode blocked: its permission/question dialog owns the keys, and
+      // older clients still route composer sends through this raw endpoint —
+      // typing text + Enter there would answer it. Hold the message like a
+      // prompt-route send would; a bare key press is refused outright.
+      if (now?.agent === 'opencode' && now.status === 'blocked' && !b.native) {
+        if (typeof b.text !== 'string' || !b.text.trim() || isSlashCommand(b.text)) {
+          throw new HerdrError('stale', 'OpenCode is asking something — answer it in its terminal.')
+        }
+        const q = addQueued(b.pane_id, b.text, { held: true })
+        setTimeout(poll, 50)
+        return q
+      }
       if (typeof b.text === 'string' && b.text) await herdr('pane.send_input', { pane_id: b.pane_id, text: b.text })
       if (Array.isArray(b.keys) && b.keys.length) await herdr('pane.send_input', { pane_id: b.pane_id, keys: b.keys.map(String) })
     } finally {

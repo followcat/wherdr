@@ -854,9 +854,14 @@ const bashInput = (line: string, above: string | undefined) => /^!(\s|$)/.test(l
 // ("❯ 1. Yes, proceed", /mcp, /hooks…) is not its input field. omp's field
 // ends with a "╰─" line followed by the text typed, under its status line
 // ("π > Opus > ~/demo ▶─1%────1M─"); a box's bottom is a longer rule.
-export function inputVisible(text: string | null | undefined): boolean {
+export function inputVisible(text: string | null | undefined, agent?: string | null): boolean {
   if (ompApprovalOpen(text)) return false
   const t = String(text || '')
+  // Devin and OpenCode have their own composers: the ›/❯/╰─ recognizers can
+  // match glyphs inside their output, so only their box anchors count — and
+  // an OpenCode dialog marker anywhere on screen rules its field out.
+  if (agent === 'devin') return devinFieldOnScreen(t)
+  if (agent === 'opencode') return opencodeFieldOnScreen(t)
   const lines = t.replace(/\s+$/, '').split('\n').slice(-12)
   return lines.some((l, i) => /^\s*›(\s|$)/.test(l)
     || (/^\s*❯(\s|$)/.test(l) && /^\s*─{3,}/.test(lines[i - 1] || ''))
@@ -885,11 +890,19 @@ function devinFieldOnScreen(text: string): boolean {
 // question dialog keeps that box on screen, so its markers must also be
 // absent — the same dialog rows herdr's opencode.toml detects as "blocked"
 // (the pane is an alternate-screen TUI: no scrollback replays to exclude).
-const OPENCODE_DIALOG = /△ Permission required|esc dismiss|↑↓ select|⇆ tab|enter (confirm|submit|toggle)/
+// Same conjunction herdr's opencode.toml uses for "blocked" — a lone word
+// like "enter confirm" in ordinary output must not keep a message held.
+const OPENCODE_DIALOG_TITLE = /△ Permission required/
+const OPENCODE_DIALOG_DISMISS = /esc dismiss/
+const OPENCODE_DIALOG_ACTION = /enter (confirm|submit|toggle)/
+const OPENCODE_DIALOG_NAV = /↑↓ select|⇆ tab/
 function opencodeFieldOnScreen(text: string): boolean {
   const lines = String(text || '').split('\n')
   const last = lines.length - 1
-  if (lines.slice(Math.max(0, last - 12)).some(l => OPENCODE_DIALOG.test(l))) return false
+  const bottom = lines.slice(Math.max(0, last - 12))
+  const dialog = bottom.some(l => OPENCODE_DIALOG_TITLE.test(l))
+    || (bottom.some(l => OPENCODE_DIALOG_DISMISS.test(l)) && bottom.some(l => OPENCODE_DIALOG_ACTION.test(l)) && bottom.some(l => OPENCODE_DIALOG_NAV.test(l)))
+  if (dialog) return false
   for (let i = last; i >= Math.max(1, last - 8); i--) {
     if (/^\s*╹▀{3,}/.test(lines[i]!.replace(/\s+$/, ''))) return /^\s*┃/.test(lines[i - 1]!)
   }
