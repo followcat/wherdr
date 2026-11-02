@@ -1,8 +1,9 @@
 import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { createTranscripts } from '../server/utils/transcripts'
+import { localFs } from '../server/utils/fsx'
 import {
   commandCodeAssistant, commandCodeModel, commandCodePNG, commandCodeSession,
   commandCodeToolResults, commandCodeUser, writeCommandCodeSession,
@@ -88,6 +89,53 @@ it('finds the last usage through a trailing record larger than the status window
   expect(stats?.meters).not.toContain('1.8k')
 })
 
+it('keeps a tool result when its call and result straddle read windows', async () => {
+  const { home, reader } = fixture()
+  const filler = 'y'.repeat(2.2 * 1024 * 1024)
+  writeCommandCodeSession(home, {
+    id: 'sess-1', cwd: pane.cwd, lines: [
+      commandCodeSession('sess-1', pane.cwd),
+      commandCodeUser('u1', null, 'Run it', 1000),
+      commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+      commandCodeUser('filler', 'a1', filler, 3000),
+      commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'ok' }] }], 4000),
+    ],
+  })
+  const r = await reader.chat(pane)
+  expect(r.items!.find(i => i.name === 'shell_command')?.out).toBe('ok')
+})
+
+it('keeps the last session when a header read fails', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'wherdr-command-code-fail-'))
+  homes.push(home)
+  let fail = false
+  const fs = {
+    ...localFs,
+    read: (file: string, start: number, len: number, timeout?: number) => {
+      if (fail && file.endsWith('sess-new.jsonl') && start === 0 && len === 64 * 1024) {
+        return Promise.reject(Object.assign(new Error('ssh read failed'), { code: 'remote' }))
+      }
+      return localFs.read(file, start, len, timeout)
+    },
+  }
+  const reader = createTranscripts({ home, herdr: async () => ({}), fs })
+  const write = (id: string, text: string, mtime: Date) => writeCommandCodeSession(home, {
+    id, cwd: pane.cwd, lines: [commandCodeSession(id, pane.cwd), commandCodeUser(`${id}-u`, null, text)], mtime,
+  })
+  write('sess-old', 'Old conversation', new Date(1_700_000_000_000))
+  write('sess-new', 'New conversation', new Date(1_700_000_100_000))
+
+  expect((await reader.chat(pane))?.items?.[0]?.text).toBe('New conversation')
+  fail = true
+  vi.useFakeTimers()
+  try {
+    vi.setSystemTime(Date.now() + 9000)
+    expect((await reader.chat(pane))?.items?.[0]?.text).toBe('New conversation')
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
 it('marks a failed tool result', async () => {
   const { home, reader } = fixture()
   writeCommandCodeSession(home, {
@@ -126,7 +174,7 @@ it('pages the tail, follows an unchanged token and sees appended replies', async
   const lines = [commandCodeSession('sess-1', pane.cwd), commandCodeModel('example/model-a')]
   const long = 'x'.repeat(32 * 1024)
   let parent = null
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 200; i++) {
     const user = `u${i}`
     const assistant = `a${i}`
     lines.push(commandCodeUser(user, parent, `Message ${i} ${long}`, i * 10))
@@ -139,7 +187,7 @@ it('pages the tail, follows an unchanged token and sees appended replies', async
   expect(tail.items!.length).toBeGreaterThan(0)
   // The file is larger than one read window: the tail starts in the middle.
   expect(tail.start).toBeGreaterThan(0)
-  expect(tail.items!.at(-1)?.text).toBe('Reply 99')
+  expect(tail.items!.at(-1)?.text).toBe('Reply 199')
 
   const older = await reader.chat(pane, { before: tail.start })
   expect(older.items!.length).toBeGreaterThan(0)
@@ -151,7 +199,7 @@ it('pages the tail, follows an unchanged token and sees appended replies', async
   const again = await reader.chat(pane, { since: second.token, from: second.start })
   expect(again).toMatchObject({ unchanged: true })
 
-  appendFileSync(file, JSON.stringify(commandCodeAssistant('a-new', 'a99', [{ type: 'text', text: 'Appended' }], { ms: 5000 })) + '\n')
+  appendFileSync(file, JSON.stringify(commandCodeAssistant('a-new', 'a199', [{ type: 'text', text: 'Appended' }], { ms: 5000 })) + '\n')
   const next = await reader.chat(pane, { since: second.token, from: second.start })
   expect(next.rewritten).toBeUndefined()
   expect(next.items?.at(-1)?.text).toBe('Appended')
