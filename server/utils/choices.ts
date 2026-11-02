@@ -836,6 +836,9 @@ export function screenChoices(text: string | null | undefined, agent: string | n
     // only its own permission shape is accepted (a generic match is a misread,
     // see inputVisible's agent scoping).
     : agent === 'opencode' ? parseOpenCodePermission(text)
+    // Command Code's own dialogs look like the generic grammar ("❯ 1. …")
+    // but are answered by their own keys — the terminal keeps them.
+    : agent === 'cmd' ? null
     : parseChoices(text) || parseChoices(text, { strict: true })
   if (c) c.identity = promptIdentity(text, agent)
   return c && agent === 'claude' ? completeClaudeAsk(c, asked) : c
@@ -872,6 +875,9 @@ export function inputVisible(text: string | null | undefined, agent?: string | n
   // an OpenCode dialog marker anywhere on screen rules its field out.
   if (agent === 'devin') return devinFieldOnScreen(t)
   if (agent === 'opencode') return opencodeFieldOnScreen(t)
+  // Command Code's composer is a ❯ line inside its ─ box; its dialogs use the
+  // same glyph on option rows, so the box anchors alone cannot tell them apart.
+  if (agent === 'cmd') return cmdFieldOnScreen(t)
   const lines = t.replace(/\s+$/, '').split('\n').slice(-12)
   return lines.some((l, i) => /^\s*›(\s|$)/.test(l)
     || (/^\s*❯(\s|$)/.test(l) && /^\s*─{3,}/.test(lines[i - 1] || ''))
@@ -925,6 +931,36 @@ function opencodeFieldOnScreen(text: string): boolean {
     if (/^\s*╹▀{3,}/.test(lines[i]!.replace(/\s+$/, ''))) return /^\s*┃/.test(lines[i - 1]!)
   }
   return false
+}
+
+// Command Code's composer (v1.88.x), captured on a live pane:
+//
+//   ───────────────────────────
+//   ❯ Ask your question...
+//   ───────────────────────────
+//     ? for shortcuts
+//
+// The "❯" line is the input field only while boxed by bare rules AND holding
+// no text: a draft ("❯ /" opening the command menu below, or typed text)
+// receives whatever is typed and its Enter runs the highlighted menu entry —
+// never type over it. Its dialogs draw the same glyph on option rows
+// ("❯ 1. Yes, proceed" with "↑/↓ to navigate · enter to select" hints), and a
+// permission dialog can leave the composer box on screen below it, so any
+// option cursor or selection hints rule the whole screen out. An empty field
+// shows its placeholder text instead; other locales' placeholders read as a
+// draft and simply hold (fail closed).
+const CMD_OPTION_CURSOR = /^\s*❯\s*\d{1,2}\.\s/
+const CMD_DIALOG_HINTS = /↑\/↓ to navigate|enter to select|esc to exit/i
+function cmdFieldOnScreen(text: string): boolean {
+  const lines = String(text || '').split('\n').map(l => l.replace(/\s+$/, ''))
+  for (const l of lines) {
+    if (CMD_OPTION_CURSOR.test(l) || CMD_DIALOG_HINTS.test(l)) return false
+  }
+  let at = -1
+  for (let i = lines.length - 1; i >= 0 && at < 0; i--) if (/^\s*❯/.test(lines[i]!)) at = i
+  if (at < 1 || !/^\s*─{3,}/.test(lines[at - 1]!) || !/^\s*─{3,}/.test(lines[at + 1] || '')) return false
+  const content = lines[at]!.replace(/^\s*❯\s*/, '').trim()
+  return content === '' || /^ask your question/i.test(content)
 }
 
 // Devin's permission dialog (v3000.x), captured on a live pane:
