@@ -1096,37 +1096,38 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
 
   // A larger same-inode file may still be an in-place rewrite: every parsed
   // result record (matched or orphan) must still fingerprint the same bytes.
+  // One bounded read covers the whole watch set: a per-record pipeline would
+  // launch thousands of processes on a tool-heavy session.
   async function cmdResultsValid(file: string): Promise<boolean> {
     const watches = cmdWatches.get(file)
     if (!watches || !watches.size) return true
-    const records = new Map<string, { at: number, len: number, hash: string }>()
-    for (const r of watches.values()) {
-      records.set(`${r.at}:${r.len}:${r.hash}`, { at: r.at, len: r.len, hash: r.hash })
+    const records = new Map<string, CommandCodeWatch>()
+    for (const w of watches.values()) records.set(`${w.at}:${w.len}:${w.hash}`, w)
+    const all = [...records.values()].sort((a, b) => a.at - b.at)
+    let first = all[0]!.at
+    const last = all[all.length - 1]!
+    const end = last.at + last.len
+    let selected = all
+    // Above the cap, validate the newest records that fit: the work stays
+    // bounded whatever the session size.
+    const CAP = 4 * 1024 * 1024
+    if (end - first > CAP) {
+      let start = end
+      let i = all.length - 1
+      for (; i >= 0; i--) {
+        if (start - all[i]!.at > CAP) break
+        start = all[i]!.at
+      }
+      selected = all.slice(i + 1)
+      first = start
     }
-    if (!records.size) return true
-    if (exec) {
-      // One remote pass per byte-bounded batch, not one SSH command per record.
-      const specs = [...records.values()].map(r => `${r.at}:${r.len}:${r.hash}`)
-      const got = new Map<string, string>()
-      try {
-        for (const chunk of chunksByBytes(specs)) {
-          const r = await exec('f="$1"; shift; H=sha256sum; command -v "$H" >/dev/null 2>&1 || H="shasum -a 256"; for s in "$@"; do at=${s%%:*}; rest=${s#*:}; len=${rest%%:*}; h=${rest#*:}; printf "%s\\t" "$h"; tail -c +$((at+1)) "$f" | head -c "$len" | $H | cut -c1-16; done', [file, ...chunk], { timeoutMs: 8000 })
-          if (r.code !== 0) return true
-          for (const line of r.stdout.toString('utf8').split('\n')) {
-            const tab = line.indexOf('\t')
-            if (tab > 0) got.set(line.slice(0, tab), line.slice(tab + 1).trim())
-          }
-        }
-        for (const rec of records.values()) if (got.get(rec.hash) !== rec.hash) return false
-        return true
-      } catch { return true } // transient remote failure: keep
-    }
-    for (const rec of records.values()) {
-      try {
-        const raw = (await fs.read(file, rec.at, rec.len)).toString('utf8')
-        const h = createHash('sha256').update(raw).digest('hex').slice(0, 16)
-        if (h !== rec.hash) return false
-      } catch { return true }
+    let buf: Buffer
+    try { buf = await fs.read(file, first, end - first) } catch { return true }
+    for (const w of selected) {
+      const from = w.at - first
+      if (from < 0 || from + w.len > buf.length) return false
+      const h = createHash('sha256').update(buf.subarray(from, from + w.len)).digest('hex').slice(0, 16)
+      if (h !== w.hash) return false
     }
     return true
   }

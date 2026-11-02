@@ -4,8 +4,8 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createChatDelta, splitToken } from '../server/utils/chatDelta'
 import { anchorOf, createTranscripts, headOf } from '../server/utils/transcripts'
-import { applyToolUpdates, createTailLoader, nextTail, restartsTail, tailQuery } from '../app/utils/chatTail'
-import type { ChatItem } from '../shared/types'
+import { applyToolUpdates, createTailLoader, nextTail, restartsTail, retainToolUpdates, tailQuery } from '../app/utils/chatTail'
+import type { ChatItem, CommandCodeToolUpdate } from '../shared/types'
 import { type FsStat, type MachineFs, type ShellExec, createShellFs, localFs } from '../server/utils/fsx'
 import { spawn } from 'node:child_process'
 import { renameSync } from 'node:fs'
@@ -138,6 +138,16 @@ describe('nextTail and tailQuery', () => {
     expect(applyToolUpdates(older, [{ id: 'call_1', out: 'ok' }])[0]).toMatchObject({ out: 'ok' })
     expect(applyToolUpdates(older, [{ id: 'other', out: 'x' }])[0]).toBe(older[0])
     expect(applyToolUpdates(older, undefined)).toBe(older)
+  })
+
+  it('retains an update whose call page is still loading', () => {
+    const pending = new Map<string, CommandCodeToolUpdate>()
+    retainToolUpdates(pending, [], [{ id: 'call_1', out: 'ok' }])
+    expect(pending.get('call_1')).toMatchObject({ out: 'ok' })
+    const older: ChatItem[] = [{ role: 'tool', name: 'shell_command', toolId: 'call_1', text: 'echo ok', ts: null }]
+    expect(applyToolUpdates(older, [...pending.values()])[0]).toMatchObject({ out: 'ok' })
+    retainToolUpdates(pending, older, [{ id: 'call_1', out: 'ok' }])
+    expect(pending.has('call_1')).toBe(false)
   })
 
   it('sends the item count of the list held (0 without a token)', () => {
