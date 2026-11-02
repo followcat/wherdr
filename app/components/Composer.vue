@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// Input bar (UChatPrompt): field on top, + · model and send below,
-// like Claude.ai. Agent working and field empty: send becomes "Stop" (Escape),
+// Input bar (UChatPrompt): on touch, one row at rest; while editing, the
+// model toolbar moves below the full-width field. Working and empty: "Stop" (Escape),
 // via UChatPromptSubmit ("streaming" state).
 // Photos shrunk in the browser (2048 px, JPEG) then stored on the server;
 // their path goes with the message. Other files the agent can read (PDF,
@@ -12,6 +12,7 @@ import { quotesIn, removeQuote } from '~/utils/questionReply'
 import { attachQuoteMirror } from '~/utils/quoteMirror'
 import { isAgentCommand } from '#shared/commandScreen'
 import { isSlashCommand } from '#shared/queuedMatch'
+import { isSubmitKey, submitKeysFor } from '#shared/submitKeys'
 import { viaPrompt } from '#shared/sendRoute'
 import type { AttachKind } from '#shared/attachments'
 import { refusalText, sortForAgent } from '~/utils/fileDrop'
@@ -24,6 +25,7 @@ import { kbOpen } from '~/composables/useViewport'
 import { PromptHistory, historyDirection } from '~/utils/promptHistory'
 import { createTouchTap } from '~/utils/touchTap'
 import { tracePaste } from '~/utils/pasteJournal'
+import { ESC_CONFIRM_MS, type EscapeArm, pressEscape } from '~/utils/escapeStop'
 import { pasteHtmlText } from '~/utils/pasteHtml'
 
 // `escStops`: Escape is free for Stop (the conversation search, which closes on it, is shut).
@@ -70,6 +72,51 @@ const draft = useDraft(props.paneId)
 const text = toRef(draft, 'text')
 const promptRef = ref<{ textareaRef?: HTMLTextAreaElement } | null>(null)
 const ta = computed(() => promptRef.value?.textareaRef || null)
+const fieldFocused = ref(false)
+const withinPrompt = (el: Element | null) => !!(el && ta.value?.closest('.prompt')?.contains(el))
+let pointerHeld = false
+let collapseAfterPress = false
+let collapseFrame = 0
+function fieldFocus() {
+  cancelAnimationFrame(collapseFrame)
+  collapseAfterPress = false
+  fieldFocused.value = true
+}
+function fieldBlur(e?: FocusEvent) {
+  if (withinPrompt(e?.relatedTarget as Element | null)) return
+  // A press outside the empty editor blurs it before the click is delivered.
+  // Keep that press's target still; collapsing now can move an answer away
+  // from the finger and lose the first quote. Keyboard blur stays immediate.
+  if (coarse.value && pointerHeld) collapseAfterPress = true
+  else fieldFocused.value = false
+}
+function holdEditor() { pointerHeld = true }
+function releaseEditor() {
+  pointerHeld = false
+  if (!collapseAfterPress) return
+  collapseAfterPress = false
+  collapseFrame = requestAnimationFrame(() => {
+    collapseFrame = 0
+    fieldFocused.value = withinPrompt(document.activeElement)
+  })
+}
+onMounted(() => {
+  document.addEventListener('pointerdown', holdEditor, true)
+  window.addEventListener('pointerup', releaseEditor, true)
+  window.addEventListener('pointercancel', releaseEditor, true)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', holdEditor, true)
+  window.removeEventListener('pointerup', releaseEditor, true)
+  window.removeEventListener('pointercancel', releaseEditor, true)
+  cancelAnimationFrame(collapseFrame)
+})
+// Android can dismiss the keyboard while leaving the textarea focused.
+watch(kbOpen, open => {
+  if (open || hardwareKeyboard.value) return
+  if (document.activeElement === ta.value) { ta.value?.blur(); fieldFocused.value = false }
+  else if (!withinPrompt(document.activeElement)) fieldFocused.value = false
+})
 const fileInput = ref<HTMLInputElement | null>(null)
 const anyFileInput = ref<HTMLInputElement | null>(null)
 const sending = ref(false)
@@ -79,6 +126,7 @@ const enterSends = computed(() => enterSendsFor({ desk: desk.value, touch: Boole
 
 type Att = DraftAtt
 const attachments = toRef(draft, 'atts')
+const expanded = computed(() => fieldFocused.value || kbOpen.value || text.value.length > 0 || attachments.value.length > 0)
 // What the text refers to ("↳ … —" lines, see shared/reference.ts): one chip
 // each above the field, to remove it.
 const quotes = computed(() => quotesIn(text.value))
@@ -96,6 +144,7 @@ onBeforeUnmount(() => { mirror?.destroy(); mirror = null })
 
 const canSend = computed(() => Boolean(text.value.trim() || attachments.value.length))
 const readOnly = computed(() => Boolean(props.pane?.stopped || props.pane?.prompt?.unavailable) || !eventsOpen.value || offlineView.value || paneStale(props.pane))
+const composerStatus = computed(() => props.pane?.ompStatus ?? props.pane?.devinStatus ?? props.pane?.opencodeStatus)
 // Offline, no Stop: UChatPromptSubmit ignores `disabled` in "streaming" mode.
 // omp running the user's "!" / "$" command stays idle: Stop cancels the command.
 const shellRun = computed(() => Boolean(props.pane && props.pane.agent === 'omp' && props.pane.ompShell && props.pane.status !== 'working'))
@@ -135,25 +184,53 @@ const placeholder = computed(() => {
 
 // Enter: UChatPrompt only sends text; a photo alone, or an empty field
 // while the agent is working (Stop), go through here.
+// IME guard, the same shape as Nuxt UI's useIMEGuard: an IME can emit a
+// chorded Enter as its send action right when composition ends, where
+// isComposing is already false — caught below it would end the draft with
+// that key ("Send with Ctrl+Enter" queues instead of sending).
+let compositionJustEnded = false
+let compositionEndTimer: ReturnType<typeof setTimeout> | undefined
+function onCompositionEnd() {
+  clearTimeout(compositionEndTimer)
+  compositionJustEnded = true
+  compositionEndTimer = setTimeout(() => { compositionJustEnded = false }, 50)
+}
+onBeforeUnmount(() => clearTimeout(compositionEndTimer))
+const imeKey = (e: KeyboardEvent) => e.isComposing || e.keyCode === 229 || compositionJustEnded
 function onKeydown(e: KeyboardEvent) {
-  if (slashOpen.value && !e.isComposing) {
+  if (slashOpen.value && !imeKey(e)) {
     const n = slashMatches.value.length
-    if (e.key === 'ArrowDown') { e.preventDefault(); lastPointer = 'kb'; slashSel.value = (slashSel.value + 1) % n; return }
-    if (e.key === 'ArrowUp') { e.preventDefault(); lastPointer = 'kb'; slashSel.value = (slashSel.value - 1 + n) % n; return }
+    if (e.key === 'ArrowDown' && n) { e.preventDefault(); lastPointer = 'kb'; slashSel.value = (slashSel.value + 1) % n; return }
+    if (e.key === 'ArrowUp' && n) { e.preventDefault(); lastPointer = 'kb'; slashSel.value = (slashSel.value - 1 + n) % n; return }
     if (e.key === 'Escape') { e.preventDefault(); slashDismissed.value = true; return }
-    if (e.key === 'Tab' || (enterSends.value && e.key === 'Enter' && !e.shiftKey)) {
+    // The menu can be open with no candidate (a denied-list note): Enter and
+    // Tab then keep their normal job — there is nothing to pick.
+    if ((e.key === 'Tab' || (enterSends.value && e.key === 'Enter' && !e.shiftKey)) && n) {
       e.preventDefault()
       e.stopPropagation()
       pickSlash(slashMatches.value[slashSel.value] || slashMatches.value[0]!)
       return
     }
   }
-  if (e.key === 'Tab' && !e.shiftKey && !e.isComposing && suggestion.value && !text.value) {
+  if (e.key === 'Tab' && !e.shiftKey && !imeKey(e) && suggestion.value && !text.value) {
     e.preventDefault()
     useSuggestion()
     return
   }
-  if (enterSends.value && e.key === 'Enter' && !e.shiftKey && !e.isComposing && !text.value.trim()) {
+  // A verified terminator of this agent ends the draft with that key
+  // ("Send with Tab"), like the same press in the terminal. Plain Tab only:
+  // on an empty field it keeps moving the focus, and Shift+Tab always does.
+  if (!imeKey(e) && canSend.value) {
+    const chord = e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey ? 'tab'
+      : e.key === 'Enter' && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey ? 'ctrl+enter'
+        : null
+    if (chord && isSubmitKey(props.pane?.agent, chord, { working: props.pane?.status === 'working' })) {
+      e.preventDefault()
+      submitWith(chord)
+      return
+    }
+  }
+  if (enterSends.value && e.key === 'Enter' && !e.shiftKey && !imeKey(e) && !text.value.trim()) {
     e.preventDefault()
     submit()
   }
@@ -184,6 +261,96 @@ onBeforeUnmount(() => {
   // Leaving the pane while browsing must keep the original unsent draft.
   if (history.draft) text.value = history.draft.text
 })
+
+// Voice input (utils/asrModel.ts): the mic stays dim until the model is
+// cached on this device. A recording belongs to this pane's draft — leaving
+// the pane drops the take, so a result never lands in another draft; the
+// loaded engine is shared and stays warm across panes.
+const sp = useSpeech()
+onMounted(() => { refreshAsrInstalled() })
+onBeforeUnmount(() => sp.dispose())
+const asrRecording = computed(() => sp.status.value === 'recording')
+const asrBusy = computed(() => ['downloading', 'loading', 'flushing'].includes(sp.status.value))
+watch(sp.finalText, (t) => {
+  if (!t) return
+  sp.finalText.value = ''
+  text.value = text.value + (text.value && !/\s$/.test(text.value) ? ' ' : '') + t
+})
+watch(sp.error, (e) => {
+  if (!e) return
+  sp.error.value = ''
+  toast(tl('Voice input failed', 'La saisie vocale a échoué'), true, e)
+})
+// Hold to talk: press starts, release ends the take. A release under ~0.6 s of
+// actual recording keeps it running — the press then read as tap-to-start and
+// the next press stops, so the click toggle still works and no sub-second take
+// decodes into a stray syllable. A release while the model/mic is still
+// starting cancels the pending start.
+let micHeld: 'start' | 'stop' | null = null
+let recStartedAt = 0
+let micUpAt = 0
+watch(asrRecording, (on) => { if (on) recStartedAt = performance.now() })
+const MIC_MIN_HOLD_MS = 600
+
+function micDown(e: PointerEvent) {
+  if (e.button) return
+  e.preventDefault()
+  if (!asrInstalled.value) return toast(tl('Voice input is not installed — download the model in Settings › Conversation', 'Saisie vocale non installée — télécharge le modèle dans Réglages › Conversation'))
+  if (asrBusy.value || micHeld) return
+  micHeld = asrRecording.value ? 'stop' : 'start'
+  if (e.pointerId !== undefined) { try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch { /* synthetic events carry no active pointer */ } }
+  haptic()
+  if (micHeld === 'start') sp.startMic(asrCtx()).catch((err: Error) => toast(err.message, true))
+}
+function micUp() {
+  const held = micHeld
+  micHeld = null
+  if (!held) return
+  micUpAt = performance.now()
+  if (held === 'stop') {
+    if (asrRecording.value) sp.stopMic()
+    return
+  }
+  if (asrRecording.value) {
+    if (performance.now() - recStartedAt >= MIC_MIN_HOLD_MS) sp.stopMic()
+  } else sp.cancelMic()
+}
+function onMic() {
+  // The click that follows a real hold's release is already handled above.
+  if (performance.now() - micUpAt < 700) return
+  haptic()
+  if (!asrInstalled.value) return toast(tl('Voice input is not installed — download the model in Settings › Conversation', 'Saisie vocale non installée — télécharge le modèle dans Réglages › Conversation'))
+  if (asrBusy.value) return
+  if (asrRecording.value) { sp.stopMic(); return }
+  sp.startMic(asrCtx()).catch((err: Error) => toast(err.message, true))
+}
+function cancelAsr() { haptic(); sp.cancelMic() }
+// Snapshot this pane's original text at mic-press. No extra transcript read
+// or vocabulary maintained by hand; other panes' histories stay separate.
+function asrCtx(): string {
+  if (!asrModel.value?.context) return ''
+  return buildAsrContext({
+    agent: props.pane?.displayAgent || props.pane?.agent,
+    machine: machineInfo(props.pane?.machine)?.label,
+    name: props.pane?.name,
+    title: props.pane?.title,
+    cwd: props.pane?.cwd,
+    draft: text.value,
+    files: attachments.value.map(a => a.name ?? a.ref ?? a.path),
+    recent: promptHistoryFor(props.paneId),
+  })
+}
+// The take as block-glyph bars — the wave reads like text, the chat way.
+const WAVE_GLYPHS = '▁▂▃▄▅▆▇█'
+const asrWave = computed(() => {
+  let s = ''
+  for (const v of sp.levels.value) s += WAVE_GLYPHS[Math.min(7, Math.floor(Math.sqrt(v * 4) * 8))]
+  return s
+})
+const asrTime = computed(() => {
+  const s = Math.floor(sp.recMs.value / 1000)
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+})
 function rememberSent(typed: string) {
   rememberPrompt(props.paneId, typed)
   history.reset()
@@ -209,7 +376,17 @@ const sendTap = createTouchTap({
 })
 const hint = computed(() => desk.value && !stopMode.value)
 
-async function submit() {
+// The keys that end the draft instead of typing into the field ("Send with
+// Tab"): the verified terminators of this agent (shared/submitKeys.ts). None
+// without a draft — the same key then stays a literal terminal key.
+const sendWithKeys = computed(() => canSend.value ? submitKeysFor(props.pane?.agent, { working: props.pane?.status === 'working' }) : [])
+function submitWith(key: string) {
+  if (!sendWithKeys.value.includes(key) || readOnly.value || sending.value) return
+  haptic()
+  void submit(key)
+}
+async function submit(submitKey?: string) {
+  if (typeof submitKey !== 'string' || !submitKey) submitKey = undefined
   if (readOnly.value) return toast(t('Sending unavailable offline'), true)
   if (stopMode.value) return interrupt()
   if (attachments.value.some(a => !a.paste && !a.path)) return toast(t(attachments.value.some(a => !a.path && a.file) ? 'File is uploading…' : 'Photo is uploading…'))
@@ -222,6 +399,14 @@ async function submit() {
   const body = messageBody(typed, pastes, paths)
   const msg = body
   if (!msg || sending.value) return
+  // The same text sent here a moment ago: an echo (a dictation app pressing
+  // Enter again while the page lags), not a new message. Its copy goes.
+  if (!claimSend(props.paneId, msg)) {
+    text.value = ''
+    clearAttachments()
+    toast(t('Already sent'))
+    return
+  }
   const p = props.pane
   // omp question with "Other": the message is its free answer.
   const prompt = p && p.status === 'blocked' ? p.prompt : null
@@ -236,20 +421,31 @@ async function submit() {
     rememberPastes(pastes)
     haptic()
     emit('sent', null)
-    outboxSend(p, props.paneId, msg).then(() => emit('sent', null), (err: Error) => toast(err.message, true))
+    outboxSend(p, props.paneId, msg, submitKey).then(() => emit('sent', null), (err: Error) => toast(err.message, true))
     return
   }
   sending.value = true
   // Before the send: it tells the server where they sit (see sendMessage).
   rememberPastes(pastes)
+  // The field empties before the request: another Enter while it runs finds
+  // nothing to send. Not sent: the message comes back.
+  const atts = attachments.value
+  text.value = ''
+  attachments.value = []
+  const giveBack = () => {
+    releaseSend(props.paneId, msg)
+    if (!text.value && !attachments.value.length) {
+      text.value = typed
+      attachments.value = atts
+    } else restoreDraft(draft, msg, pastes)
+  }
   try {
     let queued: QueuedMessage | null = null
     if (prompt && free >= 0) {
-      if (!(await choose(props.paneId, free, prompt.options[free]!.label, prompt.identity, { text: msg, question: prompt.question }))) return
-    } else queued = await sendMessage(p, props.paneId, msg)
+      if (!(await choose(props.paneId, free, prompt.options[free]!.label, prompt.identity, { text: msg, question: prompt.question }))) return giveBack()
+    } else queued = await sendMessage(p, props.paneId, msg, undefined, submitKey)
     rememberSent(typed)
-    text.value = ''
-    clearAttachments()
+    for (const a of atts) if (a.url) URL.revokeObjectURL(a.url)
     haptic()
     emit('sent', queued)
     // "/" command: its result (terminal screen), as from the + menu.
@@ -260,6 +456,7 @@ async function submit() {
       showCommandResult(props.paneId, cmd, listed.some(c => c.source === 'builtin' && `/${c.name}` === cmd))
     }
   } catch (err) {
+    giveBack()
     toast((err as Error).message, true)
   } finally {
     sending.value = false
@@ -303,18 +500,34 @@ async function interrupt() {
 watch(() => props.pane?.status, s => { if (interrupting.value === 'failed' && !stoppingShell.value && s !== 'working') interrupting.value = null })
 watch(shellRun, on => { if (interrupting.value === 'failed' && stoppingShell.value && !on) interrupting.value = null })
 // Escape (composables/useShortcuts.ts): the Stop button, only while it is shown and
-// clickable. The field blurs itself on Escape: it gets the focus back for what comes next.
+// clickable, on the second press within a moment (utils/escapeStop.ts): one stray
+// Escape from another app must not stop the agent. The field blurs itself on
+// Escape: it gets the focus back for what comes next.
+const escArm: EscapeArm = { at: null }
+const escArmed = ref(false)
+let escTimer: ReturnType<typeof setTimeout> | undefined
 function stop() {
   if (!props.escStops || !stopMode.value || sending.value || interrupting.value === 'running') return false
-  interrupt()
+  clearTimeout(escTimer)
+  escArmed.value = !pressEscape(escArm, Date.now())
+  if (escArmed.value) escTimer = setTimeout(() => { escArmed.value = false }, ESC_CONFIRM_MS)
+  else interrupt()
   ta.value?.focus()
   return true
 }
+onBeforeUnmount(() => clearTimeout(escTimer))
 
 // ------------------------------------------------------------ photos
 function clearAttachments() {
   for (const a of attachments.value) if (a.url) URL.revokeObjectURL(a.url)
   attachments.value = []
+}
+// A send's receipt drops only what it carried: attachments added while the
+// answer was awaited stay.
+function dropAttachments(sent: Att[]) {
+  const drop = new Set(sent)
+  for (const a of sent) if (a.url) URL.revokeObjectURL(a.url)
+  attachments.value = attachments.value.filter(a => !drop.has(a))
 }
 // Large preview (same viewer as the conversation), including while
 // sending: the local URL (blob) is enough.
@@ -610,7 +823,7 @@ defineExpose({
   focusEnd,
   focusAnswer,
   blur: () => ta.value?.blur(),
-  addImages, addFiles, stop,
+  addImages, addFiles, stop, submitWith,
 })
 </script>
 
@@ -696,12 +909,22 @@ defineExpose({
         </button>
       </span>
     </div>
+    <div v-if="asrRecording || asrBusy" class="prompt-asr" role="status">
+      <span class="asr-dot" />
+      <template v-if="asrRecording">
+        <span class="asr-wave" aria-hidden="true"><span class="asr-wave-in">{{ asrWave || '▁' }}</span></span>
+        <span class="asr-time">{{ asrTime }}</span>
+      </template>
+      <span v-else class="asr-live">{{ sp.status.value === 'flushing' ? tl('Recognizing…', 'Reconnaissance…') : tl('Loading the speech model…', 'Chargement du modèle vocal…') }}</span>
+      <button v-if="asrRecording" type="button" class="asr-x" :aria-label="t('Cancel recording')" @click="cancelAsr"><UIcon name="i-lucide-x" /></button>
+    </div>
     <UChatPrompt
       ref="promptRef" v-model="text" :disabled="Boolean(pane?.stopped)" :placeholder="pane?.stopped ? t('Restart Codex before sending a message') : readOnly ? t('Draft saved — sending unavailable offline') : placeholder" variant="outline" color="neutral"
       :rows="1" :maxrows="7" :autofocus="false" :submit-on-enter="enterSends && !slashOpen"
       :enterkeyhint="enterSends ? 'send' : 'enter'" autocapitalize="sentences"
-      class="prompt" :class="{ suggesting: suggestTap }" :style="suggestRoom ? { '--suggest-room': `${suggestRoom}px` } : undefined" :ui="{ header: 'prompt-head', body: 'prompt-body', base: 'prompt-input', footer: 'prompt-foot' }"
-      @submit="submit" @keydown="onKeydown" @paste="onPaste" @beforeinput="onBeforeInput"
+      class="prompt" :class="{ suggesting: suggestTap, expanded }" :style="suggestRoom ? { '--suggest-room': `${suggestRoom}px` } : undefined" :ui="{ header: 'prompt-head', body: 'prompt-body', base: 'prompt-input', footer: 'prompt-foot' }"
+      @focusin="fieldFocus" @focusout="fieldBlur" @focus="fieldFocus" @blur="fieldBlur"
+      @submit="submit()" @keydown="onKeydown" @compositionend="onCompositionEnd" @paste="onPaste" @beforeinput="onBeforeInput"
     >
       <template v-if="attachments.length" #header>
         <div class="attachments">
@@ -740,10 +963,22 @@ defineExpose({
         />
         <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onFiles">
         <input ref="anyFileInput" type="file" multiple hidden data-testid="attach-any" @change="onFiles">
-        <ModelPicker v-if="pane && (pane.agent === 'claude' || pane.agent === 'codex' || pane.agent === 'omp')" :pane="pane" />
+        <div v-if="pane && (pane.agent === 'claude' || pane.agent === 'codex' || pane.agent === 'omp' || pane.agent === 'devin' || pane.agent === 'opencode')" class="prompt-models">
+          <ModelPicker :pane="pane" />
+        </div>
         <span v-if="hint && suggestion" class="prompt-hint"><UKbd value="tab" size="sm" /> {{ t('suggestion') }} <span class="sep">·</span> <UKbd value="enter" size="sm" /> {{ t('send') }}</span>
         <span v-else-if="hint" class="prompt-hint"><UKbd value="enter" size="sm" /> {{ t('send') }} <span class="sep">·</span> <UKbd value="shift" size="sm" /><UKbd value="enter" size="sm" /> {{ t('new line') }}</span>
-        <span v-else-if="desk && escStops && stopMode && interrupting !== 'running'" class="prompt-hint"><UKbd value="escape" size="sm" /> {{ tl('stop', 'arrêter') }}</span>
+        <span v-else-if="desk && escStops && stopMode && interrupting !== 'running'" class="prompt-hint" :class="{ armed: escArmed }" data-testid="esc-hint">
+          <template v-if="escArmed"><UKbd value="escape" size="sm" /> {{ t('again to stop') }}</template>
+          <template v-else><UKbd value="escape" size="sm" /><UKbd value="escape" size="sm" /> {{ tl('stop', 'arrêter') }}</template>
+        </span>
+        <UButton
+          :icon="asrRecording ? 'i-lucide-square' : asrInstalled ? 'i-lucide-mic' : 'i-lucide-mic-off'" color="neutral" variant="outline" size="sm"
+          class="prompt-mic" :class="{ dim: !asrInstalled, rec: asrRecording }" :disabled="readOnly || asrBusy"
+          :title="asrInstalled ? t('Voice input') : tl('Voice input not installed — Settings › Conversation', 'Saisie vocale non installée — Réglages › Conversation')"
+          :aria-label="asrInstalled ? t('Voice input') : tl('Voice input not installed', 'Saisie vocale non installée')" :aria-pressed="asrRecording"
+          @pointerdown="micDown" @pointerup="micUp" @pointercancel="micUp" @click="onMic"
+        />
         <UChatPromptSubmit
           :status="stopMode ? 'streaming' : 'ready'" :disabled="sendDisabled"
           color="primary" variant="solid" streaming-color="neutral" streaming-variant="solid" streaming-icon="i-herdr-stop" size="sm"
@@ -753,10 +988,10 @@ defineExpose({
         />
       </template>
     </UChatPrompt>
-    <!-- omp: its status line, as at the bottom of the terminal. -->
-    <div v-if="pane?.ompStatus" class="composer-status" :title="[pane.ompStatus.line, pane.ompStatus.meters].filter(Boolean).join('\n')">
-      <span class="composer-status-line">{{ pane.ompStatus.line }}</span>
-      <span v-if="pane.ompStatus.meters" class="composer-status-meters">{{ pane.ompStatus.meters }}</span>
+    <!-- omp/Devin: the agent's status line, as at the bottom of its terminal. -->
+    <div v-if="composerStatus" class="composer-status" :title="[composerStatus.line, composerStatus.meters].filter(Boolean).join('\n')">
+      <span class="composer-status-line">{{ composerStatus.line }}</span>
+      <span v-if="composerStatus.meters" class="composer-status-meters">{{ composerStatus.meters }}</span>
     </div>
   </div>
 </template>

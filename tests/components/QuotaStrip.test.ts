@@ -68,3 +68,24 @@ describe('QuotaStrip', () => {
     expect(w.find('.quota.empty').exists()).toBe(true)
   })
 })
+
+describe('QuotaStrip on API billing', () => {
+  it('shows a muted label instead of gauges, with no warning colour', async () => {
+    quotaNow.value = now
+    const w = await mountSuspended(QuotaStrip, { props: { rows: [], api: true } })
+    const row = w.find('[data-testid="quota-claude-api"]')
+    expect(row.exists()).toBe(true)
+    expect(row.find('.quota-api-label').text()).toBe('Claude · API usage, no quota')
+    expect(row.find('.quota-who .avatar').exists()).toBe(true)
+    expect(w.findAll('.quota')).toHaveLength(0)
+    expect(w.find('.hi, .mid, .stale').exists()).toBe(false)
+  })
+
+  it('sits before the other rows and is absent without API billing', async () => {
+    quotaNow.value = now
+    const both = await mountSuspended(QuotaStrip, { props: { rows: rows().slice(1), api: true } })
+    expect(both.findAll('.quota-row').map(r => r.classes().includes('quota-api'))).toEqual([true, false])
+    const none = await mountSuspended(QuotaStrip, { props: { rows: [] } })
+    expect(none.find('.quotas').exists()).toBe(false)
+  })
+})

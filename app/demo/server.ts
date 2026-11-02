@@ -357,6 +357,7 @@ export class DemoServer {
         case '/api/worktrees': return ok({ worktrees: [] })
         case '/api/plugins/actions': return ok({ actions: [] })
         case '/api/push/quiet': return ok({})
+        case '/api/push/devices': return ok({ devices: [] })
         case '/api/close/status': return ok({ git: false })
         case '/api/isgit': return ok({ git: false })
         case '/api/efforts': return ok({ levels: ['low', 'medium', 'high'], current: this.pane(paneId)?.model?.effort || null })

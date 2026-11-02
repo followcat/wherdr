@@ -1,5 +1,6 @@
 // Global app state: live agents (WebSocket /ws/events), device
 // settings, lock, API calls. Module singletons (client app).
+import { createSocketProbe } from '~/utils/socketProbe'
 import { DESK_QUERY, SLIM_QUERY, TABLET_QUERY, provesHardwareKeyboard } from '~/utils/layoutMode'
 import type { AppConfig, AuthStatus, HerdrState, MachineConfig, MachineInfo, NamedSession, Pane, Quotas } from '#shared/types'
 import { LOCAL, splitId } from '#shared/ids'
@@ -27,6 +28,8 @@ import { flag, settingsSync, syncedRef } from './useSyncedSettings'
 import type { SettingsMap } from '#shared/settings'
 import type { QuotaDisplay } from '~/utils/quotas'
 import type { ContentWidth } from '~/utils/contentWidth'
+import { readUiScale, type UiScale } from '~/utils/uiScale'
+import { PHONE_KEY_ORDER_KEY, readKeyOrder, writeKeyOrder, type PhoneKeyId } from '~/utils/keybarOrder'
 
 const ls = {
   get(k: string) {
@@ -36,6 +39,10 @@ const ls = {
   set(k: string, v: string) {
     try { localStorage.setItem(k, v) }
     catch { /* stockage indisponible */ }
+  },
+  remove(k: string) {
+    try { localStorage.removeItem(k) }
+    catch { /* storage unavailable */ }
   },
 }
 
@@ -101,6 +108,8 @@ export const hostLabel = ref('')
 export const brandLabel = computed(() => 'wherdr')
 export const curPane = ref<string | null>(null)
 export const pageVisible = ref(true)
+// Every visible wake, including pageshow/online with unchanged visibility.
+export const socketWake = ref(0)
 
 // Device settings.
 // Display preferences without anything specific to the device are kept on the
@@ -132,6 +141,12 @@ watch(contentWidth, (v) => {
     try { localStorage.removeItem('chatWidth') } catch { /* stockage indisponible */ }
     document.documentElement.dataset.contentWidth = v
   }
+}, { immediate: true })
+// Interface size on a computer; applied as data-ui-scale, desk media only.
+export const uiScale = ref<UiScale>(readUiScale(ls.get('uiScale')))
+watch(uiScale, (v) => {
+  ls.set('uiScale', v)
+  if (import.meta.client) document.documentElement.dataset.uiScale = v
 }, { immediate: true })
 // Independent settings; migration of the old modes on first read.
 const savedTyping = parseTypingSettings(ls.get('typewriterSpeed'), ls.get('encryptedText'), ls.get('typewriterMode'), ls.get('typewriter'))
@@ -168,11 +183,25 @@ export const replyStyle = syncedRef('replyStyle', parseReplyStyle, v => v)
 export const homeQuotas = ref<Quotas | null>(null)
 export const fontSize = ref(Number(ls.get('fontSize')) || 12)
 watch(fontSize, v => ls.set('fontSize', String(v)))
+// Experimental touch physics is a device rendering preference, like the renderer.
+// On this fork it defaults on for touch devices: it is the point of the build.
+const smoothTouchDefault = typeof matchMedia !== 'undefined' && matchMedia('(hover: none) and (pointer: coarse)').matches
+export const smoothTouchScrolling = ref(ls.get('smoothTouchScrolling') ? ls.get('smoothTouchScrolling') === '1' : smoothTouchDefault)
+watch(smoothTouchScrolling, v => ls.set('smoothTouchScrolling', v ? '1' : '0'))
+
 export const terminalRenderer = ref(parseTerminalRenderer(ls.get('terminalRenderer')))
 watch(terminalRenderer, v => ls.set('terminalRenderer', v))
 // OSC 52 copies of the agents written to this device's clipboard (on by default).
 export const agentClipboard = ref(ls.get('agentClipboard') !== '0')
 watch(agentClipboard, v => ls.set('agentClipboard', v ? '1' : '0'))
+// Order of the phone key bar (utils/keybarOrder.ts), the same in the
+// Conversation and the Terminal. The default order is not stored.
+export const phoneKeyOrder = ref<PhoneKeyId[]>(readKeyOrder(ls.get(PHONE_KEY_ORDER_KEY)))
+watch(phoneKeyOrder, (v) => {
+  const raw = writeKeyOrder(v)
+  if (raw === null) ls.remove(PHONE_KEY_ORDER_KEY)
+  else ls.set(PHONE_KEY_ORDER_KEY, raw)
+})
 // The engine actually loaded in xterm; kept after the terminal view
 // is closed so Settings can show the last observed result.
 export const terminalRenderStatus = ref<ActiveTerminalRenderer | null>(null)
@@ -198,6 +227,8 @@ export function refreshTerminalRenderStatus() {
 }
 if (import.meta.client) {
   window.addEventListener('storage', (event) => {
+    if (event.key === 'smoothTouchScrolling') smoothTouchScrolling.value = event.newValue === '1'
+    if (event.key === PHONE_KEY_ORDER_KEY) phoneKeyOrder.value = readKeyOrder(event.newValue)
     if (event.key === 'terminalRenderer') {
       terminalRenderer.value = parseTerminalRenderer(event.newValue)
       refreshTerminalRenderStatus()
@@ -481,15 +512,52 @@ function normalize(s: HerdrState): HerdrState {
   return s
 }
 
+const eventProbe = createSocketProbe(() => evWs)
+let evHandshake: ReturnType<typeof setTimeout> | undefined
+// OPEN but silent: the upgrade succeeded and no real packet followed. An
+// open pipe proves nothing (the first state goes out on connect); past this
+// window the socket is dead rather than slow, so it is closed for onclose's
+// retry path.
+let evFirst: ReturnType<typeof setTimeout> | undefined
+export function recoverEvents() {
+  connectEvents()
+  return eventProbe.recover(() => { if (!document.hidden && !locked.value) reconnectEvents() })
+}
+export function reconnectEvents() {
+  eventProbe.cancel()
+  clearTimeout(evHandshake)
+  clearTimeout(evFirst)
+  clearTimeout(evTimer)
+  if (evWs) { try { evWs.onclose = null; evWs.close() } catch { /* ignore */ } evWs = null }
+  evRetry = 0
+  connectEvents()
+}
+
 export function connectEvents() {
   clearTimeout(evTimer)
   if (locked.value) return
   if (evWs && evWs.readyState <= 1) return
+  clearTimeout(evHandshake)
+  clearTimeout(evFirst)
+  eventProbe.cancel()
   const ws = new WebSocket(`${wsBase()}/ws/events`)
   evWs = ws
+  const t0 = Date.now() // staged timing: open, then first real packet
+  let proved = false
+  // A CONNECTING socket fires nothing: no open, no close, no retry. If the
+  // network is not actually back yet, the handshake hangs and the app would
+  // sit offline forever -- close it on a deadline so onclose retries.
+  evHandshake = setTimeout(() => {
+    if (evWs === ws && ws.readyState === 0) { try { ws.close() } catch { /* ignore */ } }
+  }, 6000)
   ws.onopen = () => {
+    if (evWs !== ws) return
+    clearTimeout(evHandshake)
     evRetry = 0
     eventsOpen.value = true
+    evFirst = setTimeout(() => {
+      if (evWs === ws) { try { ws.close() } catch { /* ignore */ } }
+    }, 8000)
     if (everOpen) {
       settleUntil = Date.now() + SETTLE_MS
       // Reconnection = often a redeployment: we check right away whether
@@ -505,8 +573,12 @@ export function connectEvents() {
   }
   ws.onmessage = (e) => {
     try {
+      if (evWs !== ws) return
       const data = JSON.parse(e.data)
-      // Settings changed on another device (or another tab).
+      if (data?.type === 'pong') { eventProbe.pong(ws); return }
+      // Real traffic (state or settings): the socket proved itself live.
+      clearTimeout(evFirst)
+      if (!proved) { proved = true; console.debug(`[events] first +${Date.now() - t0}ms`) }
       if (data?.type === 'settings') { settingsSync.receive(data.settings || {}); return }
       const got = normalize(data) as HerdrState
       // Server just restarted, state still partial: we keep the whole
@@ -530,8 +602,11 @@ export function connectEvents() {
   }
   ws.onclose = () => {
     if (evWs !== ws) return
+    clearTimeout(evHandshake)
+    clearTimeout(evFirst)
     evWs = null
     eventsOpen.value = false
+    eventProbe.cancel()
     if (herdrState.value.ok && lastStateAt) cachedAt.value = lastStateAt
     // Refused because of the lock (session expired) rather than a network cut?
     confirmLock()
@@ -578,7 +653,9 @@ watch(herdrState, (s) => {
 // the server end a session past its maximum duration (never in the middle of use).
 export async function confirmLock({ resume = false } = {}) {
   try {
-    const st = await api<AuthStatus>(resume ? '/api/auth/status?resume=1' : '/api/auth/status')
+    // A server that never answers is not a reason to lock: bound the read so
+    // the catch below (unreachable → leave the app as it is) still fires.
+    const st = await api<AuthStatus>(resume ? '/api/auth/status?resume=1' : '/api/auth/status', undefined, AbortSignal.timeout(STATUS_WAIT_MS))
     if (st.enabled && !st.unlocked) return showLock()
     const access = leaseFromStatus(st)
     setOfflineAccess(access)
@@ -616,6 +693,8 @@ export function showLock() {
   setOfflineAccess(null)
   clearOffline()
   // Nothing must talk to the server any more until it is unlocked.
+  eventProbe.cancel()
+  clearTimeout(evHandshake)
   const ws = evWs
   evWs = null
   if (ws) {
@@ -644,7 +723,7 @@ export async function start({ resume = false } = {}) {
   try {
     const st = resume
       ? await api<AuthStatus>('/api/auth/status?resume=1', undefined, AbortSignal.timeout(STATUS_WAIT_MS))
-      : await api<AuthStatus>('/api/auth/status')
+      : await api<AuthStatus>('/api/auth/status', undefined, AbortSignal.timeout(STATUS_WAIT_MS))
     if (st.hostLabel !== undefined) hostLabel.value = st.hostLabel
     if (st.enabled && !st.unlocked) return showLock()
     access = leaseFromStatus(st)

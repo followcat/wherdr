@@ -6,7 +6,10 @@ import { ompToolCall, ompToolResult, ompUserRun } from './ompTools'
 import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDetail'
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
 import { cleanModelName, lastModel, mergeOmpModel, ompLastModel, ompModelComplete, ompModelLabel, ompModelResult } from './models'
-import { type MachineFs, localFs } from './fsx'
+import { type MachineFs, type ShellExec, localFs } from './fsx'
+import { createDevinTranscripts } from './devinTranscripts'
+import { createOpenCodeTranscripts, type OpenCodeOptions } from './opencodeTranscripts'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process' 
 import { searchFile } from './conversationSearch'
 import { hasTranscript, transcriptKind } from '../../shared/agentKind'
 import { type CommandTemplate, ompCommandTemplates } from './slash'
@@ -504,9 +507,97 @@ export function codexCommand(input: unknown): string {
   return firstLine(s)
 }
 
+// Codex writes an attached image as three content parts (codex-rs/protocol
+// models.rs): '<image name=[Image #1] path="…">' ('<image name=[Image #1]>' in
+// older versions, '<image>' for a remote one), the input_image, then '</image>'.
+// The user's text, after them, keeps the composer's "[Image #1]" placeholder.
+// Only parts right around an image are wrappers: the same text elsewhere is the user's.
+const CODEX_IMAGE_OPEN = /^<image(?: name=\[Image #\d+\][^\n]*)?>$/
+const CODEX_IMAGE_CLOSE = '</image>'
+function codexImageWrappers(content: Json[]): Set<number> {
+  const out = new Set<number>()
+  content.forEach((part, k) => {
+    if (part?.type !== 'input_image') return
+    const before = content[k - 1]
+    const after = content[k + 1]
+    if (before?.type === 'input_text' && CODEX_IMAGE_OPEN.test(String(before.text || '').trim())) out.add(k - 1)
+    if (after?.type === 'input_text' && String(after.text || '').trim() === CODEX_IMAGE_CLOSE) out.add(k + 1)
+  })
+  return out
+}
+// The composer's placeholders are not told apart by their text: "[Image #1]"
+// typed by the user looks the same. Codex records them separately, as
+// `text_elements` (UTF-8 byte ranges) of the text it was given, in the event
+// written after the message: `user_message` (legacy rollouts) or
+// `item_completed` with a `UserMessage` item (paginated ones). Only those
+// ranges are removed. Without such an event (older Codex, or a page that cut
+// it off), a text is kept unless it holds nothing but the placeholders of the
+// message's own images, each once (a photo sent alone).
+type Spans = [number, number][]
+const IMAGE_LABEL = /^\[Image #(\d+)\]$/
+function imageSpans(text: string, elements: unknown): Spans {
+  if (!Array.isArray(elements)) return []
+  const bytes = Buffer.from(text)
+  const out: Spans = []
+  for (const el of elements as Json[]) {
+    const start = el?.byte_range?.start
+    const end = el?.byte_range?.end
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > bytes.length || start >= end) continue
+    const slice = bytes.subarray(start, end).toString()
+    // The span must hold an image placeholder (not a mention or a paste).
+    if (!IMAGE_LABEL.test(slice) || (el.placeholder != null && el.placeholder !== slice)) continue
+    out.push([bytes.subarray(0, start).toString().length, bytes.subarray(0, end).toString().length])
+  }
+  return out
+}
+// Texts Codex declared with their image placeholders, from the turn events of
+// these lines; each event is used once (the same text may be sent twice).
+function codexPlaceholders(lines: Lines): Map<string, Spans[]> {
+  const out = new Map<string, Spans[]>()
+  const add = (text: unknown, elements: unknown) => {
+    if (typeof text !== 'string') return
+    // Kept even with no image span: the text is then known to be typed.
+    out.set(text, [...(out.get(text) || []), imageSpans(text, elements)])
+  }
+  for (const line of lines) {
+    if (!line || !line.includes('"event_msg"') || !line.includes('text_elements')) continue
+    let d: Json
+    try { d = JSON.parse(line) }
+    catch { continue }
+    const e = d?.payload
+    if (d?.type !== 'event_msg' || !e) continue
+    if (e.type === 'user_message') add(e.message, e.text_elements)
+    else if (e.type === 'item_completed' && e.item?.type === 'UserMessage' && Array.isArray(e.item.content)) {
+      for (const c of e.item.content) if (c?.type === 'text') add(c.text, c.text_elements)
+    }
+  }
+  return out
+}
+// The text without the [start, end) ranges, and without the spaces or line they leave.
+function dropSpans(text: string, spans: Spans): string {
+  for (const [start, end] of [...spans].sort((x, y) => y[0] - x[0])) {
+    let a = start
+    let b = end
+    while (text[b] === ' ' || text[b] === '\t') b++
+    if (b === text.length || text[b] === '\n') while (a > 0 && (text[a - 1] === ' ' || text[a - 1] === '\t')) a--
+    if ((a === 0 || text[a - 1] === '\n') && text[b] === '\n') b++
+    text = text.slice(0, a) + text.slice(b)
+  }
+  return text
+}
+// Nothing but the placeholders of the message's images, each once: "[Image #1]",
+// "[Image #1] [Image #2]"… (what the composer leaves when no text is typed).
+function onlyOwnLabels(text: string, images: number): boolean {
+  const t = text.trim()
+  if (!/^(?:\[Image #\d+\]\s*)+$/.test(t)) return false
+  const nums = [...t.matchAll(/\[Image #(\d+)\]/g)].map(m => Number(m[1]))
+  return nums.every(n => n >= 1 && n <= images) && new Set(nums).size === nums.length
+}
+
 export function parseCodex(lines: Lines): Parsed {
   const items: Parsed = []
   const calls = new Map<string, ChatItem>()
+  const placeholders = codexPlaceholders(lines)
   for (let li = 0; li < lines.length; li++) {
     const line = lines[li]
     const ref = lines.refs ? lines.refs[li] : undefined
@@ -526,7 +617,11 @@ export function parseCodex(lines: Lines): Parsed {
     if (p.type === 'message' && (p.role === 'user' || p.role === 'assistant')) {
       let text = ''
       let images = 0
-      for (const part of p.content || []) {
+      const content: Json[] = Array.isArray(p.content) ? p.content : []
+      const wrappers = p.role === 'user' ? codexImageWrappers(content) : new Set<number>()
+      const imageCount = content.filter(part => part?.type === 'input_image').length
+      for (const [k, part] of content.entries()) {
+        if (wrappers.has(k)) continue
         // "!cmd" typed in Codex: run at once, written as
         // <user_shell_command><command>…</command><result>Exit code: N … Output:\n…</result>.
         const run = p.role === 'user' && part.type === 'input_text' ? /^\s*<user_shell_command>\s*<command>\s*([\s\S]*?)\s*<\/command>\s*(?:<result>([\s\S]*?)<\/result>)?/.exec(part.text || '') : null
@@ -535,6 +630,10 @@ export function parseCodex(lines: Lines): Parsed {
           const exit = /Exit code: (-?\d+)/.exec(result)
           const out = /(?:^|\n)Output:\n?([\s\S]*)$/.exec(result)
           items.push({ role: 'bash', text: clip(run[1]!, 2000), out: out ? out[1]!.replace(/\s+$/, '').slice(-MAX_OUT) : '', err: '', error: Boolean(exit && exit[1] !== '0'), ts })
+        } else if (p.role === 'user' && imageCount && part.type === 'input_text' && part.text && !isNoise(part.text)) {
+          const declared = placeholders.get(part.text)?.shift()
+          const kept: string = declared ? dropSpans(part.text, declared) : onlyOwnLabels(part.text, imageCount) ? '' : part.text
+          if (kept.trim()) text += (text ? '\n' : '') + kept
         } else if ((part.type === 'input_text' || part.type === 'output_text') && part.text && !isNoise(part.text)) text += (text ? '\n' : '') + part.text
         else if (part.type === 'input_image') images++
       }
@@ -669,7 +768,8 @@ export function parseOmp(lines: Lines, home = '', templates: readonly CommandTem
           items.push(t)
         }
       }
-      if (m.stopReason === 'aborted' && /interrupt/i.test(String(m.errorMessage || ''))) items.push({ role: 'system', text: 'Interrupted', ts })
+      const end = ompTurnEnd(m)
+      if (end) items.push({ ...end, ts })
     } else if (m.role === 'bashExecution' || m.role === 'pythonExecution') {
       // "!cmd" / "$ code" typed in omp's input field: a user action, like
       // Claude's bash mode, drawn the way omp draws it.
@@ -692,6 +792,31 @@ export function parseOmp(lines: Lines, home = '', templates: readonly CommandTem
   return items
 }
 
+// How an omp assistant turn ended, when it failed: what omp's terminal shows
+// under it when it replays the session. A provider error (usage limit,
+// credit balance, stalled stream, "Retry budget exhausted…") is a turn with
+// `stopReason: "error"`, its `errorMessage` and often no content at all.
+// When omp retries, it later marks the failed attempt (`retryRecovery`, by
+// rewriting the file): "superseded" attempts are hidden, a "recovered" one
+// becomes a one-line note. Error ids carry omp's flags (pi-ai error/flags.ts).
+const OMP_SILENT_ABORT = 0x0200_0000
+const OMP_USER_INTERRUPT = 0x0400_0000
+const OMP_ABORT = 0x0800_0000
+function ompTurnEnd(m: Json): Pick<ChatItem, 'role' | 'text' | 'name' | 'error'> | null {
+  const status = m.retryRecovery && typeof m.retryRecovery === 'object' ? m.retryRecovery.status : null
+  if (status === 'superseded') return null
+  if (status === 'recovered') return { role: 'system', text: 'Retried after an error' }
+  const message = typeof m.errorMessage === 'string' ? m.errorMessage.trim() : ''
+  const id = Number.isInteger(m.errorId) ? m.errorId as number : 0
+  if (id & OMP_SILENT_ABORT || message === '__omp.silent_abort__') return null
+  if (id & OMP_USER_INTERRUPT || (m.stopReason === 'aborted' && /interrupt/i.test(message))) return { role: 'system', text: 'Interrupted' }
+  let text = ''
+  if (m.stopReason === 'error') text = message || 'Error'
+  else if (m.stopReason === 'aborted') text = id & OMP_ABORT || !message || message === 'Request was aborted' ? 'Operation aborted' : message
+  else text = message
+  return text ? { role: 'notice', name: 'error', text: clip(text), error: true } : null
+}
+
 // Text of an omp file command: "/name args". omp appends the arguments
 // after the text, unless the command places them itself ($1, {{args}}…): the
 // text then only starts like the command, and its arguments are lost.
@@ -708,6 +833,109 @@ function ompCommandText(text: string, templates: readonly CommandTemplate[]): st
 // `base`: position (in bytes) of `text` in the file. Each line keeps
 // its "start:length" position (lines.refs): messages with images
 // carry it, to re-read the image on demand (see image()).
+// Command Code (commandcode.ai): one JSONL session per project, shaped like
+// Claude's (message / model_change / session lines, tool_use + tool_result,
+// thinking, images). `meta.source` separates a human turn from tool results
+// and injected context; `model` on assistant lines is the session's model.
+function commandCodeText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (!Array.isArray(value)) return ''
+  return value.map(p => (p && p.type === 'text' && typeof p.text === 'string' ? p.text : '')).filter(Boolean).join('\n')
+}
+
+function commandCodeTool(name: string, input: Json): string {
+  if (typeof input === 'string') return firstLine(input)
+  const i = input && typeof input === 'object' ? input : {}
+  switch (name) {
+    case 'shell_command': return firstLine(i.description || i.command)
+    case 'read_file': case 'write_file': case 'edit_file':
+      return firstLine(i.file_path || i.path)
+    case 'grep': return `${i.pattern || ''}${i.path ? ` · ${i.path}` : ''}`
+    case 'glob': return firstLine(i.pattern)
+    case 'agent': return firstLine(i.description || i.prompt)
+    case 'ask_user_question': return firstLine(i.questions && i.questions[0] && i.questions[0].question)
+    case 'search_tools': return firstLine(i.query)
+    default: {
+      const v = Object.values(i).find(x => typeof x === 'string')
+      return firstLine(v)
+    }
+  }
+}
+
+export function parseCommandCode(lines: Lines): Parsed {
+  const items: Parsed = []
+  const tools = new Map<string, ChatItem>()
+  for (let i = 0; i < lines.length; i++) {
+    let d: Json
+    try { d = JSON.parse(lines[i]!) } catch { continue }
+    if (!d || d.type !== 'message' || !d.message || typeof d.message !== 'object') continue
+    const m = d.message
+    const ref = lines.refs?.[i]
+    const ts = typeof d.timestamp === 'string'
+      ? d.timestamp
+      : (Number.isFinite(m.meta?.createdAt) ? new Date(m.meta.createdAt).toISOString() : null)
+    if (m.role === 'assistant') {
+      const content = Array.isArray(m.content) ? m.content : []
+      let images = 0
+      for (const [block, part] of content.entries()) {
+        if (!part || typeof part !== 'object') continue
+        if (part.type === 'thinking' && typeof part.thinking === 'string' && part.thinking.trim()) {
+          items.push({ role: 'thinking', text: clip(part.thinking), ts })
+        } else if (part.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
+          items.push(replyItem({ role: 'assistant', text: clip(part.text), ts }, ref, block))
+        } else if (part.type === 'tool_use' && typeof part.id === 'string') {
+          const name = typeof part.name === 'string' ? part.name : 'Tool'
+          const t: ChatItem = { role: 'tool', name, text: clip(commandCodeTool(name, part.input), 300), ts }
+          tools.set(part.id, t)
+          items.push(t)
+        } else if (part.type === 'image') images++
+      }
+      if (images) items.push(replyItem({ role: 'assistant', text: '', images, ts, ...(ref ? { ref } : {}) }, ref))
+      continue
+    }
+    if (m.role !== 'user') continue
+    const content = m.content
+    const source = m.meta && typeof m.meta.source === 'string' ? m.meta.source : null
+    if (typeof content === 'string') {
+      const text = content.trim()
+      if (text && source !== 'system') items.push({ role: 'user', text: clip(text), ts })
+      continue
+    }
+    if (!Array.isArray(content)) continue
+    let text = ''
+    let images = 0
+    // Images the line's tool results returned come after the message's own
+    // (see lineImages / extractImage).
+    let toolImages = content.filter((p: Json) => p && p.type === 'image').length
+    for (const part of content) {
+      if (!part || typeof part !== 'object') continue
+      if (part.type === 'text' && typeof part.text === 'string') {
+        text += (text ? '\n' : '') + part.text
+      } else if (part.type === 'image') {
+        images++
+      } else if (part.type === 'tool_result' && typeof part.tool_use_id === 'string') {
+        const t = tools.get(part.tool_use_id)
+        if (!t) continue
+        const out = commandCodeText(part.content)
+        if (out) t.out = clip(out, 8000)
+        if (part.is_error) t.error = true
+        const n = Array.isArray(part.content) ? part.content.filter((p: Json) => p && p.type === 'image').length : 0
+        if (n && ref) {
+          t.images = n
+          t.ref = ref
+          if (toolImages) t.imageAt = toolImages
+        }
+        toolImages += n
+      }
+    }
+    const human = source === 'user' || (!source && !content.some((p: Json) => p && p.type === 'tool_result'))
+    if (human && (text.trim() || images)) {
+      items.push({ role: 'user', text: clip(text.trim()), images, ...(images && ref ? { ref } : {}), ts })
+    }
+  }
+  return items
+}
+
 export function parseLines(text: string, kind: string | null, base = 0, home = '', templates?: readonly CommandTemplate[], cwd = ''): Parsed {
   const raw = text.split('\n')
   const refs: string[] = []
@@ -719,7 +947,7 @@ export function parseLines(text: string, kind: string | null, base = 0, home = '
   }
   const lines: Lines = raw.map(stripBlobs)
   lines.refs = refs
-  const items = kind === 'omp' ? parseOmp(lines, home, templates, cwd) : kind === 'codex' ? parseCodex(lines) : parseClaude(lines, home)
+  const items = kind === 'omp' ? parseOmp(lines, home, templates, cwd) : kind === 'codex' ? parseCodex(lines) : kind === 'cmd' ? parseCommandCode(lines) : parseClaude(lines, home)
   // Content hash of each image, to spot one shown twice (see shared/imageDupes.ts).
   const byRef = new Map<string, number>()
   refs.forEach((r, i) => byRef.set(r, i))
@@ -809,7 +1037,9 @@ export function isMissing(e: unknown): boolean {
   return err.code === 'remote' && /no such file|not a directory|introuvable/i.test(err.message || '')
 }
 
-export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number }) {
+export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, exec, stream }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number, exec?: ShellExec, stream?: (script: string, args: string[]) => ChildProcessWithoutNullStreams | null }) {
+  const devin = createDevinTranscripts({ home, fs })
+  const opencode = createOpenCodeTranscripts({ home, exec, stream })
   // File -> state (size, generation) and when this server first saw it, for
   // whole-second mtimes (see SETTLE_MS); `file|size|gen` -> checksum of the
   // file at first sight (null: could not be taken).
@@ -961,13 +1191,33 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
       const f = await findSessionFile('codex', pane.agentSession)
       if (f) return { file: f, session: pane.agentSession }
     }
+    // `codex resume <uuid>` can keep writing a rollout created months ago.
+    // Missing hooks must not restrict that explicit session to the recent scan.
+    // Include it among candidates, rather than pinning it forever: /new can
+    // create a newer conversation without changing the process's launch args.
+    let resumed: string | null = null
+    try {
+      const proc = await paneProcess(pane.id, 'codex')
+      const args = Array.isArray(proc?.argv) ? proc.argv : []
+      const at = args.indexOf('resume')
+      const id = at >= 0 ? args[at + 1] : null
+      if (typeof id === 'string' && /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(id)) {
+        const file = await findSessionFile('codex', id)
+        const meta = file && await rolloutMeta(file)
+        const stat = file ? await fs.stat(file) : null
+        if (file && meta?.id === id && stat?.isFile) {
+          resumed = id
+          rolls.push({ file, id, ts: Date.parse(meta.timestamp || 0) || 0, mtimeMs: stat.mtimeMs })
+        }
+      }
+    } catch { /* process information is optional; retain the recent fallback */ }
     let best: CodexRollout | null = null
     for (const r of rolls) {
       if (taken.has(r.id)) continue
-      if (pane.bornAt && r.ts < pane.bornAt - 60000) continue
+      if (r.id !== resumed && pane.bornAt && r.ts < pane.bornAt - 60000) continue
       if (!best || r.mtimeMs > best.mtimeMs) best = r
     }
-    return best && { file: best.file, session: best.id, guessed: true }
+    return best && { file: best.file, session: best.id, ...(best.id !== resumed ? { guessed: true } : {}) }
   }
 
   // Codex panes of the machine (kept up to date by the state): for the claims.
@@ -975,6 +1225,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   // Agents seen at work: they have a conversation (see shared/integrations.ts).
   const activity = createActivity()
   function observe(panes: TranscriptPane[]) {
+    opencode.observe(panes)
     codexPeers.clear()
     for (const p of panes) if (p.agent === 'codex') codexPeers.set(p.id, p)
     const live = new Set(panes.map(p => p.id))
@@ -1001,7 +1252,8 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
           for (const d of await sortDesc(path.join(root, y, m))) {
             const dir = path.join(root, y, m, d)
             const hit = (await sortDesc(dir)).find(n => n.endsWith(`-${id}.jsonl`))
-            if (hit) { found = path.join(dir, hit); break outer }
+            // A folder with that name is not a conversation.
+            if (hit && await exists(path.join(dir, hit))) { found = path.join(dir, hit); break outer }
           }
         }
       }
@@ -1013,9 +1265,55 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
       // identifier: only an omp session (~/.omp/agent/sessions).
       const f = path.normalize(id)
       if (path.isAbsolute(f) && f.endsWith('.jsonl') && transcriptKind(f) === 'omp' && await exists(f)) found = f
+    } else if (kind === 'cmd') {
+      // ~/.commandcode/projects/<project-slug>/<session-id>.jsonl. The slug
+      // is not reversible (camelCase is split): scan the project folders.
+      const root = path.join(home, '.commandcode/projects')
+      const sid = path.basename(id).replace(/\.jsonl$/, '')
+      found = await firstExisting((await listDir(root)).map(d => path.join(root, d, `${sid}.jsonl`)))
     }
     if (found) bySession.set(id, found)
     return found
+  }
+
+  // Command Code has no Herdr session integration yet: find the project by the
+  // `cwd` recorded in each session's first line, then the most recently
+  // written session there. A resumed session keeps appending to its file, so
+  // mtime follows the pane in use; two live panes in the same project would
+  // still share the newest file (see docs/conversation.md).
+  async function commandCodeSessions() {
+    const root = path.join(home, '.commandcode/projects')
+    const out: { file: string, mtimeMs: number }[] = []
+    for (const d of await listDir(root)) {
+      const dir = path.join(root, d)
+      const files = (await listDir(dir)).filter(n => n.endsWith('.jsonl') && !n.endsWith('.checkpoints.jsonl'))
+      if (!files.length) continue
+      const paths = files.map(n => path.join(dir, n))
+      const stats = await fs.statMany(paths)
+      for (let i = 0; i < paths.length; i++) if (stats[i]?.isFile) out.push({ file: paths[i]!, mtimeMs: stats[i]!.mtimeMs })
+    }
+    return out.sort((a, b) => b.mtimeMs - a.mtimeMs)
+  }
+
+  async function locateCommandCode(pane: TranscriptPane): Promise<Loc | null> {
+    if (pane.agentSession) {
+      const f = await findSessionFile('cmd', pane.agentSession)
+      if (f) return { file: f, session: pane.agentSession }
+    }
+    if (!pane.cwd) return null
+    let best: { file: string, id: string, cwdLength: number } | null = null
+    for (const s of await commandCodeSessions()) {
+      let first: string
+      try { first = (await fs.read(s.file, 0, 64 * 1024)).toString('utf8').split('\n')[0]! } catch { continue }
+      let d: Json
+      try { d = JSON.parse(first) } catch { continue }
+      if (!d || d.type !== 'session' || typeof d.cwd !== 'string') continue
+      if (d.cwd !== pane.cwd && !pane.cwd.startsWith(d.cwd + '/')) continue
+      const hit = { file: s.file, id: typeof d.id === 'string' ? d.id : path.basename(s.file, '.jsonl'), cwdLength: d.cwd.length }
+      if (!best || hit.cwdLength > best.cwdLength) best = hit
+      if (d.cwd === pane.cwd) break // newest exact match
+    }
+    return best ? { file: best.file, session: best.id, guessed: true } : null
   }
 
   // `fresh`: a cached "no file" is not trusted (a brand new Claude writes its
@@ -1027,6 +1325,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     let failed = false
     try {
       if (pane.agent === 'codex') loc = await locateCodexPane(pane)
+      else if (pane.agent === 'cmd') loc = await locateCommandCode(pane)
       else if (pane.agentSession) {
         const f = await findSessionFile(pane.agent, pane.agentSession)
         if (f) loc = { file: f, session: pane.agentSession }
@@ -1146,6 +1445,8 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
 
   // ------------------------------------------------------------ API
   async function search(pane: TranscriptPane, query: string, deadline: number) {
+    if (pane.agent === 'devin') return devin.search(pane, query, deadline)
+    if (pane.agent === 'opencode') return opencode.search(pane, query, deadline)
     if (!hasTranscript(pane.agent)) return { hits: [], limited: false, kind: null }
     const loc = await locate(pane)
     if (!loc || Date.now() >= deadline) return { hits: [], limited: Date.now() >= deadline, kind: null }
@@ -1160,7 +1461,19 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   // opts.fresh : look for the file again if none was found lately (see locate)
   // opts.anchor: token as the client sent it, for the join check (anchorOf),
   //              when `since` was dropped (list the server no longer knows)
-  async function chat(pane: TranscriptPane, opts: { since?: string, from?: number | null, before?: number | null, fresh?: boolean, anchor?: string } = {}): Promise<ChatResponse> {
+  async function chat(pane: TranscriptPane, options: OpenCodeOptions & { fresh?: boolean } = {}): Promise<ChatResponse> {
+    if (pane.agent === 'devin') {
+      const r = await devin.chat(pane, { since: options.since, from: typeof options.from === 'number' ? options.from : null, before: typeof options.before === 'number' ? options.before : null, anchor: options.anchor })
+      for (const item of r.items || []) if (item.role === 'assistant' && item.ref) replyKeys.set(item, `devin:${r.session}:${item.ref}`)
+      return r
+    }
+    if (pane.agent === 'opencode') {
+      const r = await opencode.chat(pane, options)
+      for (const item of r.items || []) if (item.role === 'assistant' && item.ref) replyKeys.set(item, `opencode:${r.session}:${item.ref}`)
+      return r
+    }
+    // Numeric offsets remain exclusive to the existing file-backed readers.
+    const opts = { ...options, from: typeof options.from === 'number' ? options.from : null, before: typeof options.before === 'number' ? options.before : null }
     if (!hasTranscript(pane.agent)) return { available: false, reason: 'unsupported' }
     const loc = await locate(pane, Boolean(opts.fresh))
     if (!loc) return { available: false, reason: 'not_found' }
@@ -1169,6 +1482,10 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     catch (e) {
       // Failed read: an error (the client keeps what it shows), not an empty result.
       if (!isMissing(e)) throw e
+      st = null
+    }
+    // Gone, or a folder where the transcript was expected: no conversation.
+    if (!st || !st.isFile) {
       locCache.delete(pane.id)
       lastLoc.delete(pane.id)
       return { available: false, reason: 'not_found' }
@@ -1238,6 +1555,8 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   // Image no. `index` of the message at `ref` ("start:length"): we re-read
   // that single line and decode the image it contains (base64).
   async function image(pane: TranscriptPane, fileId: string | null, ref: string | null, index: number) {
+    if (pane.agent === 'devin') return devin.image(pane, fileId, ref, index)
+    if (pane.agent === 'opencode') return opencode.image(pane, fileId, ref, index)
     const loc = await locate(pane)
     if (!loc || path.basename(loc.file) !== fileId) return null
     const m = /^(\d+):(\d+)$/.exec(String(ref || ''))
@@ -1265,7 +1584,9 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   const MODEL_MAX_BYTES = 16 * 1024 * 1024
   const modelCache = new Map<string, { file: string, size: number, raw: ModelInfo | null, info: ModelInfo | null }>()
   async function model(pane: TranscriptPane): Promise<ModelInfo | null> {
-    if (!pane.agent || !['claude', 'codex', 'omp'].includes(pane.agent)) return null
+    if (pane.agent === 'devin') return devin.model(pane)
+    if (pane.agent === 'opencode') return opencode.model(pane)
+    if (!pane.agent || !['claude', 'codex', 'omp', 'cmd'].includes(pane.agent)) return null
     const loc = await locate(pane)
     if (!loc) return null
     // A failed read (SSH dropped, timeout) says nothing about the model: keep
@@ -1383,7 +1704,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     claudeAskCache.delete(paneId)
   }
 
-  return { chat, preview, latestReply, image, forget, locate, model, observe, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions }
+  return { chat, preview, latestReply, image, forget, locate, model, observe, dispose: opencode.dispose, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions, opencodeModels: opencode.models, opencodePatchModel: opencode.patchModel, opencodePending: opencode.pending, opencodeReplyPermission: opencode.replyPermission, opencodeReplyForm: opencode.replyForm, opencodePermissionMatch: opencode.permissionMatch, opencodeInbox: opencode.inbox, opencodeInboxDelete: opencode.inboxDelete, opencodeShell: opencode.shell, opencodeStatus: opencode.status }
 }
 
 export type Transcripts = ReturnType<typeof createTranscripts>

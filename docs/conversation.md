@@ -2,12 +2,48 @@
 
 [Documentation](README.md) · [Project](../README.md)
 
-- **Conversation view**: the agent's real transcript (Claude Code, Codex and omp), rendered as
+- **Conversation view**: the agent's real transcript (Claude Code, Codex, omp, Devin, OpenCode 2.x and Command Code), rendered as
   Markdown, with grouped tool calls, images (full-screen viewer with pinch / wheel zoom and pan), timestamps, search and infinite scroll back to the
   first message. Reading a conversation never touches the terminal, so it never resizes a pane.
   A command the agent proposes (shell code block, or inline `! command`) can be copied without
-  its prompt, or run in the agent's shell mode (`!`, Claude Code, Codex and omp) after you
+  its prompt, or run in the agent's shell mode (`!`, Claude Code, Codex, omp and OpenCode) after you
   confirm the full command.
+- **Devin conversations**: read the local CLI's ATIF transcript on the machine running
+  the agent (`~/.local/share/devin/cli/transcripts/<session-id>.json`, ATIF-v1.7 as written
+  by Devin CLI 3000.11.234), including tool results and saved images. Install the Herdr
+  integration with `herdr integration install devin`, then start or resume Devin so it
+  reports its session. Same-directory sessions are never selected by recency. The reader
+  follows `DEVIN_SESSIONS_DIR`, then `XDG_DATA_HOME/devin/cli`, otherwise
+  `~/.local/share/devin/cli`. No export flag is needed: Devin writes the JSON file next
+  to its CLI data. New text appears when Devin saves it, which may be less frequent than
+  the terminal's streaming display. Cloud sessions are not supported by this reader.
+- **OpenCode 2.x conversations**: read the existing background service's projected
+  history on the agent's machine (local or SSH), with native pagination, reasoning,
+  tool progress/results/errors, saved images, previews and search. Python 3 is required
+  on that machine. Install `herdr integration install opencode`, then start or resume
+  OpenCode so Herdr reports its exact session ID. Same-directory sessions are never
+  guessed. The reader discovers `service.json` in OpenCode's state directory
+  (`XDG_STATE_HOME/opencode`, normally `~/.local/state/opencode`, with
+  `opencode debug paths state` as a fallback), authenticates on the machine, and
+  checks `/api/info` for version 2.x. It never starts, restarts or reconfigures the
+  service. Credentials and service URLs are never sent to the browser.
+  One SSE subscription per machine invalidates the cache; canonical HTTP pages are
+  re-read on reconnect and regularly even when no event arrives. Revert, compaction
+  and service changes discard old page anchors. Temporary read failures preserve
+  already displayed messages. Search uses a 40-page / 8 MB scan budget within the shared deadline
+  and reports incomplete results; the last page may exceed the byte budget. Only session-referenced inline or local
+  image files are served; remote image URLs are not fetched. Sending, stopping,
+  questions and approvals retain the existing terminal controls. Version 1.x,
+  `--standalone` and explicit `--server` instances are not supported by this reader.
+- **Command Code conversations**: read the local CLI's JSONL sessions on the machine
+  running the agent (local or SSH): `~/.commandcode/projects/<project>/<session>.jsonl`.
+  Herdr already reports the pane as `cmd`; no separate integration is needed. Text,
+  reasoning, tool calls and their results, saved images, search, previews, model and
+  pagination are read from the same file the CLI appends to. The CLI reports no session
+  id: the reader finds the project through the `cwd` in the session header and takes its
+  most recently written session, so two live Command Code panes in the same folder share
+  the newest one. Command Code's `/model`, `/effort` and `/permissions` stay terminal
+  controls; version 1 sessions and checkpoints are not read.
 - **Interactive agent screens**: in a conversation, an uncertain menu or panel opens the
   pane's real terminal in a modal window, with arrows, Enter, Escape, Tab, digits and y/n.
   The rest of the app waits behind a scrim (the window fills the screen on a phone); in a
@@ -39,10 +75,25 @@
   pane and opens a new one for the same agent (the same conversation, or the same herdr-projects
   coordinator or task, as after `coordinator restart`), the view moves to the new pane and the
   draft comes along. A pane closed for good keeps it under its banner, with **Copy draft**.
+- **On-device voice input**: install a speech model in Settings › Conversation, then use
+  the microphone beside the message field. Context-capable models receive a bounded snapshot
+  of the draft, pane information, attachment names and the last three messages sent from this
+  device to this pane. Source text keeps its original words, numbers and writing system.
+  Context is a recognition hint; it does not guarantee a spelling or number format.
+  The server side supplies the weights: `scripts/fetch-asr-models.sh <model|all>` downloads
+  them into `DATA_DIR/models/<name>/` (sherpa-onnx release tarballs, or Hugging Face for the
+  WebGPU Qwen3-ASR export — `HF_ENDPOINT` selects a mirror where huggingface.co is gated),
+  and the `/models/**` route serves them with byte ranges, behind the passkey lock like the
+  API. The browser fetches each file once, in resumable slices, and keeps it in Cache
+  Storage, so models survive redeploys and are not part of the npm tarball.
 - **Model and effort pickers** for Claude Code, Codex and omp (omp: its
   "Switch Model" selector, `/switch` or `/model`, and its thinking level, changed with its own
   ⇧⇥ cycle). Changes apply **to the current session only**; wherdr never changes your default
   model.
+- **Codex update notices**: on Linux, wherdr checks the executable of the pane's
+  current process, with a bounded cache. Resuming an older conversation does not
+  make its original CLI version the running version. If the process cannot be
+  inspected, wherdr falls back to the screen and conversation metadata.
 **Settings › Conversation › Reply style** chooses how an agent's reply offers to be quoted in
 the field, question by question and point by point (a list item or a paragraph that asks
 nothing), so that one message answers them all:
@@ -100,7 +151,7 @@ same lines as text, a fallback if the tokens misbehave. The message sent is the 
 
 A **closed question**, one that yes or no answers in full, also gets **Yes** and **No** next to
 its `↳` (at the end of its row in the list style). A tap refers to the question and writes the
-answer under it, in the language of the interface, exactly as Reply and typing would; nothing is sent, so several questions can be
+answer under it (`Yes` or `No`), exactly as Reply and typing would; nothing is sent, so several questions can be
 answered in a row before sending. On a computer a click hands the field the focus, the caret
 right after the answer, so Enter sends it at once; the keyboard stays down on a phone, and a
 button pressed with the keyboard keeps the focus. Tapping the other answer
@@ -115,8 +166,7 @@ them, gets a panel right under it: **OK to all** refers to the whole table and w
 under it (a second tap takes it back), and each row has **Yes**, **No** and `↳`, which refer to
 the row by its number and write `Yes` or `No` under it, or nothing for an answer in words; a row
 that asks an open question has `↳` alone. Every answer names the message and the row, even for
-the last message: the agent may write another one before you send. In French: `OK tout`, `Oui`,
-`Non`. Here too everything is composed in the field and you send; on a computer the field takes the focus
+the last message: the agent may write another one before you send. Here too everything is composed in the field and you send; on a computer the field takes the focus
 after a click, so Enter sends. A table qualifies when it has a
 number column (a header `#`, `N°`, `No`, `Num`, `ID` or `Q` over short numbers, each once) and a
 question column, known by its header (`Question`, `Decision`, `Choix`…), by cells that all end

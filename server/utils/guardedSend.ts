@@ -55,6 +55,10 @@ export interface GuardDeps {
 }
 
 export interface GuardOptions {
+  // The key that ends the submission (default Enter). An alternate
+  // terminator (e.g. Codex's Tab) replaces it everywhere — first press and
+  // the single retry alike.
+  submitKey?: string
   // Wait for an occupied field to empty before refusing (ms).
   freeWaitMs?: number
   // How long the field must stay empty before we type (ms).
@@ -80,7 +84,7 @@ export interface GuardResult {
   unsent: string[]
 }
 
-const DEFAULTS: Required<GuardOptions> = { freeWaitMs: 2000, quietMs: 400, showWaitMs: 4000, submitWaitMs: 4000, lateMs: 8000, pollMs: 50, retry: false }
+const DEFAULTS: Required<GuardOptions> = { submitKey: 'enter', freeWaitMs: 2000, quietMs: 400, showWaitMs: 4000, submitWaitMs: 4000, lateMs: 8000, pollMs: 50, retry: false }
 // Time for the transcript to record a message just submitted (ms).
 const RECORD_MS = 600
 const MAX_ATTEMPTS = 3
@@ -308,8 +312,8 @@ async function sendOne(d: GuardDeps, text: string, o: Required<GuardOptions>, fo
     }
     const sent = box!
     if (state.kind === 'unknown') log(`input holds more than our message and cannot be split: sent as it is (${JSON.stringify(sent)})`)
-    // 2. Enter, then the field must empty.
-    await d.keys(['enter'])
+    // 2. The submit key, then the field must empty.
+    await d.keys([o.submitKey])
     let again = false
     let looked2 = false
     let after: BoxState = state
@@ -331,12 +335,12 @@ async function sendOne(d: GuardDeps, text: string, o: Required<GuardOptions>, fo
         // Replaced by other text: ours was taken, another writer typed since.
         return
       }
-      // Still there alone: the Enter was lost, pressed once more. Never a
-      // third time: a dialog that opens meanwhile would take it as an answer.
+      // Still there alone: the submit key was lost, pressed once more. Never
+      // a third time: a dialog that opens meanwhile would take it as an answer.
       if (!again && now() - entered >= o.submitWaitMs / 3) {
         again = true
-        log('message still in the input after Enter: Enter pressed again')
-        await d.keys(['enter'])
+        log(`message still in the input after ${o.submitKey}: pressed again`)
+        await d.keys([o.submitKey])
       }
       // A screen that lags behind the agent: the transcript may already have it.
       if (!looked2 && now() - entered >= o.submitWaitMs) {
@@ -423,8 +427,8 @@ export async function confirmSubmitted(d: Omit<GuardDeps, 'type'>, text: string,
     if (!ours(await d.box())) return
     if (!again && now() - start >= o.submitWaitMs / 3) {
       again = true
-      d.log?.('message still in the input after Enter: Enter pressed again')
-      await d.keys(['enter'])
+      d.log?.(`message still in the input after ${o.submitKey}: pressed again`)
+      await d.keys([o.submitKey])
     }
     if (!looked && now() - start >= o.submitWaitMs) {
       looked = true

@@ -1,4 +1,6 @@
 // Agent actions shared between the list and the agent view.
+import type { CloseProcess } from '#shared/closeProcess'
+import { paneCloseConfirm } from '~/utils/spaceConfirm'
 import type { Pane, QueuedMessage, WaitAction } from '#shared/types'
 import { type RestartPreview, RESTARTABLE, restartNotice } from '#shared/restart'
 import { viaPrompt } from '#shared/sendRoute'
@@ -101,11 +103,13 @@ export function navKey(paneId: string, key: 'up' | 'down' | 'enter' | 'esc' | 'l
 // server keeps it for its record, so the bubble never changes identity.
 // `pastes`: where the texts this device pasted into the field sit in the
 // message, so that every device shows them as cards (see shared/pastedText.ts).
-export async function sendMessage(p: Pane | undefined, paneId: string, text: string, clientId?: string): Promise<QueuedMessage | null> {
+// `submitKey`: a verified terminator ("Send with Tab", see shared/submitKeys.ts):
+// the server ends the message with that key instead of Enter.
+export async function sendMessage(p: Pane | undefined, paneId: string, text: string, clientId?: string, submitKey?: string): Promise<QueuedMessage | null> {
   const pastes = pasteRanges(text, splitPasted(text, [], sentPastes.value).pastes)
   const r = viaPrompt(p)
-    ? await api<{ queued?: QueuedMessage }>('/api/prompt', { pane_id: paneId, text, ...(clientId ? { client_id: clientId } : {}), ...(pastes.length ? { pastes } : {}) })
-    : await api<{ queued?: QueuedMessage }>('/api/input', { pane_id: paneId, text, keys: ['enter'], ...(p?.prompt ? { native: true, identity: p.prompt.identity } : {}) })
+    ? await api<{ queued?: QueuedMessage }>('/api/prompt', { pane_id: paneId, text, ...(clientId ? { client_id: clientId } : {}), ...(pastes.length ? { pastes } : {}), ...(submitKey ? { submit_key: submitKey } : {}) })
+    : await api<{ queued?: QueuedMessage }>('/api/input', { pane_id: paneId, text, keys: [submitKey || 'enter'], ...(p?.prompt ? { native: true, identity: p.prompt.identity } : {}) })
   return r.queued || null
 }
 
@@ -163,14 +167,27 @@ export async function dismissRestart(paneId: string) {
 }
 
 export async function closePane(p: Pane) {
-  const workspace = herdrState.value.workspaces.find(w => w.id === p.workspace)
-  const what = p.agent
-    ? tl(`${kindLabel(p.agent)} “${paneTitle(p)}”`, `${kindLabel(p.agent)} « ${paneTitle(p)} »`)
-    : tl(`the terminal in space “${workspace?.label || paneTitle(p)}”`, `le terminal de l’espace « ${workspace?.label || paneTitle(p)} »`)
-  const plan = await confirmClose('pane', p.id,
-    tl(`Close ${what}? The process will be stopped.`, `Fermer ${what} ? Le processus sera arrêté.`),
-    t('Close pane'),
-  )
+  let process: CloseProcess = { state: 'unknown' }
+  if (!p.agent || p.stopped) {
+    try { process = await api<CloseProcess>(`/api/close-preview?pane=${encodeURIComponent(p.id)}`) }
+    catch { /* Unavailable inspection: keep the conditional warning. */ }
+  }
+  // Written from the state at the time it is shown (asked again if it grew).
+  const plan = await confirmClose('pane', p.id, (plan) => {
+    const s = herdrState.value
+    const pane = s.panes.find(x => x.id === p.id) || p
+    const tab = s.tabs?.find(x => x.id === pane.tab)
+    const workspace = s.workspaces.find(w => w.id === pane.workspace)
+    return paneCloseConfirm({
+      pane, process,
+      tabLabel: tab ? (tab.label || String(tab.number)) : pane.tabLabel || '',
+      tabPanes: s.panes.filter(x => x.tab === pane.tab).length,
+      workspaceTabs: new Set(s.panes.filter(x => x.workspace === pane.workspace).map(x => x.tab)).size,
+      workspaceLabel: workspace?.label || paneTitle(pane),
+      closesTab: plan.tabs.includes(pane.tab),
+      closesWorkspace: plan.closesWorkspace,
+    }, tl)
+  })
   if (!plan) return
   // Closed from its view: its tab if panes remain there, otherwise the neighbouring
   // tab, otherwise the list. Closed from the plan: we stay there.

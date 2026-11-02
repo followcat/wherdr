@@ -369,6 +369,16 @@ body.short-bottom { --safe-bottom: 0px; }
 .global-search-role.claude { color: var(--claude); }
 .global-search-role.codex { color: var(--codex); }
 .global-search-role.omp { color: var(--omp); }
+.global-search-tasks-head { padding: 9px 12px; background: var(--surface); border-bottom: 1px solid var(--line); font: 500 10.5px/1.2 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.global-search-task-title { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 14px; line-height: 1.4; color: var(--text); }
+.global-search-task-key { margin-right: 8px; font: 500 12px/1 var(--mono); color: var(--mauve); }
+.global-search-task .global-search-excerpt { margin-top: 4px; -webkit-line-clamp: 2; font-size: 13px; }
+.global-search-task .global-search-meta { min-width: 0; white-space: nowrap; }
+.global-search-task-state { letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.global-search-task-state.needs { color: var(--rose); }
+.global-search-task-state.working { color: var(--working); }
+.global-search-task-state.ready { color: var(--mauve); }
+.global-search-task-state.done { color: var(--done); }
 .global-search-note { display: flex; align-items: center; gap: 10px; margin: 6px 0 12px; font: 400 12px/1.4 var(--mono); color: var(--muted); }
 .global-search-note.bad { color: var(--rose); }
 .global-search-pulse { width: 7px; height: 7px; flex: none; background: var(--working); animation: pulse 1.3s ease-in-out infinite; }
@@ -442,6 +452,8 @@ body.short-bottom { --safe-bottom: 0px; }
 .quota.hi .quota-top b { color: var(--rose); }
 .quota-reset { flex: 0 0 100%; display: flex; align-items: center; gap: 4px; font: 400 9.5px/1.2 var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .quota-reset .iconify { width: 9px; height: 9px; flex: none; }
+.quota-row.quota-api { grid-template-columns: 44px 1fr; min-height: 34px; }
+.quota-api-label { margin: 0; padding: 4px 10px; align-self: center; min-width: 0; font: 400 10px/1.3 var(--mono); letter-spacing: .04em; color: var(--dim); overflow-wrap: anywhere; }
 .quota-foot { margin: 6px 0 0; text-align: right; font: 400 9.5px/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
 
 .agent-group { margin-bottom: 26px; }
@@ -990,6 +1002,16 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
    Agent view
    ================================================================ */
 #agent { overflow: hidden; }
+/* Phone chrome: the tab picker, title and state share one row. Extra
+   actions remain in Options; the tab picker retains tab management. */
+.phone-chrome .agent-top { container: phone-header / inline-size; grid-template-columns: 44px minmax(0, 1fr) auto; grid-template-areas: "back head actions"; gap: 2px; border-bottom: 0; box-shadow: inset 0 -1px var(--line-soft); padding: var(--safe-top) 4px 0; min-height: calc(44px + var(--safe-top)); }
+.phone-chrome .agent-top :is(.back, .agent-actions .icon-btn) { width: 44px; height: 44px; flex: none; }
+.phone-keybar-controls { position: relative; height: 0; flex: none; z-index: 5; }
+.phone-keybar-toggle { position: absolute; right: 12px; bottom: 8px; width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 0; background: var(--bg-2); color: var(--muted); touch-action: manipulation; }
+.phone-keybar-toggle::after { content: ''; position: absolute; inset: -5px; }
+.phone-keybar-toggle .iconify { width: 20px; height: 20px; }
+.phone-keybar-toggle.on { color: var(--accent); border-color: var(--accent); }
+.phone-keybar-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* File dragged from the Finder / file explorer: drop zone over the whole view. */
 .file-drop {
   position: absolute; inset: 8px; z-index: 60; pointer-events: none;
@@ -1008,8 +1030,8 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 .agent-top .back { grid-area: back; }
 .agent-head { grid-area: head; min-width: 0; padding: 0 4px; }
 .agent-actions { grid-area: actions; display: flex; align-items: center; gap: 2px; flex: none; }
-.agent-top .view-tabs { grid-area: tabs; }
-.agent-actions .view-tabs { width: 220px; margin-right: 10px; }
+.agent-top .view-toggle { grid-area: tabs; }
+.agent-actions .view-toggle { margin-right: 10px; }
 /* Header toggle (phone): terminal `>_`. Lit = shown. */
 .agent-actions .mode-btn.on { border-color: var(--mauve); background: color-mix(in srgb, var(--mauve) 14%, transparent); color: var(--mauve); }
 @media (max-width: 380px) { .agent-actions .icon-btn { width: 36px; } }
@@ -1021,6 +1043,9 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 /* The path moves to a hidden 2nd line if it does not have room for at least "· /pr…". */
 .agent-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 20px 8px; margin-top: 3px; min-width: 0; max-height: 16px; overflow: hidden; }
 .agent-meta .pill { font-size: 11px; }
+/* A long state ("quota reached · claude") shrinks: the agent kind ends with an ellipsis instead of being cut at the edge. */
+.agent-meta > .pill { flex: 0 1 auto; min-width: 0; }
+.agent-meta .pill-kind { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-meta .agent-subtitle { min-width: 0; max-width: 42%; font: 400 11px/1.2 var(--mono); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .agent-meta .agent-subtitle::before { content: '· '; color: var(--dim); }
 .agent-meta .where { flex: 1 1 0; min-width: 6ch; font: 400 11px/1.2 var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1038,18 +1063,9 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 .machine-banner > .term-banner-icon { color: var(--rose); }
 .machine-banner small { display: block; margin-top: 2px; font: 400 11px/1.35 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 
-/* Selector (UTabs): discreet bordered block, active tab filled, like INK / PAPER. */
-.hw-tabs { padding: 0; border: 1px solid var(--line); background: transparent; width: 100%; }
-.hw-tab {
-  flex: 1; justify-content: center; padding: 6px 8px;
-  font: 500 10.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
-}
-.hw-tab[data-state="inactive"] { color: var(--muted); }
-/* Active tab in mauve, dark text (phone and computer). */
-.hw-tab[data-state="active"] { color: var(--on-accent); }
-.hw-tab-ind { background: var(--mauve); inset-block: 0; }
-/* Its icons only show where the labels do not fit (narrow side-by-side cell). */
-.hw-tab-icon { display: none; }
+/* One action to switch between conversation and terminal. */
+.view-toggle { justify-content: center; border-radius: 0; }
+.view-toggle-label { font: 500 10.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
 
 /* No scroll container here: the window body (AppSheet) scrolls. A nested one
    that never overflows would keep the wheel and the finger for itself. */
@@ -1151,9 +1167,26 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 #termWrap { position: relative; flex: 1; min-height: 0; padding: 6px 4px 0 6px; background: var(--bg); }
 /* The layer receives touch gestures; on a computer, the mouse must reach
    xterm for selection and the programs' mouse mode. */
-#term { position: absolute; inset: 6px 4px 0 6px; z-index: 0; }
-#touch { position: absolute; inset: 0; z-index: 1; touch-action: none; pointer-events: none; }
+#term { position: absolute; inset: 6px 4px 0 6px; z-index: 0; overflow: hidden; }
+#touch { position: absolute; inset: 0; z-index: 1; touch-action: none; pointer-events: none; -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
 @media (hover: none) and (pointer: coarse) { #touch { pointer-events: auto; } }
+/* Local scrollback: a real scroller (chat-view feel). History lines fill the
+   top with the terminal's own font/background; a transparent one-viewport gap
+   at the bottom lets the live terminal show through at rest. */
+#scrollback { position: absolute; inset: 0; z-index: 2; overflow-y: auto; overflow-x: hidden; overflow-anchor: none;
+  overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y;
+  scrollbar-width: none; pointer-events: none; background: transparent; }
+#scrollback::-webkit-scrollbar { display: none; }
+#scrollback .sb-body { padding: 6px 4px 0 6px; white-space: pre-wrap; overflow-wrap: break-word; font-variant-ligatures: none; }
+/* Skip layout/paint for off-screen history rows: the snapshot can hold
+   thousands of lines. --sb-lh carries the terminal's line height so the
+   estimate matches real rows (wrapped lines re-resolve on approach). */
+#scrollback .sb-line { content-visibility: auto; contain-intrinsic-size: auto var(--sb-lh, 1em); }
+#scrollback .sb-gap { height: 100%; }
+#scrollback .sb-body { background: var(--bg); }
+/* The native selection surface needs selectable ancestors on Android too. */
+#termWrap.copying-screen { user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; }
+.agent-main:has(.copying-screen), #agent:has(.copying-screen), .cell-view:has(.copying-screen) { user-select: text; -webkit-user-select: text; }
 .term-loading { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
 .term-loading.static { position: static; padding: 30px; }
 .xterm .xterm-viewport { background: transparent !important; overflow-y: hidden !important; }
@@ -1185,7 +1218,7 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
    Conversation (UChatMessages, UChatMessage, UChatTool, UChatShimmer)
    ================================================================ */
 .chat-wrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.chat { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.chat { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; overflow-anchor: none; }
 .chat-msgs { padding: 0; gap: 0; min-height: 100%; }
 .chat-list { padding: 18px 16px 8px; display: flex; flex-direction: column; gap: 14px; }
 .chat-note {
@@ -1200,6 +1233,9 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 .msg-c { padding-bottom: 0; gap: 0; }
 .msg-ai .msg-c { padding-bottom: 0; }
 .msg-ai:has(.msg-actions) .msg-c { padding-bottom: 36px; }
+
+/* An assistant turn that ended in an error keeps its text but reads as one. */
+.msg-ai.err .md-body { border-left: 2px solid var(--rose); padding-left: 10px; }
 
 /* User message: square block on the right. */
 .msg-user-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; margin-top: 6px; }
@@ -1391,6 +1427,12 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 .tools .tool.err .tool-leading, .tools .tool.err .tool-label { color: var(--rose); }
 .tool-chev { width: 14px; height: 14px; margin-left: 2px; color: var(--dim); }
 .tool-body { padding: 4px 0 4px; white-space: normal; }
+/* Collapsed preview: a nested scroller inside the chat would capture the
+   pan gesture until its edge — tap expands the output in place instead. */
+.tool-result { max-height: 220px; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0 8px; padding: 8px; border: 1px solid var(--line-soft); border-radius: 4px; background: var(--bg-2); color: var(--text-2); font: 400 12px/1.5 var(--mono); position: relative; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.tool-result::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 40px; background: linear-gradient(transparent, var(--bg-2)); pointer-events: none; }
+.tool-result.open { max-height: none; cursor: text; }
+.tool-result.open::after { content: none; }
 .tool-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; color: var(--text-3); min-width: 0; }
 .tool-row .iconify { width: 14px; height: 14px; color: var(--dim); }
 .tool-row b { font-weight: 500; flex: none; }
@@ -1529,6 +1571,10 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
 /* Scheduled task prompt: one line until opened. */
 .msg-notice.scheduled:not(.open) .msg-notice-body { max-height: 1.6em; mask-image: none; -webkit-mask-image: none; white-space: nowrap; text-overflow: ellipsis; }
 .msg-notice.scheduled:not(.open) .msg-notice-body > * { margin: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Failed agent turn: the provider's message, as it came. */
+.msg-error { border-left-color: var(--danger); }
+.msg-error .msg-notice-head { color: var(--danger); }
+.msg-error-text { color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; font: 400 12.5px/1.5 var(--mono); }
 .msg-system, .day-sep {
   display: flex; align-items: center; gap: 12px; margin: 6px 0;
   font: 500 10.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--dim);
@@ -1588,6 +1634,22 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
    color when the theme defines one, otherwise the accent. */
 .chat-status .omp-step-line { --omp-color: var(--omp, var(--accent)); display: inline-flex; align-items: baseline; min-width: 0; font-family: var(--font-mono); font-size: 13px; }
 .chat-status .omp-step { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; --ui-text-muted: var(--muted); --ui-text-highlighted: color-mix(in srgb, var(--omp-color) 55%, var(--text)); }
+
+/* Phone density: the conversation spends its space on text, not air. */
+@media (pointer: coarse) {
+  .chat-list { padding: 10px 12px 6px; gap: 9px; }
+  .chat-note { padding: 3px 0; }
+  .msg-user-wrap { gap: 3px; margin-top: 2px; }
+  .msg-bubble { padding: 7px 10px; }
+  .msg-ai:has(.msg-actions) .msg-c { padding-bottom: 30px; }
+  .queued-list { gap: 8px; padding: 2px 12px 6px; }
+  .tools { padding-left: 8px; }
+  .omp-thinking .omp-thinking-head, .omp-job-head { min-height: 30px; }
+  .omp-thinking .omp-thinking-body { padding: 2px 0 5px; }
+  button.omp-tool-head { min-height: 28px; }
+  .chat-status { padding: 3px 12px 10px; }
+  .composer { padding: 5px 10px max(8px, calc(var(--safe-bottom) - 8px)); }
+}
 .chat-status .omp-spinner { display: inline-block; flex: none; width: 1.6em; margin-left: -.3em; text-align: center; color: var(--omp-color); }
 .chat-status .omp-elapsed { flex: none; margin-left: .75em; padding-left: .75em; border-left: 1px solid var(--line); color: var(--dim); font-variant-numeric: tabular-nums; }
 
@@ -1771,6 +1833,8 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
 .composer { flex: none; background: var(--bg); padding: 6px 12px max(10px, calc(var(--safe-bottom) - 6px)); }
 body.kb .composer { padding-bottom: 8px; }
 .composer { position: relative; }
+/* The open phone key strip already ends with 5 px under its keys (their touch zones). */
+.virtual-keyboard + .composer { padding-top: 0; }
 /* Claude Code status ("✔ Update installed · Restart to update"): small
    blue text on the right, just above the field, as in the terminal. */
 .composer-notice {
@@ -1859,7 +1923,8 @@ body.kb .composer { padding-bottom: 8px; }
 .slash-denied-label .iconify { width: 14px; height: 14px; color: var(--ochre); flex: none; }
 .slash-denied .dir-denied-path { font-size: 11.5px; }
 .prompt {
-  position: relative; padding: 4px 6px 6px; gap: 2px;
+  position: relative; display: flex; flex-direction: column; align-items: stretch; min-width: 0;
+  padding: 4px 6px 6px; gap: 2px;
   background: var(--bg-2); border: 1px solid var(--input-line); box-shadow: none; backdrop-filter: none;
   transition: border-color .15s ease;
 }
@@ -1934,7 +1999,7 @@ body.kb .composer { padding-bottom: 8px; }
   /* Still colored all around, frozen. */
   .fx-spin, :root:not([data-focus-border="off"]) .tools.omp-console.live .omp-ring .fx-spin { animation: none; transform: translate(-50%, -50%) rotate(135deg); }
 }
-.prompt-body { padding: 0; }
+.prompt-body { width: 100%; min-width: 0; padding: 0; }
 .prompt-input {
   padding: 8px 6px 4px; font-size: 16px; line-height: 1.45; color: var(--text);
   min-height: 38px; max-height: 40vh;
@@ -1942,9 +2007,40 @@ body.kb .composer { padding-bottom: 8px; }
   overflow-y: auto !important;
 }
 .prompt-input::placeholder { color: var(--dim); }
-.prompt-foot { gap: 8px; }
-.prompt-plus { width: 32px; height: 32px; justify-content: center; color: var(--text-2); border-color: var(--line); }
+.prompt-foot { display: flex; align-items: center; min-width: 0; gap: 8px; }
+.prompt-models { display: flex; align-items: center; min-width: 0; }
+.prompt-models .model-pick-wrap { flex: 0 1 auto; }
+.prompt-models .effort-pick-wrap { flex-shrink: 0; max-width: 130px; }
+.prompt-models .model-pick { max-width: 100%; }
+.prompt-plus { flex: none; width: 32px; height: 32px; justify-content: center; color: var(--text-2); border-color: var(--line); }
 .prompt-plus .iconify { width: 18px; height: 18px; }
+/* The mic sits in the footer row ahead of Send, same box and outline as its
+   neighbours. It opens the right-aligned group (margin-left:auto) so hints and
+   the model picker stay left while mic + send pin to the right edge. Off
+   (model not installed) it shows a crossed-out mic so "unusable" reads at a
+   glance; the tap still explains where to install it. */
+.prompt-mic {
+  flex: none; width: 32px; height: 32px; justify-content: center; padding: 0;
+  margin-left: auto; position: relative; touch-action: manipulation;
+  color: var(--text-2); border-radius: 8px; border-color: var(--line);
+}
+.prompt-mic::after { content: ''; position: absolute; inset: -8px; }
+.prompt-mic .iconify { width: 16px; height: 16px; }
+.prompt-mic.dim { opacity: .45; color: var(--muted); border-style: dashed; }
+.prompt-mic.rec { color: var(--danger); border-color: var(--danger); border-style: solid; }
+.prompt.suggesting .prompt-mic { display: none; }
+.prompt.suggesting .prompt-send { margin-left: auto; }
+.prompt-input { padding-right: 38px; }
+.prompt-asr { display: flex; align-items: center; gap: 8px; margin: 0 2px 6px; font-size: 12px; color: var(--muted); }
+.prompt-asr .asr-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); animation: asr-pulse 1.1s ease-in-out infinite; }
+.prompt-asr .asr-live { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-asr .asr-wave { flex: 1; min-width: 0; overflow: hidden; display: flex; justify-content: flex-end; }
+.prompt-asr .asr-wave-in { white-space: pre; font-family: var(--mono); font-size: 13px; line-height: 1; color: var(--accent); letter-spacing: 1px; }
+.prompt-asr .asr-time { flex: none; font-family: var(--mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.prompt-asr .asr-x { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 0; background: transparent; color: var(--muted); padding: 0; }
+.prompt-asr .asr-x .iconify { width: 14px; height: 14px; }
+@keyframes asr-pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .prompt-asr .asr-dot { animation: none; } }
 .prompt-hint {
   flex: 1; display: flex; align-items: center; gap: 4px; justify-content: flex-end;
   font: 400 11px/1 var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden;
@@ -1973,7 +2069,7 @@ body.kb .composer { padding-bottom: 8px; }
 .model-menu .model-hint { font-size: 11.5px; color: var(--dim); }
 .model-menu .model-menu-label { font: 500 10.5px/1.2 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
 .model-menu .model-loading .iconify { animation: spin 1s linear infinite; }
-.prompt-send { width: 32px; height: 32px; justify-content: center; margin-left: auto; position: relative; touch-action: manipulation; }
+.prompt-send { flex: none; width: 32px; height: 32px; justify-content: center; margin-left: 0; position: relative; touch-action: manipulation; }
 /* 48 px touch area (Apple: 44 minimum) without enlarging the button. The button does not
    take the focus (mousedown.prevent): the keyboard stays open, the bar does not move
    under the finger during the tap. */
@@ -1986,6 +2082,30 @@ body.kb .composer { padding-bottom: 8px; }
 .prompt-send.stop { background: var(--text); color: var(--bg); }
 /* Pressed by a touch (Composer's sendTap): its touchstart is cancelled, which can drop :active on iOS. */
 .prompt-send.pressed { opacity: .75; }
+
+/* Touch: one row at rest, a full-width editor over the toolbar while editing.
+   The compact row has only +, the field and send, so selectors cannot squeeze it. */
+@media (pointer: coarse) {
+  .prompt { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px 44px; align-items: center; gap: 4px; }
+  .prompt .prompt-body { grid-column: 2; grid-row: 1; }
+  .prompt .prompt-foot { display: contents; }
+  .prompt .prompt-plus { grid-column: 1; grid-row: 1; }
+  .prompt .prompt-mic { grid-column: 3; grid-row: 1; }
+  .prompt .prompt-send { grid-column: 4; grid-row: 1; margin-left: 0; }
+  .prompt .prompt-models, .prompt .prompt-hint { display: none; }
+  .prompt.expanded { display: flex; align-items: stretch; }
+  .prompt.expanded .prompt-foot, .prompt.expanded .prompt-models { display: flex; }
+  .prompt .prompt-input {
+    min-height: 40px; padding: 8px 6px;
+    max-height: min(176px, calc(var(--vv-h, 100dvh) * .3));
+  }
+  .prompt .prompt-input:placeholder-shown { height: 40px; }
+  .prompt .prompt-foot { gap: 4px; }
+  .prompt .prompt-plus, .prompt .prompt-mic, .prompt .prompt-send { width: 44px; height: 44px; }
+  .prompt .prompt-plus::after, .prompt .prompt-mic::after, .prompt .prompt-send::after { inset: 0; }
+  .prompt .model-pick { height: 44px; }
+  .prompt:not(.expanded) .prompt-suggest { top: 12px; right: 58px; }
+}
 
 .prompt-head { padding: 4px 2px 2px; }
 .attachments { display: flex; gap: 8px; overflow-x: auto; }
@@ -2061,9 +2181,10 @@ body.kb .composer { padding-bottom: 8px; }
   body.kb .hw-sheet:not(.screen) { bottom: var(--vv-bottom, 0px); max-height: calc(var(--vv-h) - var(--safe-top) - 8px); padding-bottom: 12px; }
 }
 .hw-sheet > * { border-top: 0 !important; border-bottom: 0 !important; }
-.hw-sheet > [data-slot="header"] { padding: 4px 0 10px; min-height: 0; border: 0; order: 1; display: flex; align-items: center; justify-content: space-between; }
+/* Keep wrapped titles above the scrolling body when the sheet reaches its height limit. */
+.hw-sheet > [data-slot="header"] { padding: 4px 0 10px; min-height: 0; flex: none; border: 0; order: 1; display: flex; align-items: center; justify-content: space-between; }
 .hw-sheet > [data-slot="body"] { padding: 0; order: 2; overflow-y: auto; overscroll-behavior: contain; flex: 1; min-height: 0; scroll-padding-bottom: 16px; }
-.hw-sheet-title { font: 850 24px/1 var(--display); letter-spacing: -.035em; word-spacing: .06em; color: var(--text); overflow-wrap: anywhere; }
+.hw-sheet-title { min-width: 0; font: 850 24px/1 var(--display); letter-spacing: -.035em; word-spacing: .06em; color: var(--text); overflow-wrap: anywhere; }
 .hw-sheet [data-slot="close"] { position: static; inset: auto; }
 /* Handle at the top of the sheet, on the phone: tap or swipe down to close.
    The bar is drawn small; the button around it is a 44 px touch target. */
@@ -2343,6 +2464,21 @@ body.kb .composer { padding-bottom: 8px; }
 .settings-group h3::before, .theme-section-title::before { content: ''; width: 18px; height: 1px; background: var(--line); }
 .settings-hint { font-size: 13px; margin: -20px 2px 30px; }
 .settings-group .settings-hint { margin: 9px 2px 0; }
+.settings-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.asr-progress progress { width: 100%; }
+.settings-hint.asr-error { color: var(--danger); }
+/* Voice model list — one row per model: pick area, badge or size/remove. */
+.asr-model-list { margin: 0 0 10px; }
+.asr-model-row { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); background: var(--bg-2); }
+.asr-model-row + .asr-model-row { border-top: 0; }
+.asr-model-on { border-color: var(--accent); }
+.asr-model-on + .asr-model-row, .asr-model-row:has(+ .asr-model-on) { border-top-color: var(--accent); }
+.asr-model-pick { flex: 1; display: flex; align-items: flex-start; gap: 10px; min-width: 0; text-align: left; padding: 0; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+.asr-model-dot { flex: none; width: 18px; height: 18px; margin-top: 2px; color: var(--text-3); }
+.asr-model-on .asr-model-dot { color: var(--accent); }
+.asr-model-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.asr-model-text b { font-size: 14px; font-weight: 500; }
+.asr-model-text small { font-size: 12.5px; color: var(--text-3); line-height: 1.4; }
 /* Sub-section of a settings section shown only on a computer (Appearance › Desktop). */
 .settings-subhead { margin: 6px 0 22px; padding-top: 22px; border-top: 1px solid var(--line); }
 .projects-plugin-intro { margin: 0 0 12px; color: var(--text-2); font-size: 14px; line-height: 1.55; }
@@ -2652,6 +2788,23 @@ body.kb .composer { padding-bottom: 8px; }
 .bar-pref-state.offline { background: var(--rose); }
 .bar-pref-reset { margin-top: 12px; border-radius: 0; }
 @media (prefers-reduced-motion: reduce) { .bar-pref-row { transition: none; } }
+/* Settings › Terminal › Phone key bar (PhoneKeyOrderSettings.vue). The preview
+   is as wide as a phone row and draws the keys like PhoneKeybar.vue. */
+.key-order-preview { display: flex; gap: 6px; max-width: 390px; padding: 5px 11px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; border: 1px solid var(--line); background: var(--bg); }
+.key-order-preview::-webkit-scrollbar { display: none; }
+.key-order-cap { display: grid; place-items: center; flex: none; min-width: 38px; height: 36px; padding: 0 3px; border: 1px solid var(--line-soft); background: var(--bg-2); color: var(--text-2); font: 500 12px/1 var(--mono); user-select: none; -webkit-user-select: none; }
+.key-order-cap.danger { color: var(--rose); border-color: var(--rose); }
+.key-order-cap svg { width: 19px; height: 19px; }
+.key-order-label { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 0 10px 0 12px; }
+.key-order-label .key-order-cap { min-width: 34px; height: 30px; font-size: 11px; }
+.key-order-label .key-order-cap svg { width: 16px; height: 16px; }
+.key-order-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: var(--text); }
+.key-order-step { flex: none; width: 44px; display: grid; place-items: center; border: 0; border-left: 1px solid var(--line-soft); border-radius: 0; background: none; color: var(--text-2); cursor: pointer; touch-action: manipulation; }
+.key-order-step svg { width: 18px; height: 18px; }
+.key-order-step:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
+.key-order-step:disabled { color: var(--dim); opacity: .45; cursor: default; }
+.key-order-step:focus-visible { outline: 1px solid var(--accent); outline-offset: -3px; }
+.key-order-announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .settings-stepper { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 58px; padding: 8px 12px 8px 16px; }
 .settings-stepper > span { font-size: 15px; }
 .settings-stepper > div { display: flex; align-items: center; border: 1px solid var(--line); }
@@ -2872,20 +3025,17 @@ ol[data-slot="viewport"] { top: calc(var(--safe-top) + 12px) !important; bottom:
 .cell-view::after { content: ""; position: absolute; inset: 0; z-index: 5; pointer-events: none; box-shadow: inset 0 0 0 1px transparent; }
 .cell-view.active::after { box-shadow: inset 0 0 0 1px var(--mauve); }
 .cell-view .agent-title { font-size: 14px; }
-.cell-view .agent-top .view-tabs { width: 220px; }
+.cell-view .agent-top .view-toggle { min-width: 140px; }
 /* Agent question in a short cell: it scrolls instead of eating the cell. */
 .cell-view .choices { max-height: 58%; overflow-y: auto; overscroll-behavior: contain; }
 .cell-view .agent-actions { justify-self: end; }
 .cell-view .agent-actions .icon-btn { width: 34px; height: 34px; }
 .cell-view .agent-actions .icon-btn .iconify { width: 17px; height: 17px; }
-/* Narrow cell: the selector shrinks to its two icons (the labels stay for
-   screen readers); narrower still, the header keeps the title and the menu. */
+/* Narrow cells keep the action icon and accessible name. */
 .cell-view .agent-top { container: cell-top / inline-size; }
 @container cell-top (max-width: 500px) {
-  .cell-view .agent-top .view-tabs { width: 72px; }
-  .cell-view .hw-tab { padding: 6px 0; }
-  .cell-view .hw-tab-icon { display: block; width: 14px; height: 14px; }
-  .cell-view .hw-tab-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .cell-view .agent-top .view-toggle { min-width: 44px; width: 44px; padding-inline: 0; }
+  .cell-view .view-toggle-label { display: none; }
 }
 @container cell-top (max-width: 250px) {
   .cell-view .agent-actions .cell-extra { display: none; }
@@ -3216,6 +3366,29 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
   .menu button:hover, .dir-list button:hover { background: var(--surface-2); }
 
   ol[data-slot="viewport"] { top: 16px !important; }
+
+  /* Settings › Desktop › Interface size › Large: a wider reading column and
+     ~15% bigger text on the main surfaces (the terminal keeps its own text
+     size). Font sizes only: paddings and layouts stay untouched. */
+  :root[data-ui-scale="lg"] { --side: 300px; }
+  /* Large grows the reading column — except over Content width › Full
+     width, whose (same-specificity) --read is defined above and wins on
+     document order; keep full's explicit choice by scoping ours out. */
+  :root[data-ui-scale="lg"]:not([data-content-width="full"]) { --read: min(1500px, 100% - 48px); }
+  :root[data-ui-scale="lg"] .md-body { font-size: 16.5px; }
+  :root[data-ui-scale="lg"] .md-body pre { font-size: 14px; }
+  :root[data-ui-scale="lg"] .prompt-input { font-size: 16px; }
+  :root[data-ui-scale="lg"] .agent-title { font-size: 17.5px; }
+  :root[data-ui-scale="lg"] .agent-meta .pill { font-size: 12px; }
+  :root[data-ui-scale="lg"] .agent-meta { max-height: 18px; }
+  :root[data-ui-scale="lg"] .tab-chip { font-size: 12.5px; }
+  :root[data-ui-scale="lg"] .card .card-title { font-size: 16.5px; }
+  :root[data-ui-scale="lg"] .card.compact .card-title { font-size: 15px; }
+  :root[data-ui-scale="lg"] .group-title { font-size: 11.5px; }
+  :root[data-ui-scale="lg"] .stat b { font-size: 34px; }
+  :root[data-ui-scale="lg"] .composer-status { font-size: 12px; }
+  :root[data-ui-scale="lg"] .msg-time { font-size: 11.5px; }
+  :root[data-ui-scale="lg"] .settings-body { font-size: 16px; }
 }
 
 .sheet-btn { padding: 11px 16px; font: 600 11.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
@@ -3223,6 +3396,13 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
 
 /* Images in replies: clickable (large preview). */
 .md-body img { max-width: 100%; height: auto; cursor: zoom-in; border: 1px solid var(--line); }
+/* An image that cannot show (refused, unreachable): a note with its link (utils/imageFallback.ts). */
+.md-body img.md-img-broken { display: none; }
+.md-img-fallback { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; max-width: 100%; margin: 4px 0; padding: 10px 12px; border: 1px solid var(--line); background: var(--bg-2); color: var(--text-3); font-size: .9em; line-height: 1.4; cursor: auto; }
+.md-img-fallback-tag { font: 600 10px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.md-img-fallback-alt { color: var(--text); }
+.md-body .md-img-fallback a { display: inline-flex; align-items: center; min-height: 44px; font-weight: 600; }
+.md-img-fallback-url { font: 12px/1.4 var(--mono); color: var(--dim); overflow-wrap: anywhere; }
 
 /* Tabs of a space (at the top of its view): state dot for a tab with a
    single pane, mini-map otherwise. */
@@ -4156,7 +4336,7 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
   .keybar button { height: 44px; }
   /* Side by side: cell buttons, selector and grip at finger size. */
   .cell-view .agent-actions .icon-btn { width: 44px; height: 44px; }
-  .cell-view .agent-top .hw-tab { min-height: 44px; }
+  .agent-top .view-toggle { min-width: 44px; min-height: 44px; }
   .cell-grip { width: 32px; height: 44px; }
   /* Dividers: wider touch area, line marked with a notch (as in the plan). */
   .split .divider.right { width: 24px; }
@@ -4351,4 +4531,34 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
 
 /* Autopilot wakes retain the transcript text with a quiet system attribution. */
 .msg-autopilot { min-width: 0; margin: 6px 0; color: var(--text-2); }
-.msg-autopilot-body { border-left: 1px solid var(--line-soft); padding: 6px 12px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg-autopilot-body { display: flex; align-items: flex-start; gap: 8px; border-left: 1px solid var(--line-soft); padding: 6px 12px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.msg-autopilot-text { flex: 1; min-width: 0; }
+.msg-autopilot-copy { display: inline-flex; flex: none; width: 24px; height: 24px; justify-content: center; color: var(--dim); }
+.msg-autopilot-copy:hover { color: var(--text); }
+
+/* Contain the terminal grid; the terminal frame and composer stay fixed. */
+#termWrap.smooth-touch #term { overflow: hidden; }
+#termWrap.smooth-touch .xterm { overflow-y: hidden; overscroll-behavior: none; }
+
+/* Only tab content moves; the header and footer are outside this clipped viewport. */
+.home-content { position: relative; flex: 1; min-height: 0; overflow: hidden; isolation: isolate; background: inherit; }
+.home-content > .scroll { position: absolute; inset: 0; padding-bottom: 16px; background: inherit; }
+#home > .fab-wrap { position: static; flex: none; display: flex; justify-content: flex-end; padding: 12px 16px calc(var(--safe-bottom) + 18px); }
+.home-next-enter-active, .home-next-leave-active,
+.home-prev-enter-active, .home-prev-leave-active { transition-property: transform, opacity; transition-duration: 260ms; transition-timing-function: cubic-bezier(.22,.68,0,1); will-change: transform, opacity; }
+.home-next-enter-from { transform: translateX(calc(100% + var(--home-release, 0px))); opacity: 0; }
+.home-prev-enter-from { transform: translateX(calc(-100% + var(--home-release, 0px))); opacity: 0; }
+.home-next-leave-from, .home-prev-leave-from { transform: translateX(var(--home-release, 0px)); }
+.home-prev-leave-to { transform: translateX(100%); opacity: 0; }
+.home-next-leave-to { transform: translateX(-100%); opacity: 0; }
+.home-returning > .scroll:not([class*="-active"]) { transition: transform 260ms cubic-bezier(.22,.68,0,1); }
+.home-dragging > .scroll { transform: translateX(var(--home-touch)); transition: none !important; }
+.home-next-leave-active, .home-prev-leave-active { pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .machine-bar-indicator { transition: none; }
+  .home-content > .scroll { transition: none !important; transform: none !important; opacity: 1 !important; }
+}
+
+.phone-chrome .mode-btn { border: 1px solid transparent; border-radius: 0; }
+.phone-chrome .mode-btn.on { border-color: var(--accent); }

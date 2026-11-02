@@ -40,6 +40,11 @@ const normText = (s: string) => String(s || '').replace(/\s+/g, ' ').trim().toLo
 // first words of `sent` (see sameSent).
 const holds = (text: string, sent: string) => sameSent(normText(text), normText(sent), (a, b) => a.includes(b.slice(0, 60)))
 
+// Whether a rendered queue item's raw text is the given on-screen queue
+// row — the same match the merge uses. Devin's Cancel only exists for its
+// newest row, so the button hides on anything older.
+export const queuedRowMatches = (raw: string, screenEntry: string) => holds(raw, screenEntry)
+
 // Records with photos seen for a pane (most recent last), to give Claude's
 // entries their photos. Plain memory of this page, outside reactivity.
 const MEMORY = 30
@@ -69,7 +74,10 @@ export function pendingQueue(o: {
     const sent = withoutUploads(q.text)
     const nb = normText(q.text.replace(/^\s*(?:!!?|\$\$?)\s*/, '')).slice(0, 60)
     return Boolean(normText(sent)) && o.items.some(i => after(i)
-      && (i.role === 'user' ? holds(i.text, sent) : i.role === 'bash' && Boolean(nb) && normText(i.text).includes(nb)))
+      && (i.role === 'user' ? holds(i.text, sent)
+        : i.role === 'bash' ? Boolean(nb) && normText(i.text).includes(nb)
+          : i.role === 'tool' && i.name === 'shell' ? Boolean(nb) && normText(i.text).includes(nb)
+            : false))
   }
   // Sending order, whatever the source (server or local send).
   const mine = [...o.mine].sort((a, b) => (a.at && b.at ? a.at - b.at : 0))

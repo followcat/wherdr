@@ -1,6 +1,7 @@
 // Web Push (iOS 16.4+, installed PWA): the notification is delivered by Apple, so it
 // arrives even if Tailscale is off on the phone, and a tap reopens the PWA
 // itself (an ntfy notification would open Safari).
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import webpush from 'web-push'
@@ -8,6 +9,7 @@ import { DATA_DIR, appUrl, log } from './env'
 import { pushConfig } from './pushConfig'
 import type { Pane } from '../../shared/types'
 import { type Quiet, quietActive, silenced } from '../../shared/quiet'
+import { type PushDelivery, type PushDeviceView, classifyPushError, expiredLongAgo, pushProvider } from '../../shared/pushDelivery'
 
 const fsp = fs.promises
 const VAPID_FILE = path.join(DATA_DIR, 'vapid.json')
@@ -21,6 +23,7 @@ export interface PushSub {
   addedAt: string
   sessions?: Record<string, string>
   quiet?: Quiet // mode silence de cet appareil
+  last?: PushDelivery // result of the last send to this device
 }
 // Text in English, with the French version for devices subscribed in French
 // (the language is stored with the subscription; English by default).
@@ -103,9 +106,11 @@ export async function pushSend(payload: PushPayload, audience?: PushAudience, fo
   if (!pushReady()) return 0
   const subs = await readSubs()
   const globalQuiet = force ? null : await readGlobalQuiet()
-  const dead: string[] = []
+  const results = new Map<string, PushDelivery>()
   let ok = 0
   for (const sub of subs) {
+    // An expired subscription can never deliver again: it stays listed until removed.
+    if (sub.last?.status === 'expired') continue
     // Filter before sending: nothing goes to a muted device.
     if (!force && silenced(globalQuiet, sub.quiet)) continue
     if (audience && !audience(sub)) continue
@@ -116,16 +121,32 @@ export async function pushSend(payload: PushPayload, audience?: PushAudience, fo
         message.body = bodyFr || message.body
       }
       await webpush.sendNotification(sub, JSON.stringify(message), { TTL: 3600, urgency: 'high' })
+      results.set(sub.endpoint, { at: new Date().toISOString(), status: 'ok' })
       ok++
     } catch (e) {
-      const err = e as { statusCode?: number, body?: string, message?: string }
-      const code = err.statusCode || 0
-      if (code === 404 || code === 410) dead.push(sub.endpoint)
-      log(`push ${code}: ${String(err.body || err.message).slice(0, 140)}`)
+      const result = classifyPushError(e)
+      results.set(sub.endpoint, { at: new Date().toISOString(), ...result })
+      log(`push: delivery failed (${result.status}${result.code ? ` ${result.code}` : ''}) to device ${pushDeviceId(sub.endpoint)}`)
     }
   }
   // Re-read before writing: sending took time, and a subscription or
   // quiet setting saved in the meantime must not be overwritten by the old list.
-  if (dead.length) await writeSubs((await readSubs()).filter(s => !dead.includes(s.endpoint)))
+  if (results.size) await writeSubs(recordDeliveries(await readSubs(), results))
   return ok
+}
+
+// Each device keeps its own result; long-expired ones are dropped.
+export function recordDeliveries(subs: PushSub[], results: Map<string, PushDelivery>, now = Date.now()): PushSub[] {
+  return subs.map((s) => {
+    const last = results.get(s.endpoint)
+    return last ? { ...s, last } : s
+  }).filter(s => !expiredLongAgo(s.last, now))
+}
+
+// Opaque, stable id of a subscription: the endpoint is a capability URL and stays here.
+export const pushDeviceId = (endpoint: string) => createHash('sha256').update(endpoint).digest('hex').slice(0, 16)
+
+export function pushDeviceViews(subs: PushSub[], currentEndpoint = ''): PushDeviceView[] {
+  return subs.map(s => ({ id: pushDeviceId(s.endpoint), provider: pushProvider(s.endpoint), lang: s.lang === 'fr' ? 'fr' : 'en',
+    addedAt: s.addedAt, last: s.last || null, current: Boolean(currentEndpoint) && s.endpoint === currentEndpoint }))
 }

@@ -12,14 +12,30 @@ export interface UpdateLaunch {
 // Quoted text, a running TUI and a partially typed shell command are rejected.
 export function updateShellSignature(text: string): string | null {
   const lines = text.replace(/\r/g, '').trimEnd().split('\n')
-  const end = lines.findLastIndex(l => /^\s*(?:🎉\s*)?Update ran successfully! Please restart Codex\.\s*$/.test(l))
-  if (end < 0 || !lines.slice(Math.max(0, end - 4), end).some(l => /^\s*Codex CLI \S+ installed successfully\.\s*$/.test(l))) return null
+  // Some terminal read sources retain a soft wrap. Rejoin only complete,
+  // known installer messages, never arbitrary output or prompt lines.
+  const installed = /^\s*Codex CLI \S+ installed successfully\.\s*$/
+  const updated = /^\s*(?:🎉\s*)?Update ran successfully! Please restart Codex\.\s*$/
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (installed.test(lines[i]!) || updated.test(lines[i]!)) continue
+    for (const separator of ['', ' ']) {
+      const joined = lines[i]!.trimEnd() + separator + lines[i + 1]!.trimStart()
+      if (installed.test(joined) || updated.test(joined)) {
+        lines.splice(i, 2, joined)
+        break
+      }
+    }
+  }
+  const end = lines.findLastIndex(l => updated.test(l))
+  if (end < 0 || !lines.slice(Math.max(0, end - 4), end).some(l => installed.test(l))) return null
   const tail = lines.slice(end + 1).filter(l => l.trim())
   if (!tail.length || tail.length > 2) return null
   // Conservative: unfamiliar prompts require a manual relaunch in the terminal.
   const last = tail.at(-1)!
   // `>` is a continuation prompt (quotes, heredocs), never a fresh input.
-  if (!/^\s*(?:[\w@./~:-]+(?: [\w@./~:-]+){0,2} )?[$%#❯]\s*$/.test(last)) return null
+  // Require a recognizable user@host prefix for decorated prompts: merely
+  // ending an ordinary sentence with a shell symbol is not enough.
+  if (!/^\s*(?:[\w.-]+@[\w.-]+:[\w./~:-]+ ?[$%#]|[\w.-]+@[\w.-]+ [\w./~:-]+ [$%#]|[$%#❯])\s*$/.test(last)) return null
   // Only a known two-line prompt heading is accepted. Arbitrary preceding
   // text could be a command already entered before the first exit sample.
   if (tail.length === 2 && (!/^\s*[\w./~:-]+ on [\w./:-]+\s*$/.test(tail[0]!) || !/^\s*❯\s*$/.test(last))) return null

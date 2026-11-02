@@ -97,6 +97,12 @@ function start(at: number) {
   }
   step()
 }
+// An image of the reply that cannot show (refused by the security policy,
+// unreachable): a note with a link instead of a broken icon (utils/imageFallback.ts).
+watchImageViolations()
+function onImageError(e: Event) {
+  if (e.target instanceof HTMLImageElement) showImageFallback(e.target)
+}
 function onClick() {
   if (plan) {
     stop()
@@ -127,5 +133,5 @@ onBeforeUnmount(() => {
 
 <template>
   <!-- eslint-disable-next-line vue/no-v-html -- HTML sanitized by DOMPurify (utils/markdown.ts) -->
-  <div ref="el" class="md-body" :class="{ typing: typing !== null }" @click.capture="onClick" v-html="html" />
+  <div ref="el" class="md-body" :class="{ typing: typing !== null }" @click.capture="onClick" @error.capture="onImageError" v-html="html" />
 </template>

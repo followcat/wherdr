@@ -4,16 +4,16 @@
 // replies "unchanged" as long as the file has not grown).
 // Shown = older pages loaded on demand (`older`, up to
 // byte `olderCursor`) + bottom re-read continuously from byte `tailStart`.
-import type { ChatItem, ChatResponse, ClaudeQueueEntry, ClaudeScreen, OmpToolView, Pane, QueuedMessage } from '#shared/types'
+import type { ChatCursor, ChatItem, ChatResponse, ClaudeQueueEntry, ClaudeScreen, OmpToolView, Pane, QueuedMessage } from '#shared/types'
 import { readChat, saveChat, touchChat } from '~/utils/offlineCache'
 import { mayReadOffline, readOfflineAccess } from '~/utils/offlineAccess'
 import { queueReason, canClearQueued } from '~/utils/queuedReason'
 import { canCancelQueued, lostPhotosText, restoreDraft } from '~/utils/queuedCancel'
 import { isUploadLine, uploadSrc } from '#shared/queuedMatch'
-import { pendingQueue, rememberSent } from '~/utils/pendingQueue'
+import { pendingQueue, queuedRowMatches, rememberSent } from '~/utils/pendingQueue'
 import { clampRange, createSelectionSettler, lastLineRect, selectionReplyPos } from '~/utils/selectionReply'
 import { addAnswer, addQuote, answerEnd, answerOf, forgetReply, isQuoted, replyTargets, rowOf, rowRef, rowSettled, tableRank, tableRef, tappedAnswer, toggleOkAll, unansweredCount, withQuestions, type Answer } from '~/utils/questionReply'
-import { createTailLoader, nextTail, restartsTail, tailQuery } from '~/utils/chatTail'
+import { CHAT_READ_MS, createTailLoader, hasOlder, needsOlderForHit, olderCursor, nextTail, restartsTail, tailQuery } from '~/utils/chatTail' 
 import { pickTyping, replyId } from '~/utils/typewriter'
 import { newestThought } from '~/utils/reasoningReveal'
 import { restoredScrollTop, saveReadingPosition } from '~/utils/readingPosition'
@@ -39,9 +39,9 @@ const listEl = ref<HTMLElement | null>(null)
 interface ChatData {
   file: string | null
   token: string
-  tailStart: number | null
+  tailStart: ChatCursor | null
   older: ChatItem[]
-  olderCursor: number
+  olderCursor: ChatCursor | null
   tail: ChatItem[]
   queue: ClaudeQueueEntry[]
 }
@@ -249,7 +249,7 @@ async function loadStep(current: () => boolean): Promise<boolean> {
   try {
     const ready = chat.value.tailStart === null ? await chatIntent.take(props.pane) : undefined
     if (stale()) return false
-    const r = ready || await api<ChatResponse>(`/api/chat?${tailQuery(pane, chat.value)}`)
+    const r = ready || await api<ChatResponse>(`/api/chat?${tailQuery(pane, chat.value)}`, undefined, AbortSignal.timeout(CHAT_READ_MS))
     if (stale()) return false
     if (!r.available) {
       const m = onUnavailable(misses.value, Boolean(chat.value.file) && items.value.length > 0)
@@ -285,7 +285,7 @@ async function loadStep(current: () => boolean): Promise<boolean> {
       const c = { ...chat.value }
       if (c.tailStart === null) {
         c.tailStart = r.start ?? 0
-        c.olderCursor = r.start ?? 0
+        c.olderCursor = olderCursor(r)
       }
       c.file = r.file || null
       c.token = r.token || ''
@@ -310,23 +310,29 @@ watch(() => props.pane.id, () => tailLoader.invalidate())
 
 // Older slice, keeping on screen what we were reading.
 async function loadOlder() {
-  if (olderBusy.value || !(chat.value.olderCursor > 0)) return
+  if (olderBusy.value || !hasOlder(chat.value.olderCursor)) return
   olderBusy.value = true
   const pane = props.pane.id
   const file = chat.value.file
   const before = chat.value.olderCursor
   try {
-    const r = await api<ChatResponse>(`/api/chat?pane=${encodeURIComponent(pane)}&before=${before}`)
-    if (pane !== props.pane.id || r.file !== file || chat.value.olderCursor !== before) return
+    const r = await api<ChatResponse>(`/api/chat?${new URLSearchParams({ pane, before: String(before), since: chat.value.token })}`, undefined, AbortSignal.timeout(CHAT_READ_MS))
+    if (pane !== props.pane.id || chat.value.file !== file || chat.value.olderCursor !== before) return
+    if (r.rewritten) {
+      chat.value = fresh()
+      synced = false
+      await loadChat()
+      return
+    }
+    if (r.file !== file) return
     const b = box.value
     const fromBottom = b ? b.scrollHeight - b.scrollTop : 0
     await apply(() => {
-      shown.value = Infinity
       chat.value = {
         ...chat.value,
         older: (r.items || []).concat(chat.value.older),
         // no progress: stop there
-        olderCursor: (r.start ?? 0) < before ? (r.start ?? 0) : 0,
+        olderCursor: olderCursor(r, before),
       }
     }, true)
     saveChat(pane, items.value)
@@ -346,6 +352,12 @@ onMounted(() => {
 })
 onUnmounted(() => clearInterval(timer))
 watch(pageVisible, (v) => { if (v) loadChat() })
+// Live events socket + a fresh state accepted: the server answers again.
+// Invalidate the loader so a read still in flight (possibly black-holed,
+// holding the one-at-a-time lock) drops its reply, and re-read the tail at
+// once rather than waiting out the poll interval.
+watch(() => eventsOpen.value && herdrState.value.ok && !netDown.value && !offlineView.value,
+  (ok) => { if (ok) { tailLoader.invalidate(); loadChat() } })
 
 // ------------------------------------------------------------ rendu
 // Short tool nouns: written as pairs because "Read" or "Search" mean something else elsewhere.
@@ -353,14 +365,22 @@ const TOOL_COMMAND = tl('Command', 'Commande'), TOOL_EDIT = tl('Edit', 'Modif'),
 const TOOL_LABEL: Record<string, string> = {
   Bash: TOOL_COMMAND, Read: tl('Read', 'Lecture'), Write: tl('Write', 'Écriture'), Edit: TOOL_EDIT, MultiEdit: TOOL_EDIT, Grep: tl('Search', 'Recherche'),
   Glob: tl('Files', 'Fichiers'), WebFetch: 'Web', WebSearch: tl('Web search', 'Recherche web'), Task: TOOL_SUBAGENT, Agent: TOOL_SUBAGENT,
-  TodoWrite: tl('Tasks', 'Tâches'), exec: TOOL_COMMAND, shell: TOOL_COMMAND, apply_patch: TOOL_EDIT,
+  TodoWrite: tl('Tasks', 'Tâches'), exec: TOOL_COMMAND, shell: TOOL_COMMAND, bash: TOOL_COMMAND, read: tl('Read', 'Lecture'), write: tl('Write', 'Écriture'), edit: TOOL_EDIT, grep: tl('Search', 'Recherche'), glob: tl('Files', 'Fichiers'), apply_patch: TOOL_EDIT,
+  // OpenCode's lowercase tool names (its parts carry e.g. webfetch, todoread).
+  webfetch: 'Web', websearch: tl('Web search', 'Recherche web'), task: TOOL_SUBAGENT, todoread: tl('Tasks', 'Tâches'), todowrite: tl('Tasks', 'Tâches'), list: tl('Files', 'Fichiers'), patch: TOOL_EDIT,
+  // Command Code's tool names.
+  shell_command: TOOL_COMMAND, read_file: tl('Read', 'Lecture'), write_file: tl('Write', 'Écriture'), edit_file: TOOL_EDIT,
+  agent: TOOL_SUBAGENT, ask_user_question: tl('Question', 'Question'), search_tools: tl('Search', 'Recherche'),
 }
 const TOOL_ICON: Record<string, string> = {
-  Bash: 'i-lucide-terminal', exec: 'i-lucide-terminal', shell: 'i-lucide-terminal',
+  Bash: 'i-lucide-terminal', exec: 'i-lucide-terminal', shell: 'i-lucide-terminal', bash: 'i-lucide-terminal',
   Read: 'i-lucide-file-text', Write: 'i-lucide-file-plus', Edit: 'i-lucide-file-pen', MultiEdit: 'i-lucide-file-pen',
   apply_patch: 'i-lucide-file-pen', NotebookEdit: 'i-lucide-file-pen', Grep: 'i-lucide-text-search', Glob: 'i-lucide-folder-search',
   WebFetch: 'i-lucide-globe', WebSearch: 'i-lucide-search', Task: 'i-lucide-bot', Agent: 'i-lucide-bot',
   TodoWrite: 'i-lucide-list-todo', AskUserQuestion: 'i-lucide-message-circle-question',
+  webfetch: 'i-lucide-globe', websearch: 'i-lucide-search', task: 'i-lucide-bot', todoread: 'i-lucide-list-todo', todowrite: 'i-lucide-list-todo', list: 'i-lucide-folder-search', patch: 'i-lucide-file-pen',
+  shell_command: 'i-lucide-terminal', read_file: 'i-lucide-file-text', write_file: 'i-lucide-file-plus', edit_file: 'i-lucide-file-pen',
+  agent: 'i-lucide-bot', ask_user_question: 'i-lucide-message-circle-question', search_tools: 'i-lucide-search',
 }
 // Codex "exec" runs code: a shell command, or another tool (write_stdin…).
 // Tool summary: the task count comes from the server in English ("3 tasks").
@@ -368,8 +388,21 @@ const toolText = (tool: ChatItem) => (tool.name === 'TodoWrite' ? t(tool.text ||
 const isOtherTool = (tool: ChatItem) => tool.name === 'exec' && /^\w+$/.test(tool.text || '')
 const toolLabel = (tool: ChatItem) => isOtherTool(tool) ? t('Tool') : TOOL_LABEL[tool.name || ''] || tool.name || ''
 const toolIcon = (tool: ChatItem) => (tool.error ? 'i-lucide-circle-x' : isOtherTool(tool) ? 'i-lucide-wrench' : TOOL_ICON[tool.name || ''] || 'i-lucide-wrench')
+// A tool's wall time when the transcript carries it (OpenCode's parts do).
+const toolSuffix = (tool: ChatItem) => [toolText(tool), tool.ms !== undefined ? ompWall(tool.ms) : ''].filter(Boolean).join(' · ')
+const toolLive = (tool: ChatItem, fallback: boolean) => tool.toolStatus ? tool.toolStatus === 'streaming' || tool.toolStatus === 'running' : fallback
+const toolGroupLive = (b: { list: ChatItem[], live: boolean }) => b.list.some((tool, j) => toolLive(tool, b.live && j === b.list.length - 1))
 // Collapsed action block: its last action.
 const groupSuffix = (tool: ChatItem) => `${toolLabel(tool)} · ${tool.text}`
+// Tool outputs (Devin exec results can run to thousands of lines): shown
+// collapsed, expanded in place on tap — a nested scroller would trap the
+// chat's own scroll gesture. Display is capped like the server's MAX_OUT.
+const OUT_LIMIT = 8000
+const openOuts = reactive(new Set<string>())
+const outKey = (blockKey: string, j: number) => `${blockKey}:${j}`
+const isOutOpen = (blockKey: string, j: number) => openOuts.has(outKey(blockKey, j))
+const toggleOut = (blockKey: string, j: number) => { const k = outKey(blockKey, j); if (openOuts.has(k)) openOuts.delete(k); else openOuts.add(k) }
+const toolOutText = (tool: ChatItem) => { const o = tool.out || ''; return o.length > OUT_LIMIT ? `…\n${o.slice(-OUT_LIMIT)}` : o }
 // omp's calls: a console of the last ones, the earlier ones unfolded on demand.
 const ompRows = (b: { key: string, list: ChatItem[] }) => ompConsoleRows(b.list, isOpen(b.key))
 // omp notes (custom_message shown): [label, icon] per kind.
@@ -390,12 +423,14 @@ type Block =
   | { k: 'who', key: string }
   | { k: 'user', key: string, text: string, pasted?: string[], srcs: string[], files: { path: string, name: string }[], time: string | null, at: string | null, reply: ReplyTarget | null, origin: string | null }
   // `rid`: its code in the references to it (shared/reference.ts messageId).
-  | { k: 'assistant', key: string, id: string, rid: string, text: string, html: string, time: string | null, endsTurn: boolean }
+  | { k: 'assistant', key: string, id: string, rid: string, text: string, html: string, time: string | null, endsTurn: boolean, error?: boolean }
   | { k: 'thinking', key: string, id: string, text: string, html: string, ms: number | undefined }
   | { k: 'job', key: string, id: string, tool: string, out: string, ms: number | undefined, error: boolean }
   | { k: 'autopilot', key: string, text: string }
   | { k: 'system', key: string, text: string }
   | { k: 'notice', key: string, label: string, icon: string, html: string, long: boolean, scheduled?: boolean }
+  // The agent's turn failed (omp: usage limit, credit balance, stalled stream…).
+  | { k: 'error', key: string, text: string, long: boolean }
   | { k: 'shell', key: string, bash: boolean, text: string, out: string, err: string, lines: number, long: boolean }
   | { k: 'ompRun', key: string, tool: ChatItem & { omp: OmpToolView } }
   | { k: 'tools', key: string, list: ChatItem[], live: boolean }
@@ -408,11 +443,14 @@ function itemImageSrcs(it: ChatItem): string[] {
   const srcs: string[] = []
   if (!it.ref || !it.images || !file) return srcs
   for (let k = 0; k < it.images; k++) {
-    srcs.push(`/api/chat/image?pane=${encodeURIComponent(props.pane.id)}&file=${encodeURIComponent(file)}&ref=${it.ref}&i=${(it.imageAt || 0) + k}`)
+    srcs.push(`/api/chat/image?pane=${encodeURIComponent(props.pane.id)}&file=${encodeURIComponent(file)}&ref=${encodeURIComponent(it.ref)}&i=${(it.imageAt || 0) + k}`)
   }
   return srcs
 }
 // Image srcs of actions that only repeat an image shown higher up.
+// Dedupe keys on `hashes` — only Claude and omp transcripts carry them, so
+// Devin and OpenCode images are never deduplicated (their readers fetch
+// image bytes lazily and hash nothing).
 const dupeSrcs = computed(() => {
   const dupes = duplicateImages(items.value)
   const out = new Set<string>()
@@ -532,7 +570,7 @@ const blocks = computed<Block[]>(() => {
     } else if (it.role === 'assistant') {
       lastReply = it.text
       const time = it.ts ? fmtTime(it.ts) : null
-      lastReplyBlock = lazyHtml({ k: 'assistant' as const, key, id: replyId(it), rid: messageId(it), text: it.text, time, endsTurn: false }, () => withQuestions(md(it.text), { reply: t('Reply'), quoted: t('Quoted'), discuss: t('Discuss'), yes: t('Yes'), no: t('No'), okAll: t('OK to all'), decisions: t('Decisions') }))
+      lastReplyBlock = lazyHtml({ k: 'assistant' as const, key, id: replyId(it), rid: messageId(it), text: it.text, time, endsTurn: false, error: Boolean(it.error) }, () => withQuestions(md(it.text), { reply: t('Reply'), quoted: t('Quoted'), discuss: t('Discuss'), yes: t('Yes'), no: t('No'), okAll: t('OK to all'), decisions: t('Decisions') }))
       out.push(lastReplyBlock)
       replies.push({ key, time, text: it.text, rid: lastReplyBlock.rid })
     } else if (it.role === 'thinking') {
@@ -546,6 +584,9 @@ const blocks = computed<Block[]>(() => {
       const e = it.err || ''
       const lines = (o ? o.split('\n').length : 0) + (e ? e.split('\n').length : 0)
       out.push({ k: 'shell', key: `s:${it.ts}:${it.text.slice(0, 40)}`, bash: it.role === 'bash', text: it.text, out: o, err: e, lines, long: lines > SHELL_LINES || o.length + e.length > 1500 })
+    } else if (it.role === 'notice' && it.name === 'error' && it.error) {
+      // The provider's own message (often raw JSON): shown as plain text.
+      out.push({ k: 'error', key, text: it.text, long: it.text.split('\n').length > SHELL_LINES || it.text.length > 1200 })
     } else if (it.role === 'notice') {
       const [label, icon] = NOTICE[it.name || ''] || [it.name || 'Note', 'i-lucide-info']
       // A scheduled prompt starts folded: it is not what the user wrote.
@@ -826,9 +867,18 @@ async function runCommand(cmd: string) {
   const queued = await runInAgent(props.pane.id, cmd)
   if (queued !== false) emit('sent', queued)
 }
+async function runInSplit(cmd: string) {
+  if (readOnly.value) return
+  try {
+    const r = await api<{ pane_id: string, created?: boolean }>('/api/split-command', { pane_id: props.pane.id, command: cmd })
+    toast(r.created ? t('Command sent to a new split terminal') : t('Command sent to split terminal'))
+    await navigateTo(desk.value ? { path: tabPath(props.pane.tab), query: { pane: r.pane_id } } : panePath(r.pane_id))
+  } catch (err) { toast((err as Error).message, true) }
+}
 function cmdMenuItems(cmd: string, runnable: boolean): MenuItem[] {
   const items: MenuItem[] = []
   if (runnable) items.push({ label: tl('Run…', 'Lancer…'), icon: 'i-lucide-play', run: () => runCommand(cmd) })
+  if (!readOnly.value) items.push({ label: t('Run in split terminal'), icon: 'i-lucide-columns-2', run: () => runInSplit(cmd) })
   items.push({ label: t('Copy command'), icon: 'i-lucide-copy', desc: cmd, mono: true, run: () => copyText(cmd) })
   return items
 }
@@ -920,6 +970,8 @@ const screen = computed<ClaudeScreen | null>(() => {
   if (readOnly.value) return null
   const p = props.pane
   if (p.agent === 'omp') return p.ompShell ? { shell: p.ompShell, sent: null, queued: [] } : null
+  // Devin's queue also shows while it compacts — the pane then reads done.
+  if (p.agent === 'devin') return p.devinScreen || null
   return p.agent === 'claude' && p.status === 'working' ? p.claudeScreen || null : null
 })
 const liveShell = computed(() => (screen.value && screen.value.shell) || null)
@@ -943,9 +995,15 @@ const queuedList = computed(() => {
   const mine = withOutbox(readOnly.value ? [] : (p.queued || []).filter(q => !q.back), props.localQueued)
   const memory = rememberSent(p.id, mine)
   const replies = blocks.value.filter(b => b.k === 'assistant')
-  // Agent idle, nothing holding it: Claude's own queue is empty by now.
-  const idle = queueReason(p, {}) === 'sending'
-  return pendingQueue({ mine, claude: chat.value.queue || [], items: items.value, screen: screen.value, memory, idle }).map((q) => {
+  // Agent idle, nothing holding it: the agent's own queue is empty by now —
+  // except Devin's, which outlives the "done" reading while it compacts.
+  const idle = queueReason(p, {}) === 'sending' && !(p.agent === 'devin' && p.devinScreen?.queued.length)
+  // Devin's on-screen queue entries not sent from wherdr (typed and queued
+  // in its terminal): shown like Claude's own queue, keyed by row order.
+  const own = p.agent === 'devin' && !readOnly.value
+    ? (p.devinScreen?.queued || []).map((text, i) => ({ text, ts: `dvn-${i}` }))
+    : []
+  return pendingQueue({ mine, claude: [...(chat.value.queue || []), ...own], items: items.value, screen: screen.value, memory, idle }).map((q) => {
     const lines = q.raw.split('\n')
     const text = lines.filter(l => !isUploadLine(l) && !isAttachmentLine(l)).join('\n').trim()
     const parsed = parseReply(text)
@@ -960,6 +1018,14 @@ const queuedList = computed(() => {
     }
   })
 })
+const sendingNow = ref(false)
+async function sendNow() {
+  if (sendingNow.value) return
+  sendingNow.value = true
+  try { await api('/api/send-now', { pane_id: props.pane.id }) }
+  catch (err) { toast((err as Error).message, true) }
+  finally { sendingNow.value = false }
+}
 // Same parts as a message in the conversation: thumbnails above the bubble,
 // so nothing moves when it lands.
 const pendingParts = (q: { srcs: string[], missing: number, body: string, files: unknown[] }) => [
@@ -970,6 +1036,13 @@ const pendingParts = (q: { srcs: string[], missing: number, body: string, files:
 // "Cancel": the message leaves the agent's queue and comes back into the input
 // field. Already read in the meantime: the server refuses, we say so.
 const canCancel = computed(() => !readOnly.value && canCancelQueued(props.pane))
+// Devin's queue only lets go of its newest entry (↑ recalls that one); the
+// server refuses anything older, so the button only exists on that row.
+const canCancelItem = (q: { raw: string }) => {
+  if (props.pane.agent !== 'devin') return canCancel.value
+  const rows = props.pane.devinScreen?.queued
+  return Boolean(rows?.length && queuedRowMatches(q.raw, rows[rows.length - 1]!))
+}
 const cancelling = ref<string | null>(null)
 async function cancelQueued(q: { id: string, raw: string, mine: boolean, local?: boolean, pasted?: string[] }) {
   if (cancelling.value) return
@@ -1042,8 +1115,11 @@ async function clearAndSend(q: { id: string, inputText?: string }) {
   catch (err) { toast((err as Error).message, true) }
   finally { clearing.value = null }
 }
-function queuedLabel(q: { reason?: QueuedMessage['reason'], inputText?: string, state: string | null }) {
+function queuedLabel(q: { reason?: QueuedMessage['reason'], inputText?: string, state: string | null, phase?: string }) {
   if (q.state === 'sending') return t('Queued · ') + t('sending…')
+  // In Devin's own queue, whatever the pane's status says (a compaction
+  // reads "done"): not "sending", queued by the agent.
+  if (props.pane.agent === 'devin' && q.phase === 'queued' && !q.state) return t('Queued')
   switch (queueReason(props.pane, q)) {
     case 'busy': return q.inputText
       ? tl(`Not sent: the agent’s input already contains text (“${q.inputText}”)`, `Pas envoyé : la saisie de l’agent contient déjà du texte (« ${q.inputText} »)`)
@@ -1159,7 +1235,7 @@ function stepSearch(d: number) {
   focusHit()
 }
 async function loadAllOlder() {
-  while (chat.value.olderCursor > 0) {
+  while (hasOlder(chat.value.olderCursor)) {
     const before = chat.value.olderCursor
     await loadOlder()
     if (chat.value.olderCursor === before) break
@@ -1177,7 +1253,7 @@ async function runSearch() {
     search.cur = -1
     return
   }
-  if (chat.value.olderCursor > 0 && !readOnly.value) {
+  if (hasOlder(chat.value.olderCursor) && !readOnly.value) {
     search.loading = true
     await loadAllOlder()
     search.loading = false
@@ -1188,24 +1264,27 @@ async function runSearch() {
 async function jumpToResult() {
   const raw = route.query.hit
   const q = route.query.q
-  if (typeof raw !== 'string' || typeof q !== 'string' || !/^\d+$/.test(raw)) return
-  const offset = Number(raw)
+  if (typeof raw !== 'string' || typeof q !== 'string') return
+  const numeric = /^\d+$/.test(raw)
+  const ref = typeof route.query.ref === 'string' ? route.query.ref : ''
+  if (!numeric && !ref) return
+  const offset = numeric ? Number(raw) : null
   searchOpen.value = true
   search.q = q
   search.loading = true
   jumping = true
   try {
     // Each load goes up one slice until the one of the target message.
-    while (chat.value.olderCursor > offset && !readOnly.value) {
+    for (let page = 0; !readOnly.value && needsOlderForHit(chat.value.olderCursor, offset, Boolean(ref && items.value.some(i => i.ref === ref)), page); page++) {
       const before = chat.value.olderCursor
       await loadOlder()
-      if (chat.value.olderCursor >= before) break
+      if (chat.value.olderCursor === before) break
     }
     await revealAll()
     const role = String(route.query.role || '')
     const ts = String(route.query.ts || '')
     const prefix = String(route.query.prefix || '')
-    const index = items.value.findIndex(i => i.role === role && i.ts === ts && i.text.startsWith(prefix))
+    const index = items.value.findIndex(i => ref ? i.ref === ref : i.role === role && i.ts === ts && i.text.startsWith(prefix))
     const key = index < 0 ? '' : `${role}:${ts}:${index}`
     const target = [...(listEl.value?.querySelectorAll<HTMLElement>('[data-hit-key]') || [])].find(el => el.dataset.hitKey === key)
     applySearchMarks(false, target)
@@ -1342,7 +1421,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
             <ChatSkeleton v-if="skeleton" :agent="pane.agent" />
             <!-- Blocks above not shown yet: no "Load earlier" before them. -->
             <template v-else-if="hiddenBlocks" />
-            <div v-else-if="chat.olderCursor > 0" class="chat-more">
+            <div v-else-if="hasOlder(chat.olderCursor)" class="chat-more">
               <UButton size="xs" color="neutral" variant="outline" class="mono-btn" :loading="olderBusy" icon="i-lucide-arrow-up" @click="loadOlder">
                 {{ t('Load earlier messages') }}
               </UButton>
@@ -1356,11 +1435,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                 <UIcon :name="agentIcon(pane.agent) || 'i-lucide-bot'" /><span>{{ kindLabel(pane.agent) }}</span>
               </div>
 
-              <div v-else-if="b.k === 'autopilot'" class="msg-autopilot" :data-hit-key="b.key">
-                <div class="msg-system"><span>{{ t('Autopilot') }}</span></div>
-                <div class="msg-autopilot-body"><FoldText>{{ b.text }}</FoldText></div>
-                <UButton icon="i-lucide-copy" color="neutral" variant="ghost" size="xs" :aria-label="t('Copy message')" @click="copyText(b.text)" />
-              </div>
+              <AutopilotMessage v-else-if="b.k === 'autopilot'" :text="b.text" :data-hit-key="b.key" @copy="copyText" />
 
               <div v-else-if="b.k === 'user'" class="msg-user-wrap" :data-hit-key="b.key">
                 <button v-if="b.reply" type="button" class="msg-quote" :aria-label="t('Show original message')" @click="gotoOrigin(b.origin)">
@@ -1388,7 +1463,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                   :id="b.key" role="assistant" side="left" variant="naked"
                   :data-hit-key="b.key"
                   :parts="[{ type: 'text', text: b.text }]"
-                  :ui="{ root: `msg msg-ai tw-${pane.agent || 'agent'}${canRun ? ' can-run' : ''}${pickKey === b.key ? ' q-picking' : ''}`, container: 'msg-c', content: 'md' }"
+                  :ui="{ root: `msg msg-ai tw-${pane.agent || 'agent'}${canRun ? ' can-run' : ''}${pickKey === b.key ? ' q-picking' : ''}${b.error ? ' err' : ''}`, container: 'msg-c', content: 'md' }"
                 >
                   <template #content>
                     <ChatMarkdown :html="b.html" :typing="typingAt(b.id)" @done="typingDone(b.id)" />
@@ -1470,6 +1545,14 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                 <OmpTool :tool="b.tool" run />
               </div>
               <div v-else-if="b.k === 'system'" class="msg-system"><span>{{ b.text }}</span></div>
+              <div v-else-if="b.k === 'error'" class="msg-notice msg-error" :class="{ long: b.long, open: isOpen(b.key) }">
+                <div class="msg-notice-head"><UIcon name="i-lucide-circle-alert" /><span>{{ t('Error') }}</span></div>
+                <div class="msg-notice-body msg-error-text">{{ b.text }}</div>
+                <button v-if="b.long" type="button" class="msg-shell-more" :aria-expanded="isOpen(b.key)" @click="setOpen(b.key, !isOpen(b.key))">
+                  <UIcon :name="isOpen(b.key) ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'" />
+                  <span>{{ isOpen(b.key) ? t('Collapse') : t('Show all') }}</span>
+                </button>
+              </div>
               <div v-else-if="b.k === 'notice'" class="msg-notice" :class="{ long: b.long, open: isOpen(b.key), scheduled: b.scheduled }">
                 <div class="msg-notice-head"><UIcon :name="b.icon" /><span>{{ b.label }}</span></div>
                 <ChatMarkdown class="msg-notice-body md" :html="b.html" :typing="null" />
@@ -1509,29 +1592,32 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                   <MsgThumbs v-if="tool.images" class="tool-thumbs" :srcs="itemImageSrcs(tool)" :max="TOOL_THUMB_MAX" :offline="readOnly" :dupes="dupeSrcs" />
                 </template>
               </div>
-              <div v-else-if="b.k === 'tools'" class="tools" :class="{ live: b.live }">
+              <div v-else-if="b.k === 'tools'" class="tools" :class="{ live: toolGroupLive(b) }">
                 <template v-if="b.list.length <= 3">
                   <template v-for="(tool, j) in b.list" :key="j">
                     <UChatTool
-                      :text="toolLabel(tool)" :suffix="toolText(tool)" :icon="toolIcon(tool)"
-                      :loading="b.live && j === b.list.length - 1" :streaming="b.live && j === b.list.length - 1"
+                      :text="toolLabel(tool)" :suffix="toolSuffix(tool)" :icon="toolIcon(tool)"
+                      :loading="toolLive(tool, b.live && j === b.list.length - 1)" :streaming="toolLive(tool, b.live && j === b.list.length - 1)"
                       :ui="{ root: 'tool', trigger: 'tool-trigger', label: 'tool-label', suffix: 'tool-suffix', leading: 'tool-leading' }"
                       :class="{ err: tool.error }"
-                    />
+                    >
+                      <template v-if="tool.out" #default><pre class="tool-result" :class="{ open: isOutOpen(b.key, j) }" role="button" tabindex="0" :aria-expanded="isOutOpen(b.key, j)" @click="toggleOut(b.key, j)" @keydown.enter.prevent="toggleOut(b.key, j)" @keydown.space.prevent="toggleOut(b.key, j)">{{ toolOutText(tool) }}</pre></template>
+                    </UChatTool>
                     <MsgThumbs v-if="tool.images" class="tool-thumbs" :srcs="itemImageSrcs(tool)" :max="TOOL_THUMB_MAX" :offline="readOnly" :dupes="dupeSrcs" />
                   </template>
                 </template>
                 <UChatTool
                   v-else :open="isOpen(b.key)" :text="`${b.list.length} ${t('actions')}`"
                   :suffix="groupSuffix(b.list[b.list.length - 1]!)"
-                  :icon="b.live ? undefined : 'i-lucide-layers'" :loading="b.live" :streaming="b.live" chevron="trailing"
+                  :icon="toolGroupLive(b) ? undefined : 'i-lucide-layers'" :loading="toolGroupLive(b)" :streaming="toolGroupLive(b)" chevron="trailing"
                   :ui="{ root: 'tool group', trigger: 'tool-trigger', label: 'tool-label', suffix: 'tool-suffix', leading: 'tool-leading', body: 'tool-body', trailingIcon: 'tool-chev' }"
                   @update:open="setOpen(b.key, $event)"
                 >
                   <template v-for="(tool, j) in b.list" :key="j">
                     <div class="tool-row" :class="{ err: tool.error }">
-                      <UIcon :name="toolIcon(tool)" /><b>{{ toolLabel(tool) }}</b><span>{{ toolText(tool) }}</span>
+                      <UIcon :name="toolIcon(tool)" /><b>{{ toolLabel(tool) }}</b><span>{{ toolSuffix(tool) }}</span>
                     </div>
+                    <pre v-if="tool.out" class="tool-result" :class="{ open: isOutOpen(b.key, j) }" role="button" tabindex="0" :aria-expanded="isOutOpen(b.key, j)" @click="toggleOut(b.key, j)" @keydown.enter.prevent="toggleOut(b.key, j)" @keydown.space.prevent="toggleOut(b.key, j)">{{ toolOutText(tool) }}</pre>
                     <MsgThumbs v-if="tool.images" class="tool-thumbs" :srcs="itemImageSrcs(tool)" :max="TOOL_THUMB_MAX" :offline="readOnly" :dupes="dupeSrcs" />
                   </template>
                 </UChatTool>
@@ -1554,7 +1640,10 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
             <UIcon name="i-lucide-reply" /><span>{{ t('Reply') }}</span>
           </button>
         </Teleport>
-        <div v-if="queuedList.length || liveShell" class="queued-list">
+        <div v-if="queuedList.length || liveShell || screen?.sendNow" class="queued-list">
+          <div v-if="!readOnly && screen?.sendNow" class="queued-tag">
+            <button type="button" class="queued-cancel" :disabled="sendingNow" @click="sendNow">{{ t('Send now') }}</button>
+          </div>
           <!-- Already sent (visible as sent on screen), not yet in the transcript. -->
           <div v-for="q in queuedList.filter(x => x.phase === 'sent')" :key="q.id" class="msg-user-wrap">
             <button v-if="q.reply" type="button" class="msg-quote" :aria-label="t('Show original message')" @click="gotoOrigin(q.origin)">
@@ -1624,7 +1713,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
               <UIcon name="i-lucide-clock" /><span>{{ queuedLabel(q) }}</span>
               <button v-if="canClearQueued(pane, q)" type="button" class="queued-cancel" :disabled="Boolean(clearing)" @click="clearAndSend(q)">{{ t('Clear and send') }}</button>
               <button v-if="q.state === 'held' && queueReason(pane, q) !== 'working'" type="button" class="queued-cancel" @click="emit('gotoTerm')">{{ t('Open terminal') }}</button>
-              <button v-if="q.state !== 'sending' && (canCancel || q.state === 'held') && q.raw" type="button" class="queued-cancel" :disabled="Boolean(cancelling)" @click="cancelQueued(q)">
+              <button v-if="q.state !== 'sending' && (canCancelItem(q) || q.state === 'held') && q.raw" type="button" class="queued-cancel" :disabled="Boolean(cancelling)" @click="cancelQueued(q)">
                 <UIcon :name="cancelling === q.id ? 'i-lucide-loader-circle' : 'i-lucide-undo-2'" :class="{ spin: cancelling === q.id }" />{{ t('Cancel') }}
               </button>
             </div>

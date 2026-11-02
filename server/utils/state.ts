@@ -9,16 +9,17 @@ import { notificationAllowed } from './notificationRules'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import type { ChatItem, Choices, ClaudeQueueEntry, ClaudeScreen, HerdrState, InteractiveMenu, WaitScreen, MachineInfo, ModelInfo, OmpActivity, OmpStatus, Pane, QueuedMessage, ShellRun } from '../../shared/types'
+import type { ChatItem, Choices, ClaudeQueueEntry, ClaudeScreen, HerdrState, InteractiveMenu, WaitScreen, ModelInfo, OmpActivity, OmpStatus, Pane, QueuedMessage, ShellRun } from '../../shared/types'
 import { ompActivityOf, parseOmpActivity, parseOmpShell, parseOmpStatus } from './ompScreen'
 import { LOCAL, joinId, machineOf } from '../../shared/ids'
 import { paneTitle } from '../../shared/paneTitle'
 import { foregroundCommand, reduceSnapshot } from './snapshot'
 import { DATA_DIR, HERDR_SESSION, NOTIFY_SETTLE_MS, POLL_MS, log } from './env'
 import { HerdrError, agentPrompt, herdr, herdrOn, sleep } from './herdr'
+import { paneForeground } from './restartSeq'
 import { CHOICE_MS, keepReading, ScreenCache } from './screenCache'
 import { mapScreenPanes, screenRpcGate } from './screenGate'
-import { type AskChecks, completeClaudeAsk, completeOmpAsk, ompActiveTab, parseChoices, parseOmpPrompt } from './choices'
+import { type AskChecks, completeClaudeAsk, completeOmpAsk, ompActiveTab, parseChoices, parseDevinDialog, parseOmpPrompt, parseOpenCodePermission } from './choices'
 import { isPermissionQuestion, mergeDetail } from './promptDetail'
 import { parseWaitScreen } from './waitScreen'
 import { parseMenu, TOP } from '../../shared/menuScreen'
@@ -27,10 +28,13 @@ import { parseUsageLimit, type UsageLimit } from '../../shared/usageLimit'
 import { classifyScreen, type ScreenInteraction } from '../../shared/interactiveScreen'
 import { parseClaudeActivity } from './activity'
 import { parseClaudeNotice, parseClaudeScreen, parseClaudeSuggestion } from './claudeScreen'
+import { parseDevinScreen, parseDevinStatus } from './devinScreen'
+import { opencodeCard } from './opencodePrompts'
 import { type QueueEntry, HOLD_AGENTS, INPUT_STATES, checkQueue, checkSent, giveBackHeld, isUploadLine, landed, leftForGood, lookForLeftMenu, QUEUED_TEXT_MAX, loadQueued, nextHeld, ompRunShown, publicEntry, queuedDone } from './queued'
 import { inputVisible } from './choices'
 import { isSlashCommand, photosOnly } from '../../shared/queuedMatch'
-import { clearKeys, codexFieldLine, findQueued, inputBox, msgText, unqueueClaude } from './unqueue'
+import { isSubmitKey } from '../../shared/submitKeys'
+import { clearKeys, codexFieldLine, devinFieldLine, findQueued, inputBox, msgText, unqueueClaude, unqueueDevin } from './unqueue'
 import { takeBackInterrupted, unansweredTurn } from './interruptRestore'
 import { interruptAgent } from './interruptSeq'
 import { queuedPasted } from './pastes'
@@ -41,10 +45,12 @@ import { chatDelta } from './chatDelta'
 import { agentNotificationTitle, pushSend, subWatchesSession } from './push'
 import { currentModel, forgetModel, noteScreen, modelControlBusy } from './modelctl'
 import { type Machine, RemoteMachine, allMachines, getMachine, machineOfPane, machinesListed, multiMachine, onMachinesChange, remoteMachines } from './machines'
-import { READY_MAX_MS, serverReady } from '../../shared/stateReady'
+import { READY_MAX_MS, publishedMachine, serverReady } from '../../shared/stateReady'
 import { createCodexStatus, dirWritable } from './codexStatus'
 import { runLocal, setCodexKnownWeek } from './quotas'
+import { readPassiveScreen } from './passiveScreen'
 import { createSelfUpdates } from './agentSelfUpdate'
+import { pollQueue } from './pollQueue'
 
 const fsp = fs.promises
 
@@ -64,6 +70,16 @@ export const transcripts = {
   pendingAsk: (p: TranscriptPane) => trFor(p).pendingAsk(p),
   pendingClaudeQuestions: (p: TranscriptPane) => trFor(p).pendingClaudeQuestions(p),
   forget: (id: string) => machineOfPane(id)?.transcripts.forget(id),
+  opencodeModels: (p: TranscriptPane) => trFor(p).opencodeModels(p),
+  opencodePatchModel: (p: TranscriptPane, m: { id: string, providerID: string, variant?: string }) => trFor(p).opencodePatchModel(p, m),
+  opencodePending: (p: TranscriptPane) => trFor(p).opencodePending(p),
+  opencodeReplyPermission: (p: TranscriptPane, requestID: string, decision: string, message?: string) => trFor(p).opencodeReplyPermission(p, requestID, decision, message),
+  opencodeReplyForm: (p: TranscriptPane, formID: string, key: string, value: unknown) => trFor(p).opencodeReplyForm(p, formID, key, value),
+  opencodePermissionMatch: (p: TranscriptPane, target: { action: string, resources: string[], decision: 'once' | 'always' | 'reject' }) => trFor(p).opencodePermissionMatch(p, target),
+  opencodeInbox: (p: TranscriptPane) => trFor(p).opencodeInbox(p),
+  opencodeInboxDelete: (p: TranscriptPane, itemID: string) => trFor(p).opencodeInboxDelete(p, itemID),
+  opencodeShell: (p: TranscriptPane, command: string) => trFor(p).opencodeShell(p, command),
+  opencodeStatus: (p: TranscriptPane) => trFor(p).opencodeStatus(p),
 }
 
 export { isUploadLine }
@@ -101,6 +117,14 @@ export async function withOmpTab(paneId: string, c: Choices): Promise<Choices> {
   if (tab !== null) return { ...c, tab }
   const { tabs: _, ...rest } = c
   return rest
+}
+// OpenCode's permission cursor is a background colour, invisible in the
+// detection text. Read the screen again in ANSI for the card's highlight;
+// answering goes through the permission API and never depends on it.
+export async function withOpenCodeCursor(paneId: string, c: Choices): Promise<Choices> {
+  if (!c.horizontal) return c
+  const r = await herdr('pane.read', { pane_id: paneId, source: 'visible', format: 'ansi' }, 4000)
+  return parseOpenCodePermission(null, r.read && r.read.text) || c
 }
 
 // Blocking prompts: re-read on revision changes and periodically while
@@ -166,9 +190,32 @@ async function readChoices(p: Pane, rev: unknown, strict: boolean, watch = false
     // A live quota footer keeps the input usable. Ignore lists in scrollback.
     const usageLimit = p.status === 'unknown' ? null : parseUsageLimit(String(text || ''), p.agent)
     // omp: its select dialog (tool approval) or "Ask" box.
-    let choices = usageLimit ? null : p.agent === 'omp' ? parseOmpPrompt(text) : parseChoices(text, { strict })
+    let choices = usageLimit ? null : p.agent === 'devin' ? parseDevinDialog(text) : p.agent === 'omp' ? parseOmpPrompt(text) : p.agent === 'opencode' ? null : parseChoices(text, { strict })
     if (choices) choices.identity = promptIdentity(text, p.agent)
-    const menu = !usageLimit && p.agent !== 'omp' && framed && (strict || !choices || !parseChoices(text, { strict: true })) ? await readMenu(p.id) : null
+    // OpenCode's permission/question dialogs belong to the session, not the
+    // screen: the service lists them before any menu is guessed at — its
+    // boxed dialog must not be re-read as a menu, and a real card skips the
+    // extra ANSI read entirely. Only a blocked pane can be holding one.
+    const ocCard = !choices && p.agent === 'opencode' && p.status === 'blocked' && transcripts.opencodePending
+      ? opencodeCard(await transcripts.opencodePending(p).catch(() => null) || { permissions: [], forms: [] })
+      : null
+    if (ocCard) choices = ocCard.choices
+    // Fallback for the API card: the service may be unreachable or may not
+    // list this request — the boxed permission dialog still parses from the
+    // screen, and its answer resolves a request id by action/resources.
+    let ocScreen = false
+    if (!choices && p.agent === 'opencode' && p.status === 'blocked') {
+      const screenCard = parseOpenCodePermission(text)
+      if (screenCard) {
+        choices = await withOpenCodeCursor(p.id, screenCard)
+        choices.identity = promptIdentity(text, p.agent)
+        ocScreen = true
+      }
+    }
+    // An OpenCode card is authoritative: no menu read on top of it. Every
+    // other agent keeps the original choices-vs-menu precedence.
+    const menu = ocCard || ocScreen || usageLimit || p.agent === 'omp' || !framed ? null
+      : strict || !choices || !parseChoices(text, { strict: true }) ? await readMenu(p.id) : null
     if (menu) {
       menu.identity = menuIdentity(menu)
       for (const item of menu.items) item.identity = menuIdentity(menu, item)
@@ -273,6 +320,32 @@ function refreshActivity(p: Pane) {
     .finally(() => activityBusy.delete(p.id))
 }
 
+// Devin's composer screen (see devinScreen.ts): its own queue — sent there
+// by the pane itself while it compacts, a connection retries, or Enter is
+// typed on them in the terminal — and the messages it already echoed, read
+// while its conversation is shown. Its transcript only tells afterwards.
+type DevinActivity = { screen: ClaudeScreen | null, status: OmpStatus | null, at: number }
+const devinScreens = new Map<string, DevinActivity>()
+const devinScreenBusy = new Set<string>()
+function refreshDevinScreen(p: Pane) {
+  if (devinScreenBusy.has(p.id)) return
+  devinScreenBusy.add(p.id)
+  herdr('pane.read', { pane_id: p.id, source: 'detection' }, 4000)
+    .then(r => {
+      const text = r.read && r.read.text
+      return { screen: parseDevinScreen(text), status: parseDevinStatus(text) }
+    }, () => null)
+    .then((d) => {
+      const screen = d?.screen ?? null
+      const old = devinScreens.get(p.id)?.screen
+      devinScreens.set(p.id, { screen, status: d?.status ?? null, at: Date.now() })
+      const same = (a: ClaudeScreen | null | undefined, b: ClaudeScreen | null | undefined) =>
+        (a?.sent ?? null) === (b?.sent ?? null) && (a?.queued || []).join('\n') === (b?.queued || []).join('\n') && Boolean(a?.sendNow) === Boolean(b?.sendNow)
+      if (!same(old, screen)) setTimeout(poll, 0)
+    })
+    .finally(() => devinScreenBusy.delete(p.id))
+}
+
 // Codex resting, conversation shown: text left in its input field (typed in
 // its terminal, or arrived there by mistake: a wheel report cut in two, see
 // scrollThrottle.ts). Its next message from wherdr would be glued after it.
@@ -305,6 +378,19 @@ const OMP_STATUS_MS = 3000
 type OmpScreenState = { status: OmpStatus | null, activity: OmpActivity | null, shell: ShellRun | null, at: number }
 const ompStatuses = new Map<string, OmpScreenState>()
 const ompStatusBusy = new Set<string>()
+// OpenCode's session-derived status (tokens/cost), same refresh discipline.
+const ocStatuses = new Map<string, { status: OmpStatus | null, at: number }>()
+const ocStatusBusy = new Set<string>()
+// OpenCode's inbox from the last good chat read, for checkQueue's alive grace.
+const ocInboxes = new Map<string, string[]>()
+function refreshOcStatus(p: Pane) {
+  if (ocStatusBusy.has(p.id)) return
+  ocStatusBusy.add(p.id)
+  transcripts.opencodeStatus(p)
+    .then(status => { ocStatuses.set(p.id, { status, at: Date.now() }) })
+    .catch(() => {})
+    .finally(() => ocStatusBusy.delete(p.id))
+}
 function refreshOmpStatus(p: Pane) {
   if (ompStatusBusy.has(p.id)) return
   ompStatusBusy.add(p.id)
@@ -341,8 +427,10 @@ export const codexStatus = createCodexStatus({
       exec: exec ? (script, input, timeoutMs) => exec(script, [], { input, timeoutMs }) : null,
     }
   },
-  readScreen: id => herdr('pane.read', { pane_id: id, source: 'recent_unwrapped', lines: 300 }, 4000).then(r => String((r.read && r.read.text) || '')),
+  readScreen: id => readPassiveScreen(herdr, id),
+  readProcesses: async id => (await herdr('pane.process_info', { pane_id: id }, 4000))?.process_info?.foreground_processes || [],
   rolloutOf: async p => (await transcripts.locate(p))?.file || null,
+  agentPid: async id => Number((await paneForeground({ call: herdr, sleep, now: Date.now }, id, 'codex')).agent?.pid) || null,
   runLocal,
   writable: dirWritable,
   onChange: () => poll(),
@@ -415,13 +503,19 @@ export function promptOnce(paneId: string, id: string, text: string, send: () =>
 // kept when well-formed and unused, so the bubble keeps its identity.
 // `typedAt`: when wherdr began typing it (see QueueEntry). `turn`: held until
 // the agent's turn ends.
-export function addQueued(paneId: string, text: string, opts: { held?: boolean, busy?: boolean, failed?: boolean, id?: string, typedAt?: number, turn?: boolean } = {}): QueuedMessage {
+// The complete payload kept for delivery, bounded far above the display
+// preview: a long paste must not lose its tail (attachment paths sit at the
+// end of a message).
+const QUEUED_FULL_MAX = 256 * 1024
+export function addQueued(paneId: string, text: string, opts: { held?: boolean, busy?: boolean, failed?: boolean, id?: string, typedAt?: number, turn?: boolean, submitKey?: string } = {}): QueuedMessage {
   const list = queued.get(paneId) || []
   const own = opts.id && /^w-[a-z0-9]{1,32}$/.test(opts.id) && !list.some(q => q.id === opts.id) ? opts.id : null
   // Typed during a turn (see isOmpRun).
   const turn = !opts.held && !opts.failed && TURN.has(findPane(paneId)?.status || '')
+  const raw = String(text).slice(0, QUEUED_FULL_MAX)
   const e: QueueEntry = {
-    id: own || crypto.randomBytes(4).toString('hex'), text: String(text).slice(0, QUEUED_TEXT_MAX), at: Date.now(),
+    id: own || crypto.randomBytes(4).toString('hex'), text: raw.slice(0, QUEUED_TEXT_MAX), at: Date.now(),
+    ...(raw.length > QUEUED_TEXT_MAX ? { full: raw } : {}), ...(opts.submitKey ? { submitKey: opts.submitKey } : {}),
     ...(opts.held ? { held: true } : {}), ...(opts.busy ? { busy: true } : {}), ...(opts.failed ? { failed: true } : {}),
     ...(turn ? { turnSeen: true } : {}),
     ...(opts.typedAt ? { typedAt: opts.typedAt } : {}), ...(opts.held && opts.turn ? { turn: true } : {}),
@@ -465,9 +559,17 @@ export const restarting = (paneId: string) => { const r = restarts.get(paneId); 
 const GUARD_STATES = new Set(['idle', 'done', 'working'])
 // What agent.prompt must type for the agent to submit `text` (see guardedSend.ts).
 const typedFor = (p: Pane, text: string) => (p.agent === 'claude' ? submittable(text) : text)
+// Field readers for the manual text-then-key delivery of an alternate
+// terminator (herdr's agent.prompt only knows Enter).
+const FIELD_READERS: Record<string, (ansi: string) => string | null> = { codex: codexFieldLine, claude: inputBox, devin: devinFieldLine }
 // `retry`: a later attempt of a message whose earlier send was given up (its
 // text, if still in the field, is ours: see guardedSend.ts).
-export function sendPrompt(p: Pane, text: string, opts: { retry?: boolean } = {}): Promise<void> {
+// `submitKey`: the verified terminator this message was sent with (see
+// shared/submitKeys.ts). Re-checked here at delivery time: an entry whose
+// context passed (the turn ended while it was held) is sent normally — the
+// message matters more than the key.
+export function sendPrompt(p: Pane, text: string, opts: { retry?: boolean, submitKey?: string } = {}): Promise<void> {
+  const submitKey = opts.submitKey && isSubmitKey(p.agent, opts.submitKey, { working: p.status === 'working' }) ? opts.submitKey : undefined
   return withPaneLock(p.id, async () => {
     // Re-check after waiting for another writer/restart's lock. The Pane
     // passed by a request or a held-message delivery can already be stale.
@@ -475,9 +577,27 @@ export function sendPrompt(p: Pane, text: string, opts: { retry?: boolean } = {}
     if (now?.stopped || now?.leaving) {
       throw new HerdrError(isSlashCommand(text) ? 'stale' : 'no_input', 'Restart Codex before sending a command.')
     }
+    if (opts.submitKey && !submitKey) log(`send ${p.id}: submit key ${opts.submitKey} not applicable on ${p.agent || 'pane'} ${p.status || ''}, sent normally`)
+    // OpenCode's "!" runs through its service, not a typed bash-mode field —
+    // the run lands in the transcript as a shell message either way. The
+    // pane was re-read under the lock: its session may have changed since.
+    if (now?.agent === 'opencode' && /^!\s*\S/.test(text)) {
+      if (await transcripts.opencodeShell(now, text.replace(/^!\s*/, ''))) return
+      throw new HerdrError('stale', 'OpenCode did not confirm the shell command — check the transcript.')
+    }
     // Herdr may still call a quota wait blocked. Its visible field also takes
     // slash commands, using the same checked send rather than agent.prompt.
     if (p.agent !== 'claude' || !GUARD_STATES.has(p.status || '') || (isSlashCommand(text) && !p.usageLimit)) {
+      // An alternate terminator goes text then key (as /api/input does),
+      // then the same "field must not keep our text" check — with the
+      // terminator, never Enter, as the retry.
+      const field = submitKey && FIELD_READERS[p.agent || '']
+      if (field) {
+        await herdr('pane.send_input', { pane_id: p.id, text })
+        await herdr('pane.send_input', { pane_id: p.id, keys: [submitKey!] })
+        await confirmSubmitted(fieldDeps(p, field), text, { submitKey })
+        return
+      }
       await agentPrompt(p.id, typedFor(p, text))
       // Codex: its field must not keep our text (see confirmSubmitted).
       if (p.agent === 'codex' && !isSlashCommand(text)) await confirmSubmitted(fieldDeps(p, codexFieldLine), text)
@@ -493,7 +613,7 @@ export function sendPrompt(p: Pane, text: string, opts: { retry?: boolean } = {}
       const r = await guardedSend({
         ...fieldDeps(p, inputBox),
         type: async (t) => { await herdr('pane.send_input', { pane_id: p.id, text: t }) },
-      }, text, { retry: opts.retry })
+      }, text, { retry: opts.retry, ...(submitKey ? { submitKey } : {}) })
       keep(r.unsent)
     } catch (e) {
       keep((e as GuardError).unsent)
@@ -530,7 +650,7 @@ function deliverHeld(p: Pane) {
   deliverBusy.add(p.id)
   herdr('pane.read', { pane_id: p.id, source: 'detection' }, 4000)
     .then(async (r) => {
-      if (!inputVisible(r.read && r.read.text)) return
+      if (!inputVisible(r.read && r.read.text, p.agent)) return
       if (p.agent === 'claude') {
         const box = await fieldDeps(p, inputBox).box()
         q.busy = Boolean(box && box !== BASH_EMPTY)
@@ -566,7 +686,7 @@ async function typeHeld(p: Pane, q: QueueEntry): Promise<boolean> {
   q.delivering = true
   q.typedAt = at
   saveQueued()
-  try { await sendPrompt(p, q.text, { retry }) }
+  try { await sendPrompt(p, q.full ?? q.text, { retry, submitKey: q.submitKey }) }
   catch (e) {
     delete q.delivering
     q.failed = true
@@ -610,7 +730,7 @@ function heldFailed(p: Pane, q: QueueEntry, e: HerdrError) {
 export async function closeLeftMenu(paneId: string, send: boolean): Promise<{ closed: boolean, sent: number }> {
   const p = findPane(paneId)
   if (!p || !p.agent || !HOLD_AGENTS.has(p.agent) || p.stopped || restarting(paneId)) throw new HerdrError('stale', 'No menu to close')
-  const shown = async () => inputVisible(((await herdr('pane.read', { pane_id: paneId, source: 'detection' }, 4000)).read || {}).text)
+  const shown = async () => inputVisible(((await herdr('pane.read', { pane_id: paneId, source: 'detection' }, 4000)).read || {}).text, p.agent)
   const closed = await withPaneLock(paneId, async () => {
     if (await shown()) return false
     await herdr('pane.send_input', { pane_id: paneId, keys: ['esc'] })
@@ -654,7 +774,7 @@ export function takeBack(paneId: string, item: { text: string, ts?: string | nul
   // The original text, photo paths included, goes back into wherdr's field:
   // wherdr's record, usually already gone (the message is in the transcript),
   // otherwise the sent history.
-  const text = mine ? mine.text : sentText(paneId, item) || item.text
+  const text = mine ? (mine.full ?? mine.text) : sentText(paneId, item) || item.text
   return { text, lost: lostPhotos(item.images, text) }
 }
 
@@ -710,7 +830,7 @@ export async function clearQueuedInput(paneId: string, id: string, expected: str
     if (!p || p.agent !== 'claude' || p.stopped || p.leaving || !['idle', 'done'].includes(p.status || '') || restarting(paneId)
       || p.menu || p.prompt || !q?.held || !q.busy || q.failed) throw new HerdrError('stale', 'Agent is not ready')
     const detection = await herdr('pane.read', { pane_id: paneId, source: 'detection' }, 4000)
-    if (!inputVisible(detection.read?.text)) throw new HerdrError('stale', 'Agent is not ready')
+    if (!inputVisible(detection.read?.text, p.agent)) throw new HerdrError('stale', 'Agent is not ready')
     const d = fieldDeps(p, inputBox)
     const box = await d.box()
     if (box === null) throw new HerdrError('no_input', 'Agent input field not found')
@@ -775,14 +895,25 @@ function reconcileQueued(p: Pane) {
       // queued again, or not seen for an hour (see checkSent). Claude's queue
       // is only trusted from its own transcript, not a guessed one.
       const claude = r.available && !r.guessed ? { queue: r.queue || [], popped: r.popped || [] } : null
-      if (checkSent(left, { agent: p.agent, claude, now })) {
+      // Devin's queue is only on its screen (see devinScreen.ts): a message
+      // still listed there is being held by the agent, not unseen.
+      const devinQueue = p.agent === 'devin' ? devinScreens.get(p.id)?.screen?.queued || null : null
+      // OpenCode's inbox is in its chat read already (see opencodeTranscripts).
+      const ocQueue = p.agent === 'opencode' && r.available ? r.queue || null : null
+      // What checkQueue below reads as "the agent still holds it": fail-closed —
+      // a read that did not happen keeps nothing alive.
+      if (ocQueue) ocInboxes.set(p.id, ocQueue.map(q => q.text))
+      else ocInboxes.delete(p.id)
+      if (checkSent(left, { agent: p.agent, claude, devinQueue, ocQueue, now })) {
         log(`message not seen on ${p.id}`)
         setTimeout(poll, 50)
       }
       if (left.length) queued.set(p.id, left)
       else queued.delete(p.id)
     })
-    .catch(() => {})
+    // A failed read keeps no inbox evidence: stale entries must not keep a
+    // lost message alive forever.
+    .catch(() => { ocInboxes.delete(p.id) })
     .finally(() => reconcileBusy.delete(p.id))
 }
 
@@ -814,7 +945,7 @@ export async function cancelQueued(paneId: string, text: string, id?: string): P
   if (mine && (mine.held || mine.failed) && !deliverBusy.has(p.id)) {
     drop()
     setTimeout(poll, 50)
-    return { text: mine.text }
+    return { text: mine.full ?? mine.text }
   }
   // Only wherdr's own held or failed record (above) outlives its agent.
   if (!p.agent) throw new HerdrError('not_found', 'agent not found')
@@ -824,6 +955,55 @@ export async function cancelQueued(paneId: string, text: string, id?: string): P
     drop()
     setTimeout(poll, 50)
     return { text: pend.text }
+  }
+  // Devin's own queue: its "↑" pulls the newest "○" entry back for editing —
+  // only that entry can be cancelled, nothing over the API re-queues a draft.
+  if (p.agent === 'devin') {
+    if (unqueueBusy.has(p.id)) throw new HerdrError('busy', 'Already cancelling')
+    unqueueBusy.add(p.id)
+    try {
+      await withPaneLock(p.id, () => unqueueDevin({
+        screen: async () => String(((await herdr('pane.read', { pane_id: p.id, source: 'detection' }, 4000)).read || {}).text || ''),
+        keys: async (keys) => { await herdr('pane.send_input', { pane_id: p.id, keys }) },
+        sleep,
+      }, text))
+      drop()
+      log(`queued message cancelled on ${p.id}`)
+      return { text: mine ? (mine.full ?? mine.text) : text }
+    }
+    catch (e) {
+      if ((e as HerdrError).code === 'already_read') drop()
+      throw e
+    }
+    finally {
+      unqueueBusy.delete(p.id)
+      setTimeout(poll, 50)
+    }
+  }
+  // OpenCode's queue is its session inbox: matching entry deleted through
+  // the service (the transport only deletes an id a fresh listing shows).
+  if (p.agent === 'opencode') {
+    if (unqueueBusy.has(p.id)) throw new HerdrError('busy', 'Already cancelling')
+    unqueueBusy.add(p.id)
+    try {
+      const items = await transcripts.opencodeInbox(p)
+      const candidates = items.filter(i => i?.type === 'user' && typeof i?.id === 'string')
+      // Exact text first — a substring hit ("review" inside "review server")
+      // must not delete a different entry. Identical repeats: the newest.
+      const exact = candidates.filter(i => msgText(String(i.payload?.text || '')) === msgText(text))
+      const loose = exact.length ? [] : candidates.filter(i => sameMsg(String(i.payload?.text || ''), msgText(text)))
+      const match = exact.length ? exact[exact.length - 1] : loose.length === 1 ? loose[0] : null
+      if (!match) throw new HerdrError('already_read', 'Already read by the agent')
+      const gone = await transcripts.opencodeInboxDelete(p, String(match.id))
+      if (!gone) throw new HerdrError(gone === null ? 'already_read' : 'stale', gone === null ? 'Already read by the agent' : 'OpenCode did not remove the queued message')
+      drop()
+      log(`queued message cancelled on ${p.id}`)
+      return { text: mine ? (mine.full ?? mine.text) : String(match.payload?.text || text) }
+    }
+    finally {
+      unqueueBusy.delete(p.id)
+      setTimeout(poll, 50)
+    }
   }
   if (p.agent !== 'claude') throw new HerdrError('unsupported', 'This agent can’t cancel queued messages')
   if (p.status !== 'working') throw new HerdrError('already_read', 'Already read by the agent')
@@ -864,7 +1044,7 @@ export async function cancelQueued(paneId: string, text: string, id?: string): P
     // The app only had Claude's record of the message (no paths): the sent
     // history may still know them.
     const known = !mine && r.images > 0 && !hasAttachments(text) ? sentText(p.id, { text: msgText(text), images: r.images }, taken) : null
-    const restored = mine ? mine.text : known || text
+    const restored = mine ? (mine.full ?? mine.text) : known || text
     const lost = lostPhotos(r.images, restored) + r.lost
     return { text: restored, ...(lost ? { lost } : {}) }
   } catch (e) {
@@ -878,7 +1058,7 @@ export async function cancelQueued(paneId: string, text: string, id?: string): P
 
 // Queued messages of an agent that is ready: the first given at creation (see
 // createAgent), or a send refused by Herdr during startup (see prompt.post).
-export const pendingPrompts = new Map<string, { text: string, at: number }>()
+export const pendingPrompts = new Map<string, { text: string, at: number, submitKey?: string }>()
 const PENDING_TTL_MS = 15 * 60 * 1000
 const pendingBusy = new Set<string>()
 export const READY = new Set(['done', 'idle'])
@@ -921,7 +1101,9 @@ function flushPending(p: Pane) {
   }
   if (!p.agent || !READY.has(p.status || '')) return
   pendingBusy.add(p.id)
-  withPaneLock(p.id, () => agentPrompt(p.id, typedFor(p, pend.text)))
+  withPaneLock(p.id, () => pend.submitKey
+    ? sendPrompt(p, pend.text, { submitKey: pend.submitKey })
+    : agentPrompt(p.id, typedFor(p, pend.text)))
     .then(() => {
       pendingPrompts.delete(p.id)
       log(`initial prompt ${p.id} sent`)
@@ -1080,7 +1262,15 @@ async function enrich(next: HerdrState, snap: Json, machine: string, publish?: (
       const menu = Boolean(before && (before.menu || before.prompt || before.screen || before.interaction === 'terminal')) || restarting(p.id)
       // omp running the user's "!" command: idle for Herdr, but busy.
       if (list && TURN.has(p.status || '')) for (const q of list) if (!q.held && !q.failed) q.turnSeen = true
-      if (list && checkQueue(list, before?.ompShell ? 'working' : p.status, Date.now(), menu)) log(`message not sent on ${p.id}`)
+      // A message sitting in Devin's own queue (compaction holds the pane
+      // "done" the whole time) is not lost: its wait is the agent's.
+      const devq = p.agent === 'devin' ? devinScreens.get(p.id)?.screen?.queued : undefined
+      // OpenCode's inbox (last good chat read): a message it still lists is
+      // being held by the agent, not unseen — same grace as Devin's screen.
+      const ocq = p.agent === 'opencode' ? ocInboxes.get(p.id) : undefined
+      const texts = devq?.length ? devq : ocq
+      const alive = texts?.length ? (q: QueueEntry) => texts.some(t => sameMsg(msgText(t), msgText(q.text)) || sameMsg(msgText(q.text), msgText(t))) : undefined
+      if (list && checkQueue(list, before?.ompShell ? 'working' : p.status, Date.now(), menu, alive)) log(`message not sent on ${p.id}`)
       if (list) deliverHeld(p)
       if (list && list.length) p.queued = list.map(q => queuedPasted(publicEntry(q)))
     }
@@ -1132,7 +1322,7 @@ async function enrich(next: HerdrState, snap: Json, machine: string, publish?: (
     // (see lookForLeftMenu): the conversation says so, with Close / Send anyway.
     if (lookForLeftMenu(p)) {
       const r = await herdr('pane.read', { pane_id: p.id, source: 'detection' }, 4000).catch(() => null)
-      if (r && !inputVisible(r.read && r.read.text)) p.menuLeftOpen = true
+      if (r && !inputVisible(r.read && r.read.text, p.agent)) p.menuLeftOpen = true
     }
     const pv = previews.get(p.id)
     if (!pv || pv.status !== p.status || (p.status === 'working' && Date.now() - pv.at > 10000)) refreshPreview(p)
@@ -1165,6 +1355,37 @@ async function enrich(next: HerdrState, snap: Json, machine: string, publish?: (
       const c = codexStatus.statusOf(p)
       if (c) p.codexStatus = c
     } else codexStatus.forget(p.id)
+    // OpenCode's tokens/cost live on its session record — one snapshot read
+    // a poll while the pane is watched, formatted like the omp/devin status.
+    if (p.agent === 'opencode' && isViewed(p.id)) {
+      const o = ocStatuses.get(p.id)
+      if (!o || Date.now() - o.at >= (p.status === 'working' ? ACTIVITY_MS : NOTICE_MS)) refreshOcStatus(p)
+      if (o?.status) p.opencodeStatus = o.status
+      else delete p.opencodeStatus
+    } else {
+      ocStatuses.delete(p.id)
+      // Inbox evidence is the sent-message alibi, not a viewed-only nicety:
+      // an unviewed OpenCode pane keeps it until the pane or its agent goes.
+      if (p.agent !== 'opencode') ocInboxes.delete(p.id)
+      delete p.opencodeStatus
+    }
+    // Devin's composer screen: its queue shows while it works or while it
+    // compacts (the pane then reads done), and our own messages on their way
+    // ask for a faster read. The queue section only clears on screen — so it
+    // is also watched while a queue is listed or a message is in flight,
+    // even unviewed: checkQueue/checkSent keep their alive-predicate and a
+    // held message is not misjudged as lost after a switch-away. A screen
+    // that comes back empty (or unreadable) ends the watch by itself.
+    const devinWatched = isViewed(p.id) || queued.has(p.id) || Boolean(devinScreens.get(p.id)?.screen?.queued.length)
+    if (p.agent === 'devin' && devinWatched) {
+      const d = devinScreens.get(p.id)
+      const fast = p.status === 'working' || queued.has(p.id) || Boolean(d?.screen?.queued.length)
+      if (!d || Date.now() - d.at >= (fast ? ACTIVITY_MS : NOTICE_MS)) refreshDevinScreen(p)
+      if (d?.screen) p.devinScreen = d.screen
+      else delete p.devinScreen
+      if (d?.status) p.devinStatus = d.status
+      else delete p.devinStatus
+    } else { devinScreens.delete(p.id); delete p.devinScreen; delete p.devinStatus }
     if (p.agent === 'codex' && isViewed(p.id) && (p.status === 'idle' || p.status === 'done') && !p.prompt && !p.menu && !p.restart) {
       const f = codexFields.get(p.id)
       if (!f || Date.now() - f.at >= NOTICE_MS) refreshCodexField(p)
@@ -1177,6 +1398,8 @@ async function enrich(next: HerdrState, snap: Json, machine: string, publish?: (
   for (const id of askChecks.keys()) if (!alive(id)) askChecks.delete(id)
   for (const id of pendingPrompts.keys()) if (!alive(id)) pendingPrompts.delete(id)
   for (const id of queued.keys()) if (!alive(id)) queued.delete(id)
+  for (const id of devinScreens.keys()) if (!alive(id)) devinScreens.delete(id)
+  for (const id of ocInboxes.keys()) if (!alive(id)) ocInboxes.delete(id)
   for (const id of takenBack.keys()) if (!alive(id)) takenBack.delete(id)
   for (const id of restarts.keys()) if (!alive(id)) restarts.delete(id)
   for (const id of agentBorn.keys()) if (!alive(id)) { agentBorn.delete(id); bornDirty = true }
@@ -1213,6 +1436,7 @@ function rebuild() {
   for (const k of mstates.keys()) if (!getMachine(k)) mstates.delete(k)
   const loc = mstates.get(LOCAL) || { ok: false, error: 'starting…', workspaces: [], panes: [] }
   const next: HerdrState = { ...loc, workspaces: [...loc.workspaces], tabs: [...(loc.tabs || [])], panes: [...loc.panes] }
+  const ready = isReady()
   if (multiMachine()) {
     for (const m of machines) {
       if (m.key === LOCAL) continue
@@ -1222,15 +1446,9 @@ function rebuild() {
       next.tabs!.push(...(ms.tabs || []))
       next.panes.push(...ms.panes)
     }
-    next.machines = machines.map((m): MachineInfo => {
-      const ms = mstates.get(m.key)
-      const info = m.info()
-      // Machine connected but Herdr server silent: "attention".
-      if (info.status === 'online' && ms && !ms.ok) return { ...info, status: 'offline', error: ms.error || null, version: ms.version }
-      return { ...info, version: ms && ms.version }
-    })
+    next.machines = machines.map(m => publishedMachine(m.info(), mstates.get(m.key), ready))
   }
-  if (!isReady()) next.ready = false
+  if (!ready) next.ready = false
   const json = JSON.stringify(next)
   if (json === stateJson) return
   state = next
@@ -1348,17 +1566,13 @@ async function pollMachine(m: Machine) {
 
 // One poll at a time per machine; a request during a poll triggers
 // another one right after.
-const inflight = new Map<string, Promise<void>>()
-const again = new Set<string>()
-function pollOne(m: Machine): Promise<void> {
-  const cur = inflight.get(m.key)
-  if (cur) { again.add(m.key); return cur }
-  const run = pollMachine(m).catch(() => {}).finally(() => {
-    inflight.delete(m.key)
-    if (again.delete(m.key)) pollOne(m)
-  })
-  inflight.set(m.key, run)
-  return run
+const polls = pollQueue(pollMachine)
+const pollOne = polls.pollOne
+
+// Fresh poll of one machine (pane just created): see pollQueue.
+export async function pollFresh(m: Machine) {
+  await polls.pollFresh(m)
+  rebuild()
 }
 
 // Offline machines: no polling (their connection recovers on its own),
@@ -1389,7 +1603,7 @@ export function startPolling() {
   // polled at its own pace (pollOne does not restart a poll already in progress).
   const loop = () => {
     const ms = allMachines()
-    for (const m of ms) if (m.key !== LOCAL && m.status === 'online' && !inflight.has(m.key)) pollOne(m)
+    for (const m of ms) if (m.key !== LOCAL && m.status === 'online' && !polls.busy(m.key)) pollOne(m)
     pollOne(localMachineOf(ms)).finally(() => {
       if (!stopped) pollTimer = setTimeout(loop, POLL_MS)
     })

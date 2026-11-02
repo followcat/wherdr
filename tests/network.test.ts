@@ -282,7 +282,7 @@ describe('gate matrix', () => {
   })
   it('with a passkey: every accepted network needs the unlocked session for the API and WebSockets', () => {
     for (const z of served) {
-      for (const path of ['/api/config', '/api/phone', '/api/update']) {
+      for (const path of ['/api/config', '/api/phone', '/api/update', '/models/x/model.onnx', '/uploads/a.jpg']) {
         expect(decide(z, path, true, false)).toBe('locked')
         expect(decide(z, path, true, true)).toBe('ok')
       }

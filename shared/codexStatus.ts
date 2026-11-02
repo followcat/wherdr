@@ -1,9 +1,9 @@
 // Codex notices shown in its conversation view: "Update available" (with an
 // Update button) and the weekly-limit warning. Pure logic, shared by the
 // server and the tests. Structured data first:
-//  - running version: the TUI's own header on screen ("OpenAI Codex (v…)"),
-//    else `cli_version` in the header of the agent's rollout (written by the
-//    shared app-server daemon, which may run another version than the TUI);
+//  - running version: the pane's executable when it can be inspected, then
+//    the TUI's header, else the rollout's original `cli_version` (which does
+//    not change when a newer CLI resumes an existing conversation);
 //  - latest version: `latest_version` in ~/.codex/version.json (Codex's own
 //    daily check, `dismissed_version` when the user skipped it in Codex);
 //  - installed version: ~/.codex/packages/standalone/current/codex-package.json
@@ -53,7 +53,7 @@ export interface CodexScreenInfo {
   update?: { current: string, latest: string }
   // "Run <command> to update." (raw text, not validated)
   command?: string
-  // Last weekly reading on screen.
+  // Last weekly reading with a reset on screen, else the last gauge or heads-up.
   weekly?: CodexScreenWeekly
 }
 
@@ -83,10 +83,13 @@ export function parseCodexScreen(text: string | null | undefined): CodexScreenIn
       const m = /^(.*?)\s+to update\.?$/.exec(cmd)
       if (m) out.command = norm(m[1]!)
     }
-    // A gauge (footer, `/status`) is a real reading: the last one wins, and
-    // always over the heads-up message, printed once at startup.
+    // Prefer complete `/status` readings: a footer gauge must not discard
+    // their reset. Among equally complete gauges, the last one wins.
+    // Gauges always win over the heads-up printed once at startup.
     const w = WEEK_LEFT_RE.exec(l)
-    if (w) out.weekly = { left: clampPct(Number(w[1])), exact: true, ...(w[2] ? { resets: norm(w[2]) } : {}) }
+    if (w) {
+      if (w[2] || !out.weekly?.resets) out.weekly = { left: clampPct(Number(w[1])), exact: true, ...(w[2] ? { resets: norm(w[2]) } : {}) }
+    }
     else {
       const hu = WEEK_LESS_RE.exec(l)
       if (hu && !out.weekly?.exact) out.weekly = { left: clampPct(Number(hu[1])), exact: false }
@@ -186,21 +189,33 @@ export interface CodexStatus { update?: CodexUpdate, weekly?: CodexWeekly }
 const newest = (...vs: (string | null | undefined)[]) =>
   vs.reduce<string | null>((a, b) => (!b ? a : !a || compareVersions(b, a) > 0 ? b : a), null)
 
-// Version the agent runs: the TUI's header on screen first (the process
-// actually running in the pane), then the version of its "Update available"
-// box, then the rollout's `cli_version` (that of the app-server daemon shared
-// by all the Codex of the machine: it may be newer or older than the TUI).
+// Version the agent runs: the TUI's own word first (`tuiVersion`: on screen,
+// or remembered for the same process), then the rollout's `cli_version`.
 // No guess from dates: an agent started after an install may still run an
 // older version (another binary, daemon kept), the screen tells.
-export function runningVersion(o: { rollout: string | null, screen: CodexScreenInfo }): string | null {
-  return o.screen.version || o.screen.update?.current || o.rollout || null
+export function runningVersion(o: { rollout: string | null, screen: CodexScreenInfo, seen?: string | null, process?: string | null }): string | null {
+  return o.process || tuiVersion(o.screen, o.seen) || o.rollout || null
+}
+
+// Version the TUI itself says it runs: its header on screen ("OpenAI Codex
+// (v…)"), else its "Update available" box, else `seen`, the version read
+// earlier on the screen of the same Codex process. Never the rollout's
+// `cli_version`: written by the shared app-server daemon, or by the version
+// that created a conversation later resumed (`codex resume` keeps its first
+// line), it may be older than the TUI. Null: unknown.
+export function tuiVersion(screen: CodexScreenInfo, seen?: string | null): string | null {
+  return screen.version || screen.update?.current || seen || null
 }
 
 // Update notice of a Codex agent, or null. `canRun`: the server can run a
 // command on the agent's machine (remote over SSH, or a writable local home);
 // otherwise a known command is typed into the agent's own terminal.
+// `tui`: version the TUI itself says it runs (tuiVersion), the only one that
+// can ask for a restart: "installed" only when a newer version is installed
+// than the one this Codex process runs.
 export function codexUpdateState(o: {
   running: string | null
+  tui?: string | null
   latest: string | null
   dismissed?: string | null
   installed: string | null
@@ -224,8 +239,9 @@ export function codexUpdateState(o: {
     const method: CodexUpdateMethod | null = known ? (o.canRun ? 'direct' : 'terminal') : null
     return { state: 'available', latest, current: have, command, runnable: Boolean(method), method, ...base }
   }
-  if (installed && running && compareVersions(installed, running) > 0) {
-    return { state: 'installed', latest: installed, current: running, command: null, runnable: false, method: null, ...base }
+  const tui = o.tui || null
+  if (installed && tui && compareVersions(installed, tui) > 0) {
+    return { state: 'installed', latest: installed, current: tui, command: null, runnable: false, method: null, ...base }
   }
   // Update running or failed with nothing else to say: its progress or error stays shown.
   if (job && job.phase !== 'done') return { state: 'available', latest: latest || '', current: running, command: null, runnable: false, method: null, ...base }
@@ -300,7 +316,7 @@ export function codexWeekWindow(o: WeekInputs): WeekWindow | null {
   }
   // Another account's window says nothing about this one.
   const k = o.known
-  if (k && k.resetsAt > o.now && !(k.account && s?.account && k.account !== s.account)) {
+  if (k?.account && k.resetsAt > o.now && k.account === s?.account) {
     later(Math.round(Math.max(0, 100 - k.used)), k.resetsAt, k.source)
   }
   return out
@@ -316,11 +332,12 @@ export interface KnownWeek { used: number, resetsAt: number, at: number, source:
 // `known` updated with a reading: a later window replaces it, an earlier one
 // is stale and ignored; the same window keeps the higher usage (it only
 // grows). An expired window is forgotten; a reading without a future reset
-// teaches nothing. Another account (both fingerprints known): replaced.
+// teaches nothing. Only matching known fingerprints can reuse a previous window;
+// an unidentified reading is kept on its own and is never reused later.
 export function rememberWeek(known: KnownWeek | null | undefined, r: KnownWeek | null | undefined, now: number): KnownWeek | null {
-  const k = known && known.resetsAt > now ? known : null
+  const k = known?.account && known.resetsAt > now ? known : null
   if (!r || !(r.resetsAt > now) || !Number.isFinite(r.used)) return k
-  if (!k || (r.account && k.account && r.account !== k.account) || r.resetsAt - k.resetsAt > SAME_WINDOW_MS) return { ...r }
+  if (!k || !r.account || r.account !== k.account || r.resetsAt - k.resetsAt > SAME_WINDOW_MS) return { ...r }
   if (k.resetsAt - r.resetsAt > SAME_WINDOW_MS) return k
   const base = r.at >= k.at ? r : k
   return { ...base, used: Math.max(k.used, r.used), at: Math.max(k.at, r.at), account: base.account ?? k.account ?? r.account ?? null }

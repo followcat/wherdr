@@ -124,12 +124,18 @@ export function funnelExposes(port, serveJson) {
 // Only a valid reading may prove the absence of Funnel on this port.
 export async function tailnetFacts(port, bin = tailscaleBin(), socket = bin ? null : tailscaledSocket()) {
   if (!bin && !socket) return { installed: false, readable: true, running: false, selfIps: [], peerIps: [], funnel: false }
-  const run = args => exec(bin, args, { encoding: 'utf8', timeout: 8000 }).then(r => r.stdout, () => '')
-  const { state, ...peers } = tailnetPeers(bin ? await run(['status', '--json']) : await localApi(socket, 'status'))
+  // Serial reads at the old 8 s budget could not finish inside the client's
+  // 6 s handshake patience: a wedged CLI looked like a refused upgrade. The
+  // reads go out together, each bounded under that patience; a timed-out
+  // call still reads as "unreadable" below. `serve` fires early and the
+  // exits under it may not need it -- a cheap local query either way.
+  const run = args => exec(bin, args, { encoding: 'utf8', timeout: 4500 }).then(r => r.stdout, () => '')
+  const status = bin ? run(['status', '--json']) : localApi(socket, 'status')
+  const serve = bin ? run(['serve', 'status', '--json']) : localApi(socket, 'serve-config').catch(() => '')
+  const { state, ...peers } = tailnetPeers(await status)
   if (!peers.readable) return { installed: true, ...peers, funnel: null }
   if (IDLE_STATES.has(state)) return { installed: true, ...peers, funnel: false }
-  const serve = bin ? await run(['serve', 'status', '--json']) : await localApi(socket, 'serve-config')
-  return { installed: true, ...peers, funnel: funnelExposes(port, serve) }
+  return { installed: true, ...peers, funnel: funnelExposes(port, await serve) }
 }
 
 // The HTTPS entries of a serve configuration that proxy to wherdr's local

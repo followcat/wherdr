@@ -1,27 +1,32 @@
 // Terminal of a pane: xterm.js connected to /ws/term (Herdr's ANSI frames).
 // Herdr keeps the history: no local scrollback, scrolling is
 // requested from the server (terminal.scroll).
+import { createSocketProbe } from '~/utils/socketProbe'
 import { DESK_QUERY } from '~/utils/layoutMode'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { terminalPixelWidth } from '~/utils/terminalSize'
+import { guardWebglCanvasSize } from '~/utils/terminalRenderer'
 import { bindTerminalSelection } from '~/utils/terminalSelection'
 import { bindTerminalLinks, type TerminalLinks } from '~/utils/terminalLinks'
+import { captureTerminalScreen } from '~/utils/terminalCopy'
 import { bindTerminalKeys } from '~/utils/terminalKeys'
 import { bindTerminalImagePaste } from '~/utils/terminalPaste'
 import { fmtBytes } from '~/utils/bytes'
 import { OSC52_MAX_BYTES, bindTerminalOsc52, copyAgentText } from '~/utils/terminalOsc52'
 import { uploadPhoto } from '~/utils/photoUpload'
 import { terminalClosedText, terminalUnavailableText } from '~/utils/terminalClosed'
-import { bindTerminalMouse } from '~/utils/terminalMouse'
-import { TERM_FONT, onFontsLoaded } from '~/utils/terminalFont'
+import { bindTerminalMouse, terminalCell } from '~/utils/terminalMouse'
+import { TERM_FONT, onFontsLoaded, scaledTermFont } from '~/utils/terminalFont'
+import { createCompositionTracker, displayVirtualChord, toggleVirtualModifier, virtualChord, virtualInputAction, type VirtualModifier } from '~/utils/virtualKeys'
+import { virtualNavigationBytes, virtualNavigationKeys } from '~/utils/keybarKeys'
 
 export interface Banner { text: string, btn: string, fn: () => void }
 
 // `fill`: side-by-side cell, the terminal takes the whole cell instead of the
 // reading column of a pane opened alone.
-export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | null) => void, hasBanner: () => boolean, fill?: () => boolean, input?: () => boolean }) {
+export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | null) => void, hasBanner: () => boolean, fill?: () => boolean, input?: () => boolean, submitKey?: (chord: string) => boolean }) {
   let term: Terminal | null = null
   let fit: FitAddon | null = null
   let webgl: WebglAddon | null = null
@@ -34,6 +39,39 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   let disposed = false
   const loading = ref(false)
   const kbdOn = ref(false)
+  const scrollInputVersion = ref(0)
+  const scrollGeometryVersion = ref(0)
+  // Count parsed frames separately from the scroll rows they acknowledge.
+  const frameTick = ref(0)
+  // Cumulative signed rows acknowledged after xterm parses the next frame.
+  const scrollAck = ref(0)
+  // Non-reactive frame counters for perf measurement (T05): parsed frames,
+  // decoded bytes, cumulative xterm write-callback latency. Read, don't
+  // watch — a ref write per frame would be reactive churn.
+  const frameStats = { frames: 0, bytes: 0, parseMs: 0, lastAt: 0 }
+  let touchEpoch = 0
+  // Scroll delivery ledger (v2): per-command stages reported by the server.
+  // `submitted` = written to the Herdr stdin, `flushed` = write callback.
+  // Neither means the application consumed the input; frames never prove
+  // consumption. Counters only — bounded by construction per epoch.
+  let scrollSeq = 0
+  const scrollLedger = ref({ submitted: 0, flushed: 0 })
+  let scrollCmdSeen = new Set<string>()
+  // Whether the peer honors phased cancels. Never assumed: a server that
+  // has not proven v2 treats touch.cancel{phase} as a FULL cancel and would
+  // wipe drag work. Evidence: the advertised capability, or any v2-stage
+  // message actually received.
+  let peerScrollV2 = false
+  const bumpEpoch = () => {
+    touchEpoch++
+    scrollLedger.value = { submitted: 0, flushed: 0 }
+    scrollCmdSeen = new Set()
+  }
+  const virtualModifiers = ref<VirtualModifier[]>([])
+  const lastVirtualChord = ref('')
+  const composition = createCompositionTracker()
+  const toggleModifier = (key: VirtualModifier) => { virtualModifiers.value = toggleVirtualModifier(virtualModifiers.value, key) }
+  const clearVirtualModifiers = () => { virtualModifiers.value = []; lastVirtualChord.value = '' }
   const selectionHint = useTerminalSelectionHint()
   let unbindSelection: (() => void) | null = null
   let unbindPaste: (() => void) | null = null
@@ -42,16 +80,29 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   let links: TerminalLinks | null = null
   let mouse: ReturnType<typeof bindTerminalMouse> | null = null
   let mouseSupported = false
+  // Reactive copy of the pane's mouse capability for the touch layer. The
+  // wire stream cannot be trusted for the pane's live mode -- herdr replays
+  // screens without the original mode-switch sequences, and inline TUIs
+  // redraw on the normal buffer -- so the capability advertised at attach
+  // stays the only reliable signal.
+  const mouseMode = ref(false)
+  // Local scrollback overlay state (scrollback.read / scrollback.chunk).
+  const scrollback = ref('')
+  const scrollbackVersion = ref(0)
 
   const wsBase = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`
 
   function mount(host: HTMLElement) {
     el = host
+    // Clear before xterm handles paste, including a one-character paste.
+    host.addEventListener('paste', clearVirtualModifiers, true)
     disposed = false
     twsRetry = 0
     term = new Terminal({
       fontFamily: TERM_FONT,
-      fontSize: fontSize.value,
+      fontSize: scaledFont(fontSize.value),
+      // (scaledFont is defined below in this composable's setup scope; attach
+      // runs later, so it is initialized by then.)
       // Line height 1: block characters (Claude Code logo) and
       // box-drawing lines must touch from one line to the next.
       lineHeight: 1,
@@ -69,7 +120,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     mouse = bindTerminalMouse(term, () => mouseSupported && opts.input?.() !== false, event => sendTerm(event))
     // Selection of the visible text, copied on release or with ⌘C.
     unbindSelection = bindTerminalSelection(term, () => toast(t('Copied')))
-    // OSC 8 hyperlinks and http(s) URLs, opened in a new tab.
+    // OSC 8 hyperlinks and http(s) URLs, with in-app navigation on phones.
     links = bindTerminalLinks(term, t)
     // Pasted image: its path on the agent's machine, pasted through Herdr,
     // which the agent attaches as an image.
@@ -98,8 +149,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     // JetBrains Mono (bundled): once loaded, xterm re-measures its cells.
     const t0 = term
     Promise.all([
-      document.fonts?.load(`${fontSize.value}px "JetBrains Mono Variable"`),
-      document.fonts?.load(`${fontSize.value}px "Wherdr Symbols"`, '─▀█⎿⏵⏺✻✳'),
+      document.fonts?.load(`${scaledFont(fontSize.value)}px "JetBrains Mono Variable"`),
+      document.fonts?.load(`${scaledFont(fontSize.value)}px "Wherdr Symbols"`, '─▀█⎿⏵⏺✻✳'),
     ]).then(() => {
       if (disposed || term !== t0) return
       t0.options.fontFamily = TERM_FONT
@@ -120,13 +171,37 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       ta.setAttribute('spellcheck', 'false')
       ta.addEventListener('blur', () => { kbdOn.value = false })
       ta.addEventListener('focus', () => { kbdOn.value = true })
+      ta.addEventListener('compositionstart', composition.start)
+      ta.addEventListener('compositionend', composition.end)
     }
+    // Capture on the terminal's element runs before xterm's own keydown
+    // listener on the textarea, so the stale flag is dropped before xterm
+    // emits the keystroke's data (cancelled IME, then Alt + ←).
+    term.element?.addEventListener('keydown', composition.keydown, true)
     // Wheel: xterm does nothing with it (it would send ↑/↓ to the agent, see
     // utils/terminalWheel.ts); TerminalView converts it to terminal.scroll.
     term.attachCustomWheelEventHandler(() => false)
     // Shift+Enter as a named key; Ctrl+V (outside Apple) and F12 left to the browser.
-    bindTerminalKeys(term, key => sendKeys([key]))
-    term.onData(d => { if (opts.input?.() !== false) sendTerm({ type: 'terminal.input', text: d }) })
+    bindTerminalKeys(term, key => sendVirtualKey(key))
+    term.onData(d => {
+      if (opts.input?.() === false) return
+      // IME-committed text is data, not a keystroke: a composed ASCII
+      // character must not spend an armed modifier as a shortcut.
+      if (composition.active || composition.takeEnded()) {
+        clearVirtualModifiers()
+        sendTerm({ type: 'terminal.input', text: d })
+        return
+      }
+      if (virtualModifiers.value.length) {
+        const action = virtualInputAction(d)
+        if (action.kind === 'key') { void sendVirtualKey(action.key); return }
+        // Text no chord maps to is still the user's text: warn that the
+        // modifier did not apply, then send it unchanged like a paste.
+        if (action.kind === 'blocked') toast(tl('Chord not applied — text sent as typed', 'Accord non appliqué — texte envoyé tel quel'), true)
+        clearVirtualModifiers() // A paste stays text, never a series of shortcuts.
+      }
+      sendTerm({ type: 'terminal.input', text: d })
+    })
     term.onBinary((d) => {
       if (opts.input?.() === false) return
       const bytes = Uint8Array.from(d, c => c.charCodeAt(0) & 0xff)
@@ -134,7 +209,27 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     })
   }
 
+  const probe = createSocketProbe(() => tws)
+  let handshake: ReturnType<typeof setTimeout> | undefined
+  // OPEN but silent: the upgrade succeeded and no frame ever came. The server
+  // runs its terminal startup serially (pane size, agent version, stream), so
+  // this window stays generous -- past it the pipe is dead, not slow.
+  let frameWait: ReturnType<typeof setTimeout> | undefined
+  watch(socketWake, () => {
+    if (document.hidden || !twsIntent || disposed || opts.hasBanner()) return
+    if (!isConnected()) connect(false)
+    else void probe.recover(() => {
+      if (!disposed && twsIntent && !document.hidden && !opts.hasBanner()) connect(false)
+    })
+  })
+
   function sendTerm(obj: unknown): boolean {
+    if ((obj as { type?: string })?.type === 'paste') clearVirtualModifiers()
+    if (smoothTouchScrolling.value && ['terminal.input', 'paste'].includes((obj as { type?: string })?.type || '')) {
+      scrollInputVersion.value++
+      cancelTouchScroll()
+    }
+    if ((obj as { type?: string })?.type === 'paste') clearVirtualModifiers()
     if (tws && tws.readyState === 1) {
       tws.send(JSON.stringify(obj))
       return true
@@ -145,11 +240,34 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   // Logical keys (esc, up, shift+tab…), encoded by Herdr according to the terminal
   // mode: through the WebSocket if it is open, otherwise through the API.
   async function sendKeys(keys: string[]) {
+    if (smoothTouchScrolling.value) { scrollInputVersion.value++; cancelTouchScroll() }
     if (sendTerm({ type: 'keys', keys })) return
     try {
       await api('/api/input', { pane_id: paneId, keys })
       haptic()
     } catch (err) { toast((err as Error).message, true) }
+  }
+
+  async function sendVirtualKey(key: string) {
+    const chord = virtualChord(key, virtualModifiers.value)
+    // A draft terminator of the conversation ("Send with Ctrl+Enter") resolves
+    // before the terminal-input gate: it is a composer action, and the pane's
+    // terminal is not necessarily connected in conversation mode — the gate
+    // would swallow the chord silently.
+    if (opts.submitKey?.(chord)) {
+      virtualModifiers.value = []
+      lastVirtualChord.value = displayVirtualChord(chord)
+      return
+    }
+    if (opts.input?.() === false) return
+    virtualModifiers.value = []
+    lastVirtualChord.value = displayVirtualChord(chord)
+    const navigation = virtualNavigationBytes(chord)
+    if (navigation) {
+      if (!sendTerm({ type: 'terminal.input', text: navigation })) await sendKeys(virtualNavigationKeys(chord))
+      return
+    }
+    await sendKeys([chord])
   }
 
   function fitNow(send: boolean) {
@@ -161,7 +279,10 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     const p = fit.proposeDimensions()
     if (!p || !p.cols || !p.rows) return
     const d = { cols: p.cols, rows: p.rows }
-    if (d.cols !== term.cols || d.rows !== term.rows) term.resize(d.cols, d.rows)
+    if (d.cols !== term.cols || d.rows !== term.rows) {
+      scrollGeometryVersion.value++
+      term.resize(d.cols, d.rows)
+    }
     if (send && (d.cols !== lastSize.cols || d.rows !== lastSize.rows)) {
       if (sendTerm({ type: 'terminal.resize', cols: d.cols, rows: d.rows })) lastSize = { cols: d.cols, rows: d.rows }
     }
@@ -192,6 +313,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
           fitNow(true)
         })
         term.loadAddon(addon)
+        // Backing store at CSS size × devicePixelRatio, whatever the browser reports.
+        guardWebglCanvasSize(addon)
         webgl = addon
         reportTerminalRenderer('webgl')
       } catch {
@@ -208,15 +331,24 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   }
   watch(terminalRenderer, setRenderer)
 
+  // Settings › Desktop › Interface size › Large also enlarges the terminal
+  // text by ~15%; its own text size stays the base (8–20). Computer only —
+  // uiScale is a desk media preference and phones have no such setting.
+  const scaledFont = (n: number) => scaledTermFont(n, desk.value, uiScale.value)
+
   function setFontSize(n: number) {
     if (!term) return
-    term.options.fontSize = n
+    term.options.fontSize = scaledFont(n)
     fitNow(true)
   }
+  watch([uiScale, desk], () => setFontSize(fontSize.value))
 
   function connect(takeover: boolean) {
     if (disposed || !term) return
     clearTimeout(twsTimer)
+    clearTimeout(handshake)
+    clearTimeout(frameWait)
+    probe.cancel()
     if (tws) {
       tws.onclose = null
       try { tws.close(1000) }
@@ -226,34 +358,103 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     const q = new URLSearchParams({ pane: paneId, cols: String(term.cols), rows: String(term.rows) })
     if (takeover) q.set('takeover', '1')
     mouseSupported = false
+    // Capability evidence is per-connection: a v2 peer on the last socket
+    // proves nothing about the next one.
+    peerScrollV2 = false
     loading.value = true
     twsIntent = true
     let closedReason: string | null = null
     let gotFrame = false
     let lastErr = ''
+    bumpEpoch()
+    if (smoothTouchScrolling.value) scrollInputVersion.value++
     const ws = new WebSocket(`${wsBase()}/ws/term?${q}`)
     tws = ws
+    const t0 = Date.now() // staged timing: open, then first frame (devtools)
+    // A CONNECTING socket fires nothing: if the handshake hangs (network not
+    // really back yet) nothing retries -- close it on a deadline so onclose
+    // schedules the next attempt.
+    handshake = setTimeout(() => {
+      if (tws === ws && ws.readyState === 0) { try { ws.close() } catch { /* ignore */ } }
+    }, 6000)
     ws.onopen = () => {
+      if (tws !== ws) return
+      clearTimeout(handshake)
+      frameWait = setTimeout(() => {
+        if (tws !== ws || gotFrame) return
+        // A real reason, like a server-reported error: lets the retries below
+        // give up instead of looping on a pipe that never frames.
+        lastErr = lastErr || 'no terminal frame'
+        try { ws.close() } catch { /* already closed */ }
+      }, 12000)
       if (term) lastSize = { cols: term.cols, rows: term.rows }
+      console.debug(`[term ${paneId}] open +${Date.now() - t0}ms`)
       ws.send(JSON.stringify({ type: 'visibility', visible: !document.hidden }))
     }
     ws.onmessage = (e) => {
+      if (tws !== ws) return
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let m: any
       try { m = JSON.parse(e.data) }
       catch { return }
       if (m.type === 'web.capabilities') {
         mouseSupported = m.mouse === true
+        mouseMode.value = mouseSupported
+        if (m.scroll >= 2) peerScrollV2 = true
       } else if (m.type === 'terminal.frame') {
         if (!gotFrame) {
           gotFrame = true
           twsRetry = 0
+          clearTimeout(frameWait)
+          console.debug(`[term ${paneId}] frame +${Date.now() - t0}ms`)
         }
         loading.value = false
         if (!term) return
-        if (m.width && m.height && (m.width !== term.cols || m.height !== term.rows)) term.resize(m.width, m.height)
+        if (m.width && m.height && (m.width !== term.cols || m.height !== term.rows)) {
+          if (smoothTouchScrolling.value) { scrollGeometryVersion.value++; cancelTouchScroll() }
+          term.resize(m.width, m.height)
+        }
         const current = term
-        current.write(b64ToBytes(m.bytes || ''), () => selectionHint.refresh(current, mouseSupported))
+        const bytes = b64ToBytes(m.bytes || '')
+        const queuedAt = performance.now()
+        current.write(bytes, () => {
+          selectionHint.refresh(current, mouseSupported)
+          frameTick.value++
+          // Frame parse/paint cost, measured by xterm's write callback —
+          // liveness evidence only, never proof the app consumed input.
+          frameStats.frames++
+          frameStats.bytes += bytes.length
+          frameStats.parseMs += performance.now() - queuedAt
+          frameStats.lastAt = performance.now()
+        })
+      } else if (m.type === 'scroll.ack') {
+        if (m.phase !== undefined) peerScrollV2 = true
+        if (smoothTouchScrolling.value && m.epoch === touchEpoch && Number.isFinite(m.lines) && term) {
+          // Queue behind the covering frame, including when write's callback
+          // ran before the separate ack packet arrived.
+          const epoch = touchEpoch
+          term.write('', () => {
+            if (epoch === touchEpoch && smoothTouchScrolling.value) scrollAck.value += m.lines
+          })
+        }
+      } else if (m.type === 'scroll.cmd') {
+        // Per-command delivery stage (v2). Deduped by id+stage; a repeated or
+        // late packet must not double-count. Receiving one at all proves the
+        // peer speaks v2.
+        peerScrollV2 = true
+        if (smoothTouchScrolling.value && m.epoch === touchEpoch && Number.isFinite(m.id)) {
+          const key = `${m.id}:${m.stage}`
+          if (!scrollCmdSeen.has(key)) {
+            scrollCmdSeen.add(key)
+            if (m.stage === 'submitted') scrollLedger.value = { ...scrollLedger.value, submitted: scrollLedger.value.submitted + 1 }
+            else if (m.stage === 'flushed') scrollLedger.value = { ...scrollLedger.value, flushed: scrollLedger.value.flushed + 1 }
+          }
+        }
+      } else if (m.type === 'scrollback.chunk') {
+        scrollback.value = typeof m.text === 'string' ? m.text : ''
+        scrollbackVersion.value++
+      } else if (m.type === 'pong') {
+        probe.pong(ws)
       } else if (m.type === 'terminal.closed') {
         closedReason = terminalClosedText(m)
       } else if (m.type === 'herdr.stderr') {
@@ -264,9 +465,13 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     }
     ws.onclose = () => {
       if (tws !== ws) return
+      if (smoothTouchScrolling.value) { scrollInputVersion.value++; bumpEpoch() }
+      clearTimeout(handshake)
+      clearTimeout(frameWait)
       tws = null
       mouseSupported = false
       loading.value = false
+      probe.cancel()
       if (!twsIntent || disposed) return
       if (closedReason && /already has an attached client/.test(closedReason)) {
         return opts.setBanner({ text: t('This terminal is already open elsewhere.'), btn: t('Take control'), fn: () => { opts.setBanner(null); connect(true) } })
@@ -277,8 +482,11 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       if (!currentPane.value && herdrState.value.ok) return // pane closed: the banner is already there
       if (document.hidden) return // we will reconnect on return
       // Repeated failures without a single frame: we stop and show the error
-      // rather than loop.
-      if (!gotFrame && twsRetry >= 3) {
+      // rather than loop -- but only for a real reason (the server closed it
+      // or reported an error). A transport that never connects deserves an
+      // open-ended retry while the page is visible: the tunnel just is not
+      // back yet.
+      if (!gotFrame && twsRetry >= 3 && (lastErr || closedReason)) {
         twsRetry = 0
         const why = lastErr || closedReason
         return opts.setBanner({ text: terminalUnavailableText(why), btn: t('Retry'), fn: () => { opts.setBanner(null); connect(false) } })
@@ -288,9 +496,15 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   }
 
   function disconnect() {
+    clearVirtualModifiers()
+    if (smoothTouchScrolling.value) { scrollInputVersion.value++; bumpEpoch() }
+    clearVirtualModifiers()
     mouseSupported = false
     twsIntent = false
     clearTimeout(twsTimer)
+    clearTimeout(handshake)
+    clearTimeout(frameWait)
+    probe.cancel()
     if (tws) {
       const ws = tws
       tws = null
@@ -305,25 +519,91 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     term?.focus()
     kbdOn.value = true
   }
-  function blur() { term?.textarea?.blur() }
+  function blur() { term?.textarea?.blur(); kbdOn.value = false }
+  // Native keyboard dismissal is a separate event from DOM blur on Android.
+  // Once the IME closes, release the hidden input rather than leaving a focus
+  // owner which the next scroll or browser resume can reactivate.
+  const stopKeyboardWatch = watch(kbOpen, (open, wasOpen) => {
+    if (wasOpen && !open && typeof matchMedia !== 'undefined'
+      && matchMedia('(hover: none) and (pointer: coarse)').matches && hasFocus()) blur()
+  })
   // Tap on the touch layer: opens the link under the finger, if any.
   const tapLink = (x: number, y: number) => links?.tap(x, y) ?? false
+  // A tap on the row the cursor sits on is a request to type at the agent's
+  // input field — TUIs keep the cursor there. Compare buffer rows (not
+  // viewport rows) so a scrolled-back viewport can never produce a hit.
+  const tapOnCursor = (x: number, y: number): boolean => {
+    const screen = term?.element?.querySelector('.xterm-screen') as HTMLElement | null
+    const rect = screen?.getBoundingClientRect()
+    const cell = rect && term ? terminalCell(x, y, rect, term.cols, term.rows) : null
+    const buf = term?.buffer.active
+    return Boolean(cell && buf && buf.baseY + buf.cursorY === buf.viewportY + cell.row)
+  }
   const hasFocus = () => Boolean(term && document.activeElement === term.textarea)
-  const rowHeight = () => (term && term.rows && el ? el.clientHeight / term.rows : 16)
+  // Touch math asks for the row height every move/frame; measuring
+  // .xterm-screen forces a layout each call. Cache it per geometry version
+  // (bumped on resize/fit) — the scroller itself already depends on it.
+  let rowHeightCache = { version: -1, value: 16 }
+  const rowHeight = () => {
+    if (!smoothTouchScrolling.value) return term && term.rows && el ? el.clientHeight / term.rows : 16
+    if (rowHeightCache.version === scrollGeometryVersion.value) return rowHeightCache.value
+    const screen = el?.querySelector('.xterm-screen') as HTMLElement | null
+    const value = term?.rows && screen?.clientHeight ? screen.clientHeight / term.rows : 16
+    rowHeightCache = { version: scrollGeometryVersion.value, value }
+    return value
+  }
   const pageRows = () => term?.rows || 24
   // Scrolling requested from Herdr (the history lives there).
-  function scroll(lines: number): boolean {
-    return sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines) })
+  function scroll(lines: number, x?: number, y?: number, modifiers = 0, touch = false, preview = true): boolean {
+    if (!smoothTouchScrolling.value || !touch) return sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines) })
+    const screen = term?.element?.querySelector('.xterm-screen') as HTMLElement | null
+    const rect = screen?.getBoundingClientRect()
+    const position = rect && term && x !== undefined && y !== undefined ? terminalCell(x, y, rect, term.cols, term.rows) : null
+    // Assert mouse reporting only when this xterm actually decoded it: a
+    // replayed frame can lack the mode switch, so never claim `false` — the
+    // server's own capability state is the better fallback.
+    const tui = term && term.modes.mouseTrackingMode !== 'none' ? true : undefined
+    const phase = preview ? 'drag' : 'momentum'
+    return sendTerm({ type: 'terminal.scroll', v: 2, id: ++scrollSeq, direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), ...position, modifiers, source: 'touch', tui, epoch: touchEpoch, preview, phase })
   }
+  // A phase ('momentum') drops only that phase server-side; an omitted phase
+  // cancels everything queued for the touch source. A phase cancel keeps the
+  // epoch — drag work keeps its ledger; a peer without proven v2 gets no
+  // command at all (its handler would full-cancel, and momentum tails are
+  // already bounded by their own TTL).
+  function cancelTouchScroll(phase?: 'momentum') {
+    if (!smoothTouchScrolling.value) return
+    if (phase) {
+      if (peerScrollV2) sendTerm({ type: 'touch.cancel', phase })
+      return
+    }
+    bumpEpoch()
+    sendTerm({ type: 'touch.cancel' })
+  }
+  const stopSmoothWatch = watch(smoothTouchScrolling, (_, wasEnabled) => {
+    bumpEpoch()
+    scrollInputVersion.value++
+    if (wasEnabled) sendTerm({ type: 'touch.cancel', disabled: true })
+  }, { flush: 'sync' })
+
+  // Local scrollback overlay: ask the server for the pane's recent history
+  // (Herdr's recent_unwrapped dump, ANSI-styled).
+  function requestScrollback(lines: number, source?: string) { sendTerm({ type: 'scrollback.read', lines, source }) }
+  // Styled spans of the live viewport, for the selectable copy-mode overlay.
+  const captureScreen = () => term && !composition.active ? captureTerminalScreen(term) : null
 
   function setVisible(visible: boolean) {
+    if (!visible && smoothTouchScrolling.value) { scrollInputVersion.value++; cancelTouchScroll() }
     sendTerm({ type: 'visibility', visible })
     // Another client may have resized the pane while we were away.
     if (visible) nextTick(() => fitNow(true))
   }
 
   function dispose() {
+    el?.removeEventListener('paste', clearVirtualModifiers, true)
     disposed = true
+    stopSmoothWatch()
+    stopKeyboardWatch()
     disconnect()
     unbindSelection?.()
     unbindPaste?.()
@@ -344,8 +624,11 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
 
   return {
     mount, connect, disconnect, isConnected, sendTerm, sendKeys, fitNow, setFontSize,
-    reset, scroll, focus, blur, tapLink, tapMouse: (x: number, y: number) => mouse?.tap(x, y), hasFocus, rowHeight, pageRows, setVisible, dispose, loading, kbdOn,
+    reset, scroll, focus, blur, tapLink, tapMouse: (x: number, y: number) => mouse?.tap(x, y), tapOnCursor, hasFocus, rowHeight, pageRows, setVisible, dispose, loading, kbdOn,
     hasBanner: opts.hasBanner, selectionHint,
+    cancelTouchScroll, scrollInputVersion, scrollGeometryVersion, frameTick, scrollAck, scrollLedger, frameStats,
+    scrollback, scrollbackVersion, requestScrollback, mouseMode, captureScreen,
+    virtualModifiers, lastVirtualChord, toggleModifier, toggleVirtualModifier: toggleModifier, clearVirtualModifiers, sendVirtualKey,
   }
 }
 

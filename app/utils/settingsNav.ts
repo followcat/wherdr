@@ -1,6 +1,6 @@
 // Settings: sections and Back button.
 
-export const SETTINGS_SECTIONS = ['appearance', 'conversation', 'terminal', 'agents', 'plugins', 'phone', 'notifications', 'security', 'desktop', 'advanced', 'about'] as const
+export const SETTINGS_SECTIONS = ['appearance', 'conversation', 'terminal', 'agents', 'plugins', 'phone', 'notifications', 'security', 'shortcuts', 'advanced', 'about'] as const
 export type SettingsSection = typeof SETTINGS_SECTIONS[number]
 
 // Phone: an open section is a history entry (?section=…), above

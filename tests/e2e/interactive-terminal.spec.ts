@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs'
 import { expect, test, type Page } from './test'
-import { screenChoices } from '../../server/utils/choices'
 import { OMP_CHAT_PANE, SPLIT_CHAT_PANE, SPLIT_SHELL_PANE, SPLIT_TAB, fakeHerdr } from './scenario.mjs'
 
 const pane = OMP_CHAT_PANE
@@ -9,6 +8,11 @@ const screen = (text: string | null, agent = 'codex') => fakeHerdr('e2e.interact
 const original = { cols: 120, rows: 40, attached: false }
 const size = () => fakeHerdr('e2e.pane_size', { pane_id: pane })
 const sentKeys = async () => (await fakeHerdr('e2e.terminal_screen', { pane_id: pane }) as { keys: string[] }).keys
+async function escapeKey(page: Page) {
+  const window = page.getByRole('dialog', { name: 'Interactive terminal', exact: true })
+  const phone = await window.locator('.vk-strip').count() > 0
+  await window.getByRole('button', { name: phone ? 'Esc' : 'esc', exact: true }).click()
+}
 // What a tap at the middle of `selector` would reach: the window or its scrim, or the app.
 const coveredAt = (page: Page, selector: string) => page.locator(selector).first().evaluate((el) => {
   const r = el.getBoundingClientRect()
@@ -17,6 +21,7 @@ const coveredAt = (page: Page, selector: string) => page.locator(selector).first
 const bodyBlocked = (page: Page) => page.evaluate(() => getComputedStyle(document.body).pointerEvents === 'none')
 
 test.beforeEach(async ({ page }) => {
+  await page.clock.install()
   await expect.poll(size, { timeout: 15_000 }).toEqual(original)
   await screen(usage)
   await page.addInitScript(() => localStorage.setItem('terminalRenderer', 'html'))
@@ -43,10 +48,11 @@ test('shows only the live TUI, sends real keys and closes when its field returns
   expect(fitted.cols).not.toBe(original.cols)
   if (info.project.name === 'chromium-phone') expect(fitted.cols).toBeLessThan(60)
   await page.screenshot({ path: `.shots/interactive-terminal-${info.project.name}.png` })
-  await window.getByRole('button', { name: '↓', exact: true }).click()
-  await window.getByRole('button', { name: '⏎', exact: true }).click()
+  const phone = info.project.name.endsWith('phone')
+  await window.getByRole('button', { name: phone ? 'Down arrow' : '↓', exact: true }).click()
+  await window.getByRole('button', { name: phone ? 'Enter' : '⏎', exact: true }).click()
   await expect.poll(async () => (await fakeHerdr('e2e.terminal_screen', { pane_id: pane }) as { keys: string[] }).keys).toEqual(['down', 'enter'])
-  await window.getByRole('button', { name: 'esc', exact: true }).click()
+  await escapeKey(page)
   await expect(window).toHaveCount(0)
   await expect(page.locator('.composer')).toBeVisible()
   // Closed by the agent: no scrim left, the app answers again.
@@ -54,6 +60,50 @@ test('shows only the live TUI, sends real keys and closes when its field returns
   await expect.poll(() => bodyBlocked(page)).toBe(false)
   expect(await coveredAt(page, '.agent-top')).toBe(false)
   await expect.poll(size, { timeout: 15_000 }).toEqual(original)
+})
+
+// Key matrices and saved ordering are covered by PhoneKeybar.test.ts and
+// phone-key-order.spec.ts; this journey checks the modal's narrow-screen scroll.
+test('phone terminal keys keep Esc reachable in one scrolling row on narrow screens', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'Checks the single-row phone layout')
+  const window = page.getByRole('dialog', { name: 'Interactive terminal', exact: true })
+  await expect(window).toBeVisible()
+  const bar = window.locator('.keybar')
+  const main = bar.locator('.vk-strip')
+  await expect(main.getByRole('button', { name: 'Esc', exact: true })).toBeVisible()
+  const keyboard = main.getByRole('button', { name: 'Show or hide the phone keyboard' })
+  await keyboard.tap()
+  await expect(window.locator('.xterm-helper-textarea')).toBeFocused()
+  await keyboard.tap()
+  await expect(window.locator('.xterm-helper-textarea')).not.toBeFocused()
+  const viewport = page.viewportSize()!
+  for (const width of [320, 360, 390]) {
+    await page.setViewportSize({ ...viewport, width })
+    await main.evaluate(el => { el.scrollLeft = 0 })
+    const rects = await main.locator('button').evaluateAll(buttons => buttons.map(el => {
+      const r = el.getBoundingClientRect()
+      return { label: el.getAttribute('aria-label'), x: r.x, y: r.y, width: r.width, height: r.height, right: r.right }
+    }))
+    for (const rect of rects) {
+      expect(Math.abs(rect.y - rects[0]!.y)).toBeLessThan(1)
+      expect(rect.height).toBeGreaterThanOrEqual(36)
+      expect(rect.width).toBeGreaterThanOrEqual(38)
+    }
+    const bounds = (await main.boundingBox())!
+    expect(bounds.x).toBeGreaterThanOrEqual(0)
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+    expect(await main.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true)
+    await bar.screenshot({ path: `.shots/terminal-keybar-${width}.png` })
+  }
+  await bar.getByRole('button', { name: 'F12', exact: true }).scrollIntoViewIfNeeded()
+  await expect(bar.getByRole('button', { name: 'F12', exact: true })).toBeInViewport()
+  await bar.getByRole('button', { name: 'Esc', exact: true }).scrollIntoViewIfNeeded()
+  await expect(bar.getByRole('button', { name: 'Esc', exact: true })).toBeInViewport()
+  await expect(bar.getByRole('button', { name: 'Esc', exact: true })).toHaveCount(1)
+  await escapeKey(page)
+  await expect.poll(sentKeys).toEqual(['esc'])
+  await expect(window).toHaveCount(0)
+  await expect(page.locator('.xterm-helper-textarea')).toHaveCount(0)
 })
 
 test('the scrim covers the whole app; a click on it closes the window until it is reopened', { tag: '@chromium-desktop' }, async ({ page, isMobile }, info) => {
@@ -65,7 +115,7 @@ test('the scrim covers the whole app; a click on it closes the window until it i
   expect(box.x).toBeGreaterThan(40)
   // Agent list, header and conversation: all under the scrim.
   for (const selector of ['#home', '.agent-top', '.swipe-area']) expect(await coveredAt(page, selector)).toBe(true)
-  await expect(page.getByRole('tab', { name: 'Terminal', exact: true }).click({ trial: true, timeout: 1000 })).rejects.toThrow()
+  await expect(page.getByRole('button', { name: 'Show terminal', exact: true }).click({ trial: true, timeout: 1000 })).rejects.toThrow()
   // The keys go to the terminal, and the focus cannot leave the window.
   await expect.poll(() => page.evaluate(() => Boolean(document.activeElement?.closest('.interactive-terminal .xterm')))).toBe(true)
   await page.locator('#home button').first().evaluate(el => (el as HTMLElement).focus())
@@ -80,12 +130,12 @@ test('the scrim covers the whole app; a click on it closes the window until it i
   // Same episode: it stays closed, with its button to open it again.
   const reopen = page.getByRole('button', { name: 'Open interactive terminal' })
   await expect(reopen).toBeVisible()
-  await page.waitForTimeout(3500)
+  await page.clock.fastForward(3500)
   await expect(window).toHaveCount(0)
   await expect(reopen).toBeVisible()
   await reopen.click()
   await expect(window).toBeVisible()
-  await window.getByRole('button', { name: 'esc', exact: true }).click()
+  await escapeKey(page)
   await expect(window).toHaveCount(0)
 })
 
@@ -107,31 +157,31 @@ test('manual close releases the pane without Escape and does not reopen the same
   await expect(window).toBeVisible()
   await window.getByRole('button', { name: 'Close terminal window' }).click()
   await expect(window).toHaveCount(0)
-  await expect.poll(size, { timeout: 15_000 }).toEqual(original)
-  expect((await fakeHerdr('e2e.terminal_screen', { pane_id: pane }) as { keys: string[] }).keys).toEqual([])
-  // More than a screen re-read interval; cursor motion is still the same episode.
+  const fake = async () => await fakeHerdr('e2e.terminal_screen', { pane_id: pane }) as { keys: string[], detectionReads: number }
+  // Changing the screen clears the fake's key log: check it now and at the end.
+  expect((await fake()).keys).toEqual([])
+  // Cursor motion is still the same episode. Its server re-reads (3 s cache,
+  // real time) overlap the detach. After the second read, the first one's
+  // state is published; then run the client's input/terminal debounces.
   await screen(usage.replace('› 1.', '  1.').replace('  2.', '› 2.'))
-  await page.waitForTimeout(3500)
+  await expect.poll(size, { timeout: 15_000 }).toEqual(original)
+  await expect.poll(async () => (await fake()).detectionReads, { timeout: 10_000 }).toBeGreaterThanOrEqual(2)
+  await page.clock.fastForward(1000)
   await expect(window).toHaveCount(0)
+  expect((await fake()).keys).toEqual([])
   await page.getByRole('button', { name: 'Open interactive terminal' }).click()
   await expect(window).toBeVisible()
-  await window.getByRole('button', { name: 'esc', exact: true }).click()
-  await expect(window).toHaveCount(0)
+  // Closing the reopened window on a stable field: tests/interactionWindow.test.ts
+  // "a window reopened after a manual close still closes on a stable field";
+  // the esc key and its close in the browser: the first test of this file.
 })
 
-test('rejects a stale native choice after the screen changes to an ambiguous menu', async ({ page }) => {
-  await expect(page.locator('.interactive-terminal')).toBeVisible()
-  const response = await page.request.post('/api/choose', {
-    headers: { Origin: new URL(page.url()).origin },
-    data: { pane_id: pane, index: 0, label: 'View analytics  Usage history', identity: screenChoices(usage, 'codex')!.identity },
-  })
-  expect(response.ok()).toBe(false)
-  expect((await fakeHerdr('e2e.terminal_screen', { pane_id: pane }) as { keys: string[] }).keys).toEqual([])
-})
+// Ambiguous-menu choice rejection moved to tests/review0346.test.ts
+// "an ambiguous terminal menu refuses a stale native choice".
 
 test('Terminal view after closing the window keeps one fitted terminal for the pane', async ({ page }, info) => {
   const toggle = info.project.name.includes('desktop')
-    ? (name: string) => page.getByRole('tab', { name, exact: true }).click()
+    ? (name: string) => page.getByRole('button', { name: `Show ${name.toLowerCase()}`, exact: true }).click()
     : () => page.getByRole('button', { name: 'Terminal', exact: true }).click()
   await expect(page.locator('.interactive-terminal .xterm')).toBeVisible()
   await page.getByRole('button', { name: 'Close terminal window' }).click()
@@ -162,7 +212,7 @@ test('in a split, only the cell in use opens the window; another one keeps its b
   await expect(shell.locator('.xterm-rows')).toContainText('fake terminal')
   const reopen = chat.getByRole('button', { name: 'Open interactive terminal' })
   await expect(reopen).toBeVisible()
-  await page.waitForTimeout(1500)
+  await page.clock.fastForward(1500)
   await expect(page.locator('.interactive-terminal')).toHaveCount(0)
   await expect(page.locator('.hw-scrim')).toHaveCount(0)
   expect((await sizeOf()).attached).toBe(false)
@@ -180,4 +230,22 @@ test('in a split, only the cell in use opens the window; another one keeps its b
   await expect(page.locator('.hw-scrim')).toHaveCount(0)
   await expect.poll(() => bodyBlocked(page)).toBe(false)
   await expect.poll(sizeOf, { timeout: 15000 }).toEqual({ cols: 60, rows: 40, attached: false })
+})
+
+test('copy in the interactive terminal suspends its keys and Escape only closes copy mode', async ({ page, isMobile, browserName }) => {
+  test.skip(!isMobile || browserName !== 'chromium', 'Trusted hold uses Chromium CDP')
+  const modal = page.getByRole('dialog', { name: 'Interactive terminal', exact: true })
+  await expect(modal.locator('.xterm-rows')).toContainText('View analytics')
+  const box = (await modal.locator('#termWrap').boundingBox())!
+  const input = await page.context().newCDPSession(page)
+  await input.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: box.x + 80, y: box.y + 90 }] })
+  await expect(modal.locator('.terminal-copy-layer')).toBeVisible()
+  await input.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  await expect(modal.locator('.keybar')).toHaveAttribute('inert', '')
+  await page.keyboard.press('Escape')
+  await expect(modal.locator('.terminal-copy-layer')).toHaveCount(0)
+  await expect(modal).toBeVisible()
+  await expect(modal.locator('.keybar')).not.toHaveAttribute('inert', '')
+  expect(await sentKeys()).toEqual([])
+  await expect(modal.locator('.xterm-helper-textarea')).not.toBeFocused()
 })

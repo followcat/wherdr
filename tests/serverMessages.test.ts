@@ -1,11 +1,9 @@
-// Messages produced on the server and shown in the app are English, and the
-// client translates them (shared/message.ts, app/utils/i18n.ts). This test
-// catches a raw French message added on the server, and an error message with
-// no French entry.
+// Server messages shown in the app use English keys. French agent data and
+// inactive translations remain supported.
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { FR_DICTIONARY, french } from '../app/utils/i18n'
+import { french } from '../app/utils/i18n'
 import { fmt } from '../shared/message'
 import { agentNotificationTitle } from '../server/utils/push'
 
@@ -45,17 +43,6 @@ describe('server messages', () => {
       .filter(({ l, at }) => !BILINGUAL_FILES.has(at.split(':')[0]!) && FRENCH.test(l) && /['"`]/.test(l) && !BILINGUAL.test(l))
       .map(({ l, at }) => `${at}: ${l.trim().slice(0, 120)}`)
     expect(found).toEqual([])
-  })
-
-  it('give every literal error message a French entry', () => {
-    // new HerdrError('code', 'Message') / new AuthError(…) / fail('code', 'Message'),
-    // or the template of fmt('… {name} …', {…}) in that position.
-    const CALL = /(?:new (?:HerdrError|AuthError|SpaceActionError|SkipMachine)|(?<![\w.])fail)\(\s*'[\w-]*',\s*(?:fmt\()?'((?:[^'\\\n]|\\.)*)'/g
-    const missing = SERVER.flatMap(({ f, src }) => [...src.matchAll(CALL)]
-      .map(m => m[1]!.replace(/\\(.)/g, '$1'))
-      .filter(k => !(k in FR_DICTIONARY))
-      .map(k => `${f}: ${k}`))
-    expect(missing).toEqual([])
   })
 
   it('have no duplicate key in the French dictionary', () => {

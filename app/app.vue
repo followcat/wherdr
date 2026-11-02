@@ -22,11 +22,22 @@ useHead({
   link: import.meta.env.VITE_WHERDR_DEMO === '1' ? [] : [{ rel: 'manifest', href: language === 'en' ? '/manifest-en.webmanifest' : '/manifest.webmanifest' }],
 })
 
+// Sockets do not survive a locked phone or a frozen page. The probe decides:
+// a live socket is reused for free, a zombie is recycled before the UI sits
+// dead on it. Runs on every plausible wake-up signal -- some builds skip
+// visibilitychange on unlock, and 'online' is the only hint that the radio
+// is back after the network dropped.
+function recoverSockets() {
+  if (document.hidden) return
+  pageVisible.value = true
+  socketWake.value++
+  void recoverEvents()
+}
 function onVisibility() {
   pageVisible.value = !document.hidden
   sendViewing()
   // iOS freezes the page in the background and cuts the sockets: we reconnect on return.
-  if (!document.hidden) connectEvents()
+  recoverSockets()
   // Back in the foreground: the server may end a session past its maximum duration.
   if (!document.hidden && !locked.value) {
     if (mayReadOffline(readOfflineAccess())) confirmLock({ resume: true })
@@ -52,6 +63,9 @@ onMounted(() => {
   window.addEventListener('focus', noteNotificationActivity)
   window.addEventListener('blur', sendViewing)
   document.addEventListener('visibilitychange', onVisibility)
+  window.addEventListener('pageshow', recoverSockets)
+  window.addEventListener('focus', recoverSockets)
+  window.addEventListener('online', recoverSockets)
   window.addEventListener('dragover', blockFileDrop)
   window.addEventListener('drop', blockFileDrop)
   registerServiceWorker()
@@ -79,6 +93,9 @@ let notificationHeartbeat: ReturnType<typeof setInterval> | undefined
 let leaseTimer: ReturnType<typeof setInterval> | undefined
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', onVisibility)
+  window.removeEventListener('pageshow', recoverSockets)
+  window.removeEventListener('focus', recoverSockets)
+  window.removeEventListener('online', recoverSockets)
   window.removeEventListener('dragover', blockFileDrop)
   window.removeEventListener('drop', blockFileDrop)
   clearInterval(leaseTimer)

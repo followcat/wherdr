@@ -44,7 +44,9 @@ const why = computed(() => {
   if (!eventsOpen.value || offlineView.value || paneStale(props.pane)) return t('Changes unavailable offline')
   const s = props.pane!.status
   if (s === 'working') return t('The agent is working — change the model once it’s done.')
-  if (s === 'blocked') return t('The agent is waiting for an answer — reply first.')
+  // A dialog or menu owns the terminal even when the status stays "done"
+  // (Devin's permission card) — typing /model would answer it.
+  if (s === 'blocked' || props.pane!.prompt || props.pane!.menu || props.pane!.screen || props.pane!.interaction === 'terminal') return t('The agent is waiting for an answer — reply first.')
   return null
 })
 const locked = computed(() => Boolean(why.value) || switching.value)
@@ -100,7 +102,7 @@ async function choose(o: ModelOption) {
   } finally {
     switching.value = false
   }
-  if (!why.value) await loadEfforts()
+  if (!why.value && ['claude', 'codex', 'omp'].includes(props.pane!.agent || '')) await loadEfforts()
 }
 
 async function chooseEffort(level: string) {
@@ -242,7 +244,7 @@ watch(locked, (l) => { if (l) { modelOpen.value = false; effortOpen.value = fals
     </span>
   </component>
   <component :is="Tip" v-if="effortShown" v-bind="effortTip">
-    <span class="model-pick-wrap">
+    <span class="model-pick-wrap effort-pick-wrap">
       <UDropdownMenu
         :open="effortOpen" :items="shownEffortItems" :modal="false"
         :content="{ side: 'top', align: 'start', sideOffset: 6 }"
@@ -254,7 +256,7 @@ watch(locked, (l) => { if (l) { modelOpen.value = false; effortOpen.value = fals
           :aria-disabled="locked" :aria-label="`${t('Effort')} : ${shownEffortText || (launch ? t('Model’s default') : t('Unknown effort'))}`"
           :trailing-icon="switching ? 'i-lucide-loader-circle' : 'i-lucide-chevron-down'"
           :ui="{ trailingIcon: switching ? 'animate-spin model-caret' : 'model-caret' }"
-        >{{ shownEffortText || t('Effort') }}</UButton>
+        ><span class="model-name">{{ shownEffortText || t('Effort') }}</span></UButton>
       </UDropdownMenu>
     </span>
   </component>

@@ -64,6 +64,9 @@ const app = spawn(process.execPath, [entry], {
     HERDR_CLIENT_SOCK: path.join(sockDir, 'herdr-client.sock'),
     HERDR_BIN: bin,
     HERDR_WEB_SESSION: 'hwtest',
+    // A tailnet name wherdr is reached by: its tailnet's HTTPS images are allowed
+    // in replies (markdown-images.spec.ts). No Tailscale runs in the test box.
+    HERDR_WEB_ALLOWED_HOSTS: 'box.example.ts.net',
     HERDR_WEB_MACHINES: 'off',
     WHERDR_UPDATE_CHECK: 'off',
     // Delay before a pane gets its size back after a dropped terminal (30 s by default).

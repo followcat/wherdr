@@ -74,7 +74,7 @@ it('uses one release tag for dispatch, checkout and concurrency, preserving OIDC
   expect(npmWorkflow.indexOf('name: Validate release tag')).toBeLessThan(npmWorkflow.indexOf('uses: actions/checkout'))
   expect(npmWorkflow).toContain('GH_REPO: ${{ github.repository }}')
   expect(npmWorkflow).toContain('id-token: write')
-  expect(npmWorkflow).toContain('runs-on: ubuntu-latest')
+  expect(npmWorkflow).toContain('runs-on: ubuntu-24.04')
   expect(npmWorkflow).not.toContain('GITHUB_REF_NAME')
   expect(npmWorkflow).not.toMatch(/^\s+environment:/m)
 })

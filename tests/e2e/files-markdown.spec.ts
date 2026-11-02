@@ -135,12 +135,12 @@ test('a Markdown file is shown formatted, sanitised, with its own images and lin
   if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/${info.project.name}-files-markdown-source.png` })
 })
 
-test('the Markdown toggle speaks French', async ({ page }, info) => {
+test('the Markdown toggle stays English with a legacy French preference', async ({ page }, info) => {
   await page.addInitScript(() => localStorage.setItem('herdrLanguage', 'fr'))
   await openReadme(page)
   const toggle = page.locator('.files-md-mode')
-  await expect(toggle).toHaveAttribute('aria-label', 'Affichage Markdown')
-  await expect(toggle.getByRole('button', { name: 'Mis en forme' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(toggle).toHaveAttribute('aria-label', 'Markdown view')
+  await expect(toggle.getByRole('button', { name: 'Rendered' })).toHaveAttribute('aria-pressed', 'true')
   await expect(toggle.getByRole('button', { name: 'Source' })).toBeVisible()
   await expect(page.locator('.files-md').getByRole('heading', { level: 1, name: 'Lantern' })).toBeVisible()
   if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/${info.project.name}-files-markdown-fr.png` })

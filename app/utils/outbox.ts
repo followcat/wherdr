@@ -21,8 +21,8 @@ export const SETTLED_MS = 10000
 let seq = 0
 export const newOutboxId = () => `w-${Date.now().toString(36)}${(seq++ % 1296).toString(36).padStart(2, '0')}${Math.random().toString(36).slice(2, 6)}`
 
-export function addSending(list: OutboxItem[], id: string, text: string, at: number): OutboxItem[] {
-  return [...list, { id, text, at, state: 'sending' }]
+export function addSending(list: OutboxItem[], id: string, text: string, at: number, submitKey?: string): OutboxItem[] {
+  return [...list, { id, text, at, state: 'sending', ...(submitKey ? { submitKey } : {}) }]
 }
 
 // The server answered: its record replaces the bubble (same id; the time of
@@ -34,13 +34,14 @@ export function settle(list: OutboxItem[], id: string, server: QueuedMessage | n
 }
 
 // The request failed: the bubble stays, "Not sent", with Retry / Cancel.
+// Its terminator goes with it: Retry must not send it back as a plain Enter.
 export function failLocal(list: OutboxItem[], id: string): OutboxItem[] {
-  return list.map(q => (q.id === id ? { id: q.id, text: q.text, at: q.at, state: 'failed', local: true } : q))
+  return list.map(q => (q.id === id ? { id: q.id, text: q.text, at: q.at, state: 'failed', local: true, ...(q.submitKey ? { submitKey: q.submitKey } : {}) } : q))
 }
 
 // Retry of a message the server never got: sending again, same bubble.
 export function resend(list: OutboxItem[], id: string): OutboxItem[] {
-  return list.map(q => (q.id === id ? { id: q.id, text: q.text, at: q.at, state: 'sending' } : q))
+  return list.map(q => (q.id === id ? { id: q.id, text: q.text, at: q.at, state: 'sending', ...(q.submitKey ? { submitKey: q.submitKey } : {}) } : q))
 }
 
 // A new server state: the records it lists win (shown from its state from now
@@ -58,4 +59,21 @@ export function prune(list: OutboxItem[], server: QueuedMessage[], now: number):
 // app's bubbles it does not list yet.
 export function withOutbox(server: QueuedMessage[], local: OutboxItem[]): OutboxItem[] {
   return [...server, ...local.filter(q => !server.some(x => x.id === q.id))]
+}
+
+// A dictation app pastes the text and presses Enter for the user; when the
+// page lags, that can happen more than once for one message. A submit whose
+// text is exactly the one sent to the same conversation less than REPEAT_MS
+// ago is that echo, not a new message. Any change in the text sends.
+export const REPEAT_MS = 3000
+
+export interface RecentSend { text: string, at: number }
+
+// The sends still recent enough to catch an echo.
+export function recentSends(list: RecentSend[], now: number): RecentSend[] {
+  return list.filter(s => now - s.at < REPEAT_MS && s.at <= now)
+}
+
+export function isRepeat(list: RecentSend[], text: string, now: number): boolean {
+  return recentSends(list, now).some(s => s.text === text)
 }

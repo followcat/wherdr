@@ -1,0 +1,85 @@
+{
+  "schema_version": "ATIF-v1.7",
+  "session_id": "anon-devin-session",
+  "agent": {
+    "name": "devin",
+    "model_name": "claude-sonnet-4-5"
+  },
+  "notes": "Anonymized ATIF-v1.7 transcript captured from Devin CLI 3000.11.234. Paths, names, prompts and image bytes were replaced; tool output is synthetic. Devin writes this file to ~/.local/share/devin/cli/transcripts/<session-id>.json without --export.",
+  "steps": [
+    {
+      "step_id": 1,
+      "source": "user",
+      "message": "Summarize the example module and run its tests.",
+      "metadata": {
+        "created_at": "2026-03-12T09:14:02Z",
+        "is_user_input": true
+      }
+    },
+    {
+      "step_id": 2,
+      "source": "agent",
+      "reasoning_content": "Read the example file, then run the unit tests.",
+      "message": "I will inspect `src/example.ts` and run the test suite.",
+      "tool_calls": [
+        {
+          "tool_call_id": "call_read_example",
+          "function_name": "read",
+          "arguments": { "path": "src/example.ts" }
+        },
+        {
+          "tool_call_id": "call_test_example",
+          "function_name": "exec",
+          "arguments": { "command": "npm test" }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "call_read_example",
+            "content": "export function greet(name: string) {\n  return `hello ${name}`\n}\n"
+          },
+          {
+            "source_call_id": "call_test_example",
+            "content": "1 passed, 0 failed",
+            "extra": {
+              "chisel/tool_result_meta": { "success": true, "exit_code": 0 }
+            }
+          }
+        ]
+      },
+      "metadata": {
+        "created_at": "2026-03-12T09:14:08Z",
+        "generation_model": "claude-sonnet-4-5"
+      }
+    },
+    {
+      "step_id": 3,
+      "source": "user",
+      "message": [
+        { "type": "text", "text": "Describe this screenshot of the passing run." },
+        {
+          "type": "image",
+          "source": { "media_type": "image/png" },
+          "extra": {
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+          }
+        }
+      ],
+      "metadata": {
+        "created_at": "2026-03-12T09:14:21Z",
+        "is_user_input": true
+      }
+    },
+    {
+      "step_id": 4,
+      "source": "agent",
+      "message": "The screenshot shows a green passing test run. The example module is ready.",
+      "metadata": {
+        "created_at": "2026-03-12T09:14:24Z",
+        "generation_model": "claude-sonnet-4-5"
+      }
+    }
+  ],
+  "final_metrics": {}
+}

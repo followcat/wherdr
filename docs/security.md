@@ -44,6 +44,13 @@ wherdr drives Herdr, so **it can run anything as your user**.
 - A strict Content Security Policy limits scripts to the app's own origin and hashed inline
   scripts, and connections to that origin and its WebSockets. It also blocks embedded objects
   and framing.
+- Images in agent replies load from the app's own origin (`data:` and `blob:` included) and,
+  over HTTPS only, from any machine and port of the tailnet wherdr is reached on
+  (`https://*.<tailnet>.ts.net:*`). That tailnet is read from Tailscale on the machine, from
+  `APP_URL`, from `HERDR_WEB_ALLOWED_HOSTS` and from what `tailscale serve` publishes, never from
+  a request; a name outside `*.ts.net` adds nothing. Any other image (public sites, another
+  tailnet, plain HTTP, Tailscale IP addresses) is refused by the browser and shown as a note with
+  a link to open it in a new tab.
 - wherdr never changes your agents' global settings: model and effort changes are for the
   current session only.
 

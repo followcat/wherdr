@@ -103,16 +103,16 @@ test('"OK to all" accepts the table under a reference to it, a second tap takes 
   await expectDraft(field, `${row(3)}\nNo\n${ALL}\nOK to all\n`)
 })
 
-test('the panel speaks French and writes French answers', async ({ page }, testInfo) => {
+test('the panel stays English with a legacy French preference', async ({ page }, testInfo) => {
   const { field, panel } = await open(page, undefined, 'fr')
   const all = panel.locator('.q-all')
   await all.scrollIntoViewIfNeeded()
-  expect(await all.evaluate(el => getComputedStyle(el, '::before').content)).toBe('"Ok tout"')
-  await panel.getByRole('button', { name: '1 · Oui: Tag the release today?' }).click()
-  await panel.getByRole('button', { name: `2 · Non: ${ROWS[1]![1]}` }).click()
+  expect(await all.evaluate(el => getComputedStyle(el, '::before').content)).toBe('"OK to all"')
+  await panel.getByRole('button', { name: '1 · Yes: Tag the release today?' }).click()
+  await panel.getByRole('button', { name: `2 · No: ${ROWS[1]![1]}` }).click()
   await all.click()
   // The answers follow the language of the interface; the reference does not change.
-  await expectDraft(field, `${row(1)}\nOui\n${row(2)}\nNon\n${ALL}\nOK tout\n`)
+  await expectDraft(field, `${row(1)}\nYes\n${row(2)}\nNo\n${ALL}\nOK to all\n`)
   await shot(page, 'decisions-fr', testInfo.project.name)
 })
 

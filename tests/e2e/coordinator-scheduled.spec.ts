@@ -1,7 +1,8 @@
 import { expect, test } from './test'
 
 // Isolated API fixtures; no coordinator commands or real board data are used.
-for (const language of ['en', 'fr']) {
+test.describe('English interface', () => {
+  const language = 'en'
 test(`scheduled disclosure (${language}) is lazy, read only, compact on phone and desktop, and refreshes with the board`, async ({ page }) => {
   await page.addInitScript(language => localStorage.setItem('herdrLanguage', language), language)
   let reads = 0
@@ -26,12 +27,12 @@ test(`scheduled disclosure (${language}) is lazy, read only, compact on phone an
   expect(reads).toBe(0)
   await section.locator('summary').click()
   await expect(section).toContainText('Keep the demo build green')
-  await expect(section).toContainText(language === 'fr' ? 'Session : perdus si la session se ferme' : 'Session: lost when the session closes')
-  await expect(section).toContainText(language === 'fr' ? 'Tous les lundis à 09:00' : 'Every Monday at 09:00')
+  await expect(section).toContainText('Session: lost when the session closes')
+  await expect(section).toContainText('Every Monday at 09:00')
   await expect(section).toContainText(/05\/01\/2026.*12:00/)
   await expect(section.getByRole('link', { name: 'demo/12' })).toHaveAttribute('href', '/#/board?machine=&task=demo%2F12')
   await expect(section.locator('button, input')).toHaveCount(0)
-  await expect(section).toContainText(language === 'fr' ? 'Réveil' : 'Wakeup')
+  await expect(section).toContainText('Wakeup')
   // The board's 15 s polls leave an open section alone (Refresh reads it again, below).
   const opened = reads
   await page.clock.runFor(46000)
@@ -44,24 +45,24 @@ test(`scheduled disclosure (${language}) is lazy, read only, compact on phone an
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.screenshot({ path: `.shots/coordinator-scheduled-desktop-${language}.png` })
   expect(await section.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
-  await page.getByRole('button', { name: language === 'fr' ? 'Actualiser' : 'Refresh', exact: true }).click()
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
   await expect.poll(() => reads).toBe(opened + 1)
   await expect(section).toContainText('Keep the demo build green')
   empty = true
   const beforeReopen = reads
   await section.locator('summary').click()
   await section.locator('summary').click()
-  await expect(section).toContainText(language === 'fr' ? 'Rien de programmé' : 'Nothing scheduled')
+  await expect(section).toContainText('Nothing scheduled')
   expect(reads).toBeGreaterThan(beforeReopen)
   await expect(section).not.toContainText('Keep the demo build green')
-  await page.getByRole('button', { name: language === 'fr' ? 'Actualiser' : 'Refresh', exact: true }).click()
-  await expect(section).toContainText(language === 'fr' ? 'Rien de programmé' : 'Nothing scheduled')
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(section).toContainText('Nothing scheduled')
   const before = reads
   await section.locator('summary').click()
-  await page.getByRole('button', { name: language === 'fr' ? 'Actualiser' : 'Refresh', exact: true }).click()
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
   await expect.poll(() => reads).toBe(before)
   await section.locator('summary').click()
   await expect.poll(() => reads).toBeGreaterThan(before)
 })
 
-}
+})

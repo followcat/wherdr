@@ -64,14 +64,14 @@ describe('task panel', () => {
     expect(w.find('.board-panel-name > .avatar').classes()).toContain('claude')
     w.unmount()
   })
-  it('explains setup failure instead of opening a bare shell', async () => {
+  it('explains setup failure while keeping its shell in Agent', async () => {
     failure = { stage: 'setup', title: 'Setup failed', detail: 'npm ci\nLockfile missing', next: 'Restore the lockfile.', agentCanFix: false }
     const w = await panel()
     expect(w.find('.board-panel-name').text()).toContain('Improve search')
     expect(w.find('.task-needs').text()).toContain('Lockfile missing')
     expect(w.find('.task-needs').text()).toContain('Restore the lockfile.')
-    expect(w.find('.embedded-agent').exists()).toBe(false)
-    expect(w.find('.task-setup').text()).toContain('Setup output')
+    expect(w.find('.embedded-agent').text()).toBe('term')
+    expect(w.find('.board-panel-agent-bar button').exists()).toBe(false)
     expect(w.emitted('noAgent')).toBeUndefined()
     const start = w.findAll('.task-needs button').find(b => b.text() === 'Start again')!
     await start.trigger('click'); await flushPromises()
@@ -116,7 +116,7 @@ describe('task panel', () => {
     pane = 'w1:p1'
     stage = 'working'
     await w.setProps({ task: { ...todo, stage: 'working', state: 'working', app: 'claude', group: 'working' } })
-    await vi.waitFor(() => expect(w.findAll('.board-panel-tabs button').map(b => b.text())).toEqual(['Conversation', 'Terminal', 'Task', 'Settings']))
+    await vi.waitFor(() => expect(w.findAll('.board-panel-tabs button').map(b => b.text())).toEqual(['Task', 'Agent', 'Settings']))
     expect(w.find('.embedded-agent').text()).toBe('chat')
     w.unmount()
   })
@@ -126,7 +126,7 @@ describe('task panel', () => {
     const task = { ...row(), stage: 'working', state: 'working', group: 'working' as const }
     const w = await panel({ task, target: { kind: 'task', machine: '', id } }, 'claude')
     expect(w.find('.embedded-agent').text()).toBe('chat')
-    await w.findAll('.board-panel-tabs button')[2]!.trigger('click')
+    await w.findAll('.board-panel-tabs button')[0]!.trigger('click')
     expect(w.find('.task-content').exists()).toBe(true)
     // Reloaded details keep the choice.
     await w.setProps({ task: { ...task, msg: 'moved on' } })
@@ -139,12 +139,13 @@ describe('task panel', () => {
     expect(again.find('.board-panel-tabs button.on').text()).toBe('Task')
     // Terminal picked, then its pane is gone: the choice is dropped.
     await again.findAll('.board-panel-tabs button')[1]!.trigger('click')
+    await again.get('.board-panel-agent-bar button').trigger('click')
     expect(again.find('.embedded-agent').text()).toBe('term')
     pane = null
     await again.setProps({ task: { ...task, msg: 'stopped' } })
-    await vi.waitFor(() => expect(again.findAll('.board-panel-tabs button').map(b => b.text())).toEqual(['Conversation', 'Task', 'Settings']))
+    await vi.waitFor(() => expect(again.findAll('.board-panel-tabs button').map(b => b.text())).toEqual(['Task', 'Agent', 'Settings']))
     // Its reply field (tell) is the default view again, not the terminal.
-    expect(again.find('#board-panel-tell').exists()).toBe(true)
+    await vi.waitFor(() => expect(again.find('#board-panel-tell').exists()).toBe(true))
     again.unmount()
     pane = 'w1:p1'
     const third = await panel({ task, target: { kind: 'task', machine: '', id } }, 'claude')
@@ -156,7 +157,7 @@ describe('task panel', () => {
     stage = 'working'
     const task = { ...row(), stage: 'working', state: 'working', group: 'working' as const }
     const w = await panel({ task, target: { kind: 'task', machine: '', id: `demo/9-${Math.random()}` } })
-    expect(w.findAll('.board-panel-tabs button').map(b => b.text())).toEqual(['Conversation', 'Task', 'Settings'])
+    expect(w.findAll('.board-panel-tabs button').map(b => b.text())).toEqual(['Task', 'Agent', 'Settings'])
     expect(w.find('#board-panel-tell').exists()).toBe(true)
     w.unmount()
   })
@@ -299,7 +300,7 @@ describe('task panel', () => {
       expect(buttons(w)).toEqual(['Open the reviewer'])
       expect(w.find('.task-needs').text()).not.toContain('Answer in the conversation')
       expect(w.find('.task-needs').text()).not.toContain('Open terminal')
-      expect(w.findAll('.board-panel-tabs button').map(b => b.text())).toEqual(['Conversation', 'Terminal', 'Reviewer', 'Task', 'Settings'])
+      expect(w.findAll('.board-panel-tabs button').map(b => b.text())).toEqual(['Task', 'Agent', 'Reviewer', 'Settings'])
       await w.find('.task-needs-reviewer-open').trigger('click')
       await flushPromises()
       // Its pane, in its conversation (where the dialog shows as choices).
@@ -366,7 +367,7 @@ describe('task panel', () => {
       stage = 'working'
       more = { reviewer: null }
       const task = { ...row(), stage: 'working', state: 'blocked', kind: '', msg: 'Waiting for your answer', group: 'needs' as const }
-      const w = await panel({ task, target: { kind: 'task', machine: '', id: 'demo/9-agent' } })
+      const w = await panel({ task, target: { kind: 'task', machine: '', id: 'demo/9-agent' } }, 'claude')
       expect(buttons(w)).toEqual(['Open terminal'])
       expect(w.find('.task-needs-reviewer').exists()).toBe(false)
       await w.find('.task-needs-term').trigger('click')
@@ -407,7 +408,7 @@ describe('task panel', () => {
     })
     it('a sign-in keeps Open terminal', async () => {
       stage = 'asks'
-      const w = await panel({ task: asks('auth', 'Need a GitHub login to open the PR') })
+      const w = await panel({ task: asks('auth', 'Need a GitHub login to open the PR') }, 'claude')
       expect(w.find('.task-needs-type').text()).toBe('Sign-in')
       expect(buttons(w)).toEqual(['Open terminal'])
       w.unmount()

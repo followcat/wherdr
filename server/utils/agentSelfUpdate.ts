@@ -1,5 +1,6 @@
 // Observe an actual Codex -> shell transition, once per process. Never scan
 // arbitrary shell panes for an old log: `cat` of a quoted update is not an update.
+import { readPassiveScreen } from './passiveScreen'
 import type { Pane, ChatResponse } from '../../shared/types'
 import { updatePrompt, updateShellSignature, type UpdateLaunch } from '../../shared/selfUpdate'
 import { paneForeground, type RestartDeps } from './restartSeq'
@@ -44,7 +45,9 @@ export function createSelfUpdates(d: SelfUpdateDeps, saved: [string, LastAgent][
     writtenAt = d.now()
     d.save?.([...records])
   }
-  const read = async (id: string) => String((await d.call('pane.read', { pane_id: id, source: 'recent_unwrapped', lines: 80 }, 4000))?.read?.text || '')
+  // Called only after atShell: the shell uses the normal screen, where Herdr
+  // never scrolls the application. Keep unwrapped history for narrow or scrolled views.
+  const readShell = async (id: string) => String((await d.call('pane.read', { pane_id: id, source: 'recent_unwrapped', lines: 80 }, 4000))?.read?.text || '')
   return {
     get: (id: string) => records.get(id),
     clear(id: string) { records.delete(id); persist() },
@@ -80,7 +83,7 @@ export function createSelfUpdates(d: SelfUpdateDeps, saved: [string, LastAgent][
         last.at = d.now()
         last.argv = fg.argv || last.argv
         last.pane = { id: p.id, workspace: p.workspace, agent: p.agent, agentSession: p.agentSession, bornAt: p.bornAt, cwd: p.cwd, name: p.name, title: p.title } as Pane
-        const screen = await read(p.id)
+        const screen = await readPassiveScreen(d.call, p.id)
         const chat = await d.chat(p).catch(() => null)
         // Even a guessed session can contradict an earlier exact identity.
         // It cannot establish a replacement, but must invalidate the old one.
@@ -122,7 +125,7 @@ export function createSelfUpdates(d: SelfUpdateDeps, saved: [string, LastAgent][
         if (d.now() - last.gone < 3000) { p.leaving = true; return false }
         last.checked = true
         if (d.now() - last.gone < 15000 && !last.oldOutput && (await paneForeground(d, p.id, 'codex')).atShell) {
-          last.signature = updateShellSignature(await read(p.id)) || undefined
+          last.signature = updateShellSignature(await readShell(p.id)) || undefined
           if (last.signature) {
             // The final messages may have arrived since the last live sample.
             // Re-read the retained session before deciding there is nothing to resume.
@@ -157,7 +160,7 @@ export function createSelfUpdates(d: SelfUpdateDeps, saved: [string, LastAgent][
     async check(id: string) {
       const last = records.get(id)
       if (!last?.signature || !(await paneForeground(d, id, 'codex')).atShell) return null
-      return updateShellSignature(await read(id)) === last.signature ? last : null
+      return updateShellSignature(await readShell(id)) === last.signature ? last : null
     },
   }
 }

@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createAuth } from '../server/utils/auth'
-import { allowedHosts, crossSiteRequest, hostAllowed, hostRefusalIsHtml, hostRefusedPage, phoneFixCommand, tailnetName } from '../server/utils/hosts'
-import { cspForHtml } from '../server/utils/csp'
+import { allowedHosts, crossSiteRequest, tailnetDomainHosts, hostAllowed, hostRefusalIsHtml, hostRefusedPage, networkRefusedPage, phoneFixCommand, tailnetName } from '../server/utils/hosts'
+import { cspForHtml, tailnetImageSources } from '../server/utils/csp'
 
 const req = (cookie = '') => ({ headers: { origin: 'http://localhost:7683', cookie } })
 const auth = (log = () => {}) => createAuth({ dataDir: mkdtempSync(path.join(tmpdir(), 'hw-release-')), log })
@@ -37,9 +37,19 @@ describe('allowed hosts', () => {
       const page = hostRefusedPage(install, host, '7690')
       expect(page).not.toMatch(/nas\.|192\.0|alert/)
       expect(page).toContain('This address isn\'t enabled yet.')
-      expect(page).toContain('Cette adresse n’est pas encore activée.')
+      expect(page).not.toContain('lang="fr"')
+      expect(page.match(/<h1/g)).toHaveLength(1)
       // The only address in it is the public installer's.
       expect(page.replaceAll('https://wherdr.dev/install', '')).not.toMatch(/<script|<form|ts\.net|https?:\/\/|APP_URL|localhost/i)
+    }
+  })
+  it('explains network refusals in English only', () => {
+    for (const why of [undefined, 'funnel'] as const) {
+      const page = networkRefusedPage(why)
+      expect(page).toContain('<html lang="en">')
+      expect(page).not.toContain('lang="fr"')
+      expect(page.match(/<h1/g)).toHaveLength(1)
+      expect(page).toContain(why ? 'Tailscale Funnel opens' : 'wherdr only answers')
     }
   })
   it('gives a command that works on a machine without a screen, for each kind of install', () => {
@@ -65,7 +75,7 @@ describe('allowed hosts', () => {
     const tailnet = hostRefusedPage('npm', 'box.example.ts.net')
     expect(tailnet).not.toContain('HERDR_WEB_ALLOWED_HOSTS')
     const lan = hostRefusedPage('npm', 'box.lan:7690')
-    expect(lan.match(/HERDR_WEB_ALLOWED_HOSTS/g)).toHaveLength(2)
+    expect(lan.match(/HERDR_WEB_ALLOWED_HOSTS/g)).toHaveLength(1)
     expect(lan).toContain('~/wherdr/wherdr.env')
     expect(lan).toContain('npx wherdr phone')
   })
@@ -109,6 +119,31 @@ it('only allows the exact inline scripts of the Nuxt HTML', () => {
   expect(policy.match(/script-src ([^;]+)/)?.[1]).not.toContain('unsafe-inline')
   expect(policy).toContain("frame-ancestors 'none'")
   expect(policy).toContain("connect-src 'self' ws://localhost:7690 wss://localhost:7690")
+})
+
+describe('images allowed in replies', () => {
+  it('allows every machine and port of the tailnets wherdr is reached on, over HTTPS only', () => {
+    expect(tailnetImageSources(['box.example.ts.net', 'DESK.Example.TS.net.', 'laptop.example.ts.net'])).toEqual(['https://*.example.ts.net:*'])
+    expect(tailnetImageSources(['box.example.ts.net', 'nas.home-lab.ts.net'])).toEqual(['https://*.example.ts.net:*', 'https://*.home-lab.ts.net:*'])
+  })
+  it('adds nothing for a name outside a tailnet, nor anything that could widen the policy', () => {
+    for (const name of ['localhost', '127.0.0.1', '::1', 'box.lan', 'example.ts.net', 'ts.net', 'a.b.example.ts.net', 'box.example.ts.net.evil.com', 'box.exa*mple.ts.net', 'box.example.ts.net; img-src *', '-box.example.ts.net', '']) {
+      expect(tailnetImageSources([name]), name).toEqual([])
+    }
+  })
+  it('reads the tailnet from the allowed hosts and from Tailscale\'s name for this machine', () => {
+    expect(tailnetDomainHosts(new Set(['localhost', 'box.example.ts.net']), '')).toEqual(['localhost', 'box.example.ts.net'])
+    expect(tailnetImageSources(tailnetDomainHosts(new Set(['localhost']), 'studio.example.ts.net'))).toEqual(['https://*.example.ts.net:*'])
+  })
+  it('only widens img-src: every other directive stays as it was', () => {
+    const html = '<html><script>window.__NUXT__={}</script></html>'
+    const plain = cspForHtml(html, 'box.example.ts.net')
+    const wide = cspForHtml(html, 'box.example.ts.net', ['https://*.example.ts.net:*'])
+    expect(plain).toContain("img-src 'self' data: blob:;")
+    expect(wide).toContain("img-src 'self' data: blob: https://*.example.ts.net:*;")
+    const without = (policy: string) => policy.split('; ').filter(d => !d.startsWith('img-src '))
+    expect(without(wide)).toEqual(without(plain))
+  })
 })
 
 describe('crossSiteRequest', () => {

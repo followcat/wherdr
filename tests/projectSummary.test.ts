@@ -26,6 +26,12 @@ describe('the summary of a repo group', () => {
     expect(summaryParts(s, fr).map(p => p.text)).toEqual(['4 tâches', '1 à toi', '1 en cours', '1 quota'])
   })
 
+  it('counts a task once across worker and reviewer spaces, using its Board group', () => {
+    const worker = onBoard(pane('w1:p1', { status: 'working' }), 'working')
+    const reviewer = { ...onBoard(pane('w2:p1', { status: 'working' }), 'working'), task: worker.task }
+    expect(taskSummary([worker, reviewer, onBoard(pane('w3:p1', { status: 'working' }), 'done'), onBoard(pane('w4:p1', { status: 'working' }), 'todo'), onBoard(pane('w5:p1', { status: 'working' }), 'ready')])).toEqual({ tasks: 4, blocked: 1, working: 1, limit: 0 })
+  })
+
   it('leaves out the counts at zero, says when there is no task, and the singular', () => {
     expect(summaryParts(taskSummary([]), en).map(p => p.text)).toEqual(['No tasks'])
     expect(summaryParts(taskSummary([]), fr).map(p => p.text)).toEqual(['Aucune tâche'])
@@ -42,8 +48,8 @@ describe('the summary of a repo group', () => {
       onBoard(pane('d:1', { status: 'blocked' }), 'ready'),
       onBoard(pane('e:1', { status: 'working' }), 'todo'),
     ]
-    expect(ms.map(memberGroup)).toEqual(['needs', 'needs', 'working', 'ready', 'todo'])
-    expect(taskSummary(ms)).toEqual({ tasks: 5, blocked: 2, working: 1, limit: 0 })
+    expect(ms.map(memberGroup)).toEqual(['needs', 'working', 'working', 'ready', 'todo'])
+    expect(taskSummary(ms)).toEqual({ tasks: 5, blocked: 2, working: 2, limit: 0 })
     expect(memberGroup(member(pane('f:1')))).toBeNull()
   })
 })

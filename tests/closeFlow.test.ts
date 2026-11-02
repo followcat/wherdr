@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { checkoutMessage, planClose } from '../app/utils/closeFlow'
+import { checkoutMessage, planClose, widerClose } from '../app/utils/closeFlow'
 import { spaceCall } from '../shared/spaceActions'
 import type { HerdrState, Pane, Workspace } from '../shared/types'
 
@@ -45,5 +45,43 @@ describe('confirmation de fermeture du groupe', () => {
     expect(dirty).toContain('groupe de worktrees')
     expect(dirty).toContain('2 fichier(s) modifié(s), 1 non suivi(s)')
     expect(dirty).toContain('modifications non commitées conservées')
+  })
+})
+
+describe('close scope', () => {
+  const two: HerdrState = {
+    ok: true,
+    workspaces: [{ ...ws('w9', false), repo: undefined }],
+    tabs: [
+      { id: 'w9:t1', workspace: 'w9', label: 'a', number: 1, layout: null },
+      { id: 'w9:t2', workspace: 'w9', label: 'b', number: 2, layout: null },
+    ],
+    panes: [pane('w9:p1', 'w9'), pane('w9:p2', 'w9'), { ...pane('w9:p3', 'w9'), tab: 'w9:t2' }],
+  }
+
+  it('says which tabs and whether the space go with a pane', () => {
+    expect(planClose(two, 'pane', 'w9:p1')).toMatchObject({ tabs: [], closesWorkspace: false, group: false })
+    expect(planClose(two, 'pane', 'w9:p3')).toMatchObject({ tabs: ['w9:t2'], closesWorkspace: false })
+    const lone = { ...two, panes: [two.panes[0]!], tabs: [two.tabs![0]!] }
+    expect(planClose(lone, 'pane', 'w9:p1')).toMatchObject({ tabs: ['w9:t1'], closesWorkspace: true })
+    expect(planClose(two, 'tab', 'w9:t1')).toMatchObject({ tabs: ['w9:t1'], closesWorkspace: false })
+    expect(planClose(two, 'workspace', 'w9')).toMatchObject({ tabs: ['w9:t1', 'w9:t2'], closesWorkspace: true })
+    expect(planClose(two, 'workspace', 'w9').panes).toHaveLength(3)
+  })
+
+  it('detects a close that grew while it was being confirmed', () => {
+    const shown = planClose(two, 'pane', 'w9:p1')
+    // The other pane of the tab closed meanwhile: the tab would go too.
+    const alone = { ...two, panes: two.panes.filter(p => p.id !== 'w9:p2') }
+    expect(widerClose(shown, planClose(alone, 'pane', 'w9:p1'))).toBe(true)
+    // A pane added to the space: closing the space takes more.
+    const space = planClose(two, 'workspace', 'w9')
+    const more = { ...two, panes: [...two.panes, { ...pane('w9:p4', 'w9'), tab: 'w9:t2' }] }
+    expect(widerClose(space, planClose(more, 'workspace', 'w9'))).toBe(true)
+    // Unchanged, or narrower: no new confirmation.
+    expect(widerClose(shown, planClose(two, 'pane', 'w9:p1'))).toBe(false)
+    expect(widerClose(space, planClose({ ...two, panes: two.panes.slice(0, 2), tabs: [two.tabs![0]!] }, 'workspace', 'w9'))).toBe(false)
+    // A worktree group appearing is always wider.
+    expect(widerClose({ ...shown, group: false }, { ...shown, group: true })).toBe(true)
   })
 })

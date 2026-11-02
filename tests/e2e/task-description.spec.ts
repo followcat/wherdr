@@ -1,7 +1,8 @@
 import { expect, test } from './test'
 import fs from 'node:fs/promises'
 
-for (const language of ['en', 'fr']) {
+test.describe('English interface', () => {
+  const language = 'en'
   test(`edit task description explicitly, ${language}`, async ({ page }) => {
     await page.addInitScript(lang => localStorage.setItem('herdrLanguage', lang), language)
     const row = { id: 'demo/11', repo: 'demo', repoKey: 'DEMO', n: 11, state: 'idle', kind: '', stage: 'todo', title: 'Prepare the lunar garden', msg: '', app: '', progress: null, eta: null, pr: '', review: null, reviewRound: 0, research: false, archived: false, queue: null, group: 'todo' }
@@ -25,15 +26,15 @@ for (const language of ['en', 'fr']) {
     })
     await page.goto('/#/board?machine=remote&task=demo%2F11')
     const block = page.locator('.task-description:visible')
-    await block.getByRole('button', { name: language === 'fr' ? 'Modifier' : 'Edit description' }).click()
+    await block.getByRole('button', { name: 'Edit description' }).click()
     await expect(block.locator('textarea')).toHaveValue(description)
     await block.locator('textarea').fill('discard')
-    await block.getByRole('button', { name: language === 'fr' ? 'Annuler' : 'Cancel' }).click()
+    await block.getByRole('button', { name: 'Cancel' }).click()
     expect(writes).toBe(0)
-    await block.getByRole('button', { name: language === 'fr' ? 'Modifier' : 'Edit description' }).click()
+    await block.getByRole('button', { name: 'Edit description' }).click()
     await expect(block.locator('textarea')).toHaveValue(description)
     await block.locator('textarea').fill(draft)
-    const save = block.getByRole('button', { name: language === 'fr' ? 'Enregistrer' : 'Save', exact: true })
+    const save = block.getByRole('button', { name: 'Save', exact: true })
     await save.click()
     await expect(block.getByRole('alert')).toContainText('CLI refused')
     await expect(block.locator('textarea')).toHaveValue(draft)
@@ -50,8 +51,8 @@ for (const language of ['en', 'fr']) {
     await page.screenshot({ path: `.shots/task-description-${language}-saved-desktop.png`, fullPage: true })
     await page.setViewportSize(phoneViewport)
     await page.screenshot({ path: `.shots/task-description-${language}-saved-phone.png`, fullPage: true })
-    await block.getByRole('button', { name: language === 'fr' ? 'Modifier' : 'Edit description' }).click()
+    await block.getByRole('button', { name: 'Edit description' }).click()
     await expect(block.locator('textarea')).toHaveValue(stored)
     expect(writes).toBe(2)
   })
-}
+})

@@ -5,9 +5,26 @@ import type { ChatResponse, Pane } from '../shared/types'
 
 const SESSION = '00000000-0000-4000-8000-000000000288'
 const OUTPUT = 'Updating Codex via installer...\nCodex CLI 0.162.1 installed successfully.\n\n🎉 Update ran successfully! Please restart Codex.\n\nuser@host project % '
+const PROMPTS = ['user@host:~/dir$ ', 'root@host:~/dir# ', '# ', 'user@host dir % ', '$ ', '% ']
+const wrap = (text: string, columns: number) => text.split('\n').map(line => {
+  const chars = Array.from(line)
+  const rows: string[] = []
+  for (let i = 0; i < chars.length; i += columns) rows.push(chars.slice(i, i + columns).join(''))
+  return rows.join('\n')
+}).join('\n')
 const pane = (agent: string | null = 'codex') => ({ id: 'w1:p1', workspace: 'w1', agent, agentSession: null, bornAt: 9000, status: 'idle', cwd: '/tmp/project' }) as Pane
 
 describe('Codex self-update output', () => {
+  describe.each([80, 32])('%i terminal columns', columns => {
+    it.each(PROMPTS)('recognizes an empty shell prompt: %s', prompt => {
+      const output = wrap(OUTPUT.replace('user@host project % ', prompt), columns)
+      expect(updateShellSignature(output)).toBe(prompt.trimEnd())
+    })
+    it.each(['the total is 10$', 'ordinary output $', 'ordinary output %', 'ordinary output #',
+      'user@host:~/dir$ echo hello', 'user@host dir % echo hello'])('rejects output or a draft: %s', line => {
+      expect(updateShellSignature(wrap(OUTPUT.replace('user@host project % ', line), columns))).toBeNull()
+    })
+  })
   it('accepts the real installer ending and a multiline prompt', () => {
     expect(updateShellSignature(OUTPUT)).toBe('user@host project %')
     expect(updateShellSignature(OUTPUT.replace('user@host project % ', 'project on main\n❯ '))).toBe('project on main\n❯')
@@ -69,6 +86,18 @@ function setup(chat: ChatResponse = { available: false, reason: 'not_found' }) {
 }
 
 describe('observed process lifecycle and final guards', () => {
+  it('offers resume and fresh after an Ubuntu shell returns with wrapped installer output', async () => {
+    const s = setup({ available: true, session: SESSION, items: [{ role: 'user', text: 'Continue', ts: null }] })
+    await s.monitor.observe(pane(), false)
+    s.exit()
+    s.output(wrap(OUTPUT.replace('user@host project % ', 'user@host:~/dir$ '), 32))
+    await s.monitor.observe(pane(null), false)
+    s.tick()
+    const stopped = pane(null)
+    expect(await s.monitor.observe(stopped, false)).toBe(true)
+    expect(stopped.prompt?.options.map(o => o.label)).toEqual(['Resume conversation', 'Start fresh'])
+    expect(await s.monitor.check(stopped.id)).not.toBeNull()
+  })
   it('keeps the pane blocked after exit, and validates the current empty shell', async () => {
     const s = setup()
     await s.monitor.observe(pane(), false)
