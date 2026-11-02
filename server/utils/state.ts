@@ -191,7 +191,7 @@ async function readChoices(p: Pane, rev: unknown, strict: boolean, watch = false
     // A live quota footer keeps the input usable. Ignore lists in scrollback.
     const usageLimit = p.status === 'unknown' ? null : parseUsageLimit(String(text || ''), p.agent)
     // omp: its select dialog (tool approval) or "Ask" box.
-    let choices = usageLimit ? null : p.agent === 'devin' ? parseDevinDialog(text) : p.agent === 'omp' ? parseOmpPrompt(text) : p.agent === 'opencode' ? null : parseChoices(text, { strict })
+    let choices = usageLimit ? null : p.agent === 'devin' ? parseDevinDialog(text) : p.agent === 'omp' ? parseOmpPrompt(text) : p.agent === 'opencode' ? null : p.agent === 'cmd' ? null : parseChoices(text, { strict })
     if (choices) choices.identity = promptIdentity(text, p.agent)
     // OpenCode's permission/question dialogs belong to the session, not the
     // screen: the service lists them before any menu is guessed at — its
@@ -215,7 +215,7 @@ async function readChoices(p: Pane, rev: unknown, strict: boolean, watch = false
     }
     // An OpenCode card is authoritative: no menu read on top of it. Every
     // other agent keeps the original choices-vs-menu precedence.
-    const menu = ocCard || ocScreen || usageLimit || p.agent === 'omp' || !framed ? null
+    const menu = ocCard || ocScreen || usageLimit || p.agent === 'omp' || p.agent === 'cmd' || !framed ? null
       : strict || !choices || !parseChoices(text, { strict: true }) ? await readMenu(p.id) : null
     if (menu) {
       menu.identity = menuIdentity(menu)
@@ -668,10 +668,11 @@ function deliverHeld(p: Pane) {
   deliverBusy.add(p.id)
   herdr('pane.read', { pane_id: p.id, source: 'detection' }, 4000)
     .then(async (r) => {
-      // Command Code has no screen recognizer: its idle/done status is the
-      // readiness signal (a blocked pane is the one that held the message).
+      // Command Code has no "blocked" report: its idle/done status gates the
+      // delivery, and the composer recognizer keeps text out of any dialog or
+      // draft the screen shows while the pane rests.
       const ready = p.agent === 'cmd'
-        ? p.status === 'idle' || p.status === 'done'
+        ? (p.status === 'idle' || p.status === 'done') && inputVisible(r.read && r.read.text, p.agent)
         : inputVisible(r.read && r.read.text, p.agent)
       if (!ready) return
       if (p.agent === 'claude') {

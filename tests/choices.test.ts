@@ -160,6 +160,26 @@ describe('inputVisible', () => {
     // Without an agent hint the recognizers stay backward compatible.
     expect(inputVisible(ocOutput)).toBe(true)
   })
+
+  // Command Code v1.88.x: the composer is a "❯" line boxed by "─" rules.
+  // Its dialogs put the same glyph on option rows, and a "/" or any draft
+  // text in the field means the user's input owns it — type over nothing.
+  it('sees Command Code’s empty boxed composer, never a dialog or a draft', () => {
+    expect(inputVisible(fx('cmd-composer.txt'), 'cmd')).toBe(true)
+    // Trust/permission dialog: "❯ 1. …" option cursor + selection hints.
+    expect(inputVisible(fx('cmd-trust-dialog.txt'), 'cmd')).toBe(false)
+    // "/" command menu open, and a plain draft in the field.
+    expect(inputVisible(fx('cmd-slash-menu.txt'), 'cmd')).toBe(false)
+    expect(inputVisible(fx('cmd-draft.txt'), 'cmd')).toBe(false)
+    // A permission dialog with the composer still rendered below it: the
+    // option cursor and hints rule the whole screen out.
+    const dialogAboveField = `output\n\n❯ 1. Allow\n  2. Deny\n\n↑/↓ to navigate · enter to select · esc to exit\n\n───\n❯ Ask your question...\n───\n`
+    expect(inputVisible(dialogAboveField, 'cmd')).toBe(false)
+    // A "❯" outside the box (e.g. in output) is not the field — the last one
+    // boxed by rules is, even with stray glyphs above it.
+    expect(inputVisible('output\n❯ echoed line\nplain\n───\n❯ \n───\n', 'cmd')).toBe(true)
+    expect(inputVisible('output\n❯ echoed line\n───\n', 'cmd')).toBe(false)
+  })
 })
 
 describe('panelOpen', () => {
@@ -206,6 +226,14 @@ describe('parseOmpAsk', () => {
     expect(parseOmpAsk(fx('claude-ask.txt'))).toBeNull()
     expect(screenChoices(fx('omp-ask-single.txt'), 'claude')).toBeNull()
     expect(screenChoices(fx('omp-ask-single.txt'), 'omp')!.options).toHaveLength(4)
+  })
+
+  it('never turns a Command Code dialog into a card — the terminal owns it', () => {
+    // The trust dialog matches the generic numbered grammar ("❯ 1. …"): the
+    // parser would read it, so the agent check is what keeps it a terminal UI.
+    expect(parseChoices(fx('cmd-trust-dialog.txt'))).not.toBeNull()
+    expect(screenChoices(fx('cmd-trust-dialog.txt'), 'cmd')).toBeNull()
+    expect(screenChoices(fx('cmd-composer.txt'), 'cmd')).toBeNull()
   })
 
   // Real screens: "Other" already answered, then its field reopened (prefilled).
