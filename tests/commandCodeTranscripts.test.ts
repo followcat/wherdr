@@ -135,6 +135,24 @@ it('keeps the last session when a header read fails', async () => {
   }
 })
 
+it('keeps an assistant image on its text reply', async () => {
+  const { home, reader } = fixture()
+  writeCommandCodeSession(home, {
+    id: 'sess-1', cwd: pane.cwd, lines: [
+      commandCodeSession('sess-1', pane.cwd),
+      commandCodeUser('u1', null, 'Draw it', 1000),
+      commandCodeAssistant('a1', 'u1', [
+        { type: 'text', text: 'Here is the mock' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: commandCodePNG } },
+      ], { ms: 2000 }),
+    ],
+  })
+  const r = await reader.chat(pane)
+  const replies = r.items!.filter(i => i.role === 'assistant')
+  expect(replies).toHaveLength(1)
+  expect(replies[0]).toMatchObject({ text: 'Here is the mock', images: 1 })
+})
+
 it('offsets images for a tool result whose call is outside the page', async () => {
   const { home, reader } = fixture()
   writeCommandCodeSession(home, {
@@ -243,6 +261,10 @@ it('keeps a tool result across a pagination boundary', async () => {
   reader.forget(pane.id)
   const afterForget = await reader.chat(pane, { before: tail.start })
   expect(afterForget.items!.find(i => i.name === 'shell_command')?.out).toBeUndefined()
+  // A fresh tail re-read after forget must remember the result again.
+  const reopenedTail = await reader.chat(pane)
+  const reopenedOlder = await reader.chat(pane, { before: reopenedTail.start })
+  expect(reopenedOlder.items!.find(i => i.name === 'shell_command')?.out).toBe('ok')
 
   // Replacing the file (new inode) with a larger transcript without that
   // result must invalidate the remembered entry too.
