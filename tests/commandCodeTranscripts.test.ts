@@ -654,6 +654,34 @@ it('keeps results collected by another client when a stale token arrives', async
   expect(callPage.items!.find(i => i.toolId === 'call_1')?.out).toBe('ok')
 })
 
+it('rebuilds clients when a remembered result is evicted', async () => {
+  const { home, reader } = fixture()
+  const filler = 'e'.repeat(32 * 1024)
+  const lines = [
+    commandCodeSession('sess-1', pane.cwd),
+    commandCodeUser('u1', null, 'Run it', 1000),
+    commandCodeAssistant('a1', 'u1', [{ type: 'tool_use', id: 'call_1', name: 'shell_command', input: { command: 'echo ok' } }], { ms: 2000 }),
+  ]
+  for (let i = 0; i < 200; i++) lines.push(commandCodeUser(`filler-${i}`, 'a1', filler, 3000 + i))
+  lines.push(commandCodeToolResults('u2', 'a1', [{ tool_use_id: 'call_1', content: [{ type: 'text', text: 'ok' }] }], 4000))
+  writeCommandCodeSession(home, { id: 'sess-1', cwd: pane.cwd, lines })
+  const tail = await reader.chat(pane)
+  expect(tail.start).toBeGreaterThan(0)
+
+  // 65 other Command Code transcripts evict the oldest remembered result.
+  for (let i = 0; i < 65; i++) {
+    const cwd = `/home/user/evict-${i}`
+    writeCommandCodeSession(home, { id: `evict-${i}`, cwd, lines: [commandCodeSession(`evict-${i}`, cwd), commandCodeUser(`u${i}`, null, 'x')] })
+    await reader.chat({ id: `evict-pane-${i}`, agent: 'cmd', cwd })
+  }
+
+  // The client kept the old page: its token must now tell it to rebuild.
+  expect((await reader.chat(pane, { since: tail.token, from: tail.start })).rewritten).toBe(true)
+  const reread = await reader.chat(pane)
+  const older = await reader.chat(pane, { before: reread.start })
+  expect(older.items!.find(i => i.toolId === 'call_1')?.out).toBe('ok')
+})
+
 it('reads past trailing tool results with no displayable message', async () => {
   const { home, reader } = fixture()
   const big = 'q'.repeat(1.5 * 1024 * 1024)
