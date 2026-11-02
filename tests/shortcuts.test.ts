@@ -97,24 +97,22 @@ describe('matchShortcut', () => {
     expect(match({ key: 'Escape', defaultPrevented: true })).toBeNull()
   })
 
-  it('Ctrl+arrows switch agents and space tabs; fields and the terminal keep theirs', () => {
-    expect(match({ key: 'ArrowUp', ctrlKey: true }, body, linux)).toBe('prev-agent')
-    expect(match({ key: 'ArrowDown', ctrlKey: true }, body, linux)).toBe('next-agent')
-    expect(match({ key: 'ArrowLeft', ctrlKey: true }, body, linux)).toBe('prev-tab')
-    expect(match({ key: 'ArrowRight', ctrlKey: true }, body, linux)).toBe('next-tab')
-    // Same bindings on macOS (Ctrl, not ⌘ — the OS takes ⌘+arrows anyway).
-    expect(match({ key: 'ArrowDown', ctrlKey: true })).toBe('next-agent')
-    expect(match({ key: 'ArrowLeft', ctrlKey: true })).toBe('prev-tab')
-    // Word/paragraph jumps in a non-empty field stay with the field.
-    expect(match({ key: 'ArrowLeft', ctrlKey: true }, field('half a sentence'), linux)).toBeNull()
-    expect(match({ key: 'ArrowUp', ctrlKey: true }, field('draft'), linux)).toBeNull()
-    expect(match({ key: 'ArrowLeft', ctrlKey: true }, field(''), linux)).toBe('prev-tab')
-    // The terminal keeps the keys its program expects.
-    expect(match({ key: 'ArrowRight', ctrlKey: true }, term, linux)).toBeNull()
-    expect(match({ key: 'ArrowDown', ctrlKey: true }, term, linux)).toBeNull()
+  it('Alt+←/→ switches space tabs, taken before fields and the terminal (browser Back)', () => {
+    const cap = { ...linux, phase: 'capture' as const }
+    expect(match({ key: 'ArrowLeft', altKey: true }, body, cap)).toBe('prev-tab')
+    expect(match({ key: 'ArrowRight', altKey: true }, body, cap)).toBe('next-tab')
+    // Capture phase only: the key is eaten before xterm or the browser sees it.
+    expect(match({ key: 'ArrowLeft', altKey: true }, body, linux)).toBeNull()
+    expect(match({ key: 'ArrowLeft', altKey: true }, term, cap)).toBe('prev-tab')
+    expect(match({ key: 'ArrowLeft', altKey: true }, field('typing a draft'), cap)).toBe('prev-tab')
     // A held key keeps stepping; overlays block navigation.
-    expect(match({ key: 'ArrowRight', ctrlKey: true, repeat: true }, body, linux)).toBe('next-tab')
-    expect(match({ key: 'ArrowRight', ctrlKey: true }, { ...body, overlay: true }, linux)).toBeNull()
+    expect(match({ key: 'ArrowRight', altKey: true, repeat: true }, body, cap)).toBe('next-tab')
+    expect(match({ key: 'ArrowRight', altKey: true }, { ...body, overlay: true }, cap)).toBeNull()
+    // On macOS too (⌥+←/→), and plain or shifted arrows are untouched.
+    const macCap = { ...mac, phase: 'capture' as const }
+    expect(match({ key: 'ArrowLeft', altKey: true }, body, macCap)).toBe('prev-tab')
+    expect(match({ key: 'ArrowLeft' }, body, macCap)).toBeNull()
+    expect(match({ key: 'ArrowLeft', altKey: true, shiftKey: true }, body, macCap)).toBeNull()
   })
 
   it('held keys repeat agent navigation only', () => {
