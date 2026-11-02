@@ -9,7 +9,7 @@ import { notificationAllowed } from './notificationRules'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import type { ChatItem, Choices, ClaudeQueueEntry, ClaudeScreen, HerdrState, InteractiveMenu, WaitScreen, ModelInfo, OmpActivity, OmpStatus, Pane, QueuedMessage, ShellRun } from '../../shared/types'
+import type { ChatItem, Choices, ClaudeQueueEntry, ClaudeScreen, CommandCodeStatus, HerdrState, InteractiveMenu, WaitScreen, ModelInfo, OmpActivity, OmpStatus, Pane, QueuedMessage, ShellRun } from '../../shared/types'
 import { ompActivityOf, parseOmpActivity, parseOmpShell, parseOmpStatus } from './ompScreen'
 import { LOCAL, joinId, machineOf } from '../../shared/ids'
 import { paneTitle } from '../../shared/paneTitle'
@@ -372,7 +372,7 @@ setCodexKnownWeek((key, rolled) => codexStatus.knownWeek(key, state.panes, rolle
 // not changed).
 const models = new Map<string, { info: ModelInfo | null, status: string | null, at: number }>()
 const modelBusy = new Set<string>()
-const cmdStatuses = new Map<string, { status: OmpStatus | null, session: string | null, at: number }>()
+const cmdStatuses = new Map<string, { status: CommandCodeStatus | null, session: string | null, at: number }>()
 const cmdStatusBusy = new Set<string>()
 function refreshCmdStatus(p: Pane) {
   if (cmdStatusBusy.has(p.id)) return

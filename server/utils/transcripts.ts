@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { imageTagCount } from '../../shared/queuedMatch'
-import type { ChatItem, ChatResponse, ClaudeQueueEntry, ModelInfo, OmpStatus, PromptDetail } from '../../shared/types'
+import type { ChatItem, ChatResponse, ClaudeQueueEntry, CommandCodeStatus, ModelInfo, PromptDetail } from '../../shared/types'
 import { ompToolCall, ompToolResult, ompUserRun } from './ompTools'
 import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDetail'
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
@@ -859,7 +859,9 @@ function commandCodeTool(name: string, input: Json): string {
   }
 }
 
-export function parseCommandCode(lines: Lines): Parsed {
+export type CommandCodeResult = { out?: string, error?: boolean, images?: number, ref?: string, imageAt?: number }
+
+export function parseCommandCode(lines: Lines, results?: Map<string, CommandCodeResult>): Parsed {
   const items: Parsed = []
   const tools = new Map<string, ChatItem>()
   for (let i = 0; i < lines.length; i++) {
@@ -883,6 +885,18 @@ export function parseCommandCode(lines: Lines): Parsed {
         } else if (part.type === 'tool_use' && typeof part.id === 'string') {
           const name = typeof part.name === 'string' ? part.name : 'Tool'
           const t: ChatItem = { role: 'tool', name, text: clip(commandCodeTool(name, part.input), 300), ts }
+          // Its result may have been parsed in a newer page (a page boundary
+          // between the call and the result): apply the remembered outcome.
+          const saved = results?.get(part.id)
+          if (saved) {
+            if (saved.out) t.out = saved.out
+            if (saved.error) t.error = true
+            if (saved.images && saved.ref) {
+              t.images = saved.images
+              t.ref = saved.ref
+              if (saved.imageAt) t.imageAt = saved.imageAt
+            }
+          }
           tools.set(part.id, t)
           items.push(t)
         } else if (part.type === 'image') images++
@@ -916,14 +930,29 @@ export function parseCommandCode(lines: Lines): Parsed {
       } else if (part.type === 'tool_result' && typeof part.tool_use_id === 'string') {
         const t = tools.get(part.tool_use_id)
         const n = Array.isArray(part.content) ? part.content.filter((p: Json) => p && p.type === 'image').length : 0
+        const out = commandCodeText(part.content)
         if (t) {
-          const out = commandCodeText(part.content)
           if (out) t.out = clip(out, 8000)
           if (part.is_error) t.error = true
           if (n && ref) {
             t.images = n
             t.ref = ref
             if (toolImages) t.imageAt = toolImages
+          }
+        } else if (results) {
+          // The call is in an older page: remember its result for the page
+          // that will render it.
+          const rec: CommandCodeResult = {}
+          if (out) rec.out = clip(out, 8000)
+          if (part.is_error) rec.error = true
+          if (n && ref) {
+            rec.images = n
+            rec.ref = ref
+            if (toolImages) rec.imageAt = toolImages
+          }
+          if (rec.out || rec.error || rec.images) {
+            results.set(part.tool_use_id, rec)
+            if (results.size > 4096) results.delete(results.keys().next().value!)
           }
         }
         // lineImages() counts this result's images even when its call is
@@ -939,7 +968,7 @@ export function parseCommandCode(lines: Lines): Parsed {
   return items
 }
 
-export function parseLines(text: string, kind: string | null, base = 0, home = '', templates?: readonly CommandTemplate[], cwd = ''): Parsed {
+export function parseLines(text: string, kind: string | null, base = 0, home = '', templates?: readonly CommandTemplate[], cwd = '', cmdResults?: Map<string, CommandCodeResult>): Parsed {
   const raw = text.split('\n')
   const refs: string[] = []
   let off = base
@@ -950,7 +979,7 @@ export function parseLines(text: string, kind: string | null, base = 0, home = '
   }
   const lines: Lines = raw.map(stripBlobs)
   lines.refs = refs
-  const items = kind === 'omp' ? parseOmp(lines, home, templates, cwd) : kind === 'codex' ? parseCodex(lines) : kind === 'cmd' ? parseCommandCode(lines) : parseClaude(lines, home)
+  const items = kind === 'omp' ? parseOmp(lines, home, templates, cwd) : kind === 'codex' ? parseCodex(lines) : kind === 'cmd' ? parseCommandCode(lines, cmdResults) : parseClaude(lines, home)
   // Content hash of each image, to spot one shown twice (see shared/imageDupes.ts).
   const byRef = new Map<string, number>()
   refs.forEach((r, i) => byRef.set(r, i))
@@ -1044,7 +1073,10 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   // Command Code discovery/status caches: project headers change rarely, and
   // an unchanged session must not be re-read on every 5 s status refresh.
   const cmdHeaders = new Map<string, { size: number, mtimeMs: number, cwd: string | null, id: string | null }>()
-  const cmdStatsCache = new Map<string, { file: string, size: number, gen: string, stats: OmpStatus | null, session: string | null }>()
+  const cmdStatsCache = new Map<string, { file: string, size: number, gen: string, stats: CommandCodeStatus | null, session: string | null }>()
+  // Tool results parsed in a newer page than their call (a page boundary):
+  // the call's page applies them when it is read.
+  const cmdResults = new Map<string, CommandCodeResult>()
   // File -> state (size, generation) and when this server first saw it, for
   // whole-second mtimes (see SETTLE_MS); `file|size|gen` -> checksum of the
   // file at first sight (null: could not be taken).
@@ -1436,7 +1468,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
       }
       // Each window is parsed alone (a tool result in error whose
       // call is in the previous window just loses its red mark).
-      const parsed = parseLines(r.text, kind, r.start, home, ompTemplates.list, cwd)
+      const parsed = parseLines(r.text, kind, r.start, home, ompTemplates.list, cwd, cmdResults)
       if (!queue) queue = parsed.queue || [] // the queue lives in the most recent window
       if (!popped) popped = parsed.popped || []
       items = parsed.concat(items)
@@ -1444,7 +1476,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
       if (items.length >= PAGE_ITEMS) break
     }
     if (kind === 'cmd') {
-      const parsed = parseLines(raw, kind, pageStart, home, ompTemplates.list, cwd)
+      const parsed = parseLines(raw, kind, pageStart, home, ompTemplates.list, cwd, cmdResults)
       items = parsed
       queue = parsed.queue || []
       popped = parsed.popped || []
@@ -1471,7 +1503,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
         const nl = buf.indexOf(0x0a, off)
         off = nl < 0 ? buf.length : nl + 1
       }
-      const items = parseLines(buf.subarray(off).toString('utf8'), kind, s0 + off, home, ompTemplates.list, kind === 'omp' ? await ompCwd(file) : '')
+      const items = parseLines(buf.subarray(off).toString('utf8'), kind, s0 + off, home, ompTemplates.list, kind === 'omp' ? await ompCwd(file) : '', cmdResults)
       // Start kept even when it moved to the next line: the client then sees a
       // stale anchor (or another start) and reloads from the bottom.
       r = { start: from, items, queue: items.queue || [], popped: items.popped || [], anchor: off === from - s0 ? anchorHash(above) : '' }
@@ -1662,7 +1694,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   // Command Code: the last assistant turn's model and context, for the
   // composer's status line. `/model` and `/effort` only change the default
   // for new sessions, so this stays a read-only display.
-  async function commandCodeStats(pane: TranscriptPane): Promise<{ status: OmpStatus | null, session: string | null }> {
+  async function commandCodeStats(pane: TranscriptPane): Promise<{ status: CommandCodeStatus | null, session: string | null }> {
     if (pane.agent !== 'cmd') return { status: null, session: null }
     const loc = await locate(pane)
     if (!loc) return { status: null, session: null }
@@ -1674,7 +1706,6 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
       return { status: hit.stats, session: hit.session }
     }
     const size = st.size
-    let model: string | null = null
     let context: number | null = null
     let cost: number | null = null
     // A single trailing record (a screenshot, a huge tool result) may be
@@ -1689,7 +1720,6 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
         let d: Json
         try { d = JSON.parse(line) } catch { continue }
         if (!d || d.type !== 'message' || !d.message || d.message.role !== 'assistant') continue
-        if (typeof d.model === 'string' && d.model) model = d.model
         const u = d.usage
         if (u && typeof u === 'object') {
           // `inputTokens` already includes `cacheReadTokens` (a breakdown).
@@ -1699,18 +1729,13 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
       }
       if (context !== null || start === 0 || length >= 16 * 1024 * 1024) break
     }
-    if (!model && context === null) {
+    if (context === null) {
       // Cache the "no usage yet" answer too: a new session with no assistant
       // turn must not rescan the file every five seconds.
       cmdStatsCache.set(pane.id, { file: loc.file, size, gen, stats: null, session: loc.session })
       return { status: null, session: loc.session }
     }
-    const tokens = context === null ? '' : `${context >= 1000 ? `${(context / 1000).toFixed(1)}k` : context} context`
-    const money = cost === null ? '' : `$${cost.toFixed(4)}`
-    const status: OmpStatus = {
-      line: `Command Code · ${model ? cleanModelName(model) : 'session'}`,
-      meters: [tokens, money].filter(Boolean).join(' · ') || null,
-    }
+    const status: CommandCodeStatus = { contextTokens: context, costUsd: cost }
     cmdStatsCache.set(pane.id, { file: loc.file, size, gen, stats: status, session: loc.session })
     return { status, session: loc.session }
   }

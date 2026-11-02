@@ -170,8 +170,8 @@ export interface Pane {
   codexField?: string
   // omp shown: its status line (model, folder, branch) and its gauges (context, quotas).
   ompStatus?: OmpStatus
-  // Command Code shown: model and context of its last turn, read from the session.
-  cmdStatus?: OmpStatus
+  // Command Code shown: context and cost of its last turn, read from the session.
+  cmdStatus?: CommandCodeStatus
   // omp working, conversation shown: the running step ("Finding Fixed section",
   // null before the first tool) and when the turn started (ms, null if unknown).
   ompActivity?: OmpActivity
@@ -179,6 +179,7 @@ export interface Pane {
   ompShell?: ShellRun
 }
 export interface OmpStatus { line: string, meters: string | null }
+export interface CommandCodeStatus { contextTokens: number | null, costUsd: number | null }
 export interface OmpActivity { step: string | null, since: number | null }
 
 export interface ChangeLine { kind: 'add' | 'del' | 'context' | 'hunk' | 'meta', text: string }
