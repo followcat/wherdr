@@ -181,7 +181,18 @@ async function readChoices(p: Pane, rev: unknown, strict: boolean, watch = false
     // omp: its select dialog (tool approval) or "Ask" box.
     let choices = usageLimit ? null : p.agent === 'omp' ? parseOmpPrompt(text) : parseChoices(text, { strict })
     if (choices) choices.identity = promptIdentity(text, p.agent)
-    const menu = !usageLimit && p.agent !== 'omp' && framed && (strict || !choices || !parseChoices(text, { strict: true })) ? await readMenu(p.id) : null
+    // OpenCode's permission/question dialogs belong to the session, not the
+    // screen: the service lists them before any menu is guessed at — its
+    // boxed dialog must not be re-read as a menu, and a real card skips the
+    // extra ANSI read entirely. Only a blocked pane can be holding one.
+    const ocCard = !choices && p.agent === 'opencode' && p.status === 'blocked' && transcripts.opencodePending
+      ? opencodeCard(await transcripts.opencodePending(p).catch(() => null) || { permissions: [], forms: [] })
+      : null
+    if (ocCard) choices = ocCard.choices
+    // An OpenCode card is authoritative: no menu read on top of it. Every
+    // other agent keeps the original choices-vs-menu precedence.
+    const menu = ocCard || usageLimit || p.agent === 'omp' || !framed ? null
+      : strict || !choices || !parseChoices(text, { strict: true }) ? await readMenu(p.id) : null
     if (menu) {
       menu.identity = menuIdentity(menu)
       for (const item of menu.items) item.identity = menuIdentity(menu, item)
@@ -194,14 +205,6 @@ async function readChoices(p: Pane, rev: unknown, strict: boolean, watch = false
       askChecks.set(p.id, checks)
       choices = completeClaudeAsk(choices, await transcripts.pendingClaudeQuestions(p).catch(() => []), checks)
     } else if (!choices) askChecks.delete(p.id)
-    // OpenCode's permission/question dialogs belong to the session, not the
-    // screen: read them from the service so the card answers by API. Only a
-    // blocked pane can be holding one; anything else costs no shim call.
-    if (!choices && !menu && p.agent === 'opencode' && p.status === 'blocked' && transcripts.opencodePending) {
-      const pending = await transcripts.opencodePending(p).catch(() => null)
-      const card = pending ? opencodeCard(pending) : null
-      if (card) choices = card.choices
-    }
     // Claude Code's settings panel (/usage…): read-only, shown by the settings
     // card of the command result; its "Esc to cancel" is not a question.
     const settings = p.agent === 'claude' && settingsTabs(text) !== null
