@@ -711,6 +711,109 @@ function ompCommandText(text: string, templates: readonly CommandTemplate[]): st
 // `base`: position (in bytes) of `text` in the file. Each line keeps
 // its "start:length" position (lines.refs): messages with images
 // carry it, to re-read the image on demand (see image()).
+// Command Code (commandcode.ai): one JSONL session per project, shaped like
+// Claude's (message / model_change / session lines, tool_use + tool_result,
+// thinking, images). `meta.source` separates a human turn from tool results
+// and injected context; `model` on assistant lines is the session's model.
+function commandCodeText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (!Array.isArray(value)) return ''
+  return value.map(p => (p && p.type === 'text' && typeof p.text === 'string' ? p.text : '')).filter(Boolean).join('\n')
+}
+
+function commandCodeTool(name: string, input: Json): string {
+  if (typeof input === 'string') return firstLine(input)
+  const i = input && typeof input === 'object' ? input : {}
+  switch (name) {
+    case 'shell_command': return firstLine(i.description || i.command)
+    case 'read_file': case 'write_file': case 'edit_file':
+      return firstLine(i.file_path || i.path)
+    case 'grep': return `${i.pattern || ''}${i.path ? ` · ${i.path}` : ''}`
+    case 'glob': return firstLine(i.pattern)
+    case 'agent': return firstLine(i.description || i.prompt)
+    case 'ask_user_question': return firstLine(i.questions && i.questions[0] && i.questions[0].question)
+    case 'search_tools': return firstLine(i.query)
+    default: {
+      const v = Object.values(i).find(x => typeof x === 'string')
+      return firstLine(v)
+    }
+  }
+}
+
+export function parseCommandCode(lines: Lines): Parsed {
+  const items: Parsed = []
+  const tools = new Map<string, ChatItem>()
+  for (let i = 0; i < lines.length; i++) {
+    let d: Json
+    try { d = JSON.parse(lines[i]!) } catch { continue }
+    if (!d || d.type !== 'message' || !d.message || typeof d.message !== 'object') continue
+    const m = d.message
+    const ref = lines.refs?.[i]
+    const ts = typeof d.timestamp === 'string'
+      ? d.timestamp
+      : (Number.isFinite(m.meta?.createdAt) ? new Date(m.meta.createdAt).toISOString() : null)
+    if (m.role === 'assistant') {
+      const content = Array.isArray(m.content) ? m.content : []
+      let images = 0
+      for (const [block, part] of content.entries()) {
+        if (!part || typeof part !== 'object') continue
+        if (part.type === 'thinking' && typeof part.thinking === 'string' && part.thinking.trim()) {
+          items.push({ role: 'thinking', text: clip(part.thinking), ts })
+        } else if (part.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
+          items.push(replyItem({ role: 'assistant', text: clip(part.text), ts }, ref, block))
+        } else if (part.type === 'tool_use' && typeof part.id === 'string') {
+          const name = typeof part.name === 'string' ? part.name : 'Tool'
+          const t: ChatItem = { role: 'tool', name, text: clip(commandCodeTool(name, part.input), 300), ts }
+          tools.set(part.id, t)
+          items.push(t)
+        } else if (part.type === 'image') images++
+      }
+      if (images) items.push(replyItem({ role: 'assistant', text: '', images, ts, ...(ref ? { ref } : {}) }, ref))
+      continue
+    }
+    if (m.role !== 'user') continue
+    const content = m.content
+    const source = m.meta && typeof m.meta.source === 'string' ? m.meta.source : null
+    if (typeof content === 'string') {
+      const text = content.trim()
+      if (text && source !== 'system') items.push({ role: 'user', text: clip(text), ts })
+      continue
+    }
+    if (!Array.isArray(content)) continue
+    let text = ''
+    let images = 0
+    // Images the line's tool results returned come after the message's own
+    // (see lineImages / extractImage).
+    let toolImages = content.filter((p: Json) => p && p.type === 'image').length
+    for (const part of content) {
+      if (!part || typeof part !== 'object') continue
+      if (part.type === 'text' && typeof part.text === 'string') {
+        text += (text ? '\n' : '') + part.text
+      } else if (part.type === 'image') {
+        images++
+      } else if (part.type === 'tool_result' && typeof part.tool_use_id === 'string') {
+        const t = tools.get(part.tool_use_id)
+        if (!t) continue
+        const out = commandCodeText(part.content)
+        if (out) t.out = clip(out, 8000)
+        if (part.is_error) t.error = true
+        const n = Array.isArray(part.content) ? part.content.filter((p: Json) => p && p.type === 'image').length : 0
+        if (n && ref) {
+          t.images = n
+          t.ref = ref
+          if (toolImages) t.imageAt = toolImages
+        }
+        toolImages += n
+      }
+    }
+    const human = source === 'user' || (!source && !content.some((p: Json) => p && p.type === 'tool_result'))
+    if (human && (text.trim() || images)) {
+      items.push({ role: 'user', text: clip(text.trim()), images, ...(images && ref ? { ref } : {}), ts })
+    }
+  }
+  return items
+}
+
 export function parseLines(text: string, kind: string | null, base = 0, home = '', templates?: readonly CommandTemplate[], cwd = ''): Parsed {
   const raw = text.split('\n')
   const refs: string[] = []
@@ -722,7 +825,7 @@ export function parseLines(text: string, kind: string | null, base = 0, home = '
   }
   const lines: Lines = raw.map(stripBlobs)
   lines.refs = refs
-  const items = kind === 'omp' ? parseOmp(lines, home, templates, cwd) : kind === 'codex' ? parseCodex(lines) : parseClaude(lines, home)
+  const items = kind === 'omp' ? parseOmp(lines, home, templates, cwd) : kind === 'codex' ? parseCodex(lines) : kind === 'cmd' ? parseCommandCode(lines) : parseClaude(lines, home)
   // Content hash of each image, to spot one shown twice (see shared/imageDupes.ts).
   const byRef = new Map<string, number>()
   refs.forEach((r, i) => byRef.set(r, i))
@@ -1040,9 +1143,55 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
       // identifier: only an omp session (~/.omp/agent/sessions).
       const f = path.normalize(id)
       if (path.isAbsolute(f) && f.endsWith('.jsonl') && transcriptKind(f) === 'omp' && await exists(f)) found = f
+    } else if (kind === 'cmd') {
+      // ~/.commandcode/projects/<project-slug>/<session-id>.jsonl. The slug
+      // is not reversible (camelCase is split): scan the project folders.
+      const root = path.join(home, '.commandcode/projects')
+      const sid = path.basename(id).replace(/\.jsonl$/, '')
+      found = await firstExisting((await listDir(root)).map(d => path.join(root, d, `${sid}.jsonl`)))
     }
     if (found) bySession.set(id, found)
     return found
+  }
+
+  // Command Code has no Herdr session integration yet: find the project by the
+  // `cwd` recorded in each session's first line, then the most recently
+  // written session there. A resumed session keeps appending to its file, so
+  // mtime follows the pane in use; two live panes in the same project would
+  // still share the newest file (see docs/conversation.md).
+  async function commandCodeSessions() {
+    const root = path.join(home, '.commandcode/projects')
+    const out: { file: string, mtimeMs: number }[] = []
+    for (const d of await listDir(root)) {
+      const dir = path.join(root, d)
+      const files = (await listDir(dir)).filter(n => n.endsWith('.jsonl') && !n.endsWith('.checkpoints.jsonl'))
+      if (!files.length) continue
+      const paths = files.map(n => path.join(dir, n))
+      const stats = await fs.statMany(paths)
+      for (let i = 0; i < paths.length; i++) if (stats[i]?.isFile) out.push({ file: paths[i]!, mtimeMs: stats[i]!.mtimeMs })
+    }
+    return out.sort((a, b) => b.mtimeMs - a.mtimeMs)
+  }
+
+  async function locateCommandCode(pane: TranscriptPane): Promise<Loc | null> {
+    if (pane.agentSession) {
+      const f = await findSessionFile('cmd', pane.agentSession)
+      if (f) return { file: f, session: pane.agentSession }
+    }
+    if (!pane.cwd) return null
+    let best: { file: string, id: string, cwdLength: number } | null = null
+    for (const s of await commandCodeSessions()) {
+      let first: string
+      try { first = (await fs.read(s.file, 0, 64 * 1024)).toString('utf8').split('\n')[0]! } catch { continue }
+      let d: Json
+      try { d = JSON.parse(first) } catch { continue }
+      if (!d || d.type !== 'session' || typeof d.cwd !== 'string') continue
+      if (d.cwd !== pane.cwd && !pane.cwd.startsWith(d.cwd + '/')) continue
+      const hit = { file: s.file, id: typeof d.id === 'string' ? d.id : path.basename(s.file, '.jsonl'), cwdLength: d.cwd.length }
+      if (!best || hit.cwdLength > best.cwdLength) best = hit
+      if (d.cwd === pane.cwd) break // newest exact match
+    }
+    return best ? { file: best.file, session: best.id, guessed: true } : null
   }
 
   // `fresh`: a cached "no file" is not trusted (a brand new Claude writes its
@@ -1054,6 +1203,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
     let failed = false
     try {
       if (pane.agent === 'codex') loc = await locateCodexPane(pane)
+      else if (pane.agent === 'cmd') loc = await locateCommandCode(pane)
       else if (pane.agentSession) {
         const f = await findSessionFile(pane.agent, pane.agentSession)
         if (f) loc = { file: f, session: pane.agentSession }
@@ -1314,7 +1464,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, e
   async function model(pane: TranscriptPane): Promise<ModelInfo | null> {
     if (pane.agent === 'devin') return devin.model(pane)
     if (pane.agent === 'opencode') return opencode.model(pane)
-    if (!pane.agent || !['claude', 'codex', 'omp'].includes(pane.agent)) return null
+    if (!pane.agent || !['claude', 'codex', 'omp', 'cmd'].includes(pane.agent)) return null
     const loc = await locate(pane)
     if (!loc) return null
     // A failed read (SSH dropped, timeout) says nothing about the model: keep

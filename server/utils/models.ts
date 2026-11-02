@@ -178,6 +178,17 @@ export function modelFromLine(line: string, kind: string | null): ModelInfo | nu
     const effort = p.effort || (p.collaboration_mode && p.collaboration_mode.settings && p.collaboration_mode.settings.reasoning_effort) || null
     return { id: String(p.model), label: codexModelLabel(String(p.model)), effort, at: d.timestamp || null }
   }
+  if (kind === 'cmd') {
+    if (!line.includes('"model"')) return null
+    let d: Json
+    try { d = JSON.parse(line) }
+    catch { return null }
+    const id = d.type === 'model_change'
+      ? d.model
+      : d.type === 'message' && d.message && d.message.role === 'assistant' ? d.model : null
+    if (typeof id !== 'string' || !id) return null
+    return { id, label: cleanModelName(id), at: d.timestamp || null }
+  }
   const setHit = line.includes('Set model to') || line.includes('Kept model as')
   if (!setHit && !line.includes('"model"')) return null
   let d: Json

@@ -117,7 +117,7 @@ export const LOST_MS = 60 * 1000
 // (unknown screen). Reported as not sent, with that reason, instead of
 // waiting "until the menu closes" for nothing.
 export const NO_INPUT_MS = 30 * 1000
-export const HOLD_AGENTS = new Set(['claude', 'codex', 'omp', 'devin', 'opencode'])
+export const HOLD_AGENTS = new Set(['claude', 'codex', 'omp', 'devin', 'opencode', 'cmd'])
 // Agent at rest, whose input field may be checked on screen (see closePanel).
 export const INPUT_STATES = new Set(['idle', 'done', 'unknown'])
 
@@ -180,6 +180,9 @@ export function shouldHold(agent: string | null | undefined, status: string | nu
   // owns the keys — typed text and its Enter would answer it. Its dialog
   // leaves the composer box on screen, so the generic input check alone
   // can't tell it; the status is event-driven and trusted.
+  // Command Code's input UI is not recognized yet: only a blocked pane (a
+  // permission/question dialog) holds; an idle one must never wait forever.
+  if (agent === 'cmd') return status === 'blocked'
   if (agent === 'opencode' && status === 'blocked') return true
   return INPUT_STATES.has(status || '') && !input
 }
