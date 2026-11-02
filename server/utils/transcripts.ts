@@ -893,9 +893,12 @@ export function parseCommandCode(lines: Lines): Parsed {
     if (m.role !== 'user') continue
     const content = m.content
     const source = m.meta && typeof m.meta.source === 'string' ? m.meta.source : null
+    // `meta.isMeta` marks automation (monitor wake-ups, goal continuations):
+    // its source is still "user" but it is not a human turn.
+    const hidden = m.meta?.isMeta === true
     if (typeof content === 'string') {
       const text = content.trim()
-      if (text && source !== 'system') items.push({ role: 'user', text: clip(text), ts })
+      if (text && source !== 'system' && !hidden) items.push({ role: 'user', text: clip(text), ts })
       continue
     }
     if (!Array.isArray(content)) continue
@@ -925,7 +928,7 @@ export function parseCommandCode(lines: Lines): Parsed {
         toolImages += n
       }
     }
-    const human = source === 'user' || (!source && !content.some((p: Json) => p && p.type === 'tool_result'))
+    const human = !hidden && (source === 'user' || (!source && !content.some((p: Json) => p && p.type === 'tool_result')))
     if (human && (text.trim() || images)) {
       items.push({ role: 'user', text: clip(text.trim()), images, ...(images && ref ? { ref } : {}), ts })
     }
@@ -1621,23 +1624,30 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     if (!loc) return null
     let size: number
     try { size = (await fs.stat(loc.file)).size } catch { return null }
-    let text: string
-    try { text = (await fs.read(loc.file, Math.max(0, size - 256 * 1024), Math.min(size, 256 * 1024))).toString('utf8') } catch { return null }
     let model: string | null = null
     let context: number | null = null
     let cost: number | null = null
-    for (const line of text.split('\n')) {
-      let d: Json
-      try { d = JSON.parse(line) } catch { continue }
-      if (!d || d.type !== 'message' || !d.message || d.message.role !== 'assistant') continue
-      if (typeof d.model === 'string' && d.model) model = d.model
-      const u = d.usage
-      if (u && typeof u === 'object') {
-        const input = Number(u.inputTokens) || 0
-        const cached = Number(u.cacheReadTokens) || 0
-        context = input + cached
-        cost = Number.isFinite(u.costUsd) ? Number(u.costUsd) : null
+    // A single trailing record (a screenshot, a huge tool result) may be
+    // larger than the first window: widen backwards until a complete
+    // assistant usage is in view, not just a cut record.
+    for (let length = 256 * 1024; ; length *= 2) {
+      const start = Math.max(0, size - length)
+      let text: string
+      try { text = (await fs.read(loc.file, start, size - start)).toString('utf8') } catch { return null }
+      const from = start > 0 ? text.indexOf('\n') + 1 : 0
+      for (const line of text.slice(from).split('\n')) {
+        let d: Json
+        try { d = JSON.parse(line) } catch { continue }
+        if (!d || d.type !== 'message' || !d.message || d.message.role !== 'assistant') continue
+        if (typeof d.model === 'string' && d.model) model = d.model
+        const u = d.usage
+        if (u && typeof u === 'object') {
+          // `inputTokens` already includes `cacheReadTokens` (a breakdown).
+          context = Number(u.inputTokens) || 0
+          cost = Number.isFinite(u.costUsd) ? Number(u.costUsd) : null
+        }
       }
+      if (context !== null || start === 0 || length >= 16 * 1024 * 1024) break
     }
     if (!model && context === null) return null
     const tokens = context === null ? '' : `${context >= 1000 ? `${(context / 1000).toFixed(1)}k` : context} context`
