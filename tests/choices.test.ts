@@ -143,6 +143,24 @@ footer
 `
     expect(inputVisible(scrolled)).toBe(false)
   })
+  it('keeps the OpenCode field when dialog words appear in ordinary text', () => {
+    // A lone "enter confirm" is prose, not the dialog footer — the markers
+    // need the same conjunction herdr uses (dismiss + action + nav).
+    const idle = ` some output\nThe shortcut is "enter confirm".\n┃ Ask anything…\n┃\n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n opencode 2.0 · gpt-5\n`
+    expect(inputVisible(idle)).toBe(true)
+    expect(inputVisible(idle, 'opencode')).toBe(true)
+  })
+  it('scopes field recognition to the pane’s own agent composer', () => {
+    // A "›" or "❯" glyph inside OpenCode/Devin output is not an input field.
+    const ocOutput = `› some transcript line\n┃ Ask anything…\n┃\n╹▀▀▀▀▀▀▀▀▀▀▀▀▀\n opencode\n`
+    expect(inputVisible(ocOutput, 'opencode')).toBe(true)
+    const ocDialog = `△ Permission required\n› Allow once\n┃ run tests\n┃\n╹▀▀▀▀▀▀▀▀▀▀▀▀▀\n↑↓ select · enter confirm · esc dismiss\n`
+    expect(inputVisible(ocDialog, 'opencode')).toBe(false)
+    const devinOut = `› claude-looking output\n❭ Ask Devin anything\n───\nSWE-2 Max\n`
+    expect(inputVisible(devinOut, 'opencode')).toBe(false)
+    // Without an agent hint the recognizers stay backward compatible.
+    expect(inputVisible(ocOutput)).toBe(true)
+  })
 })
 
 describe('panelOpen', () => {
