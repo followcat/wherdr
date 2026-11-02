@@ -876,12 +876,14 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
     if (m.role === 'assistant') {
       const content = Array.isArray(m.content) ? m.content : []
       let images = 0
+      let lastText: ChatItem | null = null
       for (const [block, part] of content.entries()) {
         if (!part || typeof part !== 'object') continue
         if (part.type === 'thinking' && typeof part.thinking === 'string' && part.thinking.trim()) {
           items.push({ role: 'thinking', text: clip(part.thinking), ts })
         } else if (part.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
-          items.push(replyItem({ role: 'assistant', text: clip(part.text), ts }, ref, block))
+          lastText = replyItem({ role: 'assistant', text: clip(part.text), ts }, ref, block)
+          items.push(lastText)
         } else if (part.type === 'tool_use' && typeof part.id === 'string') {
           const name = typeof part.name === 'string' ? part.name : 'Tool'
           const t: ChatItem = { role: 'tool', name, text: clip(commandCodeTool(name, part.input), 300), ts }
@@ -901,7 +903,16 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
           items.push(t)
         } else if (part.type === 'image') images++
       }
-      if (images) items.push(replyItem({ role: 'assistant', text: '', images, ts, ...(ref ? { ref } : {}) }, ref))
+      if (images) {
+        // An assistant image belongs to the text reply, not to an extra empty
+        // turn that would replace the Copy/Reply target.
+        if (lastText) {
+          lastText.images = images
+          if (ref) lastText.ref = ref
+        } else {
+          items.push(replyItem({ role: 'assistant', text: '', images, ts, ...(ref ? { ref } : {}) }, ref))
+        }
+      }
       continue
     }
     if (m.role !== 'user') continue
@@ -1127,6 +1138,12 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   const locCache = new Map<string, { at: number, loc: Loc | null, session?: string | null }>()
   const lastLoc = new Map<string, Loc>() // last file found, fallback if a lookup fails
   const parseCache = new Map<string, { size: number, gen: string, settled: boolean, r: TailResult }>()
+  // A file's remembered results and parsed tails travel together: clearing one
+  // without the other would serve a cached page that no longer has them.
+  function forgetCmdFile(file: string) {
+    cmdResults.delete(file)
+    for (const key of [...parseCache.keys()]) if (key.startsWith(`${file}|`)) parseCache.delete(key)
+  }
   const metaCache = new Map<string, Json>()
   // omp file commands of this machine (see parseOmp), re-read every 5 min.
   let ompTemplates: { at: number, list: CommandTemplate[] } = { at: 0, list: [] }
@@ -1558,7 +1575,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
         || (prev.ino !== undefined && st.ino !== undefined && prev.ino !== st.ino)
         || (st.size === prev.size && prev.gen !== g)
       )
-      if (replaced) cmdResults.delete(loc.file)
+      if (replaced) forgetCmdFile(loc.file)
       cmdSizes.set(loc.file, { size: st.size, gen: g, ino: st.ino })
       if (cmdSizes.size > 64) cmdSizes.delete(cmdSizes.keys().next().value!)
     }
@@ -1596,7 +1613,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
       || (same && st.size === prev.size && prev.gen !== gen)
       || (same && prev.unsettled && !await stillThere(loc.file, prev)))
     if (rewritten) {
-      if (kind === 'cmd') cmdResults.delete(loc.file)
+      if (kind === 'cmd') forgetCmdFile(loc.file)
       r = await tail(loc.file, kind, st.size, gen, null, settled)
     }
     const mark = `${head}${settled ? '' : '!'}`
@@ -1820,7 +1837,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
 
   function forget(paneId: string) {
     const last = lastLoc.get(paneId)
-    if (last) { cmdResults.delete(last.file); cmdSizes.delete(last.file) }
+    if (last) { forgetCmdFile(last.file); cmdSizes.delete(last.file) }
     locCache.delete(paneId)
     lastLoc.delete(paneId)
     modelCache.delete(paneId)
