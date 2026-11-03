@@ -17,7 +17,7 @@
 import path from 'node:path'
 import type { SlashCommand } from '../../shared/types'
 import { type MachineFs, type ShellExec, dirDeniedFromError } from './fsx'
-import { CLAUDE_BUILTIN, CODEX_BUILTIN, OMP_BUILTIN } from './slashcatalog'
+import { CLAUDE_BUILTIN, CODEX_BUILTIN, OMP_BUILTIN, OPENCODE_BUILTIN } from './slashcatalog'
 
 // Short: a skill or command added on the machine shows up within seconds,
 // as in the terminal (Claude Code watches its folders).
@@ -244,7 +244,7 @@ export function mergeCommands(builtin: [string, string, string?][], extra: Slash
 }
 
 export function builtinCommands(kind: string) {
-  return mergeCommands(kind === 'claude' ? CLAUDE_BUILTIN : kind === 'codex' ? CODEX_BUILTIN : kind === 'omp' ? OMP_BUILTIN : [], [])
+  return mergeCommands(kind === 'claude' ? CLAUDE_BUILTIN : kind === 'codex' ? CODEX_BUILTIN : kind === 'omp' ? OMP_BUILTIN : kind === 'opencode' ? OPENCODE_BUILTIN : [], [])
 }
 
 // Project folders whose .claude/ Claude Code reads (getProjectDirsUpToHome,
@@ -370,6 +370,8 @@ export async function slashCommands(opts: { key: string, fs: MachineFs, exec?: S
   } else if (kind === 'codex') {
     builtin = CODEX_BUILTIN
     roots = [{ dir: path.join(home, '.codex/prompts'), kind: 'commands', depth: 0, prefix: 'prompts:' }]
+  } else if (kind === 'opencode') {
+    builtin = OPENCODE_BUILTIN
   } else if (kind === 'omp') {
     builtin = OMP_BUILTIN
     const dirs = ompConfigDirs(home, cwd)
