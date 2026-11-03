@@ -8,27 +8,28 @@
   A command the agent proposes (shell code block, or inline `! command`) can be copied without
   its prompt, or run in the agent's shell mode (`!`, Claude Code, Codex, omp and OpenCode) after you
   confirm the full command.
-- **Devin conversations**: read the local CLI's ATIF transcript on the machine running
-  the agent (`~/.local/share/devin/cli/transcripts/<session-id>.json`, ATIF-v1.7 as written
-  by Devin CLI 3000.11.234), including tool results and saved images. Install the Herdr
-  integration with `herdr integration install devin`, then start or resume Devin so it
-  reports its session. Same-directory sessions are never selected by recency. The reader
-  follows `DEVIN_SESSIONS_DIR`, then `XDG_DATA_HOME/devin/cli`, otherwise
-  `~/.local/share/devin/cli`. No export flag is needed: Devin writes the JSON file next
-  to its CLI data, after each turn. A turn's messages — the prompt it took included —
-  appear here only when the turn ends, which can be well behind the terminal's
-  streaming display on a long turn. To cover that gap, wherdr also installs one small
-  lifecycle hook on the Devin machine (`~/.config/devin/wherdr-devin-live.py`,
-  registered next to Herdr's own hook in `~/.config/devin/config.json`; a
-  config it cannot parse is left untouched): Devin's documented
-  UserPromptSubmit / PreToolUse / PostToolUse / Stop events append — payloads
-  trimmed to what the view shows — to `~/.cache/herdr-web/devin-live/<session>.jsonl`,
-  owner-readable only; files untouched for a week are deleted whenever the
-  hook is (re)installed — at wherdr start or a machine reconnect, not on a
-  timer. Events of the turn ATIF has not exported yet show as live items
-  until it lands and takes over. The hook needs python3 on that machine and
-  only reaches sessions started after it was registered (Devin snapshots
-  hooks at session start). Cloud sessions are not supported by this reader.
+- **Devin conversations**: read store-first on the machine running the agent —
+  the local CLI's own `sessions.db` (`~/.local/share/devin/cli/sessions.db`), a
+  private schema guarded by its recorded version (20 as written by Devin CLI
+  3000.11.234; an unknown version is never interpreted). A small python3
+  script on that machine — the same python3 Herdr's own Devin hook already
+  needs — walks the session's message chain read-only, per-session bounded
+  queries only. Devin writes one node per message as it happens, so a turn's
+  prompt and tool calls appear within seconds, and history it compacted out
+  of the transcript is recovered: the earlier thread is stitched back in,
+  marked by a "Conversation compacted" note. When the store is not usable —
+  missing database, no python3, unknown schema, unknown session — the ATIF
+  transcript (`transcripts/<session-id>.json`, ATIF-v1.7) takes over
+  unchanged, and a source switch resets the view rather than mixing items.
+  Install the Herdr integration with `herdr integration install devin`, then
+  start or resume Devin so it reports its session. Same-directory sessions
+  are never selected by recency. The reader follows `DEVIN_SESSIONS_DIR`,
+  then `XDG_DATA_HOME/devin/cli`, otherwise `~/.local/share/devin/cli`.
+  Polling costs a file stat while the store is quiet; when the db and WAL
+  stats move, the session's chain signature confirms whether anything
+  changed before the conversation is re-read. Cloud sessions are not
+  supported by this reader, and a future schema version may need a reader
+  update.
 - **OpenCode 2.x conversations**: read the existing background service's projected
   history on the agent's machine (local or SSH), with native pagination, reasoning,
   tool progress/results/errors, saved images, previews and search. Python 3 is required
