@@ -23,11 +23,12 @@
   config it cannot parse is left untouched): Devin's documented
   UserPromptSubmit / PreToolUse / PostToolUse / Stop events append — payloads
   trimmed to what the view shows — to `~/.cache/herdr-web/devin-live/<session>.jsonl`,
-  owner-readable only and swept after a week. Events of the turn ATIF has not
-  exported yet show as live items until it lands and takes over. The hook
-  needs python3 on that machine and only reaches sessions started after it was
-  registered (Devin snapshots hooks at session start). Cloud sessions are not
-  supported by this reader.
+  owner-readable only; files untouched for a week are deleted whenever the
+  hook is (re)installed — at wherdr start or a machine reconnect, not on a
+  timer. Events of the turn ATIF has not exported yet show as live items
+  until it lands and takes over. The hook needs python3 on that machine and
+  only reaches sessions started after it was registered (Devin snapshots
+  hooks at session start). Cloud sessions are not supported by this reader.
 - **OpenCode 2.x conversations**: read the existing background service's projected
   history on the agent's machine (local or SSH), with native pagination, reasoning,
   tool progress/results/errors, saved images, previews and search. Python 3 is required
