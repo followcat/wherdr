@@ -39,15 +39,23 @@ if not sid or not all(c.isalnum() or c in '-_' for c in sid):
 def clip(v, n):
     return v[:n] if isinstance(v, str) else v
 
+def bounded(v, n):
+    # Strings clip directly; other values keep a compact JSON form.
+    if v is None or isinstance(v, str):
+        return clip(v, n)
+    return json.dumps(v, separators=(',', ':'))[:n]
+
 # The sidecar holds prompts and tool output: bound what lands in it (replies
 # at chat-item size, results and inputs much smaller — the tail only needs
 # their heads), and keep it readable by the owner only.
 ev['prompt'] = clip(ev.get('prompt'), 20000)
 ev['last_assistant_message'] = clip(ev.get('last_assistant_message'), 20000)
-ev['tool_response'] = clip(ev.get('tool_response'), 4000)
+tr = ev.get('tool_response')
+# PostToolUse carries {output, error, success}: clip its text fields.
+ev['tool_response'] = {k: clip(v, 4000) for k, v in tr.items()} if isinstance(tr, dict) else bounded(tr, 4000)
 ti = ev.get('tool_input')
 if isinstance(ti, dict):
-    ev['tool_input'] = {k: clip(v, 1000) for k, v in ti.items()}
+    ev['tool_input'] = {k: bounded(v, 1000) for k, v in ti.items()}
 try:
     # Always ~/.cache: the reader builds this path from the machine's home
     # and cannot know its XDG_CACHE_HOME.
@@ -154,6 +162,15 @@ export async function ensureDevinLive(fs: MachineFs, exec: ShellExec | undefined
 const clip = (s: unknown, max = MAX_TEXT) => typeof s === 'string' ? s.slice(0, max) : ''
 const asText = (v: unknown) => typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v)
 
+// PostToolUse's tool_response: a plain string on older events, the real
+// {output, error, success} object on 3000.11.234. Show the output, else the
+// error text, else the raw object; a failed call marks the item.
+const responseOut = (v: unknown): { out: string, failed: boolean } => {
+  if (!v || typeof v !== 'object') return { out: clip(asText(v)), failed: false }
+  const r = v as Record<string, unknown>
+  return { out: clip(asText(r.output) || asText(r.error) || JSON.stringify(v)), failed: r.success === false }
+}
+
 // Maps hook events newer than `afterTs` to chat items, pairing each
 // PostToolUse with its pending PreToolUse by tool_use_id when the event
 // carries one, else by per-tool-name order.
@@ -203,12 +220,13 @@ export function parseLiveEvents(raw: string, afterTs: number): ChatItem[] {
           if (e.id) pendingById.delete(e.id)
         }
       }
-      const out = clip(asText(ev.tool_response))
+      const { out, failed } = responseOut(ev.tool_response)
       if (t) {
         t.toolStatus = 'completed'
         if (out) t.out = out
+        if (failed) t.error = true
       } else {
-        items.push({ role: 'tool', name, text: '', ts: iso(ts), live: true, toolStatus: 'completed', ...(out ? { out } : {}) })
+        items.push({ role: 'tool', name, text: '', ts: iso(ts), live: true, toolStatus: 'completed', ...(out ? { out } : {}), ...(failed ? { error: true } : {}) })
       }
     } else if (kind === 'Stop') {
       const text = clip(ev.last_assistant_message)
