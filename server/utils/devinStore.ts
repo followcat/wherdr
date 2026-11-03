@@ -418,7 +418,7 @@ export function createDevinStore({ home, fs = localFs, exec, now = () => Date.no
       if (m.role === 'user') {
         if (m.metadata?.is_user_input !== true) continue
         const parts = blocks(m)
-        const text = clip(m.content) || clip(contentText(parts))
+        const text = clip(contentText(m.content)) || clip(contentText(parts))
         const imgs = images(parts)
         if (text || imgs.length) {
           const it: ChatItem = { role: 'user', text, ts, ref: ref('u') }

@@ -356,4 +356,12 @@ it('marks tool errors from the result meta alone, never the output text', async 
   expect(tools.find(i => i.text === 'make build')!.error).toBeFalsy()
 })
 
-
+it('reads user text when the message content is a list of blocks', async () => {
+  const { home, reader } = fixture()
+  writeDevinStore(home, { rows: [
+    { id: 0, message: devinMessage('user', [{ type: 'text', text: 'First part' }, { type: 'text', text: 'Second part' }]) },
+    { id: 1, parent: 0, message: devinMessage('assistant', 'Understood') },
+  ] })
+  const r = await reader.chat(pane)
+  expect(r.items?.[0]).toMatchObject({ role: 'user', text: 'First part\n\nSecond part' })
+})
