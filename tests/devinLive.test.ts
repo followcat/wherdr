@@ -62,6 +62,22 @@ describe('Devin live tail: hook events to chat items', () => {
     expect(item).toMatchObject({ role: 'tool', name: 'exec', toolStatus: 'completed', out: 'done' })
   })
 
+  it('reads a real object tool_response: output text, or error marked as an error', () => {
+    // Devin 3000.11.234 sends {output, error, success}, not a plain string.
+    const raw = [
+      line(T0, { hook_event_name: 'PreToolUse', tool_name: 'exec', tool_use_id: 'c1', tool_input: { command: 'make check' } }),
+      line(T0 + 100, { hook_event_name: 'PostToolUse', tool_name: 'exec', tool_use_id: 'c1', tool_response: { output: 'ran fine', error: null, success: true } }),
+      line(T0 + 200, { hook_event_name: 'PostToolUse', tool_name: 'exec', tool_response: { output: '', error: 'exit 1: boom', success: false } }),
+      line(T0 + 300, { hook_event_name: 'PostToolUse', tool_name: 'exec', tool_response: { success: true } }),
+    ].join('\n')
+    const items = parseLiveEvents(raw, 0)
+    expect(items[0]).toMatchObject({ text: 'make check', toolStatus: 'completed', out: 'ran fine' })
+    expect(items[0]!.error).toBeUndefined()
+    expect(items[1]).toMatchObject({ role: 'tool', toolStatus: 'completed', out: 'exit 1: boom', error: true })
+    // Neither output nor error to show: the raw object is the fallback.
+    expect(items[2]).toMatchObject({ role: 'tool', toolStatus: 'completed', out: '{"success":true}' })
+  })
+
   it("renders the turn's last reply when Stop fires", () => {
     const raw = line(T0, { hook_event_name: 'Stop', last_assistant_message: 'all done', session_id: 's1' })
     const [item] = parseLiveEvents(raw, 0)
@@ -261,6 +277,22 @@ describe('Devin live tail: install on a real shell', () => {
     expect(rec.ev.last_assistant_message).toHaveLength(20000)
     expect(rec.ev.tool_response).toHaveLength(4000)
     expect(rec.ev.tool_input.command).toHaveLength(1000)
-    expect(rec.ev.tool_input.timeout).toBe(42)
+    expect(rec.ev.tool_input.timeout).toBe('42')
+  })
+
+  it('clips a real object tool_response field by field', async () => {
+    const h = home()
+    expect(sh(await installScript(), h).status).toBe(0)
+    // Devin 3000.11.234 sends {output, error, success}: the text fields clip,
+    // the rest is kept as is.
+    const r = hook(h, {
+      hook_event_name: 'PostToolUse', session_id: 's3', tool_name: 'exec', tool_use_id: 'call-1',
+      tool_response: { output: 'o'.repeat(10000), error: null, success: true },
+    })
+    expect(r.status).toBe(0)
+    const rec = JSON.parse(readFileSync(path.join(h, '.cache/herdr-web/devin-live/s3.jsonl'), 'utf8'))
+    expect(rec.ev.tool_response.output).toHaveLength(4000)
+    expect(rec.ev.tool_response.error).toBeNull()
+    expect(rec.ev.tool_response.success).toBe(true)
   })
 })
