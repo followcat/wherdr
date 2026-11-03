@@ -44,6 +44,11 @@ export function queuedDone(q: { text: string, at: number, turnSeen?: boolean }, 
   const needle = norm(q.text.split('\n').filter(l => !isUploadLine(l)).join(' ')).slice(0, 80)
   const bashNeedle = norm(bashText(q.text)).slice(0, 80)
   const photos = photosOnly(q.text)
+  // OpenCode runs "!cmd" as a shell item in its transcript; it never becomes
+  // a user row, so match that item's command (either landing shape).
+  if (agent === 'opencode' && /^\s*!/.test(q.text) && bashNeedle
+    && items.some(i => (i.role === 'bash' || (i.role === 'tool' && i.name === 'shell'))
+      && (!i.ts || Date.parse(i.ts) >= q.at - 10000) && norm(i.text).includes(bashNeedle))) return true
   if (users.some(u => (!u.ts || Date.parse(u.ts) >= q.at - 10000)
     && (u.role === 'bash' ? Boolean(bashNeedle) && norm(u.text).includes(bashNeedle)
       : needle ? norm(u.text).includes(needle) : photos ? photosLanded(q.text, u) : (u.images || 0) > 0))) return true
@@ -94,6 +99,8 @@ export function landed(q: { text: string, at: number, typedAt?: number }, items:
   const hit = items.find((u) => {
     if (taken.has(u) || !u.ts || !(Date.parse(u.ts) >= since)) return false
     if (u.role === 'bash') return bash !== null && Boolean(bash) && flat(u.text) === bash
+    // OpenCode's shell run may surface as a tool item named "shell".
+    if (u.role === 'tool' && u.name === 'shell' && agent === 'opencode') return bash !== null && Boolean(bash) && flat(u.text) === bash
     if (u.role !== 'user' && u.role !== 'cmd') return false
     if (photos) return photosLanded(q.text, u)
     return wholes.has(flat(u.text)) || partOf(u.text)

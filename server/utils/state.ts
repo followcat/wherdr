@@ -19,7 +19,7 @@ import { HerdrError, agentPrompt, herdr, herdrOn, sleep } from './herdr'
 import { paneForeground } from './restartSeq'
 import { CHOICE_MS, keepReading, ScreenCache } from './screenCache'
 import { mapScreenPanes, screenRpcGate } from './screenGate'
-import { type AskChecks, completeClaudeAsk, completeOmpAsk, ompActiveTab, parseChoices, parseOmpPrompt } from './choices'
+import { type AskChecks, completeClaudeAsk, completeOmpAsk, ompActiveTab, parseChoices, parseOmpPrompt, parseOpenCodePermission } from './choices'
 import { isPermissionQuestion, mergeDetail } from './promptDetail'
 import { parseWaitScreen } from './waitScreen'
 import { parseMenu, TOP } from '../../shared/menuScreen'
@@ -73,6 +73,7 @@ export const transcripts = {
   opencodePending: (p: TranscriptPane) => trFor(p).opencodePending(p),
   opencodeReplyPermission: (p: TranscriptPane, requestID: string, decision: string, message?: string) => trFor(p).opencodeReplyPermission(p, requestID, decision, message),
   opencodeReplyForm: (p: TranscriptPane, formID: string, key: string, value: unknown) => trFor(p).opencodeReplyForm(p, formID, key, value),
+  opencodePermissionMatch: (p: TranscriptPane, target: { action: string, resources: string[], decision: 'once' | 'always' | 'reject' }) => trFor(p).opencodePermissionMatch(p, target),
   opencodeInbox: (p: TranscriptPane) => trFor(p).opencodeInbox(p),
   opencodeInboxDelete: (p: TranscriptPane, itemID: string) => trFor(p).opencodeInboxDelete(p, itemID),
   opencodeShell: (p: TranscriptPane, command: string) => trFor(p).opencodeShell(p, command),
@@ -114,6 +115,14 @@ export async function withOmpTab(paneId: string, c: Choices): Promise<Choices> {
   if (tab !== null) return { ...c, tab }
   const { tabs: _, ...rest } = c
   return rest
+}
+// OpenCode's permission cursor is a background colour, invisible in the
+// detection text. Read the screen again in ANSI for the card's highlight;
+// answering goes through the permission API and never depends on it.
+export async function withOpenCodeCursor(paneId: string, c: Choices): Promise<Choices> {
+  if (!c.horizontal) return c
+  const r = await herdr('pane.read', { pane_id: paneId, source: 'visible', format: 'ansi' }, 4000)
+  return parseOpenCodePermission(null, r.read && r.read.text) || c
 }
 
 // Blocking prompts: re-read on revision changes and periodically while
@@ -189,9 +198,21 @@ async function readChoices(p: Pane, rev: unknown, strict: boolean, watch = false
       ? opencodeCard(await transcripts.opencodePending(p).catch(() => null) || { permissions: [], forms: [] })
       : null
     if (ocCard) choices = ocCard.choices
+    // Fallback for the API card: the service may be unreachable or may not
+    // list this request — the boxed permission dialog still parses from the
+    // screen, and its answer resolves a request id by action/resources.
+    let ocScreen = false
+    if (!choices && p.agent === 'opencode' && p.status === 'blocked') {
+      const screenCard = parseOpenCodePermission(text)
+      if (screenCard) {
+        choices = await withOpenCodeCursor(p.id, screenCard)
+        choices.identity = promptIdentity(text, p.agent)
+        ocScreen = true
+      }
+    }
     // An OpenCode card is authoritative: no menu read on top of it. Every
     // other agent keeps the original choices-vs-menu precedence.
-    const menu = ocCard || usageLimit || p.agent === 'omp' || !framed ? null
+    const menu = ocCard || ocScreen || usageLimit || p.agent === 'omp' || !framed ? null
       : strict || !choices || !parseChoices(text, { strict: true }) ? await readMenu(p.id) : null
     if (menu) {
       menu.identity = menuIdentity(menu)
