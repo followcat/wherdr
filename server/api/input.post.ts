@@ -34,7 +34,10 @@ export default defineApi(async (event, b) => {
       // typing text + Enter there would answer it. Hold the message like a
       // prompt-route send would; a bare key press is refused outright.
       if (now?.agent === 'opencode' && now.status === 'blocked' && !b.native) {
-        if (typeof b.text !== 'string' || !b.text.trim() || isSlashCommand(b.text)) {
+        // Only a complete submission (text + Enter) is worth holding; a raw
+        // draft or stray keys have nothing safe to do.
+        if (typeof b.text !== 'string' || !b.text.trim() || isSlashCommand(b.text)
+          || !Array.isArray(b.keys) || b.keys.length !== 1 || b.keys[0] !== 'enter') {
           throw new HerdrError('stale', 'OpenCode is asking something — answer it in its terminal.')
         }
         const q = addQueued(b.pane_id, b.text, { held: true })

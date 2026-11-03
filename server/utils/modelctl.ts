@@ -141,8 +141,8 @@ async function withPane<T>(paneId: string, fn: (p: Pane) => Promise<T>): Promise
   const p = findPane(paneId)
   if (!p) throw new HerdrError('bad_pane', 'Pane not found')
   if (!p.agent || !SWITCH_AGENTS.has(p.agent)) throw new HerdrError('unsupported', 'This agent’s model cannot be changed from wherdr')
-  if (!READY.has(p.status || '')) {
-    throw new HerdrError('busy', p.status === 'blocked' ? 'The agent is waiting for an answer — reply first.' : 'The agent is working — change the model once it’s done.')
+  if (!READY.has(p.status || '') || p.prompt || p.menu || p.screen || p.interaction === 'terminal') {
+    throw new HerdrError('busy', p.status === 'blocked' || p.prompt || p.menu || p.screen || p.interaction === 'terminal' ? 'The agent is waiting for an answer — reply first.' : 'The agent is working — change the model once it’s done.')
   }
   if (busy.has(paneId)) throw new HerdrError('busy', 'Model change already in progress')
   busy.add(paneId)
@@ -607,8 +607,13 @@ async function ompCycleTo(p: Pane, before: ModelInfo, level: string) {
   }
 }
 
+// Devin/OpenCode have a model picker but no wherdr effort control yet —
+// keep them out of the Claude/Codex menu paths entirely.
+const EFFORT_AGENTS = new Set(['claude', 'codex', 'omp'])
+
 export async function listEfforts(paneId: string): Promise<EffortList> {
   return withPane(paneId, async p => {
+    if (!EFFORT_AGENTS.has(p.agent!)) return { levels: [], current: null }
     const model = await currentModel(p)
     if (!model) return { levels: [], current: null }
     // omp: levels of its ⇧⇥ cycle, as far as the presses have shown them.
@@ -640,6 +645,7 @@ export async function listEfforts(paneId: string): Promise<EffortList> {
 
 export async function setEffort(paneId: string, level: string): Promise<ModelInfo> {
   return withPane(paneId, async p => {
+    if (!EFFORT_AGENTS.has(p.agent!)) throw new HerdrError('unsupported', 'This agent’s effort cannot be changed from wherdr')
     const before = await currentModel(p)
     if (!before) throw new HerdrError('bad_model', 'Unknown model')
     const started = Date.now()
@@ -707,12 +713,19 @@ export async function setEffort(paneId: string, level: string): Promise<ModelInf
 // /api/session/<id> {model:{id,providerID,variant}} (opencodeTransport only
 // allows that body, then re-GETs the session for verification).
 
+// An option label must identify one catalog entry: providers can offer the
+// same display name, so duplicates carry their provider.
+type OpenCodeEntry = { id: string, providerID: string, name?: string, modelID?: string, enabled?: boolean, variants?: string[] }
+const opencodeEntryLabel = (e: OpenCodeEntry, dup: boolean) => dup ? `${e.name || e.id} (${e.providerID})` : String(e.name || e.id)
+
 async function opencodeListModels(p: Pane): Promise<ModelList> {
-  const entries = await transcripts.opencodeModels(p)
+  const entries = (await transcripts.opencodeModels(p) as OpenCodeEntry[])
+    .filter(e => e && e.enabled !== false && typeof e.id === 'string' && typeof e.providerID === 'string')
+  const names = new Map<string, number>()
+  for (const e of entries) names.set(String(e.name || e.id), (names.get(String(e.name || e.id)) || 0) + 1)
   const cur = await transcripts.model(p).catch(() => null)
   const options = entries
-    .filter(e => e && e.enabled !== false && typeof e.id === 'string' && typeof e.providerID === 'string')
-    .map((e): ModelOption => ({ label: String(e.name || e.id), hint: `${e.providerID}/${e.modelID || e.id}`, current: e.id === cur?.id }))
+    .map((e): ModelOption => ({ label: opencodeEntryLabel(e, (names.get(String(e.name || e.id)) || 0) > 1), hint: `${e.providerID}/${e.modelID || e.id}`, current: e.id === cur?.id }))
   return { agent: 'opencode', options, at: Date.now() }
 }
 
@@ -722,15 +735,22 @@ async function opencodeSetModel(p: Pane, wanted: string): Promise<ModelInfo> {
   if (busy.has(p.id)) throw new HerdrError('busy', 'Model change already in progress')
   busy.add(p.id)
   try {
-    const entries = await transcripts.opencodeModels(p)
+    const entries = (await transcripts.opencodeModels(p) as OpenCodeEntry[])
+      .filter(e => e && e.enabled !== false && typeof e.id === 'string' && typeof e.providerID === 'string')
+    const names = new Map<string, number>()
+    for (const e of entries) names.set(String(e.name || e.id), (names.get(String(e.name || e.id)) || 0) + 1)
     const wantedL = wanted.toLowerCase()
-    const e = entries.find(e => e && e.enabled !== false && (e.name === wanted || e.id === wanted || `${e.providerID}/${e.modelID || e.id}` === wanted || String(e.name || '').toLowerCase() === wantedL))
-    if (!e || typeof e.id !== 'string' || typeof e.providerID !== 'string') throw new HerdrError('bad_model', fmt('Model not found in /models: {model}', { model: wanted }))
+    const matches = (e: OpenCodeEntry) => opencodeEntryLabel(e, (names.get(String(e.name || e.id)) || 0) > 1) === wanted
+      || e.id === wanted || `${e.providerID}/${e.modelID || e.id}` === wanted
+      || (names.get(String(e.name || e.id)) === 1 && String(e.name || '').toLowerCase() === wantedL)
+    const hits = entries.filter(matches)
+    const e = hits[0]
+    if (!e || hits.length > 1) throw new HerdrError('bad_model', fmt('Model not found in /models: {model}', { model: wanted }))
     const cur = await transcripts.model(p).catch(() => null)
     const variant = cur?.id === e.id && cur.effort ? cur.effort : (Array.isArray(e.variants) ? String(e.variants[0] || '') : '') || undefined
     const patched = await transcripts.opencodePatchModel(p, { id: e.id, providerID: e.providerID, ...(variant ? { variant } : {}) })
-    const now = patched?.model
-    if (now?.id !== e.id) throw new HerdrError('stale', 'The model did not change — try again.')
+    const now = patched?.model as { id?: string, providerID?: string, variant?: string } | undefined
+    if (now?.id !== e.id || now?.providerID !== e.providerID || (variant && now?.variant !== variant)) throw new HerdrError('stale', 'The model did not change — try again.')
     const info: ModelInfo = { id: String(now.id), label: String(e.name || now.id), ...(now.variant ? { effort: now.variant } : {}) }
     setTimeout(poll, 100)
     return info

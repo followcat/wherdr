@@ -187,8 +187,10 @@ async function readChoices(p: Pane, rev: unknown, strict: boolean, watch = false
     const framed = String(text || '').split('\n').some((l: string) => TOP.test(l))
     // A live quota footer keeps the input usable. Ignore lists in scrollback.
     const usageLimit = p.status === 'unknown' ? null : parseUsageLimit(String(text || ''), p.agent)
-    // omp: its select dialog (tool approval) or "Ask" box.
-    let choices = usageLimit ? null : p.agent === 'omp' ? parseOmpPrompt(text) : parseChoices(text, { strict })
+    // omp: its select dialog (tool approval) or "Ask" box. OpenCode's boxed
+    // dialogs are never a generic choice list — its cards come from the
+    // service or the permission fallback below.
+    let choices = usageLimit ? null : p.agent === 'omp' ? parseOmpPrompt(text) : p.agent === 'opencode' ? null : parseChoices(text, { strict })
     if (choices) choices.identity = promptIdentity(text, p.agent)
     // OpenCode's permission/question dialogs belong to the session, not the
     // screen: the service lists them before any menu is guessed at — its
