@@ -1,7 +1,11 @@
 // Devin's ATIF transcript lands when a turn ends; the lifecycle-hook sidecar
 // covers the in-flight part in real time. These tests pin the event->item
 // mapping, the ATIF-boundary filter, and the install's idempotence.
-import { describe, expect, it } from 'vitest'
+import { spawnSync } from 'node:child_process'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
 import { type MachineFs, type ShellExec } from '../server/utils/fsx'
 import { ensureDevinLive, livePath, parseLiveEvents } from '../server/utils/devinLive'
 
@@ -103,5 +107,97 @@ describe('Devin live tail: paths', () => {
     expect(livePath('/home/u', 'verdant-feta')).toBe('/home/u/.cache/herdr-web/devin-live/verdant-feta.jsonl')
     expect(livePath('/home/u', 'bad/name')).toBeNull()
     expect(livePath('/home/u', '')).toBeNull()
+  })
+})
+
+// The install script and the hook run on the Devin machine: exercise them for
+// real, under a temporary HOME — never the developer's own ~/.config/devin.
+describe('Devin live tail: install on a real shell', () => {
+  const dirs: string[] = []
+  const home = () => {
+    const h = mkdtempSync(path.join(tmpdir(), 'wherdr-live-'))
+    dirs.push(h)
+    return h
+  }
+  afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }) })
+
+  const installScript = async () => {
+    const calls: string[] = []
+    await ensureDevinLive({} as MachineFs, async (script) => { calls.push(script); return { code: 0, stdout: Buffer.alloc(0), stderr: '' } })
+    return calls[0]!
+  }
+  const sh = (script: string, homeDir: string) =>
+    spawnSync('sh', ['-c', script], { env: { ...process.env, HOME: homeDir }, encoding: 'utf8' })
+  const wherdrEntries = (cfg: Record<string, any>, event: string) =>
+    ((cfg.hooks?.[event] || []) as any[]).filter(e => JSON.stringify(e).includes('wherdr-devin-live'))
+
+  it('leaves an unparsable config byte-identical and fails', async () => {
+    const h = home()
+    const cfgd = path.join(h, '.config/devin')
+    mkdirSync(cfgd, { recursive: true })
+    const cfg = path.join(cfgd, 'config.json')
+    const broken = '{\n  // half-written, keep out\n  "hooks": {},\n'
+    writeFileSync(cfg, broken)
+    const r = sh(await installScript(), h)
+    expect(r.status).not.toBe(0)
+    expect(`${r.stdout}\n${r.stderr}`).toContain('bad-config')
+    expect(readFileSync(cfg, 'utf8')).toBe(broken)
+  })
+
+  it('keeps every existing key and hook, adds one wherdr entry per event, and stays idempotent', async () => {
+    const h = home()
+    const cfgd = path.join(h, '.config/devin')
+    mkdirSync(cfgd, { recursive: true })
+    const cfg = path.join(cfgd, 'config.json')
+    writeFileSync(cfg, JSON.stringify({
+      model: 'fusion',
+      hooks: {
+        Stop: [{ hooks: [{ type: 'command', command: 'herdr-agent-state.sh devin stop' }] }],
+        PostCompaction: [{ hooks: [{ type: 'command', command: 'herdr-agent-state.sh devin compact' }] }],
+      },
+    }))
+    chmodSync(cfg, 0o640)
+    const script = await installScript()
+    expect(sh(script, h).status).toBe(0)
+    const cfg1 = JSON.parse(readFileSync(cfg, 'utf8'))
+    expect(cfg1.model).toBe('fusion')
+    for (const event of ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop'])
+      expect(wherdrEntries(cfg1, event)).toHaveLength(1)
+    // Herdr's own hook is still there, including on PostCompaction: the
+    // installer only stops registering wherdr's hook for it, it never strips
+    // entries a config already has.
+    expect(JSON.stringify(cfg1.hooks.Stop)).toContain('herdr-agent-state.sh')
+    expect(JSON.stringify(cfg1.hooks.PostCompaction)).toContain('herdr-agent-state.sh')
+    expect(wherdrEntries(cfg1, 'PostCompaction')).toHaveLength(0)
+    expect(statSync(cfg).mode & 0o777).toBe(0o640)
+    const before = readFileSync(cfg, 'utf8')
+    expect(sh(script, h).status).toBe(0)
+    expect(readFileSync(cfg, 'utf8')).toBe(before)
+  })
+
+  it('creates a missing config as mode 0600', async () => {
+    const h = home()
+    expect(sh(await installScript(), h).status).toBe(0)
+    const cfg = path.join(h, '.config/devin/config.json')
+    const d = JSON.parse(readFileSync(cfg, 'utf8'))
+    for (const event of ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop'])
+      expect(wherdrEntries(d, event)).toHaveLength(1)
+    expect(d.hooks.PostCompaction).toBeUndefined()
+    expect(statSync(cfg).mode & 0o777).toBe(0o600)
+  })
+
+  it('deletes sidecars untouched for a week, keeps fresh ones', async () => {
+    const h = home()
+    const dir = path.join(h, '.cache/herdr-web/devin-live')
+    mkdirSync(dir, { recursive: true })
+    const stale = path.join(dir, 'ended-session.jsonl')
+    const fresh = path.join(dir, 'live-session.jsonl')
+    writeFileSync(stale, '{}\n')
+    writeFileSync(fresh, '{}\n')
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 3600 * 1000)
+    utimesSync(stale, eightDaysAgo, eightDaysAgo)
+    expect(sh(await installScript(), h).status).toBe(0)
+    expect(existsSync(stale)).toBe(false)
+    expect(existsSync(fresh)).toBe(true)
   })
 })
