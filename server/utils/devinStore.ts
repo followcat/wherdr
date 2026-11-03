@@ -19,7 +19,6 @@ import { ompModelLabel } from './models'
 import { type MachineFs, type ShellExec, boundedOutput, localFs } from './fsx'
 import { HerdrError } from './herdr'
 
-const PAGE_ITEMS = 120 // one screenful, keep paging cheap
 const PROBE_RETRY_MS = 60 * 1000
 const MAX_SNAPSHOT_BYTES = 24 * 1024 * 1024
 const IMAGE_MAX_BYTES = 84 * 1024 * 1024
