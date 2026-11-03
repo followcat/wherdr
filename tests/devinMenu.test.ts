@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { devinMenuOpen, devinModelSetEcho, parseDevinModelMenu } from '../server/utils/devinMenu'
+import { devinMenuOpen, devinModelSetEcho, devinStatusModel, parseDevinModelMenu } from '../server/utils/devinMenu'
 
 // Live capture (wA:p1, Devin v3000.11.x): /model opens a searchable picker.
 const MENU = `
@@ -78,4 +78,34 @@ it('devinMenuOpen tracks the legend even with zero parsed options', () => {
   expect(devinMenuOpen(empty)).toBe(true)
   expect(parseDevinModelMenu(empty)).toBeNull()
   expect(devinMenuOpen(CONFIRMED)).toBe(false)
+})
+
+// Live captures: the status line under the composer names the session's model —
+// "SWE-2 Max · bypass", and under Fusion "Fusion · <lead> ◆ <sidekick> · bypass".
+const IDLE = `
+ ⏺ ~/work
+─────────────────────────────────────────────────────────────────────────
+❭ Ask Devin to build features, fix bugs, or work on your code
+─────────────────────────────────────────────────────────────────────────
+`
+
+it('reads the session model from the status line, Fusion included', () => {
+  expect(devinStatusModel(`${IDLE}SWE-2 Max · bypass                                             Context: 145k / 262k tokens (55%)`)).toBe('SWE-2 Max')
+  expect(devinStatusModel(`${IDLE}SWE-2 Max · bypass · 3 shells ↓                                 51k / 262k`)).toBe('SWE-2 Max')
+  expect(devinStatusModel(`${IDLE}SWE-2 Max · bypass                                             ctrl+o details · alt+t thinking`)).toBe('SWE-2 Max')
+  expect(devinStatusModel(`${IDLE}Fusion · GPT-6.1 Sol ◆ SWE-2 High · bypass                      See usage and cost: /session-stats`)).toBe('Fusion')
+  expect(devinStatusModel(`${IDLE}Fusion · Claude Opus 5.5 ◆ SWE-2 · bypass                       Press Ctrl+L to clear the screen`)).toBe('Fusion')
+  expect(devinStatusModel(`${IDLE}GPT-6 Astra Medium · accept edits`)).toBe('GPT-6 Astra Medium')
+})
+
+it('ignores lines that are not the status line', () => {
+  expect(devinStatusModel('')).toBeNull()
+  expect(devinStatusModel(null)).toBeNull()
+  // The /model legend and the set echo are not a status line.
+  expect(devinStatusModel(MENU)).toBeNull()
+  expect(devinStatusModel(CONFIRMED)).toBeNull()
+  // A "· <mode>" tail inside the conversation does not count: only the last
+  // few lines are scanned, and a model name starts with a letter or digit.
+  expect(devinStatusModel(`some reply\nlet's enable · bypass\n${IDLE}SWE-2 Max · bypass`)).toBe('SWE-2 Max')
+  expect(devinStatusModel(`❭ draft · bypass\nlast output line`)).toBeNull()
 })

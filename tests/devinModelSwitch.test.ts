@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const calls = vi.hoisted(() => ({ sent: [] as { method: string, params: Record<string, unknown> }[], screen: '', afterAltEnter: '', pane: {} as Record<string, unknown>, afterMove: '' }))
+const calls = vi.hoisted(() => ({ sent: [] as { method: string, params: Record<string, unknown> }[], screen: '', afterAltEnter: '', pane: {} as Record<string, unknown>, afterMove: '', transcript: null as { id: string | null, label: string } | null }))
 const MENU = `
 ──────────────────────────────────────────
 /
@@ -8,6 +8,30 @@ const MENU = `
   SWE-2                                                ← ◼◼◼    → Max            Fast Mode Off
 ❭ Grok 4.7                                             ← ◼◼◼◼   → Medium          Fast Mode Off
 ↑↓ select · ←→ effort · ↵ confirm · alt+↵ this session only · esc cancel
+`
+
+// Live capture, search narrowed to "Fusion": the row carries the effort slider
+// plus the Lead ▾ / Sidekick ▾ pair; the pricing block sits under it.
+const FUSION_MENU = `
+──────────────────────────────────────────
+/ Fusion
+──────────────────────────────────────────
+❭ Fusion                  ← ◼◼◼◼◼  → Max           Lead GPT-6.1 Sol   ▾   Sidekick SWE-2 High    ▾   Fast Mode Off
+
+  ━━━━━━━━━━━━●━━━━━━━━━━━━━━━━━━━━━━━
+  Input        Cached input   Output       Sidekick  Free
+  $2 / 1M      $0.1 / 1M      $10 / 1M
+
+  ✱ New  ✱ Promotion  ✱ Beta  ✱ Use your ChatGPT plan  · Pairs frontier intelligence with cost-efficient execution
+↑↓ select · tab lead · ←→ effort · shift+←/→ move cursor · ↵ confirm · alt+↵ this session only · esc cancel
+`
+
+// The composer after alt+↵ on Fusion: status line names the session's pick,
+// even without a "Model set to" echo on screen.
+const FUSION_STATUS = `
+❭ Ask Devin to build features, fix bugs, or work on your code
+─────────────────────────────────────────────────────────────────────────
+Fusion · GPT-6.1 Sol ◆ SWE-2 High · bypass                        See usage and cost: /session-stats
 `
 
 vi.mock('../server/utils/env', () => ({ log: () => {} }))
@@ -18,7 +42,7 @@ vi.mock('../server/utils/state', () => ({
   findPane: () => calls.pane,
   poll: () => {},
   transcripts: {
-    model: async () => ({ id: 'SWE-2', label: 'SWE-2' }),
+    model: async () => calls.transcript,
   },
 }))
 vi.mock('../server/utils/herdr', () => {
@@ -38,11 +62,13 @@ vi.mock('../server/utils/herdr', () => {
   }
 })
 
-import { listModels, setModel } from '../server/utils/modelctl'
+import { currentModel, forgetModel, listModels, noteScreen, setModel } from '../server/utils/modelctl'
 
 beforeEach(() => {
   calls.sent = []; calls.screen = ''; calls.afterAltEnter = ''; calls.afterMove = ''
+  calls.transcript = { id: 'SWE-2', label: 'SWE-2' }
   calls.pane = { id: 'w1:p1', agent: 'devin', status: 'done' }
+  forgetModel('w1:p1')
 })
 
 describe('model switching while a dialog owns the terminal', () => {
@@ -89,8 +115,57 @@ describe('devinSetModel verification', () => {
     calls.afterAltEnter = '\n  ❭\n' // menu gone, no echo, transcript/footer unchanged
     await expect(setModel('w1:p1', 'Grok 4.7')).rejects.toMatchObject({ code: 'stale' })
   })
+
+  it('selects Fusion: the status line confirms when no echo is read', async () => {
+    calls.screen = FUSION_MENU
+    calls.afterAltEnter = FUSION_STATUS // transcript still says SWE-2 — never "Fusion"
+    const info = await setModel('w1:p1', 'Fusion')
+    expect(info.label).toBe('Fusion')
+    expect(calls.sent.some(c => (c.params.keys as string[] | undefined)?.includes('alt+enter'))).toBe(true)
+    expect(calls.sent.some(c => (c.params.keys as string[] | undefined)?.includes('enter'))).toBe(false)
+  })
+
+  it('a stale echo of a different model does not veto the status line', async () => {
+    calls.screen = FUSION_MENU
+    // An older "Model set to SWE-2" echo may still be on screen; the status
+    // line is the live pick and says Fusion.
+    calls.afterAltEnter = `\n✓ Model set to SWE-2 for this session\n${FUSION_STATUS}`
+    const info = await setModel('w1:p1', 'Fusion')
+    expect(info.label).toBe('Fusion')
+  })
+
+  it('a status line naming another model is stale, never success', async () => {
+    calls.screen = FUSION_MENU
+    calls.afterAltEnter = `
+❭ Ask Devin to build features, fix bugs, or work on your code
+─────────────────────────────────────────────────────────────────────────
+SWE-2 Max · bypass                                                See usage and cost: /session-stats
+`
+    await expect(setModel('w1:p1', 'Fusion')).rejects.toMatchObject({ code: 'stale' })
+  })
 })
 
+
+describe('current model reporting', () => {
+  it('the status line wins over a lagging transcript — Fusion stays "Fusion"', async () => {
+    noteScreen('w1:p1', 'devin', FUSION_STATUS)
+    expect((await currentModel(calls.pane as never))?.label).toBe('Fusion')
+    // A generation under Fusion would name the lead/sidekick — still "Fusion".
+    calls.transcript = { id: 'gpt-6-1-sol-xhigh', label: 'GPT-6.1 Sol XHigh' }
+    expect((await currentModel(calls.pane as never))?.label).toBe('Fusion')
+  })
+
+  it('keeps the transcript id when it names the same model', async () => {
+    calls.transcript = { id: 'fusion', label: 'Fusion' }
+    noteScreen('w1:p1', 'devin', FUSION_STATUS)
+    expect(await currentModel(calls.pane as never)).toMatchObject({ id: 'fusion', label: 'Fusion' })
+  })
+
+  it('falls back on the transcript when no status line was seen', async () => {
+    noteScreen('w1:p1', 'devin', 'a screen without a status line')
+    expect(await currentModel(calls.pane as never)).toMatchObject({ id: 'SWE-2', label: 'SWE-2' })
+  })
+})
 
 it('a terminal-only interaction owns the pane even with ready status', async () => {
   calls.pane.interaction = 'terminal'

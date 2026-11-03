@@ -18,7 +18,7 @@ import { resizePane } from './terminal'
 import { type ClaudeEffortSlider, type ModelMenu, type OmpCycleKnowledge, type OmpSelector, OMP_EFFORT_ORDER, claudeEffortCommand, claudeEffortLevels, cleanModelName, codexCachedEfforts, codexConfigModel, claudeScreenEffort, claudeScreenModel, codexFooterModel, effortMatches, effortValue, learnOmpCycle, ompEffortLevels, ompModelLabel, ompScreenEffort, ompScreenModel, ompSelectorCaption, parseClaudeEffortScreen, parseModelMenu, parseOmpSelector, sameModel, switchConfirmKeys } from './models'
 import { fmt } from '../../shared/message'
 import { hasTranscript } from '../../shared/agentKind'
-import { type DevinModelMenu, devinMenuOpen, devinModelSetEcho, parseDevinModelMenu } from './devinMenu'
+import { type DevinModelMenu, devinMenuOpen, devinModelSetEcho, devinStatusModel, parseDevinModelMenu } from './devinMenu'
 
 // ---------------------------------------------------------------- current model
 // Choice made from the phone: shown right away, until the
@@ -66,6 +66,13 @@ export function noteScreen(paneId: string, agent: string | null, text: string | 
     if (text) ompScreens.set(paneId, text.replace(/\s+$/, '').split('\n').slice(-12).join('\n'))
     return
   }
+  if (agent === 'devin') {
+    // Devin's status line names the session's selected model, live — including
+    // Fusion, whose transcript keeps the lead/sidekick name forever.
+    const label = devinStatusModel(text)
+    if (label) footers.set(paneId, { info: { id: null, label }, ms: Date.now() })
+    return
+  }
   if (agent !== 'codex') return
   const info = codexFooterModel(text)
   if (info) footers.set(paneId, { info, ms: Date.now() })
@@ -84,7 +91,19 @@ export async function currentModel(p: Pane): Promise<ModelInfo | null> {
   if (!hasTranscript(p.agent)) return null
   // A failed read throws: the state keeps the model it showed (refreshModel).
   let fromFile = await transcripts.model(p)
-  if (p.agent === 'devin') return fromFile
+  if (p.agent === 'devin') {
+    // The status line is authoritative for the session's pick: the transcript
+    // only names the model that generated the last turn (under Fusion, a lead
+    // or sidekick name — never "Fusion"), so the footer wins whenever seen.
+    const f = footers.get(p.id)
+    if (f) return { id: fromFile && sameModel(fromFile.label, f.info.label) ? fromFile.id : null, label: f.info.label, at: new Date(f.ms).toISOString() }
+    const o = overrides.get(p.id)
+    if (o) {
+      const { ms: _ms, ...info } = o
+      return info
+    }
+    return fromFile
+  }
   const f = footers.get(p.id)
   if (f && (!fromFile || !sameModel(fromFile.label, f.info.label) || fromFile.effort !== f.info.effort)) {
     // The status line wins over a lagging rollout (change not yet followed by a turn).
@@ -743,7 +762,7 @@ async function devinListModels(p: Pane, refresh = false): Promise<ModelList> {
   const hit = listCache.get(listKey(p.id, 'devin'))
   if (hit && !refresh && Date.now() - hit.at < LIST_TTL_MS) return hit
   return withPane(p.id, async () => {
-    const cur = await transcripts.model(p).catch(() => null)
+    const cur = await currentModel(p).catch(() => null)
     let m = await devinOpenMenu(p.id)
     const seen = new Map<string, ModelOption>()
     try {
@@ -770,6 +789,7 @@ async function devinSetModel(paneId: string, wanted: string): Promise<ModelInfo>
   if (!wanted) throw new HerdrError('bad_model', 'Missing model')
   const label = wanted.toLowerCase()
   return withPane(paneId, async (p) => {
+    const started = Date.now()
     await devinOpenMenu(p.id)
     try {
       // Narrow with the search field, then alt+↵ on the matching row.
@@ -790,20 +810,25 @@ async function devinSetModel(paneId: string, wanted: string): Promise<ModelInfo>
         throw new HerdrError('stale', 'The /model menu changed — try again.')
       }
       await herdr('pane.send_input', { pane_id: p.id, keys: ['alt+enter'] })
-      // Verify: the menu closes, and only an echo of THIS model counts — a
-      // different "Model set to …" is a failure, never success.
+      // Verify: the menu closes, then the pick counts once any live signal
+      // names THIS model — the echo ("Model set to … for this session"), the
+      // status line ("Fusion · Lead ◆ Sidekick · bypass") or the transcript.
       const end = Date.now() + 4000
       let echo: string | null = null
+      let shown: string | null = null
       do {
         const t = await screen(p.id)
-        if (!devinMenuOpen(t)) { echo = devinModelSetEcho(t); break }
+        if (!devinMenuOpen(t)) { echo = devinModelSetEcho(t); shown = devinStatusModel(t); break }
         await sleep(300)
       } while (Date.now() < end)
-      const echoOk = echo && sameModel(echo, target)
-      if (echo && !echoOk) throw new HerdrError('stale', fmt('Devin set a different model ({model}) — check the session.', { model: echo }))
       const now = await transcripts.model(p).catch(() => null)
-      if (!echoOk && !sameModel(now?.label || '', target)) throw new HerdrError('stale', 'The model did not change — try again.')
-      const info: ModelInfo = { id: target, label: target }
+      if (!sameModel(echo, target) && !sameModel(shown || '', target) && !sameModel(now?.label || '', target)) {
+        throw new HerdrError('stale', echo
+          ? fmt('Devin set a different model ({model}) — check the session.', { model: echo })
+          : 'The model did not change — try again.')
+      }
+      const info: ModelInfo = { id: target, label: target, at: new Date(started).toISOString() }
+      overrides.set(p.id, { ...info, ms: started })
       setTimeout(poll, 100)
       return info
     } finally { await devinCloseMenu(p.id) }
