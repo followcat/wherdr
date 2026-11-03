@@ -18,9 +18,11 @@
   prompt and tool calls appear within seconds, and history it compacted out
   of the transcript is recovered: the earlier thread is stitched back in,
   marked by a "Conversation compacted" note. When the store is not usable —
-  missing database, no python3, unknown schema, unknown session — the ATIF
-  transcript (`transcripts/<session-id>.json`, ATIF-v1.7) takes over
-  unchanged, and a source switch resets the view rather than mixing items.
+  missing database, no python3, unknown schema, unknown session, or a failed
+  read — the ATIF transcript (`transcripts/<session-id>.json`, ATIF-v1.7)
+  takes over unchanged, a remembered page covers a single failed attempt for
+  seconds rather than hiding newer data, and a source switch resets the view
+  rather than mixing items.
   Install the Herdr integration with `herdr integration install devin`, then
   start or resume Devin so it reports its session. Same-directory sessions
   are never selected by recency. The reader follows `DEVIN_SESSIONS_DIR`,

@@ -11,6 +11,7 @@ import path from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { createTranscripts } from '../server/utils/transcripts'
 import { createDevinStore } from '../server/utils/devinStore'
+import { createDevinTranscripts } from '../server/utils/devinTranscripts'
 import { type MachineFs, type ShellExec, localFs } from '../server/utils/fsx'
 import { landed } from '../server/utils/queued'
 import { devinMessage, writeDevinFixture } from './helpers/devin-fixture.mjs'
@@ -269,3 +270,65 @@ it('keeps an empty store session available instead of reporting not_found', asyn
   const r = await reader.chat(pane)
   expect(r).toMatchObject({ available: true, items: [], start: 0 })
 })
+
+it('answers a poll from ATIF while the store read fails, then returns to a healed store', async () => {
+  const { home } = fixture()
+  let now = 1_000_000
+  const reader = createDevinTranscripts({ home, now: () => now })
+  // A graft whose summarized_from names a chain (5 → 4) with a missing
+  // ancestor: every store read raises 'Invalid Devin conversation chain'.
+  writeDevinStore(home, { rows: [
+    { id: 0, message: devinMessage('system', 'Prefix') },
+    { id: 5, parent: 4, message: devinMessage('user', 'Orphaned prompt') },
+    { id: 6, parent: 0, message: devinMessage('system', 'Summary graft'), meta: { summarized_from: 5 } },
+    { id: 7, parent: 6, message: devinMessage('assistant', 'Broken store answer') },
+  ], head: 7 })
+  writeDevinFixture(home, { rows: [{ id: 0, message: devinMessage('assistant', 'ATIF keeps the session readable') }] })
+  // The first poll already falls back: the wrapper marks the pick not-store.
+  const first = await reader.chat(pane)
+  expect(first.available).toBe(true)
+  expect(first.items?.map(i => i.text)).toEqual(['ATIF keeps the session readable'])
+  // While the pick retry window runs, ATIF keeps answering without a store retry.
+  now += 30 * 1000
+  const mid = await reader.chat(pane, { since: first.token })
+  expect(mid).toMatchObject({ available: true, unchanged: true })
+  // Heal the store by adding the missing ancestor; past the retry window the
+  // store is used again, and the source switch is a rewritten reset.
+  writeDevinStore(home, { rows: [{ id: 4, message: devinMessage('user', 'Earlier prompt') }], head: 7 })
+  now += 40 * 1000
+  const healed = await reader.chat(pane, { from: first.start as number, since: first.token, anchor: first.token })
+  expect(healed.token).toMatch(/^devins:/)
+  expect(healed.rewritten).toBe(true)
+  expect(healed.items?.map(i => [i.role, i.name || i.text])).toEqual([
+    ['user', 'Earlier prompt'],
+    ['user', 'Orphaned prompt'],
+    ['notice', 'compaction'],
+    ['assistant', 'Broken store answer'],
+  ])
+})
+
+it('serves the remembered page once on a broken read, then ATIF answers instead of stale', async () => {
+  const { home } = fixture()
+  let now = 1_000_000
+  const reader = createDevinTranscripts({ home, now: () => now })
+  writeDevinStore(home, { rows: [
+    { id: 0, message: devinMessage('user', 'Question') },
+    { id: 1, parent: 0, message: devinMessage('assistant', 'Store answer') },
+  ], head: 1 })
+  writeDevinFixture(home, { rows: [{ id: 0, message: devinMessage('assistant', 'ATIF answer') }] })
+  const good = await reader.chat(pane)
+  expect(good.items?.map(i => i.text)).toEqual(['Question', 'Store answer'])
+  // Rewind the head to a chain whose ancestor does not exist.
+  writeDevinStore(home, { rows: [{ id: 9, parent: 8, message: devinMessage('assistant', 'Broken') }], head: 9 })
+  // One failed attempt may still answer from the remembered page (a blip
+  // stays invisible); the ATIF fallback must not be hidden behind it.
+  const stale = await reader.chat(pane, { from: good.start as number, since: good.token, anchor: good.token })
+  expect(stale).toMatchObject({ available: true, unchanged: true })
+  now += 2000
+  const fallback = await reader.chat(pane, { from: good.start as number, since: good.token, anchor: good.token })
+  expect(fallback.available).toBe(true)
+  expect(fallback.rewritten).toBe(true)
+  expect(fallback.items?.map(i => i.text)).toEqual(['ATIF answer'])
+})
+
+

@@ -20,6 +20,10 @@ import { type MachineFs, type ShellExec, boundedOutput, localFs } from './fsx'
 import { HerdrError } from './herdr'
 
 const PROBE_RETRY_MS = 60 * 1000
+// Same pace as the ATIF reader's FAIL_QUIET_MS: a failure quiets repeated
+// attempts for seconds, never minutes — a broken reader must not hide the
+// fallback's newer data.
+const FAIL_QUIET_MS = 1500
 const MAX_SNAPSHOT_BYTES = 24 * 1024 * 1024
 const IMAGE_MAX_BYTES = 84 * 1024 * 1024
 const IMAGE_TYPES = /^image\/(png|jpe?g|gif|webp|avif|bmp|svg\+xml)$/
@@ -306,7 +310,7 @@ function toolError(result: Json | undefined): boolean {
   return Boolean(text && /(^|\n)\s*(error|exception|traceback|failed)\b/i.test(text))
 }
 
-export function createDevinStore({ home, fs = localFs, exec, now = () => Date.now(), failQuietMs = 2 * 60 * 1000, spawnProcess = spawn }: DevinStoreOptions) {
+export function createDevinStore({ home, fs = localFs, exec, now = () => Date.now(), failQuietMs = FAIL_QUIET_MS, spawnProcess = spawn }: DevinStoreOptions) {
   const honorEnv = fs === localFs // on the local machine only
   const dbPath = new Map<string, string>()
   const inflight = new Map<string, Promise<Json>>()
@@ -316,6 +320,7 @@ export function createDevinStore({ home, fs = localFs, exec, now = () => Date.no
   const verified = new Map<string, string>()
   const failAt = new Map<string, number>()
   const failAtEvict = new Map<string, number>()
+  const graced = new Set<string>()
   const quiet = (k: string) => now() - (failAt.get(k) || 0) < failQuietMs
   let probed: { ok: boolean, at: number } | null = null
 
@@ -458,17 +463,21 @@ export function createDevinStore({ home, fs = localFs, exec, now = () => Date.no
 
   function failOpen(session: string, e: unknown, opts: StoreOptions, base: { available: true, session: string }): never | ChatResponse {
     if (isMissing(e)) {
-      dbPath.delete(session); lastGood.delete(session); lastModel.delete(session); verified.delete(session); failAt.delete(session); modelCache.delete(session)
+      dbPath.delete(session); lastGood.delete(session); lastModel.delete(session); verified.delete(session); failAt.delete(session); modelCache.delete(session); graced.delete(session)
       return { available: false, reason: 'not_found' }
     }
     const good = lastGood.get(session)
     const first = !failAt.has(session)
     failAt.set(session, now()); failAtEvict.set(session, now() + 10 * failQuietMs)
     if (failAt.size > 64) {
-      for (const [k, at] of failAtEvict) if (at < now()) { failAt.delete(k); failAtEvict.delete(k); verified.delete(k) }
-      if (failAt.size > 64) { failAt.clear(); failAtEvict.clear() }
+      for (const [k, at] of failAtEvict) if (at < now()) { failAt.delete(k); failAtEvict.delete(k); verified.delete(k); graced.delete(k) }
+      if (failAt.size > 64) { failAt.clear(); failAtEvict.clear(); graced.clear() }
     }
-    if (good) return { ...base, file: good.file, token: opts.since || good.token, unchanged: true }
+    // The remembered page covers one failed attempt, so a blip stays
+    // invisible. A second failure is a broken reader: throwing lets the
+    // caller's ATIF fallback answer, instead of hiding newer messages
+    // behind an 'unchanged' reply.
+    if (good && !graced.has(session)) { graced.add(session); return { ...base, file: good.file, token: opts.since || good.token, unchanged: true } }
     if (first) throw e
     throw new HerdrError('internal', 'Unable to read Devin conversation')
   }
@@ -507,10 +516,10 @@ export function createDevinStore({ home, fs = localFs, exec, now = () => Date.no
         sig: before == null ? tok?.sessig ?? null : null,
       })
       if (!reply.available) {
-        dbPath.delete(session); lastGood.delete(session); lastModel.delete(session); verified.delete(session); modelCache.delete(session); failAt.delete(session)
+        dbPath.delete(session); lastGood.delete(session); lastModel.delete(session); verified.delete(session); modelCache.delete(session); failAt.delete(session); graced.delete(session)
         return { available: false, reason: 'not_found' }
       }
-      failAt.delete(session)
+      failAt.delete(session); graced.delete(session)
       if (reply.db) dbPath.set(session, reply.db)
       if (reply.signature) {
         if (dbsig) verified.set(session, `${reply.sig}@${dbsig}`)
@@ -554,7 +563,7 @@ export function createDevinStore({ home, fs = localFs, exec, now = () => Date.no
     if (Date.now() >= deadline) return { hits: [], limited: true, kind: 'devin' }
     const r = await run(pane.agentSession, 'search', { seconds: Math.max(.1, (deadline - Date.now()) / 1000) }).catch(e => { if (isMissing(e)) return null; throw e })
     if (!r || !r.available) return null
-    failAt.delete(pane.agentSession)
+    failAt.delete(pane.agentSession); graced.delete(pane.agentSession)
     const hits = parseStore(r).filter(i => i.role === 'user' || i.role === 'assistant').flatMap(i => {
       const at = matchAt(i.text, text)
       return at < 0 ? [] : [{ role: i.role, text: i.text.slice(0, 180), ts: i.ts, excerpt: excerpt(i.text, at, 120, text), offset: Number(i.ref!.split(':')[0]) + 1 }]
@@ -572,7 +581,7 @@ export function createDevinStore({ home, fs = localFs, exec, now = () => Date.no
       if (hit && hit.dbsig === dbsig) { lastModel.set(session, hit.info); return hit.info }
       const r = await run(session, 'model')
       if (!r.available) { lastModel.delete(session); modelCache.delete(session); return null }
-      failAt.delete(session)
+      failAt.delete(session); graced.delete(session)
       const name = r.generation_model || r.model
       const info = typeof name === 'string' && name ? { id: name, label: ompModelLabel(name) } : null
       if (dbsig) modelCache.set(session, { dbsig, info })
