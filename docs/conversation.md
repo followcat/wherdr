@@ -15,8 +15,9 @@
   reports its session. Same-directory sessions are never selected by recency. The reader
   follows `DEVIN_SESSIONS_DIR`, then `XDG_DATA_HOME/devin/cli`, otherwise
   `~/.local/share/devin/cli`. No export flag is needed: Devin writes the JSON file next
-  to its CLI data. New text appears when Devin saves it, which may be less frequent than
-  the terminal's streaming display. Cloud sessions are not supported by this reader.
+  to its CLI data, after each turn. A turn's messages — the prompt it took included —
+  appear here only when the turn ends, which can be well behind the terminal's
+  streaming display on a long turn. Cloud sessions are not supported by this reader.
 - **OpenCode 2.x conversations**: read the existing background service's projected
   history on the agent's machine (local or SSH), with native pagination, reasoning,
   tool progress/results/errors, saved images, previews and search. Python 3 is required

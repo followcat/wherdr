@@ -1310,7 +1310,7 @@ async function enrich(next: HerdrState, snap: Json, machine: string, publish?: (
       const ocq = p.agent === 'opencode' ? ocInboxes.get(p.id) : undefined
       const texts = devq?.length ? devq : ocq
       const alive = texts?.length ? (q: QueueEntry) => texts.some(t => sameMsg(msgText(t), msgText(q.text)) || sameMsg(msgText(q.text), msgText(t))) : undefined
-      if (list && checkQueue(list, before?.ompShell ? 'working' : p.status, Date.now(), menu, alive)) log(`message not sent on ${p.id}`)
+      if (list && checkQueue(list, before?.ompShell ? 'working' : p.status, Date.now(), menu, p.agent, alive)) log(`message not sent on ${p.id}`)
       if (list) deliverHeld(p)
       if (list && list.length) p.queued = list.map(q => queuedPasted(publicEntry(q)))
     }
