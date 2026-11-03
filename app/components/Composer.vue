@@ -976,7 +976,7 @@ defineExpose({
         />
         <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onFiles">
         <input ref="anyFileInput" type="file" multiple hidden data-testid="attach-any" @change="onFiles">
-        <div v-if="pane && (pane.agent === 'claude' || pane.agent === 'codex' || pane.agent === 'omp' || pane.agent === 'devin' || pane.agent === 'opencode')" class="prompt-models">
+        <div v-if="pane && (pane.agent === 'claude' || pane.agent === 'codex' || pane.agent === 'omp' || pane.agent === 'devin' || pane.agent === 'opencode' || pane.agent === 'cmd')" class="prompt-models">
           <ModelPicker :pane="pane" />
         </div>
         <span v-if="hint && suggestion" class="prompt-hint"><UKbd value="tab" size="sm" /> {{ t('suggestion') }} <span class="sep">·</span> <UKbd value="enter" size="sm" /> {{ t('send') }}</span>

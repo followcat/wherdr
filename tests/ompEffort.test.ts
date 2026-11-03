@@ -21,7 +21,7 @@ const status = () => {
   return ` ok\n π > ${GLYPH[shown]} Opus 5.5 > 🗑 ~/demo > ▶─1%──────\n╰─        ⇧⇥ to change thinking effort`
 }
 
-vi.mock('../server/utils/env', () => ({ log: () => {} }))
+vi.mock('../server/utils/env', async (importOriginal) => ({ ...(await importOriginal()), log: () => {} }))
 vi.mock('../server/utils/actions', () => ({ closePanel: async () => false }))
 vi.mock('../server/utils/machines', () => ({ machineOfPane: () => null }))
 vi.mock('../server/utils/state', () => ({
