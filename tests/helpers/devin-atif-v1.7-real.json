@@ -1,0 +1,76 @@
+{
+  "schema_version": "ATIF-v1.7",
+  "session_id": "acme-shop-cart-review",
+  "agent": {
+    "name": "devin",
+    "version": "3000.11.234",
+    "model_name": "claude-sonnet-4-5",
+    "tool_definitions": [
+      {
+        "name": "exec",
+        "description": "Run a shell command in the workspace.",
+        "parameters": { "type": "object", "properties": { "command": { "type": "string" } }, "required": ["command"] }
+      },
+      {
+        "name": "read",
+        "description": "Read a file from the workspace.",
+        "parameters": { "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] }
+      }
+    ],
+    "extra": { "backend": "api", "permission_mode": "default" }
+  },
+  "steps": [
+    {
+      "step_id": 1,
+      "timestamp": "2026-03-12T09:14:02.123456789+00:00",
+      "source": "system",
+      "message": "System instructions for the Devin agent.",
+      "extra": { "telemetry": { "source": "system", "operation": "session_init" } }
+    },
+    {
+      "step_id": 2,
+      "timestamp": "2026-03-12T09:14:05.441000000+00:00",
+      "source": "user",
+      "message": "Review the cart module in /home/user/acme-shop and run its tests on host-a.",
+      "extra": { "telemetry": { "source": "user", "operation": "user_input" } }
+    },
+    {
+      "step_id": 3,
+      "timestamp": "2026-03-12T09:14:18.902345678+00:00",
+      "source": "agent",
+      "model_name": "claude-sonnet-4-5",
+      "reasoning_content": "Read the cart module first, then run the test suite.",
+      "message": "I will inspect `src/cart.ts` and run the tests.",
+      "tool_calls": [
+        { "tool_call_id": "call_read_cart", "function_name": "read", "arguments": { "path": "/home/user/acme-shop/src/cart.ts" } },
+        { "tool_call_id": "call_test_cart", "function_name": "exec", "arguments": { "command": "npm test" } }
+      ],
+      "observation": {
+        "results": [
+          { "source_call_id": "call_read_cart", "content": "export function total(items) {\n  return items.reduce((sum, i) => sum + i.price, 0)\n}\n" },
+          { "source_call_id": "call_test_cart", "content": "12 passed, 0 failed" }
+        ]
+      },
+      "metrics": { "prompt_tokens": 18240, "completion_tokens": 418, "cached_tokens": 12100, "extra": { "cache_creation_input_tokens": 1560 } },
+      "extra": { "telemetry": { "source": "agent", "operation": "model_response" }, "generation_model": "claude-sonnet-4-5" }
+    },
+    {
+      "step_id": 4,
+      "timestamp": "2026-03-12T09:16:41.000000001+00:00",
+      "source": "user",
+      "message": "Anything worth changing?",
+      "extra": { "telemetry": { "source": "user", "operation": "user_input" } }
+    },
+    {
+      "step_id": 5,
+      "timestamp": "2026-03-12T09:16:58.777654321+00:00",
+      "source": "agent",
+      "model_name": "claude-sonnet-4-5",
+      "reasoning_content": "The module is small and its tests pass; no changes needed.",
+      "message": "The cart module is clean and all 12 tests pass; nothing needs changing.",
+      "metrics": { "prompt_tokens": 20110, "completion_tokens": 96, "cached_tokens": 18240, "extra": { "cache_creation_input_tokens": 0 } },
+      "extra": { "telemetry": { "source": "agent", "operation": "model_response" }, "generation_model": "claude-sonnet-4-5" }
+    }
+  ],
+  "final_metrics": { "total_prompt_tokens": 38350, "total_completion_tokens": 514, "total_cached_tokens": 30340, "total_steps": 5 }
+}
