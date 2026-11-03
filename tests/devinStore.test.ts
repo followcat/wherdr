@@ -331,4 +331,29 @@ it('serves the remembered page once on a broken read, then ATIF answers instead 
   expect(fallback.items?.map(i => i.text)).toEqual(['ATIF answer'])
 })
 
+it('marks tool errors from the result meta alone, never the output text', async () => {
+  const { home, reader } = fixture()
+  const calls = [
+    { id: 'call-ok', name: 'exec', arguments: { command: 'make check' } },
+    { id: 'call-fail', name: 'exec', arguments: { command: 'make lint' } },
+    { id: 'call-plain', name: 'exec', arguments: { command: 'make build' } },
+  ]
+  writeDevinStore(home, { rows: [
+    { id: 0, message: devinMessage('user', 'Run the checks') },
+    { id: 1, parent: 0, message: devinMessage('assistant', '', { tool_calls: calls }) },
+    // The output text screams but the meta says success: not an error.
+    { id: 2, parent: 1, message: devinMessage('tool', 'Error: 0 problems found\nall clean', { tool_call_id: 'call-ok', metadata: { extensions: { 'chisel/tool_result_meta': { success: true, exit_code: 0 } } } }) },
+    { id: 3, parent: 2, message: devinMessage('tool', 'nothing unusual', { tool_call_id: 'call-fail', metadata: { extensions: { 'chisel/tool_result_meta': { success: false } } } }) },
+    // No meta at all: the text alone still is not an error.
+    { id: 4, parent: 3, message: devinMessage('tool', 'Traceback (most recent call last)', { tool_call_id: 'call-plain' }) },
+    { id: 5, parent: 4, message: devinMessage('assistant', 'Done') },
+  ], head: 5 })
+  const r = await reader.chat(pane)
+  const tools = r.items!.filter(i => i.role === 'tool')
+  expect(tools.find(i => i.text === 'make check')).toMatchObject({ out: 'Error: 0 problems found\nall clean' })
+  expect(tools.find(i => i.text === 'make check')!.error).toBeFalsy()
+  expect(tools.find(i => i.text === 'make lint')!.error).toBe(true)
+  expect(tools.find(i => i.text === 'make build')!.error).toBeFalsy()
+})
+
 

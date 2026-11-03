@@ -302,12 +302,13 @@ function contentText(value: unknown): string {
   if (typeof value === 'string') return value
   return asList(value).filter(v => v && typeof v === 'object' && v.type === 'text' && typeof v.text === 'string').map(v => v.text).join('\n\n')
 }
-// Same failure rule as the ATIF reader's toolError.
+// The result's own meta decides failure — success === false or a non-zero
+// exit_code — like the ATIF reader's toolError. Output text that merely
+// says "error" or "traceback" is not a failure.
 function toolError(result: Json | undefined): boolean {
   const meta = result?.metadata?.extensions?.['chisel/tool_result_meta']
-  if (meta && typeof meta === 'object' && (meta.success === false || (typeof meta.exit_code === 'number' && meta.exit_code !== 0))) return true
-  const text = result && contentText(result.content)
-  return Boolean(text && /(^|\n)\s*(error|exception|traceback|failed)\b/i.test(text))
+  return Boolean(meta && typeof meta === 'object'
+    && (meta.success === false || (typeof meta.exit_code === 'number' && meta.exit_code !== 0)))
 }
 
 export function createDevinStore({ home, fs = localFs, exec, now = () => Date.now(), failQuietMs = FAIL_QUIET_MS, spawnProcess = spawn }: DevinStoreOptions) {
