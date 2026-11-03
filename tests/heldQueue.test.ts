@@ -104,8 +104,8 @@ describe('checkQueue', () => {
   it('does not fail a sent message the agent still queues (alive)', () => {
     const q = entry('a', 0)
     const inDevinQueue = (x: QueueEntry) => x.text === 'message a'
-    checkQueue([q], 'done', 1000, true, inDevinQueue)
-    expect(checkQueue([q], 'done', 1000 + LOST_MS + 1000, true, inDevinQueue)).toBe(false)
+    checkQueue([q], 'done', 1000, true, undefined, inDevinQueue)
+    expect(checkQueue([q], 'done', 1000 + LOST_MS + 1000, true, undefined, inDevinQueue)).toBe(false)
     expect(q.failed).toBeFalsy()
     // Delivered (gone from the agent's queue): the normal timer resumes.
     checkQueue([q], 'done', 2000 + LOST_MS + 1000)
