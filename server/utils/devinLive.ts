@@ -56,8 +56,9 @@ sys.exit(0)
 // Idempotent install run on the Devin machine over the machine's shell
 // channel: drops the hook script and merges one entry into each event list
 // of ~/.config/devin/config.json (existing entries — herdr's own hook — are
-// kept). Devin snapshots hook configuration at session start, so sessions
-// already running report nothing until they restart; that is expected.
+// kept). PostCompaction is not registered: the tail ignores it. Devin
+// snapshots hook configuration at session start, so sessions already
+// running report nothing until they restart; that is expected.
 const INSTALL_SCRIPT = `set -e
 command -v python3 >/dev/null 2>&1 || { echo no-python3; exit 1; }
 cfgd="$HOME/.config/devin"
@@ -66,20 +67,31 @@ cat > "$cfgd/wherdr-devin-live.py" <<'WHERDR_HOOK_EOF'
 ${HOOK_PY}
 WHERDR_HOOK_EOF
 chmod 755 "$cfgd/wherdr-devin-live.py"
+find "$HOME/.cache/herdr-web/devin-live" -name '*.jsonl' -mtime +7 -delete 2>/dev/null || true
 python3 - <<'WHERDR_CFG_EOF'
-import json, os, shutil
+import json, os, shutil, sys
 cfgd = os.path.expanduser('~/.config/devin')
 p = os.path.join(cfgd, 'config.json')
-try:
-    d = json.load(open(p))
-except Exception:
-    d = {}
-if not isinstance(d, dict):
-    d = {}
+d = {}
+if os.path.exists(p):
+    try:
+        with open(p) as fh:
+            d = json.load(fh)
+    except Exception:
+        d = None
+    # An existing file that does not hold a JSON object (a comment, a
+    # trailing comma, a half-written config) is left exactly as it is:
+    # rewriting it would drop the user's settings and herdr's own hooks.
+    if not isinstance(d, dict):
+        print('bad-config')
+        sys.exit(1)
 hooks = d.setdefault('hooks', {})
+if not isinstance(hooks, dict):
+    print('bad-config')
+    sys.exit(1)
 entry = {'type': 'command', 'command': "python3 '%s/wherdr-devin-live.py'" % cfgd, 'timeout': 5}
 changed = False
-for ev in ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'PostCompaction']:
+for ev in ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop']:
     arr = hooks.setdefault(ev, [])
     if not isinstance(arr, list):
         arr = hooks[ev] = []
@@ -88,11 +100,18 @@ for ev in ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'PostCompact
     arr.append({'hooks': [dict(entry)]})
     changed = True
 if changed:
-    if os.path.exists(p):
+    exists = os.path.exists(p)
+    if exists:
         shutil.copy2(p, p + '.wherdr-bak')
     tmp = p + '.tmp'
     with open(tmp, 'w') as fh:
         json.dump(d, fh, indent=2)
+    # The replacement is atomic and keeps the file's mode; a config we
+    # create starts private, like the events the hook writes.
+    if exists:
+        shutil.copymode(p, tmp)
+    else:
+        os.chmod(tmp, 0o600)
     os.replace(tmp, p)
 WHERDR_CFG_EOF
 echo installed
