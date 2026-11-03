@@ -17,7 +17,15 @@
   `~/.local/share/devin/cli`. No export flag is needed: Devin writes the JSON file next
   to its CLI data, after each turn. A turn's messages — the prompt it took included —
   appear here only when the turn ends, which can be well behind the terminal's
-  streaming display on a long turn. Cloud sessions are not supported by this reader.
+  streaming display on a long turn. To cover that gap, wherdr also installs one small
+  lifecycle hook on the Devin machine (`~/.config/devin/wherdr-devin-live.py`,
+  registered next to Herdr's own hook in `~/.config/devin/config.json`): Devin's
+  documented UserPromptSubmit / PreToolUse / PostToolUse / Stop / PostCompaction events
+  append to `~/.cache/herdr-web/devin-live/<session>.jsonl`, and events newer than the
+  transcript's last step show as live items until ATIF lands and takes over. The hook
+  needs python3 on that machine and only reaches sessions started after it was
+  registered (Devin snapshots hooks at session start). Cloud sessions are not
+  supported by this reader.
 - **OpenCode 2.x conversations**: read the existing background service's projected
   history on the agent's machine (local or SSH), with native pagination, reasoning,
   tool progress/results/errors, saved images, previews and search. Python 3 is required

@@ -4,8 +4,9 @@ import type { ChatItem, ChatResponse, ModelInfo } from '../../shared/types'
 import type { TranscriptPane } from './transcripts'
 import { excerpt, matchAt } from '../../shared/searchText'
 import { ompModelLabel } from './models'
-import { type MachineFs, localFs } from './fsx'
+import { type MachineFs, type ShellExec, localFs } from './fsx'
 import { HerdrError } from './herdr'
+import { ensureDevinLive, livePath, readDevinLive } from './devinLive'
 
 // JSON saved by Devin is versioned independently of wherdr (ATIF-v1.7).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -29,7 +30,7 @@ const IMAGE_TYPES = /^image\/(?:png|jpeg|gif|webp|avif)$/
 const hash12 = (s: string) => createHash('sha1').update(s).digest('hex').slice(0, 12)
 const clip = (s: unknown) => typeof s === 'string' ? s.slice(0, MAX_TEXT) : ''
 const genOf = (st: { mtimeMs: number, ino?: number }) => `${st.ino ? `${st.ino}-` : ''}${Math.round(st.mtimeMs * 1000)}`
-const HEAD = /^(.*):(\d+):(null|\d+):(?:(\d+)-)?(\d+)(!?)(?=[/~#]|$)/
+const HEAD = /^(.*):(\d+):(null|\d+):(?:(\d+)-)?(\d+)(?:\.(\d+))?(!?)(?=[/~#]|$)/
 const ANCHOR = /\/(\d+)\.([0-9a-f]{12})(?=[~#]|$)/
 
 function isMissing(e: unknown): boolean {
@@ -277,7 +278,7 @@ function stripImages(value: unknown): unknown {
 function headOf(token: string | null | undefined) {
   const m = HEAD.exec(String(token || ''))
   if (!m) return null
-  return { file: m[1]!, size: Number(m[2]), from: m[3] === 'null' ? null : Number(m[3]), ino: m[4] ? Number(m[4]) : null, gen: `${m[4] ? `${m[4]}-` : ''}${m[5]}` }
+  return { file: m[1]!, size: Number(m[2]), from: m[3] === 'null' ? null : Number(m[3]), ino: m[4] ? Number(m[4]) : null, gen: `${m[4] ? `${m[4]}-` : ''}${m[5]}`, live: m[6] ? Number(m[6]) : 0 }
 }
 
 function anchorOf(token: string | null | undefined) {
@@ -290,10 +291,11 @@ function hasStep(steps: Step[], id: number): boolean {
 }
 
 export function createDevinTranscripts({
-  home, fs = localFs, now = Date.now, maxPageBytes = MAX_READ_BYTES, failQuietMs = FAIL_QUIET_MS,
+  home, fs = localFs, exec, now = Date.now, maxPageBytes = MAX_READ_BYTES, failQuietMs = FAIL_QUIET_MS,
 }: {
   home: string
   fs?: MachineFs
+  exec?: ShellExec
   now?: () => number
   maxPageBytes?: number
   failQuietMs?: number
@@ -380,6 +382,7 @@ export function createDevinTranscripts({
     const session = pane.agentSession
     if (!session) return { available: false, reason: 'not_found' }
     const base = { available: true as const, session }
+    void ensureDevinLive(fs, exec)
     if (quiet(session)) {
       const good = lastGood.get(session)
       if (good) return { ...base, file: good.file, token: opts.since || good.token, unchanged: true }
@@ -392,9 +395,14 @@ export function createDevinTranscripts({
       failAt.delete(session)
       const fileId = path.basename(file)
       const gen = genOf(st)
+      // The live sidecar's generation rides in the token so each hook event
+      // invalidates the poll's unchanged short-circuit.
+      const liveFile = opts.before == null ? livePath(home, session) : null
+      const liveSt = liveFile ? await fs.stat(liveFile).then(s => s.isFile ? s : null).catch(() => null) : null
+      const liveGen = liveSt ? Math.round(liveSt.mtimeMs * 1000) : 0
       const from = opts.from === undefined ? null : opts.from
       const prev = headOf(opts.since)
-      if (!opts.before && prev && prev.file === fileId && prev.size === st.size && prev.gen === gen) {
+      if (!opts.before && prev && prev.file === fileId && prev.size === st.size && prev.gen === gen && (prev.live || 0) === liveGen) {
         const r = { ...base, file: fileId, token: opts.since, unchanged: true as const }
         lastGood.set(session, r)
         return r
@@ -441,7 +449,15 @@ export function createDevinTranscripts({
         start = page.start
         items = page.items
       }
-      const head = `${fileId}:${st.size}:${from}:${gen}`
+      if (liveSt && liveFile) {
+        let lastTs = 0
+        for (const s of doc.steps) {
+          const t = Date.parse(String(s.timestamp || ''))
+          if (t > lastTs) lastTs = t
+        }
+        try { items.push(...await readDevinLive(fs, liveFile, liveSt.size, lastTs)) } catch { /* the live tail is best-effort */ }
+      }
+      const head = `${fileId}:${st.size}:${from}:${gen}.${liveGen}`
       const token = `${head}/${start}.${prefixOf(doc, start)}`
       const reply: ChatResponse = before != null
         ? { ...base, file: fileId, older: true, items, start, ...(rewritten ? { rewritten: true } : {}) }

@@ -1146,7 +1146,7 @@ export const CMD_HEADERS_SCRIPT = `for f in "$@"; do
 done`
 
 export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, exec, stream }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number, exec?: ShellExec, stream?: (script: string, args: string[]) => ChildProcessWithoutNullStreams | null }) {
-  const devin = createDevinTranscripts({ home, fs })
+  const devin = createDevinTranscripts({ home, fs, exec })
   const opencode = createOpenCodeTranscripts({ home, exec, stream })
   // Command Code discovery/status caches: project headers change rarely, and
   // an unchanged session must not be re-read on every 5 s status refresh.
