@@ -96,7 +96,9 @@ async function choose(o: ModelOption) {
     const r = await api<{ model: ModelInfo }>('/api/model', { pane_id: props.pane!.id, label: o.label })
     chosen.value = { info: r.model, at: Date.now() }
     efforts.value = null
-    toast(tl(`Model: ${r.model.label} (this session)`, `Modèle : ${r.model.label} (cette session)`))
+    toast(props.pane!.agent === 'cmd'
+      ? tl(`Model: ${r.model.label}`, `Modèle : ${r.model.label}`)
+      : tl(`Model: ${r.model.label} (this session)`, `Modèle : ${r.model.label} (cette session)`))
   } catch (err) {
     toast((err as Error).message, true)
   } finally {
@@ -121,7 +123,11 @@ async function chooseEffort(level: string) {
 }
 
 const modelItems = computed(() => {
-  const head = [{ type: 'label' as const, label: t('For this session only') }]
+  // Command Code: its /model also sets the default for new sessions — say so
+  // instead of promising a session-scoped choice it does not have.
+  const head = [{ type: 'label' as const, label: list.value?.agent === 'cmd'
+    ? t('Also the default for new sessions')
+    : t('For this session only') }]
   if (modelsLoading.value || !list.value) {
     return [head, [{ label: t('Reading models…'), icon: 'i-lucide-loader-circle', disabled: true, class: 'model-loading' }]]
   }
