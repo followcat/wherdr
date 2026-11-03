@@ -33,6 +33,29 @@ describe('Devin live tail: hook events to chat items', () => {
     expect(items[1]!.out).toBeUndefined()
   })
 
+  it('pairs a tool result with its own call by tool_use_id, out of order', () => {
+    const raw = [
+      line(T0, { hook_event_name: 'PreToolUse', tool_name: 'exec', tool_use_id: 'call-a', tool_input: { command: 'first' } }),
+      line(T0 + 100, { hook_event_name: 'PreToolUse', tool_name: 'exec', tool_use_id: 'call-b', tool_input: { command: 'second' } }),
+      line(T0 + 200, { hook_event_name: 'PostToolUse', tool_name: 'exec', tool_use_id: 'call-b', tool_response: 'out-b' }),
+      line(T0 + 300, { hook_event_name: 'PostToolUse', tool_name: 'exec', tool_use_id: 'call-a', tool_response: 'out-a' }),
+    ].join('\n')
+    const items = parseLiveEvents(raw, 0)
+    expect(items[0]).toMatchObject({ text: 'first', toolStatus: 'completed', out: 'out-a' })
+    expect(items[1]).toMatchObject({ text: 'second', toolStatus: 'completed', out: 'out-b' })
+  })
+
+  it('keeps per-name order when a PostToolUse has no tool_use_id', () => {
+    const raw = [
+      line(T0, { hook_event_name: 'PreToolUse', tool_name: 'exec', tool_use_id: 'call-a', tool_input: { command: 'with-id' } }),
+      line(T0 + 100, { hook_event_name: 'PreToolUse', tool_name: 'exec', tool_input: { command: 'no-id' } }),
+      line(T0 + 200, { hook_event_name: 'PostToolUse', tool_name: 'exec', tool_response: 'done' }),
+    ].join('\n')
+    const items = parseLiveEvents(raw, 0)
+    expect(items[0]).toMatchObject({ text: 'with-id', toolStatus: 'completed', out: 'done' })
+    expect(items[1]).toMatchObject({ text: 'no-id', toolStatus: 'running' })
+  })
+
   it('keeps a tool result whose call scrolled out of the sidecar window', () => {
     const raw = line(T0, { hook_event_name: 'PostToolUse', tool_name: 'exec', tool_response: 'done' })
     const [item] = parseLiveEvents(raw, 0)

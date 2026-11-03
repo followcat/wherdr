@@ -154,11 +154,14 @@ const clip = (s: unknown, max = MAX_TEXT) => typeof s === 'string' ? s.slice(0, 
 const asText = (v: unknown) => typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v)
 
 // Maps hook events newer than `afterTs` to chat items, pairing each
-// PostToolUse with its pending PreToolUse (same tool name, in order).
+// PostToolUse with its pending PreToolUse by tool_use_id when the event
+// carries one, else by per-tool-name order.
 export function parseLiveEvents(raw: string, afterTs: number): ChatItem[] {
   const items: ChatItem[] = []
-  const pending = new Map<string, ChatItem[]>()
+  const pending = new Map<string, { item: ChatItem, id: string | null }[]>()
+  const pendingById = new Map<string, ChatItem>()
   const iso = (ms: number) => new Date(ms).toISOString()
+  const useId = (ev: Record<string, unknown>) => typeof ev.tool_use_id === 'string' && ev.tool_use_id ? ev.tool_use_id : null
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue
     let rec: { ts?: number, ev?: Record<string, unknown> }
@@ -176,13 +179,29 @@ export function parseLiveEvents(raw: string, afterTs: number): ChatItem[] {
       const summary = input.command || input.file_path || input.path || input.query || input.pattern || name
       const t: ChatItem = { role: 'tool', name, text: clip(String(summary), 300), ts: iso(ts), live: true, toolStatus: 'running' }
       items.push(t)
+      const id = useId(ev)
       const q = pending.get(name) || []
-      q.push(t)
+      q.push({ item: t, id })
       pending.set(name, q)
+      if (id) pendingById.set(id, t)
     } else if (kind === 'PostToolUse') {
       const name = String(ev.tool_name || 'Tool')
-      const q = pending.get(name)
-      const t = q && q.length ? q.shift()! : null
+      const id = useId(ev)
+      // A result with an id claims its own call even out of order; without
+      // one, the oldest waiting call of the same tool name, as before.
+      let t = id ? pendingById.get(id) ?? null : null
+      if (t) {
+        pendingById.delete(id!)
+        const q = pending.get(name)
+        const at = q ? q.findIndex(e => e.item === t) : -1
+        if (at >= 0) q!.splice(at, 1)
+      } else {
+        const e = pending.get(name)?.shift()
+        if (e) {
+          t = e.item
+          if (e.id) pendingById.delete(e.id)
+        }
+      }
       const out = clip(asText(ev.tool_response))
       if (t) {
         t.toolStatus = 'completed'
