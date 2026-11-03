@@ -3,9 +3,10 @@
 // lifecycle hooks fire in real time (the same mechanism herdr's own
 // integration uses to report pane sessions), so we install one small hook on
 // each Devin machine: it appends hook events to a per-session JSONL sidecar,
-// and the conversation tail appends any events newer than the transcript's
-// last step. ATIF stays the only transcript of record; the sidecar is a
-// transient overlay that disappears from the view as soon as ATIF lands.
+// and the conversation tail appends the events of the turn the transcript
+// has not exported yet. ATIF stays the only transcript of record; the
+// sidecar is a transient overlay that disappears from the view as soon as
+// ATIF lands.
 import type { ChatItem } from '../../shared/types'
 import type { MachineFs, ShellExec } from './fsx'
 
