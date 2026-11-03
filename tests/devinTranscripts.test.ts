@@ -18,6 +18,7 @@ function fixture() {
 afterEach(() => { vi.unstubAllEnvs(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }) })
 const pane = { id: 'p1', agent: 'devin', cwd: '/projects/demo', agentSession: 'devin-test' }
 const realFixture = fileURLToPath(new URL('./helpers/devin-atif-v1.7.json', import.meta.url))
+const realShapeFixture = fileURLToPath(new URL('./helpers/devin-atif-v1.7-real.json', import.meta.url))
 
 function countingFs(base: MachineFs = localFs) {
   const counts = { stat: 0, read: 0 }
@@ -344,6 +345,27 @@ it('reads an anonymized ATIF-v1.7 transcript from Devin CLI 3000.11.234', async 
   const img = await reader.image(pane, r.file!, shot!.ref!, 0)
   expect(img?.type).toBe('image/png')
   expect(img?.body.length).toBeGreaterThan(0)
+})
+
+it('reads the transcript shape Devin CLI 3000.11.234 really writes', async () => {
+  // steps[].timestamp (nanosecond RFC 3339), extra.telemetry, metrics and
+  // agent.tool_definitions — no metadata object anywhere.
+  const raw = JSON.parse(readFileSync(realShapeFixture, 'utf8'))
+  expect(raw.schema_version).toBe('ATIF-v1.7')
+  expect(raw.agent.version).toBe('3000.11.234')
+  expect(raw.steps.every((s: { metadata?: unknown }) => s.metadata === undefined)).toBe(true)
+  const { home, reader } = fixture()
+  const dest = path.join(home, '.local/share/devin/cli/transcripts')
+  mkdirSync(dest, { recursive: true })
+  copyFileSync(realShapeFixture, path.join(dest, 'devin-test.json'))
+  const r = await reader.chat(pane)
+  expect(r.items?.map(i => i.role)).toEqual(['user', 'thinking', 'assistant', 'tool', 'tool', 'user', 'thinking', 'assistant'])
+  expect(r.items?.[0]).toMatchObject({ role: 'user', text: 'Review the cart module in /home/user/acme-shop and run its tests on host-a.', ts: '2026-03-12T09:14:05.441000000+00:00' })
+  expect(r.items?.find(i => i.role === 'tool' && i.name === 'exec')).toMatchObject({ text: 'npm test', out: '12 passed, 0 failed' })
+  expect(r.items?.find(i => i.role === 'tool' && i.name === 'read')).toMatchObject({ text: '/home/user/acme-shop/src/cart.ts' })
+  expect(await reader.model(pane)).toEqual({ id: 'claude-sonnet-4-5', label: 'Sonnet 4.5' })
+  const s = await reader.search(pane, 'cart', Date.now() + 5000)
+  expect(s.hits.map(i => i.offset)).toEqual([5, 3, 2])
 })
 
 
