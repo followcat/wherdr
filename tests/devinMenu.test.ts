@@ -212,6 +212,68 @@ it('parseDevinFusion: fast mode focus, a truncated pair field, no claim without 
   expect(parseDevinFusion(null)).toBeNull()
 })
 
+// Live captures (w4:p4, Devin v3000.11.x): with the full menu on screen the
+// dropdown is an overlay — its entries overwrite the rows below, which bleed
+// through to the left of the box ("…Max   Fa ▸ GPT-6.1 Sol").
+const FUSION_LEAD_OVERLAY = `
+──────────────────────────────────────────
+/ Type to search
+──────────────────────────────────────────
+  Adaptive
+❭ Fusion                    ◼◼◼◼◼    XHigh         Lead GPT-6.1 Sol   ▾   Sidekick SWE-2 High    ▾   Fast Mode Off
+  Recently Used                                         Claude Opus 5.5
+  SWE-2               ✱     ◼◼◼      Max           Fa ▸ GPT-6.1 Sol
+  Recommended                                           Claude Fable 5.1
+  Claude Fable 5.1          ◼◼◼◼◼    Medium             GPT-6 Astra
+  Claude Opus 5.5           ◼◼◼◼◼    XHigh         Fa   GPT-6 Sol
+  GPT-6 Astra         ✱     ◼◼◼◼◼    Max           Fa   GPT-5.6 Sol
+  GPT-6 Sol           ✱     ◼◼◼◼◼◼   Medium        Fa   Claude Opus 5
+  GPT-6 Luna          ✱     ◼◼◼◼◼◼   Medium        Fa   Claude Sonnet 5.5
+  ↓ more below
+
+  ✱ New  ✱ Promotion  ✱ Beta  ✱ Use your ChatGPT plan  · Pairs frontier intelligence with cost-efficient execution
+↑↓ select · tab sidekick · ↵ confirm · alt+↵ this session only · esc collapse
+`
+
+const FUSION_SIDEKICK_OVERLAY = `
+──────────────────────────────────────────
+/ Type to search
+──────────────────────────────────────────
+  Adaptive
+❭ Fusion                    ◼◼◼◼◼    XHigh         Lead GPT-6.1 Sol   ▾   Sidekick SWE-2 High    ▾   Fast Mode Off
+  Recently Used                                                                    SWE-2 Medium *
+  SWE-2               ✱     ◼◼◼      Max           Fast Mode Off                 ▸ SWE-2 High
+  Recommended                                                                      GPT-6 Luna High
+  Claude Fable 5.1          ◼◼◼◼◼    Medium                                        GPT-6.1 Terra High
+  Claude Opus 5.5           ◼◼◼◼◼    XHigh         Fast Mode Off                   GPT-5.6 Luna High
+  GPT-6 Astra         ✱     ◼◼◼◼◼    Max           Fast Mode Off                   GPT-5.6 Sol High
+  GPT-6 Sol           ✱     ◼◼◼◼◼◼   Medium        Fast Mode Off                   GLM-5.2 High
+  GPT-6 Luna          ✱     ◼◼◼◼◼◼   Medium        Fast Mode Off                   Claude Sonnet 5.5 Medium
+  ↓ more below                                                                     Claude Haiku 5.5 Medium
+↑↓ select · tab fast mode · ↵ confirm · alt+↵ this session only · esc collapse
+`
+
+it('parseDevinFusion: entries overlaid on menu rows are read at the box column', () => {
+  const st = parseDevinFusion(FUSION_LEAD_OVERLAY)
+  expect(st!.dropdown!.which).toBe('lead')
+  const d = st!.dropdown!
+  expect(d.options.map(o => o.label)).toEqual([
+    'Claude Opus 5.5', 'GPT-6.1 Sol', 'Claude Fable 5.1', 'GPT-6 Astra',
+    'GPT-6 Sol', 'GPT-5.6 Sol', 'Claude Opus 5', 'Claude Sonnet 5.5',
+  ])
+  expect(d.options[d.cursor]!.label).toBe('GPT-6.1 Sol')
+
+  const side = parseDevinFusion(FUSION_SIDEKICK_OVERLAY)!.dropdown!
+  expect(side.which).toBe('sidekick')
+  expect(side.options.map(o => o.label)).toEqual([
+    'SWE-2 Medium', 'SWE-2 High', 'GPT-6 Luna High', 'GPT-6.1 Terra High',
+    'GPT-5.6 Luna High', 'GPT-5.6 Sol High', 'GLM-5.2 High',
+    'Claude Sonnet 5.5 Medium', 'Claude Haiku 5.5 Medium',
+  ])
+  expect(side.options[side.cursor]!.label).toBe('SWE-2 High')
+  expect(side.options.filter(o => o.def).map(o => o.label)).toEqual(['SWE-2 Medium'])
+})
+
 it('devinStatusPair reads the applied "Lead ◆ Sidekick" from the status line', () => {
   expect(devinStatusPair(`${IDLE}Fusion · GPT-6.1 Sol ◆ SWE-2 High · bypass                      See usage and cost: /session-stats`))
     .toEqual({ lead: 'GPT-6.1 Sol', sidekick: 'SWE-2 High' })
