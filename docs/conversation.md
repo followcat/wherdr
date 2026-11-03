@@ -32,8 +32,26 @@
   and service changes discard old page anchors. Temporary read failures preserve
   already displayed messages. Search uses a 40-page / 8 MB scan budget within the shared deadline
   and reports incomplete results; the last page may exceed the byte budget. Only session-referenced inline or local
-  image files are served; remote image URLs are not fetched. Sending, stopping,
-  questions and approvals retain the existing terminal controls. Version 1.x,
+  `file:` image files are served; remote image URLs are not fetched.
+  Answers go through the service: a blocked pane's pending permission request or
+  question shows as the same "Your turn" card other agents get (Allow once /
+  Always allow / Reject, a choice list, or a free answer for a single-field
+  form), replied to through whitelisted calls and trusted only once the request
+  has left the pending list. When the service is unreachable or does not list
+  the request, the boxed permission dialog is still parsed from the screen —
+  its colour-only cursor read from an ANSI re-read, never guessed — and its
+  displayed action and resources resolve exactly one pending request before the
+  reply goes out; an ambiguous match is refused. The session inbox is the
+  composer's queue: waiting messages appear as queued bubbles and Cancel
+  deletes the matching entry, re-listed first. `! command` runs OpenCode's real
+  shell through the service and lands as a bash card. The composer status line
+  shows the agent, model and per-direction token counts and cost from the
+  session record, and the model can be switched for the current session from
+  the composer's picker (the transport's one whitelisted write, verified by a
+  re-read). Plain text still goes through the terminal; a message sent while
+  the pane is blocked is held until its composer box is back on screen, and the
+  raw input route refuses a bare Enter there. Stopping keeps its existing
+  controls. Version 1.x,
   `--standalone` and explicit `--server` instances are not supported by this reader.
 - **Command Code conversations**: read the local CLI's JSONL sessions on the machine
   running the agent (local or SSH): `~/.commandcode/projects/<project>/<session>.jsonl`.
@@ -94,10 +112,14 @@
   and the `/models/**` route serves them with byte ranges, behind the passkey lock like the
   API. The browser fetches each file once, in resumable slices, and keeps it in Cache
   Storage, so models survive redeploys and are not part of the npm tarball.
-- **Model and effort pickers** for Claude Code, Codex and omp (omp: its
-  "Switch Model" selector, `/switch` or `/model`, and its thinking level, changed with its own
-  ⇧⇥ cycle). Changes apply **to the current session only**; wherdr never changes your default
-  model.
+- **Model and effort pickers** for Claude Code, Codex, omp, Devin, OpenCode and
+  Command Code (omp: its "Switch Model" selector, `/switch` or `/model`, and its
+  thinking level, changed with its own ⇧⇥ cycle; Devin: its `/model` picker,
+  Fusion's Lead and Sidekick included; OpenCode: the model only, switched
+  through its session API — no effort control; Command Code: the model only,
+  via `/model <id>`). Except where the agent itself cannot scope it (Command
+  Code's pick also becomes its default), changes apply **to the current session
+  only**; wherdr never changes your default model.
 - **Codex update notices**: on Linux, wherdr checks the executable of the pane's
   current process, with a bounded cache. Resuming an older conversation does not
   make its original CLI version the running version. If the process cannot be
