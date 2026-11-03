@@ -149,6 +149,29 @@ export function devinFieldLine(ansi: string): string | null {
   return DEVIN_HINTS.test(line) ? '' : line
 }
 
+// Command Code's composer (v1.88.x): the "❯" line boxed by bare "─" rules,
+// above and below. Same anchors as cmdFieldOnScreen (choices.ts) — the two
+// must not disagree about where the field is — but a different contract: it
+// returns the field's text (a draft included) for confirmSubmitted's "our
+// text still in the field" check, while the recognizer refuses a draft so
+// nothing is typed over it. '' when empty or holding its grayed-out
+// placeholder ("Ask your question…"); null: no composer box, or a dialog's
+// option cursor/selection hints anywhere on screen — typing then would
+// answer the dialog, not compose.
+const CMD_OPTION_CURSOR = /^\s*❯\s*\d{1,2}\.\s/
+const CMD_DIALOG_HINTS = /↑\/↓ to navigate|enter to select|esc to exit/i
+const CMD_BOX = /^\s*─{3,}/
+const CMD_PLACEHOLDER = /^ask your question/i
+export function cmdFieldLine(ansi: string): string | null {
+  const lines = String(ansi || '').split('\n').map(l => l.replace(SGR, '').replace(/\s+$/, ''))
+  if (lines.some(l => CMD_OPTION_CURSOR.test(l) || CMD_DIALOG_HINTS.test(l))) return null
+  let at = -1
+  for (let i = lines.length - 1; i >= 0 && at < 0; i--) if (/^\s*❯/.test(lines[i]!)) at = i
+  if (at < 1 || !CMD_BOX.test(lines[at - 1]!) || !CMD_BOX.test(lines[at + 1] || '')) return null
+  const text = lines[at]!.replace(/^\s*❯\s*/, '').trim()
+  return CMD_PLACEHOLDER.test(text) ? '' : text
+}
+
 // Dim and reverse video in effect at the end of `prefix` (SGR sequences only).
 function sgrState(prefix: string): { dim: boolean, reverse: boolean } {
   let dim = false

@@ -34,7 +34,7 @@ import { type QueueEntry, HOLD_AGENTS, INPUT_STATES, checkQueue, checkSent, give
 import { inputVisible } from './choices'
 import { isSlashCommand, photosOnly } from '../../shared/queuedMatch'
 import { isSubmitKey } from '../../shared/submitKeys'
-import { clearKeys, codexFieldLine, devinFieldLine, findQueued, inputBox, msgText, unqueueClaude, unqueueDevin } from './unqueue'
+import { clearKeys, cmdFieldLine, codexFieldLine, devinFieldLine, findQueued, inputBox, msgText, unqueueClaude, unqueueDevin } from './unqueue'
 import { takeBackInterrupted, unansweredTurn } from './interruptRestore'
 import { interruptAgent } from './interruptSeq'
 import { queuedPasted } from './pastes'
@@ -606,9 +606,22 @@ export function sendPrompt(p: Pane, text: string, opts: { retry?: boolean, submi
     // Herdr may still call a quota wait blocked. Its visible field also takes
     // slash commands, using the same checked send rather than agent.prompt.
     if (p.agent !== 'claude' || !GUARD_STATES.has(p.status || '') || (isSlashCommand(text) && !p.usageLimit)) {
+      // Command Code registers by its pane label only — Herdr's agent.prompt
+      // refuses label-only panes for good ("not an active named agent"). Its
+      // composer takes the text directly, the same writes an alternate
+      // terminator makes, gated by its strict recognizer first: a dialog, a
+      // "/" menu or a draft owns the keys — held, never typed over.
+      if (p.agent === 'cmd') {
+        const r = await herdr('pane.read', { pane_id: p.id, source: 'detection' }, 4000)
+        if (!inputVisible(r.read && r.read.text, p.agent)) throw new HerdrError('no_input', 'Agent input field not found')
+        await herdr('pane.send_input', { pane_id: p.id, text })
+        await herdr('pane.send_input', { pane_id: p.id, keys: ['enter'] })
+        await confirmSubmitted(fieldDeps(p, cmdFieldLine), text)
+        return
+      }
       // An alternate terminator goes text then key (as /api/input does),
       // then the same "field must not keep our text" check — with the
-      // terminator, never Enter, as the retry.
+      // terminator, never Enter, which would mean something else to the agent.
       const field = submitKey && FIELD_READERS[p.agent || '']
       if (field) {
         await herdr('pane.send_input', { pane_id: p.id, text })
@@ -1125,9 +1138,12 @@ function flushPending(p: Pane) {
   }
   if (!p.agent || !READY.has(p.status || '')) return
   pendingBusy.add(p.id)
-  withPaneLock(p.id, () => pend.submitKey
+  // sendPrompt takes the pane lock itself — a lock inside the lock never
+  // resolves. Command Code goes through it too: agent.prompt refuses its
+  // label-only pane for good, while its composer takes the typed text.
+  ;(pend.submitKey || p.agent === 'cmd'
     ? sendPrompt(p, pend.text, { submitKey: pend.submitKey })
-    : agentPrompt(p.id, typedFor(p, pend.text)))
+    : withPaneLock(p.id, () => agentPrompt(p.id, typedFor(p, pend.text))))
     .then(() => {
       pendingPrompts.delete(p.id)
       log(`initial prompt ${p.id} sent`)
