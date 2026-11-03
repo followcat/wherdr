@@ -200,4 +200,44 @@ describe('Devin live tail: install on a real shell', () => {
     expect(existsSync(stale)).toBe(false)
     expect(existsSync(fresh)).toBe(true)
   })
+
+  // Feeds one event JSON to the installed hook, like Devin itself does.
+  const hook = (homeDir: string, ev: Record<string, unknown>, extraEnv: Record<string, string> = {}) =>
+    spawnSync('python3', [path.join(homeDir, '.config/devin/wherdr-devin-live.py')], {
+      env: { ...process.env, HOME: homeDir, ...extraEnv },
+      input: JSON.stringify(ev),
+      encoding: 'utf8',
+    })
+
+  it('writes the sidecar under ~/.cache even when XDG_CACHE_HOME is set, mode 0600', async () => {
+    const h = home()
+    expect(sh(await installScript(), h).status).toBe(0)
+    const xdg = path.join(h, 'elsewhere')
+    // The reader builds ~/.cache/herdr-web from the machine's home: it cannot
+    // know a remote XDG_CACHE_HOME, so the hook ignores it too.
+    expect(hook(h, { hook_event_name: 'UserPromptSubmit', session_id: 's1', prompt: 'hi' }, { XDG_CACHE_HOME: xdg }).status).toBe(0)
+    const sidecar = path.join(h, '.cache/herdr-web/devin-live/s1.jsonl')
+    expect(existsSync(sidecar)).toBe(true)
+    expect(existsSync(path.join(xdg, 'herdr-web/devin-live/s1.jsonl'))).toBe(false)
+    expect(statSync(sidecar).mode & 0o777).toBe(0o600)
+  })
+
+  it('truncates prompts, replies, tool output and inputs before writing', async () => {
+    const h = home()
+    expect(sh(await installScript(), h).status).toBe(0)
+    const r = hook(h, {
+      hook_event_name: 'PostToolUse', session_id: 's2',
+      prompt: 'p'.repeat(25000),
+      last_assistant_message: 'a'.repeat(25000),
+      tool_response: 'o'.repeat(5000),
+      tool_input: { command: 'c'.repeat(2000), timeout: 42 },
+    })
+    expect(r.status).toBe(0)
+    const rec = JSON.parse(readFileSync(path.join(h, '.cache/herdr-web/devin-live/s2.jsonl'), 'utf8'))
+    expect(rec.ev.prompt).toHaveLength(20000)
+    expect(rec.ev.last_assistant_message).toHaveLength(20000)
+    expect(rec.ev.tool_response).toHaveLength(4000)
+    expect(rec.ev.tool_input.command).toHaveLength(1000)
+    expect(rec.ev.tool_input.timeout).toBe(42)
+  })
 })
