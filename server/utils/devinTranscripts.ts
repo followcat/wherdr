@@ -66,6 +66,15 @@ function isUserStep(step: Step): boolean {
   return step.source === 'user'
 }
 
+// One step time for the items and the live-tail cutoff alike: current
+// transcripts write `timestamp`, the fixture's older shape only has
+// `metadata.created_at`.
+function stepTime(step: Step): string | null {
+  return typeof step.timestamp === 'string' ? step.timestamp
+    : typeof step.metadata?.created_at === 'string' ? step.metadata.created_at
+      : null
+}
+
 function contentText(value: unknown): string {
   if (typeof value === 'string') return clip(value)
   if (Array.isArray(value)) return value.map(contentText).filter(Boolean).join('\n')
@@ -161,9 +170,7 @@ export function parseDevin(steps: Step[], all: Step[] = steps, imagesByRef?: Map
   }
   for (const step of steps) {
     if (step.is_copied_context === true || step.source === 'system') continue
-    const ts = typeof step.timestamp === 'string' ? step.timestamp
-      : typeof step.metadata?.created_at === 'string' ? step.metadata.created_at
-        : null
+    const ts = stepTime(step)
     const id = Number(step.step_id)
     if (!Number.isSafeInteger(id) || id < 1) continue
     const ref = (slot: string) => `${id}:${slot}`
@@ -452,10 +459,10 @@ export function createDevinTranscripts({
       if (liveSt && liveFile) {
         let lastTs = 0
         for (const s of doc.steps) {
-          const t = Date.parse(String(s.timestamp || ''))
+          const t = Date.parse(stepTime(s) || '')
           if (t > lastTs) lastTs = t
         }
-        try { items.push(...await readDevinLive(fs, liveFile, liveSt.size, lastTs)) } catch { /* the live tail is best-effort */ }
+        try { items.push(...await readDevinLive(fs, liveFile, liveSt.size, lastTs, st.mtimeMs)) } catch { /* the live tail is best-effort */ }
       }
       const head = `${fileId}:${st.size}:${from}:${gen}.${liveGen}`
       const token = `${head}/${start}.${prefixOf(doc, start)}`

@@ -217,10 +217,34 @@ export function parseLiveEvents(raw: string, afterTs: number): ChatItem[] {
   return items.slice(-LIVE_MAX_ITEMS)
 }
 
-// Reads the sidecar's tail and returns the live items newer than `afterTs`;
-// the file lives on the Devin machine, so reads go through its MachineFs.
-export async function readDevinLive(fs: MachineFs, file: string, size: number, afterTs: number): Promise<ChatItem[]> {
+// A Stop event ends its turn, and Devin rewrites the ATIF transcript at
+// about that moment — a little before or after the hook runs, so the file's
+// mtime gets a slack window. Once the transcript has caught up to a Stop,
+// everything up to it is ATIF's own: cutting by the last step's clock alone
+// resurfaces the turn's events, the Stop's copy of the final reply first
+// (the hook fires after the last step was generated, so its ts is newer).
+// A Stop ATIF has not reached yet means that turn is still live.
+const LIVE_STOP_SLACK_MS = 10 * 1000
+
+function exportedThrough(raw: string, atifMtimeMs: number): number {
+  let through = 0
+  for (const line of raw.split('\n')) {
+    if (!line.includes('"Stop"')) continue
+    let rec: { ts?: number, ev?: Record<string, unknown> }
+    try { rec = JSON.parse(line) } catch { continue }
+    if (rec.ev?.hook_event_name !== 'Stop' || typeof rec.ts !== 'number') continue
+    if (atifMtimeMs >= rec.ts - LIVE_STOP_SLACK_MS && rec.ts > through) through = rec.ts
+  }
+  return through
+}
+
+// Reads the sidecar's tail and returns the live items of the turn ATIF has
+// not exported yet: events newer than its last step (`afterTs`) and past the
+// newest Stop the transcript's mtime covers. The file lives on the Devin
+// machine, so reads go through its MachineFs.
+export async function readDevinLive(fs: MachineFs, file: string, size: number, afterTs: number, atifMtimeMs = 0): Promise<ChatItem[]> {
   const start = Math.max(0, size - LIVE_TAIL_BYTES)
   const buf = await fs.read(file, start, size - start)
-  return parseLiveEvents(buf.toString('utf8'), afterTs)
+  const raw = buf.toString('utf8')
+  return parseLiveEvents(raw, Math.max(afterTs, exportedThrough(raw, atifMtimeMs)))
 }

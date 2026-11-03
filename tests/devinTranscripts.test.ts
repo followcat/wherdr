@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -432,4 +432,95 @@ it('replaces a cursor page from the former SQLite reader instead of mixing proto
   const reader = createDevinTranscripts({ home })
   const previous = 'devin:devin-' + '1'.repeat(24) + ':0:' + 'a'.repeat(24) + ':' + 'b'.repeat(24)
   expect(await reader.chat(pane, { from: 0, since: previous, anchor: previous })).toMatchObject({ rewritten: true, items: [{ text: 'ATIF history' }] })
+})
+
+// Live tail vs ATIF: the hook sidecar overlays the transcript only for the
+// turn ATIF has not exported yet. These use raw JSON because the writer above
+// only fills metadata.created_at and gives no control over file mtimes.
+const T0 = Date.parse('2026-11-03T09:00:00Z')
+const at = (ms: number) => new Date(ms).toISOString()
+
+function writeAtif(home: string, steps: Record<string, unknown>[], mtime: Date) {
+  const dir = path.join(home, '.local/share/devin/cli/transcripts')
+  mkdirSync(dir, { recursive: true })
+  const file = path.join(dir, 'devin-test.json')
+  writeFileSync(file, JSON.stringify({ schema_version: 'ATIF-v1.7', session_id: 'devin-test', agent: { name: 'devin', model_name: 'test-model' }, steps }))
+  utimesSync(file, mtime, mtime)
+  return file
+}
+
+function writeLive(home: string, session: string, events: { ts: number, ev: Record<string, unknown> }[]) {
+  const dir = path.join(home, '.cache/herdr-web/devin-live')
+  mkdirSync(dir, { recursive: true })
+  const file = path.join(dir, `${session}.jsonl`)
+  writeFileSync(file, events.map(e => JSON.stringify(e)).join('\n') + '\n')
+  return file
+}
+
+it('shows no live item of a turn ATIF already exported, whichever side of its Stop the file landed', async () => {
+  // Steps carry only metadata.created_at, the shape the fixture writes:
+  // the cutoff must read it too, not just step.timestamp.
+  const events = [
+    { ts: T0, ev: { hook_event_name: 'UserPromptSubmit', session_id: 'devin-test', prompt: 'First prompt' } },
+    { ts: T0 + 3000, ev: { hook_event_name: 'PreToolUse', session_id: 'devin-test', tool_name: 'exec', tool_use_id: 'call-1', tool_input: { command: 'npm test' } } },
+    { ts: T0 + 6000, ev: { hook_event_name: 'PostToolUse', session_id: 'devin-test', tool_name: 'exec', tool_use_id: 'call-1', tool_response: 'ok' } },
+    { ts: T0 + 9000, ev: { hook_event_name: 'Stop', session_id: 'devin-test', last_assistant_message: 'First reply' } },
+  ]
+  for (const offset of [-3000, 3000]) {
+    const { home, reader } = fixture()
+    writeAtif(home, [
+      { step_id: 1, source: 'user', message: 'First prompt', metadata: { created_at: at(T0), is_user_input: true } },
+      { step_id: 2, source: 'agent', message: 'First reply', metadata: { created_at: at(T0 + 7000) } },
+    ], new Date(T0 + 9000 + offset))
+    writeLive(home, 'devin-test', events)
+    const r = await reader.chat(pane)
+    expect(r.items?.filter(i => i.live)).toEqual([])
+    expect(r.items?.map(i => i.text)).toEqual(['First prompt', 'First reply'])
+  }
+})
+
+it('shows the events of a turn still in progress, in order', async () => {
+  const { home, reader } = fixture()
+  writeAtif(home, [
+    { step_id: 1, source: 'user', timestamp: at(T0), message: 'Earlier prompt' },
+    { step_id: 2, source: 'agent', timestamp: at(T0 + 5000), message: 'Earlier reply' },
+  ], new Date(T0 + 6000))
+  writeLive(home, 'devin-test', [
+    { ts: T0 + 5500, ev: { hook_event_name: 'Stop', session_id: 'devin-test', last_assistant_message: 'Earlier reply' } },
+    { ts: T0 + 8000, ev: { hook_event_name: 'UserPromptSubmit', session_id: 'devin-test', prompt: 'Next prompt' } },
+    { ts: T0 + 9000, ev: { hook_event_name: 'PreToolUse', session_id: 'devin-test', tool_name: 'exec', tool_use_id: 'call-2', tool_input: { command: 'make check' } } },
+  ])
+  const r = await reader.chat(pane)
+  expect(r.items?.map(i => [i.role, i.text, i.live ? 'live' : 'atif'])).toEqual([
+    ['user', 'Earlier prompt', 'atif'],
+    ['assistant', 'Earlier reply', 'atif'],
+    ['user', 'Next prompt', 'live'],
+    ['tool', 'make check', 'live'],
+  ])
+})
+
+it('drops a turn\'s live items once ATIF lands for it', async () => {
+  const { home, reader } = fixture()
+  writeAtif(home, [
+    { step_id: 1, source: 'user', timestamp: at(T0), message: 'Earlier prompt' },
+    { step_id: 2, source: 'agent', timestamp: at(T0 + 5000), message: 'Earlier reply' },
+  ], new Date(T0 + 6000))
+  const live = writeLive(home, 'devin-test', [
+    { ts: T0 + 5500, ev: { hook_event_name: 'Stop', session_id: 'devin-test', last_assistant_message: 'Earlier reply' } },
+    { ts: T0 + 8000, ev: { hook_event_name: 'UserPromptSubmit', session_id: 'devin-test', prompt: 'Next prompt' } },
+    { ts: T0 + 9000, ev: { hook_event_name: 'PreToolUse', session_id: 'devin-test', tool_name: 'exec', tool_use_id: 'call-2', tool_input: { command: 'make check' } } },
+  ])
+  expect((await reader.chat(pane)).items?.filter(i => i.live)).toHaveLength(2)
+  // The turn ends: Stop fires, then ATIF is rewritten holding the turn —
+  // its last step timestamped a little before the hook ran.
+  appendFileSync(live, JSON.stringify({ ts: T0 + 11000, ev: { hook_event_name: 'Stop', session_id: 'devin-test', last_assistant_message: 'Next reply' } }) + '\n')
+  writeAtif(home, [
+    { step_id: 1, source: 'user', timestamp: at(T0), message: 'Earlier prompt' },
+    { step_id: 2, source: 'agent', timestamp: at(T0 + 5000), message: 'Earlier reply' },
+    { step_id: 3, source: 'user', timestamp: at(T0 + 8100), message: 'Next prompt' },
+    { step_id: 4, source: 'agent', timestamp: at(T0 + 10000), message: 'Next reply' },
+  ], new Date(T0 + 11500))
+  const r = await reader.chat(pane)
+  expect(r.items?.filter(i => i.live)).toEqual([])
+  expect(r.items?.map(i => i.text)).toEqual(['Earlier prompt', 'Earlier reply', 'Next prompt', 'Next reply'])
 })
