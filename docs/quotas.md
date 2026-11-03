@@ -30,9 +30,12 @@ week, with reset times), for every online machine.
 
 - **Codex**: nothing to do, Codex writes its limits in its session files. Machines on different
   Codex accounts get one block each (told apart by a short hash of the account ID found in the
-  session files; `~/.codex/auth.json` is never read). If a session has no recognized account
-  fingerprint, its reading stays under its own machine and is never merged with another
-  conversation or machine. A new conversation identifies an account switch even before it
+  session files; `~/.codex/auth.json` is never read). Codex only writes that account ID in
+  conversations created with a ChatGPT login by a recent Codex version. A reading without it
+  joins another machine's reading only when both show the same 5-hour window and the same
+  weekly window (resets within a minute, week already started), a sign of one account: the
+  machines then share one Codex row at the top, like Claude. Otherwise it stays under its own
+  machine and is never merged with another conversation or machine. A new conversation identifies an account switch even before it
   logs limits; until a reading for that account is available, no Codex gauge is shown. Failed reads do not
   reuse an older machine snapshot, and remembered weekly limits cannot cross account
   identities. Without a known fingerprint, remembered weekly corrections are not reused,

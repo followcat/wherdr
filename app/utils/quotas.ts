@@ -37,7 +37,8 @@ export function quotaRows(q: Quotas | null, hidden: readonly string[] = []): Quo
 }
 
 // Rows specific to a machine (key '' = local): its Claude account, its Codex
-// account, when accounts differ or the Codex identity is unknown.
+// account, when accounts differ or a Codex identity cannot be established
+// (see mergeQuotas).
 export function machineQuotaRows(q: Quotas | null, key: string, hidden: readonly string[] = []): QuotaRow[] {
   if (!q) return []
   const rows: QuotaRow[] = []
