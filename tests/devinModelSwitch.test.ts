@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const calls = vi.hoisted(() => ({ sent: [] as { method: string, params: Record<string, unknown> }[], screen: '', afterAltEnter: '', pane: {} as Record<string, unknown>, afterMove: '', transcript: null as { id: string | null, label: string } | null }))
+const calls = vi.hoisted(() => ({ sent: [] as { method: string, params: Record<string, unknown> }[], screen: '', afterAltEnter: '', pane: {} as Record<string, unknown>, afterMove: '', transcript: null as { id: string | null, label: string } | null, onKeys: null as null | ((keys: string[]) => void) }))
 const MENU = `
 ──────────────────────────────────────────
 /
@@ -34,6 +34,84 @@ const FUSION_STATUS = `
 Fusion · GPT-6.1 Sol ◆ SWE-2 High · bypass                        See usage and cost: /session-stats
 `
 
+// Live captures, "tab" on the Fusion row: the Lead ▾ / Sidekick ▾ dropdowns
+// open below it ("esc collapse" legend; "▸" is the pick, "*" the default).
+const LEAD_OPEN = `
+──────────────────────────────────────────
+/ Fusion
+──────────────────────────────────────────
+❭ Fusion                    ◼◼◼◼◼    Max           Lead GPT-6.1 Sol   ▾   Sidekick SWE-2 High    ▾   Fast Mode Off
+                                                   Claude Opus 5.5
+                                                 ▸ GPT-6.1 Sol
+                                                   Claude Fable 5.1
+                                                   GPT-6 Astra
+                                                   GPT-6 Sol
+                                                   GPT-5.6 Sol
+                                                   Claude Opus 5
+                                                   Claude Sonnet 5.5
+
+  ━━━━━━━━━━━━●━━━━━━━━━━━━━━━━━━━━━━━
+  Input        Cached input   Output       Sidekick  Free
+  $2 / 1M      $0.1 / 1M      $10 / 1M
+↑↓ select · tab sidekick · shift+←/→ move cursor · ↵ confirm · alt+↵ this session only · esc collapse
+`
+
+const SIDE_OPEN = `
+──────────────────────────────────────────
+/ Fusion
+──────────────────────────────────────────
+❭ Fusion                    ◼◼◼◼◼    Max           Lead GPT-6.1 Sol   ▾   Sidekick SWE-2 High    ▾   Fast Mode Off
+                                                                           SWE-2 Medium *
+                                                                         ▸ SWE-2 High
+                                                                           GPT-6 Luna High
+                                                                           GPT-6.1 Terra High
+                                                                           GPT-5.6 Luna High
+                                                                           GPT-5.6 Sol High
+                                                                           GLM-5.2 High
+                                                                           Claude Sonnet 5.5 Medium
+
+  ━━━━━━━━━━━━●━━━━━━━━━━━━━━━━━━━━━━━
+  Input        Cached input   Output       Sidekick  Free
+  $2 / 1M      $0.1 / 1M      $10 / 1M
+↑↓ select · tab fast mode · shift+←/→ move cursor · ↵ confirm · alt+↵ this session only · esc collapse
+`
+
+// ↑↓ inside a dropdown retargets the row field live — the row shows it
+// truncated ("GPT-6 Luna H…") while "▸" names the pick exactly.
+const SIDE_LUNA = SIDE_OPEN
+  .replace('Sidekick SWE-2 High', 'Sidekick GPT-6 Luna H…')
+  .replace('▸ SWE-2 High', '  SWE-2 High')
+  .replace(/(\s+)GPT-6 Luna High/, '$1▸ GPT-6 Luna High')
+
+const FUSION_STATUS_LUNA = `
+❭ Ask Devin to build features, fix bugs, or work on your code
+─────────────────────────────────────────────────────────────────────────
+Fusion · GPT-6.1 Sol ◆ GPT-6 Luna High · bypass                   See usage and cost: /session-stats
+`
+
+const FUSION_STATUS_OPUS = `
+❭ Ask Devin to build features, fix bugs, or work on your code
+─────────────────────────────────────────────────────────────────────────
+Fusion · Claude Opus 5.5 ◆ SWE-2 High · bypass                    See usage and cost: /session-stats
+`
+
+// The picker's key handling in the mock: tab cycles the row's controls
+// (effort → lead → sidekick), esc collapses a dropdown back to the menu.
+function driveFusion(screens: Record<string, string>, extra?: (k: string, st: string) => string) {
+  let st = 'menu'
+  calls.onKeys = (keys) => {
+    for (const k of keys) {
+      if (k === 'tab') st = st === 'menu' ? 'lead' : st === 'lead' ? 'side' : st
+      else if (k === 'esc') st = 'menu'
+      else st = extra ? extra(k, st) : st
+    }
+    calls.screen = screens[st] || calls.screen
+  }
+}
+
+// ▸ moved onto Claude Opus 5.5 in the Lead dropdown.
+const LEAD_OPUS = LEAD_OPEN.replace('▸ GPT-6.1 Sol', '  GPT-6.1 Sol').replace('  Claude Opus 5.5', '▸ Claude Opus 5.5')
+
 vi.mock('../server/utils/env', () => ({ log: () => {} }))
 vi.mock('../server/utils/actions', () => ({ closePanel: async () => false }))
 vi.mock('../server/utils/machines', () => ({ machineOfPane: () => null }))
@@ -50,6 +128,7 @@ vi.mock('../server/utils/herdr', () => {
     calls.sent.push({ method, params })
     if (method === 'pane.send_input' && calls.afterMove && (params.keys as string[]).some(k => k === 'up' || k === 'down')) calls.screen = calls.afterMove
     if (method === 'pane.send_input' && (params.keys as string[]).includes('alt+enter')) calls.screen = calls.afterAltEnter
+    if (method === 'pane.send_input' && calls.onKeys && !(params.keys as string[]).includes('alt+enter')) calls.onKeys(params.keys as string[])
     return method === 'pane.read' ? { read: { text: calls.screen } } : {}
   }
   return {
@@ -65,7 +144,7 @@ vi.mock('../server/utils/herdr', () => {
 import { currentModel, forgetModel, listModels, noteScreen, setModel } from '../server/utils/modelctl'
 
 beforeEach(() => {
-  calls.sent = []; calls.screen = ''; calls.afterAltEnter = ''; calls.afterMove = ''
+  calls.sent = []; calls.screen = ''; calls.afterAltEnter = ''; calls.afterMove = ''; calls.onKeys = null
   calls.transcript = { id: 'SWE-2', label: 'SWE-2' }
   calls.pane = { id: 'w1:p1', agent: 'devin', status: 'done' }
   forgetModel('w1:p1')
@@ -187,4 +266,69 @@ it('does not accept an older successful echo above the latest mismatched echo', 
   calls.screen = MENU
   calls.afterAltEnter = '✓ Model set to Grok 4.7 for this session\n✓ Model set to SWE-2 for this session'
   await expect(setModel('w1:p1', 'Grok 4.7')).rejects.toMatchObject({ code: 'stale' })
+})
+
+describe('Fusion Lead/Sidekick parts', () => {
+  it('drives tab → ↓ → esc → alt+↵ and verifies the status-line pair', async () => {
+    calls.screen = FUSION_MENU
+    calls.afterAltEnter = FUSION_STATUS_LUNA
+    driveFusion({ menu: FUSION_MENU, lead: LEAD_OPEN, side: SIDE_OPEN, sideLuna: SIDE_LUNA },
+      (k, st) => (k === 'down' && st === 'side' ? 'sideLuna' : st))
+    const info = await setModel('w1:p1', 'Fusion', { sidekick: 'GPT-6 Luna High' })
+    expect(info.label).toBe('Fusion')
+    const seq = calls.sent.filter(c => c.method === 'pane.send_input').flatMap(c => c.params.keys as string[])
+    // esc×3 close stale pickers, the search chars, tab tab (effort→lead→sidekick),
+    // down (SWE-2 High → GPT-6 Luna High), esc collapse, alt+enter. Never "enter".
+    expect(seq).toEqual([
+      'esc', 'esc', 'esc',
+      ...'Fusion'.split(''),
+      'tab', 'tab', 'down', 'esc', 'alt+enter',
+    ])
+  })
+
+  it('picks the lead from its own dropdown (one tab)', async () => {
+    calls.screen = FUSION_MENU
+    calls.afterAltEnter = FUSION_STATUS_OPUS
+    driveFusion({ menu: FUSION_MENU, lead: LEAD_OPEN, leadOpus: LEAD_OPUS },
+      (k, st) => (k === 'up' && st === 'lead' ? 'leadOpus' : st))
+    const info = await setModel('w1:p1', 'Fusion', { lead: 'Claude Opus 5.5' })
+    expect(info.label).toBe('Fusion')
+    const seq = calls.sent.filter(c => c.method === 'pane.send_input').flatMap(c => c.params.keys as string[])
+    expect(seq.slice(-4)).toEqual(['tab', 'up', 'esc', 'alt+enter'])
+  })
+
+  it('a status-line pair that does not match the request never verifies', async () => {
+    calls.screen = FUSION_MENU
+    // Both picks land on screen, but the applied pair names a different lead —
+    // the status line is the truth and stays GPT-6.1 Sol → stale.
+    calls.afterAltEnter = FUSION_STATUS_LUNA
+    driveFusion({ menu: FUSION_MENU, lead: LEAD_OPEN, leadOpus: LEAD_OPUS, side: SIDE_OPEN, sideLuna: SIDE_LUNA },
+      (k, st) => (k === 'up' && st === 'lead' ? 'leadOpus' : k === 'down' && st === 'side' ? 'sideLuna' : st))
+    await expect(setModel('w1:p1', 'Fusion', { lead: 'Claude Opus 5.5', sidekick: 'GPT-6 Luna High' }))
+      .rejects.toMatchObject({ code: 'stale' })
+  })
+
+  it('a part name the dropdown does not offer is bad_model; parts on another model too', async () => {
+    calls.screen = FUSION_MENU
+    driveFusion({ menu: FUSION_MENU, lead: LEAD_OPEN, side: SIDE_OPEN })
+    await expect(setModel('w1:p1', 'Fusion', { sidekick: 'No Such Model' })).rejects.toMatchObject({ code: 'bad_model' })
+    calls.screen = MENU
+    await expect(setModel('w1:p1', 'Grok 4.7', { lead: 'GPT-6.1 Sol' })).rejects.toMatchObject({ code: 'bad_model' })
+    // Non-Devin panes reject parts outright.
+    calls.pane.agent = 'claude'
+    await expect(setModel('w1:p1', 'sonnet', { lead: 'X' })).rejects.toMatchObject({ code: 'unsupported' })
+    calls.pane.agent = 'devin'
+  })
+
+  it('listModels carries the Lead/Sidekick lists on the Fusion option', async () => {
+    calls.screen = FUSION_MENU
+    driveFusion({ menu: FUSION_MENU, lead: LEAD_OPEN, side: SIDE_OPEN })
+    const list = await listModels('w1:p1', true)
+    const fusion = list.options.find(o => o.label === 'Fusion')
+    expect(fusion).toBeDefined()
+    expect(fusion!.parts).toEqual([
+      { key: 'lead', label: 'Lead', current: 'GPT-6.1 Sol', options: expect.arrayContaining(['Claude Opus 5.5', 'GPT-6.1 Sol', 'GPT-6 Astra']) },
+      { key: 'sidekick', label: 'Sidekick', current: 'SWE-2 High', options: expect.arrayContaining(['SWE-2 Medium', 'SWE-2 High', 'GPT-6 Luna High']) },
+    ])
+  })
 })

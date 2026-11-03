@@ -129,3 +129,89 @@ export function devinStatusModel(text: string | null | undefined): string | null
   }
   return null
 }
+
+// The status line's "◆" pair under Fusion: "Fusion · <lead> ◆ <sidekick> · <mode>".
+// The applied pair is only ever shown here — the /model row's fields can be
+// truncated ("Sidekick GPT-6 Luna H… ▾"), this line is not.
+export function devinStatusPair(text: string | null | undefined): { lead: string, sidekick: string } | null {
+  if (!text) return null
+  const lines = String(text).split('\n').map(l => l.replace(/\s+$/, '')).filter(l => l.trim())
+  for (let i = lines.length - 1; i >= Math.max(0, lines.length - 4); i--) {
+    const left = lines[i]!.split(/\s{2,}/)[0]!
+    const segs = left.split(' · ').map(s => s.trim()).filter(Boolean)
+    if (segs.length && STATUS_SHELLS.test(segs[segs.length - 1]!)) segs.pop()
+    if (segs.length < 3 || !STATUS_MODE.test(segs[segs.length - 1]!)) continue
+    if (segs[0] !== 'Fusion') return null // a real status line, but not Fusion
+    const pair = segs[1]!.split(' ◆ ').map(s => s.trim())
+    if (pair.length !== 2 || !pair[0] || !pair[1]) return null
+    if (!RULE.test((lines[i - 1] || '').trimStart())) continue
+    return { lead: pair[0], sidekick: pair[1] }
+  }
+  return null
+}
+
+// ── Fusion row: Lead ▾ / Sidekick ▾ dropdowns ───────────────────────────
+// tab on the Fusion row cycles effort → Lead → Sidekick → Fast Mode. The
+// open dropdown's legend reads "esc collapse" and "tab <next>" names what
+// the next tab reaches ("tab sidekick" while Lead is open…). ↑↓ inside a
+// dropdown retargets the row field live; "▸" is the pick cursor, "*" the
+// default. Live capture:
+//   ❭ Fusion  ◼◼◼◼◼  Max   Lead GPT-6.1 Sol   ▾   Sidekick SWE-2 High    ▾   Fast Mode Off
+//                             Claude Opus 5.5
+//                           ▸ GPT-6.1 Sol
+//   ↑↓ select · tab sidekick · shift+←/→ move cursor · ↵ confirm · alt+↵ this session only · esc collapse
+export interface DevinFusionState {
+  lead: string | null, sidekick: string | null // the row's fields (may end in "…")
+  focus: 'effort' | 'lead' | 'sidekick' | 'fast' | null
+  dropdown: { which: 'lead' | 'sidekick', options: { label: string, here: boolean, def: boolean }[], cursor: number } | null
+}
+
+const FUSION_ROW = /^(?:❭|  ) *Fusion\s/
+const FUSION_PAIR = /Lead\s+(.+?)\s+▾\s+Sidekick\s+(.+?)\s+▾/
+const DROPDOWN_ENTRY = /^\s{15,}(▸\s+)?(\S.*?)\s*(\*)?\s*$/
+const DROPDOWN_SCROLL = /^[↑↓]/
+
+export function parseDevinFusion(text: string | null | undefined): DevinFusionState | null {
+  if (!text) return null
+  const lines = String(text).split('\n').map(l => l.replace(/\s+$/, ''))
+  const legend = lines.find(l => /↑↓ select/.test(l) && /↵ confirm/.test(l))
+  if (!legend) return null
+  const rowAt = lines.findIndex(l => FUSION_ROW.test(l))
+  if (rowAt < 0) return null
+  const pair = FUSION_PAIR.exec(lines[rowAt]!)
+  // "esc collapse" = a dropdown is open; "tab <next>" names the next control,
+  // so the open one is the control before it in the cycle.
+  const collapsed = /esc collapse/.test(legend)
+  const next = /tab ([a-z ]+?)(?: ·|$)/.exec(legend)?.[1] || ''
+  const arrows = /←→ ([a-z ]+?)(?: ·|$)/.exec(legend)?.[1] || ''
+  // "tab sidekick" while Lead is open — the open control is the one before
+  // the tab target. A legend we cannot place means no dropdown claim.
+  const which: 'lead' | 'sidekick' | null = collapsed
+    ? (next === 'sidekick' ? 'lead' : next === 'fast mode' ? 'sidekick' : null)
+    : null
+  const focus: DevinFusionState['focus'] = which || (arrows === 'fast mode' ? 'fast' : 'effort')
+  let dropdown: DevinFusionState['dropdown'] = null
+  if (which) {
+    const options: NonNullable<DevinFusionState['dropdown']>['options'] = []
+    for (let i = rowAt + 1; i < lines.length; i++) {
+      const l = lines[i]!
+      if (/↑↓ select/.test(l) || RULE.test(l.trimStart())) break
+      const e = DROPDOWN_ENTRY.exec(l)
+      if (!e || DROPDOWN_SCROLL.test(e[2]!)) {
+        if (options.length) break
+        continue
+      }
+      options.push({ label: e[2]!.trim(), here: Boolean(e[1]), def: Boolean(e[3]) })
+    }
+    if (options.length) {
+      const cursor = Math.max(0, options.findIndex(o => o.here))
+      dropdown = { which, options, cursor }
+    }
+  }
+  return {
+    lead: pair?.[1]?.trim() || null,
+    sidekick: pair?.[2]?.trim() || null,
+    focus,
+    dropdown,
+  }
+}

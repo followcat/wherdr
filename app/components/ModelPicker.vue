@@ -88,13 +88,15 @@ const selectedModelIndex = computed(() => currentModelOption(list.value?.options
 const isCurrent = (o: ModelOption) => list.value?.options.indexOf(o) === selectedModelIndex.value
 const displayModelOption = (o: ModelOption) => /^default \(recommended\)$/i.test(o.label) ? t('Default (recommended)') : o.label
 
-async function choose(o: ModelOption) {
-  if (isCurrent(o) || locked.value) return
+async function choose(o: ModelOption, parts?: Record<string, string>) {
+  if ((!parts && isCurrent(o)) || locked.value) return
   switching.value = true
   haptic()
   try {
-    const r = await api<{ model: ModelInfo }>('/api/model', { pane_id: props.pane!.id, label: o.label })
+    const r = await api<{ model: ModelInfo }>('/api/model', { pane_id: props.pane!.id, label: o.label, ...(parts ? { parts } : {}) })
     chosen.value = { info: r.model, at: Date.now() }
+    // A part pick leaves the model checked — the part's own tick moves.
+    if (parts) o.parts?.forEach((pt) => { if (parts[pt.key]) pt.current = parts[pt.key]! })
     efforts.value = null
     toast(tl(`Model: ${r.model.label} (this session)`, `Modèle : ${r.model.label} (cette session)`))
   } catch (err) {
@@ -125,13 +127,35 @@ const modelItems = computed(() => {
   if (modelsLoading.value || !list.value) {
     return [head, [{ label: t('Reading models…'), icon: 'i-lucide-loader-circle', disabled: true, class: 'model-loading' }]]
   }
-  const opts = list.value.options.map(o => ({
-    type: 'checkbox' as const,
-    label: displayModelOption(o),
-    description: o.hint || undefined,
-    checked: isCurrent(o),
-    onSelect: () => choose(o),
-  }))
+  const opts = list.value.options.map((o) => {
+    // A composite model (Fusion's Lead ▾ / Sidekick ▾): the row opens a
+    // submenu — picking the row itself plus each part's choices.
+    if (o.parts?.length) {
+      const pick = { type: 'checkbox' as const, label: displayModelOption(o), checked: isCurrent(o), onSelect: () => choose(o) }
+      return {
+        label: displayModelOption(o),
+        description: o.hint || undefined,
+        icon: isCurrent(o) ? 'i-lucide-check' : undefined,
+        children: [
+          [pick],
+          ...o.parts.map(part => [
+            { type: 'label' as const, label: part.label },
+            ...part.options.map(v => ({
+              type: 'checkbox' as const, label: v, checked: v === part.current,
+              onSelect: () => choose(o, { [part.key]: v }),
+            })),
+          ]),
+        ],
+      }
+    }
+    return {
+      type: 'checkbox' as const,
+      label: displayModelOption(o),
+      description: o.hint || undefined,
+      checked: isCurrent(o),
+      onSelect: () => choose(o),
+    }
+  })
   const tail = [{
     label: t('Reload list'), icon: 'i-lucide-refresh-cw',
     onSelect: (e: Event) => { e.preventDefault(); loadModels(true) },

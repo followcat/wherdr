@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { devinMenuOpen, devinModelSetEcho, devinStatusModel, parseDevinModelMenu } from '../server/utils/devinMenu'
+import { devinMenuOpen, devinModelSetEcho, devinStatusModel, devinStatusPair, parseDevinFusion, parseDevinModelMenu } from '../server/utils/devinMenu'
 
 // Live capture (wA:p1, Devin v3000.11.x): /model opens a searchable picker.
 const MENU = `
@@ -108,4 +108,117 @@ it('ignores lines that are not the status line', () => {
   // few lines are scanned, and a model name starts with a letter or digit.
   expect(devinStatusModel(`some reply\nlet's enable · bypass\n${IDLE}SWE-2 Max · bypass`)).toBe('SWE-2 Max')
   expect(devinStatusModel(`❭ draft · bypass\nlast output line`)).toBeNull()
+})
+
+// Live captures: the Fusion row carries "Lead X ▾  Sidekick Y ▾"; tab on the
+// row cycles effort → Lead → Sidekick → Fast Mode, and an open dropdown shows
+// its entries with "▸" on the pick and "*" on the default.
+const FUSION_EFFORT = `
+──────────────────────────────────────────
+/ Fusion
+──────────────────────────────────────────
+❭ Fusion                  ← ◼◼◼◼◼  → Max           Lead GPT-6.1 Sol   ▾   Sidekick SWE-2 High    ▾   Fast Mode Off
+
+  ━━━━━━━━━━━━●━━━━━━━━━━━━━━━━━━━━━━━
+  Input        Cached input   Output       Sidekick  Free
+  $2 / 1M      $0.1 / 1M      $10 / 1M
+↑↓ select · tab lead · ←→ effort · shift+←/→ move cursor · ↵ confirm · alt+↵ this session only · esc cancel
+`
+
+const FUSION_LEAD_OPEN = `
+──────────────────────────────────────────
+/ Fusion
+──────────────────────────────────────────
+❭ Fusion                    ◼◼◼◼◼    Max           Lead GPT-6.1 Sol   ▾   Sidekick SWE-2 High    ▾   Fast Mode Off
+                                                   Claude Opus 5.5
+                                                 ▸ GPT-6.1 Sol
+                                                   Claude Fable 5.1
+                                                   GPT-6 Astra
+                                                   GPT-6 Sol
+                                                   GPT-5.6 Sol
+                                                   Claude Opus 5
+                                                   Claude Sonnet 5.5
+
+  ━━━━━━━━━━━━●━━━━━━━━━━━━━━━━━━━━━━━
+  Input        Cached input   Output       Sidekick  Free
+  $2 / 1M      $0.1 / 1M      $10 / 1M
+↑↓ select · tab sidekick · shift+←/→ move cursor · ↵ confirm · alt+↵ this session only · esc collapse
+`
+
+const FUSION_SIDEKICK_OPEN = `
+──────────────────────────────────────────
+/ Fusion
+──────────────────────────────────────────
+❭ Fusion                    ◼◼◼◼◼    Max           Lead GPT-6.1 Sol   ▾   Sidekick SWE-2 High    ▾   Fast Mode Off
+                                                                           SWE-2 Medium *
+                                                                         ▸ SWE-2 High
+                                                                           GPT-6 Luna High
+                                                                           GPT-6.1 Terra High
+                                                                           GPT-5.6 Luna High
+                                                                           GPT-5.6 Sol High
+                                                                           GLM-5.2 High
+                                                                           Claude Sonnet 5.5 Medium
+
+  ━━━━━━━━━━━━●━━━━━━━━━━━━━━━━━━━━━━━
+  Input        Cached input   Output       Sidekick  Free
+  $2 / 1M      $0.1 / 1M      $10 / 1M
+↑↓ select · tab fast mode · shift+←/→ move cursor · ↵ confirm · alt+↵ this session only · esc collapse
+`
+
+it('parseDevinFusion: effort focus shows the pair and no dropdown', () => {
+  const st = parseDevinFusion(FUSION_EFFORT)
+  expect(st).toMatchObject({ lead: 'GPT-6.1 Sol', sidekick: 'SWE-2 High', focus: 'effort', dropdown: null })
+})
+
+it('parseDevinFusion: the Lead dropdown, its entries, cursor and default', () => {
+  const st = parseDevinFusion(FUSION_LEAD_OPEN)
+  expect(st!.focus).toBe('lead')
+  expect(st!.dropdown!.which).toBe('lead')
+  const d = st!.dropdown!
+  expect(d.options.map(o => o.label)).toEqual([
+    'Claude Opus 5.5', 'GPT-6.1 Sol', 'Claude Fable 5.1', 'GPT-6 Astra',
+    'GPT-6 Sol', 'GPT-5.6 Sol', 'Claude Opus 5', 'Claude Sonnet 5.5',
+  ])
+  expect(d.options[d.cursor]!.label).toBe('GPT-6.1 Sol')
+  // The pending pick and the pair stay on the row above the entries.
+  expect(st!.lead).toBe('GPT-6.1 Sol')
+  expect(st!.sidekick).toBe('SWE-2 High')
+})
+
+it('parseDevinFusion: the Sidekick dropdown marks the default with *', () => {
+  const st = parseDevinFusion(FUSION_SIDEKICK_OPEN)
+  expect(st!.focus).toBe('sidekick')
+  const d = st!.dropdown!
+  expect(d.which).toBe('sidekick')
+  expect(d.options.map(o => o.label)).toEqual([
+    'SWE-2 Medium', 'SWE-2 High', 'GPT-6 Luna High', 'GPT-6.1 Terra High',
+    'GPT-5.6 Luna High', 'GPT-5.6 Sol High', 'GLM-5.2 High', 'Claude Sonnet 5.5 Medium',
+  ])
+  expect(d.options[d.cursor]!.label).toBe('SWE-2 High')
+  expect(d.options.filter(o => o.def).map(o => o.label)).toEqual(['SWE-2 Medium'])
+})
+
+it('parseDevinFusion: fast mode focus, a truncated pair field, no claim without a legend', () => {
+  const fast = parseDevinFusion(FUSION_EFFORT.replace('tab lead · ←→ effort', 'tab effort · ←→ fast mode'))
+  expect(fast!.focus).toBe('fast')
+  expect(fast!.dropdown).toBeNull()
+  // The row truncates a long pick ("GPT-6 Luna H…") — reported as shown.
+  const trunc = parseDevinFusion(FUSION_EFFORT.replace('Sidekick SWE-2 High', 'Sidekick GPT-6 Luna H…'))
+  expect(trunc!.sidekick).toBe('GPT-6 Luna H…')
+  // The Fusion row is read even when the cursor sits on another row — but
+  // with no "esc collapse" legend there is no dropdown claim.
+  expect(parseDevinFusion(MENU)).toMatchObject({ lead: 'Claude Opus 5.5', sidekick: 'SWE-2', dropdown: null })
+  expect(parseDevinFusion('')).toBeNull()
+  expect(parseDevinFusion(null)).toBeNull()
+})
+
+it('devinStatusPair reads the applied "Lead ◆ Sidekick" from the status line', () => {
+  expect(devinStatusPair(`${IDLE}Fusion · GPT-6.1 Sol ◆ SWE-2 High · bypass                      See usage and cost: /session-stats`))
+    .toEqual({ lead: 'GPT-6.1 Sol', sidekick: 'SWE-2 High' })
+  expect(devinStatusPair(`${IDLE}Fusion · Claude Opus 5.5 ◆ GPT-6 Luna High · bypass            ctrl+o details`))
+    .toEqual({ lead: 'Claude Opus 5.5', sidekick: 'GPT-6 Luna High' })
+  // A real status line without Fusion is not a pair.
+  expect(devinStatusPair(`${IDLE}SWE-2 Max · bypass                                             Context: 145k / 262k`)).toBeNull()
+  expect(devinStatusPair(MENU)).toBeNull()
+  expect(devinStatusPair('')).toBeNull()
 })
