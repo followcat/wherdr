@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const calls = vi.hoisted(() => ({ sent: [] as { method: string, params: Record<string, unknown> }[], screen: '', afterAltEnter: '', pane: {} as Record<string, unknown>, afterMove: '', transcript: null as { id: string | null, label: string } | null, onKeys: null as null | ((keys: string[]) => void) }))
+const calls = vi.hoisted(() => ({ sent: [] as { method: string, params: Record<string, unknown> }[], screen: '', afterAltEnter: '', pane: {} as Record<string, unknown>, afterMove: '', transcript: null as { id: string | null, label: string } | null, onKeys: null as null | ((keys: string[]) => void), queue: [] as string[], altQueue: [] as string[] }))
 const MENU = `
 ──────────────────────────────────────────
 /
@@ -127,9 +127,9 @@ vi.mock('../server/utils/herdr', () => {
   const herdr = async (method: string, params: Record<string, unknown>) => {
     calls.sent.push({ method, params })
     if (method === 'pane.send_input' && calls.afterMove && (params.keys as string[]).some(k => k === 'up' || k === 'down')) calls.screen = calls.afterMove
-    if (method === 'pane.send_input' && (params.keys as string[]).includes('alt+enter')) calls.screen = calls.afterAltEnter
+    if (method === 'pane.send_input' && (params.keys as string[]).includes('alt+enter')) { calls.screen = calls.afterAltEnter; calls.queue = [...calls.altQueue] }
     if (method === 'pane.send_input' && calls.onKeys && !(params.keys as string[]).includes('alt+enter')) calls.onKeys(params.keys as string[])
-    return method === 'pane.read' ? { read: { text: calls.screen } } : {}
+    return method === 'pane.read' ? { read: { text: calls.queue.length ? calls.queue.shift()! : calls.screen } } : {}
   }
   return {
     HerdrError: class HerdrError extends Error {
@@ -144,7 +144,7 @@ vi.mock('../server/utils/herdr', () => {
 import { currentModel, forgetModel, listModels, noteScreen, setModel } from '../server/utils/modelctl'
 
 beforeEach(() => {
-  calls.sent = []; calls.screen = ''; calls.afterAltEnter = ''; calls.afterMove = ''; calls.onKeys = null
+  calls.sent = []; calls.screen = ''; calls.afterAltEnter = ''; calls.afterMove = ''; calls.onKeys = null; calls.queue = []; calls.altQueue = []
   calls.transcript = { id: 'SWE-2', label: 'SWE-2' }
   calls.pane = { id: 'w1:p1', agent: 'devin', status: 'done' }
   forgetModel('w1:p1')
@@ -306,6 +306,24 @@ describe('Fusion Lead/Sidekick parts', () => {
       (k, st) => (k === 'up' && st === 'lead' ? 'leadOpus' : k === 'down' && st === 'side' ? 'sideLuna' : st))
     await expect(setModel('w1:p1', 'Fusion', { lead: 'Claude Opus 5.5', sidekick: 'GPT-6 Luna High' }))
       .rejects.toMatchObject({ code: 'stale' })
+  })
+
+  it('keeps polling when the status line lags the menu closing', async () => {
+    // Live: the footer redraws a beat after the menu closes — the first read
+    // still shows the old model. Verification must not give up on read #1.
+    calls.screen = FUSION_MENU
+    calls.afterAltEnter = FUSION_STATUS_LUNA
+    calls.altQueue = [`
+✓ Model set to Fusion for this session
+
+❭ Ask Devin to build features, fix bugs, or work on your code
+─────────────────────────────────────────────────────────────────────────
+SWE-2 Max · bypass                                                See usage and cost: /session-stats
+`]
+    driveFusion({ menu: FUSION_MENU, lead: LEAD_OPEN, side: SIDE_OPEN, sideLuna: SIDE_LUNA },
+      (k, st) => (k === 'down' && st === 'side' ? 'sideLuna' : st))
+    const info = await setModel('w1:p1', 'Fusion', { sidekick: 'GPT-6 Luna High' })
+    expect(info.label).toBe('Fusion')
   })
 
   it('a part name the dropdown does not offer is bad_model; parts on another model too', async () => {

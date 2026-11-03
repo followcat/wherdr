@@ -913,9 +913,16 @@ async function devinSetModel(paneId: string, wanted: string, parts?: Record<stri
       let echo: string | null = null
       let shown: string | null = null
       let pair: { lead: string, sidekick: string } | null = null
+      const pairOk = () => !!pair && picks.every(k => sameModel(pair![k === 'lead' ? 'lead' : 'sidekick'], parts![k]))
       do {
         const t = await screen(p.id)
-        if (!devinPickerOpen(t)) { echo = devinModelSetEcho(t); shown = devinStatusModel(t); pair = devinStatusPair(t); break }
+        if (devinPickerOpen(t)) { await sleep(300); continue }
+        echo = devinModelSetEcho(t) || echo
+        shown = devinStatusModel(t) || shown
+        pair = devinStatusPair(t) || pair
+        // The status line redraws a beat behind the menu closing — with parts
+        // requested, keep polling until it names the pair (or time runs out).
+        if (!picks.length || pairOk()) break
         await sleep(300)
       } while (Date.now() < end)
       const now = await transcripts.model(p).catch(() => null)
@@ -926,9 +933,8 @@ async function devinSetModel(paneId: string, wanted: string, parts?: Record<stri
       }
       // A requested pair is only done when the status line shows it — the row's
       // fields can be truncated, the status line's "Lead ◆ Sidekick" is not.
-      if (picks.length) {
-        const pairOk = pair && picks.every(k => sameModel(pair![k === 'lead' ? 'lead' : 'sidekick'], parts![k]))
-        if (!pairOk) throw new HerdrError('stale', pair
+      if (picks.length && !pairOk()) {
+        throw new HerdrError('stale', pair
           ? `Fusion applied ${pair.lead} ◆ ${pair.sidekick} — not the requested pair.`
           : 'Could not verify the Fusion pair — check the session.')
       }
