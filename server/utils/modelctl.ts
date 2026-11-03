@@ -10,7 +10,7 @@
 // Command Code has no session-scoped confirm: its `/model <id>` applies to
 // the running session and also becomes the default for new sessions.
 import path from 'node:path'
-import type { EffortList, ModelInfo, ModelList, ModelOption, Pane } from '../../shared/types'
+import type { EffortList, ModelInfo, ModelList, ModelOption, ModelPart, Pane } from '../../shared/types'
 import { log } from './env'
 import { HerdrError, agentPrompt, herdr, sleep } from './herdr'
 import { closePanel } from './actions'
@@ -19,8 +19,7 @@ import { machineOfPane } from './machines'
 import { resizePane } from './terminal'
 import { type ClaudeEffortSlider, type ModelMenu, type OmpCycleKnowledge, type OmpSelector, OMP_EFFORT_ORDER, claudeEffortCommand, claudeEffortLevels, cleanModelName, codexCachedEfforts, codexConfigModel, claudeScreenEffort, claudeScreenModel, codexFooterModel, effortMatches, effortValue, learnOmpCycle, ompEffortLevels, ompModelLabel, ompScreenEffort, ompScreenModel, ompSelectorCaption, parseClaudeEffortScreen, parseModelMenu, parseOmpSelector, sameModel, switchConfirmKeys } from './models'
 import { fmt } from '../../shared/message'
-import { type DevinModelMenu, devinMenuOpen, devinModelSetEcho, parseDevinModelMenu } from './devinMenu'
-import { parseDevinStatus } from './devinScreen'
+import { type DevinFusionState, type DevinModelMenu, devinMenuOpen, devinModelSetEcho, devinStatusModel, devinStatusPair, parseDevinFusion, parseDevinModelMenu } from './devinMenu'
 import { runLocal } from './quotas'
 
 // ---------------------------------------------------------------- current model
@@ -69,6 +68,13 @@ export function noteScreen(paneId: string, agent: string | null, text: string | 
     if (text) ompScreens.set(paneId, text.replace(/\s+$/, '').split('\n').slice(-12).join('\n'))
     return
   }
+  if (agent === 'devin') {
+    // Devin's status line names the session's selected model, live — including
+    // Fusion, whose transcript keeps the lead/sidekick name forever.
+    const label = devinStatusModel(text)
+    if (label) footers.set(paneId, { info: { id: null, label }, ms: Date.now() })
+    return
+  }
   if (agent !== 'codex') return
   const info = codexFooterModel(text)
   if (info) footers.set(paneId, { info, ms: Date.now() })
@@ -84,10 +90,23 @@ export function forgetModel(paneId: string) {
 }
 
 export async function currentModel(p: Pane): Promise<ModelInfo | null> {
-  if (p.agent === 'opencode' || p.agent === 'devin' || p.agent === 'cmd') return transcripts.model(p)
-  if (!p.agent || !['claude', 'codex', 'omp'].includes(p.agent)) return null
+  if (p.agent === 'opencode' || p.agent === 'cmd') return transcripts.model(p)
+  if (!p.agent || !['claude', 'codex', 'omp', 'devin'].includes(p.agent)) return null
   // A failed read throws: the state keeps the model it showed (refreshModel).
   let fromFile = await transcripts.model(p)
+  if (p.agent === 'devin') {
+    // The status line is authoritative for the session's pick: the transcript
+    // only names the model that generated the last turn (under Fusion, a lead
+    // or sidekick name — never "Fusion"), so the footer wins whenever seen.
+    const f = footers.get(p.id)
+    if (f) return { id: fromFile && sameModel(fromFile.label, f.info.label) ? fromFile.id : null, label: f.info.label, at: new Date(f.ms).toISOString() }
+    const o = overrides.get(p.id)
+    if (o) {
+      const { ms: _ms, ...info } = o
+      return fromFile && sameModel(fromFile.label, info.label) ? { ...info, id: fromFile.id } : info
+    }
+    return fromFile
+  }
   const f = footers.get(p.id)
   if (f && (!fromFile || !sameModel(fromFile.label, f.info.label) || fromFile.effort !== f.info.effort)) {
     // The status line wins over a lagging rollout (change not yet followed by a turn).
@@ -256,11 +275,12 @@ async function pick(paneId: string, m: ModelMenu, n: number, label: string, kind
   return at
 }
 
-export async function setModel(paneId: string, wanted: string): Promise<ModelInfo> {
+export async function setModel(paneId: string, wanted: string, parts?: Record<string, string>): Promise<ModelInfo> {
   const p0 = findPane(paneId)
+  if (p0?.agent === 'devin') return devinSetModel(p0.id, String(wanted || '').trim(), parts)
+  if (parts && Object.keys(parts).length) throw new HerdrError('unsupported', 'This model has no selectable parts')
   if (p0?.agent === 'omp') return ompSetModel(paneId, String(wanted || '').trim())
   if (p0?.agent === 'opencode') return opencodeSetModel(p0, String(wanted || '').trim())
-  if (p0?.agent === 'devin') return devinSetModel(p0.id, String(wanted || '').trim())
   if (p0?.agent === 'cmd') return cmdSetModel(p0, String(wanted || '').trim())
   const label = cleanModelName(wanted)
   if (!label) throw new HerdrError('bad_model', 'Missing model')
@@ -778,10 +798,14 @@ async function devinMenu(paneId: string, timeoutMs = 6000): Promise<DevinModelMe
   return null
 }
 
+// The picker counts as open while its legend is up — the model list AND an
+// open Fusion Lead/Sidekick dropdown ("esc collapse") alike.
+const devinPickerOpen = (text: string) => devinMenuOpen(text) || Boolean(parseDevinFusion(text)?.dropdown)
+
 async function devinCloseMenu(paneId: string) {
   for (let i = 0; i < 3; i++) {
     // The legend marks an open picker even when a search left zero options.
-    if (!devinMenuOpen(await screen(paneId))) return
+    if (!devinPickerOpen(await screen(paneId))) return
     await herdr('pane.send_input', { pane_id: paneId, keys: ['esc'] })
     await sleep(400)
   }
@@ -796,14 +820,54 @@ async function devinOpenMenu(paneId: string): Promise<DevinModelMenu> {
   return m
 }
 
+// Reads Fusion's Lead ▾ and Sidekick ▾ option lists: tab cycles the row's
+// controls (effort → Lead → Sidekick → Fast Mode); an open dropdown shows its
+// entries with "▸" on the current pick. Ends collapsed back on the menu.
+async function devinReadFusionParts(paneId: string, m: DevinModelMenu): Promise<ModelPart[] | null> {
+  const idx = m.options.findIndex(o => /^fusion$/i.test(o.label))
+  if (idx < 0 || m.cursor < 0) return null
+  const keys = moveKeys(m.cursor, idx)
+  if (keys.length) { await herdr('pane.send_input', { pane_id: paneId, keys }); await sleep(300) }
+  // Never drive blindly: the cursor must be on the Fusion row — its "tab lead"
+  // legend is what makes the dropdowns reachable at all.
+  const at = await devinMenu(paneId, 2000)
+  if (!at || at.cursor < 0 || !/^fusion$/i.test(at.options[at.cursor]?.label || '')) return null
+  const parts: ModelPart[] = []
+  for (const which of ['lead', 'sidekick'] as const) {
+    let st: DevinFusionState | null = null
+    for (let t = 0; t < 5 && st?.dropdown?.which !== which; t++) {
+      if (t) await sleep(250)
+      await herdr('pane.send_input', { pane_id: paneId, keys: ['tab'] })
+      await sleep(250)
+      st = parseDevinFusion(await screen(paneId))
+      if (!st) break // menu or Fusion row gone — stop tabbing a dead screen
+    }
+    if (st?.dropdown?.which !== which || !st.dropdown.options.length) break
+    parts.push({
+      key: which,
+      label: which === 'lead' ? 'Lead' : 'Sidekick',
+      options: st.dropdown.options.map(o => o.label),
+      current: st.dropdown.options[st.dropdown.cursor]?.label || null,
+    })
+  }
+  // Collapse any open dropdown back to the plain menu (esc: collapse, not cancel).
+  for (let i = 0; i < 3 && parseDevinFusion(await screen(paneId))?.dropdown; i++) {
+    await herdr('pane.send_input', { pane_id: paneId, keys: ['esc'] })
+    await sleep(300)
+  }
+  return parts.length ? parts : null
+}
+
 async function devinListModels(p: Pane, refresh = false): Promise<ModelList> {
   const hit = listCache.get(listKey(p.id, 'devin'))
   if (hit && !refresh && Date.now() - hit.at < LIST_TTL_MS) return hit
   return withPane(p.id, async () => {
-    const cur = await transcripts.model(p).catch(() => null)
+    const cur = await currentModel(p).catch(() => null)
     let m = await devinOpenMenu(p.id)
     const seen = new Map<string, ModelOption>()
+    const parts = await devinReadFusionParts(p.id, m).catch(() => null)
     try {
+      if (parts) m = (await devinMenu(p.id, 2000)) || m
       // Collect across scrolls until "↓ more below" disappears.
       for (let pages = 0; pages < 12; pages++) {
         for (const o of m.options) seen.set(o.label, { label: o.label, hint: o.hint, current: o.label === cur?.label })
@@ -817,16 +881,53 @@ async function devinListModels(p: Pane, refresh = false): Promise<ModelList> {
         m = (await devinMenu(p.id, 2000)) || m
       }
     } finally { await devinCloseMenu(p.id) }
+    const fusion = parts && seen.get('Fusion')
+    if (fusion) fusion.parts = parts!
     const list: ModelList = { agent: 'devin', options: [...seen.values()], at: Date.now() }
     listCache.set(listKey(p.id, 'devin'), list)
     return list
   })
 }
 
-async function devinSetModel(paneId: string, wanted: string): Promise<ModelInfo> {
+// Opens the Fusion row's `which` dropdown ("lead"/"sidekick") by tabbing the
+// row's control cycle, then moves the "▸" pick to `name` — verified on screen:
+// a name the dropdown does not offer is a bad_model, a cursor that does not
+// follow is stale. Returns once the pick is set (dropdown still open).
+async function devinPickFusionPart(paneId: string, which: 'lead' | 'sidekick', name: string) {
+  let st: DevinFusionState | null = null
+  for (let t = 0; t < 5; t++) {
+    st = parseDevinFusion(await screen(paneId))
+    if (st?.dropdown?.which === which) break
+    if (!st) throw new HerdrError('stale', 'The /model menu changed — try again.')
+    await herdr('pane.send_input', { pane_id: paneId, keys: ['tab'] })
+    await sleep(250)
+  }
+  if (st?.dropdown?.which !== which) throw new HerdrError('stale', `Fusion’s ${which} picker did not open — try again.`)
+  const i = st.dropdown.options.findIndex(o => o.label.toLowerCase() === name.toLowerCase())
+  if (i < 0) throw new HerdrError('bad_model', fmt('Fusion {part} not offered: {name}', { part: which, name }))
+  if (i !== st.dropdown.cursor) {
+    await herdr('pane.send_input', { pane_id: paneId, keys: moveKeys(st.dropdown.cursor, i) })
+    await sleep(300)
+    const at = parseDevinFusion(await screen(paneId))
+    if (at?.dropdown?.which !== which || at.dropdown.cursor !== i) throw new HerdrError('stale', 'The /model menu changed — try again.')
+  }
+}
+
+// Collapses an open Lead/Sidekick dropdown back onto the plain menu
+// ("esc collapse"); the pending pick stays on the row.
+async function devinCollapse(paneId: string) {
+  for (let i = 0; i < 3; i++) {
+    if (!parseDevinFusion(await screen(paneId))?.dropdown) return
+    await herdr('pane.send_input', { pane_id: paneId, keys: ['esc'] })
+    await sleep(300)
+  }
+}
+
+async function devinSetModel(paneId: string, wanted: string, parts?: Record<string, string>): Promise<ModelInfo> {
   if (!wanted) throw new HerdrError('bad_model', 'Missing model')
   const label = wanted.toLowerCase()
   return withPane(paneId, async (p) => {
+    const started = Date.now()
     await devinOpenMenu(p.id)
     try {
       // Narrow with the search field, then alt+↵ on the matching row.
@@ -846,25 +947,42 @@ async function devinSetModel(paneId: string, wanted: string): Promise<ModelInfo>
       if (!selected || selected.cursor < 0 || selected.options[selected.cursor]?.label !== target) {
         throw new HerdrError('stale', 'The /model menu changed — try again.')
       }
+      // Composite picks (Fusion's Lead ▾ / Sidekick ▾): choose each requested
+      // part in its dropdown, collapse, then confirm the row with the pair on it.
+      const picks = parts ? (['lead', 'sidekick'] as const).filter(k => parts[k]?.trim()) : []
+      if (parts && Object.keys(parts).length && !picks.length) throw new HerdrError('bad_model', 'Unknown model part')
+      if (picks.length && !/^fusion$/i.test(target)) throw new HerdrError('bad_model', fmt('Model has no selectable parts: {model}', { model: target }))
+      for (const which of picks) await devinPickFusionPart(p.id, which, parts![which]!.trim())
+      if (picks.length) await devinCollapse(p.id)
       await herdr('pane.send_input', { pane_id: p.id, keys: ['alt+enter'] })
-      // Verify: the menu closes, and only an echo of THIS model counts.
+      // Verify: the menu closes, then the pick counts once any live signal
+      // names THIS model — the echo ("Model set to … for this session"), the
+      // status line ("Fusion · Lead ◆ Sidekick · bypass") or the transcript.
       const end = Date.now() + 4000
       let echo: string | null = null
+      let shown: string | null = null
+      let pair: { lead: string, sidekick: string } | null = null
       do {
         const t = await screen(p.id)
-        if (!devinMenuOpen(t)) { echo = devinModelSetEcho(t); break }
+        if (!devinPickerOpen(t)) { echo = devinModelSetEcho(t); shown = devinStatusModel(t); pair = devinStatusPair(t); break }
         await sleep(300)
       } while (Date.now() < end)
-      const echoOk = echo && sameModel(echo, target)
-      if (echo && !echoOk) throw new HerdrError('stale', fmt('Devin set a different model ({model}) — check the session.', { model: echo }))
       const now = await transcripts.model(p).catch(() => null)
-      if (!echoOk && !sameModel(now?.label || '', target)) {
-        // Fall back on the footer/status reader when the transcript lags.
-        const st = parseDevinStatus(await screen(p.id))
-        const got = st?.line?.split('·')[0]?.trim() || ''
-        if (!got.toLowerCase().includes(target.toLowerCase())) throw new HerdrError('stale', 'The model did not change — try again.')
+      if (!sameModel(echo, target) && !sameModel(shown || '', target) && !sameModel(now?.label || '', target)) {
+        throw new HerdrError('stale', echo
+          ? fmt('Devin set a different model ({model}) — check the session.', { model: echo })
+          : 'The model did not change — try again.')
       }
-      const info: ModelInfo = { id: target, label: target }
+      // A requested pair is only done when the status line shows it — the row's
+      // fields can be truncated, the status line's "Lead ◆ Sidekick" is not.
+      if (picks.length) {
+        const pairOk = pair && picks.every(k => sameModel(pair![k === 'lead' ? 'lead' : 'sidekick'], parts![k]))
+        if (!pairOk) throw new HerdrError('stale', pair
+          ? `Fusion applied ${pair.lead} ◆ ${pair.sidekick} — not the requested pair.`
+          : 'Could not verify the Fusion pair — check the session.')
+      }
+      const info: ModelInfo = { id: target, label: target, at: new Date(started).toISOString() }
+      overrides.set(p.id, { ...info, ms: started })
       setTimeout(poll, 100)
       return info
     } finally { await devinCloseMenu(p.id) }
