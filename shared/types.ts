@@ -320,6 +320,9 @@ export interface ChatItem {
   hashes?: string[]
   error?: boolean
   toolStatus?: 'streaming' | 'running' | 'completed' | 'error'
+  // Devin lifecycle-hook event newer than the ATIF transcript's last step:
+  // real activity, but not yet in the transcript of record.
+  live?: boolean
   // omp reasoning and completed background jobs, read from its transcript.
   ms?: number
   job?: { id: string, tool: string, out: string }
