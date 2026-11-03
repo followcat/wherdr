@@ -13,7 +13,7 @@ import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import type { ChatItem, ChatResponse, ModelInfo } from '../../shared/types'
-import type { TranscriptImage, TranscriptPane } from './transcripts'
+import type { TranscriptPane } from './transcripts'
 import { excerpt, matchAt } from '../../shared/searchText'
 import { ompModelLabel } from './models'
 import { type MachineFs, type ShellExec, boundedOutput, localFs } from './fsx'
@@ -532,7 +532,7 @@ export function createDevinStore({ home, fs = localFs, exec, now = () => Date.no
     } catch (e) { return failOpen(session, e, opts, base) }
   }
 
-  async function image(pane: TranscriptPane, fileId: string | null, ref: string | null, index: number): Promise<TranscriptImage | null> {
+  async function image(pane: TranscriptPane, fileId: string | null, ref: string | null, index: number): Promise<{ type: string, body: Buffer } | null> {
     const m = /^(\d+):(u|a|r|t\d+)$/.exec(ref || '')
     if (!pane.agentSession || !m || !Number.isSafeInteger(index) || index < 0) return null
     const r = await run(pane.agentSession, 'image', { node: Number(m[1]) }, IMAGE_MAX_BYTES).catch(e => { if (isMissing(e)) return null; throw e })
@@ -558,7 +558,7 @@ export function createDevinStore({ home, fs = localFs, exec, now = () => Date.no
     failAt.delete(pane.agentSession)
     const hits = parseStore(r).filter(i => i.role === 'user' || i.role === 'assistant').flatMap(i => {
       const at = matchAt(i.text, text)
-      return at < 0 ? [] : [{ role: i.role, ts: i.ts, excerpt: excerpt(i.text, at, 120, text), offset: Number(i.ref!.split(':')[0]) + 1 }]
+      return at < 0 ? [] : [{ role: i.role, text: i.text.slice(0, 180), ts: i.ts, excerpt: excerpt(i.text, at, 120, text), offset: Number(i.ref!.split(':')[0]) + 1 }]
     })
     return { hits, limited: Boolean(r.limited), kind: 'devin' }
   }
