@@ -249,8 +249,11 @@ export interface ModelInfo {
   effortResolved?: string | null
   at?: string | null
 }
+// A selectable part of a composite model row — Devin Fusion's Lead ▾ /
+// Sidekick ▾ dropdowns. `options` are the names the dropdown offers.
+export interface ModelPart { key: string, label: string, options: string[], current: string | null }
 // Option of an agent's /model menu.
-export interface ModelOption { label: string, hint: string | null, current?: boolean, isDefault?: boolean }
+export interface ModelOption { label: string, hint: string | null, current?: boolean, isDefault?: boolean, parts?: ModelPart[] }
 export interface ModelList { agent: string, options: ModelOption[], at: number }
 export interface EffortList { levels: string[], current: string | null }
 
