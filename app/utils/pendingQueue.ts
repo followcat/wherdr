@@ -69,7 +69,10 @@ export function pendingQueue(o: {
     const sent = withoutUploads(q.text)
     const nb = normText(q.text.replace(/^\s*(?:!!?|\$\$?)\s*/, '')).slice(0, 60)
     return Boolean(normText(sent)) && o.items.some(i => after(i)
-      && (i.role === 'user' ? holds(i.text, sent) : i.role === 'bash' && Boolean(nb) && normText(i.text).includes(nb)))
+      && (i.role === 'user' ? holds(i.text, sent)
+        : i.role === 'bash' ? Boolean(nb) && normText(i.text).includes(nb)
+          : i.role === 'tool' && i.name === 'shell' ? Boolean(nb) && normText(i.text).includes(nb)
+            : false))
   }
   // Sending order, whatever the source (server or local send).
   const mine = [...o.mine].sort((a, b) => (a.at && b.at ? a.at - b.at : 0))

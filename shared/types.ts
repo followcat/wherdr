@@ -29,7 +29,25 @@ export interface PromptDetail {
 // `typing`: omp's free-text answer field is open (single option: `free`).
 // `tabs`: tabs of omp's multi-question "Ask" box (the last one is Submit),
 // `tab` the one shown; ←/→ move between them.
-export interface Choices { identity?: string, unavailable?: boolean, question: string | null, cursor: number, options: ChoiceOption[], kind?: 'self-update', detail?: PromptDetail, multi?: boolean, typing?: boolean, tabs?: string[], tab?: number, horizontal?: boolean }
+export interface Choices {
+  identity?: string
+  unavailable?: boolean
+  question: string | null
+  cursor: number
+  options: ChoiceOption[]
+  kind?: 'self-update'
+  detail?: PromptDetail
+  multi?: boolean
+  typing?: boolean
+  tabs?: string[]
+  tab?: number
+  // OpenCode's permission dialog moves with ←/→ (⇆ select), not ↑/↓.
+  horizontal?: boolean
+  // OpenCode permission request behind a screen-parsed card (fallback when
+  // the service API is unreachable): answered through the service by
+  // action/resources match — never by guessing the colour-only cursor.
+  permission?: { action: string, resources: string[] }
+}
 
 // Waiting screen of an agent (Codex at startup: hooks, folder trust,
 // login…), see server/utils/waitScreen.ts. `other`: unrecognized screen,
