@@ -205,8 +205,11 @@ export function parseLiveEvents(raw: string, afterTs: number): ChatItem[] {
     } else if (kind === 'PostToolUse') {
       const name = String(ev.tool_name || 'Tool')
       const id = useId(ev)
-      // A result with an id claims its own call even out of order; without
-      // one, the oldest waiting call of the same tool name, as before.
+      // A result with an id claims its own call even out of order; falling
+      // back it may only take a waiting call that has no id — completing a
+      // different one would show the wrong output (its own call scrolled out
+      // of the tail: it becomes an orphan below). Without an id, the oldest
+      // waiting call of the same name, as before.
       let t = id ? pendingById.get(id) ?? null : null
       if (t) {
         pendingById.delete(id!)
@@ -214,8 +217,10 @@ export function parseLiveEvents(raw: string, afterTs: number): ChatItem[] {
         const at = q ? q.findIndex(e => e.item === t) : -1
         if (at >= 0) q!.splice(at, 1)
       } else {
-        const e = pending.get(name)?.shift()
-        if (e) {
+        const q = pending.get(name)
+        const at = q ? q.findIndex(e => id ? e.id === null : true) : -1
+        if (at >= 0) {
+          const e = q!.splice(at, 1)[0]!
           t = e.item
           if (e.id) pendingById.delete(e.id)
         }

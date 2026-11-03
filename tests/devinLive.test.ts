@@ -78,6 +78,20 @@ describe('Devin live tail: hook events to chat items', () => {
     expect(items[2]).toMatchObject({ role: 'tool', toolStatus: 'completed', out: '{"success":true}' })
   })
 
+  it('lets a result with an unknown tool_use_id orphan instead of taking a waiting call', () => {
+    // id0's own PreToolUse scrolled out of the tail: it must not complete
+    // id1's call with the wrong output.
+    const raw = [
+      line(T0, { hook_event_name: 'PreToolUse', tool_name: 'exec', tool_use_id: 'id1', tool_input: { command: 'still running' } }),
+      line(T0 + 100, { hook_event_name: 'PostToolUse', tool_name: 'exec', tool_use_id: 'id0', tool_response: { output: 'older', error: null, success: true } }),
+    ].join('\n')
+    const items = parseLiveEvents(raw, 0)
+    expect(items).toHaveLength(2)
+    expect(items[0]).toMatchObject({ text: 'still running', toolStatus: 'running' })
+    expect(items[0]!.out).toBeUndefined()
+    expect(items[1]).toMatchObject({ role: 'tool', toolStatus: 'completed', out: 'older' })
+  })
+
   it("renders the turn's last reply when Stop fires", () => {
     const raw = line(T0, { hook_event_name: 'Stop', last_assistant_message: 'all done', session_id: 's1' })
     const [item] = parseLiveEvents(raw, 0)
