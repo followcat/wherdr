@@ -882,9 +882,14 @@ async function devinSetModel(paneId: string, wanted: string): Promise<ModelInfo>
 
 const CMD_LIST_SCRIPT = `C=$(command -v cmd 2>/dev/null) || true
 [ -n "$C" ] || C=$(ls -1 "$HOME"/.nvm/versions/node/*/bin/cmd 2>/dev/null | tail -1)
+[ -n "$C" ] || C=$(command -v command-code 2>/dev/null) || true
+[ -n "$C" ] || C=$(ls -1 "$HOME"/.nvm/versions/node/*/bin/command-code 2>/dev/null | tail -1)
 [ -n "$C" ] || C=$(ls -1 "$HOME"/.local/bin/cmd /usr/local/bin/cmd /usr/bin/cmd /opt/homebrew/bin/cmd 2>/dev/null | head -1)
 if [ -z "$C" ]; then echo "cmd CLI not found" >&2; exit 127; fi
-exec "$C" --list-models`
+# The CLI is a node script ("#!/usr/bin/env node") and the agent machine's
+# non-interactive PATH often lacks node (an nvm install): its own bin dir —
+# node's, for those — is prepended so the shebang resolves.
+exec env PATH="$(dirname "$C"):$PATH" "$C" --list-models`
 
 export function parseCmdModels(text: string, currentId: string | null): ModelOption[] {
   const options: ModelOption[] = []
