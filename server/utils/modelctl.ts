@@ -136,10 +136,11 @@ const listKey = (paneId: string, agent: string) => `${machineOfPane(paneId)?.key
 const busy = new Set<string>()
 export const modelControlBusy = (paneId: string) => busy.has(paneId)
 
+const SWITCH_AGENTS = new Set(['claude', 'codex', 'omp', 'opencode'])
 async function withPane<T>(paneId: string, fn: (p: Pane) => Promise<T>): Promise<T> {
   const p = findPane(paneId)
   if (!p) throw new HerdrError('bad_pane', 'Pane not found')
-  if (!p.agent || !['claude', 'codex', 'omp'].includes(p.agent)) throw new HerdrError('unsupported', 'Not a Claude, Codex or omp agent')
+  if (!p.agent || !SWITCH_AGENTS.has(p.agent)) throw new HerdrError('unsupported', 'This agent’s model cannot be changed from wherdr')
   if (!READY.has(p.status || '')) {
     throw new HerdrError('busy', p.status === 'blocked' ? 'The agent is waiting for an answer — reply first.' : 'The agent is working — change the model once it’s done.')
   }
@@ -223,6 +224,7 @@ export async function listModels(paneId: string, refresh = false): Promise<Model
   const p0 = findPane(paneId)
   if (!p0 || !p0.agent) throw new HerdrError('bad_pane', 'Pane not found')
   if (p0.agent === 'omp') return ompListModels(p0, refresh)
+  if (p0.agent === 'opencode') return opencodeListModels(p0)
   const hit = listCache.get(listKey(p0.id, p0.agent))
   if (hit && !refresh && Date.now() - hit.at < LIST_TTL_MS) return hit
   return withPane(paneId, async (p) => {
@@ -250,6 +252,7 @@ async function pick(paneId: string, m: ModelMenu, n: number, label: string, kind
 export async function setModel(paneId: string, wanted: string): Promise<ModelInfo> {
   const p0 = findPane(paneId)
   if (p0?.agent === 'omp') return ompSetModel(paneId, String(wanted || '').trim())
+  if (p0?.agent === 'opencode') return opencodeSetModel(p0, String(wanted || '').trim())
   const label = cleanModelName(wanted)
   if (!label) throw new HerdrError('bad_model', 'Missing model')
   return withPane(paneId, async (p) => {
@@ -696,4 +699,40 @@ export async function setEffort(paneId: string, level: string): Promise<ModelInf
     setTimeout(poll, 100)
     return info
   })
+}
+
+// ── OpenCode ────────────────────────────────────────────────────────────────
+// The TUI /models selector carries its cursor in color only, so the safe
+// switch is the service API's single whitelisted write: PATCH
+// /api/session/<id> {model:{id,providerID,variant}} (opencodeTransport only
+// allows that body, then re-GETs the session for verification).
+
+async function opencodeListModels(p: Pane): Promise<ModelList> {
+  const entries = await transcripts.opencodeModels(p)
+  const cur = await transcripts.model(p).catch(() => null)
+  const options = entries
+    .filter(e => e && e.enabled !== false && typeof e.id === 'string' && typeof e.providerID === 'string')
+    .map((e): ModelOption => ({ label: String(e.name || e.id), hint: `${e.providerID}/${e.modelID || e.id}`, current: e.id === cur?.id }))
+  return { agent: 'opencode', options, at: Date.now() }
+}
+
+async function opencodeSetModel(p: Pane, wanted: string): Promise<ModelInfo> {
+  if (!wanted) throw new HerdrError('bad_model', 'Missing model')
+  if (!READY.has(p.status || '')) throw new HerdrError('busy', p.status === 'blocked' ? 'The agent is waiting for an answer — reply first.' : 'The agent is working — change the model once it’s done.')
+  if (busy.has(p.id)) throw new HerdrError('busy', 'Model change already in progress')
+  busy.add(p.id)
+  try {
+    const entries = await transcripts.opencodeModels(p)
+    const wantedL = wanted.toLowerCase()
+    const e = entries.find(e => e && e.enabled !== false && (e.name === wanted || e.id === wanted || `${e.providerID}/${e.modelID || e.id}` === wanted || String(e.name || '').toLowerCase() === wantedL))
+    if (!e || typeof e.id !== 'string' || typeof e.providerID !== 'string') throw new HerdrError('bad_model', fmt('Model not found in /models: {model}', { model: wanted }))
+    const cur = await transcripts.model(p).catch(() => null)
+    const variant = cur?.id === e.id && cur.effort ? cur.effort : (Array.isArray(e.variants) ? String(e.variants[0] || '') : '') || undefined
+    const patched = await transcripts.opencodePatchModel(p, { id: e.id, providerID: e.providerID, ...(variant ? { variant } : {}) })
+    const now = patched?.model
+    if (now?.id !== e.id) throw new HerdrError('stale', 'The model did not change — try again.')
+    const info: ModelInfo = { id: String(now.id), label: String(e.name || now.id), ...(now.variant ? { effort: now.variant } : {}) }
+    setTimeout(poll, 100)
+    return info
+  } finally { busy.delete(p.id) }
 }
