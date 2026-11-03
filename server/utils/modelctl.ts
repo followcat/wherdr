@@ -810,9 +810,18 @@ async function devinListModels(p: Pane, refresh = false): Promise<ModelList> {
     const parts = await devinReadFusionParts(p.id, m).catch(() => null)
     try {
       if (parts) m = (await devinMenu(p.id, 2000)) || m
-      // Collect across scrolls until "↓ more below" disappears.
+      // Collect across scrolls until "↓ more below" disappears. The status
+      // line prints "<model> <effort>" ("SWE-2 Max" for SWE-2 at Max), so a
+      // current check also accepts the option's name plus an effort word.
+      const isCurrent = (o: { label: string }) => {
+        const cl = cur?.label || ''
+        if (!cl) return false
+        if (sameModel(o.label, cl)) return true
+        const rest = cl.startsWith(o.label + ' ') ? cl.slice(o.label.length).trim() : ''
+        return /^(?:low|medium|high|xhigh|max)$/i.test(rest)
+      }
       for (let pages = 0; pages < 12; pages++) {
-        for (const o of m.options) seen.set(o.label, { label: o.label, hint: o.hint, current: o.label === cur?.label })
+        for (const o of m.options) seen.set(o.label, { label: o.label, hint: o.hint, current: isCurrent(o) })
         if (!/↓ more below/.test(await screen(p.id))) break
         if (m.cursor < 0) break // unknown cursor: don't guess a position
         const last = m.options.length - 1

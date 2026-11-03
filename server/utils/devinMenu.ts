@@ -168,7 +168,6 @@ export interface DevinFusionState {
 
 const FUSION_ROW = /^(?:❭|  ) *Fusion\s/
 const FUSION_PAIR = /Lead\s+(.+?)\s+▾\s+Sidekick\s+(.+?)\s+▾/
-const DROPDOWN_ENTRY = /^\s{15,}(▸\s+)?(\S.*?)\s*(\*)?\s*$/
 const DROPDOWN_SCROLL = /^[↑↓]/
 
 export function parseDevinFusion(text: string | null | undefined): DevinFusionState | null {
@@ -192,16 +191,29 @@ export function parseDevinFusion(text: string | null | undefined): DevinFusionSt
   const focus: DevinFusionState['focus'] = which || (arrows === 'fast mode' ? 'fast' : 'effort')
   let dropdown: DevinFusionState['dropdown'] = null
   if (which) {
-    const options: NonNullable<DevinFusionState['dropdown']>['options'] = []
+    // The dropdown is an overlay box drawn over the rows below: the covered
+    // menu rows bleed through to the left ("…Max   Fa ▸ GPT-6.1 Sol"), so an
+    // entry is only the text at/right of the box's edge — never the row. The
+    // "▸" pick marks that edge exactly; entry names sit two cells right of it.
+    let boxCol = -1
     for (let i = rowAt + 1; i < lines.length; i++) {
       const l = lines[i]!
       if (/↑↓ select/.test(l) || RULE.test(l.trimStart())) break
-      const e = DROPDOWN_ENTRY.exec(l)
-      if (!e || DROPDOWN_SCROLL.test(e[2]!)) {
-        if (options.length) break
-        continue
+      const c = l.indexOf('▸')
+      if (c >= 0) { boxCol = c; break }
+    }
+    const options: NonNullable<DevinFusionState['dropdown']>['options'] = []
+    if (boxCol >= 0) {
+      for (let i = rowAt + 1; i < lines.length; i++) {
+        const l = lines[i]!
+        if (/↑↓ select/.test(l) || RULE.test(l.trimStart())) break
+        const e = /^\s*(▸\s+)?(\S.*?)\s*(\*)?\s*$/.exec(l.slice(boxCol))
+        if (!e || !e[2] || DROPDOWN_SCROLL.test(e[2])) {
+          if (options.length) break
+          continue
+        }
+        options.push({ label: e[2].trim(), here: Boolean(e[1]), def: Boolean(e[3]) })
       }
-      options.push({ label: e[2]!.trim(), here: Boolean(e[1]), def: Boolean(e[3]) })
     }
     if (options.length) {
       const cursor = Math.max(0, options.findIndex(o => o.here))

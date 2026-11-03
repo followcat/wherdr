@@ -320,6 +320,20 @@ describe('Fusion Lead/Sidekick parts', () => {
     calls.pane.agent = 'devin'
   })
 
+  it('marks the current model from the status line, effort suffix included', async () => {
+    // The status line prints "<model> <effort>" — SWE-2 at Max reads "SWE-2
+    // Max" — while the menu row is just "SWE-2". The tick still lands on it.
+    noteScreen('w1:p1', 'devin', `
+❭ Ask Devin to build features, fix bugs, or work on your code
+─────────────────────────────────────────────────────────────────────────
+SWE-2 Max · bypass                                                See usage and cost: /session-stats
+`)
+    calls.screen = MENU
+    const list = await listModels('w1:p1', true)
+    expect(list.options.find(o => o.label === 'SWE-2')?.current).toBe(true)
+    expect(list.options.find(o => o.label === 'Grok 4.7')?.current).toBe(false)
+  })
+
   it('listModels carries the Lead/Sidekick lists on the Fusion option', async () => {
     calls.screen = FUSION_MENU
     driveFusion({ menu: FUSION_MENU, lead: LEAD_OPEN, side: SIDE_OPEN })
