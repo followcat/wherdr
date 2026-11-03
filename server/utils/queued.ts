@@ -304,11 +304,11 @@ export function checkSent(list: QueueEntry[], o: { agent: string | null | undefi
       || Boolean(oc && oc.some(isIt))
     if (inQueue) { delete q.popped; delete q.lostSince }
     else if (c && c.popped.some(isIt)) q.popped = true
-    // Devin exports its ATIF transcript per turn: a message it took is written
-    // only when the turn ends, however long that is. A message the agent worked
-    // on after it was typed is inside such a turn, not unseen.
-    const devinTurn = o.agent === 'devin' && q.turnSeen
-    if (!inQueue && !devinTurn && o.now - q.at > QUEUED_TTL_MS) {
+    // Devin exports its ATIF transcript per turn; Codex and omp write a
+    // queued message only when the next turn takes it. A message the agent
+    // worked on after it was typed (turnSeen) can stay out of the
+    // conversation for a whole turn without being unseen.
+    if (!inQueue && !q.turnSeen && o.now - q.at > QUEUED_TTL_MS) {
       q.failed = true
       q.unseen = true
       changed = true

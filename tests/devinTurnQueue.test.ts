@@ -22,10 +22,10 @@ describe('Devin: a taken message inside a turn is not unseen', () => {
     expect(publicEntry(list[0]!)).toMatchObject({ state: 'failed', reason: 'unseen' })
   })
 
-  it('does not apply to other agents', () => {
+  it('also covers Codex, whose queued message lands only when the next turn takes it', () => {
     const list = [sent({ turnSeen: true })]
-    expect(checkSent(list, { agent: 'codex', claude: null, now: T0 + QUEUED_TTL_MS + 1 })).toBe(true)
-    expect(publicEntry(list[0]!)).toMatchObject({ state: 'failed', reason: 'unseen' })
+    expect(checkSent(list, { agent: 'codex', claude: null, now: T0 + QUEUED_TTL_MS + 1 })).toBe(false)
+    expect(list[0]!.failed).toBeUndefined()
   })
 })
 
