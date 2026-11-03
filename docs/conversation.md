@@ -41,9 +41,12 @@
   reasoning, tool calls and their results, saved images, search, previews, model and
   pagination are read from the same file the CLI appends to; the composer shows the
   last turn's model and context. Its built-in `/model`, `/effort`, `/permissions`,
-  `/compact`, `/clear` and `/config` are offered in the `/` menu. `/model` and
-  `/effort` set the default for **new** sessions only — the running session keeps its
-  model — so wherdr shows the model read-only and leaves the change to the terminal.
+  `/compact`, `/clear` and `/config` are offered in the `/` menu. The model can also be
+  changed from the composer's picker: it sends `/model <id>` to the pane, and the change
+  is confirmed by the `model_change` entry the CLI writes. Command Code has no
+  session-scoped confirm, so the choice also becomes the default for **new** sessions
+  (`/config` › model). `/effort` stays a terminal command: it is not offered in the
+  picker yet.
   The CLI reports no session id: the reader finds the project through the `cwd` in the
   session header and takes its most recently written session, so two live Command Code
   panes in the same folder share the newest one. Herdr has no `cmd` launch kind yet:
