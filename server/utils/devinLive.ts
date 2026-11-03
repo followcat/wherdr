@@ -34,18 +34,35 @@ except Exception:
 sid = str(ev.get('session_id') or '')
 if not sid or not all(c.isalnum() or c in '-_' for c in sid):
     sys.exit(0)
+
+def clip(v, n):
+    return v[:n] if isinstance(v, str) else v
+
+# The sidecar holds prompts and tool output: bound what lands in it (replies
+# at chat-item size, results and inputs much smaller — the tail only needs
+# their heads), and keep it readable by the owner only.
+ev['prompt'] = clip(ev.get('prompt'), 20000)
+ev['last_assistant_message'] = clip(ev.get('last_assistant_message'), 20000)
+ev['tool_response'] = clip(ev.get('tool_response'), 4000)
+ti = ev.get('tool_input')
+if isinstance(ti, dict):
+    ev['tool_input'] = {k: clip(v, 1000) for k, v in ti.items()}
 try:
-    root = os.environ.get('XDG_CACHE_HOME') or os.path.join(os.path.expanduser('~'), '.cache')
-    d = os.path.join(root, 'herdr-web', 'devin-live')
+    # Always ~/.cache: the reader builds this path from the machine's home
+    # and cannot know its XDG_CACHE_HOME.
+    d = os.path.join(os.path.expanduser('~'), '.cache', 'herdr-web', 'devin-live')
     os.makedirs(d, exist_ok=True)
     f = os.path.join(d, sid + '.jsonl')
-    with open(f, 'a') as fh:
+    fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, 'a') as fh:
         fh.write(json.dumps({'ts': int(time.time() * 1000), 'ev': ev}, separators=(',', ':')) + '\\n')
+    os.chmod(f, 0o600)
     if os.path.getsize(f) > 131072:
         with open(f, 'rb') as fh:
             fh.seek(-65536, os.SEEK_END)
             lines = fh.read().splitlines()[-400:]
-        with open(f + '.tmp', 'wb') as fh:
+        fd = os.open(f + '.tmp', os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'wb') as fh:
             fh.write(b'\\n'.join(lines) + b'\\n')
         os.replace(f + '.tmp', f)
 except Exception:
