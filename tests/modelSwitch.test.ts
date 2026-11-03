@@ -10,7 +10,7 @@ const MENU = `
 ↑↓ select · ←→ effort · ↵ confirm · alt+↵ this session only · esc cancel
 `
 
-vi.mock('../server/utils/env', () => ({ log: () => {} }))
+vi.mock('../server/utils/env', async (importOriginal) => ({ ...(await importOriginal()), log: () => {} }))
 vi.mock('../server/utils/actions', () => ({ closePanel: async () => false }))
 vi.mock('../server/utils/machines', () => ({ machineOfPane: () => null }))
 vi.mock('../server/utils/state', () => ({

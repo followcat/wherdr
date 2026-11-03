@@ -176,8 +176,17 @@ describe('Devin status footer', () => {
       .toEqual({ line: 'Model · mode · 1 shell ↓', meters: 'Context: 12k / 262k tokens (4%)' })
   })
 
+  it('keeps the status line while the slot shows shortcut hints (live capture shape)', () => {
+    expect(parseDevinStatus('SWE-2 Max · bypass · 1 subagent · 3 shells ↓                                        ctrl+o details · alt+t thinking'))
+      .toEqual({ line: 'SWE-2 Max · bypass · 1 subagent · 3 shells ↓', meters: null })
+    expect(parseDevinStatus('SWE-2 Max · bypass · 3 shells ↓   alt+t thinking'))
+      .toEqual({ line: 'SWE-2 Max · bypass · 3 shells ↓', meters: null })
+  })
+
   it('null without a Context meter, or on a dialog screen', () => {
     expect(parseDevinStatus('SWE-2 Max · 1 shell ↓')).toBeNull()
+    expect(parseDevinStatus('SWE-2 Max · bypass · 3 shells ↓   just some trailing text')).toBeNull()
+    expect(parseDevinStatus('ran a · b ↓   ctrl+o details   third column')).toBeNull()
     expect(parseDevinStatus(DIALOG)).toBeNull()
     expect(parseDevinStatus('')).toBeNull()
   })

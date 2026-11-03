@@ -95,16 +95,26 @@ export function parseDevinScreen(text: string | null | undefined): ClaudeScreen 
 //
 // `line` carries the left side (model, mode, shells); `meters` the context
 // gauge — the same split OmpStatus makes and Composer renders for omp.
+// Devin rotates that right slot: a turn can put its shortcut hints
+// ("ctrl+o details · alt+t thinking") where the gauge was — the left side
+// is still the footer, so it stays published and only the meter drops out.
+// A null there would blink the whole line away and back as it rotates.
 export function parseDevinStatus(text: string | null | undefined): OmpStatus | null {
   if (!text) return null
   const lines = String(text).split('\n').map(l => l.replace(/\s+$/, '')).filter(l => l.trim() !== '')
   const last = lines[lines.length - 1] || ''
   const i = last.indexOf('Context:')
-  if (i <= 0) return null
-  const line = last.slice(0, i).trim()
-  const meters = last.slice(i).trim()
-  // The gauge has a fixed shape — "Context: 16k / 262k tokens (6%)"; prose
-  // mentioning "Context:" must not publish as a status footer.
-  if (!line || !/^Context:\s*[\d.]+[kM]?\s*\/\s*[\d.]+[kM]?\s*tokens?\s*\(\s*\d+%\s*\)/.test(meters)) return null
-  return { line: line.slice(0, 300), meters: meters.slice(0, 200) }
+  if (i > 0) {
+    const line = last.slice(0, i).trim()
+    const meters = last.slice(i).trim()
+    // The gauge has a fixed shape — "Context: 16k / 262k tokens (6%)"; prose
+    // mentioning "Context:" must not publish as a status footer.
+    if (!line || !/^Context:\s*[\d.]+[kM]?\s*\/\s*[\d.]+[kM]?\s*tokens?\s*\(\s*\d+%\s*\)/.test(meters)) return null
+    return { line: line.slice(0, 300), meters: meters.slice(0, 200) }
+  }
+  // No gauge: still the footer when the left half is its status text and the
+  // right half is a shortcut-hint slot — anything else is not a status line.
+  const [left, right, ...rest] = last.split(/\s{2,}/).map(s => s.trim()).filter(Boolean)
+  if (rest.length || !left || !right || !/·/.test(left) || !/↓\s*$/.test(left) || !/^(?:ctrl|alt|shift)\+\S/i.test(right)) return null
+  return { line: left.slice(0, 300), meters: null }
 }

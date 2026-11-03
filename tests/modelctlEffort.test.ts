@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const calls = vi.hoisted(() => ({ sent: [] as { method: string, params: Record<string, unknown> }[], screen: '' }))
 const fx = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
 
-vi.mock('../server/utils/env', () => ({ log: () => {} }))
+vi.mock('../server/utils/env', async (importOriginal) => ({ ...(await importOriginal()), log: () => {} }))
 vi.mock('../server/utils/actions', () => ({ closePanel: async () => false }))
 vi.mock('../server/utils/machines', () => ({ machineOfPane: () => null }))
 vi.mock('../server/utils/state', () => ({
