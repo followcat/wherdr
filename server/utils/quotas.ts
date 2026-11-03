@@ -11,7 +11,9 @@
 // the identifier itself); machines on different accounts then each get
 // their own block (claudeAccounts), shown under their machine by the app.
 // Codex: same principle (codexAccounts), fingerprint taken from `creator_account_id`
-// in the header (session_meta) of its conversations, never from auth.json.
+// in the header (session_meta) of its conversations, never from auth.json;
+// without one, only identical 5-hour and weekly windows join machines
+// (sameCodexAccount).
 // Codex's week may be reset early: without a turn since, its conversations
 // still carry the old window; a `/status` read on one of the machine's Codex
 // screens then corrects the gauge, and stays known after that screen is gone
@@ -223,7 +225,10 @@ export function latestCodexQuota(readings: CodexReading[]): Quota | null {
 }
 
 // Codex account fingerprint of a conversation: `creator_account_id` of its
-// first line (session_meta). Only a truncated hash comes out, never the value.
+// first line (session_meta), the only account field Codex writes in its files
+// (rate_limits carry none). Codex sets it when a thread is created with a
+// ChatGPT login; older Codex versions, API-key logins and threads created before
+// the field existed have none. Only a truncated hash comes out, never the value.
 export function codexAccount(head: string): string | null {
   const first = head.split('\n', 1)[0] || ''
   if (!first.includes('"session_meta"')) return null
@@ -245,16 +250,40 @@ export function machineCodexQuota(readings: CodexSessionReading[]): CodexAccount
 
 export type CodexAccountReading = ClaudeReading
 
+// Start of a conversation file, up to its first line break. A session_meta
+// line longer than 512 KiB (large base instructions or tool list) comes back
+// cut: its account and timestamp come first, so they stay readable.
 async function readHead(fs: MachineFs, f: string, size: number): Promise<string> {
+  let t = ''
   for (const max of [64 * 1024, 512 * 1024]) {
     const len = Math.min(size, max)
-    const t = (await fs.read(f, 0, len)).toString('utf8')
+    t = (await fs.read(f, 0, len)).toString('utf8')
     if (t.includes('\n') || len === size) return t
   }
-  return ''
+  return t
+}
+
+// Start time of a conversation (session_meta `timestamp`), 0 if unknown. The
+// line may be cut (see readHead): then read from its first characters.
+export function codexSessionStart(head: string): number {
+  const first = head.split('\n', 1)[0] || ''
+  try {
+    const meta = JSON.parse(first)
+    return meta?.type === 'session_meta' ? Date.parse(meta.timestamp) || 0 : 0
+  } catch { /* cut or unknown line */ }
+  const m = /^\{"timestamp":"([^"\\]{1,40})","type":"session_meta"/.exec(first)
+  return m ? Date.parse(m[1]!) || 0 : 0
 }
 
 export async function readCodex(fs: MachineFs, home: string): Promise<CodexAccountReading | null> {
+  return (await readCodexMachine(fs, home)).q
+}
+
+// Codex reading of a machine, and whether it has recent Codex conversations at
+// all (`seen`): a machine with conversations but no reading (a new account's
+// first conversation, before its first limits) must not show another
+// machine's account as its own.
+export async function readCodexMachine(fs: MachineFs, home: string): Promise<{ q: CodexAccountReading | null, seen: boolean }> {
   const root = path.posix.join(home, '.codex/sessions')
   const files: string[] = []
   const now = new Date()
@@ -263,7 +292,7 @@ export async function readCodex(fs: MachineFs, home: string): Promise<CodexAccou
     const dir = path.posix.join(root, String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0'))
     for (const n of await ls(fs, dir)) if (n.startsWith('rollout-') && n.endsWith('.jsonl')) files.push(path.posix.join(dir, n))
   }
-  if (!files.length) return null
+  if (!files.length) return { q: null, seen: false }
   const st = await fs.statMany(files)
   const recent = files.map((f, i) => ({ f, s: st[i] })).filter(x => x.s && x.s.isFile)
     .sort((a, b) => b.s!.mtimeMs - a.s!.mtimeMs).slice(0, 6)
@@ -272,11 +301,7 @@ export async function readCodex(fs: MachineFs, home: string): Promise<CodexAccou
   const readings = await Promise.all(recent.map(async ({ f, s }): Promise<CodexSessionReading> => {
     const head = await readHead(fs, f, s!.size).catch(() => '')
     const account = codexAccount(head)
-    let started = 0
-    try {
-      const meta = JSON.parse(head.split('\n', 1)[0] || '')
-      if (meta.type === 'session_meta') started = Date.parse(meta.timestamp) || 0
-    } catch { /* unknown session format */ }
+    const started = codexSessionStart(head)
     // Even without limits, a new session can identify an account switch.
     // File time is only a fallback when there is no timestamp in the session.
     const empty = { q: null, account, stamp: started || s!.mtimeMs }
@@ -291,7 +316,7 @@ export async function readCodex(fs: MachineFs, home: string): Promise<CodexAccou
     }
     return empty
   }))
-  return machineCodexQuota(readings)
+  return { q: machineCodexQuota(readings), seen: true }
 }
 
 // Codex gauge of a machine checked against the latest weekly window known
@@ -317,12 +342,28 @@ export function setCodexKnownWeek(f: KnownWeekSource | null) { knownWeek = f }
 
 const fresher = (a: Quota | null, b: Quota | null) => (!a ? b : !b ? a : b.at > a.at ? b : a)
 
-// Codex: only matching known fingerprints establish a shared account.
-// Unknown identities remain scoped to their own machine.
-export const sameCodexAccount = (a: ClaudeReading, b: ClaudeReading) => Boolean(a.account && b.account && a.account === b.account)
+// Codex: two known fingerprints decide alone (equal: same account; different:
+// never merged). Without a fingerprint on one side, a reading is only grouped
+// with another when both show the same 5-hour AND the same weekly window
+// (resets within SAME_RESET of each other), the week already started. Reset
+// times come from OpenAI as absolute times, fixed for a window of one account:
+// two accounts matching on both windows to the minute is not a coincidence that
+// happens. An unused window may report "now + its length", so a week at 0 % is
+// not evidence. Anything less (one window missing, different resets, a reading
+// left over from before an account switch) keeps each machine on its own row:
+// another account's numbers are never shown (WHR-221).
+const SAME_RESET = 60000
+const sameReset = (x: QuotaWindow | null, y: QuotaWindow | null) =>
+  Boolean(x?.resetsAt && y?.resetsAt && Math.abs(x.resetsAt - y.resetsAt) <= SAME_RESET)
+export function sameCodexAccount(a: ClaudeReading, b: ClaudeReading): boolean {
+  if (a.account && b.account) return a.account === b.account
+  return sameReset(a.five, b.five) && sameReset(a.week, b.week) && a.week!.used > 0 && b.week!.used > 0
+}
 
 // Assembles the readings of the online machines (in machine order).
-export function mergeQuotas(readings: { key: string, label: string, claude: ClaudeReading | null, codex: (Quota & { account?: string | null }) | null, setup?: ClaudeSetup | null }[]): Quotas {
+// `codexSeen: false`: the machine has no recent Codex conversation (missing:
+// unknown, as after a failed read).
+export function mergeQuotas(readings: { key: string, label: string, claude: ClaudeReading | null, codex: (Quota & { account?: string | null }) | null, codexSeen?: boolean, setup?: ClaudeSetup | null }[]): Quotas {
   let codex: Quota | null = null
   for (const r of readings) {
     if (!r.codex) continue
@@ -337,7 +378,15 @@ export function mergeQuotas(readings: { key: string, label: string, claude: Clau
   // then go under their own machines, so they are listed with them.
   const api = readings.some(r => r.setup?.state === 'api')
   const out: Quotas = accounts.length > 1 || (api && accounts.length) ? { claude, codex, claudeAccounts: accounts } : { claude, codex }
-  if (codexAccounts.length > 1 || (codexAccounts.length > 0 && readings.some(r => !r.codex?.account))) out.codexAccounts = codexAccounts
+  // One Codex account at the top, like Claude, once it is established: a known
+  // fingerprint, or several machines matched by their windows. A single
+  // unidentified reading stays under its machine, and so does everything while
+  // a machine with Codex has no reading (account switch waiting for its first
+  // limits, failed read): the top row would pass for its account.
+  const codexed = readings.filter(r => r.codex)
+  const waiting = readings.some(r => !r.codex && r.codexSeen !== false)
+  const shared = codexAccounts.length === 1 && !waiting && (codexed.length > 1 || Boolean(codexed[0]?.codex?.account))
+  if (codexAccounts.length && !shared) out.codexAccounts = codexAccounts
   const setup = readings.flatMap(r => (r.setup ? [r.setup] : []))
   if (setup.length) out.claudeSetup = setup
   return out
@@ -381,9 +430,9 @@ export async function readQuotas(force = false): Promise<Quotas> {
   const online = allMachines().filter(m => m.home && !m.info().baseKey && (m.local || m.status === 'online'))
   const dismissed = readDismissed()
   const readings = await Promise.all(online.map(async (m) => {
-    const [claude, rolled] = await Promise.all([
+    const [claude, { q: rolled, seen: codexSeen }] = await Promise.all([
       readMachineClaude(m),
-      readCodex(m.fs, m.home).catch(() => null),
+      readCodexMachine(m.fs, m.home).catch(() => ({ q: null, seen: true })),
     ])
     const week = rolled?.week ? { used: rolled.week.used, resetsAt: rolled.week.resetsAt, at: rolled.at, account: rolled.account } : null
     const known = knownWeek ? await knownWeek(m.key, week).catch(() => null) : null
@@ -394,7 +443,7 @@ export async function readQuotas(force = false): Promise<Quotas> {
     const setup: ClaudeSetup | null = state
       ? { key: m.key, state, installable: await canInstall(m), ...(dismissed.has(m.key) ? { dismissed: true } : {}) }
       : null
-    return { key: m.key, label: m.label, claude: claude?.q || null, codex, setup }
+    return { key: m.key, label: m.label, claude: claude?.q || null, codex, codexSeen, setup }
   }))
   const q = mergeQuotas(readings)
   // A slow older poll must not replace a newer completed snapshot.
