@@ -7,6 +7,7 @@ import { ompModelLabel } from './models'
 import { type MachineFs, type ShellExec, localFs } from './fsx'
 import { HerdrError } from './herdr'
 import { ensureDevinLive, livePath, readDevinLive } from './devinLive'
+import { createDevinStore } from './devinStore'
 
 // JSON saved by Devin is versioned independently of wherdr (ATIF-v1.7).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -297,7 +298,7 @@ function hasStep(steps: Step[], id: number): boolean {
   return id === 0 || steps.some(s => Number(s.step_id) === id)
 }
 
-export function createDevinTranscripts({
+function createAtifTranscripts({
   home, fs = localFs, exec, now = Date.now, maxPageBytes = MAX_READ_BYTES, failQuietMs = FAIL_QUIET_MS,
 }: {
   home: string
@@ -539,4 +540,65 @@ export function createDevinTranscripts({
   }
 
   return { chat, image, search, model }
+}
+
+// Store-first reading: the CLI's own sessions.db sees every message as it is
+// written (the ATIF transcript only lands when a turn ends). The store is the
+// source while it stays usable — database present, python3 on the machine, a
+// guarded schema version, the session known — and anything else falls back to
+// the ATIF reader above, unchanged. A source switch is a rewritten reset via
+// the token's source prefix, never a mix.
+export function createDevinTranscripts({
+  home, fs = localFs, exec, now = Date.now, maxPageBytes = MAX_READ_BYTES, failQuietMs = FAIL_QUIET_MS,
+}: {
+  home: string
+  fs?: MachineFs
+  exec?: ShellExec
+  now?: () => number
+  maxPageBytes?: number
+  failQuietMs?: number
+}) {
+  const atif = createAtifTranscripts({ home, fs, exec, now, maxPageBytes, failQuietMs })
+  const store = createDevinStore({ home, fs, exec, now, failQuietMs })
+  const picks = new Map<string, { use: boolean, at: number }>()
+  const PICK_RETRY_MS = 60 * 1000
+  async function useStore(session: string): Promise<boolean> {
+    const p = picks.get(session)
+    if (p && (p.use || now() - p.at < PICK_RETRY_MS)) return p.use
+    const use = await store.probe()
+    picks.set(session, { use, at: now() })
+    if (picks.size > 64) picks.delete(picks.keys().next().value!)
+    return use
+  }
+  return {
+    async chat(pane: TranscriptPane, opts: DevinOptions = {}) {
+      if (pane.agentSession && await useStore(pane.agentSession)) {
+        const r = await store.chat(pane, opts)
+        if (r.available) return r
+        picks.set(pane.agentSession, { use: false, at: now() })
+      }
+      return atif.chat(pane, opts)
+    },
+    async image(pane: TranscriptPane, fileId: string | null, ref: string | null, index: number) {
+      if (pane.agentSession && await useStore(pane.agentSession)) {
+        const img = await store.image(pane, fileId, ref, index).catch(() => null)
+        if (img) return img
+      }
+      return atif.image(pane, fileId, ref, index)
+    },
+    async search(pane: TranscriptPane, text: string, deadline: number) {
+      if (pane.agentSession && await useStore(pane.agentSession)) {
+        const r = await store.search(pane, text, deadline).catch(() => null)
+        if (r) return r
+      }
+      return atif.search(pane, text, deadline)
+    },
+    async model(pane: TranscriptPane): Promise<ModelInfo | null> {
+      if (pane.agentSession && await useStore(pane.agentSession)) {
+        const m = await store.model(pane).catch(() => null)
+        if (m) return m
+      }
+      return atif.model(pane)
+    },
+  }
 }

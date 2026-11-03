@@ -431,6 +431,9 @@ const NOTICE: Record<string, [string, string]> = {
   'background-tan-dispatch': ['Background task', 'i-lucide-bot'],
   // Prompt a scheduled task gave Claude Code (see server/utils/transcripts.ts).
   'scheduled': ['Scheduled task', 'i-lucide-clock'],
+  // Where Devin compacted the conversation (see server/utils/devinStore.ts):
+  // the older thread, recovered from the store, continues below.
+  'compaction': ['Conversation compacted', 'i-lucide-archive'],
 }
 
 const UPLOAD_RE = /\/\.cache\/herdr-web\/uploads\/\S+/g
