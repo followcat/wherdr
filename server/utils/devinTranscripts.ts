@@ -558,8 +558,11 @@ export function createDevinTranscripts({
   return {
     async chat(pane: TranscriptPane, opts: DevinOptions = {}) {
       if (pane.agentSession && await useStore(pane.agentSession)) {
-        const r = await store.chat(pane, opts)
-        if (r.available) return r
+        // A thrown read error falls back the same way an unavailable store
+        // does: ATIF answers this poll and the pick rests for the retry
+        // window, so a broken reader never freezes the conversation.
+        const r = await store.chat(pane, opts).catch(() => null)
+        if (r?.available) return r
         picks.set(pane.agentSession, { use: false, at: now() })
       }
       return atif.chat(pane, opts)
