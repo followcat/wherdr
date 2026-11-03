@@ -7,6 +7,8 @@
 // default (~/.claude/settings.json, ~/.codex/config.toml).
 // In Codex, Enter on the first menu only moves on to the effort
 // choice ("enter select"), which we then confirm with "s".
+// Command Code has no session-scoped confirm: its `/model <id>` applies to
+// the running session and also becomes the default for new sessions.
 import path from 'node:path'
 import type { EffortList, ModelInfo, ModelList, ModelOption, Pane } from '../../shared/types'
 import { log } from './env'
@@ -19,6 +21,7 @@ import { type ClaudeEffortSlider, type ModelMenu, type OmpCycleKnowledge, type O
 import { fmt } from '../../shared/message'
 import { type DevinModelMenu, devinMenuOpen, devinModelSetEcho, parseDevinModelMenu } from './devinMenu'
 import { parseDevinStatus } from './devinScreen'
+import { runLocal } from './quotas'
 
 // ---------------------------------------------------------------- current model
 // Choice made from the phone: shown right away, until the
@@ -138,7 +141,7 @@ const listKey = (paneId: string, agent: string) => `${machineOfPane(paneId)?.key
 const busy = new Set<string>()
 export const modelControlBusy = (paneId: string) => busy.has(paneId)
 
-const SWITCH_AGENTS = new Set(['claude', 'codex', 'omp', 'devin', 'opencode'])
+const SWITCH_AGENTS = new Set(['claude', 'codex', 'omp', 'devin', 'opencode', 'cmd'])
 async function withPane<T>(paneId: string, fn: (p: Pane) => Promise<T>): Promise<T> {
   const p = findPane(paneId)
   if (!p) throw new HerdrError('bad_pane', 'Pane not found')
@@ -228,6 +231,7 @@ export async function listModels(paneId: string, refresh = false): Promise<Model
   if (p0.agent === 'omp') return ompListModels(p0, refresh)
   if (p0.agent === 'opencode') return opencodeListModels(p0)
   if (p0.agent === 'devin') return devinListModels(p0, refresh)
+  if (p0.agent === 'cmd') return cmdListModels(p0, refresh)
   const hit = listCache.get(listKey(p0.id, p0.agent))
   if (hit && !refresh && Date.now() - hit.at < LIST_TTL_MS) return hit
   return withPane(paneId, async (p) => {
@@ -257,6 +261,7 @@ export async function setModel(paneId: string, wanted: string): Promise<ModelInf
   if (p0?.agent === 'omp') return ompSetModel(paneId, String(wanted || '').trim())
   if (p0?.agent === 'opencode') return opencodeSetModel(p0, String(wanted || '').trim())
   if (p0?.agent === 'devin') return devinSetModel(p0.id, String(wanted || '').trim())
+  if (p0?.agent === 'cmd') return cmdSetModel(p0, String(wanted || '').trim())
   const label = cleanModelName(wanted)
   if (!label) throw new HerdrError('bad_model', 'Missing model')
   return withPane(paneId, async (p) => {
@@ -863,5 +868,79 @@ async function devinSetModel(paneId: string, wanted: string): Promise<ModelInfo>
       setTimeout(poll, 100)
       return info
     } finally { await devinCloseMenu(p.id) }
+  })
+}
+
+// ── Command Code ────────────────────────────────────────────────────────────
+// No menu driving: the CLI takes the model as a one-shot command and records
+// the change in the session (`model_change`), which is what the reader shows.
+// Unlike Claude and Codex there is no session-scoped confirm: `/model <id>`
+// applies to the running session AND becomes the default for new sessions
+// (~/.commandcode/config.json) — Command Code's own behavior for the command.
+// The list comes from the CLI itself (`cmd --list-models`), never scraped
+// from a TUI; the decision models it ends with are headless-only and stay out.
+
+const CMD_LIST_SCRIPT = `C=$(command -v cmd 2>/dev/null) || true
+[ -n "$C" ] || C=$(ls -1 "$HOME"/.nvm/versions/node/*/bin/cmd 2>/dev/null | tail -1)
+[ -n "$C" ] || C=$(ls -1 "$HOME"/.local/bin/cmd /usr/local/bin/cmd /usr/bin/cmd /opt/homebrew/bin/cmd 2>/dev/null | head -1)
+if [ -z "$C" ]; then echo "cmd CLI not found" >&2; exit 127; fi
+exec "$C" --list-models`
+
+export function parseCmdModels(text: string, currentId: string | null): ModelOption[] {
+  const options: ModelOption[] = []
+  for (const raw of String(text || '').split('\n')) {
+    if (/^Decision models/i.test(raw)) break
+    const m = /^(\S+)\s{2,}(.+?)\s*$/.exec(raw)
+    if (!m || !m[1]!.includes('/')) continue
+    const id = m[1]!
+    const isDefault = /\(default\)\s*$/i.test(m[2]!)
+    options.push({ label: id, hint: cleanModelName(m[2]!) || null, current: id === currentId, isDefault })
+  }
+  return options
+}
+
+async function cmdListModels(p: Pane, refresh = false): Promise<ModelList> {
+  const m = machineOfPane(p.id)
+  const key = `cmd|${m?.key || ''}`
+  const hit = listCache.get(key)
+  if (hit && !refresh && Date.now() - hit.at < LIST_TTL_MS) return hit
+  const cur = await transcripts.model(p).catch(() => null)
+  const r = m && !m.local
+    ? await m.exec!('exec sh -s', [], { input: Buffer.from(CMD_LIST_SCRIPT), timeoutMs: 15000 })
+    : await runLocal(CMD_LIST_SCRIPT, m?.home || '', 15000)
+  const out = r.stdout.toString('utf8')
+  if (r.code !== 0 || !out.trim()) {
+    throw new HerdrError('no_cli', r.code === 127 || /not found/i.test(r.stderr)
+      ? fmt('The Command Code CLI (cmd) was not found on {machine}', { machine: m?.label || 'this machine' })
+      : fmt('The model list could not be read (exit {code})', { code: r.code }))
+  }
+  const options = parseCmdModels(out, cur?.id || null)
+  if (!options.length) throw new HerdrError('no_menu', 'The model list came back empty')
+  const list: ModelList = { agent: 'cmd', options, at: Date.now() }
+  listCache.set(key, list)
+  log(`models cmd: ${options.map(o => o.label).join(', ')}`)
+  return list
+}
+
+async function cmdSetModel(p: Pane, wanted: string): Promise<ModelInfo> {
+  if (!wanted) throw new HerdrError('bad_model', 'Missing model')
+  return withPane(p.id, async () => {
+    const started = Date.now()
+    const cur = await transcripts.model(p).catch(() => null)
+    if (cur?.id === wanted) return cur
+    await agentPrompt(p.id, `/model ${wanted}`)
+    // The change lands as a `model_change` entry: wait for it so the picker,
+    // the plan header and the composer status line all show it right away.
+    const until = Date.now() + 6000
+    for (;;) {
+      const info = await transcripts.model(p).catch(() => null)
+      if (info && info.id === wanted && info.at && Date.parse(info.at) >= started - 1500) {
+        log(`model ${p.id} (cmd) -> ${wanted}`)
+        setTimeout(poll, 100)
+        return info
+      }
+      if (Date.now() > until) throw new HerdrError('stale', fmt('Command Code did not switch to {model} — try again.', { model: wanted }))
+      await sleep(300)
+    }
   })
 }
