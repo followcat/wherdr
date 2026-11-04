@@ -9,7 +9,10 @@ import path from 'node:path'
 const BUILD = String.raw`
 import json, os, sqlite3, sys
 
-file, request = sys.argv[1], json.loads(sys.argv[2])
+# The row set can be megabytes (long-session fixtures): it travels on stdin,
+# not argv.
+file = sys.argv[1]
+request = json.loads(sys.argv[2]) if len(sys.argv) > 2 else json.load(sys.stdin)
 os.makedirs(os.path.dirname(file), exist_ok=True)
 con = sqlite3.connect(file)
 con.execute('PRAGMA journal_mode=WAL')
@@ -78,7 +81,7 @@ export function devinStorePath(home, cliDir) {
 // compaction (rows with meta.summarized_from) or rewind main_chain_id.
 export function writeDevinStore(home, { session = 'devin-test', rows = [], head, model = 'test-model', schemaVersion = 20, cliDir } = {}) {
   const file = devinStorePath(home, cliDir)
-  const r = spawnSync('python3', ['-X', 'utf8', '-c', BUILD, file, JSON.stringify({ session, rows, head, model, schemaVersion })], { encoding: 'utf8' })
+  const r = spawnSync('python3', ['-X', 'utf8', '-c', BUILD, file], { input: JSON.stringify({ session, rows, head, model, schemaVersion }), encoding: 'utf8' })
   if (r.status !== 0) throw new Error(`devin-store fixture failed: ${r.stderr || r.stdout}`)
   return file
 }
