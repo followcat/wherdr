@@ -48,11 +48,11 @@ interface Json { [k: string]: any } // eslint-disable-line @typescript-eslint/no
 // under an env-override data directory on a remote machine (no HOME there).
 export const DEVIN_QUERY = String.raw`
 import hashlib, json, os, pathlib, sqlite3, sys, time
+from collections import deque
 
 MAX_ROW = 84 * 1024 * 1024
 MAX_BYTES = 24 * 1024 * 1024
-MAX_NODES = 200000
-MAX_CHAINS = 24
+MAX_VISIT = 30000
 SCHEMA_VERSIONS = {20}
 VISIBLE_PAGE = 120
 CONTEXT_AHEAD = 256
@@ -112,159 +112,220 @@ def main():
         base = {'available': True, 'db': str(file), 'file': 'devin-' + identity, 'model': session[1], 'sig': sig}
         if request['op'] == 'page' and request.get('before') is None and request.get('sig') == sig:
             return {**base, 'signature': True}
-        parents, summarized = {}, {}
-        for nid, par, sf in con.execute("SELECT node_id,parent_node_id,json_extract(metadata,'$.summarized_from') FROM message_nodes WHERE session_id=? LIMIT ?", (sid, MAX_NODES + 1)):
-            parents[nid] = par
-            if sf is not None:
-                summarized[nid] = sf
-        if len(parents) > MAX_NODES:
-            raise ValueError('Devin conversation exceeds the supported node limit')
-        if any(not isinstance(n, int) or n < 0 or n >= 9007199254740991 or not isinstance(parents[n], int) and parents[n] is not None and (parents[n] < 0 or parents[n] >= 9007199254740991) for n in parents):
-            raise ValueError('Unsupported Devin node identifier')
+        head = session[0]
 
-        # The live chain plus the chains compaction abandoned, oldest first:
-        # a node whose metadata carries summarized_from is where the summary
-        # was grafted, and the chain it names is spliced in just before it.
-        # Nodes shared with an earlier chain (the system prefix) are emitted
-        # once, at their position on the newest chain.
-        stitched, emitted, seam_nodes = [], set(), set()
-        def emit(head, depth):
-            if depth > MAX_CHAINS:
-                raise ValueError('Devin conversation exceeds the supported compaction depth')
-            ids, seen, node = [], set(), head
-            while node is not None:
-                if node in seen or node not in parents:
-                    raise ValueError('Invalid Devin conversation chain')
-                seen.add(node)
-                ids.append(node)
-                parent = parents[node]
-                if parent is not None and parent >= node:
-                    raise ValueError('Unsupported Devin node ordering')
-                node = parent
-            for n in reversed(ids):
-                if n in emitted:
-                    continue
-                emitted.add(n)
-                sf = summarized.get(n)
-                if sf is not None and sf != n and sf in parents:
-                    emit(sf, depth + 1)
-                    seam_nodes.add(n)
-                stitched.append(n)
-        emit(session[0], 0)
-        positions = {node + 1: i for i, node in enumerate(stitched)}
+        visited = [0]
+        # One indexed point lookup per walked node — the store can hold
+        # gigabytes and a session tens of thousands of nodes, so a reply only
+        # ever touches the nodes it needs. prev(n) follows the
+        # summarized_from mark when its target exists in the session (the
+        # compaction seam hop: the system summary node grafted under the
+        # shared prefix is skipped backward into the chain it summarizes),
+        # else the parent link. Walking prev() back from the head visits the
+        # conversation newest-first; the summarizer's assistant carries the
+        # same mark on its own branch and is never walked to.
+        META = ("SELECT n.parent_node_id, json_extract(n.metadata,'$.summarized_from'), s.node_id IS NOT NULL"
+                ' FROM message_nodes n'
+                ' LEFT JOIN message_nodes s ON s.session_id=n.session_id'
+                " AND s.node_id=json_extract(n.metadata,'$.summarized_from')"
+                ' WHERE n.session_id=? AND n.node_id=?')
+        FULL = ("SELECT n.parent_node_id, json_extract(n.metadata,'$.summarized_from'), s.node_id IS NOT NULL,"
+                ' length(CAST(n.chat_message AS BLOB)), substr(n.chat_message,1,?)'
+                ' FROM message_nodes n'
+                ' LEFT JOIN message_nodes s ON s.session_id=n.session_id'
+                " AND s.node_id=json_extract(n.metadata,'$.summarized_from')"
+                ' WHERE n.session_id=? AND n.node_id=?')
+        def meta(node, body=False):
+            visited[0] += 1
+            return con.execute(FULL if body else META, (MAX_ROW, sid, node) if body else (sid, node)).fetchone()
 
-        def prefix(index):
-            return digest(identity + ':' + json.dumps([(n, parents[n]) for n in stitched[:index + 1]]))
+        def prev(node, r):
+            if r[0] is not None and r[0] >= node:
+                raise ValueError('Unsupported Devin node ordering')
+            return r[1] if r[1] is not None and r[1] != node and r[2] else r[0]
 
-        def row(node, full=False):
-            size, = con.execute('SELECT length(CAST(chat_message AS BLOB)) FROM message_nodes WHERE session_id=? AND node_id=?', (sid, node)).fetchone()
-            if size > MAX_ROW:
+        # The cursor's own proof: the node and the link it will be walked
+        # from. Nodes are immutable once written, so this only fails when the
+        # store itself was rewritten.
+        def prefix_hash(node, r):
+            return digest(identity + ':' + json.dumps([node, r[0], r[1] if r[2] else None]))
+        EMPTY_PREFIX = digest(identity + ':root')
+
+        def row_of(node, r, untrimmed=False):
+            if r[3] > MAX_ROW:
                 raise ValueError('Devin message exceeds the supported size limit')
-            raw, = con.execute('SELECT chat_message FROM message_nodes WHERE session_id=? AND node_id=?', (sid, node)).fetchone()
-            value = json.loads(raw)
-            r = {'id': node, 'message': value if full else trim(value)}
-            if node in seam_nodes:
-                r['seam'] = True
-            return r, size
+            row = {'id': node, 'message': json.loads(r[4]) if untrimmed else trim(json.loads(r[4]))}
+            if r[1] is not None and r[1] != node and r[2]:
+                row['seam'] = True
+            return row
 
-        if request['op'] == 'image':
-            node = request['node']
-            if node not in emitted:
-                return {'available': False}
-            r, _ = row(node, True)
-            return {**base, 'rows': [r]}
-        if request['op'] == 'model':
-            found, generation = {}, None
-            tail = stitched[-64:]
-            if tail:
-                for nid, raw in con.execute('SELECT node_id,chat_message FROM message_nodes WHERE session_id=? AND node_id IN (' + ','.join('?' * len(tail)) + ')', (sid, *tail)):
-                    found[nid] = raw
-            for nid in reversed(tail):
-                raw = found.get(nid)
-                if raw is not None and json.loads(raw).get('role') == 'assistant':
-                    generation = (json.loads(raw).get('metadata') or {}).get('generation_model')
-                    break
-            return {**base, 'generation_model': generation}
-        if request['op'] == 'search':
-            rows, used, limited = [], 0, False
-            for node in reversed(stitched):
-                if time.monotonic() > deadline or used >= 8 * 1024 * 1024:
-                    limited = True
-                    break
-                r, size = row(node)
-                used += size
-                if r['message'].get('role') in ('user', 'assistant'):
-                    rows.append(r)
-            return {**base, 'rows': rows, 'limited': limited}
-
-        def visible_of(r, node):
-            m = r['message']
+        def visible_of(row):
+            m = row['message']
             role = m.get('role')
-            count = int(node in seam_nodes)
+            count = int(bool(row.get('seam')))
             if role == 'user':
                 count += int((m.get('metadata') or {}).get('is_user_input') is True)
             elif role == 'assistant':
                 count += int(bool(m.get('content'))) + int(bool(m.get('thinking'))) + len(m.get('tool_calls') or [])
             return count
 
-        def take(candidates):
-            # Walk candidates until the page holds VISIBLE_PAGE chat items
-            # (or the byte budget runs out).
-            rows, used, visible = [], 0, 0
-            for node in candidates:
+        def page(start, stop, cap):
+            # Rows newest-first walking prev() back from start until stop
+            # (inclusive; None is the root), the visible cap, the byte budget
+            # or the visited bound, whichever comes first. Also returns the
+            # last kept node's meta (the oldest = the page's start) and why
+            # the walk ended: 'stop', 'full', 'over' or 'root'.
+            rows, used, visible, seen, last, node = [], 0, 0, set(), None, start
+            while node is not None:
+                if node in seen:
+                    raise ValueError('Invalid Devin conversation chain')
+                seen.add(node)
+                if visited[0] >= MAX_VISIT:
+                    return rows, 'over', last
                 if time.monotonic() > deadline:
                     raise TimeoutError('Devin conversation read timed out')
-                r, _ = row(node)
-                used += len(json.dumps(r).encode())
+                r = meta(node, True)
+                if r is None:
+                    raise ValueError('Invalid Devin conversation chain')
+                row = row_of(node, r)
+                used += len(json.dumps(row).encode())
                 if used > MAX_BYTES:
-                    return rows, visible, True
-                rows.append(r)
-                visible += visible_of(r, node)
-                if visible >= VISIBLE_PAGE:
+                    return rows, 'over', last
+                last = r
+                rows.append(row)
+                visible += visible_of(row)
+                if node == stop:
+                    return rows, 'stop', last
+                if cap and visible >= VISIBLE_PAGE:
+                    return rows, 'full', last
+                node = prev(node, r)
+            return rows, 'root', last
+
+        if request['op'] == 'image':
+            node = request['node']
+            r = meta(node, True)
+            # Off-path branches of the same session are harmless to read.
+            if r is None:
+                return {'available': False}
+            return {**base, 'rows': [row_of(node, r, True)]}
+        if request['op'] == 'model':
+            generation, seen, node, steps = None, set(), head, 0
+            while node is not None and steps < 64:
+                if node in seen:
+                    raise ValueError('Invalid Devin conversation chain')
+                seen.add(node)
+                if visited[0] >= MAX_VISIT or time.monotonic() > deadline:
                     break
-            return rows, visible, False
+                r = meta(node, True)
+                if r is None:
+                    raise ValueError('Invalid Devin conversation chain')
+                if r[3] > MAX_ROW:
+                    raise ValueError('Devin message exceeds the supported size limit')
+                if json.loads(r[4]).get('role') == 'assistant':
+                    generation = (json.loads(r[4]).get('metadata') or {}).get('generation_model')
+                    break
+                node = prev(node, r)
+                steps += 1
+            return {**base, 'generation_model': generation, 'visited': visited[0]}
+        if request['op'] == 'search':
+            rows, used, limited, seen, node = [], 0, False, set(), head
+            while node is not None:
+                if node in seen:
+                    raise ValueError('Invalid Devin conversation chain')
+                seen.add(node)
+                if visited[0] >= MAX_VISIT or used >= 8 * 1024 * 1024 or time.monotonic() > deadline:
+                    limited = True
+                    break
+                r = meta(node, True)
+                if r is None:
+                    raise ValueError('Invalid Devin conversation chain')
+                row = row_of(node, r)
+                used += r[3]
+                if row['message'].get('role') in ('user', 'assistant'):
+                    rows.append(row)
+                node = prev(node, r)
+            return {**base, 'rows': rows, 'limited': limited, 'visited': visited[0]}
 
         anchor = request.get('anchor')
-        invalid = bool(anchor and (anchor['file'] != base['file'] or (anchor['start'] not in positions and anchor['start'] != 0)))
-        if anchor and not invalid:
-            at = positions.get(anchor['start'], 0)
-            invalid = anchor['prefix'] != prefix(at)
-        before, start = request.get('before'), request.get('from')
-        if before is not None and before not in positions and before != 0:
+        invalid = False
+        if anchor:
             invalid = True
-        if start is not None and start not in positions and start != 0:
+            if anchor['file'] == base['file']:
+                a = anchor.get('start')
+                if a == 0:
+                    invalid = anchor['prefix'] != EMPTY_PREFIX
+                elif isinstance(a, int) and 0 < a < 9007199254740991:
+                    ar = meta(a - 1)
+                    invalid = ar is None or anchor['prefix'] != prefix_hash(a - 1, ar)
+        before, start = request.get('before'), request.get('from')
+        cursor = meta(before - 1) if isinstance(before, int) and before > 0 else None
+        if before is not None and before > 0 and cursor is None:
+            invalid = True
+        if start is not None and start > 0 and before is not None and meta(start - 1) is None:
             invalid = True
         if invalid and before is not None:
-            return {**base, 'rewritten': True, 'rows': [], 'context': [], 'start': 0, 'prefix': '', 'seams': sorted(seam_nodes)}
-        end = positions.get(before, 0) if before is not None else len(stitched)
-        lo = positions.get(start, 0) if start is not None and not invalid and before is None else None
-        if lo is None:
-            selected, _, _ = take(reversed(stitched[:end]))
-            selected.reverse()
-            lo = positions[selected[0]['id'] + 1] if selected else 0
-        else:
-            selected, _, over = take(iter(stitched[lo:end]))
-            if over:
-                # A from-cursor page that does not fit: the view restarts
-                # from a fresh bottom page.
+            return {**base, 'rewritten': True, 'rows': [], 'context': [], 'start': 0, 'prefix': '', 'seams': [], 'visited': visited[0]}
+        if before == 0:
+            return {**base, 'rewritten': invalid, 'rows': [], 'context': [], 'start': 0, 'prefix': EMPTY_PREFIX, 'seams': [], 'visited': visited[0]}
+        if before is not None:
+            # Resume the walk one link below the cursor (exclusive).
+            rows, st, last = page(prev(before - 1, cursor), None, True)
+        elif start is not None and not invalid:
+            # The tail re-read: walk the head back to the cursor. If it is
+            # not reached inside the bound — off the path after a rewind, or
+            # simply too far back — the client gets a fresh bottom instead.
+            rows, st, last = page(head, None if start == 0 else start - 1, False)
+            if st == 'over' or (start != 0 and st != 'stop'):
                 invalid = True
-                selected, _, _ = take(reversed(stitched))
-                selected.reverse()
-                lo = positions[selected[0]['id'] + 1] if selected else 0
-        calls = {call.get('id') for r in selected for call in (r['message'].get('tool_calls') or []) if isinstance(call.get('id'), str)}
-        calls -= {r['message'].get('tool_call_id') for r in selected if r['message'].get('role') == 'tool'}
+                rows, st, last = page(head, None, True)
+        else:
+            rows, st, last = page(head, None, True)
+
+        calls = {call.get('id') for r in rows for call in (r['message'].get('tool_calls') or []) if isinstance(call.get('id'), str)}
+        calls -= {r['message'].get('tool_call_id') for r in rows if r['message'].get('role') == 'tool'}
         context = []
-        for node in stitched[end:end + CONTEXT_AHEAD]:
-            if not calls:
-                break
-            if time.monotonic() > deadline:
-                raise TimeoutError('Devin conversation read timed out')
-            r, _ = row(node)
-            m = r['message']
-            if m.get('role') == 'tool' and m.get('tool_call_id') in calls:
-                calls.remove(m['tool_call_id'])
-                context.append(r)
-        return {**base, 'rows': selected, 'context': context, 'start': stitched[lo] + 1 if lo else 0, 'prefix': prefix(lo), 'rewritten': invalid, 'seams': sorted(seam_nodes)}
+        if calls and before is not None:
+            # Results for calls dangling at the page's top sit in the page
+            # the client already holds, just above the cursor. Reach them
+            # with a bounded walk down from the head, keeping the closest
+            # CONTEXT_AHEAD nodes — only when something actually dangles.
+            window = deque(maxlen=CONTEXT_AHEAD)
+            seen, node, reached = set(), head, False
+            while node is not None and visited[0] < MAX_VISIT:
+                if node in seen:
+                    raise ValueError('Invalid Devin conversation chain')
+                seen.add(node)
+                if time.monotonic() > deadline:
+                    raise TimeoutError('Devin conversation read timed out')
+                r = meta(node)
+                if r is None:
+                    raise ValueError('Invalid Devin conversation chain')
+                window.append(node)
+                if node == before - 1:
+                    reached = True
+                    break
+                node = prev(node, r)
+            if reached:
+                for cn in reversed(list(window)):
+                    r = meta(cn, True)
+                    if r is None or r[3] > MAX_ROW:
+                        continue
+                    m = json.loads(r[4])
+                    if m.get('role') == 'tool' and m.get('tool_call_id') in calls:
+                        calls.discard(m['tool_call_id'])
+                        context.append({'id': cn, 'message': trim(m)})
+                    if not calls:
+                        break
+        rows.reverse()
+        if rows and prev(rows[0]['id'], last) is None:
+            # The page starts at the conversation's root: the zero cursor.
+            prefix, start_out = EMPTY_PREFIX, 0
+        elif rows:
+            prefix, start_out = prefix_hash(rows[0]['id'], last), rows[0]['id'] + 1
+        else:
+            prefix, start_out = EMPTY_PREFIX, 0
+        seams = sorted(r['id'] for r in rows if r.get('seam'))
+        return {**base, 'rows': rows, 'context': context, 'start': start_out, 'prefix': prefix, 'rewritten': invalid, 'seams': seams, 'visited': visited[0]}
     finally:
         con.close()
 
@@ -532,8 +593,8 @@ export function createDevinStore({ home, fs = localFs, exec, now = () => Date.no
       const token = `devins:${reply.file}:${dbsig || 'x'}:${reply.sig}/${reply.start}.${reply.prefix}`
       if (dbsig) verified.set(session, `${reply.sig}@${dbsig}`)
       const r: ChatResponse = before != null
-        ? { ...base, file: reply.file, older: true, items, start: reply.start || 0, ...(reply.rewritten || foreign ? { rewritten: true as const } : {}) }
-        : { ...base, file: reply.file, token, items, start: reply.start || 0, queue: [], ...(reply.rewritten || foreign ? { rewritten: true as const } : {}) }
+        ? { ...base, file: reply.file, older: true, items, start: reply.start || 0, visited: reply.visited, ...(reply.rewritten || foreign ? { rewritten: true as const } : {}) }
+        : { ...base, file: reply.file, token, items, start: reply.start || 0, queue: [], visited: reply.visited, ...(reply.rewritten || foreign ? { rewritten: true as const } : {}) }
       lastGood.set(session, r)
       const model = reply.generation_model || reply.model
       lastModel.set(session, typeof model === 'string' && model ? { id: model, label: ompModelLabel(model) } : null)
