@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resampleTo16k } from '../app/utils/audio'
+import { createResampler, resampleTo16k } from '../app/utils/audio'
 
 describe('resampleTo16k', () => {
   it('passes 16 kHz audio through unchanged', () => {
@@ -29,5 +29,34 @@ describe('resampleTo16k', () => {
     expect(out[0]).toBe(0)
     expect(out[1]).toBeCloseTo(5, 5)
     expect(out[3]).toBeCloseTo(10, 1)
+  })
+})
+
+describe('createResampler', () => {
+  // The mic delivers 4096-sample buffers. Resampling each one on its own lost
+  // a fraction of a sample at every join (a third at 48 kHz): the take drifted.
+  const ramp = (n: number) => new Float32Array(n).map((_, i) => Math.sin(i / 7))
+  for (const rate of [48000, 44100, 22050]) {
+    it(`streams ${rate} Hz buffers like one continuous take`, () => {
+      const src = ramp(4096 * 10)
+      const whole = createResampler(rate)(src)
+      const stream = createResampler(rate)
+      const parts: number[] = []
+      for (let at = 0; at < src.length; at += 4096) parts.push(...stream(src.subarray(at, at + 4096)))
+      expect(parts.length).toBe(whole.length)
+      expect(parts.length).toBe(Math.ceil((src.length - 1) / (rate / 16000)))
+      for (let i = 0; i < whole.length; i++) expect(parts[i]).toBeCloseTo(whole[i]!, 4)
+    })
+  }
+
+  it('passes 16 kHz buffers through unchanged', () => {
+    const src = new Float32Array([0, 0.5, -0.5, 1])
+    expect(createResampler(16000)(src)).toEqual(src)
+  })
+
+  it('takes an empty buffer', () => {
+    const stream = createResampler(48000)
+    expect(stream(new Float32Array(0)).length).toBe(0)
+    expect(stream(new Float32Array([0, 3, 6, 9])).length).toBe(1)
   })
 })

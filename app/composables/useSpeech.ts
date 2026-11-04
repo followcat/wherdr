@@ -178,13 +178,14 @@ function createEngine() {
       // Not every device honors the requested context rate — resample the
       // captured rate rather than feeding the engine a wrong-speed stream.
       const inRate = ctx.sampleRate
+      const resample = createResampler(inRate)
       pendingCtx = ctxText || ''
       takeDead = false
       me.levels.value = []
       me.recMs.value = 0
       node.onaudioprocess = (e) => {
         const raw = e.inputBuffer.getChannelData(0)
-        const buf = resampleTo16k(raw.slice(0), inRate)
+        const buf = resample(raw)
         worker?.postMessage({ t: 'push', pcm: buf.buffer }, [buf.buffer])
         // Two RMS bars per buffer feed the composer's live wave.
         const half = raw.length >> 1
