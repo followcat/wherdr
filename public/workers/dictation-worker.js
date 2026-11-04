@@ -44,84 +44,14 @@ function startRuntime(runtime) {
   return engineReady
 }
 
-// Without Cache Storage, model files stream from the server in 8 MB range
-// slices: a long single GET through a tunnel or a mobile link dies mid-stream,
-// while each slice gets its own retries.
-const CHUNK = 8 * 1024 * 1024
+// Model files come through the shared loader (public/workers/
+// model-files.js): the cached `?chunk=N` slices or a whole entry, else
+// resumable 8 MB Range slices from the server, { t:'dl' } progress posted
+// as the bytes arrive.
+importScripts('/workers/model-files.js')
+const { openFile } = self.wherdrModelFiles
+
 const sleep = ms => new Promise(r => setTimeout(r, ms))
-
-async function refetch(doFetch) {
-  let lastErr = null
-  for (let i = 0; i < 5; i++) {
-    try {
-      const r = await doFetch()
-      if (r.status < 500) return r
-      lastErr = new Error(`HTTP ${r.status}`)
-    }
-    catch (e) { lastErr = e }
-    await sleep(700 * (i + 1))
-  }
-  throw lastErr
-}
-
-// The first request doubles as slice 0 and a range probe: a 206 means the
-// server slices; a 200 means it sends the whole file, drained as it comes.
-async function* streamFile(url, file) {
-  const first = await refetch(() => fetch(url, { headers: { range: `bytes=0-${CHUNK - 1}` } }))
-  if (first.status !== 206) {
-    if (!first.ok) throw new Error(`fetch ${file}: HTTP ${first.status}`)
-    const total = Number(first.headers.get('content-length')) || 0
-    const reader = first.body.getReader()
-    let got = 0
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) return
-      got += value.length
-      postMessage({ t: 'dl', file, got, total })
-      yield value
-    }
-  }
-  const total = Number((first.headers.get('content-range') || '').split('/')[1]) || 0
-  if (!total) throw new Error(`fetch ${file}: bad content-range`)
-  const firstPart = new Uint8Array(await first.arrayBuffer())
-  let got = firstPart.byteLength
-  postMessage({ t: 'dl', file, got, total })
-  yield firstPart
-  while (got < total) {
-    const end = Math.min(got + CHUNK - 1, total - 1)
-    const res = await refetch(() => fetch(url, { headers: { range: `bytes=${got}-${end}` } }))
-    if (res.status !== 206) throw new Error(`fetch ${file}: HTTP ${res.status} at byte ${got}`)
-    const part = new Uint8Array(await res.arrayBuffer())
-    if (part.byteLength !== end - got + 1) throw new Error(`fetch ${file}: short slice at byte ${got}`)
-    got = end + 1
-    postMessage({ t: 'dl', file, got, total })
-    yield part
-  }
-}
-
-// A Response for `url`, never assembled in JS: its slices from the cache
-// (or one whole entry, as F2 kept files), else streamed from the server.
-async function openFile(url, file, bytes, msg) {
-  const cache = msg.cache && self.caches ? await caches.open(msg.cache) : null
-  const whole = cache && await cache.match(url)
-  if (whole) return whole
-  const gen = cache ? cachedSlices(cache, url, file, Math.max(1, Math.ceil(bytes / msg.chunk))) : streamFile(url, file)
-  return new Response(new ReadableStream({
-    async pull(ctrl) {
-      const { done, value } = await gen.next()
-      if (done) ctrl.close()
-      else ctrl.enqueue(value)
-    },
-  }))
-}
-
-async function* cachedSlices(cache, url, file, count) {
-  for (let i = 0; i < count; i++) {
-    const hit = await cache.match(`${url}?chunk=${i}`)
-    if (!hit) throw new Error(`${file}: not downloaded`)
-    yield new Uint8Array(await hit.arrayBuffer())
-  }
-}
 
 // A file into the emscripten FS slice by slice: the weights must live in the
 // WASM heap anyway, but no second whole copy is held in JS (a whole-file

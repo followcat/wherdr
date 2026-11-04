@@ -30,6 +30,9 @@ describe('service worker precache', () => {
       '_nuxt/jetbrains-mono-greek-wght-normal.Bw9x6K1M.woff2',
       '_nuxt/archivo-vietnamese-wght-normal.XAtsl5Q_.woff2',
       '_nuxt/pdf.min.t82Z80JU.mjs',
+      // The dictation workers come at first use, with the model.
+      'workers/dictation-worker.js',
+      'workers/model-files.js',
     ]) expect(precached(f), f).toBe(false)
   })
 

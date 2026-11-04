@@ -51,6 +51,8 @@ insertion are shared; only the engine behind the interface changes.
 | `server/utils/dictation.ts`, `server/api/dictation/*` | Key storage and the OpenRouter relay |
 | `server/utils/modelFiles.ts`, `server/routes/models/[...path].ts` | Serving `DATA_DIR/models/**` |
 | `scripts/fetch-dictation-files.mjs` | Pinned downloads into `DATA_DIR/models`, checked by sha256 |
+| `public/workers/dictation-worker.js` | The sherpa-onnx worker: WASM runtime, recognizer, decode |
+| `public/workers/model-files.js` | Model-file access shared by the dictation workers (cached slices, Range-slice streaming) |
 
 ## The engine interface
 

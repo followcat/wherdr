@@ -11,7 +11,7 @@ export const RUNTIME_ONLY_GLOBS = [
   '**/wherdr-nerd-*.woff2',
   // Inter / Archivo / JetBrains Mono beyond Latin (Latin covers French and English).
   '**/*-{latin-ext,cyrillic,cyrillic-ext,greek,greek-ext,vietnamese}-wght-normal.*.woff2',
-  // The on-device dictation worker: only for those who turn it on.
+  // The on-device dictation workers: only for those who turn it on.
   'workers/**',
 ]
 
