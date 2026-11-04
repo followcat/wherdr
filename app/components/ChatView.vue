@@ -368,12 +368,6 @@ onMounted(() => {
 })
 onUnmounted(() => clearInterval(timer))
 watch(pageVisible, (v) => { if (v) loadChat() })
-// Live events socket + a fresh state accepted: the server answers again.
-// Invalidate the loader so a read still in flight (possibly black-holed,
-// holding the one-at-a-time lock) drops its reply, and re-read the tail at
-// once rather than waiting out the poll interval.
-watch(() => eventsOpen.value && herdrState.value.ok && !netDown.value && !offlineView.value,
-  (ok) => { if (ok) { tailLoader.invalidate(); loadChat() } })
 
 // ------------------------------------------------------------ rendu
 // Short tool nouns: written as pairs because "Read" or "Search" mean something else elsewhere.
