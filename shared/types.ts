@@ -378,6 +378,9 @@ export interface ChatResponse {
   // main-chain node id + 1. Numeric zero means the beginning; opaque anchors
   // are compared by equality.
   start?: ChatCursor
+  // Devin's store reader: nodes the query had to walk for this reply
+  // (diagnostics and tests only).
+  visited?: number
   // Native API pagination is independent of the tail anchor. null: no older page.
   // Absent: legacy readers use their numeric start as the older-page boundary.
   olderCursor?: ChatCursor | null
