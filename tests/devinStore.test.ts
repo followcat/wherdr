@@ -173,7 +173,7 @@ it('pages a long stitched chain with from/before and reports a rewrite above the
   expect(next.items?.map(i => i.text)).toEqual(['Message 0', 'Replacement branch'])
 })
 
-it('marks a compaction landing between polls as a rewrite, not a mix', async () => {
+it('delivers a compaction landing between polls as a tail re-read, not a rewrite', async () => {
   const { home, reader } = fixture()
   const rows = Array.from({ length: 150 }, (_, id) => ({
     id, parent: id ? id - 1 : null, message: devinMessage(id % 2 ? 'assistant' : 'user', `Message ${id}`),
@@ -182,19 +182,85 @@ it('marks a compaction landing between polls as a rewrite, not a mix', async () 
   const tail = await reader.chat(pane)
   expect(tail.start).toBeGreaterThan(0)
   writeDevinStore(home, { rows: [
-    // The graft hangs under the shared prefix (node 0): the spliced older
-    // chain lands mid-list, so retained pages no longer line up.
     { id: 500, parent: 0, message: devinMessage('system', 'New thread preamble') },
     { id: 501, parent: 500, message: devinMessage('system', 'You are continuing work from a previous conversation thread.'), meta: { summarized_from: 149 } },
     { id: 502, parent: 501, message: devinMessage('user', 'New question') },
   ], head: 502 })
+  // Node cursors do not move when a compaction grafts new content in front of
+  // the head: the tail re-read simply carries the seam and the new message.
   const next = await reader.chat(pane, { from: tail.start as number, anchor: tail.token, since: tail.token })
-  expect(next.rewritten).toBe(true)
-  expect(next.items).toHaveLength(120)
+  expect(next.rewritten).toBeFalsy()
+  expect(next.start).toBe(tail.start)
   expect(next.items?.at(-2)).toMatchObject({ role: 'notice', name: 'compaction' })
   expect(next.items?.at(-2)?.text).toContain('previous conversation thread')
   expect(next.items?.at(-1)).toMatchObject({ role: 'user', text: 'New question' })
 })
+
+it('stitches every chain through 30 compactions, one notice each, no summarizer branch', async () => {
+  const { home, reader } = fixture()
+  const rows: { id: number, parent?: number | null, message: ReturnType<typeof devinMessage>, meta?: Record<string, number> }[] = [
+    { id: 0, message: devinMessage('system', 'Prefix') },
+  ]
+  let head = 0, nid = 1
+  const expected: (string | [string, string])[] = []
+  for (let round = 1; round <= 30; round++) {
+    // Four exchanges per round keep the conversation longer than one page.
+    for (let q = 1; q <= 4; q++) {
+      const u = nid++
+      rows.push({ id: u, parent: head, message: devinMessage('user', `Question ${round}.${q}`) })
+      const a = nid++
+      rows.push({ id: a, parent: u, message: devinMessage('assistant', `Answer ${round}.${q}`) })
+      expected.push(`Question ${round}.${q}`, `Answer ${round}.${q}`)
+      head = a
+    }
+    if (round === 30) break
+    // What a real compaction writes: the summary system node on the new
+    // chain's path (its parent is a prefix node), and the summarizer's
+    // assistant off-path, branching off the round's last user node. Both
+    // carry the same summarized_from mark.
+    const graft = nid++
+    rows.push({ id: graft, parent: 0, message: devinMessage('system', `Summary ${round}`), meta: { summarized_from: head } })
+    const summarizer = nid++
+    rows.push({ id: summarizer, parent: head - 1, message: devinMessage('assistant', `Summarizer notes ${round}`), meta: { summarized_from: head } })
+    head = graft
+    expected.push(['notice', 'compaction'] as [string, string])
+  }
+  // A retry sibling stays hidden too.
+  rows.push({ id: nid++, parent: 1, message: devinMessage('assistant', 'Discarded retry') })
+  writeDevinStore(home, { rows, head })
+  const tail = await reader.chat(pane)
+  expect(tail.available).toBe(true)
+  const all = [...tail.items!]
+  let before = tail.start as number
+  while (before) {
+    const older = await reader.chat(pane, { before, anchor: tail.token })
+    if (!older.items?.length) break
+    all.unshift(...older.items)
+    if (older.start === before) break
+    before = older.start as number
+  }
+  expect(all.map(i => (i.role === 'notice' ? [i.role, i.name] : i.text))).toEqual(expected)
+  const text = JSON.stringify(all)
+  expect(text).not.toContain('Summarizer')
+  expect(text).not.toContain('Discarded retry')
+})
+
+it('reads a 20,000-node session a bounded walk at a time', async () => {
+  const { home, reader } = fixture()
+  const total = 20000
+  const rows = Array.from({ length: total }, (_, id) => ({
+    id, parent: id ? id - 1 : null, message: devinMessage(id % 2 ? 'assistant' : 'user', `Message ${id}`),
+  }))
+  writeDevinStore(home, { rows })
+  const tail = await reader.chat(pane)
+  expect(tail.items).toHaveLength(120)
+  expect(tail.items?.at(-1)?.text).toBe(`Message ${total - 1}`)
+  // A bottom page only walks back what it needs.
+  expect(tail.visited).toBeLessThanOrEqual(300)
+  const older = await reader.chat(pane, { before: tail.start as number, anchor: tail.token })
+  expect(older.items?.map(i => i.text)).toEqual(rows.slice(total - 240, total - 120).map(r => r.message.content))
+  expect(older.visited).toBeLessThanOrEqual(300)
+}, 30_000)
 
 it('falls back to the ATIF transcript when the store schema version is unknown', async () => {
   const { home, reader } = fixture()
