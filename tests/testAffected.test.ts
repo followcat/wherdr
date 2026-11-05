@@ -64,6 +64,15 @@ describe('affected test selector', () => {
     expect(Object.keys(plan.domains)).toContain('copy')
     expect(Object.keys(plan.e2e)).toContain('tests/e2e/terminal-copy.spec.ts')
   })
+  it.each([
+    'app/utils/terminalModifiers.ts', 'app/utils/keybarKeys.ts', 'app/utils/phoneKeys.ts',
+    'app/utils/keybarOrder.ts', 'app/components/PhoneKeybar.vue', 'app/components/Keybar.vue',
+    'app/utils/terminalKeys.ts', 'app/composables/useTerminal.ts', 'server/utils/coreInput.ts', 'server/utils/coreTerm.ts',
+  ])('selects the virtual-keys journey for its %s integration path', file => {
+    const plan = select([file], available.concat('tests/terminalModifiers.test.ts', 'tests/e2e/terminal-keys.spec.ts'), undefined)
+    expect(Object.keys(plan.domains)).toContain('keys')
+    expect(Object.keys(plan.e2e)).toContain('tests/e2e/terminal-keys.spec.ts')
+  })
   it('falls back visibly for an unknown file and a missing base', () => {
     const plan = select(['unknown source.ts'], available, undefined)
     expect(plan.broad).toBe(true)
