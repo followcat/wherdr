@@ -94,6 +94,35 @@ describe('frozen terminal snapshot', () => {
     expect(text(grid([{ text: 'suffix', wrapped: true }, { text: 'next' }], 0, 2))).toBe('suffix\nnext')
   })
 
+  it('drops only the pad an empty final cell leaves for a wrapped wide glyph', () => {
+    // 4 columns, `abc你`: the wide glyph cannot start in the last column, so
+    // xterm leaves that cell empty and wraps it. The copy must be `abc你`.
+    expect(text(grid([
+      { text: 'abc' },
+      { cells: [{ ch: '你', width: 2 }, { width: 0 }], wrapped: true },
+    ], 0, 2, 4))).toBe('abc你')
+    // `ab  你`: intentional spaces before it are real cells and stay.
+    expect(text(grid([
+      { text: 'ab  ' },
+      { cells: [{ ch: '你', width: 2 }, { width: 0 }], wrapped: true },
+    ], 0, 2, 4))).toBe('ab  你')
+  })
+
+  it('keeps interior blanks, hard newlines and wide cells once through the join', () => {
+    expect(text(grid([{ cells: [{ ch: 'a' }, {}, { ch: 'b' }] }], 0, 1, 4))).toBe('a b')
+    // A full-width row that continues normally still joins without padding.
+    expect(text(grid([
+      { text: 'abcd' },
+      { cells: [{ ch: '你', width: 2 }, { width: 0 }, { ch: 'f' }], wrapped: true },
+    ], 0, 2, 4))).toBe('abcd你f')
+    // Three wide glyphs in 4 columns: two fill the row, the third wraps —
+    // each appears exactly once, continuation cells still skipped.
+    expect(text(grid([
+      { cells: [{ ch: '你', width: 2 }, { width: 0 }, { ch: '你', width: 2 }, { width: 0 }] },
+      { cells: [{ ch: '你', width: 2 }, { width: 0 }], wrapped: true },
+    ], 0, 2, 4))).toBe('你你你')
+  })
+
   it('skips continuation cells, keeps wide and combined characters once, keeps empty cells', () => {
     const t = grid([{ cells: [
       { ch: '你', width: 2 }, { width: 0 },
