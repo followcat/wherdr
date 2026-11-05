@@ -4,10 +4,11 @@ import { mount } from '@vue/test-utils'
 import { createTerminal } from '~/composables/useTerminal'
 import { pageVisible, socketWake, terminalRenderer, smoothTouchScrolling } from '~/composables/useHerdr'
 
-const terms: { scrollLines: ReturnType<typeof vi.fn> }[] = []
+const terms: { scrollToLine: ReturnType<typeof vi.fn> }[] = []
 vi.mock('@xterm/xterm', () => ({ Terminal: class {
   cols = 80; rows = 24; options = {}; modes = { mouseTrackingMode: 'none' }
-  scrollLines = vi.fn()
+  buffer = { active: { viewportY: 10, baseY: 10, length: 34, cursorY: 23 } }
+  scrollToLine = vi.fn(function (this: { buffer: { active: { viewportY: number } } }, y: number) { this.buffer.active.viewportY = y })
   write(_data: unknown, done?: () => void) { done?.() }
   resize() {} reset() {}
   loadAddon() {} open() {} dispose() {} refresh() {} attachCustomWheelEventHandler() {}
@@ -70,11 +71,13 @@ it.each([false, true])('shares wake probes while preserving touch beta=%s frame 
     expect(pageVisible.value).toBe(true)
     expect(sockets).toHaveLength(1)
     expect(ws.close).not.toHaveBeenCalled()
-    // Scrolling is local: scrollLines on xterm, never a terminal.scroll packet.
-    ctl.scroll(2)
-    expect(terms[0]!.scrollLines).toHaveBeenCalledWith(-2)
-    expect(ws.send.mock.calls.map(([data]) => JSON.parse(data)).some(m => m.type === 'terminal.scroll')).toBe(false)
     ws.onmessage!({ data: '{"type":"web.capabilities","core":true}' })
+    // Watching mode pins the window to the tail (baseY 10): scrolling is
+    // local — scrollToLine on xterm, never a terminal.scroll packet.
+    ws.onmessage!({ data: '{"type":"terminal.control","on":false}' })
+    ctl.scroll(2)
+    expect(terms[0]!.scrollToLine).toHaveBeenLastCalledWith(8)
+    expect(ws.send.mock.calls.map(([data]) => JSON.parse(data)).some(m => m.type === 'terminal.scroll')).toBe(false)
     ws.onmessage!({ data: JSON.stringify({ type: 'terminal.frame', width: 80, height: 24, bytes: '' }) })
     expect(ctl.frameTick.value).toBe(enabled ? 1 : 0)
     // A full repaint replaces the screen a gesture measured: input version.
@@ -109,11 +112,13 @@ it.each([false, true])('shares wake probes while preserving touch beta=%s frame 
     replacement.readyState = 1
     replacement.onopen!()
     ctl.scroll(1)
-    expect(terms[0]!.scrollLines).toHaveBeenLastCalledWith(-1)
+    expect(terms[0]!.scrollToLine).toHaveBeenLastCalledWith(9)
     staleClose()
     expect(ctl.scrollInputVersion.value).toBe(previousVersion + 1)
     replacement.onmessage!({ data: '{"type":"scroll.ack","lines":1}' })
-    expect(terms[0]!.scrollLines).toHaveBeenCalledTimes(2)
+    // The full repaint between the scrolls re-pinned the window to the tail
+    // (scrollToLine 10): three owned viewport moves in total.
+    expect(terms[0]!.scrollToLine).toHaveBeenCalledTimes(3)
     // Disconnect invalidates pending gestures in both modes too.
     const vd = ctl.scrollInputVersion.value
     ctl.disconnect()

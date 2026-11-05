@@ -353,6 +353,87 @@ test('a watching viewer pans a wide grid horizontally without giving up the foll
     await expect.poll(async () => (await screen.getAttribute('style')) || '').toContain('translateY(-')
     await expectRows(page, /watcher extra line/)
     expect(inside(await rowAt(/watcher extra line|watcher cursor line/))).toBe(true)
+
+    // Short history: erase the scrollback and repaint so exactly one row sits
+    // above the 60-row grid — 61 lines with 60 newlines, baseY 1. Buffer row
+    // b carries `watcher line b+1`, so the window top is the row index of the
+    // first line inside the clip. A one-line delta through the app's own
+    // wheel accumulator must move it exactly one row — buffer row 30, between
+    // the viewport's domain and the lifted grid, used to be skipped entirely.
+    const short = Array.from({ length: 60 }, (_, i) => `watcher line ${String(i + 1).padStart(2, '0')}`).join('\r\n')
+    core.output('\x1b[3J\x1b[2J\x1b[H' + short + '\r\nwatcher tail line')
+    await expectRows(page, /watcher tail line/)
+    await expect.poll(async () => (await screen.getAttribute('style')) || '').toContain('translateY(-')
+    await expect.poll(async () => { await tick(page, 40); return scrollbackRows(page) }).toBe(1)
+    // The topmost buffer row whose rect lands inside the host clip: the first
+    // rendered row whose bottom edge made it past the top boundary.
+    const topIndex = async () => {
+      const text = await xterm.evaluate((el, top) => {
+        const rows = el.querySelector('.xterm-rows')
+        if (!rows) return ''
+        for (const d of Array.from(rows.children) as HTMLElement[]) {
+          if (d.getBoundingClientRect().bottom > top + 1) return d.textContent || ''
+        }
+        return ''
+      }, clip.top)
+      const m = /watcher line (\d+)/.exec(text)
+      return m ? Number(m[1]) - 1 : -1
+    }
+    const rowH = await rowPx(page)
+    // The lifted domain exists whenever the clip shows under ~32 rows —
+    // measure it rather than assume it (Chromium ~30, WebKit ~31.4).
+    const hostRows = (clip.bottom - clip.top) / rowH
+    expect(hostRows).toBeGreaterThan(28)
+    expect(hostRows).toBeLessThan(32)
+    // A row-sized synthetic wheel delta through the app's accumulator — the
+    // same scroll() path touch drags use (page.mouse.wheel is not portable
+    // to WebKit). ceil(rowH) always converts to exactly one line.
+    const wheel = async (rows: number) => {
+      await page.locator('#termWrap').dispatchEvent('wheel', { deltaY: rows * Math.ceil(rowH), deltaMode: 0, bubbles: true, cancelable: true })
+      await tick(page, 40)
+    }
+    // Up one line per event: every attempt must move the top exactly one row
+    // (a stall or a jump is a defect), until the oldest row clamps it. Buffer
+    // row 30 is the row the old cap skipped — it sits in the lifted zone only
+    // on clips short enough to pin above it, so require it when it does.
+    const tops: number[] = [await topIndex()]
+    expect(tops[0]).toBeGreaterThanOrEqual(28)
+    for (let i = 0; i < 40 && tops.at(-1) !== 0; i++) { await wheel(-1); tops.push(await topIndex()) }
+    await wheel(-1); tops.push(await topIndex())
+    await wheel(-1); tops.push(await topIndex())
+    for (let i = 1; i < tops.length; i++) expect(tops[i]).toBe(tops[i - 1]! === 0 ? 0 : tops[i - 1]! - 1)
+    if (tops[0]! >= 30) expect(tops).toContain(30)
+    expect(tops.at(-1)).toBe(0)
+    expect(silentPackets(sent)).toEqual([])
+    expect(dataIn(core).length).toBe(d0)
+    expect(resizeFrames()).toBe(r0)
+
+    // Back down to the middle of the lifted region — the viewport sits at
+    // its bottom edge while the transform carries the window — and parked
+    // there while a line of output lands, the reading row must hold: it is
+    // a buffer coordinate, not a bottom-edge pin.
+    for (let i = 0; i < 40 && (await topIndex()) < 15; i++) await wheel(1)
+    const parked = await topIndex()
+    expect(parked).toBe(15)
+    expect(await viewportY(page)).toBe(1)
+    expect((await screen.getAttribute('style')) || '').toContain('translateY(-')
+    core.output('\r\nwatcher extra 2')
+    await expectRows(page, /watcher extra 2/)
+    expect(await topIndex()).toBe(parked)
+    await page.screenshot({ path: testInfo.outputPath(`05-watch-short-${testInfo.project.name}.png`) })
+    expect(silentPackets(sent)).toEqual([])
+    expect(dataIn(core).length).toBe(d0)
+    expect(resizeFrames()).toBe(r0)
+
+    // Continuing down: one row per attempt to the live tail, whose bottom
+    // rows come back inside the clip on the cursor's own pin.
+    const tailIdx = Math.floor(2 + 60 - hostRows)
+    const downs: number[] = [await topIndex()]
+    for (let i = 0; i < 40 && downs.at(-1) !== tailIdx; i++) { await wheel(1); downs.push(await topIndex()) }
+    for (let i = 1; i < downs.length; i++) expect(downs[i]).toBe(downs[i - 1]! === tailIdx ? tailIdx : downs[i - 1]! + 1)
+    expect(downs.at(-1)).toBe(tailIdx)
+    expect(inside(await rowAt(/watcher extra 2|watcher tail line/))).toBe(true)
+    expect(silentPackets(sent)).toEqual([])
   } finally {
     await core.stop()
   }

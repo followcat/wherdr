@@ -10,12 +10,13 @@ const terminals = vi.hoisted(() => [] as { focused: boolean, disposed: boolean, 
 vi.mock('~/utils/xtermLoader', () => {
   class Terminal {
     cols = 80; rows = 24; options = {}; textarea = null; element = null
+    buffer = { active: { viewportY: 0, baseY: 0, length: 0, cursorY: 0 } }
     state = { focused: false, disposed: false, addons: [] as string[] }
     constructor() { terminals.push(this.state) }
     loadAddon(a: { kind: string }) { this.state.addons.push(a.kind) }
     focus() { this.state.focused = true }
     dispose() { this.state.disposed = true }
-    write() {} open() {} refresh() {} reset() {} attachCustomWheelEventHandler() {}
+    write() {} open() {} refresh() {} reset() {} scrollToLine() {} attachCustomWheelEventHandler() {}
     attachCustomKeyEventHandler() {} onData() {} onBinary() {} onScroll() {}
   }
   class FitAddon { kind = 'fit'; proposeDimensions() { return null } }

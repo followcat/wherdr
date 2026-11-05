@@ -6,7 +6,7 @@
 import { createSocketProbe } from '~/utils/socketProbe'
 import { DESK_QUERY } from '~/utils/layoutMode'
 // Types only: the code is loaded when a terminal is shown (utils/xtermLoader.ts).
-import type { Terminal } from '@xterm/xterm'
+import type { Terminal, IBuffer } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
 import type { WebglAddon } from '@xterm/addon-webgl'
 import { loadWebgl, loadXterm } from '~/utils/xtermLoader'
@@ -83,21 +83,86 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     if (coreStream && sendTerm({ type: 'take.control' })) controlPending = false
     else controlPending = true
   }
-  // Watching a terminal taller than this screen: shift it so the cursor row,
-  // where the newest output is, stays in view.
+  // Watching a terminal taller than this screen: the visible window's top is
+  // a scalar buffer-row position. Positions inside scrollback ride xterm's
+  // own viewport (view === viewportY); the clipped bottom of the grid is
+  // reached by lifting the rendered screen (view - baseY rows). viewportY
+  // alone has only baseY+1 stops, so it cannot reach every row or move one
+  // row at a time.
+  let view = 0
+  // The window is pinned to live output while it sits on the cursor's tail
+  // position; scrolling back releases the pin until the tail is reached.
+  let atTail = true
+  // Set for the synchronous onScroll our own scrollToLine produces.
+  let viewDrive = false
+  // The viewport position and base last seen: a DOM scroll event reporting no
+  // move is the trailing echo of our own scrollToLine, and output arriving at
+  // the bottom edge grows ybase and ydisp together — neither is a user seek.
+  let lastY = -1
+  let lastBaseY = -1
+  // The buffer the owned view position belongs to: the alternate screen is a
+  // different buffer object with its own scroll domain, and numeric values
+  // like baseY 0 / viewportY 0 would otherwise read as output at the bottom
+  // edge and keep a stale position from the previous buffer.
+  let activeBuf: IBuffer | null = null
   function followCursor() {
-    const screen = term?.element?.querySelector('.xterm-screen') as HTMLElement | null
-    if (!term || !screen || !el) return
-    const shown = el.clientHeight - (screen.offsetTop || 0)
-    const rowPx = screen.offsetHeight / term.rows
-    const over = coreStream && !coreControl ? (term.buffer.active.cursorY + 1) * rowPx - shown : 0
-    // Scrolled back into retained history the lift releases toward the screen
-    // top as viewportY falls, so the oldest row can reach the clipped host —
-    // at the live tail (viewportY === baseY) it is the usual cursor follow.
-    const buf = term.buffer.active
-    const cap = buf.viewportY < buf.baseY ? buf.viewportY * rowPx : Infinity
-    const lift = Math.min(Math.max(over, 0), cap)
-    screen.style.transform = lift > 0 ? `translateY(${-Math.ceil(lift)}px)` : ''
+    const buf = term?.buffer.active
+    if (!term || !buf) return
+    if (buf !== activeBuf) {
+      activeBuf = buf
+      view = 0
+      atTail = true
+      lastY = -1
+      lastBaseY = -1
+    }
+    const watching = coreStream && !coreControl
+    const screen = term.element?.querySelector('.xterm-screen') as HTMLElement | null
+    const rowPx = screen && term.rows ? screen.offsetHeight / term.rows : 0
+    const hostRows = el && rowPx ? (el.clientHeight - (screen!.offsetTop || 0)) / rowPx : term.rows
+    // The live tail puts the cursor's bottom edge at the host bottom — never
+    // less than the plain baseY tail a fitting terminal scrolls to anyway.
+    const tail = buf.baseY + (watching ? Math.max(0, buf.cursorY + 1 - hostRows) : 0)
+    // The scroll range spans the whole remote grid: a cursor that moved up
+    // leaves the rendered rows below it parked and reachable, out to the
+    // grid's own bottom edge.
+    const limit = buf.baseY + (watching ? Math.max(0, term.rows - hostRows) : 0)
+    if (atTail) view = tail
+    view = Math.min(Math.max(view, 0), limit)
+    // The pin re-engages at the live edge — within a row of the cursor's
+    // tail. A position below it (rows still reachable while the cursor sits
+    // higher) stays parked through output instead of snapping back.
+    atTail = view >= tail && view < tail + 1
+    // scrollToLine needs an integer line; whatever the floor drops — the
+    // fractional part of a view inside history, or the whole clipped bottom
+    // of the grid past baseY — the lift carries it, so the window's top is
+    // exactly the view position at any host metric.
+    const y = Math.floor(Math.min(view, buf.baseY))
+    if (y !== buf.viewportY) {
+      viewDrive = true
+      try { term.scrollToLine(y) } finally { viewDrive = false }
+    }
+    const lift = watching ? Math.max(0, view - y) * rowPx : 0
+    // Hundredth-pixel rounding keeps the text crisp while collapsing the
+    // float noise in view*rowPx (a ceil would turn 126.00000000000001 into a
+    // whole extra pixel, shifting the projected window by a visible step).
+    if (screen) screen.style.transform = lift > 0 ? `translateY(${-Math.round(lift * 100) / 100}px)` : ''
+    lastY = buf.viewportY
+    lastBaseY = buf.baseY
+  }
+  // A viewport move we did not make is an absolute position in xterm's own
+  // domain: its bottom edge (viewportY === baseY) is the live tail. A move
+  // where the viewport simply stayed pinned to the bottom edge is output
+  // growing ybase and ydisp together — the reader's buffer row did not move.
+  function viewportMoved() {
+    const buf = term?.buffer.active
+    if (!term || !buf) return
+    if (buf.viewportY !== lastY || buf.baseY !== lastBaseY) {
+      const trackedTail = lastY === lastBaseY && buf.viewportY === buf.baseY
+      lastY = buf.viewportY
+      lastBaseY = buf.baseY
+      if (!viewDrive && !trackedTail) { view = buf.viewportY; atTail = view >= buf.baseY }
+    }
+    followCursor()
   }
   function offerFit() {
     followCursor()
@@ -283,13 +348,17 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       const bytes = Uint8Array.from(d, c => c.charCodeAt(0) & 0xff)
       sendTerm({ type: 'terminal.input', bytes: bytesToB64(bytes) })
     })
-    // Any viewport move re-derives the follow transform so a scrolled-back
-    // viewer can reach the top rows: onScroll covers programmatic scrolls,
-    // and the viewport's own scroll event covers the native scrollbar (xterm
-    // suppresses onScroll for changes it originates there). The viewport dies
-    // with term.dispose() — no unbind needed.
-    term.onScroll(() => followCursor())
-    term.element?.querySelector('.xterm-viewport')?.addEventListener('scroll', () => followCursor())
+    // Any viewport move re-derives the window: onScroll covers programmatic
+    // scrolls, and the viewport's own scroll event covers the native
+    // scrollbar (xterm suppresses onScroll for changes it originates there).
+    // The viewport dies with term.dispose() — no unbind needed.
+    view = 0
+    atTail = true
+    lastY = -1
+    lastBaseY = -1
+    activeBuf = null
+    term.onScroll(() => viewportMoved())
+    term.element?.querySelector('.xterm-viewport')?.addEventListener('scroll', () => viewportMoved())
     if (focusQueued) focus()
     return true
   }
@@ -488,7 +557,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
         // Core repaints the screen and its history on each attach.
         // A full repaint replaces the screen the gesture measured — input
         // version kills it. A resize only invalidates its coordinates.
-        if (coreStream && m.full === true) scrollInputVersion.value++
+        if (coreStream && m.full === true) { scrollInputVersion.value++; atTail = true }
         writeTerminalFrame(current, { width: m.width, height: m.height, reset: coreStream && m.full === true, bytes: b64ToBytes(m.bytes || '') }, {
           resized: () => {
             if (term !== current) return
@@ -569,7 +638,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   }
   const isConnected = () => Boolean(tws && tws.readyState <= 1)
 
-  function reset() { term?.reset() }
+  function reset() { view = 0; atTail = true; term?.reset() }
   function focus() {
     focusQueued = !term && mounting
     term?.focus()
@@ -619,10 +688,14 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     return cell.row + buffer.viewportY === buffer.cursorY + buffer.baseY
   }
   // Scrolling is local: the attach delivered the scrollback and xterm owns
-  // the viewport. Positive lines look back into history.
+  // the viewport — plus, for a watched grid taller than the host, the lifted
+  // part below it. Positive lines look back: one line moves the window one
+  // row, inside history and the clipped grid alike.
   function scroll(lines: number): boolean {
     if (!term) return false
-    term.scrollLines(-lines)
+    view -= lines
+    atTail = false
+    followCursor()
     return true
   }
   const stopSmoothWatch = watch(smoothTouchScrolling, () => {
