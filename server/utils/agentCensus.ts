@@ -61,23 +61,24 @@ const EVAL_OPTS = new Set(['-e', '--eval', '-p', '--print'])
 const base = (s: string | undefined) => (s || '').split('/').pop() || ''
 
 type ScriptPos =
-  | { kind: 'script', raw: string, preloads: string[] }
+  | { kind: 'script', raw: string, index: number, preloads: string[] }
   | { kind: 'eval' }
   | { kind: 'unknown' }
   | { kind: 'none' }
 
 // The actual script position: consume the supported option subset, stop at
-// the first positional (arguments after it never supply identity). An
-// unterminated operand or unrecognized bare option means unknown.
+// the first positional (arguments after it never supply identity). `index` is
+// the argv index of the script. An unterminated operand or unrecognized bare
+// option means unknown.
 function scriptPos(argv: string[], terminated: boolean): ScriptPos {
   const args = argv.slice(1)
   const preloads: string[] = []
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!
-    if (!a.startsWith('-')) return { kind: 'script', raw: a, preloads } // a cut tail is the script's own argument
+    if (!a.startsWith('-')) return { kind: 'script', raw: a, index: i + 1, preloads } // a cut tail is the script's own argument
     if (a === '--') {
       const n = args[i + 1]
-      return n === undefined ? { kind: 'unknown' } : { kind: 'script', raw: n, preloads }
+      return n === undefined ? { kind: 'unknown' } : { kind: 'script', raw: n, index: i + 2, preloads }
     }
     if (a === '-' || EVAL_OPTS.has(a) || a.startsWith('--eval=') || a.startsWith('--print=')) return { kind: 'eval' }
     const eq = a.indexOf('=')
@@ -118,6 +119,18 @@ function classify(p: { comm?: string, argv?: string[], exe?: string, terminated?
   // exec -a): require interpreter or package evidence.
   if (a0b === 'cmd' && (INTERPRETER.test(base(p.exe)) || ENTRY.test(p.exe ?? ''))) return 'peer'
   return 'other'
+}
+
+// The agent's own argument vector: takes the FULL process argv (argv[0]
+// included) and returns the arguments after the script position for an
+// interpreter launch, or after argv0 for a directly-invoked binary/script.
+// null when the boundary can't be proven (unknown option shape, eval, stdin,
+// empty argv): callers must not guess where agent args begin.
+export function agentArgsOf(argv: string[]): string[] | null {
+  if (!argv.length) return null
+  if (!INTERPRETER.test(base(argv[0]))) return argv.slice(1)
+  const sp = scriptPos(argv, true)
+  return sp.kind === 'script' ? argv.slice(sp.index + 1) : null
 }
 
 const MAX_CMDLINE = 16384
