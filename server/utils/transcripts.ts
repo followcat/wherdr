@@ -7,7 +7,8 @@ import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDet
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
 import { cleanModelName, lastModel, mergeOmpModel, ompLastModel, ompModelComplete, ompModelLabel, ompModelResult } from './models'
 import { type MachineFs, localFs } from './fsx'
-import type { CommandCodeResultRef } from './commandCodeWatch'
+import { fingerprintRefs, type CommandCodeResultRef } from './commandCodeWatch'
+import { createCommandCodeState, type CommandCodeFileHandle } from './commandCodeState'
 import { searchFile } from './conversationSearch'
 import { hasTranscript, transcriptKind } from '../../shared/agentKind'
 import { type CommandTemplate, ompCommandTemplates } from './slash'
@@ -43,7 +44,7 @@ const CODEX_BIRTH_AFTER = 120000
 export type Lines = string[] & { refs?: string[] }
 type Parsed = ChatItem[] & { queue?: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], updates?: CommandCodeToolUpdate[], resultRefs?: CommandCodeResultRef[] }
 // `anchor`: fingerprint of the bytes just above `start` (see anchorAt).
-interface TailResult { start: number, items: ChatItem[], queue: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], anchor?: string }
+interface TailResult { start: number, items: ChatItem[], queue: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], anchor?: string, updates?: CommandCodeToolUpdate[] }
 
 // Join check of a re-read from a cursor: the bytes just above it, hashed. A
 // transcript rewritten at the same size, or shortened but still longer than
@@ -1412,6 +1413,10 @@ export function isMissing(e: unknown): boolean {
 
 export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, locateCommandCode }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number, locateCommandCode?: (pane: TranscriptPane) => Promise<Loc | null> }) {
   const devin = createDevinTranscripts({ home, fs, now })
+  // Command Code file generations of this machine (see commandCodeState):
+  // cross-page outcomes, result-record watches, the trusted stat, the
+  // invalidation stamps and the reader nonce client tokens carry.
+  const cmd = createCommandCodeState({ fs })
   // File -> state (size, generation) and when this server first saw it, for
   // whole-second mtimes (see SETTLE_MS); `file|size|gen` -> checksum of the
   // file at first sight (null: could not be taken).
@@ -1446,7 +1451,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   }
   const locCache = new Map<string, { at: number, loc: Loc | null, session?: string | null }>()
   const lastLoc = new Map<string, Loc>() // last file found, fallback if a lookup fails
-  const parseCache = new Map<string, { size: number, gen: string, settled: boolean, r: TailResult }>()
+  const parseCache = new Map<string, { size: number, gen: string, settled: boolean, r: TailResult, stamp?: number }>()
   const tailReads = new Map<string, Promise<TailResult>>()
   const previewCache = new Map<string, { size: number, gen: string, reply: { key: string, text: string } }>()
   const metaCache = new Map<string, Json>()
@@ -1689,6 +1694,16 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   }
 
   // ------------------------------------------------------------ reading
+  // A raw range — generation-bound when a Command Code context is given:
+  // the helper then owns exact coverage and post-await currency, and null
+  // is unknown (failed, short or detached), rejected so no parse, cache or
+  // epoch advances on it. Without `ctx` this is a plain fs.read.
+  async function cmdRead(file: string, start: number, len: number, ctx?: { stamp: number }): Promise<Buffer> {
+    if (!ctx) return fs.read(file, start, len)
+    const buf = await cmd.io.readExact(file, start, len, ctx.stamp)
+    if (!buf) throw new Error('command code transcript read unknown')
+    return buf
+  }
   // Reads bytes [start, end) of the file. If `start` falls in the middle of a
   // line, it is skipped: the returned `start` is always a line start. A
   // `start` already at a line start (the byte before is a newline) is kept:
@@ -1696,12 +1711,12 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   // `buf` is the fetched window itself (its first byte is absolute offset
   // `bufStart`): Command Code result positions are fingerprinted against
   // these bytes — never a re-encoded copy of a line.
-  async function readRange(file: string, start: number, end: number) {
+  async function readRange(file: string, start: number, end: number, ctx?: { h: CommandCodeFileHandle, stamp: number }) {
     if (start <= 0) {
-      const buf = await fs.read(file, 0, end)
+      const buf = await cmdRead(file, 0, end, ctx)
       return { start: 0, bufStart: 0, buf, text: buf.toString('utf8') }
     }
-    const buf = await fs.read(file, start - 1, end - start + 1)
+    const buf = await cmdRead(file, start - 1, end - start + 1, ctx)
     const nl = buf.indexOf(0x0a)
     const off = nl < 0 ? buf.length : nl + 1
     return { start: start - 1 + off, bufStart: start - 1, buf, text: buf.subarray(off).toString('utf8') }
@@ -1723,40 +1738,57 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     return cwd
   }
 
-  async function anchorAt(file: string, start: number) {
+  async function anchorAt(file: string, start: number, ctx?: { h: CommandCodeFileHandle, stamp: number }) {
     const s0 = Math.max(0, start - ANCHOR_BYTES)
-    return anchorHash(start > 0 ? await fs.read(file, s0, start - s0) : new Uint8Array())
+    // Command Code: the anchor read is generation-bound and exact — a short
+    // one is unknown, never a minted join point that would later mislabel
+    // the page and force a false rewrite.
+    const buf = start > 0 ? await cmdRead(file, s0, start - s0, ctx) : new Uint8Array()
+    return anchorHash(buf)
   }
 
   // Goes back from `end` by windows up to PAGE_ITEMS messages (or the start).
-  async function readBackwards(file: string, end: number, kind: string | null): Promise<TailResult> {
+  // `ctx`: the Command Code file's captured generation — each window feeds
+  // the shared outcome map and fingerprints its result records on the raw
+  // bytes it was read from, before they are dropped.
+  async function readBackwards(file: string, end: number, kind: string | null, ctx?: { h: CommandCodeFileHandle, stamp: number }): Promise<TailResult> {
     const cwd = kind === 'omp' ? await ompCwd(file) : ''
     let start = end
     let items: ChatItem[] = []
     let queue: ClaudeQueueEntry[] | null = null
     let popped: ClaudeQueueEntry[] | null = null
+    // Cross-page outcomes gathered over all windows: the newest absolute
+    // offset wins, whichever order windows were walked in.
+    const updates = new Map<string, CommandCodeToolUpdate>()
     while (start > 0 && end - start < MAX_READ_BYTES) {
       // Window widened as long as it contains no line start (a
-      // multi-MB line: message with images), within the cap.
+      // multi-MB line: message with images). The issued window never
+      // exceeds this request's remaining span: a line longer than the
+      // cap must not parse by overshooting it.
       let w = WINDOW_BYTES
-      let r: { start: number, text: string }
+      let r: Awaited<ReturnType<typeof readRange>>
       for (;;) {
-        const s0 = Math.max(0, start - w)
-        r = await readRange(file, s0, start)
-        if (r.start < start || s0 === 0 || w >= MAX_READ_BYTES) break
+        const s0 = Math.max(0, start - Math.min(w, MAX_READ_BYTES - (end - start)))
+        r = await readRange(file, s0, start, ctx)
+        if (r.start < start || s0 === 0 || start - s0 >= MAX_READ_BYTES - (end - start)) break
         w *= 2
       }
       if (r.start === start) break // giant line beyond the cap: stop there
       // Each window is parsed alone (a tool result in error whose
       // call is in the previous window just loses its red mark).
-      const parsed = parseLines(r.text, kind, r.start, home, ompTemplates.list, cwd)
+      const parsed = parseLines(r.text, kind, r.start, home, ompTemplates.list, cwd, ctx?.h.results)
+      for (const u of parsed.updates || []) {
+        const was = updates.get(u.id)
+        if (!was || cmdNewer(u.at, was.at)) { updates.delete(u.id); updates.set(u.id, u) }
+      }
+      if (ctx && parsed.resultRefs) for (const x of fingerprintRefs(r.buf, r.bufStart, parsed.resultRefs)) ctx.h.watch(x.id, x)
       if (!queue) queue = parsed.queue || [] // the queue lives in the most recent window
       if (!popped) popped = parsed.popped || []
       items = parsed.concat(items)
       start = r.start
       if (items.length >= PAGE_ITEMS) break
     }
-    return { start, items, queue: queue || [], popped: popped || [] }
+    return { start, items, queue: queue || [], popped: popped || [], ...(updates.size ? { updates: [...updates.values()] } : {}) }
   }
 
   // Bottom of the conversation: from `from` (already shown on the phone) or,
@@ -1764,45 +1796,58 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   // (file, kind, size, generation, from), when read once the state settled.
   // Reads in progress are shared: several devices on one pane cost one read
   // and one parse per change.
-  async function tail(file: string, kind: string | null, size: number, gen: string, from: number | null, settled = true, ino?: number): Promise<TailResult> {
+  // `ctx` (Command Code): the captured file handle and stamp of the
+  // generation this tail serves. A read that publishes must still be the
+  // file's current generation — never cross-generation state.
+  async function tail(file: string, kind: string | null, size: number, gen: string, from: number | null, settled = true, ino?: number, ctx?: { h: CommandCodeFileHandle, stamp: number }): Promise<TailResult> {
     const key = `${file}|${kind}|${from}`
     const c = parseCache.get(key)
-    if (c && c.settled && c.size === size && c.gen === gen) return c.r
-    const flight = `${key}|${size}|${gen}`
+    // A hit must also still be the file's live generation: a page cached
+    // under a since-detached stamp is another transcript's state.
+    if (c && c.settled && c.size === size && c.gen === gen && (!ctx || (c.stamp === ctx.stamp && cmd.io.live(file, ctx.stamp)))) return c.r
+    const flight = `${key}|${size}|${gen}${ctx ? `|${ctx.stamp}` : ''}`
     let read = tailReads.get(flight)
     if (!read) {
-      read = readTail(file, kind, size, from, ino).finally(() => { tailReads.delete(flight) })
+      read = readTail(file, kind, size, from, ino, ctx).finally(() => { tailReads.delete(flight) })
       tailReads.set(flight, read)
     }
     const r = await read
-    parseCache.set(key, { size, gen, settled, r })
+    // The file's generation must not have moved under the read: a page
+    // parsed from detached bytes is another transcript's state.
+    if (ctx && !cmd.io.live(file, ctx.stamp)) throw new Error('command code transcript generation changed')
+    parseCache.set(key, { size, gen, settled, r, stamp: ctx?.stamp })
     if (parseCache.size > 16) parseCache.delete(parseCache.keys().next().value!)
     return r
   }
-  async function readTail(file: string, kind: string | null, size: number, from: number | null, ino?: number): Promise<TailResult> {
+  async function readTail(file: string, kind: string | null, size: number, from: number | null, ino?: number, ctx?: { h: CommandCodeFileHandle, stamp: number }): Promise<TailResult> {
     if (from !== null && from <= size && size - from <= MAX_READ_BYTES) {
-      return await locked(`${file}|${kind}|${from}`, () => readBelow(file, kind, size, from, ino))
+      // Cmd bottoms serialize per captured generation (legacy key
+      // unchanged): a fresh one never waits on stale detached IO.
+      const k = ctx ? `${file}|${kind}|${from}|${ctx.stamp}` : `${file}|${kind}|${from}`
+      return await locked(k, () => readBelow(file, kind, size, from, ino, ctx))
     }
-    const r = await readBackwards(file, size, kind)
-    r.anchor = await anchorAt(file, r.start)
+    const r = await readBackwards(file, size, kind, ctx)
+    r.anchor = await anchorAt(file, r.start, ctx)
     return r
   }
   // The whole bottom from `from`, read and parsed again.
-  async function readSlice(file: string, kind: string | null, size: number, from: number): Promise<TailResult> {
+  async function readSlice(file: string, kind: string | null, size: number, from: number, ctx?: { h: CommandCodeFileHandle, stamp: number }): Promise<TailResult> {
     // One read for the anchor above `from` and the bottom (as readRange: a
     // `from` in the middle of a line skips to the next line start).
     const s0 = Math.max(0, from - ANCHOR_BYTES)
-    const buf = await fs.read(file, s0, size - s0)
+    const buf = await cmdRead(file, s0, size - s0, ctx)
     const above = buf.subarray(0, from - s0)
     let off = from - s0
     if (from > 0 && above[above.length - 1] !== 0x0a) {
       const nl = buf.indexOf(0x0a, off)
       off = nl < 0 ? buf.length : nl + 1
     }
-    const items = parseLines(buf.subarray(off).toString('utf8'), kind, s0 + off, home, ompTemplates.list, kind === 'omp' ? await ompCwd(file) : '')
-    // Start kept even when it moved to the next line: the client then sees a
+    const items = parseLines(buf.subarray(off).toString('utf8'), kind, s0 + off, home, ompTemplates.list, kind === 'omp' ? await ompCwd(file) : '', ctx?.h.results)
+    if (ctx && items.resultRefs) for (const x of fingerprintRefs(buf, s0, items.resultRefs)) ctx.h.watch(x.id, x)
+    // Start kept even when it moves to the next line: the client then sees a
     // stale anchor (or another start) and reloads from the bottom.
-    return { start: from, items, queue: items.queue || [], popped: items.popped || [], anchor: off === from - s0 ? anchorHash(above) : '' }
+    if (ctx && !cmd.io.live(file, ctx.stamp)) throw new Error('command code transcript generation changed')
+    return { start: from, items, queue: items.queue || [], popped: items.popped || [], anchor: off === from - s0 ? anchorHash(above) : '', ...(items.updates?.length ? { updates: items.updates } : {}) }
   }
 
   // Bottom below a client's cursor, kept between polls: while an agent
@@ -1820,6 +1865,11 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     aligned: boolean // the cursor is a line start
     check: string // anchorHash of the CHECK_BYTES before `end` (omp: from `start`)
     claude: ClaudeParser | null
+    // Command Code: the incremental parser (its `shared` map is the file's
+    // current outcome map) and the generation stamp it was built under —
+    // a retained bottom of a detached generation is never reused.
+    cmd?: CommandCodeParser
+    cmdStamp?: number
     turns: { lines: number, items: ChatItem[], templates: readonly CommandTemplate[] } // see lastTurn
   }
   const CHECK_BYTES = 4096
@@ -1856,11 +1906,25 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     }
     return b.turns.items.concat(parse(b.turns.lines))
   }
-  async function readBelow(file: string, kind: string | null, size: number, from: number, ino?: number): Promise<TailResult> {
+  async function readBelow(file: string, kind: string | null, size: number, from: number, ino?: number, ctx?: { h: CommandCodeFileHandle, stamp: number }): Promise<TailResult> {
     const key = `${file}|${kind}|${from}`
     const s0 = Math.max(0, from - ANCHOR_BYTES)
+    // After any awaited IO the captured generation must still be the file's:
+    // a stale poll must never feed the retained parser, republish a bottom,
+    // nor reach a response.
+    const live = () => !ctx || cmd.io.live(file, ctx.stamp)
+    const stale = (): never => { throw new Error('command code transcript generation changed') }
+    // Before any cache lookup or mutation: a request queued behind its own
+    // generation's IO must never delete or feed the fresh bottom another
+    // generation may already have published here.
+    if (!live()) stale()
     let b = below.get(key)
-    below.delete(key) // put back below when up to date (most recent last)
+    // A legacy bottom leaves the map while read (put back below when up to
+    // date, most recent last). A Cmd bottom stays — an unknown read needs
+    // no restore then, and nothing stale can evict the fresh entry.
+    if (!ctx) below.delete(key)
+    // A retained bottom belongs to its generation: a detached one rebuilds.
+    if (kind === 'cmd' && b && b.cmdStamp !== ctx?.stamp) b = undefined
     let above: Buffer = Buffer.alloc(0)
     let known: Buffer = Buffer.alloc(0) // bytes just before b.end, still the same
     let fresh: Buffer = Buffer.alloc(0) // bytes from b.end
@@ -1870,23 +1934,36 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     const c0 = b ? (whole ? b.start : Math.max(b.start, b.end - CHECK_BYTES)) : 0
     if (b && b.ino === ino && size >= b.end) {
       if (c0 - from <= CHECK_BYTES) {
-        const buf = await fs.read(file, s0, size - s0)
+        const buf = await cmdRead(file, s0, size - s0, ctx)
         above = buf.subarray(0, from - s0)
         known = buf.subarray(c0 - s0, b.end - s0)
         fresh = buf.subarray(b.end - s0)
       } else {
-        above = await fs.read(file, s0, from - s0)
-        const buf = await fs.read(file, c0, size - c0)
+        above = await cmdRead(file, s0, from - s0, ctx)
+        const buf = await cmdRead(file, c0, size - c0, ctx)
         known = buf.subarray(0, b.end - c0)
         fresh = buf.subarray(b.end - c0)
       }
-      // Rewritten, cut or replaced since: read again from the cursor.
+      // Rewritten, cut or replaced since: read again from the cursor. Cmd's
+      // reads are exact by contract — coverage mismatches cannot occur, so
+      // a difference here is the reader's own proof of a byte-level rewrite:
+      // propagate the generation, then fail closed — the dead entry goes.
       sum = whole ? createHash('sha1').update(known) : null
       const check = sum ? sum.copy().digest('hex').slice(0, 12) : anchorHash(known)
-      if (above.length !== from - s0 || known.length !== b.end - c0 || anchorHash(above) !== b.above || check !== b.check) b = undefined
+      if (above.length !== from - s0 || known.length !== b.end - c0 || anchorHash(above) !== b.above || check !== b.check) {
+        if (kind === 'cmd' && b.cmdStamp !== undefined) {
+          // The proof belongs to b's captured generation: if it already
+          // moved, the slot can hold a fresh bottom — only an invalidation
+          // that landed on that generation may evict here.
+          if (cmd.invalidate(file, b.cmdStamp)) below.delete(key)
+          throw new Error('command code transcript rewritten')
+        }
+        below.delete(key)
+        b = undefined
+      }
     }
     if (!b || b.ino !== ino || size < b.end) {
-      const buf = await fs.read(file, s0, size - s0)
+      const buf = await cmdRead(file, s0, size - s0, ctx)
       above = buf.subarray(0, from - s0)
       let off = from - s0
       if (from > 0 && above[above.length - 1] !== 0x0a) {
@@ -1896,15 +1973,23 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       known = Buffer.alloc(0)
       sum = whole ? createHash('sha1') : null
       const lines: Lines & { refs: string[] } = Object.assign([], { refs: [] })
-      const claude = kind === 'codex' || kind === 'omp' ? null : claudeParser(home)
-      b = { ino, start: s0 + off, end: s0 + off, above: anchorHash(above), aligned: off === from - s0, check: anchorHash(known), lines, hashes: new Map(), keep: !claude, claude,
+      const claude = kind === 'codex' || kind === 'omp' || kind === 'cmd' ? null : claudeParser(home)
+      const cmdP = kind === 'cmd' && ctx ? commandCodeParser(ctx.h.results) : undefined
+      b = { ino, start: s0 + off, end: s0 + off, above: anchorHash(above), aligned: off === from - s0, check: anchorHash(known), lines, hashes: new Map(), keep: !claude && !cmdP, claude,
+        ...(cmdP ? { cmd: cmdP, cmdStamp: ctx!.stamp } : {}),
         turns: { lines: 0, items: [], templates: ompTemplates.list } }
       fresh = buf.subarray(off)
     }
     const nl = fresh.lastIndexOf(0x0a)
+    // Absolute offset of fresh[0]: the base the appended lines' result
+    // positions fingerprint against, while the raw bytes are still held.
+    let feedBase = b.end
     if (nl >= 0) {
+      if (!live()) stale()
+      feedBase = b.end
       const added = storeLines(b, fresh.subarray(0, nl).toString('utf8'), b.end, kind)
       b.claude?.feed(added)
+      b.cmd?.feed(added)
       b.end += nl + 1
       // From c0 (or the start) to the new end: covers the bytes to check next time.
       if (sum) b.check = sum.update(fresh.subarray(0, nl + 1)).digest('hex').slice(0, 12)
@@ -1913,6 +1998,9 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
         b.check = anchorHash(tail.subarray(Math.max(0, tail.length - CHECK_BYTES)))
       }
     }
+    if (!live()) stale()
+    // Most recent last — a Cmd bottom stayed in the map while read.
+    below.delete(key)
     below.set(key, b)
     let kept = 0
     for (const x of below.values()) kept += x.keep ? x.end - x.start : 0
@@ -1923,20 +2011,28 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     }
     // A last line not ended yet is left for the next poll, unless it already
     // parses (written whole, its newline still to come): read the whole
-    // bottom for this poll, as before.
+    // bottom for this poll, as before. Only the parse attempt is caught —
+    // a failed read must reject so the line is read again next poll.
     const partial = fresh.subarray(nl + 1)
     if (partial.length) {
-      try {
-        JSON.parse(stripBlobs(partial.toString('utf8'), kind))
-        return await readSlice(file, kind, size, from)
-      } catch { /* incomplete: ignored as the parsers would */ }
+      let whole2 = false
+      try { JSON.parse(stripBlobs(partial.toString('utf8'), kind)); whole2 = true }
+      catch { /* incomplete: ignored as the parsers would */ }
+      if (whole2) return await readSlice(file, kind, size, from, ctx)
     }
-    const items = b.claude ? b.claude.result() : lastTurn(b, kind, kind === 'omp' ? await ompCwd(file) : '')
+    const items = b.claude ? b.claude.result() : b.cmd ? b.cmd.result() : lastTurn(b, kind, kind === 'omp' ? await ompCwd(file) : '')
+    // Result positions of the appended lines: fingerprinted on the bytes
+    // just read — never a re-encoded copy — before they are dropped.
+    if (b.cmd && ctx && nl >= 0 && items.resultRefs) {
+      for (const x of fingerprintRefs(fresh.subarray(0, nl), feedBase, items.resultRefs)) ctx.h.watch(x.id, x)
+    }
+    if (!live()) stale()
     withHashes(items, b.hashes)
-    return { start: from, items, queue: items.queue || [], popped: items.popped || [], anchor: b.aligned ? b.above : '' }
+    return { start: from, items, queue: items.queue || [], popped: items.popped || [], anchor: b.aligned ? b.above : '', ...(items.updates?.length ? { updates: items.updates } : {}) }
   }
 
   // ------------------------------------------------------------ API
+
   async function search(pane: TranscriptPane, query: string, deadline: number) {
     if (!hasTranscript(pane.agent)) return { hits: [], limited: false, kind: null }
     const loc = await locate(pane)

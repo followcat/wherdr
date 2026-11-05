@@ -18,7 +18,8 @@ const reply = (text: string) => JSON.stringify({ type: 'assistant', message: { r
 const pane = { id: 'w1:p1', agent: 'claude', cwd: '/x', agentSession: 'abc-123' }
 
 // A transcript, and a file system that counts the bytes read from it.
-function setup(lines: string[], now?: () => number) {
+// `onRead(n)` runs before the file's nth read — it can gate or fail it.
+function setup(lines: string[], now?: () => number, onRead?: (n: number) => void | Promise<void>) {
   const home = mkdtempSync(path.join(tmpdir(), 'hw-reads-'))
   homes.push(home)
   const dir = path.join(home, '.claude/projects/-x')
@@ -27,6 +28,7 @@ function setup(lines: string[], now?: () => number) {
   writeFileSync(file, lines.join('\n') + '\n')
   const reads: number[] = []
   const fs: MachineFs = { ...localFs, read: async (p, start, len) => {
+    if (p === file) await onRead?.(reads.length)
     const b = await localFs.read(p, start, len)
     if (p === file) reads.push(b.length)
     return b
@@ -51,6 +53,20 @@ describe('shared transcript reads', () => {
     expect(a.items!.at(-1)!.text).toBe('More')
     expect(b.items!.at(-1)!.text).toBe('More')
     expect(reads.length).toBe(2)
+  })
+
+  // The backward reader never issues a window past the remaining
+  // MAX_READ_BYTES span: a 25 MiB line is not parsed by overshooting the
+  // request's 24 MiB logical window.
+  it('never reads past the 24 MiB window — a line beyond it is not parsed', async () => {
+    const CAP = 24 * 1024 * 1024
+    const { t, reads } = setup([user('hi'), 'x'.repeat(CAP + 1024)])
+    const r = await t.chat(pane)
+    // The reader really widened to the cap, then stopped: each issued
+    // window fits the remaining span (+1 line-start lookback byte).
+    expect(reads.length).toBeGreaterThan(1)
+    expect(Math.max(...reads)).toBeLessThanOrEqual(CAP + 1)
+    expect(r.items).toEqual([])
   })
 })
 
@@ -222,5 +238,26 @@ describe('bottom read from a cursor while the transcript grows', () => {
     const r = (await g.poll(0)).r
     expect(r).toEqual(await g.fresh(0))
     expect(r.items!.map(i => i.text)).toEqual(['New file', 'Fresh!', 'More'])
+  })
+
+  // A complete line not ended yet is re-read whole this poll (readSlice):
+  // only the JSON.parse probe is caught — a failed awaited read rejects so
+  // the line is read again next poll, not lost from the response.
+  it('a failed whole-line re-read rejects, then recovers without a new write', async () => {
+    let failAt = -1
+    const { file, t, reads } = setup([user('Hello'), reply('Hi there')], undefined, async n => {
+      // One shot: the failed read did not happen, the count stays, a plain
+      // `failAt = reads.length + 1` would otherwise keep failing forever.
+      if (n === failAt) { failAt = -1; throw new Error('remote cut') }
+    })
+    const r0 = await t.chat(pane)
+    appendFileSync(file, `${user('New message')}`) // complete JSON, no newline
+    // This poll reads the appended tail, then the whole span again: the
+    // second read is the one to fail.
+    failAt = reads.length + 1
+    await expect(t.chat(pane, { from: r0.start })).rejects.toThrow('remote cut')
+    // No new write: the same bytes come back with the appended message.
+    const r = await t.chat(pane, { from: r0.start })
+    expect(r.items!.map(i => i.text)).toEqual(['Hello', 'Hi there', 'New message'])
   })
 })

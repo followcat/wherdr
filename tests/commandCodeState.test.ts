@@ -191,6 +191,23 @@ describe('commandCodeState', () => {
     expect(s.handle(FILE).results.size).toBe(0)
   })
 
+  it('binds invalidate to the generation its proof was made under', async () => {
+    const disk: Record<string, MemFile> = { [FILE]: { body: Buffer.from('v1'), mtimeMs: 1, ino: 9 } }
+    const s = createCommandCodeState({ fs: memFs(disk) })
+    const first = await s.observe(FILE)
+    // Proof of another stamp: nothing minted, the current record stands.
+    expect(s.invalidate(FILE, first.stamp + 1)).toBe(false)
+    expect(s.invalidate(FILE, 0)).toBe(false)
+    expect(s.invalidate('/absent', 1)).toBe(false)
+    expect(s.stampOf(FILE)).toBe(first.stamp)
+    // A matching stamp advances the generation — stale proofs are void after.
+    expect(s.invalidate(FILE, first.stamp)).toBe(true)
+    expect(s.stampOf(FILE)).toBe(first.stamp + 1)
+    expect(s.handle(FILE).stamp).toBe(first.stamp + 1)
+    expect(s.invalidate(FILE, first.stamp)).toBe(false)
+    expect(s.stampOf(FILE)).toBe(first.stamp + 1)
+  })
+
   it('starts each reader with a fresh nonce and empty state', () => {
     const fs = memFs({ [FILE]: { body: Buffer.from('x'), mtimeMs: 1, ino: 9 } })
     const a = createCommandCodeState({ fs })

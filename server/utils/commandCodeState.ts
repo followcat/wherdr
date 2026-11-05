@@ -185,10 +185,22 @@ export function createCommandCodeState({ fs }: { fs: MachineFs }) {
   // The file's current invalidation stamp (0: no record). Tokens compare it.
   function stampOf(file: string): number { return files.get(file)?.stamp ?? 0 }
 
+  // The reader's own trusted caches proved the file's bytes changed without
+  // an observation seeing it (a retained bottom's anchor/check): propagate
+  // the invalidation so every other handle and client detaches too.
+  // `expectedStamp` binds the proof to the generation it was made under —
+  // evidence about an already-replaced record must never mint a third.
+  function invalidate(file: string, expectedStamp: number): boolean {
+    const s = files.get(file)
+    if (!s || s.stamp !== expectedStamp) return false
+    files.set(file, fresh())
+    return true
+  }
+
   // Raw reads bound to this service's stamps: readers share the context so
   // every awaited byte range checks the same generations (see
   // commandCodeIo).
   const io = commandCodeIo({ fs, stampOf })
 
-  return { reader, handle, observe, stampOf, io }
+  return { reader, handle, observe, stampOf, invalidate, io }
 }
