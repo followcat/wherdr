@@ -33,6 +33,7 @@ import type { SettingsMap } from '#shared/settings'
 import type { QuotaDisplay } from '~/utils/quotas'
 import type { ContentWidth } from '~/utils/contentWidth'
 import { PHONE_KEY_ORDER_KEY, readKeyOrder, writeKeyOrder, type PhoneKeyId } from '~/utils/keybarOrder'
+import { smoothTouchDefault } from '~/utils/smoothTouch'
 
 const ls = {
   get(k: string) {
@@ -136,8 +137,11 @@ watch(dictationEngine, v => ls.set(DICTATION_KEY, v))
 export const homeQuotas = ref<Quotas | null>(null)
 export const fontSize = ref(Number(ls.get('fontSize')) || 12)
 watch(fontSize, v => ls.set('fontSize', String(v)))
-// Experimental touch physics is a device rendering preference, like the renderer.
-export const smoothTouchScrolling = ref(ls.get('smoothTouchScrolling') === '1')
+// Touch physics is a device rendering preference, like the renderer: on for
+// coarse-pointer devices that scroll with a finger, off on computers; a saved
+// '0'/'1' always wins.
+const coarsePointer = typeof matchMedia !== 'undefined' && matchMedia('(hover: none) and (pointer: coarse)').matches
+export const smoothTouchScrolling = ref(smoothTouchDefault(ls.get('smoothTouchScrolling'), coarsePointer))
 watch(smoothTouchScrolling, v => ls.set('smoothTouchScrolling', v ? '1' : '0'))
 
 export const terminalRenderer = ref(parseTerminalRenderer(ls.get('terminalRenderer')))
@@ -178,7 +182,7 @@ export function refreshTerminalRenderStatus() {
 }
 if (import.meta.client) {
   window.addEventListener('storage', (event) => {
-    if (event.key === 'smoothTouchScrolling') smoothTouchScrolling.value = event.newValue === '1'
+    if (event.key === 'smoothTouchScrolling') smoothTouchScrolling.value = smoothTouchDefault(event.newValue, coarsePointer)
     if (event.key === PHONE_KEY_ORDER_KEY) phoneKeyOrder.value = readKeyOrder(event.newValue)
     if (event.key === 'terminalRenderer') {
       terminalRenderer.value = parseTerminalRenderer(event.newValue)

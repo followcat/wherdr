@@ -35,10 +35,11 @@ async function mounted(smooth: boolean, screen: TerminalCopySnapshot | null = sn
     scroll: vi.fn(() => true), rowHeight: () => 16, pageRows: () => 24,
     fitNow: vi.fn(), hasBanner: () => true, connect: vi.fn(), dispose: vi.fn(),
     focus: vi.fn(), blur: vi.fn(() => calls.push('blur')),
-    tapLink: vi.fn(() => false), tapMouse: vi.fn(), hasFocus: () => false,
+    tapLink: vi.fn(() => false), tapMouse: vi.fn(), tapOnCursor: vi.fn(() => false),
+    hasFocus: () => false, imeBusy: () => false,
     clearVirtualModifiers: vi.fn(() => calls.push('mods')),
     captureScreen: vi.fn(() => { calls.push('capture'); return screen }),
-    cancelTouchScroll: vi.fn(), scrollInputVersion: ref(0), scrollAck: ref(0), frameTick: ref(0),
+    scrollInputVersion: ref(0), scrollGeometryVersion: ref(0), frameTick: ref(0),
     loading: ref(false), selectionHint: { visible: ref(false), dismiss: vi.fn() },
   }
   // emitted() is reset by unmount: a parent listener sees the whole session,

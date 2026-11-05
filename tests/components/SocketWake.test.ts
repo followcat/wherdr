@@ -4,11 +4,15 @@ import { mount } from '@vue/test-utils'
 import { createTerminal } from '~/composables/useTerminal'
 import { pageVisible, socketWake, terminalRenderer, smoothTouchScrolling } from '~/composables/useHerdr'
 
+const terms: { scrollLines: ReturnType<typeof vi.fn> }[] = []
 vi.mock('@xterm/xterm', () => ({ Terminal: class {
   cols = 80; rows = 24; options = {}; modes = { mouseTrackingMode: 'none' }
+  scrollLines = vi.fn()
   write(_data: unknown, done?: () => void) { done?.() }
+  resize() {} reset() {}
   loadAddon() {} open() {} dispose() {} refresh() {} attachCustomWheelEventHandler() {}
   attachCustomKeyEventHandler() {} onData() {} onBinary() {}
+  constructor() { terms.push(this) }
 } }))
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { proposeDimensions() { return null } } }))
 vi.mock('~/utils/terminalMouse', () => ({ bindTerminalMouse: () => ({ dispose() {} }) }))
@@ -30,6 +34,7 @@ it.each([false, true])('shares wake probes while preserving touch beta=%s frame 
     constructor() { sockets.push(this) }
   }
   vi.stubGlobal('WebSocket', Socket)
+  terms.length = 0
   pageVisible.value = true
   terminalRenderer.value = 'html'
   let ctl!: ReturnType<typeof createTerminal>
@@ -65,30 +70,88 @@ it.each([false, true])('shares wake probes while preserving touch beta=%s frame 
     expect(pageVisible.value).toBe(true)
     expect(sockets).toHaveLength(1)
     expect(ws.close).not.toHaveBeenCalled()
-    ctl.scroll(2, 10, 20, 0, true)
-    const packet = ws.send.mock.calls.map(([data]) => JSON.parse(data)).findLast(m => m.type === 'terminal.scroll')
-    expect(packet.source).toBe(enabled ? 'touch' : undefined)
+    // Scrolling is local: scrollLines on xterm, never a terminal.scroll packet.
+    ctl.scroll(2)
+    expect(terms[0]!.scrollLines).toHaveBeenCalledWith(-2)
+    expect(ws.send.mock.calls.map(([data]) => JSON.parse(data)).some(m => m.type === 'terminal.scroll')).toBe(false)
+    ws.onmessage!({ data: '{"type":"web.capabilities","core":true}' })
     ws.onmessage!({ data: JSON.stringify({ type: 'terminal.frame', width: 80, height: 24, bytes: '' }) })
-    ws.onmessage!({ data: JSON.stringify({ type: 'scroll.ack', epoch: packet.epoch, lines: 2 }) })
     expect(ctl.frameTick.value).toBe(enabled ? 1 : 0)
-    expect(ctl.scrollAck.value).toBe(enabled ? 2 : 0)
+    // A full repaint replaces the screen a gesture measured: input version.
+    const beforeFull = ctl.scrollInputVersion.value
+    ws.onmessage!({ data: JSON.stringify({ type: 'terminal.frame', width: 80, height: 24, full: true, bytes: '' }) })
+    expect(ctl.scrollInputVersion.value).toBe(beforeFull + 1)
+    // A resize only invalidates coordinates: geometry version, not input.
+    const beforeGeometry = ctl.scrollInputVersion.value
+    ws.onmessage!({ data: JSON.stringify({ type: 'terminal.frame', width: 100, height: 30, bytes: '' }) })
+    expect(ctl.scrollInputVersion.value).toBe(beforeGeometry)
+    expect(ctl.scrollGeometryVersion.value).toBeGreaterThan(0)
+    // scroll.ack belongs to the retired remote model: ignored, never an error.
+    ws.onmessage!({ data: '{"type":"scroll.ack","lines":2}' })
+    expect(ctl.frameTick.value).toBe(enabled ? 3 : 0)
+    // Real controller input invalidates a gesture in BOTH scroll modes —
+    // local only, never a remote cancel.
+    const v0 = ctl.scrollInputVersion.value
+    ctl.sendTerm({ type: 'terminal.input', text: 'x' })
+    expect(ctl.scrollInputVersion.value).toBe(v0 + 1)
+    void ctl.sendKeys(['esc'])
+    expect(ctl.scrollInputVersion.value).toBe(v0 + 2)
+    ctl.sendTerm({ type: 'paste', text: 'p' })
+    expect(ctl.scrollInputVersion.value).toBe(v0 + 3)
+    ctl.setVisible(false)
+    expect(ctl.scrollInputVersion.value).toBe(v0 + 4)
+    expect(ws.send.mock.calls.map(([data]) => JSON.parse(data)).some(m => m.type === 'touch.cancel')).toBe(false)
     const previousVersion = ctl.scrollInputVersion.value
     const staleClose = ws.onclose!
     ctl.connect(false)
-    expect(ctl.scrollInputVersion.value).toBe(previousVersion + (enabled ? 1 : 0))
+    expect(ctl.scrollInputVersion.value).toBe(previousVersion + 1)
     const replacement = sockets[1]!
     replacement.readyState = 1
     replacement.onopen!()
-    ctl.scroll(1, 10, 20, 0, true)
-    const nextPacket = replacement.send.mock.calls.map(([data]) => JSON.parse(data)).findLast(m => m.type === 'terminal.scroll')
+    ctl.scroll(1)
+    expect(terms[0]!.scrollLines).toHaveBeenLastCalledWith(-1)
     staleClose()
-    expect(ctl.scrollInputVersion.value).toBe(previousVersion + (enabled ? 1 : 0))
-    replacement.onmessage!({ data: JSON.stringify({ type: 'scroll.ack', epoch: nextPacket.epoch, lines: 1 }) })
-    expect(ctl.scrollAck.value).toBe(enabled ? 3 : 0)
+    expect(ctl.scrollInputVersion.value).toBe(previousVersion + 1)
+    replacement.onmessage!({ data: '{"type":"scroll.ack","lines":1}' })
+    expect(terms[0]!.scrollLines).toHaveBeenCalledTimes(2)
+    // Disconnect invalidates pending gestures in both modes too.
+    const vd = ctl.scrollInputVersion.value
+    ctl.disconnect()
+    expect(ctl.scrollInputVersion.value).toBe(vd + 1)
   } finally {
     ctl.dispose()
     smoothTouchScrolling.value = false
     wrapper.unmount()
     vi.unstubAllGlobals()
+  }
+})
+
+it.each([false, true])('rowHeight measures the rendered grid, not the clipped host, beta=%s', async enabled => {
+  smoothTouchScrolling.value = enabled
+  let ctl!: ReturnType<typeof createTerminal>
+  const wrapper = mount(defineComponent({
+    setup() {
+      ctl = createTerminal('w1:p1', { setBanner: vi.fn(), hasBanner: () => false })
+      return () => h('div')
+    },
+  }))
+  try {
+    await ctl.mount(wrapper.element as HTMLElement)
+    const el = wrapper.element as HTMLElement
+    // A watching viewer: a 24-row grid rendered at 20px/row inside a 240px
+    // clipped host. Host/rows would read 10px — the grid's own 20px is right.
+    Object.defineProperty(el, 'clientHeight', { value: 240, configurable: true })
+    const screen = document.createElement('div')
+    screen.className = 'xterm-screen'
+    Object.defineProperty(screen, 'clientHeight', { value: 480, configurable: true })
+    el.appendChild(screen)
+    expect(ctl.rowHeight()).toBe(20)
+    // Before the screen renders, the host metric is the fallback.
+    screen.remove()
+    expect(ctl.rowHeight()).toBe(10)
+  } finally {
+    ctl.dispose()
+    smoothTouchScrolling.value = false
+    wrapper.unmount()
   }
 })
