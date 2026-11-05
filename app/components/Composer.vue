@@ -51,6 +51,9 @@ const ta = computed(() => promptRef.value?.textareaRef || null)
 // Dictation (Settings › Conversation): the mic before the plugins' buttons, the take above the field.
 const mic = useComposerDictation({ text, ta, pane: () => props.pane })
 const fieldFocused = ref(false)
+// The prompt's controls (footer buttons) keep the composer "focused" too:
+// a move between them and the field is not a leave.
+const withinPrompt = (el: Element | null) => !!(el && ta.value?.closest('.prompt')?.contains(el))
 let pointerHeld = false
 let collapseAfterPress = false
 let collapseFrame = 0
@@ -59,12 +62,21 @@ function fieldFocus() {
   collapseAfterPress = false
   fieldFocused.value = true
 }
-function fieldBlur() {
+// focusin/focusout bubble: on .composer they see the prompt's controls, not
+// only the textarea (@focus/@blur stay for the textarea itself).
+function fieldFocusIn(e: FocusEvent) {
+  if (withinPrompt(e.target as Element | null)) fieldFocus()
+}
+function fieldBlur(e?: FocusEvent) {
+  if (withinPrompt(e?.relatedTarget as Element | null)) return
   // A press outside the empty editor blurs it before the click is delivered.
   // Keep that press's target still; collapsing now can move an answer away
   // from the finger and lose the first quote. Keyboard blur stays immediate.
   if (coarse.value && pointerHeld) collapseAfterPress = true
   else fieldFocused.value = false
+}
+function fieldFocusOut(e: FocusEvent) {
+  if (withinPrompt(e.target as Element | null)) fieldBlur(e)
 }
 function holdEditor() { pointerHeld = true }
 function releaseEditor() {
@@ -73,7 +85,7 @@ function releaseEditor() {
   collapseAfterPress = false
   collapseFrame = requestAnimationFrame(() => {
     collapseFrame = 0
-    fieldFocused.value = document.activeElement === ta.value
+    fieldFocused.value = withinPrompt(document.activeElement)
   })
 }
 onMounted(() => {
@@ -87,8 +99,37 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointercancel', releaseEditor, true)
   cancelAnimationFrame(collapseFrame)
 })
-// Android can dismiss the keyboard while leaving the textarea focused.
-watch(kbOpen, open => { if (!open) fieldFocused.value = false })
+// Android can dismiss the keyboard while leaving the textarea focused: release
+// it on coarse pointers only — on a desktop a resize can blink kbOpen without
+// meaning the soft keyboard; blurring there would interrupt ordinary editing.
+// A close landing mid-composition waits for the commit: blurring at compend
+// would still race the candidate (the input that inserts it follows compend).
+const composing = ref(false)
+let kbCloseWhileComposing = false
+let kbReleaseFrame = 0
+watch(kbOpen, open => {
+  if (open || !coarse.value || hardwareKeyboard.value) return
+  if (document.activeElement === ta.value) {
+    if (composing.value) { kbCloseWhileComposing = true; return }
+    ta.value?.blur()
+    fieldFocused.value = false
+  }
+  else if (!withinPrompt(document.activeElement)) fieldFocused.value = false
+})
+function onComposition(e: CompositionEvent) {
+  composing.value = e.type === 'compositionstart'
+  if (composing.value) { kbCloseWhileComposing = false; cancelAnimationFrame(kbReleaseFrame); kbReleaseFrame = 0; return }
+  if (!kbCloseWhileComposing) return
+  kbCloseWhileComposing = false
+  kbReleaseFrame = requestAnimationFrame(() => {
+    kbReleaseFrame = 0
+    // The release rechecks everything that made it safe at close time:
+    // keyboard back up, a hardware key, a pointer change, a moved focus.
+    if (kbOpen.value || composing.value || !coarse.value || hardwareKeyboard.value) return
+    if (document.activeElement === ta.value) { ta.value?.blur(); fieldFocused.value = false }
+  })
+}
+onBeforeUnmount(() => cancelAnimationFrame(kbReleaseFrame))
 const fileInput = ref<HTMLInputElement | null>(null)
 const anyFileInput = ref<HTMLInputElement | null>(null)
 const sending = ref(false)
@@ -576,7 +617,7 @@ defineExpose({
 </script>
 
 <template>
-  <div class="composer" data-wherdr="composer" :data-agent="pane?.agent || undefined">
+  <div class="composer" data-wherdr="composer" :data-agent="pane?.agent || undefined" @focusin="fieldFocusIn" @focusout="fieldFocusOut">
     <div v-if="interrupting" class="composer-notice restart" :class="{ failed: interrupting === 'failed' }" role="status">
       <template v-if="interrupting === 'failed'">
         <span class="restart-text">{{ stoppingShell ? tl('The command is still running.', 'La commande tourne encore.') : t('The agent is still working.') }}</span>
@@ -636,6 +677,7 @@ defineExpose({
       data-wherdr="composer-field" class="prompt" :class="{ suggesting: suggestTap, expanded, 'has-mic': Boolean(mic.engine.value) }" :style="suggestRoom ? { '--suggest-room': `${suggestRoom}px` } : undefined" :ui="{ header: 'prompt-head', body: 'prompt-body', base: 'prompt-input', footer: 'prompt-foot' }"
       @focus="fieldFocus" @blur="fieldBlur"
       @submit="submit" @keydown="onKeydown" @paste="onPaste" @beforeinput="onBeforeInput"
+      @compositionstart="onComposition" @compositionend="onComposition" @compositioncancel="onComposition"
     >
       <template v-if="attachments.length" #header>
         <div class="attachments">

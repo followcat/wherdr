@@ -81,6 +81,17 @@ describe('affected test selector', () => {
     expect(Object.keys(plan.domains)).toContain('keys')
     expect(Object.keys(plan.e2e)).toContain('tests/e2e/terminal-keys.spec.ts')
   })
+  it('routes phone chrome changes to the phone-ux journey', () => {
+    const plan = select(['app/components/Composer.vue', 'app/components/PhoneIdentity.vue'], available.concat('tests/components/ComposerFocus.test.ts', 'tests/e2e/phone-terminal-ux.spec.ts'), undefined)
+    expect(Object.keys(plan.domains)).toContain('phone-ux')
+    expect(Object.keys(plan.e2e)).toContain('tests/e2e/phone-terminal-ux.spec.ts')
+    expect(Object.keys(plan.tests)).toContain('tests/components/ComposerFocus.test.ts')
+  })
+  it.each(['app/components/AppSheet.vue', 'app/components/MenuSheet.vue', 'app/composables/useViewport.ts', 'app/utils/viewMode.ts'])('selects the phone-ux journey for its %s integration path', file => {
+    const plan = select([file], available.concat('tests/components/PhoneIdentity.test.ts', 'tests/e2e/phone-terminal-ux.spec.ts'), undefined)
+    expect(Object.keys(plan.domains)).toContain('phone-ux')
+    expect(Object.keys(plan.e2e)).toContain('tests/e2e/phone-terminal-ux.spec.ts')
+  })
   it('falls back visibly for an unknown file and a missing base', () => {
     const plan = select(['unknown source.ts'], available, undefined)
     expect(plan.broad).toBe(true)
