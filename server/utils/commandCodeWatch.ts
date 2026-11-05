@@ -17,6 +17,10 @@ const watchOk = (at: number, len: number) =>
   Number.isSafeInteger(at) && at >= 0 && Number.isSafeInteger(len) && len >= 0
   && Number.isSafeInteger(at + Math.min(len, WATCH_BYTES))
 
+// Registration-time bound for a watch record: the same position arithmetic
+// fingerprints obey, so a watch can't claim a sample that can't exist.
+export const validWatch = (w: CommandCodeWatch): boolean => watchOk(w.at, w.len)
+
 // Fingerprint of a result record's raw line, built before its base64 is
 // stripped: exactly the record's own sample — min(len, WATCH_BYTES) bytes —
 // is hashed. `raw` must hold them (a bounded prefix of a giant line is
