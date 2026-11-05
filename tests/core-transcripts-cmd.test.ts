@@ -259,13 +259,15 @@ describe('Command Code panes resolve via core detail and per-machine wires', () 
       t.locate({ id: 'p2', agent: 'cmd', cwd: '/w/two' }),
       t.locate(P('p3')),
       t.preview(P('p1')),
-      t.model(P('p1'))
+      // model() is enabled for cmd: a dead remote stat is a read error the
+      // caller sees, not "no model" — the wire here answers unreachable.
+      t.model(P('p1')).then(() => null, (e: unknown) => e)
     ])
     expect(r1).toEqual({ file: F('a', U1), session: U1, guessed: true })
     expect(r2).toEqual({ file: F('b', U2), session: U2, guessed: true })
     expect(r3).toBeNull() // unproven root: no location, no storm
-    expect(pv).toBeNull() // cmd parsing arrives with parser enablement, a later task
-    expect(md).toBeNull()
+    expect(pv).toBeNull() // guarded chat can't stat the dead remote either
+    expect(md).toBeInstanceOf(Error)
     expect([core.calls.census, core.calls.files, core.calls.headers]).toEqual([1, 1, 1])
   })
 

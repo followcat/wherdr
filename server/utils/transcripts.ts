@@ -2279,57 +2279,105 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   // its kind, so the reading goes on until both are found (`raw`: partial).
   const MODEL_WINDOW = 512 * 1024
   const MODEL_MAX_BYTES = 16 * 1024 * 1024
-  const modelCache = new Map<string, { file: string, size: number, raw: ModelInfo | null, info: ModelInfo | null }>()
+  const modelCache = new Map<string, { file: string, size: number, raw: ModelInfo | null, info: ModelInfo | null, stamp?: number }>()
   async function model(pane: TranscriptPane): Promise<ModelInfo | null> {
     if (pane.agent === 'devin') {
       const loc = await locate(pane)
       return loc ? devin.model({ ...pane, agentSession: loc.session }) : null
     }
-    if (!pane.agent || !['claude', 'codex', 'omp'].includes(pane.agent)) return null
+    if (!pane.agent || !['claude', 'codex', 'omp', 'cmd'].includes(pane.agent)) return null
     const loc = await locate(pane)
     if (!loc) return null
+    // The transcript path tells the real kind (closed agent mislabeled).
+    const kind = transcriptKind(loc.file) || pane.agent
+    const c = modelCache.get(pane.id)
+    let h: CommandCodeFileHandle | null = null
+    let size: number
     // A failed read (SSH dropped, timeout) says nothing about the model: keep
     // the last value of this file, or let the caller keep its own. Only a
-    // missing file means "no model".
+    // missing file means "no model". Command Code: only an entry proven of
+    // the file's CURRENT generation may stand in — never a prior selected
+    // file's or a detached generation's metadata.
     const stale = (e: unknown) => {
+      if (kind === 'cmd') {
+        // Missing file means "no model", warm cache or not — only a
+        // transport unknown may retain current same-generation metadata.
+        if (isMissing(e)) return null
+        if (c && c.file === loc.file && c.stamp !== undefined && c.stamp === cmd.stampOf(loc.file)) return c.info
+        throw e
+      }
       if (c && c.file === loc.file) return c.info
       if (isMissing(e)) return null
       throw e
     }
-    const c = modelCache.get(pane.id)
-    let size: number
-    try { size = (await fs.stat(loc.file)).size }
-    catch (e) { return stale(e) }
-    if (c && c.file === loc.file && c.size === size) return c.info
+    if (kind === 'cmd') {
+      // The observation is the one stat acquisition: it also proves the
+      // file's generation (result watches) or invalidates it.
+      let o: CommandCodeObservation | null = null
+      try { o = await cmd.observe(loc.file) }
+      catch (e) { return stale(e) }
+      // Unknown — failed or short validation, the pending cap, a record
+      // replaced mid-IO: the entry stamped by the very record this
+      // observation resolved under AND still current now is proven
+      // same-generation; anything else is a read error, never another
+      // generation's model.
+      if (!o.st) {
+        if (c && c.file === loc.file && c.stamp !== undefined && c.stamp === o.stamp && cmd.io.live(loc.file, o.stamp)) return c.info
+        throw new Error('command code transcript state unknown')
+      }
+      // A folder where the transcript was expected has no model.
+      if (!o.st.isFile) return null
+      h = cmd.handle(loc.file)
+      // Bound handle proven current before any cache mutation — same
+      // ordering as chat.
+      if (h.stamp !== o.stamp) throw new Error('command code transcript generation changed')
+      if (o.invalidated) purgeFile(loc.file)
+      size = o.st.size
+      if (c && c.file === loc.file && c.size === size && c.stamp === h.stamp) return c.info
+    } else {
+      try { size = (await fs.stat(loc.file)).size }
+      catch (e) { return stale(e) }
+      if (c && c.file === loc.file && c.size === size) return c.info
+    }
     const omp = pane.agent === 'omp'
     let raw: ModelInfo | null = null
     let done = size // end of the last complete line (a line being written will be re-read)
     try {
       // Already read up to c.size: only what follows can bring something new. We
       // start from the byte before (the newline): readRange skips the line
-      // started at the beginning of the window.
-      const floor = c && c.file === loc.file && c.size < size ? c.size : 0
+      // started at the beginning of the window. For Command Code that floor is
+      // usable only within its generation — another generation's remembered
+      // size says nothing of these bytes.
+      const floor = c && c.file === loc.file && c.size < size && (kind !== 'cmd' || c.stamp === h!.stamp) ? c.size : 0
       let end = size
       let w = MODEL_WINDOW
       while (end > floor && size - end < MODEL_MAX_BYTES) {
-        const s0 = Math.max(floor ? floor - 1 : 0, end - w)
-        const r = await readRange(loc.file, s0, end)
+        // Window widened as long as it holds no line start — but never
+        // issued past this request's remaining logical span (a giant
+        // line must not be read by overshooting the cap), and `w` can't
+        // widen forever: a window already covering the span ends it.
+        const room = MODEL_MAX_BYTES - (size - end)
+        const s0 = Math.max(floor ? floor - 1 : 0, end - Math.min(w, room))
+        const r = await readRange(loc.file, s0, end, h ? { h, stamp: h.stamp } : undefined)
         if (r.start >= end) {
           // No whole line in the window (message with images): we widen it.
-          if (s0 <= Math.max(0, floor - 1) || w >= MODEL_MAX_BYTES) break
+          if (s0 <= Math.max(0, floor - 1) || end - s0 >= room) break
           w *= 2
           continue
         }
         if (end === size && !r.text.endsWith('\n')) done = size - Buffer.byteLength(r.text.slice(r.text.lastIndexOf('\n') + 1))
         const lines = r.text.split('\n').map(l => stripBlobs(l, pane.agent))
-        raw = omp ? mergeOmpModel(raw, ompLastModel(lines)) : lastModel(lines, pane.agent)
+        raw = omp ? mergeOmpModel(raw, ompLastModel(lines)) : lastModel(lines, kind)
         if (omp ? ompModelComplete(raw) : raw) break
         end = r.start
       }
       if (floor && c) raw = omp ? mergeOmpModel(raw, c.raw) : raw || c.raw
     } catch (e) { return stale(e) }
+    // The generation must still be live before its metadata is cached or
+    // returned — a detached answer is never published.
+    if (h && !cmd.io.live(loc.file, h.stamp)) throw new Error('command code transcript generation changed')
     const info = omp ? ompModelResult(raw) : raw
-    modelCache.set(pane.id, { file: loc.file, size: done, raw, info })
+    modelCache.set(pane.id, { file: loc.file, size: done, raw, info, stamp: h?.stamp })
     return info
   }
 
