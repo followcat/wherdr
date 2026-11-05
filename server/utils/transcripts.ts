@@ -34,7 +34,7 @@ export interface TranscriptPane {
   status?: string | null
 }
 
-interface Loc { file: string, session: string, guessed?: boolean }
+export interface Loc { file: string, session: string, guessed?: boolean }
 interface CodexRollout { file: string, id: string, ts: number, mtimeMs: number }
 // Window in which a Codex's conversation is created around its appearance.
 const CODEX_BIRTH_BEFORE = 5000
@@ -1022,7 +1022,7 @@ export function isMissing(e: unknown): boolean {
   return err.code === 'remote' && /no such file|not a directory|introuvable/i.test(err.message || '')
 }
 
-export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number }) {
+export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, locateCommandCode }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number, locateCommandCode?: (pane: TranscriptPane) => Promise<Loc | null> }) {
   const devin = createDevinTranscripts({ home, fs, now })
   // File -> state (size, generation) and when this server first saw it, for
   // whole-second mtimes (see SETTLE_MS); `file|size|gen` -> checksum of the
@@ -1258,6 +1258,17 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   // `fresh`: a cached "no file" is not trusted (a brand new Claude writes its
   // transcript with its first message, within those 8 s).
   async function locate(pane: TranscriptPane, fresh = false): Promise<Loc | null> {
+    // Command Code resolves through the machine's census-backed helper —
+    // never the pane-id/session caches, and never agentSession. Any earlier
+    // legacy entry for this pane is dropped so a later agent transition
+    // cannot resurrect it; a failed/unavailable lookup is "no location",
+    // not the failed-read path that preserves lastLoc. Without the callback
+    // there is no evidence at all: null.
+    if (pane.agent === 'cmd') {
+      locCache.delete(pane.id)
+      lastLoc.delete(pane.id)
+      return locateCommandCode ? await locateCommandCode(pane).catch(() => null) : null
+    }
     const hit = locCache.get(pane.id)
     if (hit && (hit.loc || !fresh) && Date.now() - hit.at < (pane.agent === 'devin' ? 1500 : 8000) && hit.session === pane.agentSession) return hit.loc
     let loc: Loc | null = null

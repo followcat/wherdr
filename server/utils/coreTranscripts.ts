@@ -3,20 +3,22 @@
 // core supplies those (terminal.get) and, for a remote core machine, the machine's disk
 // (machine.exec through createShellFs), so the same reader, parsers, search and queue apply.
 import { createShellFs, localFs, type ExecResult, type MachineFs, type ShellExec } from './fsx'
-import { createTranscripts, type TranscriptPane, type Transcripts } from './transcripts'
+import { createTranscripts, type Loc, type TranscriptPane, type Transcripts } from './transcripts'
 import { CoreError } from './core'
 import type { Pane } from '../../shared/types'
 import { DEVIN_PROCESS_SCRIPT, devinProcesses } from './devinProcesses'
+import { createCmdCore } from './commandCodeCore'
 
 type Call = <T>(method: string, params: object, timeout: number) => Promise<T>
 export interface CoreTranscriptDeps {
   call: Call
   pane: (id: string) => Pane | undefined
   localHome: string
+  now?: () => number // injected clock for the Command Code evidence TTL (tests)
 }
 
 interface CoreProcess { pid?: number, name?: string, argv?: string[], cwd?: string, startedAt?: number, argvExact?: boolean }
-interface CoreDetail { pid?: number, argv?: string[], created_ms?: number, foreground?: CoreProcess | null }
+interface CoreDetail { state?: string, pid?: number, argv?: string[], created_ms?: number, foreground?: CoreProcess | null }
 
 // The machine part of a core address (`mac/t7` -> `mac`; local ones have none).
 export const machineOfAddress = (address: string | undefined) => (address && address.includes('/') ? address.split('/')[0]! : '')
@@ -57,7 +59,8 @@ export function coreShell(call: Call, on: string): ShellExec {
     const seconds = Math.max(1, Math.ceil((opts.timeoutMs ?? 15000) / 1000))
     try {
       const r = await call<{ code: number | null, stdout?: string, stderr?: string, timed_out?: boolean, truncated?: boolean }>('machine.exec', {
-        argv: ['sh', '-c', script, 'sh', ...args], on, timeout: seconds,
+        // An empty machine name is never sent: omitting `on` runs on this core.
+        argv: ['sh', '-c', script, 'sh', ...args], ...(on ? { on } : {}), timeout: seconds,
         ...(opts.input ? { input: opts.input.toString('base64') } : {}),
       }, seconds * 1000 + 5000)
       const stdout = Buffer.from(r.stdout || '', 'base64')
@@ -111,12 +114,27 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
     let t = machines.get(name)
     if (!t) {
       t = (async () => {
-        if (!name) return createTranscripts({ home: deps.localHome, herdr, fs: localFs })
+        // Census/discovery/header work goes through machine.exec on the core
+        // itself — locally too (an omitted `on` runs on this machine); only
+        // transcript file reads use localFs directly.
         const shell = coreShell(deps.call, name)
-        const home = (await shell('printf %s "$HOME"')).stdout.toString('utf8').trim()
+        const home = name ? (await shell('printf %s "$HOME"')).stdout.toString('utf8').trim() : deps.localHome
         if (!home.startsWith('/')) throw new CoreError('unreachable', 'machine home unknown')
-        const fs: MachineFs = createShellFs(shell)
-        return createTranscripts({ home, herdr, fs })
+        const fs: MachineFs = name ? createShellFs(shell) : localFs
+        // Command Code: the census-backed locator decides what this pane's
+        // terminal really shows. Only THIS machine's terminal.get detail of
+        // the pane's exact coreAddress feeds it — state is passed unchanged
+        // (only an exact 'live' resolves), never defaulted.
+        const cmd = createCmdCore(shell, home, deps.now ? { now: deps.now } : {})
+        const locateCommandCode = async (p: TranscriptPane): Promise<Loc | null> => {
+          const address = deps.pane(p.id)?.coreAddress
+          if (!address || machineOfAddress(address) !== name) return null
+          const d = await detail(address).catch(() => null)
+          if (!d) return null
+          const r = await cmd.locate({ state: d.state, pid: d.pid, argv: d.argv, foreground: d.foreground ? { pid: d.foreground.pid } : null })
+          return 'file' in r ? { file: r.file, session: r.session, guessed: true } : null
+        }
+        return createTranscripts({ home, herdr, fs, locateCommandCode })
       })()
       machines.set(name, t)
       // Not remembered when it fails: the machine may come back.
@@ -140,12 +158,25 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
   }
 
   const of = (p: { id: string }) => forMachine(machineOfAddress(deps.pane(p.id)?.coreAddress))
+  // A failed machine entry (home lookup, core error) resolves as each
+  // method's own typed unavailable for Command Code panes — the value the
+  // method answers when nothing can be read. Other agents keep throwing.
+  const unavailable: Record<string, unknown> = {
+    chat: { available: false, reason: 'not_found' },
+    search: { hits: [], limited: false, kind: null },
+    pendingAsk: [],
+    pendingClaudeQuestions: []
+  }
+  const machineOf = (p: TranscriptPane) => of(p).catch(e => {
+    if (p.agent === 'cmd') return null
+    throw e
+  })
   type Fn<K extends keyof Transcripts> = Transcripts[K] extends (p: TranscriptPane, ...a: infer A) => infer R ? (p: TranscriptPane, ...a: A) => R : never
   const viaPane = <K extends 'chat' | 'preview' | 'latestReply' | 'locate' | 'model' | 'pendingTool' | 'pendingAsk' | 'pendingClaudeQuestions' | 'search'>(k: K) =>
     (async (p: TranscriptPane, ...a: unknown[]) => {
-      const t = await of(p)
+      const t = await machineOf(p)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return (t[k] as any)(await withBirth(p), ...a)
+      return t ? (t[k] as any)(await withBirth(p), ...a) : unavailable[k] ?? null
     }) as unknown as Fn<K>
 
   return {
@@ -158,7 +189,10 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
     pendingAsk: viaPane('pendingAsk'),
     pendingClaudeQuestions: viaPane('pendingClaudeQuestions'),
     search: viaPane('search'),
-    image: async (p: TranscriptPane, file: string | null, ref: string | null, i: number) => (await of(p)).image(await withBirth(p), file, ref, i),
+    image: async (p: TranscriptPane, file: string | null, ref: string | null, i: number) => {
+      const t = await machineOf(p)
+      return t ? t.image(await withBirth(p), file, ref, i) : null
+    },
     forget: (id: string) => { for (const t of machines.values()) void t.then(x => x.forget(id)).catch(() => {}) },
     // Called with every inventory: the Codex claims need each peer's start time.
     async observe(panes: Pane[]) {
