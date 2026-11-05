@@ -6,9 +6,9 @@ import { ompToolCall, ompToolResult, ompUserRun } from './ompTools'
 import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDetail'
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
 import { cleanModelName, lastModel, mergeOmpModel, ompLastModel, ompModelComplete, ompModelLabel, ompModelResult } from './models'
-import { type MachineFs, localFs } from './fsx'
+import { type FsStat, type MachineFs, localFs } from './fsx'
 import { fingerprintRefs, type CommandCodeResultRef } from './commandCodeWatch'
-import { createCommandCodeState, type CommandCodeFileHandle } from './commandCodeState'
+import { createCommandCodeState, type CommandCodeFileHandle, type CommandCodeObservation } from './commandCodeState'
 import { searchFile } from './conversationSearch'
 import { hasTranscript, transcriptKind } from '../../shared/agentKind'
 import { type CommandTemplate, ompCommandTemplates } from './slash'
@@ -71,6 +71,14 @@ export function headOf(token: string | null | undefined): { file: string, size: 
   const m = HEAD.exec(String(token || ''))
   if (!m) return null
   return { file: m[1]!, size: Number(m[2]), from: m[3] === 'null' ? null : Number(m[3]), ino: m[4] ? Number(m[4]) : null, gen: `${m[4] ? `${m[4]}-` : ''}${m[5]}`, unsettled: m[6] === '!' }
+}
+// Command Code tokens also carry the file's generation stamp and this
+// reader's nonce (`~s<stamp>~r<reader>`): a page remembered under another
+// generation or another process must never splice under the current one.
+const CSTAMP = /~s(\d+)~r([a-z0-9]+)(?=[~/#]|$)/
+const tokenStamp = (token: string | null | undefined): { stamp: number, reader: string } | null => {
+  const m = CSTAMP.exec(String(token || ''))
+  return m ? { stamp: Number(m[1]), reader: m[2]! } : null
 }
 // A stat that gives whole seconds only (a remote `stat` without fractions, a
 // coarse file system): a rewrite at the same size within the second already
@@ -2033,6 +2041,25 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
 
   // ------------------------------------------------------------ API
 
+  // Everything the reader keeps per file — caches keyed `file|…`, retained
+  // bottoms, and pane-keyed caches whose entry is about this file. A Command
+  // Code generation replaced or evicted purges all of it at once: old
+  // awaited work must not refill them afterwards.
+  function purgeFile(file: string) {
+    const p = `${file}|`
+    for (const k of parseCache.keys()) if (k.startsWith(p)) parseCache.delete(k)
+    for (const k of tailReads.keys()) if (k.startsWith(p)) tailReads.delete(k)
+    for (const k of below.keys()) if (k.startsWith(p)) below.delete(k)
+    for (const k of previewCache.keys()) if (k.startsWith(p)) previewCache.delete(k)
+    for (const k of firstSums.keys()) if (k.startsWith(p)) firstSums.delete(k)
+    metaCache.delete(file)
+    genSeen.delete(file)
+    for (const [k, v] of modelCache) if (v.file === file) modelCache.delete(k)
+    for (const [k, v] of pendingCache) if (v.file === file) pendingCache.delete(k)
+    for (const [k, v] of askCache) if (v.file === file) askCache.delete(k)
+    for (const [k, v] of claudeAskCache) if (v.file === file) claudeAskCache.delete(k)
+  }
+
   async function search(pane: TranscriptPane, query: string, deadline: number) {
     if (!hasTranscript(pane.agent)) return { hits: [], limited: false, kind: null }
     const loc = await locate(pane)
@@ -2040,6 +2067,18 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     if (pane.agent === 'devin') return devin.search({ ...pane, agentSession: loc.session }, query, deadline)
     // The transcript path tells the real kind (closed agent mislabeled).
     const kind = transcriptKind(loc.file) || pane.agent
+    if (kind === 'cmd') {
+      // The same generation guard as chat: the selected file's state must
+      // be trusted before its awaited reads run — unknown is a read error.
+      const o = await cmd.observe(loc.file)
+      if (!o.st) throw new Error('command code transcript state unknown')
+      // Purge on proven currency only, as in chat: a stale resolved
+      // observation must not clear a newer generation's caches first.
+      if (o.invalidated) {
+        if (cmd.stampOf(loc.file) !== o.stamp) throw new Error('command code transcript generation changed')
+        purgeFile(loc.file)
+      }
+    }
     return { ...await searchFile(fs, loc.file, kind, home, query, deadline), kind }
   }
 
@@ -2058,12 +2097,39 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       for (const item of r.items || []) if (item.role === 'assistant' && item.ref) replyKeys.set(item, `devin:${r.session}:${item.ref}`)
       return r
     }
-    let st
-    try { st = await fs.stat(loc.file) }
-    catch (e) {
-      // Failed read: an error (the client keeps what it shows), not an empty result.
-      if (!isMissing(e)) throw e
-      st = null
+    // The transcript path tells the real kind: a pane whose agent changed while
+    // its session stayed must not read the file as another agent's (no message).
+    const kind = transcriptKind(loc.file) || pane.agent
+    if (kind === 'omp') await refreshOmpTemplates()
+    let st: FsStat | null = null
+    let h: CommandCodeFileHandle | null = null
+    if (kind === 'cmd') {
+      // The observation is the one stat acquisition: it also proves the
+      // file's generation (result watches) or invalidates it.
+      let o: CommandCodeObservation | null = null
+      try { o = await cmd.observe(loc.file) }
+      catch (e) { if (!isMissing(e)) throw e; o = null }
+      // Unknown — failed or short validation, the pending cap, a record
+      // replaced mid-IO: a read error, never a trusted advance. The client
+      // keeps what it shows and the next poll retries.
+      if (o && !o.st) throw new Error('command code transcript state unknown')
+      st = o ? o.st : null
+      if (st && st.isFile) {
+        h = cmd.handle(loc.file)
+        // The bound handle must prove the observation current before any
+        // cache mutation — synchronous, nothing awaits between them: a
+        // stale resolved observation must not clear a newer generation's
+        // caches and then fail this check anyway.
+        if (o && h.stamp !== o.stamp) throw new Error('command code transcript generation changed')
+        if (o && o.invalidated) purgeFile(loc.file)
+      }
+    } else {
+      try { st = await fs.stat(loc.file) }
+      catch (e) {
+        // Failed read: an error (the client keeps what it shows), not an empty result.
+        if (!isMissing(e)) throw e
+        st = null
+      }
     }
     // Gone, or a folder where the transcript was expected: no conversation.
     if (!st || !st.isFile) {
@@ -2073,42 +2139,59 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     }
     const fileId = path.basename(loc.file)
     const base = { available: true, file: fileId, session: loc.session, guessed: Boolean(loc.guessed) }
-    // The transcript path tells the real kind: a pane whose agent changed while
-    // its session stayed must not read the file as another agent's (no message).
-    const kind = transcriptKind(loc.file) || pane.agent
-    if (kind === 'omp') await refreshOmpTemplates()
-    if (opts.before !== null && opts.before !== undefined) {
-      const r = await readBackwards(loc.file, Math.min(opts.before, st.size), kind)
-      return { ...base, older: true, items: r.items, start: r.start }
+    // The generation every read and cache write is bound to — every
+    // awaited step must still find it live before its result is used.
+    const ctx = h ? { h, stamp: h.stamp } : undefined
+    // The token the client claims to have read from (its anchor doubles as
+    // the join check when `since` was forgotten). For Command Code it must
+    // name this exact generation and reader: a missing or stale stamp can
+    // never serve its pages or its outcomes — fresh bottom, not older.
+    const sent = opts.anchor ?? opts.since
+    const tok = kind === 'cmd' ? tokenStamp(sent) : null
+    const noProof = kind === 'cmd' && (tok === null || tok.stamp !== h!.stamp || tok.reader !== cmd.reader)
+    const stale = noProof && (sent != null || opts.before != null)
+    if (opts.before !== null && opts.before !== undefined && !noProof) {
+      const r = await readBackwards(loc.file, Math.min(opts.before, st.size), kind, ctx)
+      // An older page exists only in its generation: a rewrite observed
+      // while its windows were awaited makes this page another
+      // transcript's — reject, never return it.
+      if (h && !cmd.io.live(loc.file, h.stamp)) throw new Error('command code transcript generation changed')
+      return { ...base, older: true, items: r.items, start: r.start, ...(r.updates?.length ? { toolUpdates: r.updates } : {}) }
     }
     const from = opts.from === undefined ? null : opts.from
     const gen = genOf(st)
     const settled = await settledGen(loc.file, st, gen)
+    // digests may have awaited: an "unchanged" answer must still be of this
+    // generation — a replacement mid-await means the client must reset.
+    if (h && !cmd.io.live(loc.file, h.stamp)) throw new Error('command code transcript generation changed')
     // Token: file, size, cursor, generation (unchanged as long as these are,
-    // once settled), then the anchor of the reply's start.
-    const head = `${fileId}:${st.size}:${from}:${gen}`
+    // once settled), then the anchor of the reply's start. For Command Code
+    // the head also carries the generation stamp and the reader nonce — the
+    // unchanged comparison then includes both, exactly.
+    const head = `${fileId}:${st.size}:${from}:${gen}${h ? `~s${h.stamp}~r${cmd.reader}` : ''}`
     if (settled && opts.since && opts.since.split('/')[0] === head) return { ...base, unchanged: true, token: opts.since }
-    let r = await tail(loc.file, kind, st.size, gen, from, settled, st.ino)
+    let r = await tail(loc.file, kind, st.size, gen, from, settled, st.ino, ctx)
     // The client's list starts at the cursor, and the file was rewritten
     // above it: replaced by another file (inode), shorter, rewritten at the
     // same size (appends always grow it), or other bytes just above the cursor
     // (anchor), or no line start there any more. Read back from the end, and
     // say so: the client starts again.
-    const sent = opts.anchor ?? opts.since
     const at = anchorOf(sent)
     const prev = headOf(sent)
     const same = prev !== null && prev.file === fileId
     // A list read before its state settled (whole-second mtimes): rewritten
     // within that second if its part of the file changed since.
-    const rewritten = from !== null && from > 0 && at !== null && at.start === from && (r.anchor !== at.hash
+    const rewritten = stale || (from !== null && from > 0 && at !== null && at.start === from && (r.anchor !== at.hash
       || (same && prev.ino !== null && st.ino !== undefined && prev.ino !== st.ino)
       || (same && st.size < prev.size)
       || (same && st.size === prev.size && prev.gen !== gen)
-      || (same && prev.unsettled && !await stillThere(loc.file, prev)))
-    if (rewritten) r = await tail(loc.file, kind, st.size, gen, null, settled, st.ino)
-    const mark = `${head}${settled ? '' : '!'}`
+      || (same && prev.unsettled && !await stillThere(loc.file, prev))))
+    if (rewritten) r = await tail(loc.file, kind, st.size, gen, null, settled, st.ino, ctx)
+    // `!` (unsettled) rides right after the generation where headOf finds it.
+    const mark = `${fileId}:${st.size}:${from}:${gen}${settled ? '' : '!'}${h ? `~s${h.stamp}~r${cmd.reader}` : ''}`
     const token = r.anchor ? `${mark}/${r.start}.${r.anchor}` : mark
-    return { ...base, token, items: r.items, start: r.start, queue: r.queue || [], ...(r.popped?.length ? { popped: r.popped } : {}), ...(rewritten ? { rewritten: true } : {}) }
+    if (h && !cmd.io.live(loc.file, h.stamp)) throw new Error('command code transcript generation changed')
+    return { ...base, token, items: r.items, start: r.start, queue: r.queue || [], ...(r.popped?.length ? { popped: r.popped } : {}), ...(rewritten ? { rewritten: true } : {}), ...(r.updates?.length ? { toolUpdates: r.updates } : {}) }
   }
 
   // Agent's last reply, for cards and notifications.
@@ -2129,6 +2212,9 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   }
   async function tailReply(pane: TranscriptPane): Promise<{ key: string, text: string } | null> {
     if (pane.agent === 'devin') return null // ATIF is a single JSON document, not JSONL.
+    // Command Code previews come from the guarded chat itself until the
+    // short-preview path carries generation evidence (4d-3).
+    if (pane.agent === 'cmd') return null
     if (!hasTranscript(pane.agent)) return null
     const loc = await locate(pane)
     if (!loc) return null
