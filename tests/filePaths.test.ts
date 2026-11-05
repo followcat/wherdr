@@ -1,7 +1,7 @@
 // File paths in agent replies: which inline code is a path, how it resolves
 // against the agent's folder, and the clickable markup in rendered markdown.
 import { describe, expect, it, vi } from 'vitest'
-import { pathCandidate, posixResolve, resolveAgentPath, runnablePath } from '../shared/filePaths'
+import { pathCandidate, posixResolve, resolveAgentPath } from '../shared/filePaths'
 
 // markdown.ts runs in the browser: DOMPurify needs a DOM, `t` is auto-imported.
 vi.mock('dompurify', () => ({ default: { sanitize: (s: string) => s, addHook: () => {} } }))
@@ -78,13 +78,6 @@ describe('resolveAgentPath', () => {
     expect(posixResolve('/a/b', '../c/./d')).toBe('/a/c/d')
     expect(posixResolve('/a', '/x/../y')).toBe('/y')
     expect(posixResolve('/', '../..')).toBe('/')
-  })
-})
-
-describe('runnablePath', () => {
-  it('flags apps, scripts and installers', () => {
-    for (const p of ['/h/Tool.app', '/h/Tool.app/', '/h/run.command', '/h/x.sh', '/h/a.pkg', '/h/s.scpt', '/h/d.dmg']) expect(runnablePath(p), p).toBe(true)
-    for (const p of ['/h/a.html', '/h/notes.md', '/h/folder', '/h/photo.png', '/h/app.ts']) expect(runnablePath(p), p).toBe(false)
   })
 })
 

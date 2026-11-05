@@ -38,7 +38,7 @@ check_archive() {
   tmp="$(mktemp -d)"
   tar -xzf "$tgz" -C "$tmp"
   for entry in .output/server/index.mjs bin/wherdr.mjs bin/lib/install-skill.sh bin/lib/verify-release.mjs \
-    package.json skills/wherdr/SKILL.md; do
+    scripts/fetch-dictation-files.mjs scripts/dictation-files.mjs app/utils/dictation/models.json package.json; do
     [ -f "$tmp/package/$entry" ] || { echo "prerelease: missing package/$entry" >&2; missing=1; }
   done
   native="$(node -e '

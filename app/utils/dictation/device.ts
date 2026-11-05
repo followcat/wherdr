@@ -3,11 +3,12 @@
 // server (/models/**) once, kept in Cache Storage by modelStore.ts (the same
 // download as Settings › Dictation), then read from there. Nothing leaves the device.
 import { splitTake } from './audio'
-import { abortError } from './engine'
+import { abortError, ModelTooLarge } from './engine'
 import type { DictationEngine, PrepareProgress, Readiness } from './engine'
-import { DEVICE_CACHE, DEVICE_MODEL_KEY, DEVICE_RUNTIME, deviceModel, modelBytes } from './deviceModels'
+import { DEVICE_CACHE, DEVICE_MODEL_KEY, DEVICE_MODELS, DEVICE_RUNTIME, deviceLanguage, deviceModel, markLoading, markTooLarge, memoryFit, modelBytes, sentenceCase, takeCrash } from './deviceModels'
 import type { DeviceModel } from './deviceModels'
-import { CHUNK, installModel, storedBytes } from './modelStore'
+import { CHUNK, installModel, prepareOnServer, storedBytes } from './modelStore'
+import type { Progress } from './modelStore'
 
 export const WORKER_URL = '/workers/dictation-worker.js'
 
@@ -27,12 +28,21 @@ type FromWorker =
 
 interface Pending { resolve: (r: { text: string, ms: number }) => void, reject: (e: unknown) => void }
 
+// A worker that says it ran out of memory: the model is too large for this
+// device. Emscripten reports an abort for OOM or a failed memory grow; the
+// browser, a failed buffer allocation. Other errors stay plain failures.
+const OUT_OF_MEMORY = /out of memory|Aborted\(OOM\)|enlarge memory|allocation failed/i
+
 function savedModel(): DeviceModel {
   try { return deviceModel(localStorage.getItem(DEVICE_MODEL_KEY)) }
   catch { return deviceModel(null) }
 }
 
 export function createDeviceEngine(deps: DeviceEngineDeps = {}): DictationEngine {
+  // The last page was killed while loading a model: said once, at the next
+  // press, while the choice falls back to one that fits (deviceModel).
+  const crashed = takeCrash()
+  let notice = crashed ? DEVICE_MODELS.find(m => m.id === crashed) : undefined
   const model = deps.model ?? savedModel()
   const cacheStorage = deps.caches === undefined ? globalThis.caches : deps.caches
   const doFetch = deps.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a))
@@ -46,6 +56,8 @@ export function createDeviceEngine(deps: DeviceEngineDeps = {}): DictationEngine
   let onProgress: ((p: PrepareProgress) => void) | undefined
   let nextId = 0
   let disposed = false
+  // Stops a load's wait for the server's files (no Cache Storage) on dispose.
+  let waitServer: AbortController | null = null
   const pending = new Map<number, Pending>()
 
   // The worker failed (load error, crash, out of memory): everything waiting
@@ -54,6 +66,7 @@ export function createDeviceEngine(deps: DeviceEngineDeps = {}): DictationEngine
     worker?.terminate()
     worker = null
     loading = null
+    markLoading(null)
     failLoad?.(err)
     failLoad = null
     for (const p of pending.values()) p.reject(err)
@@ -63,9 +76,16 @@ export function createDeviceEngine(deps: DeviceEngineDeps = {}): DictationEngine
   // Into Cache Storage first, where the worker reads it. A browser that cannot
   // keep it (no Cache Storage, quota full) has the worker stream it from the server.
   async function fetchModel(): Promise<string> {
-    if (!cacheStorage) return ''
+    const report = (p: Progress) => onProgress?.({ phase: 'fetch', ...p })
+    if (!cacheStorage) {
+      // Streamed from the server: it still has to hold the files.
+      waitServer = new AbortController()
+      try { await prepareOnServer(model, { fetch: doFetch }, waitServer.signal, report) }
+      finally { waitServer = null }
+      return ''
+    }
     try {
-      await installModel(model, p => onProgress?.({ phase: 'fetch', ...p }), { caches: cacheStorage, fetch: doFetch })
+      await installModel(model, report, { caches: cacheStorage, fetch: doFetch })
       return DEVICE_CACHE
     }
     catch (e) {
@@ -79,21 +99,32 @@ export function createDeviceEngine(deps: DeviceEngineDeps = {}): DictationEngine
       const w = makeWorker()
       worker = w
       failLoad = reject
+      markLoading(model.id)
+      let started = false // the worker spoke: a silent death after is not a missing file
       const fail = (err: Error) => { if (worker === w) reset(err); reject(err) }
-      w.onerror = (e) => { e.preventDefault?.(); fail(new Error(e.message || 'dictation worker failed')) }
+      // A load that dies (no message) or runs out of memory: too large here.
+      const tooLarge = (msg: string) => { markTooLarge(model.id, 'oom'); return new ModelTooLarge(msg) }
+      const loadFailed = (msg: string) => fail((!msg && started) || OUT_OF_MEMORY.test(msg) ? tooLarge(msg || 'dictation worker died') : new Error(msg || 'dictation worker failed'))
+      w.onerror = (e) => {
+        e.preventDefault?.()
+        if (failLoad) loadFailed(e.message)
+        else fail(new Error(e.message || 'dictation worker failed'))
+      }
       w.onmessage = ({ data: m }: MessageEvent<FromWorker>) => {
+        started = true
         if (m.t === 'phase') onProgress?.({ phase: m.phase })
         else if (m.t === 'dl') {
           const i = model.files.findIndex(f => f.path === m.file)
           const before = model.files.slice(0, Math.max(0, i)).reduce((n, f) => n + f.bytes, 0)
           onProgress?.({ phase: 'fetch', got: before + m.got, total })
         }
-        else if (m.t === 'ready') { failLoad = null; resolve() }
+        else if (m.t === 'ready') { failLoad = null; markLoading(null); resolve() }
         else if (m.t === 'final') {
-          pending.get(m.id)?.resolve({ text: m.text, ms: m.ms })
+          pending.get(m.id)?.resolve({ text: model.textCase === 'upper' ? sentenceCase(m.text) : m.text, ms: m.ms })
           pending.delete(m.id)
         }
-        else if (m.id === undefined) fail(new Error(m.error))
+        else if (m.id === undefined) loadFailed(m.error)
+        else if (OUT_OF_MEMORY.test(m.error)) fail(tooLarge(m.error))
         else {
           pending.get(m.id)?.reject(new Error(m.error))
           pending.delete(m.id)
@@ -108,6 +139,7 @@ export function createDeviceEngine(deps: DeviceEngineDeps = {}): DictationEngine
         bytes: model.files.map(f => f.bytes),
         chunk: CHUNK,
         cache,
+        language: model.autoDetect === false ? deviceLanguage(model) : '',
       })
     })
   }
@@ -145,6 +177,12 @@ export function createDeviceEngine(deps: DeviceEngineDeps = {}): DictationEngine
 
     async readiness(): Promise<Readiness> {
       if (typeof Worker === 'undefined' || typeof WebAssembly === 'undefined') return { ready: false, reason: 'unsupported' }
+      if (notice) {
+        const detail = notice.name
+        notice = undefined
+        return { ready: false, reason: 'too-large', detail }
+      }
+      if (memoryFit(model) !== 'ok') return { ready: false, reason: 'too-large', detail: model.name }
       if (await cached().catch(() => false)) return { ready: true }
       // Not on this device yet: prepare downloads it if the server has it.
       try {
@@ -183,6 +221,7 @@ export function createDeviceEngine(deps: DeviceEngineDeps = {}): DictationEngine
 
     dispose() {
       disposed = true
+      waitServer?.abort(abortError())
       if (worker) reset(abortError())
     },
   }

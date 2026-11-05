@@ -10,7 +10,7 @@ import type { DraftAtt } from '~/composables/useDraft'
 import { unreference } from '#shared/reference'
 import { quotesIn, removeQuote } from '~/utils/questionReply'
 import { attachQuoteMirror } from '~/utils/quoteMirror'
-import { isSlashCommand } from '#shared/queuedMatch'
+import { isBareBang, isSlashCommand } from '#shared/queuedMatch'
 import { viaPrompt } from '#shared/sendRoute'
 import type { AttachKind } from '#shared/attachments'
 import { refusalText, sortForAgent } from '~/utils/fileDrop'
@@ -114,16 +114,20 @@ watch([() => quoteMode.value === 'native' && quotes.value.length > 0, ta], ([on,
 watch(text, () => nextTick(() => mirror?.render()), { flush: 'post' })
 onBeforeUnmount(() => { mirror?.destroy(); mirror = null })
 
-const canSend = computed(() => Boolean(text.value.trim() || attachments.value.length))
+// A lone "!" is nothing to send (shared/queuedMatch.ts isBareBang): no Send,
+// and Enter adds no line. It is not an empty field either: no Stop, no suggestion.
+const typedText = computed(() => (isBareBang(text.value) ? '' : text.value))
+const fieldEmpty = computed(() => !text.value.trim() && !attachments.value.length)
+const canSend = computed(() => Boolean(typedText.value.trim() || attachments.value.length))
 const readOnly = computed(() => Boolean(props.pane?.stopped || props.pane?.prompt?.unavailable) || !eventsOpen.value || offlineView.value || paneStale(props.pane))
 // Offline, no Stop: UChatPromptSubmit ignores `disabled` in "streaming" mode.
 // omp running the user's "!" / "$" command stays idle: Stop cancels the command.
 const shellRun = computed(() => Boolean(props.pane && props.pane.agent === 'omp' && props.pane.ompShell && props.pane.status !== 'working'))
-const stopMode = computed(() => Boolean(!readOnly.value && props.pane && props.pane.agent && (props.pane.status === 'working' || shellRun.value) && !canSend.value))
+const stopMode = computed(() => Boolean(!readOnly.value && props.pane && props.pane.agent && (props.pane.status === 'working' || shellRun.value) && fieldEmpty.value))
 // Claude Code's grayed-out suggestion (see parseClaudeSuggestion): placeholder of the
 // empty field; Tab puts it in the field, without sending it. A touch screen has no Tab:
 // a "Use" button inside the field, on the right, does the same (`suggestTap`).
-const suggestion = computed(() => (!readOnly.value && !canSend.value && props.pane?.claudeSuggestion) || null)
+const suggestion = computed(() => (!readOnly.value && fieldEmpty.value && props.pane?.claudeSuggestion) || null)
 const suggestTap = computed(() => Boolean(suggestion.value && !enterSends.value))
 function useSuggestion() {
   const s = suggestion.value
@@ -171,7 +175,7 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 function onEmptyEnter(e: KeyboardEvent) {
-  if (e.defaultPrevented || e.target !== ta.value || e.key !== 'Enter' || e.shiftKey || e.isComposing || !enterSends.value || text.value.trim()) return
+  if (e.defaultPrevented || e.target !== ta.value || e.key !== 'Enter' || e.shiftKey || e.isComposing || !enterSends.value || typedText.value.trim()) return
   e.preventDefault()
 }
 onMounted(() => window.addEventListener('keydown', onEmptyEnter))
@@ -231,7 +235,7 @@ async function submit() {
   // they are, after the typed text (the agent gets one message, as from a paste).
   const pastes = attachments.value.flatMap(a => (a.paste ? [a.paste] : []))
   const paths = attachments.value.flatMap(a => (a.paste ? [] : [a.ref || a.path!]))
-  const typed = text.value
+  const typed = typedText.value
   const body = messageBody(typed, pastes, paths)
   const msg = body
   if (!msg || sending.value) return
@@ -599,7 +603,11 @@ defineExpose({
       </button>
     </div>
     <div v-if="mic.shown.value" class="composer-notice dictation" role="status" data-testid="dictation-take">
-      <template v-if="mic.status.value === 'transcribing'">
+      <template v-if="mic.status.value === 'rewriting'">
+        <span class="notice-spin" aria-hidden="true" />
+        <span class="restart-text">{{ tl('Rewriting…', 'Reformulation…') }}</span>
+      </template>
+      <template v-else-if="mic.status.value === 'transcribing'">
         <span class="notice-spin" aria-hidden="true" />
         <span class="restart-text">{{ tl('Recognizing…', 'Reconnaissance…') }}</span>
         <!-- Stopped while the model still downloads (first use): its progress. -->

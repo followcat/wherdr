@@ -77,8 +77,3 @@ export function resolveAgentPath(written: string, cwd: string | null | undefined
   const r = posixResolve(base, p.replace(/^~(?=$|\/)/, root))
   return inside(r) ? r : null
 }
-
-// What "Open" refuses to launch: it would run code (application, script,
-// installer) instead of showing a document.
-const RUNNABLE = /\.(app|command|tool|terminal|pkg|mpkg|workflow|action|scpt|scptd|applescript|jar|sh|bash|zsh|csh|fish|py|rb|pl|webloc|inetloc|fileloc|prefpane|qlgenerator|saver|kext|osax|dmg)\/?$/i
-export const runnablePath = (p: string) => RUNNABLE.test(p)

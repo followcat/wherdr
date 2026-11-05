@@ -4,7 +4,7 @@
 import { coreCall, CoreError } from './core'
 import { HerdrError } from './herdr'
 import { keepPastes } from './pastes'
-import { isSlashCommand } from '../../shared/queuedMatch'
+import { isBareBang, isSlashCommand } from '../../shared/queuedMatch'
 import type { Pane } from '../../shared/types'
 
 type Call = <T>(method: string, params: object, timeout: number) => Promise<T>
@@ -66,7 +66,7 @@ export function failure(e: unknown): never {
 export async function coreSend(deps: CoreInputDeps, b: { pane_id?: unknown, text?: unknown, pastes?: unknown }) {
   const p = target(deps, b.pane_id)
   const text = typeof b.text === 'string' ? b.text : ''
-  if (!text.trim()) throw new HerdrError('empty', 'Empty message')
+  if (!text.trim() || isBareBang(text)) throw new HerdrError('empty', 'Empty message')
   if (text.length > MAX_TEXT) throw new HerdrError('too_large', 'Message too large')
   if (!isSlashCommand(text)) keepPastes(text, b.pastes)
   try {

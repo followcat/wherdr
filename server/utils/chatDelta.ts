@@ -28,13 +28,22 @@ const LISTS_PER_PANE = 4 // several devices on the same pane, a little history
 const MAX_SIGS = 400_000 // all panes together: 3.2 MB of signatures
 const TTL_MS = 15 * 60 * 1000 // since the list was last sent or polled
 
-// 64-bit signature per item: two 32-bit words of the item's SHA-1.
+// 64-bit signature per item: two 32-bit words of the item's SHA-1. Computed
+// once per item object: the transcript readers hand out the same object
+// again for an item that did not change since (claudeParser, the turns kept
+// for Codex and omp), so a poll signs only the new and changed items. The
+// contract: an item given here is never changed afterwards.
+const signed = new WeakMap<ChatItem, [number, number]>()
 export function itemSigs(items: ChatItem[]): Uint32Array {
   const out = new Uint32Array(items.length * 2)
   items.forEach((it, k) => {
-    const h = createHash('sha1').update(JSON.stringify(it)).digest()
-    out[2 * k] = h.readUInt32LE(0)
-    out[2 * k + 1] = h.readUInt32LE(4)
+    let sig = signed.get(it)
+    if (!sig) {
+      const h = createHash('sha1').update(JSON.stringify(it)).digest()
+      signed.set(it, sig = [h.readUInt32LE(0), h.readUInt32LE(4)])
+    }
+    out[2 * k] = sig[0]
+    out[2 * k + 1] = sig[1]
   })
   return out
 }

@@ -1,12 +1,11 @@
-// scripts/fetch-dictation-files.mjs: pinned files, checked before use,
+// scripts/dictation-files.mjs (the fetch script's code): pinned files, checked before use,
 // resumed after a cut.
 import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-// @ts-expect-error plain .mjs script, no types
-import { SETS, download, fetchEntry, setsOf } from '../scripts/fetch-dictation-files.mjs'
+import { SETS, download, fetchEntry, setsOf } from '../scripts/dictation-files.mjs'
 
 type Entry = { url: string, sha256: string, to?: string, dir?: string, members?: string[] }
 const body = Buffer.from('a'.repeat(1000) + 'b'.repeat(1000))
@@ -40,6 +39,10 @@ describe('the pinned files', () => {
     }
     // Runtimes are pinned to a version or a commit, and sit under runtime/.
     for (const e of [...SETS.runtime, ...SETS.ort] as Entry[]) expect(e.to).toMatch(/^runtime\/[^/]+-[0-9a-f.]{5,}\//)
+  })
+  it('has no CLI in the module the server bundles: importing it starts no download', () => {
+    const lib = readFileSync(new URL('../scripts/dictation-files.mjs', import.meta.url), 'utf8')
+    expect(lib).not.toMatch(/process\.(argv|exit)/)
   })
   it('chooses the default sets, all, or refuses an unknown one', () => {
     expect(setsOf([])).toEqual(['runtime', 'parakeet'])

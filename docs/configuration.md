@@ -11,9 +11,7 @@ unit: see [Installation](installation.md#keep-it-running)), read at each start.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `WHERDR_BACKEND` | *(empty: v2)* | `core` for v3. Needed when building **and** when starting the server. |
-| `NUXT_PUBLIC_CORE` | *(from the build)* | `true` when building v3, so the interface is built in herdr-core mode. |
-| `HC_SOCKET` | *(none)* | Socket of the hc session to drive. Required: wherdr never guesses it, and reports "Set HC_SOCKET on the wherdr server" without it. |
+| `HC_SOCKET` | *(none)* | Socket of the hc session to drive. Required: wherdr never guesses it, and the server stops at startup with a log line naming `HC_SOCKET` without it. `wherdr --hc-socket <path>` sets it. |
 | `PORT` | `7683` | Listening port. |
 | `HOST` | `127.0.0.1` (`npm start`) | Listening address: loopback, or this machine's tailnet address (`tailscale ip`, with Tailscale running). Any other address (`0.0.0.0`, a LAN address) stops wherdr at startup unless `WHERDR_TRUSTED_NETWORKS` covers it. |
 | `WHERDR_TRUSTED_NETWORKS` | *(empty)* | Other private networks wherdr accepts besides this computer and the tailnet, as comma-separated CIDR ranges or addresses (e.g. `10.147.17.0/24` for ZeroTier). `any` accepts every network, with a warning at startup and in the app: not recommended. See [Network access](security.md#network-access). |

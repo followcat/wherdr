@@ -21,19 +21,19 @@ describe('update command', () => {
     expect(installMode('npm')).toBe('npm')
     expect(installMode('brew')).toBe('brew')
     expect(installMode('npm-global')).toBe('npm-global')
-    expect(installMode('plugin')).toBe('plugin')
+    // wherdr 3 is not a Herdr plugin: a 2.x plugin copy counts as a checkout.
+    expect(installMode('plugin')).toBe('native')
     expect(installMode(undefined)).toBe('native')
     expect(installMode('autre')).toBe('native')
-    const cmd = (m: Parameters<typeof updateCommand>[0]) => updateCommand(m, 'owner/wherdr')
+    const cmd = updateCommand
     expect(cmd('native')).toBe('git pull && npm ci && npm run build')
     expect(cmd('npm')).toBe('npx wherdr@latest')
     expect(cmd('brew')).toBe('brew upgrade wherdr && brew services restart wherdr')
     expect(cmd('npm-global')).toBe('npm install -g wherdr@latest && wherdr restart')
-    expect(cmd('plugin')).toBe('herdr plugin install owner/wherdr --yes')
   })
 
   it('offers the one-tap update only where wherdr can replace itself', () => {
-    expect(['plugin', 'npm-global', 'brew', 'npm', 'native'].filter(m => oneTapMode(installMode(m)))).toEqual(['plugin', 'npm-global', 'brew'])
+    expect(['plugin', 'npm-global', 'brew', 'npm', 'native'].filter(m => oneTapMode(installMode(m)))).toEqual(['npm-global', 'brew'])
   })
 })
 
@@ -93,12 +93,6 @@ describe('release check', () => {
 
 describe('independent release channels', () => {
   const releases = [{ tag_name: 'v1.3.3' }, { tag_name: 'v1.3.4-beta', prerelease: true }, { tag_name: 'v9.0.0', draft: true }]
-  it('offers published releases to plugins even while npm is unavailable', async () => {
-    const fetch = vi.fn(async () => ({ ok: true, json: async () => releases }))
-    const check = createUpdateChecker({ current: '1.3.2', env: { WHERDR_INSTALL: 'plugin' }, fetch })
-    expect(await check()).toMatchObject({ latest: '1.3.3', oneTap: true })
-    expect(fetch).toHaveBeenCalledTimes(3)
-  })
   for (const mode of ['npm', 'npm-global']) {
     it(`${mode} waits for the tarball and retries after an hour`, async () => {
       let available = false, time = 0
@@ -146,16 +140,9 @@ describe('provider HTTP requests', () => {
     await fetchUpdateResource('https://raw.githubusercontent.com/example/tap/main/Formula/wherdr.rb', request)
   })
 
-  it.each(['archive', 'checksum'])('hides plugin updates when the %s is missing', async missing => {
-    const check = createUpdateChecker({ current: '1.3.2', env: { WHERDR_INSTALL: 'plugin' },
-      fetch: async url => ({ ok: url === RELEASES_URL || (missing === 'archive' ? !url.endsWith('.tgz') : !url.endsWith('.sha256')),
-        json: async () => [{ tag_name: 'v1.3.3' }] }) })
-    expect((await check()).latest).toBeNull()
-  })
-
   it('keeps a previously validated notice through a transient error and an unavailable new candidate', async () => {
     let time = 0, phase = 'available'
-    const check = createUpdateChecker({ current: '1.3.2', env: { WHERDR_INSTALL: 'plugin' }, now: () => time,
+    const check = createUpdateChecker({ current: '1.3.2', env: { WHERDR_INSTALL: 'npm-global' }, now: () => time,
       fetch: async url => {
         if (phase === 'offline') throw new Error('offline')
         return { ok: url === RELEASES_URL || phase === 'available', json: async () => [{ tag_name: phase === 'new' ? 'v1.3.4' : 'v1.3.3' }] }

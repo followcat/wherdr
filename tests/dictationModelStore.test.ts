@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fakeCaches, rangeServer } from './fakeModelCache'
 import { DEVICE_CACHE, DEVICE_MODELS, qualityRating, readCatalog, runnableModels } from '../app/utils/dictation/deviceModels'
 import type { DeviceModel } from '../app/utils/dictation/deviceModels'
-import { CHUNK, cancelInstall, deleteModel, installModel, storedBytes, watchInstall } from '../app/utils/dictation/modelStore'
+import { CHUNK, PREPARE_URL, ServerFetchFailed, cancelInstall, deleteModel, fetchCommand, installModel, MissingOnServer, storedBytes, watchInstall } from '../app/utils/dictation/modelStore'
+import type { Progress } from '../app/utils/dictation/modelStore'
 
 const model: DeviceModel = { ...DEVICE_MODELS[0]!, id: 'm', dir: 'm', files: [{ path: 'enc.onnx', bytes: 2 * CHUNK + 5 }, { path: 'tokens.txt', bytes: 10 }] }
 const total = 2 * CHUNK + 15
@@ -61,6 +62,51 @@ describe('model store', () => {
     const wrong = { ...model, files: [{ path: 'enc.onnx', bytes: 2 * CHUNK + 5 }] }
     const server = rangeServer({ ...model, files: [{ path: 'enc.onnx', bytes: 99 }] })
     await expect(installModel(wrong, undefined, { caches, fetch: server.fetch })).rejects.toThrow('size differs from the catalog')
+  })
+
+  it('says the server is missing the files on a 404, with the command that fetches them', async () => {
+    const fetch404 = (async () => new Response(null, { status: 404 })) as typeof fetch
+    const err = await installModel(model, undefined, { caches: fakeCaches(), fetch: fetch404 }).catch(e => e)
+    expect(err).toBeInstanceOf(MissingOnServer)
+    expect(err).toMatchObject({ path: 'enc.onnx', model: { id: 'm' } })
+    expect(fetchCommand(model)).toBe(`node scripts/fetch-dictation-files.mjs runtime ${model.set}`)
+  })
+
+  it('waits for the server to fetch the files, with its progress, then downloads them', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    const files = rangeServer(model)
+    const answers = [
+      { state: 'preparing', phase: 'fetch', got: 40, total: 100 },
+      { state: 'preparing', phase: 'unpack', got: 100, total: 100 },
+      { state: 'ready' },
+    ]
+    const asked: unknown[] = []
+    const fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (url !== PREPARE_URL) return files.fetch(url, init)
+      asked.push(JSON.parse(String(init!.body)))
+      return Response.json(answers.shift())
+    }) as typeof globalThis.fetch
+    const seen: Progress[] = []
+    const run = installModel(model, p => seen.push(p), { caches: fakeCaches(), fetch })
+    await vi.runAllTimersAsync()
+    await run
+    expect(asked).toEqual([{ model: 'm' }, { model: 'm' }, { model: 'm' }])
+    expect(seen.slice(0, 2)).toEqual([{ got: 40, total: 100, server: true, unpack: false }, { got: 100, total: 100, server: true, unpack: true }])
+    expect(seen.at(-1)).toEqual({ got: total, total })
+    expect(files.calls).toHaveLength(4)
+  })
+
+  it('stops on a failed server fetch, and asks nothing when the phone holds the model', async () => {
+    const fail = (async () => Response.json({ state: 'error', error: 'enc.onnx: sha256 mismatch' })) as typeof fetch
+    const err = await installModel(model, undefined, { caches: fakeCaches(), fetch: fail }).catch(e => e)
+    expect(err).toBeInstanceOf(ServerFetchFailed)
+    expect(err.message).toBe('enc.onnx: sha256 mismatch')
+
+    const caches = fakeCaches()
+    await installModel(model, undefined, { caches, fetch: rangeServer(model).fetch })
+    const never = vi.fn(fail)
+    await installModel(model, undefined, { caches, fetch: never })
+    expect(never).not.toHaveBeenCalled()
   })
 
   it('counts a whole-file entry, and deletes only this model', async () => {

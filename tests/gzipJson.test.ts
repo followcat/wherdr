@@ -1,22 +1,28 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { gunzipSync } from 'node:zlib'
-import { GZIP_MIN, gzipBody } from '../server/utils/gzipJson'
+import { GZIP_MIN, jsonBody } from '../server/utils/gzipJson'
 
 describe('large JSON answers, gzipped', () => {
   const big = { items: Array.from({ length: 400 }, (_, i) => ({ role: 'assistant', text: `reply ${i}` })) }
   it('gzips a large object for a browser that takes it, and it reads back the same', () => {
-    const body = gzipBody('gzip, deflate, br', big)
-    expect(body).not.toBeNull()
-    expect(body!.length).toBeLessThan(JSON.stringify(big).length / 4)
-    expect(JSON.parse(gunzipSync(body!).toString('utf8'))).toEqual(big)
+    const r = jsonBody('gzip, deflate, br', big)
+    expect(r?.gzip).toBe(true)
+    expect(r!.body.length).toBeLessThan(JSON.stringify(big).length / 4)
+    expect(JSON.parse(gunzipSync(r!.body as Buffer).toString('utf8'))).toEqual(big)
   })
-  it('leaves small answers, other encodings and anything but plain JSON as they are', () => {
-    expect(gzipBody('gzip', { ok: true })).toBeNull()
-    expect(gzipBody('br', big)).toBeNull()
-    expect(gzipBody(undefined, big)).toBeNull()
-    expect(gzipBody('gzip', Buffer.alloc(GZIP_MIN * 2))).toBeNull()
-    expect(gzipBody('gzip', 'x'.repeat(GZIP_MIN * 2))).toBeNull()
-    expect(gzipBody('gzip', new Map([['a', 1]]))).toBeNull()
-    expect(gzipBody('gzip', Array.from({ length: 2000 }, (_, i) => i))).not.toBeNull()
+  it('sends a small answer as the JSON text it built, once', () => {
+    const json = vi.spyOn(JSON, 'stringify')
+    try {
+      expect(jsonBody('gzip', { ok: true })).toEqual({ gzip: false, body: '{"ok":true}' })
+      expect(json).toHaveBeenCalledTimes(1)
+    } finally { json.mockRestore() }
+  })
+  it('leaves other encodings and anything but plain JSON to H3', () => {
+    expect(jsonBody('br', big)).toBeNull()
+    expect(jsonBody(undefined, big)).toBeNull()
+    expect(jsonBody('gzip', Buffer.alloc(GZIP_MIN * 2))).toBeNull()
+    expect(jsonBody('gzip', 'x'.repeat(GZIP_MIN * 2))).toBeNull()
+    expect(jsonBody('gzip', new Map([['a', 1]]))).toBeNull()
+    expect(jsonBody('gzip', Array.from({ length: 2000 }, (_, i) => i))?.gzip).toBe(true)
   })
 })

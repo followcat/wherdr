@@ -11,13 +11,11 @@ on the same machine:
 git clone -b v3 https://github.com/afloury/wherdr.git
 cd wherdr
 npm ci
-WHERDR_BACKEND=core NUXT_PUBLIC_CORE=true npm run build
-WHERDR_BACKEND=core HC_SOCKET=/path/to/hc.sock npm start   # listens on 127.0.0.1:7683
+npm run build
+HC_SOCKET=/path/to/hc.sock npm start   # listens on 127.0.0.1:7683
 ```
 
-For hot reload, `WHERDR_BACKEND=core NUXT_PUBLIC_CORE=true HC_SOCKET=/path/to/hc.sock npm run dev`
-(`http://localhost:3000`). Without `WHERDR_BACKEND=core`, the same checkout builds the v2
-application, which drives Herdr.
+For hot reload, `HC_SOCKET=/path/to/hc.sock npm run dev` (`http://localhost:3000`).
 
 Open `http://localhost:7683` in a browser on that computer: the desktop layout, passkeys and the
 installable app work there, since browsers treat `localhost` as secure. There is no phone access
@@ -43,7 +41,7 @@ the server guard and the client use the same list. Unit and component tests run 
 real hc session:
 
 ```sh
-WHERDR_BACKEND=core NUXT_PUBLIC_CORE=true npm run build
+npm run build
 npx playwright test -c playwright.core.config.ts
 ```
 

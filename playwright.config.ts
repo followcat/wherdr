@@ -1,7 +1,8 @@
-// End-to-end tests (v3): the built app (`npm run build`) on Chromium at iPhone size.
-// Each spec starts its own server and fake herdr-core socket (tests/e2e/core.ts), so
-// there is no webServer here. The v2 suite (fake Herdr, WebKit, desktop) lives on
-// develop and main.
+// End-to-end tests (v3): the built app (`npm run build`) on Chromium at iPhone size,
+// and the core smoke on WebKit (Safari's engine, iPhone 13) for iOS-only breakage
+// such as a WebSocket handshake Safari rejects. Each spec starts its own server and
+// fake herdr-core socket (tests/e2e/core.ts), so there is no webServer here. The v2
+// suite (fake Herdr, desktop projects) lives on develop and main.
 import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
@@ -19,5 +20,8 @@ export default defineConfig({
     serviceWorkers: 'block',
     trace: 'retain-on-failure',
   },
-  projects: [{ name: 'chromium-phone', use: { ...devices['iPhone 13'], browserName: 'chromium' } }],
+  projects: [
+    { name: 'chromium-phone', use: { ...devices['iPhone 13'], browserName: 'chromium' } },
+    { name: 'webkit-phone', use: { ...devices['iPhone 13'] }, testMatch: 'core-smoke.spec.ts' },
+  ],
 })

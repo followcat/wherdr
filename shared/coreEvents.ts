@@ -1,4 +1,5 @@
 import type { CoreTerminal } from './coreInventory'
+import { cleanTitle } from './paneTitle'
 
 // herdr-core `events.subscribe`: a snapshot, then one `event` notification per fact
 // change, numbered by `seq`. This applies one event to the terminals we hold.
@@ -47,7 +48,14 @@ export function applyCoreEvent(terminals: CoreTerminals, event: CoreEvent, now: 
     case 'turn':
       if (typeof data.turn === 'number') terminals.set(event.terminal, { ...t, turn: data.turn, ...(data.turn !== t.turn ? { status_ms: stamp(data, now) } : {}) })
       return 'terminal'
-    case 'title': if (typeof data.title === 'string') terminals.set(event.terminal, { ...t, title: data.title }); return 'terminal'
+    case 'title': {
+      if (typeof data.title !== 'string') return 'terminal'
+      // Claude animates a spinner glyph in front of its title while it works: a new
+      // glyph alone shows nothing new (the state strips it), so it is no change.
+      const same = cleanTitle(data.title) === cleanTitle(t.title)
+      terminals.set(event.terminal, { ...t, title: data.title })
+      return same ? null : 'terminal'
+    }
     case 'labels': if (isObject(data.labels)) terminals.set(event.terminal, { ...t, labels: data.labels as Record<string, string> }); return 'terminal'
     case 'keep': if (typeof data.keep === 'boolean') terminals.set(event.terminal, { ...t, keep: data.keep }); return 'terminal'
     case 'size': terminals.set(event.terminal, { ...t, cols: Number(data.cols) || t.cols, rows: Number(data.rows) || t.rows }); return 'terminal'

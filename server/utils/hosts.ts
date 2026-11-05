@@ -60,13 +60,11 @@ export function hostRefusalIsHtml(path: string, accept: string | string[] | unde
 }
 
 // The command that checks and fixes the phone address on the machine, which
-// may have no screen: `wherdr phone` where that command exists (npm, Homebrew),
-// else the installer, which ends with the same check (Herdr plugin).
+// may have no screen: `wherdr phone` (npx when wherdr is not installed for good).
 // `wherdr phone` looks at its default port: one started on another port
 // (--port, PORT=…, from the sources) is named, or the command checks nothing.
 const CLI_DEFAULT_PORT = '7683'
 export function phoneFixCommand(install = process.env.WHERDR_INSTALL || '', port = process.env.NITRO_PORT || process.env.PORT || ''): string {
-  if (install === 'plugin') return 'curl -fsSL https://wherdr.dev/install | sh'
   const command = install === 'brew' || install === 'npm-global' ? 'wherdr phone' : 'npx wherdr phone'
   return /^\d+$/.test(port) && port !== CLI_DEFAULT_PORT ? `${command} --port ${port}` : command
 }

@@ -3,6 +3,7 @@ import type { CoreTerminal } from './coreInventory'
 import { type CoreDocs, SPACE_LABEL, TAB_LABEL, rootTerminals, SEEN_LABEL } from './coreLayout'
 import { addressOnly, coreActivity, coreTitle, coreUnread, ownTitle } from './coreInventory'
 import type { HerdrState, MachineInfo, Pane } from './types'
+import { cleanTitle } from './paneTitle'
 
 export interface CoreMachine { name: string; state: string; why?: string }
 // Lossless encoding keeps IDs stable across inventory order and core restarts.
@@ -45,7 +46,7 @@ export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], do
     }
     const activity = coreActivity(terminal)
     const commands = [terminal.template, terminal.status?.app, ...(terminal.foreground?.argv ?? []), ...(terminal.argv ?? [])]
-    const agent = terminal.agent || (commands.map(c => c?.split('/').pop()?.replace(/^claude-code$/, 'claude').replace(/^gemini-cli$/, 'gemini')).find(c => c && ['claude', 'codex', 'omp', 'opencode', 'gemini', 'aider'].includes(c)) ?? null)
+    const agent = terminal.agent || (commands.map(c => c?.split('/').pop()?.replace(/^claude-code$/, 'claude').replace(/^gemini-cli$/, 'gemini')).find(c => c && ['claude', 'codex', 'omp', 'devin', 'opencode', 'gemini', 'aider'].includes(c)) ?? null)
     if (!result.tabs!.some(t => t.id === tab)) {
       result.tabs!.push({ id: tab, workspace, machine, label: docTab?.name || coreTitle(terminal), number: result.tabs!.length + 1, layout: null })
       if (docTab) order.set(tab, space!.tabs!.indexOf(docTab))
@@ -54,7 +55,7 @@ export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], do
     // idle after a turn nobody looked at yet = finished, unread ('done').
     const status = (state === 'idle' || state === 'done') && terminal.labels?.[SEEN_LABEL] !== undefined ? (coreUnread(terminal) ? 'done' : 'idle') : state
     const pane: Pane = { id: `${workspace}:p${id}`, coreAddress: terminal.address, machine, workspace, tab, tabLabel: result.tabs!.find(t => t.id === tab)!.label,
-      agent, name: addressOnly(terminal.name, terminal.address) ? null : terminal.name ?? null, label: ownTitle(terminal), title: terminal.title ?? null, cwd, agentSession: null,
+      agent, name: addressOnly(terminal.name, terminal.address) ? null : terminal.name ?? null, label: ownTitle(terminal), title: terminal.title == null ? null : cleanTitle(terminal.title), cwd, agentSession: null,
       status, interaction: 'unknown',
       ...(typeof terminal.status_ms === 'number' ? { stateSeq: terminal.status_ms } : terminal.turn ? { stateSeq: terminal.turn } : {}) }
     result.panes.push(pane)

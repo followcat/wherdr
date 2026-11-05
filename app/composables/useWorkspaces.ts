@@ -22,10 +22,6 @@ export function noteTab(tabId: string) {
   const open = herdrState.value.ok ? herdrState.value.workspaces.map(w => w.id) : undefined
   saveMemory(rememberTab(tabMemory.value, e.tab.workspace, tabId, open))
 }
-// Tab just created (not yet in Herdr's state): remembered right away.
-export function rememberNewTab(workspaceId: string, tabId: string) {
-  saveMemory(rememberTab(tabMemory.value, workspaceId, tabId))
-}
 
 // Panes just closed from the app, hidden until Herdr's state
 // removes them (a tab whose panes are all gone disappears with them):

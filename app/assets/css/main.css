@@ -250,9 +250,6 @@
 .display {
   font-family: var(--display); font-weight: 850; letter-spacing: -.045em; word-spacing: .08em; line-height: .95; color: var(--text);
 }
-.dot { width: 7px; height: 7px; background: var(--dim); flex: none; }
-.dot.ok { background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 14%, transparent); }
-.dot.bad { background: var(--rose); }
 
 .icon-btn {
   width: 40px; height: 40px; padding: 0; flex: none;
@@ -445,7 +442,6 @@ body.short-bottom { --safe-bottom: 0px; }
 .quota-row.quota-api { grid-template-columns: 44px 1fr; min-height: 34px; }
 .quota-api-label { margin: 0; padding: 4px 10px; align-self: center; min-width: 0; font: 400 10px/1.3 var(--mono); letter-spacing: .04em; color: var(--dim); overflow-wrap: anywhere; }
 .quota-limited { color: var(--danger); }
-.quota-foot { margin: 6px 0 0; text-align: right; font: 400 9.5px/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
 
 .agent-group { margin-bottom: 26px; }
 .group-title {
@@ -459,10 +455,6 @@ body.short-bottom { --safe-bottom: 0px; }
 .group-title .group-sort:hover { color: var(--text); }
 .agent-group.blocked .group-title { color: var(--rose); }
 .agent-group.blocked .group-title::before { background: var(--rose); }
-.group-btn {
-  margin-left: auto; font: 500 10.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
-  color: var(--mauve); padding: 4px 0;
-}
 
 /* Small mono tag on a card (usage limit). */
 .card-tag {
@@ -685,16 +677,10 @@ body.short-bottom { --safe-bottom: 0px; }
 .card.done .card-title { font-weight: 700; }
 .card:focus-visible { outline: 1px solid var(--mauve); outline-offset: -1px; }
 
-.card-main { flex: 1; min-width: 0; }
 .card-title {
   font-weight: 600; font-size: 15px; line-height: 1.3; color: var(--text); letter-spacing: -.01em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.card-meta { display: flex; align-items: center; gap: 8px; margin-top: 5px; min-width: 0; overflow: hidden; }
-/* Line too narrow (space: number of tabs and panes): the model is
-   truncated with "…" instead of being cut sharply. */
-.card-meta .pill { flex-shrink: 1; min-width: 0; }
-.card-meta .pill-model { min-width: 0; }
 /* Worktree branch (or folder): its own line, below the state, readable in full. */
 .card-where {
   display: block; min-width: 0; margin-top: 4px;
@@ -806,10 +792,6 @@ body.short-bottom { --safe-bottom: 0px; }
   background: var(--surface); color: var(--text); border: 1px solid var(--line);
 }
 .avatar .iconify { width: 21px; height: 21px; }
-/* A herdr-projects coordinator (AgentAvatar `coordinator`): its role's icon on
-   an accent tint, in its agent's color below. */
-.avatar.coord { color: var(--mauve); background: color-mix(in srgb, var(--mauve) 10%, var(--surface)); border-color: color-mix(in srgb, var(--mauve) 50%, var(--line)); }
-.avatar.coord .iconify { width: 19px; height: 19px; }
 .avatar.claude { color: var(--claude); }
 .avatar.codex { color: var(--codex); }
 .avatar.omp { color: var(--omp); }
@@ -1029,16 +1011,18 @@ body.short-bottom { --safe-bottom: 0px; }
 .msg-ai:has(.msg-actions) .msg-c { padding-bottom: 36px; }
 
 /* User message: square block on the right. */
-.msg-user-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; margin-top: 6px; }
+.msg-user-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; margin-top: 6px; container-type: inline-size; }
 .msg-user .msg-c { max-width: 88%; }
-/* Images-only message: no empty bubble under the thumbnails. */
-.msg-no-text .msg-bubble { display: none; }
+/* Images in the bubble, above the text. Images only: the same frame, even padding. */
+.msg-media { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; white-space: normal; }
+.msg-media:last-child { margin-bottom: 2px; }
+.msg-no-text .msg-bubble { padding: 8px; }
+.msg-no-text .msg-media { margin: 0; }
 .msg-bubble {
   min-height: 0; padding: 10px 14px;
   background: var(--surface-2); color: var(--text); border: 1px solid var(--line);
   font-size: 15px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;
 }
-.msg-files { margin-bottom: 6px; }
 .msg-time { font: 400 10.5px/1 var(--mono); color: var(--dim); letter-spacing: .04em; }
 /* Long typed message: folded after ~12 lines, with a fade and Show more. */
 .msg-fold { position: relative; }
@@ -1385,7 +1369,6 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
 /* Photo counted by Claude's queue whose file wherdr does not know. */
 .thumb-missing { display: grid; place-items: center; width: 92px; height: 92px; border: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent); color: var(--muted); background: var(--surface-2); }
 .thumb-missing .iconify { width: 22px; height: 22px; }
-.msg-files:has(.thumb-missing) { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 @media (max-width: 700px) { .thumb-missing { width: 72px; height: 72px; } }
 .queued-tag { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; font: 400 11px/1.3 var(--mono); color: var(--muted); text-align: right; }
 .queued-tag > span { max-width: calc(100% - 18px); min-width: 0; overflow-wrap: anywhere; }
@@ -1434,7 +1417,10 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
 .thumbs { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; white-space: normal; }
 .thumbs .msg-img { width: 92px; height: 92px; object-fit: cover; cursor: zoom-in; background: var(--surface-2); border: 1px solid var(--line); }
 .thumbs.one .msg-img { width: auto; height: auto; max-width: min(100%, 280px); max-height: 280px; }
-.msg-bubble .thumbs { margin: 2px 0 8px; justify-content: flex-start; }
+.msg-media .thumbs { justify-content: flex-start; }
+/* One image in a user message: readable, and sized from the message width (a
+   percentage would let a wide screenshot stretch the bubble, then sit shrunk in it). */
+.msg-media .thumbs.one .msg-img { max-width: min(360px, 88cqi - 32px); max-height: 320px; }
 /* Images an action returned (read of a PNG, screenshot…): under its row, left-aligned. */
 .thumbs.tool-thumbs { display: flex; justify-content: flex-start; margin: 6px 0 8px 22px; }
 .omp-console .thumbs.tool-thumbs { margin-left: 12px; }
@@ -1445,7 +1431,7 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
 /* Image viewer: the stage is the area left by the safe areas and the bars; the
    image is laid out at its zoom (width/height) and moved with a transform, so
    it may extend past the stage when zoomed. No native scrolling or page zoom. */
-.lightbox { position: fixed; inset: 0; z-index: 50; overflow: hidden; background: rgba(10, 10, 12, .94); cursor: zoom-out; touch-action: none; overscroll-behavior: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.lightbox { position: fixed; inset: 0; z-index: 50; pointer-events: auto; overflow: hidden; background: rgba(10, 10, 12, .94); cursor: zoom-out; touch-action: none; overscroll-behavior: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .lightbox-stage {
   position: absolute; top: calc(var(--safe-top) + 56px); bottom: calc(var(--safe-bottom) + 64px);
   left: max(12px, env(safe-area-inset-left, 0px)); right: max(12px, env(safe-area-inset-right, 0px));
@@ -1797,9 +1783,11 @@ body.kb .composer { padding-bottom: 8px; }
   .prompt .prompt-foot { display: contents; }
   .prompt .prompt-plus { grid-column: 1; grid-row: 1; }
   .prompt .prompt-send { grid-column: 3; grid-row: 1; margin-left: 0; }
-  /* With the mic, the row at rest keeps it next to Send. */
-  .prompt.has-mic { grid-template-columns: 44px minmax(0, 1fr) 44px 44px; }
-  .prompt.has-mic .prompt-mic { grid-column: 3; grid-row: 1; }
+  /* With the mic, the row at rest keeps it next to +, where it sits while editing too:
+     it never moves, and a stray tap there sends nothing. */
+  .prompt.has-mic { grid-template-columns: 44px 44px minmax(0, 1fr) 44px; }
+  .prompt.has-mic .prompt-mic { grid-column: 2; grid-row: 1; }
+  .prompt.has-mic .prompt-body { grid-column: 3; }
   .prompt.has-mic .prompt-send { grid-column: 4; }
   .prompt .prompt-hint { display: none; }
   .prompt.expanded { display: flex; align-items: stretch; }
@@ -2315,7 +2303,6 @@ body.kb .composer { padding-bottom: 8px; }
 .shortcut-row dd { margin: 0; display: flex; align-items: center; gap: 4px; flex: none; }
 .shortcut-row .sep { margin: 0 4px; font-size: 12px; color: var(--dim); }
 .shortcut-row [data-slot], .shortcut-row kbd { border-radius: 0; font-family: var(--mono); }
-.settings-action-keys { display: flex; gap: 4px; margin-left: auto; }
 .settings-card .keys { padding-top: 14px; font-family: var(--mono); font-size: 12px; }
 .settings-toggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 16px; cursor: pointer; }
 .settings-toggle + .settings-toggle { border-top: 0; }
@@ -2445,14 +2432,6 @@ ol[data-slot="viewport"] { top: calc(var(--safe-top) + 12px) !important; bottom:
 .tabmap i.done { background: color-mix(in srgb, var(--done) 30%, transparent); }
 .tabmap i.cur { background: var(--mauve); }
 
-/* Card of a space with several tabs or panes: mini-map of the tab of the
-   most urgent pane instead of the avatar, number of tabs / panes. */
-.space-avatar { display: grid; place-items: center; width: 38px; height: 38px; flex: none; }
-.space-avatar .tabmap { width: 36px; height: 26px; }
-.space-avatar .tabmap i.cur { background: color-mix(in srgb, var(--mauve) 70%, transparent); }
-.card.blocked:not(.state-from-tab) .space-avatar .tabmap i.cur { background: var(--rose); }
-.card-title-branch { width: 13px; height: 13px; margin-right: 6px; vertical-align: -1px; color: var(--green); }
-.card-count { flex: none; font: 500 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--text-3); padding: 3px 5px; border: 1px solid var(--line); }
 /* Space with several tabs: one state dot per tab, in order (same colors as the pill). */
 .card-tab-dots { display: inline-flex; gap: 3px; margin-left: 7px; vertical-align: 1px; }
 .card-tab-dots i { width: 6px; height: 6px; flex: none; border: 1px solid var(--dim); }
@@ -2460,10 +2439,6 @@ ol[data-slot="viewport"] { top: calc(var(--safe-top) + 12px) !important; bottom:
 .card-tab-dots i.working { background: var(--working); border-color: var(--working); }
 .card-tab-dots i.done { background: var(--done); border-color: var(--done); }
 .card-tab-dots i.idle { border-color: var(--idle); }
-
-/* Role tag + tab count can fill the line: the state wraps below instead of being cut. */
-.space-card .card-meta { flex-wrap: wrap; row-gap: 5px; }
-.card-where .card-where-lead { color: var(--dim); }
 
 .space-menu.icon-btn { flex: none; }
 
@@ -3307,7 +3282,7 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
 .card.compact .card-where { display: flex; align-items: center; gap: 6px; }
 .card.compact .card-where .tabmap { flex: none; width: 22px; height: 15px; }
 .card.compact .card-where-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.card.compact.blocked:not(.state-from-tab) .card-where .tabmap i.cur { background: var(--rose); }
+.card.compact.blocked .card-where .tabmap i.cur { background: var(--rose); }
 .card.compact .card-more-in > :first-child { margin-top: 6px; }
 .card.compact .card-more-in > :last-child { margin-bottom: 4px; }
 .card.compact .card-detail { padding: 4px 8px; }
@@ -3349,7 +3324,7 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
 .list-compact .quota-top b { font-size: 14px; letter-spacing: -.04em; }
 .list-compact .quota-top b small { font-size: 11px; }
 .list-compact .quota-bar { height: 3px; margin: 4px 0 0; }
-.list-compact .quota-reset, .list-compact .quota-foot { display: none; }
+.list-compact .quota-reset { display: none; }
 
 /* Touch tablet (iPad, shortest side ≥ 700 px, also by its screen while the
    on-screen keyboard shortens the window): 44 px targets, like on the
@@ -3369,18 +3344,10 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
   .cell-view .agent-actions .icon-btn { width: 44px; height: 44px; }
   .agent-top .view-toggle { min-width: 44px; min-height: 44px; }
   .cell-grip { width: 32px; height: 44px; }
-  /* Dividers: wider touch area, line marked with a notch (as in the plan). */
-  .split .divider.right { width: 24px; }
-  .split .divider.down { height: 24px; }
-  .split .divider::before { content: ''; position: absolute; left: 50%; top: 50%; background: var(--line-strong); transform: translate(-50%, -50%); }
-  .split .divider.right::before { width: 4px; height: 26px; }
-  .split .divider.down::before { width: 26px; height: 4px; }
-  .split .divider.on::before { background: var(--mauve); }
 }
 @media (prefers-reduced-motion: reduce) { #home.drawer, .list-scrim { animation: none; } }
 
 .hw-toast .hw-toast-action { border-radius: 0; font: 600 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
-.card.compact.task-row .home-task-line { flex-basis: calc(100% - 26px); min-height: 1.3em; }
 
 /* Machine groups share the machine bar's device preferences and reorder handles. */
 .machine-group-list { list-style: none; padding: 0; margin: 0 0 12px; }
@@ -3448,3 +3415,12 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
 .phone-chrome .mode-btn { border: 1px solid transparent; border-radius: 0; }
 .phone-chrome .mode-btn.on { border-color: var(--accent); }
 .composer-actions { display: contents; }
+
+/* Projects and board (ProjectsSettings, BoardView, TaskSheet). */
+.mono-label { font-family: var(--font-mono, 'JetBrains Mono', monospace); text-transform: uppercase; letter-spacing: .08em; font-size: 12px; color: var(--text-2); }
+/* 16 px: iOS zooms into a smaller field. */
+.pm-select { max-width: 100%; min-height: 44px; padding: 8px; border: 1px solid var(--line); border-radius: 0; background: var(--bg); color: var(--text); font-family: var(--font-mono, 'JetBrains Mono', monospace); font-size: 16px; }
+.board-badge { align-self: flex-start; font: 600 12px var(--font-mono); padding: 2px 6px; border: 1px solid var(--blocked); color: var(--blocked); }
+.board-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.board-chip { font: 500 12px var(--font-mono); padding: 2px 6px; border: 1px solid var(--line); color: var(--text-2); }
+a.board-chip { color: var(--accent); text-decoration: none; }

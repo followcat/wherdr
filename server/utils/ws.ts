@@ -5,8 +5,7 @@ import { auth } from './http'
 import { sameOrigin } from './http'
 import { hostAllowed } from './hosts'
 import { checkRequestClient, ensureFresh, gateDecision, networkReady, onNetworkReading } from './network'
-
-const WS_MAX = 256 * 1024
+import { WS_MAX_PAYLOAD } from './wsCompression'
 
 // Headers of an upgrade request (web Headers) -> plain object.
 export function headersOf(h: Headers): Record<string, string | undefined> {
@@ -92,8 +91,8 @@ setInterval(() => {
   }
 }, 25000).unref?.()
 
-// Message text, refused beyond 256 KB (like maxPayload before).
+// Message text, refused beyond 256 KB (ws already stops a larger frame: WS_MAX_PAYLOAD).
 export function messageText(message: { text: () => string, rawData?: unknown }): string | null {
   const t = message.text()
-  return t.length > WS_MAX ? null : t
+  return t.length > WS_MAX_PAYLOAD ? null : t
 }

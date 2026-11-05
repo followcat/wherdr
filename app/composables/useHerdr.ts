@@ -14,7 +14,9 @@ import { READY_SORTS, type ReadySort } from '#shared/spaces'
 import { DEADLINE_WARNING_MS } from '#shared/sessionLimit'
 import { effectiveTypingSpeed, encryptedTextActive, parseTypingSettings } from '~/utils/typewriter'
 import { readHiddenAgents } from '~/utils/agentChoices'
-import { checkNewVersion } from './useAppVersion'
+import { checkNewVersionOnWake } from './useAppVersion'
+import { onceEvery } from '~/utils/onceEvery'
+import { keepIfSame } from '~/utils/keepIfSame'
 import { migrateContentWidth } from '~/utils/contentWidth'
 import { readQuotaDisplay } from '~/utils/quotas'
 import { readShowShells } from '~/utils/terminalVisibility'
@@ -268,7 +270,7 @@ export const currentPane = computed<Pane | undefined>(() => herdrState.value.pan
 // ---------------------------------------------------------------- machines
 // Several machines (Herdr SSH profiles): `machines` is only sent if
 // there are at least two; with a single one, the app stays exactly as before.
-export const machines = computed<MachineInfo[]>(() => herdrState.value.machines || [])
+export const machines = computed<MachineInfo[]>(old => keepIfSame(old, herdrState.value.machines || []))
 export const multiMachine = computed(() => machines.value.length > 1 || Boolean(machines.value[0]?.baseKey))
 export const machineInfo = (key: string | null | undefined) => machines.value.find(m => m.key === (key || ''))
 // `uname -s` of a pane's machine ('Darwin' = macOS); the local one from the config.
@@ -305,12 +307,11 @@ watch(lastMachine, v => ls.set('lastMachine', v))
 type Toaster = ReturnType<typeof useToast>
 let toaster: Toaster | null = null
 export function setToaster(t: Toaster) { toaster = t }
-// `detail`: an extra, smaller line (output of a plugin action…).
-export function clearToast() { toaster?.clear() }
 // `action`: one button in it (Restore after Archive…), the toast then stays a
 // few seconds longer; a tap runs it and closes the toast.
 export interface ToastAction { label: string, icon?: string, run: () => void }
 export const ACTION_TOAST_MS = 6000
+// `detail`: an extra, smaller line (output of a plugin action…).
 export function toast(msg: string, err = false, detail?: string, action?: ToastAction) {
   if (!toaster) return
   toaster.clear()
@@ -471,6 +472,9 @@ export function createPaneReuse() {
   }
 }
 const paneReuse = createPaneReuse()
+// Each return to the foreground reconnects on iOS: the push subscription is
+// posted again at most this often on reconnection.
+const pushResync = onceEvery(10 * 60000)
 
 const eventProbe = createSocketProbe(() => evWs)
 let evHandshake: ReturnType<typeof setTimeout> | undefined
@@ -509,10 +513,12 @@ export function connectEvents() {
     if (everOpen) {
       settleUntil = Date.now() + SETTLE_MS
       // Reconnection = often a redeployment: we check right away whether
-      // a new version is served ("Reload" banner).
-      checkNewVersion()
-      // Push subscriptions dropped meanwhile (lock turned off): post this device's again.
-      syncPushLanguage().catch(() => {})
+      // a new version is served ("Reload" banner), at most once a minute.
+      checkNewVersionOnWake()
+      // Push subscriptions dropped meanwhile (lock turned off while this
+      // device slept): post this device's again, at most every 10 minutes
+      // (an open app is asked at once with "push-resubscribe").
+      if (pushResync.take()) syncPushLanguage().catch(() => {})
     }
     everOpen = true
     sendViewing()

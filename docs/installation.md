@@ -29,8 +29,8 @@ Build and start from source, as in [First launch](quick-start.md#quick-start):
 git clone -b v3 https://github.com/afloury/wherdr.git
 cd wherdr
 npm ci
-WHERDR_BACKEND=core NUXT_PUBLIC_CORE=true npm run build
-WHERDR_BACKEND=core HC_SOCKET=/path/to/hc.sock npm start
+npm run build
+HC_SOCKET=/path/to/hc.sock npm start
 ```
 
 `npm start` runs `.output/server/index.mjs` on `127.0.0.1:7683` (`HOST`, `PORT`). Other settings
@@ -48,7 +48,6 @@ Description=wherdr v3 (herdr-core)
 
 [Service]
 WorkingDirectory=%h/wherdr
-Environment=WHERDR_BACKEND=core
 Environment=HC_SOCKET=/path/to/hc.sock
 Environment=DATA_DIR=%h/wherdr/data
 ExecStart=/usr/bin/env node .output/server/index.mjs
@@ -88,7 +87,8 @@ DATA_DIR=/path/to/data node scripts/fetch-dictation-files.mjs
 | Set | Size | Content |
 | --- | --- | --- |
 | `runtime` (default) | 13 MB | sherpa-onnx WASM runtime, in `models/runtime/` |
-| `parakeet` (default) | 670 MB | Parakeet v3, the phone's model: French, English and 23 more European languages, detected |
+| `parakeet` (default) | 670 MB | Parakeet v3: French, English and 23 more European languages, detected. Too large for an iPhone |
+| `canary` | 207 MB | Canary 180M, the iPhone's default: French, English, German, Spanish (the device's language, not detected) |
 | `sensevoice` | 237 MB | SenseVoice, lighter, no French (Chinese, English, Japanese, Korean, Cantonese) |
 | `ort` | 59 MB | onnxruntime-web 1.23.2, in `models/runtime/`, for WebGPU models only |
 
@@ -106,7 +106,7 @@ update, in the checkout:
 ```sh
 git pull
 npm ci
-WHERDR_BACKEND=core NUXT_PUBLIC_CORE=true npm run build
+npm run build
 ```
 
 then restart wherdr. Data in `DATA_DIR` (passkeys, push subscriptions, settings) is kept.

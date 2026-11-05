@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { ChatItem } from '../shared/types'
-import { boxHolds, takeBackInterrupted, unansweredLast, unansweredTurn, withoutTakenBack } from '../server/utils/interruptRestore'
+import { boxHolds, takeBackInterrupted, unansweredLast, withoutTakenBack } from '../server/utils/interruptRestore'
 import { inputBox } from '../server/utils/unqueue'
 import { parseClaude } from '../server/utils/transcripts'
 import { restoreDraft } from '../app/utils/queuedCancel'
@@ -53,25 +53,6 @@ describe('unansweredLast', () => {
   it('is null once the agent replied or used a tool', () => {
     expect(unansweredLast([{ role: 'user', text: 'b' }, { role: 'assistant', text: 'ok' }])).toBeNull()
     expect(unansweredLast([{ role: 'user', text: 'b' }, { role: 'tool', text: 'Read x' }])).toBeNull()
-  })
-})
-
-describe('unansweredTurn', () => {
-  const photo = '/home/user/.cache/herdr-web/uploads/2026-01-01T00-00-00-000Z-abc123.png'
-  it('first message of a conversation, with a photo, taken by Claude with no reply yet', () => {
-    const u: ChatItem = { role: 'user', text: 'fictional first question', images: 1, ts: '1' }
-    expect(unansweredTurn([u], `fictional first question\n${photo}`)).toBe(u)
-    expect(unansweredTurn([u, { role: 'system', text: 'Interrupted' }], 'fictional first question')).toBe(u)
-  })
-  it('photos alone: matched by their images', () => {
-    const u: ChatItem = { role: 'user', text: '', images: 1, ts: '1' }
-    expect(unansweredTurn([u], photo)).toBe(u)
-  })
-  it('null once a reply started, or for another message', () => {
-    const u: ChatItem = { role: 'user', text: 'fictional first question', ts: '1' }
-    expect(unansweredTurn([u, { role: 'assistant', text: 'Sure' }], 'fictional first question')).toBeNull()
-    expect(unansweredTurn([u], 'something else entirely')).toBeNull()
-    expect(unansweredTurn([], 'fictional first question')).toBeNull()
   })
 })
 

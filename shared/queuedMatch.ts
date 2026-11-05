@@ -38,3 +38,8 @@ export const uploadSrc = (name: string) => `/uploads/${encodeURIComponent(name)}
 // A command for the agent ("/compact", "/model opus"…), not a message that
 // starts with a path (a photo sent alone is "/…/uploads/<name>").
 export const isSlashCommand = (text: string) => /^\/[^\s/]*(?:\s|$)/.test(String(text || '').trim())
+
+// "!" with nothing after it: Claude Code switches to bash mode with an empty
+// field and stays there, so the next message would run as a shell command
+// (Claude Code 2.1.318). Nothing to send.
+export const isBareBang = (text: string) => /^\s*!\s*$/.test(String(text || ''))

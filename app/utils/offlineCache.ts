@@ -13,7 +13,6 @@ export const MAX_MESSAGES = 160
 export const MAX_CHATS = 12
 export const MAX_BYTES = 4 * 1024 * 1024
 export const CHAT_BYTES = 220 * 1024
-export const LEASE_MS = 12 * 3600 * 1000
 export const WRITE_MS = 2000
 
 export interface SavedChat { id: string, items: ChatItem[], at: number }

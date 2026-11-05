@@ -1,7 +1,7 @@
 // wherdr (herdr-web) — PWA to drive, from your phone, the coding agents running in Herdr.
 // Client-only app (no SSR) served by Nitro, which also hosts the whole
 // Herdr gateway (API, WebSockets, Web Push): see server/.
-import { CSP_BASE } from './server/utils/csp'
+import { CSP_BASE, CSP_DICTATION_WORKER, DICTATION_WORKER_PATH } from './server/utils/csp'
 import { ICON_SCAN_GLOBS } from './shared/iconScan'
 import { lazyChunks, PRECACHE_GLOBS, RUNTIME_ONLY_GLOBS } from './shared/precache'
 
@@ -140,6 +140,8 @@ export default defineNuxtConfig({
       'referrer-policy': 'no-referrer',
       'x-content-type-options': 'nosniff',
     } },
+    // The only script allowed to compile WebAssembly (server/utils/csp.ts).
+    [DICTATION_WORKER_PATH]: { headers: { 'content-security-policy': CSP_DICTATION_WORKER } },
     '/icons/**': { headers: { 'cache-control': 'public, max-age=86400' } },
     '/_nuxt/**': { headers: { 'cache-control': 'public, max-age=31536000, immutable' } },
   },

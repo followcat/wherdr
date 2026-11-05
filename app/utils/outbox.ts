@@ -75,3 +75,34 @@ export function recentSends(list: RecentSend[], now: number): RecentSend[] {
 export function isRepeat(list: RecentSend[], text: string, now: number): boolean {
   return recentSends(list, now).some(s => s.text === text)
 }
+
+// Sends of a conversation go one after the other. Each waits for the earlier
+// one whatever its outcome, so a message behind a failed one still goes. A
+// send with no answer after SEND_DEADLINE_MS fails ("Not sent", Retry /
+// Cancel), so the ones behind it never wait for good. The server answers
+// within about 45 s (herdr-core's own deadlines): this only catches a request
+// lost on the way.
+export const SEND_DEADLINE_MS = 60000
+
+export class SendTimeout extends Error {
+  constructor() {
+    super('No answer from the server')
+    this.name = 'SendTimeout'
+  }
+}
+
+export function chainSend<T>(prev: Promise<unknown> | undefined, send: (signal: AbortSignal) => Promise<T>, ms = SEND_DEADLINE_MS): Promise<T> {
+  return (prev || Promise.resolve()).catch(() => {}).then(() => {
+    const ctl = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    // Also when `send` does not honour the signal.
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        const err = new SendTimeout()
+        ctl.abort(err)
+        reject(err)
+      }, ms)
+    })
+    return Promise.race([send(ctl.signal), deadline]).finally(() => clearTimeout(timer))
+  })
+}

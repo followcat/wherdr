@@ -27,7 +27,6 @@ export class CoreSession {
   private socket: Socket | null = null
   private ready = false
   private stopped = false
-  private seq = 0
   private delay = 250
   private retry: ReturnType<typeof setTimeout> | null = null
   private dog: ReturnType<typeof setTimeout> | null = null

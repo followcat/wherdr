@@ -2,6 +2,7 @@
 // herdr-core machines: those core reached (state and last error), reconnect, and
 // add one over SSH (like `hc machine add`). The machine must already accept this
 // host's SSH login: wherdr never asks for a password nor installs anything.
+import { hasPort } from '#shared/coreCapabilities'
 const target = ref('')
 const name = ref('')
 const adding = ref(false)
@@ -18,7 +19,7 @@ const remote = computed(() => machines.value.filter(m => !m.local && !gone.value
 const STATE: Record<string, string> = { online: 'connected', connecting: 'connecting…', offline: 'offline' }
 
 async function add() {
-  if (!target.value.trim() || adding.value) return
+  if (!target.value.trim() || adding.value || portRefused.value) return
   adding.value = true
   error.value = ''
   try {
@@ -32,7 +33,10 @@ async function add() {
 }
 const renaming = ref('')
 const newName = ref('')
-const status = ref<{ version: string, uptimeMs: number, live: number, name: string | null } | null>(null)
+const status = ref<{ version: string, uptimeMs: number, live: number, name: string | null, hostPort: boolean | null } | null>(null)
+// `user@host:2222` only when the core says it takes a port (unknown: let it try).
+const noPort = computed(() => status.value?.hostPort === false)
+const portRefused = computed(() => noPort.value && hasPort(target.value))
 // "Core 0.1.17 · running since 3 h" from server.status.
 function upFor(ms: number) {
   const m = Math.floor(ms / 60000)
@@ -111,11 +115,12 @@ async function reconnect(key: string) {
     <p v-if="coreLine" class="mono-label core-line" data-testid="core-line">{{ coreLine }}</p>
     <form class="sheet-form" @submit.prevent="add">
       <label class="field-label" for="machineTarget">{{ t('SSH target') }}</label>
-      <UInput id="machineTarget" v-model="target" size="xl" class="w-full mono" autocapitalize="none" autocorrect="off" :spellcheck="false" placeholder="user@10.0.0.7:22" maxlength="200" />
+      <UInput id="machineTarget" v-model="target" size="xl" class="w-full mono" autocapitalize="none" autocorrect="off" :spellcheck="false" :placeholder="noPort ? 'user@10.0.0.7' : 'user@10.0.0.7:22'" maxlength="200" :aria-describedby="portRefused ? 'machinePortHint' : undefined" />
+      <p v-if="portRefused" id="machinePortHint" class="muted settings-hint" data-testid="machine-port-hint">{{ t('This herdr-core takes no port: update it, or use a Host from ~/.ssh/config') }}</p>
       <label class="field-label" for="machineName">{{ t('Name') }} <span class="muted">{{ t('(optional)') }}</span></label>
       <UInput id="machineName" v-model="name" size="xl" class="w-full mono" autocapitalize="none" autocorrect="off" :spellcheck="false" placeholder="vps" maxlength="32" />
       <p v-if="error" class="form-error" role="alert">{{ t(error) }}</p>
-      <UButton type="submit" size="xl" color="primary" variant="solid" class="hw-cta" icon="i-lucide-plus" :loading="adding" :disabled="!target.trim()">{{ t('Add machine') }}</UButton>
+      <UButton type="submit" size="xl" color="primary" variant="solid" class="hw-cta" icon="i-lucide-plus" :loading="adding" :disabled="!target.trim() || portRefused">{{ t('Add machine') }}</UButton>
     </form>
   </div>
 </template>
@@ -124,7 +129,6 @@ async function reconnect(key: string) {
 .machine-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--line); }
 .machine-row:last-child { border-bottom: 0; }
 .machine-row span:first-child { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
-.mono-label { font-family: var(--font-mono, 'JetBrains Mono', monospace); text-transform: uppercase; letter-spacing: .08em; font-size: 12px; color: var(--text-2); }
 .mono-label[data-status='online'] { color: var(--green, var(--text)); }
 .core-machines .settings-card { padding: 0; margin-top: 12px; }
 .rename-form { display: flex; gap: 8px; width: 100%; align-items: center; }

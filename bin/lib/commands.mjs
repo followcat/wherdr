@@ -3,19 +3,19 @@
 // phone, service and doctor.
 import { spawn, spawnSync } from 'node:child_process'
 import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, unlinkSync, watchFile, writeFileSync } from 'node:fs'
-import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { BIN, CliError, SERVER, VERSION, bad, c, homebrewInstall, localUrl, ok, portTaken, probe, row, say, serverEnv, settingsFile, warn, wherdrDir, withSettings } from './core.mjs'
+import { MIGRATION_GUIDE, checkCore, missingHcSocket } from './hc.mjs'
+import { BIN, CliError, ROOT, SERVER, VERSION, bad, c, homebrewInstall, localUrl, ok, portTaken, probe, row, say, serverEnv, settingsFile, warn, wherdrDir, withSettings } from './core.mjs'
 import { RUNTIME_HELP, findRuntime, isBun, runtimeOk, runtimeVersion, temporaryInstall } from './runtime.mjs'
 import { brewDoctor, brewRedirect, brewService, brewStatusRows } from './brew.mjs'
 import { controlService, enableLinger, installService, lingerOn, serviceFile, servicePlatform, serviceState, uninstallService } from './service.mjs'
 import { loginShellPath, userPath } from './userpath.mjs'
-import { refreshSkill } from './skill.mjs'
+import { removeLegacySkill } from './skill.mjs'
 import { LINKS, inspect, publishCommand, reachable } from './tailnet.mjs'
 
-export const HELP = `${'wherdr'}: your Herdr agents from your phone and browser.
+export const HELP = `${'wherdr'}: your coding agents on herdr-core (hc), from your phone and browser.
 
 Usage: wherdr [command] [options]
 
@@ -27,20 +27,22 @@ Commands:
   logs [-f]          Last lines of the log (-n <lines>); -f follows it
   open               Open wherdr in the browser
   phone              Phone state, the app's phone setup page, QR code once it answers
-  panel              One screen: state, Open wherdr, Set up my phone, other commands
   service install    Start wherdr at login (macOS LaunchAgent, Linux systemd --user)
   service uninstall  Remove it
-  doctor             Check Node/Bun, Herdr and its socket, the port and the service
+  dictation fetch    Download the on-device dictation files into <data dir>/models
+                     (default: runtime and the phone model; or name sets, or all)
+  doctor             Check Node/Bun, herdr-core (hc) and its socket, the port and the service
+  pm <command>       A project coordinator's board commands (token in its environment; see its AGENTS.md)
 
 Options:
-  --port <n>        Listening port (default: 7683, or $PORT)
-  --host <addr>     Listening address (default: 127.0.0.1, or $HOST): loopback or this machine's tailnet address.
-  --data-dir <dir>  Passkeys, push keys and settings (default: ~/wherdr/data, or $DATA_DIR)
-  --session <name>  Named Herdr session to drive (default: Herdr's default session)
-  -v, --version     Print the version
-  -h, --help        Print this help
+  --hc-socket <path>  Socket of the herdr-core (hc) session to drive (required, or $HC_SOCKET)
+  --port <n>          Listening port (default: 7683, or $PORT)
+  --host <addr>       Listening address (default: 127.0.0.1, or $HOST): loopback or this machine's tailnet address.
+  --data-dir <dir>    Passkeys, push keys, settings and dictation files (default: ~/wherdr/data, or $DATA_DIR)
+  -v, --version       Print the version
+  -h, --help          Print this help
 
-Settings: environment variables (APP_URL, HOST_LABEL, HERDR_BIN…), or KEY=VALUE lines in
+Settings: environment variables (HC_SOCKET, APP_URL, HOST_LABEL…), or KEY=VALUE lines in
 ~/wherdr/wherdr.env. Guide: https://wherdr.dev`
 
 const files = dir => ({ pid: path.join(dir, 'wherdr.pid'), log: path.join(dir, 'wherdr.log'), last: path.join(dir, 'wherdr.json') })
@@ -59,16 +61,22 @@ export function context(opts, env = process.env, home = os.homedir()) {
     port: opts.port ?? full.PORT ?? saved.port,
     host: opts.host ?? full.HOST ?? saved.host,
     dataDir: opts.dataDir ?? full.DATA_DIR ?? saved.dataDir,
-    session: opts.session ?? full.HERDR_WEB_SESSION ?? saved.session,
+    hcSocket: opts.hcSocket ?? full.HC_SOCKET ?? saved.hcSocket,
   }
   const senv = serverEnv(merged, full, home)
   return { dir, files: files(dir), env: senv, port: senv.PORT, host: senv.HOST, url: localUrl(senv.PORT) }
 }
 
-function remember(ctx) {
+export function remember(ctx) {
   mkdirSync(ctx.dir, { recursive: true })
-  const { PORT: port, HOST: host, DATA_DIR: dataDir, HERDR_WEB_SESSION: session } = ctx.env
-  writeFileSync(ctx.files.last, `${JSON.stringify({ port, host, dataDir, session: session || undefined }, null, 2)}\n`)
+  const { PORT: port, HOST: host, DATA_DIR: dataDir, HC_SOCKET: hcSocket } = ctx.env
+  writeFileSync(ctx.files.last, `${JSON.stringify({ port, host, dataDir, hcSocket }, null, 2)}\n`)
+}
+
+// wherdr 3 never starts without herdr-core: refuse before anything is started.
+export function needCore(ctx) {
+  const missing = missingHcSocket(ctx.env)
+  if (missing) throw new CliError(`${missing}\n  Guide: ${path.join(ROOT, MIGRATION_GUIDE)}`)
 }
 
 // Pid of the background wherdr when it is alive and still our server.
@@ -117,13 +125,14 @@ function needServer() {
 
 // ------------------------------------------------------------------- run
 export async function run(opts) {
-  refreshSkill(context(opts).env)
+  removeLegacySkill(context(opts).env)
   needServer()
   const ctx = context(opts)
+  needCore(ctx)
   if (!process.versions.bun && Number(process.versions.node.split('.')[0]) < 22) throw new CliError(`Node.js 22 or newer is required (found ${process.version}).`)
   await checkPort(ctx)
-  say(`${c.bold('wherdr')} ${VERSION} · ${c.cyan(ctx.url)} · data ${ctx.env.DATA_DIR}${ctx.env.HERDR_WEB_SESSION ? ` · session ${ctx.env.HERDR_WEB_SESSION}` : ''}`)
-  // Bun runs the server (WebSockets, web-push, passkeys, Herdr's Unix socket),
+  say(`${c.bold('wherdr')} ${VERSION} · ${c.cyan(ctx.url)} · data ${ctx.env.DATA_DIR} · hc ${ctx.env.HC_SOCKET}`)
+  // Bun runs the server (WebSockets, web-push, passkeys, herdr-core's Unix socket),
   // but Node stays the reference runtime: use it when it is there.
   if (process.versions.bun && ctx.env.WHERDR_RUNTIME !== 'bun') {
     const node = findRuntime({ ...ctx.env, WHERDR_RUNTIME: '' })
@@ -141,9 +150,10 @@ export async function run(opts) {
 
 // ----------------------------------------------------------------- start
 export async function start(opts) {
-  refreshSkill(context(opts).env)
+  removeLegacySkill(context(opts).env)
   needServer()
   const ctx = context(opts)
+  needCore(ctx)
   const brew = brewService()
   if (brew) {
     const redirect = brewRedirect('start', brew)
@@ -225,7 +235,7 @@ export async function stop(opts, { quiet = false } = {}) {
   }
   if (quiet) return false
   const other = await probe(ctx.port, ctx.host)
-  if (other) warn(`the wherdr on port ${ctx.port} was not started by \`wherdr start\` (plugin, a terminal…): left running.`)
+  if (other) warn(`the wherdr on port ${ctx.port} was not started by \`wherdr start\` (npm start, a terminal…): left running.`)
   else say('wherdr is not running.')
   return false
 }
@@ -255,11 +265,11 @@ export async function status(opts) {
   const hb = brew && brewStatusRows(brew)
   say(`${c.bold('wherdr')} ${VERSION}`)
   row('Address', answer === 'wherdr' ? `${c.green('●')} ${c.cyan(ctx.url)} answers` : answer ? `${c.yellow('●')} port ${ctx.port} is taken by another program` : `${c.dim('○')} port ${ctx.port} free: not running`)
-  row('Process', hb?.process ? hb.process : svc.running ? 'login service' : pid ? `pid ${pid} (wherdr start)` : answer === 'wherdr' ? 'started another way (plugin, a terminal…)' : 'none')
+  row('Process', hb?.process ? hb.process : svc.running ? 'login service' : pid ? `pid ${pid} (wherdr start)` : answer === 'wherdr' ? 'started another way (npm start, a terminal…)' : 'none')
   row('Service', hb ? hb.service : svc.installed ? `installed (${serviceFile()})${svc.running ? '' : ', not running'}` : 'not installed · wherdr service install')
   row('Data', ctx.env.DATA_DIR)
   row('Log', hb ? hb.log : ctx.files.log)
-  if (ctx.env.HERDR_WEB_SESSION) row('Session', ctx.env.HERDR_WEB_SESSION)
+  row('hc', ctx.env.HC_SOCKET || c.yellow('HC_SOCKET not set: wherdr cannot start (--hc-socket <path>)'))
   if (!answer) say(c.dim(hb ? hb.hint : '\n  Start it: wherdr start (background) or wherdr (foreground).'))
 }
 
@@ -379,7 +389,7 @@ export async function phone(opts) {
 
 // --------------------------------------------------------------- service
 export async function service(opts) {
-  if (opts.sub === 'install') refreshSkill(context(opts).env)
+  if (opts.sub === 'install') removeLegacySkill(context(opts).env)
   const ctx = context(opts)
   if (opts.sub === 'uninstall') {
     const file = uninstallService()
@@ -392,6 +402,7 @@ export async function service(opts) {
     throw new CliError('systemd --user is not available here: keep wherdr running with your own service manager (or wherdr start).')
   }
   needServer()
+  needCore(ctx)
   const bin = realpathSync(BIN)
   if (temporaryInstall(bin)) {
     throw new CliError(`this wherdr runs from a temporary npx / bunx / pnpm dlx folder (${path.dirname(path.dirname(bin))}).
@@ -408,13 +419,7 @@ export async function service(opts) {
   if (stopped) ok('background wherdr stopped (the service takes over).')
   await checkPort(ctx)
   remember(ctx)
-  const args = [bin, 'run', '--port', ctx.port, '--host', ctx.host, '--data-dir', ctx.env.DATA_DIR]
-  if (ctx.env.HERDR_WEB_SESSION) args.push('--session', ctx.env.HERDR_WEB_SESSION)
-  // launchd and systemd do not see the shell's PATH: the service gets the
-  // user's, so agents in user folders are found by the Board's commands.
-  const PATH = servicePath(runtime, ctx.env)
-  const env = { PATH, WHERDR_DIR: ctx.dir, WHERDR_RUNTIME: runtime }
-  for (const k of ['APP_URL', 'HERDR_BIN', 'HOST_LABEL', 'CLAUDE_CONFIG_DIR', 'WHERDR_SKILL', 'HERDR_PROJECTS_DATA_DIR']) if (ctx.env[k]) env[k] = ctx.env[k]
+  const { args, env } = serviceSpec(ctx, bin, runtime, servicePath(runtime, ctx.env))
   let file
   try {
     file = installService({ runtime, args, env, log: ctx.files.log })
@@ -445,30 +450,58 @@ export async function service(opts) {
   }
 }
 
+// Command line and environment of the login service. launchd and systemd do
+// not see the shell's PATH: the service gets the user's (PATH), so agents in
+// user folders are found by the Board's commands.
+export function serviceSpec(ctx, bin, runtime, PATH) {
+  const args = [bin, 'run', '--port', ctx.port, '--host', ctx.host, '--data-dir', ctx.env.DATA_DIR]
+  const env = { PATH, WHERDR_DIR: ctx.dir, WHERDR_RUNTIME: runtime }
+  for (const k of ['HC_SOCKET', 'APP_URL', 'HOST_LABEL', 'CLAUDE_CONFIG_DIR', 'WHERDR_SKILL', 'HERDR_PROJECTS_DATA_DIR']) if (ctx.env[k]) env[k] = ctx.env[k]
+  return { args, env }
+}
+
 // The service's PATH: the runtime's folder, then the user's PATH (the login
 // shell's, asked once, herdr-projects' record and the usual folders).
 export function servicePath(runtime, env = process.env, { home = os.homedir(), login = loginShellPath(env), exists } = {}) {
   return userPath({ env, home, first: [path.dirname(runtime)], login, exists })
 }
 
-// ---------------------------------------------------------------- doctor
-function herdrBin(env) {
-  const local = path.join(os.homedir(), '.local/bin/herdr')
-  if (env.HERDR_BIN) return env.HERDR_BIN
-  if (existsSync(local)) return local
-  for (const p of ['/opt/homebrew/bin/herdr', '/usr/local/bin/herdr']) if (existsSync(p)) return p
-  const r = spawnSync('sh', ['-c', 'command -v herdr'], { encoding: 'utf8' })
-  return r.status === 0 ? r.stdout.trim() : null
+// ------------------------------------------------------------- dictation
+// The on-device dictation files (scripts/fetch-dictation-files.mjs, shipped in
+// the package), into the same DATA_DIR as the server: it serves them at /models/.
+export const DICTATION_SCRIPT = path.join(ROOT, 'scripts', 'fetch-dictation-files.mjs')
+
+export async function dictation(opts, { log = say, load = () => import(pathToFileURL(DICTATION_SCRIPT).href) } = {}) {
+  const ctx = context(opts)
+  const { fetchSets, setsOf } = await load()
+  let names
+  try { names = setsOf(opts.sets ?? []) } catch (e) { throw new CliError(e.message, 2) }
+  const modelsDir = path.join(ctx.env.DATA_DIR, 'models')
+  await fetchSets(modelsDir, names, { log })
+  ok(`dictation files in place: ${modelsDir}`)
 }
 
-function connects(sock) {
-  const { promise, resolve } = Promise.withResolvers()
-  const s = net.connect(sock)
-  const done = (v) => { s.destroy(); resolve(v) }
-  s.once('connect', () => done(true))
-  s.once('error', () => done(false))
-  setTimeout(() => done(false), 2000)
-  return promise
+// wherdr 2's panel was the screen of the Herdr plugin; wherdr 3 is not a Herdr plugin.
+export function panel() {
+  throw new CliError('`wherdr panel` is gone: it was the screen of the wherdr 2 Herdr plugin, and wherdr 3 runs on herdr-core.\n  Use `wherdr status`, `wherdr open` and `wherdr phone` instead.')
+}
+
+// ---------------------------------------------------------------- doctor
+// herdr-core rows of `doctor`: [level, text], level ok | warn | fail.
+export async function coreRows(env) {
+  const sock = env.HC_SOCKET
+  if (!sock) return [['fail', missingHcSocket(env)]]
+  const rows = [['ok', `HC_SOCKET: ${sock}`]]
+  try {
+    const core = await checkCore(sock)
+    rows.push(['ok', `herdr-core ${core.version}: protocol generation ${core.generation}, all required methods`])
+  } catch (e) {
+    const kind = e?.kind
+    rows.push(['fail', kind === 'unavailable' ? `herdr-core socket does not connect: ${sock}. Start hc, or fix --hc-socket.`
+      : kind === 'incompatible' && e.hint ? `herdr-core is missing required methods: ${e.hint}. Update hc.`
+        : `herdr-core: ${e?.message || e}${e?.hint ? ` (${e.hint})` : ''}`])
+  }
+  return rows
 }
 
 export async function doctor(opts) {
@@ -483,17 +516,7 @@ export async function doctor(opts) {
   else fail(`No Node.js 22+ or Bun found (this command runs on ${here}). ${RUNTIME_HELP}`)
   if (temporaryInstall(BIN)) warn('Running from a temporary npx / bunx / pnpm dlx folder: `npm install -g wherdr` for `wherdr service install`.')
 
-  const herdr = herdrBin(ctx.env)
-  const hv = herdr && spawnSync(herdr, ['--version'], { encoding: 'utf8', timeout: 10_000 })
-  if (hv?.status === 0) ok(`Herdr: ${herdr} (${hv.stdout.trim()})`)
-  else fail(`Herdr not found${herdr ? ` (${herdr} does not run)` : ''}: install it from https://herdr.dev, or set HERDR_BIN.`)
-
-  const session = ctx.env.HERDR_WEB_SESSION
-  const home = ctx.env.HOME || os.homedir()
-  const sock = ctx.env.HERDR_SOCK || (session ? path.join(home, '.config/herdr/sessions', session, 'herdr.sock') : path.join(home, '.config/herdr/herdr.sock'))
-  if (!existsSync(sock)) fail(`Herdr socket missing: ${sock}. Start Herdr (herdr${session ? ` --session ${session}` : ''}).`)
-  else if (await connects(sock)) ok(`Herdr socket: ${sock}`)
-  else fail(`Herdr socket does not answer: ${sock}. Is the Herdr server running?`)
+  for (const [level, text] of await coreRows(ctx.env)) ({ ok, warn, fail })[level](text)
 
   const answer = await probe(ctx.port, ctx.host)
   const taken = answer ? null : await portTaken(ctx.port, ctx.host)

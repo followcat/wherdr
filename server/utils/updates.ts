@@ -37,12 +37,6 @@ export function createUpdateChecker(opts: {
       const candidate = { version: body.tag_name.replace(/^v/, ''), url: typeof body.html_url === 'string' ? body.html_url : '',
         missed, truncated: releases.length >= 100 }
       const mode = installMode(opts.env.WHERDR_INSTALL)
-      if (mode === 'plugin') {
-        const archive = `https://github.com/${REPO}/releases/download/v${candidate.version}/wherdr-${candidate.version}.tgz`
-        if (!(await opts.fetch(archive)).ok || !(await opts.fetch(`${archive}.sha256`)).ok) {
-          nextAt = now() + RETRY_MS; return
-        }
-      }
       if (mode === 'npm' || mode === 'npm-global') {
         // Check the actual tarball, rather than trusting npm publish's exit code.
         const registry = (opts.env.npm_config_registry || 'https://registry.npmjs.org').replace(/\/$/, '')
@@ -69,7 +63,7 @@ export function createUpdateChecker(opts: {
 
   return async function check(): Promise<UpdateInfo> {
     const mode = installMode(opts.env.WHERDR_INSTALL)
-    const base = { current: opts.current, mode, command: updateCommand(mode, REPO), oneTap: oneTapMode(mode), behind: 0, missed: [] as string[], behindAtLeast: false }
+    const base = { current: opts.current, mode, command: updateCommand(mode), oneTap: oneTapMode(mode), behind: 0, missed: [] as string[], behindAtLeast: false }
     if (String(opts.env.WHERDR_UPDATE_CHECK || '').toLowerCase() === 'off') return { ...base, latest: null, url: null, checked: false }
     if (now() >= nextAt) {
       pending ??= refresh().finally(() => { pending = null })

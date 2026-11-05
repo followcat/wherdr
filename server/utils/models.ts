@@ -46,9 +46,6 @@ export function ompModelLabel(id: string): string {
   return ver ? `${family} ${ver}` : family
 }
 
-export const modelLabel = (kind: string | null, id: string) =>
-  kind === 'omp' ? ompModelLabel(id) : kind === 'codex' ? codexModelLabel(id) : claudeModelLabel(id)
-
 // Label from a /model menu or output: "Opus 5 (1M context) (default)" → "Opus 5 (1M)".
 export function cleanModelName(s: string): string {
   return String(s || '')
@@ -58,12 +55,6 @@ export function cleanModelName(s: string): string {
     .replace(/\(1M context\)/i, '(1M)')
     .replace(/\s+/g, ' ')
     .trim()
-}
-
-// Same model? ("Opus 5.5" = "opus 5.5 (1M)"; parentheses are variants.)
-export const sameModel = (a: string | null | undefined, b: string | null | undefined) => {
-  const k = (s: string | null | undefined) => cleanModelName(s || '').replace(/\s*\(.*?\)/g, '').toLowerCase()
-  return Boolean(a && b) && k(a) === k(b)
 }
 
 // Local /model output: "Set model to `Sonnet 5` for this session only",
@@ -177,52 +168,6 @@ export function lastModel(lines: string[], kind: string | null): ModelInfo | nul
   return null
 }
 
-// Claude's current effort announced on screen: banner ("Opus 5.5 with low effort")
-// or /effort output ("Set effort level to low (for this session only)"); the lowest wins.
-export function claudeScreenEffort(text: string | null | undefined): string | null {
-  const lines = String(text || '').split('\n')
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const m = lines[i]!.match(/\bwith (low|medium|high|xhigh|max|ultracode) effort\b|Set effort level to (low|medium|high|xhigh|max|ultracode)\b/i)
-    if (m) return (m[1] || m[2])!.toLowerCase()
-  }
-  return null
-}
-
-// Claude: model announced on screen, for an agent that has no
-// transcript yet. Claude Code header ("Opus 5.5 with low effort · Claude
-// Pro", "Sonnet 5 (1M context) · Claude Max") or output of a typed /model
-// ("Set model to Sonnet 5"). The lowest wins.
-const HEADER_RE = /([A-Z][A-Za-z]+ \d+(?:\.\d+)*(?: \([^)]*\))?)(?: with (low|medium|high|xhigh|max|ultracode) effort)? · (?:Claude\b|API\b)/
-const SET_SCREEN_RE = /(?:Set model to|Kept model as) `?([^`\n]+?)`?(?= for this session| and saved|\s*$)/
-export function claudeScreenModel(text: string | null | undefined): ModelInfo | null {
-  const lines = String(text || '').split('\n')
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const l = lines[i]!.replace(/\s+$/, '')
-    const s = SET_SCREEN_RE.exec(l)
-    if (s) {
-      const label = cleanModelName(s[1]!)
-      if (label) return { id: null, label, effort: null, at: null }
-    }
-    const h = HEADER_RE.exec(l)
-    if (h) return { id: null, label: cleanModelName(h[1]!), effort: h[2] ? h[2].toLowerCase() : null, at: null }
-  }
-  return null
-}
-
-// Idle Codex: its status line below the input field gives the model and
-// effort actually in effect ("GPT-5.6-Terra medium · ~ · …"), including
-// after a /model typed elsewhere, which the rollout only records on the next turn.
-export function codexFooterModel(text: string | null | undefined): ModelInfo | null {
-  const lines = String(text || '').replace(/\s+$/, '').split('\n').slice(-6)
-  const input = lines.findIndex(l => /^\s*›\s/.test(l))
-  if (input < 0) return null
-  for (const l of lines.slice(input + 1)) {
-    const m = l.match(/^\s*((?:GPT|gpt)-[\w.-]+|o\d[\w.-]*)(?:\s+(minimal|low|medium|high|xhigh|max|ultra))?\s+·/)
-    if (m) return { id: null, label: m[1]!.startsWith('gpt') ? codexModelLabel(m[1]!) : m[1]!, effort: m[2] || null, at: null }
-  }
-  return null
-}
-
 // Codex: default model and effort (~/.codex/config.toml, top-level keys).
 export function codexConfigModel(toml: string): ModelInfo | null {
   const top = String(toml || '').split(/^\s*\[/m)[0]!
@@ -230,70 +175,4 @@ export function codexConfigModel(toml: string): ModelInfo | null {
   if (!m) return null
   const e = top.match(/^\s*model_reasoning_effort\s*=\s*"([^"]+)"/m)
   return { id: m[1]!, label: codexModelLabel(m[1]!), effort: e ? e[1]! : null, at: null }
-}
-
-// ---------------------------------------------------------------- omp thinking level
-// Status line glyphs of the three symbol presets (unicode, nerd font, ascii).
-const OMP_EFFORT_GLYPHS: Record<string, string> = {
-  '○': 'minimal', '◔': 'low', '◑': 'medium', '◒': 'high', '◕': 'xhigh', '◉': 'max', '⟳': 'auto', '⦸': 'off',
-  '\u{F0A9E}': 'minimal', '\u{F0A9F}': 'low', '\u{F0AA1}': 'medium', '\u{F0AA3}': 'high', '\u{F0AA5}': 'xhigh', '\uF06D': 'max', '\uF074': 'auto', '\uF05E': 'off',
-  '[min]': 'minimal', '[low]': 'low', '[med]': 'medium', '[high]': 'high', '[xhi]': 'xhigh', '[max]': 'max', '[~]': 'auto',
-}
-const OMP_EFFORT_WORDS: Record<string, string> = {
-  off: 'off', auto: 'auto', min: 'minimal', minimal: 'minimal', low: 'low', med: 'medium', medium: 'medium',
-  high: 'high', xhi: 'xhigh', xhigh: 'xhigh', max: 'max',
-}
-
-// omp's thinking level on its status line, next to the model name: the top
-// border of the input box (" π > ◔ Opus 5.5 > 🗑 repo > … ───") or, in older
-// layouts, the line under it (" ◒ Opus 5.5 👁 · 📁 ~/repo"). One glyph before
-// the name (compact display, the default), or a " · ◔ low" suffix after it.
-// Until its first turn "auto" shows ⟳, then the level it resolved to — the
-// transcript, when there is one, keeps "auto". The name anchors the reading:
-// the conversation above may hold the same glyphs. null: not on screen, or
-// no thinking level.
-export function ompScreenEffort(text: string | null | undefined, model: string | null | undefined): string | null {
-  const name = cleanModelName(model || '').replace(/\s*\(.*?\)/g, '').toLowerCase()
-  if (!name) return null
-  const lines = String(text || '').replace(/\s+$/, '').split('\n').slice(-12)
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i]!
-    // Boxed rows (selectors, dialogs) are not the status line.
-    if (/^\s*│/.test(line)) continue
-    const at = line.toLowerCase().indexOf(name)
-    if (at < 0) continue
-    const glyph = OMP_EFFORT_GLYPHS[line.slice(0, at).trimEnd().split(/\s+/).pop() || '']
-    if (glyph) return glyph
-    const suffix = line.slice(at + name.length).match(/^[^·>]*·\s*(?:\S+\s+){0,2}?\[?(off|auto|min|minimal|low|med|medium|high|xhi|xhigh|max)\]?(?=\s|$)/)
-    if (suffix) return OMP_EFFORT_WORDS[suffix[1]!]!
-  }
-  return null
-}
-
-// omp's model and thinking level from its status line alone, for a
-// conversation with no transcript yet (omp only writes its session file on
-// the first message). The level glyph sits among the first segments
-// (" π > ⟳ Opus 5.5 > 🗑 ~/demo > ─…", nerd-font separators alike: the glyph
-// right after a segment separator), or opens the older layout's line
-// (" ◒ Opus 5.5 👁 · 📁 ~/repo", with its " · " segments). The name runs until
-// the next segment without letters or digits (separator, icon). A glyph in
-// the conversation above has neither. The model's id is unknown.
-export function ompScreenModel(text: string | null | undefined): ModelInfo | null {
-  const lines = String(text || '').replace(/\s+$/, '').split('\n').slice(-12)
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i]!
-    if (/^\s*│/.test(line)) continue
-    const tokens = line.trim().split(/\s+/)
-    for (let k = 0; k < Math.min(tokens.length, 5); k++) {
-      const effort = OMP_EFFORT_GLYPHS[tokens[k]!]
-      if (!effort) continue
-      const name: string[] = []
-      let j = k + 1
-      for (; j < tokens.length && /[\p{L}\p{N}]/u.test(tokens[j]!) && !tokens[j]!.includes('─'); j++) name.push(tokens[j]!)
-      const status = k > 0 ? /^(?:[>›〉»]|[\uE0B0-\uE0BF])$/.test(tokens[k - 1]!) : tokens.slice(j).includes('·')
-      const label = name.join(' ')
-      if (status && /\p{L}/u.test(label)) return { id: null, label, effort, at: null }
-    }
-  }
-  return null
 }

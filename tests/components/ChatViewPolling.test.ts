@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
-import { defineComponent, h, nextTick, shallowRef } from 'vue'
+import { defineComponent, getCurrentInstance, h, nextTick, shallowRef } from 'vue'
 import { UApp } from '#components'
 import ChatView from '~/components/ChatView.vue'
 import { herdrState } from '~/composables/useHerdr'
@@ -21,11 +21,15 @@ registerEndpoint('/api/chat', () => {
 
 // The pane as the live state hands it to the view: a new object on each push.
 const current = shallowRef<Pane>(idle)
+// Updates of each component kind while `counting` is on.
+const updates = new Map<string, number>()
+let counting = false
+const countUpdates = { updated() { if (!counting) return; const type = getCurrentInstance()?.type as { name?: string, __name?: string } | undefined; const name = type?.name || type?.__name || '?'; updates.set(name, (updates.get(name) || 0) + 1) } }
 async function mountIdle() {
   current.value = idle
   herdrState.value = { ok: true, workspaces: [], panes: [idle] }
   const Host = defineComponent({ render: () => h(UApp, null, () => h(ChatView, { pane: current.value, localQueued: [] })) })
-  const w = await mountSuspended(Host)
+  const w = await mountSuspended(Host, { global: { mixins: [countUpdates] } })
   await expect.poll(() => w.find('.chat').text()).toContain('Renamed.')
   const push = async (pane: Pane) => { current.value = pane; await nextTick() }
   return { w, push, view: () => w.findComponent(ChatView) }
@@ -81,6 +85,21 @@ describe('conversation polling', () => {
     } finally { w.unmount() }
   })
 
+  it('does not re-read on a push that leaves status and preview as they were', async () => {
+    const { w, push } = await mountIdle()
+    vi.useFakeTimers()
+    try {
+      reads = 0
+      // 30 pushes in 3 s: each one a new pane object (title, name…), same status and preview.
+      for (let i = 0; i < 30; i++) {
+        await push({ ...idle, title: `demo ${i}`, name: `run ${i}` })
+        await vi.advanceTimersByTimeAsync(100)
+      }
+      await settle()
+      expect(reads).toBe(0)
+    } finally { w.unmount() }
+  })
+
   it('stops polling once unmounted', async () => {
     const { w, push, view } = await mountIdle()
     vi.useFakeTimers()
@@ -111,6 +130,29 @@ describe('conversation blocks', () => {
       expect(vm.blocks).not.toBe(before)
       expect(vm.blocks.some(b => b.k === 'turn')).toBe(false)
       expect(w.findAll('.turn-end')).toHaveLength(0)
+    } finally { w.unmount() }
+  })
+
+  it('are not re-rendered by pushes that change neither them nor the status line, nor by a new working verb', async () => {
+    const { w, push } = await mountIdle()
+    try {
+      const pushes = async (make: (i: number) => Pane) => {
+        updates.clear()
+        counting = true
+        for (let i = 0; i < 10; i++) await push(make(i))
+        await nextTick()
+        counting = false
+        return new Map(updates)
+      }
+      // Before the fix, every push re-rendered every message.
+      const quiet = await pushes(i => ({ ...idle, title: `demo ${i}` }))
+      expect(quiet.get('UChatMessage') ?? 0).toBe(0)
+      await push({ ...idle, status: 'working', activity: 'Thinking' })
+      await expect.poll(() => w.find('.claude-verb').exists()).toBe(true)
+      const verbs = await pushes(i => ({ ...idle, status: 'working', activity: `Step ${i}` }))
+      expect(verbs.get('UChatMessage') ?? 0).toBe(0)
+      expect(verbs.get('ChatStatusLine')).toBe(10)
+      expect(w.find('.claude-verb').text()).toContain('Step 9')
     } finally { w.unmount() }
   })
 })

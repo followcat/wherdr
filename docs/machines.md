@@ -32,10 +32,11 @@ On the machine to add:
 machine with its state (connected, connecting…, offline) and last error:
 
 - **Add machine** (`machine.add`): an **SSH target** (`user@host`, a `~/.ssh/config` host, or
-  `user@host:port` with herdr-core 0.1.17 or newer) and an optional **Name** (a-z, 0-9, `-`, `_`,
-  `.`, 32 at most). wherdr never accepts a `via` command. Adding can fail with: the name is
-  taken, the machine is already added, it cannot be reached over SSH, herdr-core is not
-  installed there, or its herdr-core version is incompatible.
+  `user@host:port` when the core takes a port, as herdr-core 0.1.17 does; wherdr reads this from
+  the core's `rpc.discover`, and on an older core the form says so before sending) and an optional
+  **Name** (a-z, 0-9, `-`, `_`, `.`, 32 at most). wherdr never accepts a `via` command. Adding can
+  fail with: the name is taken, the machine is already added, it cannot be reached over SSH,
+  herdr-core is not installed there, or its herdr-core version is incompatible.
 - **Reconnect** an offline machine (`machine.connect`).
 - **Rename** (`machine.rename`): the new name follows the same rules. Only this core's name
   changes; links that use the old name stop working.

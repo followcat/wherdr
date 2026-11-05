@@ -1,10 +1,14 @@
 import crypto from 'node:crypto'
 
-// 'wasm-unsafe-eval' lets the on-device dictation worker compile its
-// WebAssembly runtime (sherpa-onnx, onnxruntime-web, served by /models/runtime/).
-// Only that engine needs it. It allows compiling WebAssembly, never eval() of
-// JavaScript ('unsafe-eval' stays out).
-export const CSP_BASE = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; manifest-src 'self'"
+export const CSP_BASE = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; manifest-src 'self'"
+
+// The on-device dictation worker's own policy (a worker follows the policy of
+// its script's response, not the page's): 'wasm-unsafe-eval' lets it compile
+// its WebAssembly runtime (sherpa-onnx, onnxruntime-web, served by
+// /models/runtime/). It allows compiling WebAssembly, never eval() of
+// JavaScript ('unsafe-eval' stays out); the page itself cannot compile any.
+export const DICTATION_WORKER_PATH = '/workers/dictation-worker.js'
+export const CSP_DICTATION_WORKER = CSP_BASE.replace("script-src 'self'", "script-src 'self' 'wasm-unsafe-eval'")
 
 const LABEL = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?'
 // A machine of a tailnet: <machine>.<tailnet>.ts.net (MagicDNS), and nothing else.
@@ -30,7 +34,7 @@ export function cspForHtml(html: string, host: string, imgSources: string[] = []
     .filter(([, attrs, content]) => content && !/type=["']application\/json["']/i.test(attrs || ''))
     .map(([, , content]) => `'sha256-${crypto.createHash('sha256').update(content!).digest('base64')}'`)
   return CSP_BASE
-    .replace("script-src 'self' 'wasm-unsafe-eval'", `script-src 'self' 'wasm-unsafe-eval' ${hashes.join(' ')}`.trim())
+    .replace("script-src 'self'", `script-src 'self' ${hashes.join(' ')}`.trim())
     .replace("img-src 'self' data: blob:", ["img-src 'self' data: blob:", ...imgSources].join(' '))
     .replace("connect-src 'self'", `connect-src 'self' ws://${host} wss://${host}`)
 }

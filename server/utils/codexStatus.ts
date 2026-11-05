@@ -297,8 +297,6 @@ export function createCodexStatus(d: CodexStatusDeps) {
   return { statusOf, forget, startUpdate, dismiss, compute, knownWeek }
 }
 
-export type CodexStatusService = ReturnType<typeof createCodexStatus>
-
 export async function dirWritable(dir: string): Promise<boolean> {
   try {
     await fs.promises.access(dir, fs.constants.W_OK)

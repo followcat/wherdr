@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { CoreError } from '../server/utils/core'
 import { coreInput, coreInterrupt, coreKeepGet, coreKeepSet, coreKill, coreSend, type CoreInputDeps } from '../server/utils/coreInput'
+import { isBareBang } from '../shared/queuedMatch'
 import type { Pane } from '../shared/types'
 
 const pane = (id: string, extra: Partial<Pane> = {}) => ({ id, workspace: 'w1', coreAddress: `m/${id}`, agent: 'claude', ...extra }) as Pane
@@ -44,6 +45,24 @@ describe('core input routes', () => {
     await coreSend(w.d, { pane_id: 't1', text: 'a\nb' })
     await coreSend(w.d, { pane_id: 't1', text: 'one line' })
     expect(w.calls.filter(c => c[0] === 'terminal.keys')).toHaveLength(0)
+  })
+
+  it('sends a multi-line "!" command as it is, in one terminal.send', async () => {
+    // Claude Code 2.1.318 runs the whole text in bash mode, lines included.
+    const cmd = '! cd /srv/app\nnpm run build\n. ./env.sh dev\nls dist/'
+    const t = deps(() => ({ started: true }))
+    expect(await coreSend(t.d, { pane_id: 't1', text: cmd })).toEqual({ ok: true, started: true })
+    expect(t.calls).toEqual([['terminal.send', { terminal: 'm/t1', text: cmd }, 30000]])
+  })
+
+  it('refuses a lone "!": it would leave Claude in bash mode for the next message', async () => {
+    for (const text of ['!', ' ! ', '!\n']) {
+      const t = deps()
+      await expect(coreSend(t.d, { pane_id: 't1', text })).rejects.toMatchObject({ code: 'empty' })
+      expect(t.calls).toHaveLength(0)
+    }
+    expect(isBareBang('! ls')).toBe(false)
+    expect(isBareBang('!!')).toBe(false)
   })
 
   it('maps core errors to stable messages and never retries', async () => {

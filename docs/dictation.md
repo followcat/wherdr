@@ -17,7 +17,7 @@ pane terms, model route, fetch script), with credit in the code.
 | Composer mic and **Settings › Conversation › Dictation** | Merged |
 | Online engine (OpenRouter, through the wherdr server) | Merged |
 | `/models/**` route, fetch script with sha256, CSP, service worker | Merged |
-| On-device engine (sherpa-onnx WASM worker, CPU) | Merged: Parakeet v3 (French + English, default) and SenseVoice |
+| On-device engine (sherpa-onnx WASM worker, CPU) | Merged: Parakeet v3 (French + English, default), Canary 180M (default on iPhone) and SenseVoice |
 | Model list in Settings (install, delete, progress, ratings) | Merged |
 | WebGPU models (Qwen3-ASR q4f16) | **Open for an outside contributor** (see [Task split](#task-split)) |
 
@@ -49,8 +49,11 @@ insertion are shared; only the engine behind the interface changes.
 | `app/utils/dictation/modelStore.ts` | Model files in Cache Storage: resumable install, delete, space used |
 | `app/components/DictationDeviceSettings.vue` | Settings › Dictation › On this device (model list) |
 | `server/utils/dictation.ts`, `server/api/dictation/*` | Key storage and the OpenRouter relay |
+| `shared/dictationRewrite.ts`, `app/utils/dictation/rewrite.ts` | The optional rewrite: prompt, dictionary, the call with its raw-text fallback |
+| `app/components/DictationRewriteSettings.vue` | Settings › Dictation › Rewrite (switch, model, prompt, dictionary) |
 | `server/utils/modelFiles.ts`, `server/routes/models/[...path].ts` | Serving `DATA_DIR/models/**` |
-| `scripts/fetch-dictation-files.mjs` | Pinned downloads into `DATA_DIR/models`, checked by sha256 |
+| `scripts/dictation-files.mjs`, `scripts/fetch-dictation-files.mjs` | Pinned downloads into `DATA_DIR/models`, checked by sha256 (the code, and its CLI) |
+| `server/utils/dictationServerFiles.ts`, `server/api/dictation/prepare.post.ts` | The server fetching a model's missing files when Install asks |
 | `public/workers/dictation-worker.js` | The sherpa-onnx worker: WASM runtime, recognizer, decode |
 | `public/workers/model-files.js` | Model-file access shared by the dictation workers (cached slices, Range-slice streaming) |
 
@@ -147,8 +150,10 @@ pane name and title, the last two folders of the cwd, and name-like words of the
 draft (inner capitals, digits, `-`, `.`, `/`, `_`), at most 400 characters. Each engine uses them
 its own way: `keyterms` for OpenRouter, a prompt for a context-capable local model.
 
-**Composer.** The mic sits before the plugins' buttons (`data-wherdr="composer-actions"`) and is
-hidden while dictation is **Off**. Hold it (≥ 0.6 s) and release to stop, or tap to start and tap
+**Composer.** The mic sits before the plugins' buttons (`data-wherdr="composer-actions"`), right
+of **+**, in every state: on a touch screen the row at rest is `+ · mic · field · Send`, and the
+toolbar under the field while editing keeps it in the same place. A stray tap there is harmless,
+unlike Send. It is hidden while dictation is **Off**. Hold it (≥ 0.6 s) and release to stop, or tap to start and tap
 again. The take's line above the field shows the wave (`▁▂▃▄▅▆▇█`), the clock (or the load
 percentage) and ×.
 
@@ -188,14 +193,44 @@ percentage) and ×.
 - **Key**: `OPENROUTER_API_KEY` wins, else `DATA_DIR/openrouter.json` (mode 0600) written by
   `POST /api/dictation/key` and removed by `DELETE`. `GET /api/dictation/status` returns only
   `{ set, last4 }`. The key is never returned, never logged, and scrubbed from upstream errors.
-- **Options** (per device, `cloudOptions.ts`): model (Whisper large v3 turbo by default, Voxtral
-  Mini, GPT-4o mini transcribe), ZDR (on by default), send pane terms (off by default).
+- **Models**: once a key is saved, `GET /api/dictation/models` has the server fetch OpenRouter's
+  `GET /api/v1/models?output_modalities=transcription` with the key and keep the models that take
+  audio in, give a transcription out and are served at `/api/v1/audio/transcriptions`
+  (`shared/dictationModels.ts`). It answers `{ models: [{ id, name, perMinute? }], live }`: the
+  price per minute only for models billed by duration (`pricing.prompt` per second, no output
+  price). Others (MAI quotes per hour, GPT-4o and Gemini transcribers bill tokens) show
+  **Price: see OpenRouter**, a link to `https://openrouter.ai/<model id>`: the unit is never guessed. The list is kept 6 hours, served stale while OpenRouter fails (retried after a minute);
+  without a key or any good fetch, a built-in list of three. Settings searches it locally by name
+  or id (`USelectMenu`).
+- **Options** (per device, `cloudOptions.ts`): model (Whisper large v3 turbo by default), ZDR (on
+  by default), send pane terms (off by default).
+
+## Rewrite
+
+An optional pass after the transcript, for both engines (**Settings › Conversation › Dictation ›
+Rewrite**, per device, off by default). The take's text goes to `POST /api/dictation/rewrite`;
+the server sends it with its key to OpenRouter's `POST /api/v1/chat/completions` (ZDR as for
+transcription, 30 s timeout, 2 at once and 10 per client per minute).
+
+- **Messages** (`rewriteMessages()`): the prompt (editable; the default removes filler words and
+  false starts, fixes punctuation, keeps the meaning and language, never answers or adds) plus the
+  **personal dictionary** as the system message, the text between `<transcript>` tags as the user
+  one. The dictionary is also sent as `keyterms` to the online engine, with or without the
+  rewrite. A model that refuses keyterms (Whisper does; the model list does not say which) gets
+  the take again without them. Quotes wrapped around the whole answer are dropped.
+- **Model**: `GET /api/dictation/text-models` lists OpenRouter's text models, cached like the
+  transcription list, priced per million tokens, with a default computed from the live list: the
+  cheapest model that bills both input and output, never `:free` or `:batch`. An empty choice
+  follows that default.
+- **Composer**: the take's line says **Rewriting…** meanwhile; × drops the take. When the rewrite
+  fails or times out, the raw transcript goes into the field and a toast says so.
 
 ## On-device models
 
 ### Where files are stored and served
 
-- **Server side**: `DATA_DIR/models/`, filled by `scripts/fetch-dictation-files.mjs`. Runtimes go
+- **Server side**: `DATA_DIR/models/`, filled by the server itself on Install (below) or by
+  `scripts/fetch-dictation-files.mjs`. Runtimes go
   under `runtime/<name>-<version>/` (sherpa-onnx WASM, onnxruntime-web); each model gets its own
   folder. These files are never in the repository, the npm package or the service worker
   precache. The folder survives updates.
@@ -215,6 +250,21 @@ percentage) and ×.
   (`app/service-worker/sw.ts`) leaves `/models/` alone and keeps `wherdr-asr-*` caches across app
   updates (it deletes every other old cache).
 
+### The server fetches what it lacks
+
+Before downloading a model the phone does not hold whole, `modelStore.ts` posts
+`{ model }` to `POST /api/dictation/prepare` (`server/utils/dictationServerFiles.ts`). The server
+checks the runtime set's files and the model's files at their catalog sizes (no hash of 600 MB on
+every Install) and answers `ready`, or starts fetching what is missing and answers
+`preparing` with `got`, `total` and `phase` (`fetch`, then `unpack` for the archive). The browser
+posts again every second, Settings shows *Preparing on the server… 40 %*, and the phone download
+starts once the answer is `ready`. It runs the fetch script's own code (`scripts/dictation-files.mjs`:
+same pinned URLs, sha256 checks, `.part` resume), one fetch at a time for the whole server; a
+second request for the same model joins the running one. A failed fetch (`error`, shown in the
+row) is told once; the next Install tries again and resumes. Cancel stops the phone's polling, not
+the server's fetch. A server without the route (older build) falls back to the 404 message with
+the command to run.
+
 ### Long takes
 
 Parakeet slows down on long audio (about 1.3 times real time on a 45 s take on a desktop CPU,
@@ -233,7 +283,8 @@ goes to `file.part`, resumes with `Range` after an interruption, and is moved in
 when its hash matches. An entry is either a single file (`{ url, sha256, to }`) or a `.tar.bz2`
 archive (`{ url, sha256, dir, members }`) from which only the listed members are extracted; a
 `.complete` stamp holding the archive's hash marks it done. `tests/fetchDictationFiles.test.ts`
-covers resume, mismatch and the set list.
+covers resume, mismatch and the set list; `tests/dictationServerFiles.test.ts` the server's use of
+it. The code lives in `scripts/dictation-files.mjs`, which has no CLI, since the server bundles it.
 
 ### The model catalog
 
@@ -244,11 +295,14 @@ family is added there without code; the app needs a rebuild to ship it. An entry
 | Field | Meaning |
 | --- | --- |
 | `id`, `name` | Stable id (saved as the device's choice); short display name |
-| `kind` | The family: how the worker builds it (`senseVoice`, `nemoTransducer`; later `canary`, `moonshine`, `whisper`, `qwen3Q4F16`…). An entry of a family this build does not know is skipped, never an error |
+| `kind` | The family: how the worker builds it (`senseVoice`, `nemoTransducer`, `canary`; later `moonshine`, `whisper`, `qwen3Q4F16`…). An entry of a family this build does not know is skipped, never an error |
 | `requires` | `[]`, `['webgpu']` or `['webgpu', 'shader-f16']`: Settings hides the model when the browser lacks it |
 | `set`, `source` | The fetch script's set name and its pinned archive (`url`, `sha256`) |
 | `dir`, `files` | Folder under `/models/` and its files, each with its exact `bytes` (checked against the server's on download) |
-| `languages`, `punctuation` | ISO 639-1 codes, all detected; punctuation and capitals |
+| `languages`, `punctuation` | ISO 639-1 codes; punctuation and capitals |
+| `autoDetect` | `false` when the model does not detect the language (Canary): the worker is given the first of the device's languages it speaks, else English |
+| `textCase` | `"upper"` when the model writes in capitals (SenseVoice, even with inverse text normalization on): the app puts its text in sentence case |
+| `memory` | Measured `{ heap, peak, basis }`: WASM heap after load, and the page's peak memory. `heap` is what the device budget checks |
 | `quality` | Raw published WER per language: `{ lang, dataset, wer, source }` |
 | `speed` | `{ estimate: 1–5, basis, source }`, absent when there is no source |
 | `license` | `{ id, url }` |
@@ -260,6 +314,32 @@ native real-time factors on a phone-class CPU (≤ 0.1 → 5, ≤ 0.2 → 4, ≤
 above → 1), shown as estimated; measuring it on the device is left for later. A language the model
 does not speak shows "—"; a missing figure is left out of the file, never set to zero, and shows
 "unknown".
+
+### Memory budget
+
+Safari on iOS kills a tab that uses too much memory, with no error the page can catch: the page
+goes black and reloads. Measured on 2026-11-05 (worker in headless Chromium and WebKit, Linux):
+
+| Model | WASM heap | Page peak, Chromium | Page peak, WebKit |
+| --- | --- | --- | --- |
+| Parakeet v3 | 818 MiB | 1.8 GB | killed during the load |
+| Canary 180M | 512 MiB | 0.85 GB | 1.35 to 1.5 GB |
+| SenseVoice | 512 MiB | 0.96 GB | 1.2 to 1.45 GB |
+
+SenseVoice runs on a real iPhone; Parakeet kills it. `memoryBudget()` (`deviceModels.ts`) gives
+iOS and iPadOS a 640 MiB heap budget, and other browsers a quarter of `navigator.deviceMemory`
+when they report it. A model over the budget shows **Too large for this device** in Settings, and
+is never chosen (`deviceModel()` falls back to the first catalog model that fits, so Canary 180M
+on an iPhone).
+
+When the page is killed anyway: a load in progress is noted in `localStorage` and cleared when it
+ends or on `pagehide`. Found at the next start, it means the system killed the page: the model is
+marked too large on this device, the next mic press says "Dictation stopped: the model is too
+large for this device", and the choice falls back to a model that fits. A worker that reports
+running out of memory (emscripten `Aborted(OOM)`, a failed grow or allocation) fails the same way,
+during the session: the composer then frees the engine, so the next press loads the model that
+fits without a reload. Settings tells the two cases apart, and **Try again** (or Delete) clears the
+mark, since a page can also be lost for another reason.
 
 ### Adding a model
 
@@ -278,13 +358,17 @@ does not speak shows "—"; a missing figure is left out of the file, never set 
    language when the model cannot detect it.
 5. **Check**: the unit tests (catalog shape, fetch set matches the catalog), then a real take in
    French and English on an Android phone and an iPhone, noting load time, decode time and memory.
+   Record the heap and peak in `memory` (see [Memory budget](#memory-budget)).
 6. Document the set in [On-device dictation files](installation.md#on-device-dictation-files).
 
 ### Content Security Policy
 
-`server/utils/csp.ts` adds `'wasm-unsafe-eval'` to `script-src`. It lets the dictation worker
+Only the worker's own response (`/workers/dictation-worker.js`, a route rule in
+`nuxt.config.ts`) carries `'wasm-unsafe-eval'` in `script-src` (`CSP_DICTATION_WORKER` in
+`server/utils/csp.ts`): a worker follows its script's policy, not the page's. It lets the worker
 compile its WebAssembly runtime (sherpa-onnx, onnxruntime-web) served from `/models/runtime/`.
-It allows compiling WebAssembly only, never `eval()` of JavaScript: `'unsafe-eval'` stays out.
+The page itself cannot compile WebAssembly, and `eval()` of JavaScript is never allowed:
+`'unsafe-eval'` stays out.
 Runtimes and workers load from `'self'` only (`worker-src 'self' blob:`, `connect-src 'self'`):
 no CDN at run time. A runtime that needs anything more must say why in its pull request.
 
@@ -326,12 +410,31 @@ an English take work on at least one Android phone with WebGPU, with load time, 
 memory reported in the pull request; a device without WebGPU or `shader-f16` gets the
 `unsupported` message, not a crash. iOS Safari results are welcome but not required.
 
+## Read aloud
+
+The other direction: **Play** under each agent reply reads it aloud, chosen in **Settings ›
+Conversation › Read aloud** (per device: Off, or the device's voices; on by default where the
+browser has `speechSynthesis`).
+
+| File | Role |
+| --- | --- |
+| `app/utils/speech/plainText.ts` | `speakableText()`: the words of a reply, "Code block." for code; `speechChunks()`: pieces of at most 220 characters (Chrome cuts long utterances) |
+| `app/composables/useReadAloud.ts` | Engine and voice choice, the voice list (`voiceschanged`), one reply at a time for the app |
+| `app/components/ReadAloudButton.vue`, `ReadAloudSettings.vue` | Play / Stop under a reply; the settings (voice search, Test) |
+
+Every piece is queued in the tap itself: iOS only speaks from a user gesture. iOS may stop
+speech when the screen locks or the app goes to the background, without an `end` event; a check
+every 1.5 s puts the button back to Play. Leaving the pane stops its reply. Voices marked
+"online" (Chrome's Google voices) send the text to their vendor. An OpenRouter engine
+(`POST /api/v1/audio/speech`, relayed by the server like dictation) is a planned follow-up.
+
 ## Known limits
 
 - No published speed figures exist for speech models in a phone browser; speed ratings stay
   estimates until measured on the device.
-- Memory: Safari can kill a tab beyond roughly 1 to 1.5 GB on a 4 GB iPhone. Large models must
-  be measured there.
+- Memory: Safari can kill a tab beyond roughly 1 to 1.5 GB on a 4 GB iPhone. The figures in
+  [Memory budget](#memory-budget) were measured on desktop engines; only SenseVoice and Parakeet
+  were tried on a real iPhone so far.
 - Outside an installed app, Safari may clear site storage (and downloaded models) after 7 days
   without a visit.
 - `ScriptProcessorNode` is deprecated but works everywhere; moving to an `AudioWorklet` would add

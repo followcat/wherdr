@@ -6,6 +6,7 @@ import { createShellFs, localFs, type ExecResult, type MachineFs, type ShellExec
 import { createTranscripts, type TranscriptPane, type Transcripts } from './transcripts'
 import { CoreError } from './core'
 import type { Pane } from '../../shared/types'
+import { DEVIN_PROCESS_SCRIPT, devinProcesses } from './devinProcesses'
 
 type Call = <T>(method: string, params: object, timeout: number) => Promise<T>
 export interface CoreTranscriptDeps {
@@ -14,7 +15,7 @@ export interface CoreTranscriptDeps {
   localHome: string
 }
 
-interface CoreProcess { pid?: number, name?: string, argv?: string[], cwd?: string }
+interface CoreProcess { pid?: number, name?: string, argv?: string[], cwd?: string, startedAt?: number, argvExact?: boolean }
 interface CoreDetail { pid?: number, argv?: string[], created_ms?: number, foreground?: CoreProcess | null }
 
 // The machine part of a core address (`mac/t7` -> `mac`; local ones have none).
@@ -24,12 +25,12 @@ export const machineOfAddress = (address: string | undefined) => (address && add
 // program first, then the terminal's own process (an agent started by a shell is the former).
 export function processInfo(d: CoreDetail) {
   const procs: CoreProcess[] = []
-  if (d.foreground && typeof d.foreground.pid === 'number') procs.push({ pid: d.foreground.pid, name: d.foreground.name, argv: d.foreground.argv })
-  if (typeof d.pid === 'number' && d.pid !== d.foreground?.pid) procs.push({ pid: d.pid, name: d.argv?.[0], argv: d.argv })
+  if (d.foreground && typeof d.foreground.pid === 'number') procs.push({ pid: d.foreground.pid, name: d.foreground.name, argv: d.foreground.argv, argvExact: true })
+  if (typeof d.pid === 'number' && d.pid !== d.foreground?.pid) procs.push({ pid: d.pid, name: d.argv?.[0], argv: d.argv, argvExact: true })
   return { process_info: { foreground_processes: procs } }
 }
 
-const AGENT_PROGRAMS = new Set(['claude', 'codex', 'omp'])
+const AGENT_PROGRAMS = new Set(['claude', 'codex', 'omp', 'devin'])
 const baseName = (s: string | undefined) => (s || '').split('/').pop() || ''
 // Programs under the terminal's process, from `ps -e -o pid=,ppid=,args=`: an agent started by a
 // shell, or hosted by a helper, is not the foreground process of the terminal.
@@ -45,7 +46,7 @@ export function agentDescendants(ps: string, root: number): CoreProcess[] {
       seen.add(r.pid)
       grew = true
       const name = [baseName(r.argv[0]), baseName(r.argv[1])].find(n => AGENT_PROGRAMS.has(n)) || ''
-      if (name) out.push({ pid: r.pid, name, argv: r.argv })
+      if (name) out.push({ pid: r.pid, name, argv: r.argv, argvExact: false })
     }
   }
   return out
@@ -90,6 +91,17 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
       const on = machineOfAddress(address)
       const ps = await deps.call<{ stdout?: string }>('machine.exec', { argv: ['ps', '-e', '-o', 'pid=,ppid=,args='], ...(on ? { on } : {}), timeout: 5 }, 8000).catch(() => null)
       procs.unshift(...agentDescendants(Buffer.from(ps?.stdout || '', 'base64').toString('utf8'), d.pid))
+    }
+    const devin = procs.filter(p => [baseName(p.name), ...(p.argv?.slice(0, 2).map(baseName) || [])].includes('devin') && Number.isSafeInteger(p.pid) && p.pid! > 0)
+    if (devin.length) {
+      // Exact argv and a conservative birth bound, read together on the agent's machine.
+      const on = machineOfAddress(address)
+      const r = await deps.call<{ stdout?: string }>('machine.exec', {
+        argv: ['sh', '-c', DEVIN_PROCESS_SCRIPT, 'sh', ...devin.map(p => String(p.pid))],
+        ...(on ? { on } : {}), timeout: 5,
+      }, 8000).catch(() => null)
+      const snapshot = devinProcesses(Buffer.from(r?.stdout || '', 'base64').toString('utf8'))
+      for (const p of devin) Object.assign(p, snapshot.get(p.pid!))
     }
     return info
   }

@@ -4,7 +4,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createAuth } from '../server/utils/auth'
 import { allowedHosts, crossSiteRequest, tailnetDomainHosts, hostAllowed, hostRefusalIsHtml, hostRefusedPage, networkRefusedPage, phoneFixCommand, tailnetName } from '../server/utils/hosts'
-import { cspForHtml, tailnetImageSources } from '../server/utils/csp'
+import { CSP_DICTATION_WORKER, cspForHtml, tailnetImageSources } from '../server/utils/csp'
 
 const req = (cookie = '') => ({ headers: { origin: 'http://localhost:7683', cookie } })
 const auth = (log = () => {}) => createAuth({ dataDir: mkdtempSync(path.join(tmpdir(), 'hw-release-')), log })
@@ -57,9 +57,8 @@ describe('allowed hosts', () => {
     expect(phoneFixCommand('npm-global', '7683')).toBe('wherdr phone')
     expect(phoneFixCommand('npm', '')).toBe('npx wherdr phone')
     expect(phoneFixCommand('', '7683')).toBe('npx wherdr phone')
-    // No `wherdr` command on the host there: the installer ends with the same check.
-    expect(phoneFixCommand('plugin', '7690')).toBe('curl -fsSL https://wherdr.dev/install | sh')
-    expect(hostRefusedPage('plugin')).toContain('<pre><code>curl -fsSL https://wherdr.dev/install | sh</code></pre>')
+    // wherdr 3 is not a Herdr plugin: no installer command any more.
+    expect(phoneFixCommand('plugin', '7690')).toBe('npx wherdr phone --port 7690')
   })
   it('names the port in the command when wherdr does not run on the default one', () => {
     // `wherdr phone` alone looks at port 7683.
@@ -114,8 +113,10 @@ describe('first key and challenges', () => {
 
 it('only allows the exact inline scripts of the Nuxt HTML', () => {
   const policy = cspForHtml('<html><script type="importmap">{"imports":{}}</script><script>window.__NUXT__={}</script><script type="application/json">{}</script></html>', 'localhost:7690')
-  expect(policy).toContain("script-src 'self' 'wasm-unsafe-eval' 'sha256-")
-  expect(policy.match(/script-src ([^;]+)/)?.[1]).not.toContain("'unsafe-eval'")
+  expect(policy).toContain("script-src 'self' 'sha256-")
+  // WebAssembly only in the dictation worker's own policy, never eval().
+  expect(policy).not.toContain('wasm-unsafe-eval')
+  expect(CSP_DICTATION_WORKER.match(/script-src ([^;]+)/)?.[1]).toBe("'self' 'wasm-unsafe-eval'")
   expect(policy.match(/'sha256-/g)).toHaveLength(2)
   expect(policy.match(/script-src ([^;]+)/)?.[1]).not.toContain('unsafe-inline')
   expect(policy).toContain("frame-ancestors 'none'")

@@ -149,5 +149,3 @@ export function createSettingsSync(opts: { local: LocalStore, transport?: Settin
     get pendingKeys() { return [...pending.keys()] },
   }
 }
-
-export type SettingsSync = ReturnType<typeof createSettingsSync>

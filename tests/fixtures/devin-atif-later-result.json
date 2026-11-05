@@ -1,0 +1,13 @@
+{
+  "schema_version": "ATIF-v1.7",
+  "session_id": "devin-test",
+  "agent": { "name": "devin", "version": "3000.11.234" },
+  "steps": [
+    { "step_id": 1, "source": "agent", "tool_calls": [
+      { "tool_call_id": "test-call", "function_name": "exec", "arguments": { "command": "npm test" } }
+    ] },
+    { "step_id": 200, "source": "tool", "observation": { "results": [
+      { "source_call_id": "test-call", "content": "12 passed", "extra": { "success": true } }
+    ] } }
+  ]
+}

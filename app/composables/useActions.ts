@@ -49,11 +49,12 @@ export function navKey(paneId: string, key: 'up' | 'down' | 'enter' | 'esc' | 'l
 // server keeps it for its record, so the bubble never changes identity.
 // `pastes`: where the texts this device pasted into the field sit in the
 // message, so that every device shows them as cards (see shared/pastedText.ts).
-export async function sendMessage(p: Pane | undefined, paneId: string, text: string, clientId?: string): Promise<QueuedMessage | null> {
+// `signal`: aborts the request (the outbox's deadline).
+export async function sendMessage(p: Pane | undefined, paneId: string, text: string, clientId?: string, signal?: AbortSignal): Promise<QueuedMessage | null> {
   const pastes = pasteRanges(text, splitPasted(text, [], sentPastes.value).pastes)
   const r = viaPrompt(p)
-    ? await api<{ queued?: QueuedMessage }>('/api/prompt', { pane_id: paneId, text, ...(clientId ? { client_id: clientId } : {}), ...(pastes.length ? { pastes } : {}) })
-    : await api<{ queued?: QueuedMessage }>('/api/input', { pane_id: paneId, text, keys: ['enter'], ...(p?.prompt ? { native: true, identity: p.prompt.identity } : {}) })
+    ? await api<{ queued?: QueuedMessage }>('/api/prompt', { pane_id: paneId, text, ...(clientId ? { client_id: clientId } : {}), ...(pastes.length ? { pastes } : {}) }, signal)
+    : await api<{ queued?: QueuedMessage }>('/api/input', { pane_id: paneId, text, keys: ['enter'], ...(p?.prompt ? { native: true, identity: p.prompt.identity } : {}) }, signal)
   return r.queued || null
 }
 

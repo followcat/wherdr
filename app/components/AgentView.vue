@@ -49,6 +49,11 @@ onUnmounted(() => {
 })
 
 const pane = computed(() => herdrState.value.panes.find(p => p.id === props.paneId))
+// herdr-core: a project coordinator's pane shows its bar (agent, template change).
+const coord = computed(() => coordinatorOf(pane.value))
+let coordTimer: ReturnType<typeof setInterval> | undefined
+onMounted(() => { if (core) { loadCoordinators(); coordTimer = setInterval(() => { if (coord.value) loadCoordinators() }, 15_000) } })
+onUnmounted(() => clearInterval(coordTimer))
 // herdr-core: opening a finished agent reads it (herdr.seen), once per turn, while the page is visible.
 const pageVisible = ref(true)
 const syncVisible = () => { pageVisible.value = document.visibilityState !== 'hidden' }
@@ -581,6 +586,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
     <div class="agent-body">
     <div class="agent-main hw-backdrop-host">
     <GridBackdrop v-if="desk && !cell && backdrop === 'wherdr' && mode === 'chat'" />
+    <CoordinatorBar v-if="coord && !cell" :c="coord" />
     <div v-if="machineDown && machine" class="term-banner machine-banner">
       <UIcon name="i-lucide-unplug" class="term-banner-icon" />
       <span>{{ machine.status === 'connecting' ? tl(`${machineName(machine.key)} unreachable — reconnecting…`, `${machineName(machine.key)} injoignable — reconnexion…`) : tl(`${machineName(machine.key)} offline`, `${machineName(machine.key)} hors ligne`) }}<small v-if="machine.error">{{ t(machine.error) }}</small></span>

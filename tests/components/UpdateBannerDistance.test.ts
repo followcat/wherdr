@@ -4,7 +4,7 @@ import UpdateBanner from '~/components/UpdateBanner.vue'
 import type { UpdateInfo } from '#shared/updates'
 
 it('shows release distance without replacing the installation-specific action', async () => {
-  const info: UpdateInfo = { current: '1.0.0', latest: '1.3.0', url: null, checked: true, mode: 'plugin', command: 'update', oneTap: false,
+  const info: UpdateInfo = { current: '1.0.0', latest: '1.3.0', url: null, checked: true, mode: 'npm-global', command: 'update', oneTap: false,
     behind: 3, missed: ['1.3.0', '1.2.0', '1.1.0'], behindAtLeast: false }
   const w = await mountSuspended(UpdateBanner, { props: { info } })
   try {

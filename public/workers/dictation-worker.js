@@ -3,11 +3,12 @@
 // Ported from followcat's public/workers/asr-worker.js (followcat/wherdr,
 // branch mobile, MIT); the WebGPU (onnxruntime-web) path is left for later.
 //
-//   in : {t:'load', runtime, base, kind, files[], bytes[], chunk, cache}
+//   in : {t:'load', runtime, base, kind, files[], bytes[], chunk, cache, language}
 //          runtime: URL of the sherpa-onnx files, ending in '/'
 //          base:    URL of the model's folder, files[] relative to it
 //          cache:   Cache Storage name holding the files in `chunk`-byte slices
 //                   (app/utils/dictation/modelStore.ts), '' = stream them from the server
+//          language: ISO 639-1, for a model that does not detect it (Canary)
 //   in : {t:'decode', id, pcm}              pcm: Float32 ArrayBuffer, 16 kHz mono
 //   out: {t:'phase', phase}                 'runtime' | 'fetch' | 'create'
 //   out: {t:'dl', file, got, total}         bytes of the file being downloaded
@@ -72,17 +73,23 @@ async function fsWriteStreamed(path, res) {
 }
 
 // The model part of the recognizer config, per model family. Field names are
-// the JS binding's (useItn, not useInverseTextNormalization: a wrong name is
-// silently ignored).
-function modelConfig(kind) {
+// the runtime's (sherpa-onnx-asr.js): a wrong name is silently ignored.
+function modelConfig(kind, language) {
   const M = MODEL_DIR
   switch (kind) {
-    // SenseVoice: zh, en, ja, ko, yue, detected; punctuation through ITN.
-    case 'senseVoice': return { senseVoice: { model: `${M}/model.int8.onnx`, language: '', useItn: 1 } }
+    // SenseVoice: zh, en, ja, ko, yue, detected. Inverse text normalization
+    // gives casing and punctuation (the binding reads
+    // useInverseTextNormalization; useItn left the text in capitals).
+    case 'senseVoice': return { senseVoice: { model: `${M}/model.int8.onnx`, language: '', useInverseTextNormalization: 1 } }
     // NeMo transducers (Parakeet TDT v3: 25 European languages, detected).
     case 'nemoTransducer': return {
       transducer: { encoder: `${M}/encoder.int8.onnx`, decoder: `${M}/decoder.int8.onnx`, joiner: `${M}/joiner.int8.onnx` },
       modelType: 'nemo_transducer',
+    }
+    // NeMo Canary (180M flash: en, de, es, fr): no detection, the language is
+    // given; punctuation and casing on (usePnc).
+    case 'canary': return {
+      canary: { encoder: `${M}/encoder.int8.onnx`, decoder: `${M}/decoder.int8.onnx`, srcLang: language || 'en', tgtLang: language || 'en', usePnc: 1 },
     }
     default: throw new Error(`unknown model kind: ${kind}`)
   }
@@ -106,7 +113,7 @@ async function load(msg) {
   postMessage({ t: 'phase', phase: 'create' })
   if (recognizer) recognizer.free()
   recognizer = new OfflineRecognizer({
-    modelConfig: { ...modelConfig(msg.kind), tokens: `${MODEL_DIR}/tokens.txt`, numThreads: 1, provider: 'cpu', debug: 0 },
+    modelConfig: { ...modelConfig(msg.kind, msg.language), tokens: `${MODEL_DIR}/tokens.txt`, numThreads: 1, provider: 'cpu', debug: 0 },
   }, Module)
   // The weights are now in the recognizer: the FS copies only cost memory.
   for (const file of msg.files) {

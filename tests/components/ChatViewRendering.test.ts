@@ -6,6 +6,8 @@ import { herdrState } from '~/composables/useHerdr'
 import type { ChatItem, Pane } from '#shared/types'
 import { parseLines } from '../../server/utils/transcripts'
 import ompErrors from '../fixtures/omp-errors.jsonl?raw'
+import devinAtif from '../fixtures/devin-atif-v1.7-real.json'
+import { parseDevin } from '../../server/utils/devinTranscripts'
 
 const pane: Pane = { id: 'w1:p1', workspace: 'w1', tab: 'w1:t1', tabLabel: null, agent: 'omp', name: null, label: null, status: 'blocked', title: null, cwd: '/tmp/demo', agentSession: null }
 let items: ChatItem[] = []
@@ -13,6 +15,26 @@ registerEndpoint('/api/chat', () => ({ available: true, token: 'rendering', file
 
 describe('conversation rendering', () => {
   afterEach(() => { lightboxSrc.value = null; lightboxSet.value = []; herdrState.value = { ok: false, workspaces: [], panes: [] } })
+
+  it('renders the saved Devin checkpoint while the process works on its next turn', async () => {
+    const working = { ...pane, agent: 'devin', status: 'working' as const }
+    herdrState.value = { ok: true, workspaces: [], panes: [working] }
+    items = parseDevin(devinAtif.steps)
+    const w = await mountSuspended(ChatView, {
+      props: { pane: working, localQueued: [] },
+      global: { stubs: { UTooltip: { template: '<slot />' } } },
+    })
+    try {
+      await expect.poll(() => w.find('.chat').text()).toContain('all 12 tests pass')
+      expect(w.findAll('.msg-user')).toHaveLength(2)
+      expect(w.find('.chat').text()).not.toContain('System instructions')
+      expect(w.find('.chat').text()).toContain('npm test')
+      // The first historical turn is finished; the tail is still working.
+      const order = [...w.find('.chat').element.querySelectorAll('.msg-user, .turn-end')]
+        .map(el => el.classList.contains('turn-end') ? 'finished' : 'user')
+      expect(order).toEqual(['user', 'finished', 'user'])
+    } finally { w.unmount() }
+  })
 
   it('keeps an action awaiting approval live without a finished-turn line', async () => {
     herdrState.value = { ok: true, workspaces: [], panes: [pane] }

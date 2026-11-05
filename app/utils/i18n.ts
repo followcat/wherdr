@@ -49,10 +49,8 @@ const FR: Record<string, string> = {
   'Group by': 'Grouper par',
   'State': 'État',
   'Reachable': 'Joignable',
-  'Retry connection': 'Réessayer la connexion',
   'unknown remote machine': 'Machine distante inconnue',
   // Errors and lists
-  'Task not found': 'Tâche introuvable',
   '{agent} is not installed on {machine}': '{agent} n’est pas installé sur {machine}',
   'Unknown action': 'Action inconnue',
   'Drag to reorder': 'Glisser pour réordonner',
@@ -148,7 +146,6 @@ const FR: Record<string, string> = {
   'Queued': 'En attente', 'agent stopped': 'agent arrêté',
   'Send now': 'Envoyer maintenant',
   'Queued · ': 'En attente · ', 'Sent · read by the agent': 'Envoyé · lu par l’agent', 'Running': 'En cours d’exécution', 'No output yet': 'Pas encore de sortie',
-  'Already read by the agent': 'Message déjà lu par l’agent',
   'after you answer the question': 'après ta réponse à la question', 'sending…': 'envoi…',
   'Photo is uploading…': 'Photo en cours d’envoi…', 'Remove': 'Retirer',
   'Photo upload failed': 'Photo non envoyée',
@@ -280,7 +277,7 @@ const FR: Record<string, string> = {
   'Invalid subscription': 'abonnement invalide',
   // Labels without emoji (Lucide icons replace them in the new interface)
   'Rename': 'Renommer', 'Take control of this terminal': 'Prendre la main sur ce terminal',
-  'host:port needs herdr-core 0.1.17 or newer': 'host:port demande herdr-core 0.1.17 ou plus récent',
+  'This herdr-core takes no port: update it, or use a Host from ~/.ssh/config': 'Ce herdr-core ne prend pas de port : mets-le à jour, ou utilise un Host de ~/.ssh/config',
   'A machine with this name already exists': 'Une machine porte déjà ce nom',
   'Reconnect': 'Reconnecter', 'Photo or screenshot': 'Photo ou capture d’écran',
   'Refresh': 'Rafraîchir',
@@ -365,11 +362,10 @@ const FR: Record<string, string> = {
   // Space, tab and pane actions
   'Space': 'Espace', 'New tab': 'Nouvel onglet', 'New tab…': 'Nouvel onglet…', 'Tabs of this space': 'Onglets de cet espace', 'Tab map': 'Carte des onglets',
   'Todo': 'À faire',
-  'Rename failed. The name was not changed.': 'Échec du renommage. Le nom n’a pas été modifié.',
-  'Close tab': 'Fermer l’onglet', 'Close space': 'Fermer l’espace',
+  'Close tab': 'Fermer l’onglet',
   'Tab options': 'Options de l’onglet', 'Pane options': 'Options du pane',
   'Tab created': 'Onglet créé',
-  'Start in a new tab': 'Lancer dans un nouvel onglet', 'New pane': 'Nouveau pane',
+  'Start in a new tab': 'Lancer dans un nouvel onglet',
   // Agent list resize handle (computer)
   'List width': 'Largeur de la liste', 'Drag to resize · double-click: default width': 'Glisser pour élargir · double-clic : largeur par défaut',
   // Server messages (shared/message.ts: {name} = value filled in by the server)
@@ -388,7 +384,6 @@ const FR: Record<string, string> = {
   'Empty file': 'Fichier vide',
   'Machine unreachable': 'Machine injoignable',
   'timed out': 'délai dépassé',
-  'Message not found': 'Message introuvable',
   'starting…': 'démarrage…',
   'Install script not found': 'Script d’installation introuvable',
   'Home folder is read-only here: copy the command and paste it into a terminal on {machine}': 'Dossier personnel en lecture seule ici : copie la commande et colle-la dans un terminal de {machine}',
@@ -408,15 +403,9 @@ const FR: Record<string, string> = {
   'Invalid quiet setting': 'Réglage de silence invalide',
   'Notifications are not enabled on this device': 'Notifications non activées sur cet appareil',
   'keys and dismissed are required': 'keys et dismissed sont requis',
-  // Space action errors (shared/spaceActions.ts)
-  'empty name': 'nom vide', 'invalid direction': 'direction invalide', 'invalid destination': 'destination invalide',
-  'tab on another machine': 'onglet d’une autre machine', 'pane on another machine': 'pane d’une autre machine',
-  'space on another machine': 'espace d’une autre machine', 'invalid split': 'split invalide', 'invalid ratio': 'ratio invalide',
-  'no pane on that side': 'aucun pane de ce côté', 'a pane is zoomed in this tab': 'un pane est agrandi dans cet onglet',
   'Not sent': 'Non envoyé',
   'Not sent — still in Claude’s input': 'Non envoyé — toujours dans la saisie de Claude', 'Clear': 'Effacer',
   'Sent, but Claude has not started yet — check the terminal.': 'Envoyé, mais Claude n’a pas encore démarré — vérifie le terminal.',
-  'same pane': 'même pane', 'pane in another tab': 'pane d’un autre onglet',
 }
 
 export type Lang = 'en' | 'fr'

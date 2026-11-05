@@ -261,7 +261,6 @@ describe('data/pastes.json', () => {
     await vi.waitFor(() => expect(onDisk()).toEqual([LOG]))
     expect(fs.statSync(file).mode & 0o777).toBe(0o600)
     expect(server.chatPasted([user(body)])[0]!.pasted).toEqual([LOG])
-    expect(server.queuedPasted({ id: 'w-1', text: body }).pasted).toEqual([LOG])
 
     // After a restart the conversation still lists it; a message without a
     // paste and a purge with nothing expired write nothing.

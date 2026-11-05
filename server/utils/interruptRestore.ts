@@ -8,8 +8,6 @@
 // field is emptied so that sending it again does not type it twice.
 import type { ChatItem } from '../../shared/types'
 import { clearKeys, inputBox, msgText } from './unqueue'
-import { sameMsg } from './transcripts'
-import { photosLanded } from '../../shared/queuedMatch'
 
 // Compared without any whitespace: the field wraps long lines, even mid-word.
 const norm = (t: string) => t.replace(/\s+/g, '')
@@ -36,17 +34,6 @@ export function unansweredLast(items: ChatItem[]): ChatItem | null {
     if (it.role !== 'system') return null
   }
   return null
-}
-
-// The message `text` (as sent, photo paths included) if it is the turn Claude
-// just took, with nothing of a reply yet: not in its queue any more, but Stop
-// still gives it back (the first message of a conversation always goes this
-// way: Claude, resting, takes it at once).
-export function unansweredTurn(items: ChatItem[], text: string): ChatItem | null {
-  const last = unansweredLast(items)
-  if (!last) return null
-  const wanted = msgText(text)
-  return (wanted ? sameMsg(wanted, last.text) : photosLanded(text, last)) ? last : null
 }
 
 export interface RestoreDeps {

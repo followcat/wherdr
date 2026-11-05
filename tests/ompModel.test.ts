@@ -1,15 +1,13 @@
-// omp models: readable labels, the model read from its transcript
-// (model_change, thinking_level_change, assistant message.model) and from its
-// status line.
+// omp models: readable labels and the model read from its transcript
+// (model_change, thinking_level_change, assistant message.model).
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const fx = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
 const j = (o: unknown) => JSON.stringify(o)
 
-import { lastModel, modelFromLine, ompModelLabel, ompScreenEffort, ompScreenModel } from '../server/utils/models'
+import { lastModel, modelFromLine, ompModelLabel } from '../server/utils/models'
 import { createTranscripts, type Transcripts } from '../server/utils/transcripts'
 
 describe('omp model labels', () => {
@@ -97,43 +95,6 @@ describe('transcripts.model() for omp', () => {
     // A fresh reader (service restart) finds the level behind the last reply.
     add({ type: 'message', timestamp: '2026-10-02T03:06:00.000Z', message: { role: 'assistant', model: 'claude-opus-5-5', content: [] } })
     expect(await createTranscripts({ home, herdr: async () => ({}) }).model(pane)).toMatchObject({ label: 'Opus 5.5', effort: 'xhigh' })
-  })
-})
-
-describe('omp thinking level on screen', () => {
-  it('reads the compact glyph before the model name, in both status line layouts', () => {
-    expect(ompScreenEffort(fx('omp-done.txt'), 'Opus 5.5')).toBe('low')
-    expect(ompScreenEffort(fx('omp-idle-footer.txt'), 'Opus 5.5')).toBe('high')
-    expect(ompScreenEffort(' π > ⟳ Opus 5.5 > 🗑 ~/demo > ▶─1%────', 'Opus 5.5')).toBe('auto')
-    expect(ompScreenEffort(' π > ⦸ Opus 5.5 > 🗑 ~/demo > ▶─1%────', 'Opus 5.5')).toBe('off')
-    expect(ompScreenEffort(' π > [xhi] Opus 5.5 > ~/demo ────', 'Opus 5.5')).toBe('xhigh')
-  })
-
-  it('reads the " · level" suffix when the compact display is off', () => {
-    expect(ompScreenEffort(' π > ⬡ Opus 5.5 · ◑ med > 🗑 ~/demo ────', 'Opus 5.5')).toBe('medium')
-    expect(ompScreenEffort(' π > ⬡ Opus 5.5 · [ ] off > ~/demo ────', 'Opus 5.5')).toBe('off')
-  })
-
-  it('needs the model name next to the glyph: no guess from the conversation or a selector', () => {
-    expect(ompScreenEffort(' ◉ done, see above\n π > ⬡ Opus 5.5 > 🗑 ~/demo ────', 'Opus 5.5')).toBeNull()
-    expect(ompScreenEffort(fx('omp-done.txt'), 'Sonnet 5')).toBeNull()
-    expect(ompScreenEffort(fx('omp-selector.txt'), 'Opus 5.5')).toBeNull()
-  })
-})
-
-// Before its first message omp has no session file: model and level come
-// from the status line alone.
-describe('omp model on screen, without a transcript', () => {
-  it('reads the model and the level from every status line layout', () => {
-    expect(ompScreenModel(fx('omp-fresh-nerd.txt'))).toEqual({ id: null, label: 'Opus 5.5', effort: 'auto', at: null })
-    expect(ompScreenModel(fx('omp-done.txt'))).toMatchObject({ label: 'Opus 5.5', effort: 'low' })
-    expect(ompScreenModel(fx('omp-idle-footer.txt'))).toMatchObject({ label: 'Opus 5.5', effort: 'high' })
-    expect(ompScreenModel(' π > [xhi] Glm 5.3 flash > ~/demo ────')).toMatchObject({ label: 'Glm 5.3 flash', effort: 'xhigh' })
-  })
-
-  it('ignores glyphs of the conversation, selectors, and a status line without a level', () => {
-    expect(ompScreenModel(' ◉ done, see above\n π > ⬡ Opus 5.5 > 🗑 ~/demo ────')).toBeNull()
-    expect(ompScreenModel(fx('omp-selector.txt'))).toBeNull()
   })
 })
 

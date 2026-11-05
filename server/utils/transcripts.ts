@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, type Hash } from 'node:crypto'
 import path from 'node:path'
 import { imageTagCount } from '../../shared/queuedMatch'
 import type { ChatItem, ChatResponse, ClaudeQueueEntry, ModelInfo, PromptDetail } from '../../shared/types'
@@ -13,6 +13,8 @@ import { type CommandTemplate, ompCommandTemplates } from './slash'
 import { fmt } from '../../shared/message'
 import { pastedBlocks } from '../../shared/pastedText'
 import { createActivity } from '../../shared/integrations'
+import { createDevinTranscripts } from './devinTranscripts'
+import { devinSession } from './devinSessions'
 
 // Backward reading by windows until there are enough messages: Claude's
 // transcripts embed images in base64, a few screenshots
@@ -228,10 +230,14 @@ export function parseClaude(lines: Lines, home = ''): Parsed {
 // of a conversation is parsed once and each poll feeds only the lines
 // appended since (see readTail). Its items keep changing as lines come (a
 // tool result marks its call, a "/" command becomes a user message…):
-// result() hands out copies, so a list already given never changes.
+// result() hands out copies, so a list already given never changes. The copy
+// of an item is made once and handed out again until the item changes
+// (touch): chatDelta signs each copy once.
 export type ClaudeParser = ReturnType<typeof claudeParser>
 export function claudeParser(home = '') {
   const items: ChatItem[] = []
+  const copies = new WeakMap<ChatItem, ChatItem>()
+  const touch = (it: ChatItem) => { copies.delete(it) }
   const tools = new Map<string, ChatItem>()
   // Claude's own queue (messages typed while it works,
   // from the phone or the computer): enqueue, then dequeue (taken at the end of
@@ -292,6 +298,7 @@ export function claudeParser(home = '') {
       return true
     }
     if (open && items[items.length - 1] === open && open.out === undefined) {
+      touch(open)
       open.out = o.out
       open.err = o.err
     }
@@ -411,6 +418,7 @@ export function claudeParser(home = '') {
       const content = d.message && d.message.content
       if (d.type === 'assistant' && pendingCmd && Array.isArray(content) && content.some((c: Json) => c.type === 'tool_use' || assistantText(c))) {
         const c: ChatItem = pendingCmd
+        touch(c)
         c.role = 'user'
         delete c.out
         delete c.err
@@ -456,6 +464,7 @@ export function claudeParser(home = '') {
         for (const part of content) {
           if (part.type === 'tool_result') {
             const t = tools.get(part.tool_use_id)
+            if (t) touch(t)
             if (t && part.is_error) t.error = true
             const n = Array.isArray(part.content) ? part.content.filter((p: Json) => p && p.type === 'image').length : 0
             if (t && n && ref) {
@@ -496,17 +505,17 @@ export function claudeParser(home = '') {
     }
   }
   function result(): Parsed {
-    const out: Parsed = items.map((it) => {
-      const c = { ...it }
-      const key = replyKeys.get(it)
-      if (key) replyKeys.set(c, key)
-      return c
-    })
-    // Local commands: one "/cmd → useful output" line; the full output stays
-    // only when it says more than that line (opened by a tap, see ChatView);
-    // screen text copied there alone (no useful line) is dropped.
-    for (const it of out) {
-      if (it.role !== 'cmd') continue
+    const out: Parsed = items.map((orig) => {
+      let it = copies.get(orig)
+      if (it) return it
+      it = { ...orig }
+      copies.set(orig, it)
+      const key = replyKeys.get(orig)
+      if (key) replyKeys.set(it, key)
+      // Local commands: one "/cmd → useful output" line; the full output stays
+      // only when it says more than that line (opened by a tap, see ChatView);
+      // screen text copied there alone (no useful line) is dropped.
+      if (it.role !== 'cmd') return it
       const line = usefulOutput(it.out, it.err)
       if (line) it.text = `${it.text} → ${line}`
       const full = [it.err, it.out].filter(Boolean).join('\n').trim()
@@ -517,7 +526,8 @@ export function claudeParser(home = '') {
         if (!it.out) delete it.out
         if (!it.err) delete it.err
       }
-    }
+      return it
+    })
     // Queued task notifications: not user messages.
     out.queue = queue.filter(q => !isNoise(q.text))
     out.popped = [...popped]
@@ -929,6 +939,15 @@ export function parseLines(text: string, kind: string | null, base = 0, home = '
   return items
 }
 
+// A message the user typed: where a Codex or omp turn starts (see lastTurn).
+export function turnStart(line: string, kind: string | null): boolean {
+  if (!line.includes('"user"')) return false
+  let d: Json
+  try { d = JSON.parse(line) } catch { return false }
+  if (kind === 'omp') return d?.type === 'message' && d.message?.role === 'user' && !d.message.synthetic && d.message.attribution !== 'agent'
+  return d?.type === 'response_item' && d.payload?.type === 'message' && d.payload.role === 'user'
+}
+
 // Hashes are cached per line: transcripts only grow, a line never changes,
 // and its multi-MB base64 is decoded and hashed once, not at every poll.
 const HASH_CACHE_MAX = 2000
@@ -1004,6 +1023,7 @@ export function isMissing(e: unknown): boolean {
 }
 
 export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number }) {
+  const devin = createDevinTranscripts({ home, fs, now })
   // File -> state (size, generation) and when this server first saw it, for
   // whole-second mtimes (see SETTLE_MS); `file|size|gen` -> checksum of the
   // file at first sight (null: could not be taken).
@@ -1054,7 +1074,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     const r = await herdr('pane.process_info', { pane_id: paneId }, 4000)
     const procs: Json[] = (r.process_info && r.process_info.foreground_processes) || []
     const match = procs.find(p => p.name === kind || path.basename((p.argv && p.argv[0]) || '') === kind)
-    return match || procs[0] || null
+    return match || (kind === 'devin' ? null : procs[0]) || null
   }
 
   const encodeCwd = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g, '-')
@@ -1239,11 +1259,16 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   // transcript with its first message, within those 8 s).
   async function locate(pane: TranscriptPane, fresh = false): Promise<Loc | null> {
     const hit = locCache.get(pane.id)
-    if (hit && (hit.loc || !fresh) && Date.now() - hit.at < 8000 && hit.session === pane.agentSession) return hit.loc
+    if (hit && (hit.loc || !fresh) && Date.now() - hit.at < (pane.agent === 'devin' ? 1500 : 8000) && hit.session === pane.agentSession) return hit.loc
     let loc: Loc | null = null
     let failed = false
     try {
-      if (pane.agent === 'codex') loc = await locateCodexPane(pane)
+      if (pane.agent === 'devin') {
+        const proc = await paneProcess(pane.id, 'devin')
+        const id = proc ? await devinSession(fs, home, proc, fs === localFs) : pane.agentSession
+        const file = id && devin.pathOf(id)
+        if (file) loc = { file, session: id! }
+      } else if (pane.agent === 'codex') loc = await locateCodexPane(pane)
       else if (pane.agentSession) {
         const f = await findSessionFile(pane.agent, pane.agentSession)
         if (f) loc = { file: f, session: pane.agentSession }
@@ -1351,8 +1376,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   }
   async function readTail(file: string, kind: string | null, size: number, from: number | null, ino?: number): Promise<TailResult> {
     if (from !== null && from <= size && size - from <= MAX_READ_BYTES) {
-      if (kind !== 'omp') return await locked(`${file}|${kind}|${from}`, () => readBelow(file, kind, size, from, ino))
-      return await readSlice(file, kind, size, from)
+      return await locked(`${file}|${kind}|${from}`, () => readBelow(file, kind, size, from, ino))
     }
     const r = await readBackwards(file, size, kind)
     r.anchor = await anchorAt(file, r.start)
@@ -1379,18 +1403,19 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   // Bottom below a client's cursor, kept between polls: while an agent
   // writes, each poll reads only the bytes appended since (and the few KB
   // around to check the rest is still there) instead of everything from the
-  // cursor. Claude's new lines are parsed alone (claudeParser); Codex's are
-  // kept and parsed again together, its image placeholders being declared on
-  // a later line (see codexPlaceholders). omp rewrites its file (retries, see
-  // ompTurnEnd): read whole each time (readSlice).
+  // cursor. Claude's new lines are parsed alone (claudeParser); Codex's and
+  // omp's are kept and their last turn parsed again (see lastTurn). omp
+  // rewrites its file (retries, see ompTurnEnd): all its bytes below the
+  // cursor are checked, not only the last CHECK_BYTES.
   interface Below extends LineStore {
     ino?: number
     start: number // first line start at or after the cursor
     end: number // after the last complete line read
     above: string // anchorHash of the bytes above the cursor
     aligned: boolean // the cursor is a line start
-    check: string // anchorHash of the CHECK_BYTES before `end`
+    check: string // anchorHash of the CHECK_BYTES before `end` (omp: from `start`)
     claude: ClaudeParser | null
+    turns: { lines: number, items: ChatItem[], templates: readonly CommandTemplate[] } // see lastTurn
   }
   const CHECK_BYTES = 4096
   const MAX_BELOW = 8
@@ -1405,6 +1430,27 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     void done.then(() => { if (queues.get(key) === done) queues.delete(key) })
     return r
   }
+  // Codex and omp read a turn as a whole (a tool's result marks its call, an
+  // image placeholder is declared after its message): the items of the turns
+  // before the last one are kept, and only the last turn is parsed again. A
+  // turn starts at a message the user typed. Kept items are handed out again
+  // as the same objects (chatDelta signs each once).
+  function lastTurn(b: Below, kind: string | null, cwd: string): Parsed {
+    const all = b.lines
+    if (b.turns.templates !== ompTemplates.list) b.turns = { lines: 0, items: [], templates: ompTemplates.list }
+    const parse = (from: number, to = all.length) => {
+      const lines: Lines = all.slice(from, to)
+      lines.refs = all.refs.slice(from, to)
+      return kind === 'omp' ? parseOmp(lines, home, ompTemplates.list, cwd) : parseCodex(lines)
+    }
+    for (let i = all.length - 1; i > b.turns.lines; i--) {
+      if (!turnStart(all[i]!, kind)) continue
+      b.turns.items.push(...parse(b.turns.lines, i))
+      b.turns.lines = i
+      break
+    }
+    return b.turns.items.concat(parse(b.turns.lines))
+  }
   async function readBelow(file: string, kind: string | null, size: number, from: number, ino?: number): Promise<TailResult> {
     const key = `${file}|${kind}|${from}`
     const s0 = Math.max(0, from - ANCHOR_BYTES)
@@ -1413,7 +1459,10 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     let above: Buffer = Buffer.alloc(0)
     let known: Buffer = Buffer.alloc(0) // bytes just before b.end, still the same
     let fresh: Buffer = Buffer.alloc(0) // bytes from b.end
-    const c0 = b ? Math.max(b.start, b.end - CHECK_BYTES) : 0
+    const whole = kind === 'omp'
+    // omp: one hash of the bytes from b.start, checked, then extended with the new ones.
+    let sum: Hash | null = null
+    const c0 = b ? (whole ? b.start : Math.max(b.start, b.end - CHECK_BYTES)) : 0
     if (b && b.ino === ino && size >= b.end) {
       if (c0 - from <= CHECK_BYTES) {
         const buf = await fs.read(file, s0, size - s0)
@@ -1427,7 +1476,9 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
         fresh = buf.subarray(b.end - c0)
       }
       // Rewritten, cut or replaced since: read again from the cursor.
-      if (above.length !== from - s0 || known.length !== b.end - c0 || anchorHash(above) !== b.above || anchorHash(known) !== b.check) b = undefined
+      sum = whole ? createHash('sha1').update(known) : null
+      const check = sum ? sum.copy().digest('hex').slice(0, 12) : anchorHash(known)
+      if (above.length !== from - s0 || known.length !== b.end - c0 || anchorHash(above) !== b.above || check !== b.check) b = undefined
     }
     if (!b || b.ino !== ino || size < b.end) {
       const buf = await fs.read(file, s0, size - s0)
@@ -1438,8 +1489,11 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
         off = nl < 0 ? buf.length : nl + 1
       }
       known = Buffer.alloc(0)
+      sum = whole ? createHash('sha1') : null
       const lines: Lines & { refs: string[] } = Object.assign([], { refs: [] })
-      b = { ino, start: s0 + off, end: s0 + off, above: anchorHash(above), aligned: off === from - s0, check: anchorHash(known), lines, hashes: new Map(), keep: kind === 'codex', claude: kind === 'codex' ? null : claudeParser(home) }
+      const claude = kind === 'codex' || kind === 'omp' ? null : claudeParser(home)
+      b = { ino, start: s0 + off, end: s0 + off, above: anchorHash(above), aligned: off === from - s0, check: anchorHash(known), lines, hashes: new Map(), keep: !claude, claude,
+        turns: { lines: 0, items: [], templates: ompTemplates.list } }
       fresh = buf.subarray(off)
     }
     const nl = fresh.lastIndexOf(0x0a)
@@ -1448,8 +1502,11 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
       b.claude?.feed(added)
       b.end += nl + 1
       // From c0 (or the start) to the new end: covers the bytes to check next time.
-      const tail = Buffer.concat([known, fresh.subarray(0, nl + 1)])
-      b.check = anchorHash(tail.subarray(Math.max(0, tail.length - CHECK_BYTES)))
+      if (sum) b.check = sum.update(fresh.subarray(0, nl + 1)).digest('hex').slice(0, 12)
+      else {
+        const tail = Buffer.concat([known, fresh.subarray(0, nl + 1)])
+        b.check = anchorHash(tail.subarray(Math.max(0, tail.length - CHECK_BYTES)))
+      }
     }
     below.set(key, b)
     let kept = 0
@@ -1469,7 +1526,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
         return await readSlice(file, kind, size, from)
       } catch { /* incomplete: ignored as the parsers would */ }
     }
-    const items = b.claude ? b.claude.result() : parseCodex(b.lines)
+    const items = b.claude ? b.claude.result() : lastTurn(b, kind, kind === 'omp' ? await ompCwd(file) : '')
     withHashes(items, b.hashes)
     return { start: from, items, queue: items.queue || [], popped: items.popped || [], anchor: b.aligned ? b.above : '' }
   }
@@ -1479,6 +1536,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     if (!hasTranscript(pane.agent)) return { hits: [], limited: false, kind: null }
     const loc = await locate(pane)
     if (!loc || Date.now() >= deadline) return { hits: [], limited: Date.now() >= deadline, kind: null }
+    if (pane.agent === 'devin') return devin.search({ ...pane, agentSession: loc.session }, query, deadline)
     // The transcript path tells the real kind (closed agent mislabeled).
     const kind = transcriptKind(loc.file) || pane.agent
     return { ...await searchFile(fs, loc.file, kind, home, query, deadline), kind }
@@ -1494,6 +1552,11 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     if (!hasTranscript(pane.agent)) return { available: false, reason: 'unsupported' }
     const loc = await locate(pane, Boolean(opts.fresh))
     if (!loc) return { available: false, reason: 'not_found' }
+    if (pane.agent === 'devin') {
+      const r = await devin.chat({ ...pane, agentSession: loc.session }, opts)
+      for (const item of r.items || []) if (item.role === 'assistant' && item.ref) replyKeys.set(item, `devin:${r.session}:${item.ref}`)
+      return r
+    }
     let st
     try { st = await fs.stat(loc.file) }
     catch (e) {
@@ -1564,6 +1627,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     return null
   }
   async function tailReply(pane: TranscriptPane): Promise<{ key: string, text: string } | null> {
+    if (pane.agent === 'devin') return null // ATIF is a single JSON document, not JSONL.
     if (!hasTranscript(pane.agent)) return null
     const loc = await locate(pane)
     if (!loc) return null
@@ -1604,6 +1668,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   async function image(pane: TranscriptPane, fileId: string | null, ref: string | null, index: number) {
     const loc = await locate(pane)
     if (!loc || path.basename(loc.file) !== fileId) return null
+    if (pane.agent === 'devin') return devin.image({ ...pane, agentSession: loc.session }, fileId, ref, index)
     const m = /^(\d+):(\d+)$/.exec(String(ref || ''))
     if (!m) return null
     const off = Number(m[1])
@@ -1629,6 +1694,10 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   const MODEL_MAX_BYTES = 16 * 1024 * 1024
   const modelCache = new Map<string, { file: string, size: number, raw: ModelInfo | null, info: ModelInfo | null }>()
   async function model(pane: TranscriptPane): Promise<ModelInfo | null> {
+    if (pane.agent === 'devin') {
+      const loc = await locate(pane)
+      return loc ? devin.model({ ...pane, agentSession: loc.session }) : null
+    }
     if (!pane.agent || !['claude', 'codex', 'omp'].includes(pane.agent)) return null
     const loc = await locate(pane)
     if (!loc) return null

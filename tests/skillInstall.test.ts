@@ -21,22 +21,14 @@ function fixture(mode: string) {
   cpSync(path.join(repo, 'herdr-plugin.toml'), path.join(root, 'herdr-plugin.toml'))
   const bin = path.join(home, 'tools')
   mkdirSync(bin)
-  const env = { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: path.join(home, '.claude'), WHERDR_DIR: path.join(home, 'wherdr'), IMAGE_ROOT: root, PATH: `${bin}:${process.env.PATH}` }
+  const env = { ...process.env, HOME: home, HC_SOCKET: path.join(home, 'hc.sock'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), WHERDR_DIR: path.join(home, 'wherdr'), IMAGE_ROOT: root, PATH: `${bin}:${process.env.PATH}` }
   const source = path.join(root, 'skills/wherdr/SKILL.md')
-  const run = () => {
-    if (mode === 'npm' || mode === 'brew') {
-      // Refresh happens even if startup subsequently fails (unbuilt package).
-      const result = spawnSync(process.execPath, [path.join(root, 'bin/wherdr.mjs'), 'run'], { env, encoding: 'utf8' })
-      expect(result.stderr).toContain('the server is missing')
-    } else {
-      const script = 'scripts/herdr-plugin.sh'
-      execFileSync('sh', [path.join(root, script), 'skill', 'install'], { env })
-    }
-  }
+  // wherdr 3's CLI installs no skill: only the wherdr 2 Herdr plugin script does.
+  const run = () => { execFileSync('sh', [path.join(root, 'scripts/herdr-plugin.sh'), 'skill', 'install'], { env }) }
   return { home, root, source, run, env, copy: path.join(home, 'wherdr/skills/wherdr'), link: path.join(home, '.claude/skills/wherdr') }
 }
 
-for (const mode of ['npm', 'brew', 'plugin-native']) {
+for (const mode of ['plugin-native']) {
   describe(`skill installation: ${mode}`, () => {
     it('installs for existing agents and refreshes the stable copy after an update', () => {
       const f = fixture(mode)
@@ -98,19 +90,28 @@ it('silently ignores an unwritable destination and respects a custom Claude dire
   expect(existsSync(path.join(f.home, '.claude'))).toBe(false)
 })
 
-it('starts the CLI server even when the optional skill destination is unwritable', () => {
+// The CLI removes the wherdr 2 skill once, then starts as usual.
+function legacySkill() {
   const f = fixture('npm')
   mkdirSync(path.join(f.home, '.claude'))
-  const blocked = path.join(f.home, 'blocked')
-  writeFileSync(blocked, 'file')
+  mkdirSync(path.join(f.home, '.codex'))
+  execFileSync('sh', [path.join(f.root, 'bin/lib/install-skill.sh'), 'install'], { env: f.env })
+  expect(readlinkSync(f.link)).toBe(f.copy)
+  return f
+}
+const removed = (f: ReturnType<typeof fixture>) => {
+  for (const p of [f.link, path.join(f.home, '.agents/skills/wherdr'), f.copy]) expect(existsSync(p)).toBe(false)
+}
+
+it('removes the 2.x skill and its links, then starts the CLI server', () => {
+  const f = legacySkill()
   mkdirSync(path.join(f.root, '.output/server'), { recursive: true })
   writeFileSync(path.join(f.root, '.output/server/index.mjs'), "process.stdout.write('fixture server started\\n')")
-  const result = spawnSync(process.execPath, [path.join(f.root, 'bin/wherdr.mjs'), 'run', '--port', '7699'], {
-    env: { ...f.env, WHERDR_DIR: blocked }, encoding: 'utf8', timeout: 10000,
-  })
+  const result = spawnSync(process.execPath, [path.join(f.root, 'bin/wherdr.mjs'), 'run', '--port', '7699'], { env: f.env, encoding: 'utf8', timeout: 10000 })
   expect(result.status).toBe(0)
   expect(result.stdout).toContain('fixture server started')
   expect(result.stderr).toBe('')
+  removed(f)
 })
 
 it('does not follow a foreign symlink at the stable managed copy', () => {
@@ -127,14 +128,22 @@ it('does not follow a foreign symlink at the stable managed copy', () => {
 })
 
 for (const args of [['start'], ['service', 'install']]) {
-  it(`refreshes the skill before ${args.join(' ')} checks its prerequisites`, () => {
-    const f = fixture('npm')
-    mkdirSync(path.join(f.home, '.omp'))
+  it(`removes the 2.x skill before ${args.join(' ')} checks its prerequisites`, () => {
+    const f = legacySkill()
     const result = spawnSync(process.execPath, [path.join(f.root, 'bin/wherdr.mjs'), ...args], { env: f.env, encoding: 'utf8', timeout: 10000 })
     expect(result.status).toBe(1)
-    expect(readFileSync(path.join(f.home, '.agents/skills/wherdr/SKILL.md'), 'utf8')).toBe(readFileSync(f.source, 'utf8'))
+    removed(f)
   })
 }
+
+it('leaves a foreign skill alone and installs none', () => {
+  const f = fixture('npm')
+  mkdirSync(f.link, { recursive: true })
+  writeFileSync(path.join(f.link, 'SKILL.md'), 'foreign')
+  spawnSync(process.execPath, [path.join(f.root, 'bin/wherdr.mjs'), 'start'], { env: f.env, encoding: 'utf8', timeout: 10000 })
+  expect(readFileSync(path.join(f.link, 'SKILL.md'), 'utf8')).toBe('foreign')
+  expect(existsSync(f.copy)).toBe(false)
+})
 
 it.skipIf(process.platform !== 'linux')('keeps a custom Claude directory in the generated login service environment', () => {
   const f = fixture('npm')
@@ -177,7 +186,7 @@ it.skipIf(process.platform !== 'linux')('normalizes a relative Claude config and
 })
 
 
-for (const mode of ['npm', 'brew', 'plugin-native']) {
+for (const mode of ['plugin-native']) {
   it(`${mode}: WHERDR_SKILL=off neither installs nor refreshes`, () => {
     const f = fixture(mode)
     mkdirSync(path.join(f.home, '.claude'))
@@ -195,19 +204,6 @@ for (const mode of ['npm', 'brew', 'plugin-native']) {
   })
 }
 
-
-it('consumes the updater handoff without another refresh or leaking it to the server', () => {
-  const f = fixture('npm')
-  mkdirSync(path.join(f.home, '.claude'))
-  mkdirSync(path.join(f.root, '.output/server'), { recursive: true })
-  writeFileSync(path.join(f.root, '.output/server/index.mjs'), "console.log(process.env.WHERDR_SKILL_REFRESHED ?? 'consumed')")
-  const result = spawnSync(process.execPath, [path.join(f.root, 'bin/wherdr.mjs'), 'run', '--port', '7699'], {
-    env: { ...f.env, WHERDR_SKILL_REFRESHED: '1' }, encoding: 'utf8', timeout: 10000,
-  })
-  expect(result.status).toBe(0)
-  expect(result.stdout).toContain('consumed')
-  expect(existsSync(f.copy)).toBe(false)
-})
 
 for (const mode of ['plugin-native']) {
   it(`${mode}: automatic refresh preserves uninstall until explicit installation`, () => {

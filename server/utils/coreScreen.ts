@@ -66,9 +66,13 @@ const STARTUP_MS = 30_000
 // draft is shown at once: the change is the key's, nobody is typing it.
 const KEYED_MS = 2000
 
+// What one screen text says, kept while the text, the agent and core's status
+// stay the same: most polls see the screens they saw before.
+interface Parsed { agent: string | null | undefined, status: string | null | undefined, r: CoreReading, error: ReturnType<typeof codexError>, sendNow: boolean, draft?: ReturnType<typeof readDraft> }
+
 export function createCoreScreens(deps: CoreScreenDeps) {
   const now = deps.now ?? Date.now
-  const cache = new Map<string, { at: number, text: string, open?: boolean }>()
+  const cache = new Map<string, { at: number, text: string, open?: boolean, parsed?: Parsed }>()
   const born = new Map<string, number>()
   const failed = new Set<string>()
   const drafts = new Map<string, { text: string, since: number, real?: boolean }>()
@@ -77,7 +81,9 @@ export function createCoreScreens(deps: CoreScreenDeps) {
   const read = async (p: Pane) => {
     try {
       const r = await deps.call('terminal.read', { terminal: p.coreAddress, lines: 0 }, 3000)
-      cache.set(p.id, { at: now(), text: String(r?.text ?? '') })
+      const text = String(r?.text ?? '')
+      const old = cache.get(p.id)
+      cache.set(p.id, { at: now(), text, ...(old?.text === text ? { parsed: old.parsed } : {}) })
       failed.delete(p.id)
     } catch { failed.add(p.id) }
   }
@@ -113,20 +119,25 @@ export function createCoreScreens(deps: CoreScreenDeps) {
       for (const p of agents) {
         const c = cache.get(p.id)
         if (!c) continue
-        const r = readCoreScreen(c.text, p.agent, p.status)
+        if (c.parsed?.agent !== p.agent || c.parsed.status !== p.status) {
+          c.parsed = { agent: p.agent, status: p.status, r: readCoreScreen(c.text, p.agent, p.status),
+            error: p.agent === 'codex' ? codexError(c.text) : null, sendNow: queueSendNow(c.text, p.agent) }
+        }
+        const parsed = c.parsed
+        const r = parsed.r
         if (!born.has(p.id)) born.set(p.id, c.at)
         const status = r.status || p.status
         c.open = status !== 'blocked' && status !== 'working'
         let choices = r.choices
         if (choices && p.agent === 'claude' && deps.asked) choices = completeClaudeAsk(choices, await deps.asked(p).catch(() => []))
         if (r.status) p.status = r.status
-        const error = p.agent === 'codex' ? codexError(c.text) : null
+        const error = parsed.error
         if (error) p.error = error
         else delete p.error
         p.interaction = failed.has(p.id) ? 'unknown' : r.interaction
         if (choices && r.interaction === 'native') p.prompt = choices
-        if (queueSendNow(c.text, p.agent)) p.queueSendNow = true
-        const draft = !failed.has(p.id) && r.interaction === 'input' && p.status !== 'working' ? readDraft(c.text, p.agent) : null
+        if (parsed.sendNow) p.queueSendNow = true
+        const draft = !failed.has(p.id) && r.interaction === 'input' && p.status !== 'working' ? (parsed.draft === undefined ? parsed.draft = readDraft(c.text, p.agent) : parsed.draft) : null
         let seen = drafts.get(p.id)
         if (!draft) drafts.delete(p.id)
         else {

@@ -8,10 +8,11 @@ import type { Pane } from '../shared/types'
 const realFetch = window.fetch
 const realSocket = window.WebSocket
 const sockets: WebSocket[] = []
+let server: ReturnType<typeof installDemoNetwork>
 
 beforeEach(() => {
   vi.useFakeTimers()
-  installDemoNetwork('/demo/')
+  server = installDemoNetwork('/demo/')
 })
 afterEach(() => {
   for (const socket of sockets.splice(0)) socket.close()
@@ -74,10 +75,8 @@ describe('demo split terminal sizing', () => {
     socket.send(JSON.stringify({ type: 'keys', keys: ['down', 'enter'] }))
     expect(text()).toContain('Demo analytics')
     socket.send(JSON.stringify({ type: 'keys', keys: ['esc', 'esc'] }))
-    const reading = window.fetch(`/api/screen?pane=${CODEX}`)
     await vi.advanceTimersByTimeAsync(100)
-    const state = await (await reading).json()
-    expect(state.interaction).toBe('input')
+    expect(server.pane(CODEX)?.interaction).toBe('input')
     expect(text()).not.toContain('Demo analytics')
   })
   it('places a short Claude exchange at the top with its prompt directly after it', () => {

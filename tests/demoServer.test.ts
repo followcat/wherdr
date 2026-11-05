@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { DEMO_REFUSAL, DemoServer } from '../app/demo/server'
 import { CLAUDE_WEB, COORD, CODEX, OMP, scriptFor } from '../app/demo/scenario'
 import type { ChatResponse } from '../shared/types'
-import { dividers } from '../shared/layout'
 
 // Manual clock: timers run only when the test advances time.
 function clock() {
@@ -28,17 +27,6 @@ function clock() {
 const chat = (s: DemoServer, pane: string, since = '') => s.handle('GET', `/api/chat?pane=${encodeURIComponent(pane)}&since=${since}`).body as ChatResponse
 
 describe('demo server', () => {
-  it('keeps divider resizing in the simulated layout without allowing other space commands', () => {
-    const s = new DemoServer(clock())
-    const tab = s.state().tabs!.find(t => t.layout && t.layout.panes.length === 2)!
-    const divider = dividers(tab.layout!)[0]!
-    expect(s.handle('POST', '/api/space', { op: 'layout.ratio', tab_id: tab.id, path: divider.path, ratio: 0.4 }).status).toBe(200)
-    const resized = s.state().tabs!.find(t => t.id === tab.id)!
-    expect(dividers(resized.layout!)[0]!.ratio).toBeCloseTo(0.4)
-    expect(resized.layout!.panes.map(p => p.pane)).toEqual(tab.layout!.panes.map(p => p.pane))
-    expect(s.handle('POST', '/api/space', { op: 'pane.drop' }).status).toBe(403)
-    expect(s.handle('POST', '/api/space', { op: 'layout.ratio', tab_id: tab.id, path: divider.path, ratio: NaN }).status).toBe(400)
-  })
   it('opens on a consistent session: every laid-out pane exists, questions only on waiting agents', () => {
     const s = new DemoServer(clock())
     const st = s.state()
@@ -120,8 +108,6 @@ describe('demo server', () => {
     // Still waiting on the question, the message is listed, not in the conversation.
     expect(s.pane(OMP)).toMatchObject({ status: 'blocked', queued: [{ id: 'w-abc123', text: 'Why was it flaky?', state: 'held' }] })
     expect(chat(s, OMP).items).toHaveLength(before)
-    // Retry of a message still held: the same record, never an error.
-    expect(s.handle('POST', '/api/requeue', { pane_id: OMP, id: 'w-abc123' })).toMatchObject({ status: 200, body: { queued: { id: 'w-abc123', state: 'held' } } })
     // A second one waits behind it.
     expect(s.handle('POST', '/api/prompt', { pane_id: OMP, text: 'How do I check it?' }).status).toBe(200)
     expect(s.pane(OMP)?.queued).toHaveLength(2)
@@ -154,20 +140,6 @@ describe('demo server', () => {
     expect(s.handle('POST', '/api/input', { pane_id: CLAUDE_WEB, keys: ['enter'] }).status).toBe(403)
   })
 
-  it('cancels a held message: its text comes back, nothing is sent', () => {
-    const c = clock()
-    const s = new DemoServer(c)
-    const before = chat(s, OMP).items!.length
-    s.handle('POST', '/api/prompt', { pane_id: OMP, text: 'Never mind' })
-    const q = s.pane(OMP)!.queued![0]!
-    expect(s.handle('POST', '/api/unqueue', { pane_id: OMP, text: 'Never mind', id: q.id })).toEqual({ status: 200, body: { ok: true, text: 'Never mind' } })
-    expect(s.pane(OMP)?.queued).toBeUndefined()
-    expect(s.handle('POST', '/api/unqueue', { pane_id: OMP, text: 'Never mind', id: q.id }).status).toBe(409)
-    s.handle('POST', '/api/choose', { pane_id: OMP, index: 0, label: 'Approve' })
-    c.advance(60_000)
-    expect(chat(s, OMP).items!.slice(before).some(i => i.role === 'user')).toBe(false)
-  })
-
   it('takes a message while the agent works, and a command while a question is open', () => {
     const c = clock()
     const s = new DemoServer(c)
@@ -180,35 +152,11 @@ describe('demo server', () => {
     expect(s.pane(OMP)?.queued).toBeUndefined()
   })
 
-  it('the Codex task finishes by itself and the Board follows', () => {
+  it('the Codex agent finishes its turn by itself', () => {
     const c = clock()
     const s = new DemoServer(c)
-    type Board = { version: string, machines: { status: string, tasks: { id: string, group: string, pr: string }[] }[] }
-    const first = s.handle('GET', '/api/tasks').body as Board
-    expect(first.machines).toHaveLength(1)
-    expect(first.machines[0]!.status).toBe('ready')
-    expect(first.machines[0]!.tasks.find(t => t.id === 'acme-api/12')?.group).toBe('working')
-    expect(first.machines[0]!.tasks.find(t => t.id === 'acme-api/13')?.group).toBe('needs')
-    expect(s.handle('GET', `/api/tasks?since=${first.version}`).body).toEqual({ same: true, version: first.version })
     c.advance(60_000)
     expect(s.pane(CODEX)?.status).toBe('done')
-    const next = s.handle('GET', `/api/tasks?since=${first.version}`).body as Board
-    const done = next.machines[0]!.tasks.find(t => t.id === 'acme-api/12')!
-    expect(done.group).toBe('ready')
-    expect(done.pr).toMatch(/^https:\/\//)
-  })
-
-  it('gives a task\'s details with its agent\'s pane, and refuses to act on it', () => {
-    const s = new DemoServer(clock())
-    expect(s.handle('GET', '/api/tasks/details?machine=&id=acme-api%2F12').body).toMatchObject({ id: 'acme-api/12', pane: CODEX })
-    expect(s.handle('GET', '/api/tasks/details?machine=&id=acme-api%2F99').status).toBe(404)
-    // The home list's groups: the Coordinator runs acme-api, the tasks follow their agents.
-    const links = s.handle('GET', '/api/tasks/links').body as { version: string, machines: { coordinators: unknown[], tasks: { key: string, panes: { id: string }[] }[] }[] }
-    expect(links.machines[0]!.coordinators).toEqual([{ level: 'project', repo: 'acme-api', pane: COORD, workspace: 'w1' }])
-    expect(links.machines[0]!.tasks.map(t => [t.key, t.panes[0]!.id])).toEqual([['ACME-API-12', CODEX], ['ACME-API-13', OMP]])
-    expect(s.handle('GET', `/api/tasks/links?since=${links.version}`).body).toEqual({ same: true, version: links.version })
-    expect(s.handle('POST', '/api/tasks/tell', { machine: '', id: 'acme-api/12', text: 'hi' }).status).toBe(403)
-    expect(s.handle('POST', '/api/tasks/approve', { machine: '', id: 'acme-api/12' }).status).toBe(403)
   })
 
   it('refuses everything it does not simulate, with the demo message', () => {

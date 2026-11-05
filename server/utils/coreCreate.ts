@@ -14,6 +14,7 @@ import { toAgentName } from '../../shared/ids'
 import { cleanLabel } from '../../shared/spaceActions'
 import { fmt } from '../../shared/message'
 import { placementLabels } from '../../shared/coreLayout'
+import { coreCapabilities, hasPort, type CoreCapabilities } from '../../shared/coreCapabilities'
 import type { DirEntry, DirListing, MachineConfig, MachineInfo, Pane, Workspace } from '../../shared/types'
 
 export interface CoreAdminDeps {
@@ -32,7 +33,7 @@ export interface CoreAdminDeps {
 }
 
 const REQUEST_LABEL = 'wherdr-request'
-const PATH_SETUP = 'export PATH="$HOME/.local/bin:$HOME/.kimi-code/bin:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"'
+export const PATH_SETUP = 'export PATH="$HOME/.local/bin:$HOME/.kimi-code/bin:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"'
 const TARGET_RE = /^[A-Za-z0-9_][A-Za-z0-9_.@:%[\]-]{0,199}$/
 const NAME_RE = /^[a-z0-9_][a-z0-9_.-]{0,31}$/
 
@@ -115,7 +116,7 @@ interface CoreFacts { state?: string, exit_code?: number | null, signal?: string
 
 // An agent that ends with a failure within a couple of seconds did not start: say so with
 // the exit code and the last lines it printed, rather than leaving a dead entry to find.
-async function launchFailure(deps: CoreAdminDeps, address: string, ms: number): Promise<{ code: string, lines: string } | null> {
+export async function launchFailure(deps: CoreAdminDeps, address: string, ms: number): Promise<{ code: string, lines: string } | null> {
   const end = Date.now() + ms
   do {
     const t = await deps.call<CoreFacts>('terminal.get', { terminal: address }, 3000).catch(() => null)
@@ -249,11 +250,9 @@ export async function coreAddMachine(deps: CoreAdminDeps, body: { target?: unkno
   const name = typeof body.name === 'string' ? body.name.trim() : ''
   if (!TARGET_RE.test(target)) throw new HerdrError('bad_target', 'Invalid SSH target')
   if (name && !NAME_RE.test(name)) throw new HerdrError('bad_name', 'The name uses a-z, 0-9, - _ . (32 at most)')
-  // `user@host:port` (also `[::1]:22`) needs core 0.1.17+: say so instead of a vague SSH failure.
-  if (/:\d{1,5}$/.test(target)) {
-    const status = await deps.call<{ version?: string }>('server.status', {}, 8000).catch(() => null)
-    if (status?.version && !versionAtLeast(status.version, [0, 1, 17])) throw new HerdrError('port_unsupported', 'host:port needs herdr-core 0.1.17 or newer')
-  }
+  // A core that takes no port says so here instead of a vague SSH failure. Unknown
+  // (discover failed): machine.add answers for itself.
+  if (hasPort(target) && (await coreCaps(deps))?.hostPort === false) throw new HerdrError('port_unsupported', PORT_UNSUPPORTED)
   try {
     await deps.call('machine.add', { target, ...(name ? { name } : {}) }, 60000)
   } catch (e) {
@@ -270,10 +269,12 @@ export async function coreAddMachine(deps: CoreAdminDeps, body: { target?: unkno
   return { ok: true }
 }
 
-export function versionAtLeast(version: string, min: [number, number, number]) {
-  const v = version.split('.').map(n => parseInt(n, 10) || 0)
-  for (let i = 0; i < 3; i++) if ((v[i] ?? 0) !== min[i]) return (v[i] ?? 0) > min[i]!
-  return true
+export const PORT_UNSUPPORTED = 'This herdr-core takes no port: update it, or use a Host from ~/.ssh/config'
+
+// What this core accepts (rpc.discover), or null when it cannot be read.
+export async function coreCaps(deps: CoreAdminDeps): Promise<CoreCapabilities | null> {
+  const discover = await deps.call<Parameters<typeof coreCapabilities>[0]>('rpc.discover', {}, 8000).catch(() => null)
+  return discover && Array.isArray(discover.methods) ? coreCapabilities(discover) : null
 }
 
 function remoteMachine(deps: CoreAdminDeps, key: unknown) {
@@ -305,8 +306,12 @@ export async function coreForgetMachine(deps: CoreAdminDeps, key: unknown) {
 
 export async function coreStatus(deps: CoreAdminDeps) {
   try {
-    const s = await deps.call<{ version: string, pid: number, uptime_ms: number, live: number, finished: number, core?: { name?: string } }>('server.status', {}, 8000)
-    return { version: s.version, pid: s.pid, uptimeMs: s.uptime_ms, live: s.live, finished: s.finished, name: s.core?.name ?? null }
+    const [s, caps] = await Promise.all([
+      deps.call<{ version: string, pid: number, uptime_ms: number, live: number, finished: number, core?: { name?: string } }>('server.status', {}, 8000),
+      coreCaps(deps),
+    ])
+    // hostPort: null when unknown (Add machine then lets the core answer).
+    return { version: s.version, pid: s.pid, uptimeMs: s.uptime_ms, live: s.live, finished: s.finished, name: s.core?.name ?? null, hostPort: caps?.hostPort ?? null }
   } catch (e) { return failure(e) }
 }
 

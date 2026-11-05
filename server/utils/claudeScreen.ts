@@ -110,32 +110,6 @@ export function parseClaudeScreen(text: string | null | undefined, now = Date.no
   return { shell, sent, queued, ...capability }
 }
 
-// Claude Code status next to the input field ("✔ Update installed ·
-// Restart to update"…), right-aligned in the last lines. Only
-// known statuses are kept: the rest of these lines (tips, shortcuts,
-// status bar) is not reliable.
-const NOTICES = [
-  /✔?\s*Update installed\s*·\s*Restart to update\b/,
-  /Update available!?\s*(?:·\s*)?Run[^\n]*?update\b/i,
-  /✗?\s*Auto-update failed\b(?:\s*·[^\n]*)?/,
-]
-export function parseClaudeNotice(text: string | null | undefined): string | null {
-  if (!text) return null
-  const lines = text.split('\n').map(l => l.replace(/\s+$/, ''))
-  while (lines.length && !lines[lines.length - 1]) lines.pop()
-  // Dernier cadre du champ de saisie : on regarde de 3 lignes au-dessus jusqu'au bas.
-  let rule = -1
-  for (let i = lines.length - 1; i >= 0 && rule < 0; i--) if (RULE_RE.test(lines[i]!)) rule = i
-  const from = Math.max(0, (rule < 0 ? lines.length : rule) - 8)
-  for (let i = lines.length - 1; i >= from; i--) {
-    for (const re of NOTICES) {
-      const m = re.exec(lines[i]!)
-      if (m) return m[0].trim().replace(/\s+/g, ' ')
-    }
-  }
-  return null
-}
-
 // Claude Code's next-message suggestion: grayed-out text (SGR 2) alone in
 // its input field, which Tab accepts. Read from the ANSI screen:
 //

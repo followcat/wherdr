@@ -69,7 +69,7 @@ describe.skipIf(process.platform === 'win32' || !which('curl'))('herdr plugin, n
   // Like Herdr's server: a bare environment whose PATH has no node.
   const run = (action: string, extraPath = '', extraEnv: Record<string, string> = {}) => spawnSync('sh', [path.join(root, 'scripts', 'herdr-plugin.sh'), action], {
     cwd: root, encoding: 'utf8', timeout: 60_000,
-    env: { HOME: home, PATH: extraPath ? `${extraPath}:${minbin}` : minbin, WHERDR_MODE: 'native', WHERDR_PORT: String(port), ...extraEnv },
+    env: { HOME: home, HC_SOCKET: path.join(home, 'hc.sock'), PATH: extraPath ? `${extraPath}:${minbin}` : minbin, WHERDR_MODE: 'native', WHERDR_PORT: String(port), ...extraEnv },
   })
 
   const pidOf = () => readFileSync(path.join(home, 'wherdr', 'wherdr.pid'), 'utf8').trim()

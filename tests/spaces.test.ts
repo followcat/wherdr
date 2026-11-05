@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { reduceSnapshot } from './helpers/snapshot'
-import { isShellRow, leadPane, rememberTab, rowGroup, spaceRows, spaceTab, tabStates } from '../shared/spaces'
+import { leadPane, rememberTab, rowGroup, spaceRows, spaceTab, tabStates } from '../shared/spaces'
 import type { Pane } from '../shared/types'
 import layouts from './fixtures/snapshot-layouts.json'
 
@@ -39,7 +39,6 @@ describe('state of a space = its most urgent pane', () => {
     expect(w1.sum).toEqual({ blocked: 1, working: 1, done: 1, agents: 3 })
     // The shell space (w2) is sorted as an idle space.
     expect(rows.map(rowGroup)).toEqual(['blocked', 'ready', 'ready'])
-    expect(rows.map(isShellRow)).toEqual([false, true, false])
   })
 
   it('on a tie, the first in reading order', () => {

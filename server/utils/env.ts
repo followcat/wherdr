@@ -14,6 +14,9 @@ export const HOME = env.HOME || os.homedir()
 // runtime that runs wherdr stays first, as the login service puts it.
 env.PATH = userPath({ env, home: HOME, first: [path.dirname(process.execPath)] })
 export const DATA_DIR = env.DATA_DIR || path.join(process.cwd(), 'data')
+// Folder of wherdr's own files (wherdr.env, wherdr.json): set by the CLI
+// (bin/lib/core.mjs, wherdrDir), ~/wherdr otherwise.
+export const WHERDR_DIR = env.WHERDR_DIR || path.join(HOME, 'wherdr')
 export const AGENT_KINDS = (env.AGENT_KINDS || 'pi,claude,codex,gemini,cursor,devin,agy,cline,omp,mastracode,opencode,copilot,kimi,kiro,droid,amp,grok,hermes,kilo,qodercli,qwen,letta,maki,muse').split(',').map(s => s.trim()).filter(Boolean)
 // Public address of the app. Push only uses HTTPS URLs as the VAPID subject.
 // An HTTPS APP_URL in the environment wins; otherwise the phone address saved
@@ -45,7 +48,6 @@ export const TAILNET_REFRESH_MS = Number(env.TAILNET_REFRESH_MS || 30000)
 export const NOTIFY_SETTLE_MS = Number(env.NOTIFY_SETTLE_MS || 4000)
 // Photos sent from the phone: the agent reads them by their path on the host.
 export const UPLOAD_DIR = env.UPLOAD_DIR || path.join(HOME, '.cache/herdr-web/uploads')
-export const UPLOAD_MAX = 20 * 1024 * 1024
 export const UPLOAD_TTL_MS = 7 * 86400000
 // Other files attached to a message (PDF, text, code…): same 7-day purge.
 export const ATTACH_DIR = env.ATTACH_DIR || path.join(HOME, '.cache/herdr-web/files')

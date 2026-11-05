@@ -1,7 +1,10 @@
 // herdr-projects 1.x on the home list: which Herdr panes and spaces belong to
 // the board. wherdr no longer reads the Board; these types remain for the
-// notification rules (shared/notificationRules.ts) and the demo build (app/demo).
-import type { TaskAgentIdentity, TaskGroup } from './projectsTasks'
+// notification rules (shared/notificationRules.ts).
+
+// The board's five groups, in the order they need you (1.x: shown/states.rs).
+export type TaskGroup = 'needs' | 'ready' | 'working' | 'todo' | 'done'
+export interface TaskAgentIdentity { agent: string, reviewer: string, from: string }
 
 // In Working, whether an agent runs or it waits for CI or its turn.
 export type TaskActivity =
@@ -61,4 +64,3 @@ export interface LinkedCoordinator {
 export interface RepoInfo { repo: string, root: string, branch: string, behind: number | null }
 // One board (a base machine): its tasks, coordinators and repos.
 export interface MachineLinks { machine: string, tasks: LinkedTask[], coordinators: LinkedCoordinator[], repos?: RepoInfo[] }
-export interface BoardLinks { version: string, machines: MachineLinks[] }

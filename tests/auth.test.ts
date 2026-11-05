@@ -4,7 +4,8 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { createAuth, createRateLimit, type Auth } from '../server/utils/auth'
+import { createAuth, type Auth } from '../server/utils/auth'
+import { createRateLimit } from '../server/utils/rateLimit'
 
 const dir = () => mkdtempSync(path.join(tmpdir(), 'hw-auth-'))
 const req = (cookie?: string, origin = 'http://localhost:7684') => ({ headers: { cookie, origin } })

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ATTACH_LIMITS, agentReads, closeTrailingMention, attachmentDisplayName, attachmentIcon, attachmentPath, attachmentRef, checkAttachment,
+  ATTACH_LIMITS, agentReads, closeTrailingMention, attachmentDisplayName, attachmentIcon, attachmentRef, checkAttachment,
   classifyAttachment, isStoredAttachmentName, looksLikeText, parseAttachmentLine, safeAttachmentName, storedAttachmentName,
 } from '../shared/attachments'
 
@@ -98,10 +98,6 @@ describe('stored names', () => {
 
 describe('paths and references', () => {
   const stored = '2026-10-02T10-20-30-456Z-a1b2c3-spec.pdf'
-  it('builds the path on a local or remote machine', () => {
-    expect(attachmentPath('/home/dev', stored)).toBe(`/home/dev/.cache/herdr-web/files/${stored}`)
-    expect(attachmentPath('/Users/dev/', stored)).toBe(`/Users/dev/.cache/herdr-web/files/${stored}`)
-  })
 
   it('uses @ for text given to Claude, a plain path otherwise', () => {
     const p = '/home/dev/.cache/herdr-web/files/x-notes.md'

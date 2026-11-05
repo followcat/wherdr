@@ -300,10 +300,3 @@ export function screenDetail(lines: string[], q: number, top: number): PromptDet
   if (q < 0) return null
   return codexScreen(lines.slice(q + 1, top)) || claudeScreen(lines, q)
 }
-
-// The transcript gives the full command; the screen fills in what is missing.
-export function mergeDetail(tr: PromptDetail | null, screen: PromptDetail | null): PromptDetail | null {
-  if (!tr) return screen
-  if (!screen) return tr
-  return { ...tr, description: tr.description || screen.description }
-}

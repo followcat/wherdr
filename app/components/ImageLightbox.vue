@@ -4,7 +4,8 @@
 // bottom bar or + / - / 0; zoomed, a drag or the wheel pans in every direction.
 // When it belongs to a set (message with several images): ← → keys, swipe (not
 // zoomed) or the side buttons go through all of them, with a counter. A tap
-// outside the image, the close button or Escape closes it.
+// outside the image, the close button or Escape closes it. In body, so it
+// also covers a window (a task's screenshots open it from a sheet).
 import { canPan, clampView, fitScale, fitView, isZoomed, toggleZoom, wheelFactor, ZOOM_STEP, zoomAt, zoomBounds } from '~/utils/imageZoom'
 import type { ImageSize, ZoomView } from '~/utils/imageZoom'
 
@@ -58,7 +59,8 @@ function go(delta: number) {
 }
 function onKey(e: KeyboardEvent) {
   if (!lightboxSrc.value) return
-  if (e.key === 'Escape') close()
+  // Escape closes the viewer only, not the window it was opened from.
+  if (e.key === 'Escape') { e.stopPropagation(); close() }
   else if (e.key === 'ArrowLeft') { e.preventDefault(); go(-1) }
   else if (e.key === 'ArrowRight') { e.preventDefault(); go(1) }
   else if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomTo(view.value.scale * ZOOM_STEP) }
@@ -179,36 +181,38 @@ function stopGesture(e: Event) { if (lightboxSrc.value) e.preventDefault() }
 watch(lightboxSrc, () => { img.value = null; pointers.clear(); gesture = null; lastTap = null })
 
 onMounted(() => {
-  document.addEventListener('keydown', onKey)
+  window.addEventListener('keydown', onKey, true)
   window.addEventListener('resize', onResize)
   document.addEventListener('gesturestart', stopGesture)
 })
 onUnmounted(() => {
-  document.removeEventListener('keydown', onKey)
+  window.removeEventListener('keydown', onKey, true)
   window.removeEventListener('resize', onResize)
   document.removeEventListener('gesturestart', stopGesture)
 })
 </script>
 
 <template>
-  <div v-if="lightboxSrc" class="lightbox" role="dialog" aria-modal="true" :aria-label="t('Image')" @click.self="close">
-    <div
-      ref="stage" class="lightbox-stage" :class="{ pannable, zoomed }"
-      @pointerdown="onDown" @pointermove="onMove" @pointerup="onUp" @pointercancel="onUp" @wheel.prevent="onWheel"
-    >
-      <img :key="lightboxSrc" :src="lightboxSrc" alt="" draggable="false" :style="imgStyle" @load="onLoad">
+  <Teleport to="body">
+    <div v-if="lightboxSrc" class="lightbox" role="dialog" aria-modal="true" :aria-label="t('Image')" @click.self="close">
+      <div
+        ref="stage" class="lightbox-stage" :class="{ pannable, zoomed }"
+        @pointerdown="onDown" @pointermove="onMove" @pointerup="onUp" @pointercancel="onUp" @wheel.prevent="onWheel"
+      >
+        <img :key="lightboxSrc" :src="lightboxSrc" alt="" draggable="false" :style="imgStyle" @load="onLoad">
+      </div>
+      <span v-if="multi" class="lightbox-count">{{ index + 1 }} / {{ set.length }}</span>
+      <button type="button" class="lightbox-btn lightbox-close" :aria-label="t('Close')" @click="close"><UIcon name="i-lucide-x" /></button>
+      <template v-if="multi">
+        <button type="button" class="lightbox-nav prev" :disabled="index <= 0" :aria-label="t('Previous image')" @click="go(-1)"><UIcon name="i-lucide-chevron-left" /></button>
+        <button type="button" class="lightbox-nav next" :disabled="index >= set.length - 1" :aria-label="t('Next image')" @click="go(1)"><UIcon name="i-lucide-chevron-right" /></button>
+      </template>
+      <div v-if="img" class="lightbox-bar">
+        <button type="button" class="lightbox-btn" :disabled="!zoomed" :aria-label="t('Zoom out')" @click="zoomTo(view.scale / ZOOM_STEP)"><UIcon name="i-lucide-minus" /></button>
+        <button type="button" class="lightbox-zoom" :title="t('Fit to screen')" :disabled="!zoomed" @click="fitToScreen">{{ percent }}</button>
+        <button type="button" class="lightbox-btn" :disabled="view.scale >= bounds.max - 1e-6" :aria-label="t('Zoom in')" @click="zoomTo(view.scale * ZOOM_STEP)"><UIcon name="i-lucide-plus" /></button>
+        <button type="button" class="lightbox-real" :disabled="fit >= 1" :aria-pressed="view.scale === 1" :title="t('Actual size')" @click="actualSize">1:1</button>
+      </div>
     </div>
-    <span v-if="multi" class="lightbox-count">{{ index + 1 }} / {{ set.length }}</span>
-    <button type="button" class="lightbox-btn lightbox-close" :aria-label="t('Close')" @click="close"><UIcon name="i-lucide-x" /></button>
-    <template v-if="multi">
-      <button type="button" class="lightbox-nav prev" :disabled="index <= 0" :aria-label="t('Previous image')" @click="go(-1)"><UIcon name="i-lucide-chevron-left" /></button>
-      <button type="button" class="lightbox-nav next" :disabled="index >= set.length - 1" :aria-label="t('Next image')" @click="go(1)"><UIcon name="i-lucide-chevron-right" /></button>
-    </template>
-    <div v-if="img" class="lightbox-bar">
-      <button type="button" class="lightbox-btn" :disabled="!zoomed" :aria-label="t('Zoom out')" @click="zoomTo(view.scale / ZOOM_STEP)"><UIcon name="i-lucide-minus" /></button>
-      <button type="button" class="lightbox-zoom" :title="t('Fit to screen')" :disabled="!zoomed" @click="fitToScreen">{{ percent }}</button>
-      <button type="button" class="lightbox-btn" :disabled="view.scale >= bounds.max - 1e-6" :aria-label="t('Zoom in')" @click="zoomTo(view.scale * ZOOM_STEP)"><UIcon name="i-lucide-plus" /></button>
-      <button type="button" class="lightbox-real" :disabled="fit >= 1" :aria-pressed="view.scale === 1" :title="t('Actual size')" @click="actualSize">1:1</button>
-    </div>
-  </div>
+  </Teleport>
 </template>

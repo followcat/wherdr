@@ -16,8 +16,18 @@ registerEndpoint('/api/dictation/key', { method: 'POST', handler: async (e) => {
   return status()
 } })
 registerEndpoint('/api/dictation/key', { method: 'DELETE', handler: () => { saved = ''; return status() } })
+let modelCalls = 0
+registerEndpoint('/api/dictation/models', () => {
+  modelCalls++
+  return { live: true, models: [
+    { id: 'openai/whisper-large-v3-turbo', name: 'OpenAI: Whisper Large V3 Turbo', perMinute: 0.0002 },
+    { id: 'qwen/qwen3-asr-1.7b', name: 'Qwen: Qwen3 ASR 1.7B', perMinute: 0.00045 },
+    { id: 'deepgram/nova-3', name: 'Deepgram: Nova-3', perMinute: 0.0043 },
+    { id: 'openai/gpt-4o-transcribe', name: 'OpenAI: GPT-4o Transcribe' },
+  ] }
+})
 
-beforeEach(() => { saved = ''; localStorage.removeItem(CLOUD_OPTIONS_KEY) })
+beforeEach(() => { saved = ''; modelCalls = 0; localStorage.removeItem(CLOUD_OPTIONS_KEY) })
 
 describe('DictationCloudSettings', () => {
   it('saves the key, then shows only its last 4 characters and can remove it', async () => {
@@ -43,5 +53,38 @@ describe('DictationCloudSettings', () => {
     await switches[1]!.trigger('click')
     await flushPromises()
     expect(JSON.parse(localStorage.getItem(CLOUD_OPTIONS_KEY)!)).toMatchObject({ zdr: true, terms: true, model: 'openai/whisper-large-v3-turbo' })
+  })
+
+  it('loads the server list once the key is saved, and searches it by name or id', async () => {
+    saved = KEY
+    const w = await mountSuspended(DictationCloudSettings, { attachTo: document.body })
+    await vi.waitFor(() => expect(modelCalls).toBe(1))
+    await w.find('[data-testid="dictation-model"]').trigger('click')
+    const search = await vi.waitFor(() => {
+      const el = document.body.querySelector<HTMLInputElement>('[role="listbox"]')?.closest('[data-slot="content"]')?.querySelector('input')
+      expect(el).toBeTruthy()
+      return el!
+    })
+    const options = () => [...document.body.querySelectorAll('[role="option"]')].map(o => o.textContent!.replace(/\s+/g, ' ').trim())
+    await vi.waitFor(() => expect(options()).toHaveLength(4))
+    expect(options()[0]).toContain('$0.0002 / min')
+    // Billed per token: no per-minute price, a link to its OpenRouter page.
+    expect(options()[3]).toContain('Price: see OpenRouter')
+    expect(document.body.querySelectorAll('[role="option"]')[3]!.querySelector('a')!.getAttribute('href')).toBe('https://openrouter.ai/openai/gpt-4o-transcribe')
+    search.value = 'qwen'
+    search.dispatchEvent(new Event('input'))
+    await vi.waitFor(() => expect(options()).toEqual([expect.stringContaining('Qwen: Qwen3 ASR 1.7B')]))
+    search.value = 'deepgram/'
+    search.dispatchEvent(new Event('input'))
+    await vi.waitFor(() => expect(options()).toEqual([expect.stringContaining('$0.0043 / min')]))
+    ;(document.body.querySelector('[role="option"]') as HTMLElement).click()
+    await vi.waitFor(() => expect(JSON.parse(localStorage.getItem(CLOUD_OPTIONS_KEY)!).model).toBe('deepgram/nova-3'))
+    w.unmount()
+  })
+
+  it('does not ask for the list before a key is saved', async () => {
+    await mountSuspended(DictationCloudSettings)
+    await flushPromises()
+    expect(modelCalls).toBe(0)
   })
 })

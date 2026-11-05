@@ -5,6 +5,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { temporaryInstall } from './runtime.mjs'
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 export const SERVER = path.join(ROOT, '.output', 'server', 'index.mjs')
@@ -18,22 +19,25 @@ export function homebrewInstall(file) {
 }
 
 // How this copy of wherdr was installed (shared/updates.ts InstallMode), from
-// the path of its bin/wherdr.mjs: the Homebrew Cellar; the copy the Herdr
-// plugin keeps in <wherdr dir>/app; `npm i -g` (<prefix>/lib/node_modules/wherdr,
-// never a temporary npx folder); otherwise a temporary package (npx, bunx, pnpm dlx).
-export function installKind(bin, dir) {
+// the path of its bin/wherdr.mjs: the Homebrew Cellar; `npm i -g`
+// (<prefix>/lib/node_modules/wherdr); another npm package (npx, bunx, pnpm
+// dlx, a project's node_modules); otherwise a source checkout ('native').
+export function installKind(bin) {
   if (homebrewInstall(bin)) return 'brew'
   const root = path.resolve(bin, '..', '..')
-  if (root === path.join(dir, 'app')) return 'plugin'
-  if (/[\\/]lib[\\/]node_modules[\\/]wherdr$/.test(root) && !/[\\/]_npx[\\/]/.test(root)) return 'npm-global'
-  return 'npm'
+  if (temporaryInstall(bin)) return 'npm'
+  if (/[\\/]lib[\\/]node_modules[\\/]wherdr$/.test(root)) return 'npm-global'
+  if (/[\\/]node_modules[\\/]wherdr$/.test(root)) return 'npm'
+  return 'native'
 }
 
-export const COMMANDS = ['run', 'start', 'stop', 'restart', 'status', 'logs', 'open', 'phone', 'panel', 'service', 'doctor', 'help', 'version']
-const VALUE_OPTIONS = { '--port': 'port', '--host': 'host', '--data-dir': 'dataDir', '--session': 'session', '--lines': 'lines', '-n': 'lines' }
+export const COMMANDS = ['run', 'start', 'stop', 'restart', 'status', 'logs', 'open', 'phone', 'panel', 'service', 'dictation', 'doctor', 'help', 'version']
+const VALUE_OPTIONS = { '--port': 'port', '--host': 'host', '--data-dir': 'dataDir', '--hc-socket': 'hcSocket', '--session': 'session', '--lines': 'lines', '-n': 'lines' }
+// Herdr sessions are gone in wherdr 3: --session is read, then ignored with a warning.
+export const SESSION_IGNORED = '--session is ignored: wherdr 3 drives a herdr-core (hc) session, chosen with --hc-socket <path>.'
 const FLAGS = { '-h': 'help', '--help': 'help', '-v': 'version', '--version': 'version', '-f': 'follow', '--follow': 'follow' }
 
-// argv without the runtime and script → { command, sub, port, host, dataDir, session, lines, follow, help, version }.
+// argv without the runtime and script → { command, sub, sets, port, host, dataDir, hcSocket, lines, follow, help, version, warnings }.
 // Throws an Error with a user-facing message on bad input.
 export function parseArgs(argv) {
   const out = {}
@@ -48,7 +52,8 @@ export function parseArgs(argv) {
     if (!key) throw new Error(`unknown option: ${arg} (see wherdr --help)`)
     const value = eq > 0 ? arg.slice(eq + 1) : argv[++i]
     if (value === undefined || value === '' || (eq < 0 && value.startsWith('--'))) throw new Error(`${name} needs a value`)
-    out[key] = value
+    if (key === 'session') (out.warnings ??= []).push(SESSION_IGNORED)
+    else out[key] = value
   }
   const [command = 'run', sub, ...extra] = words
   if (!COMMANDS.includes(command)) throw new Error(`unknown command: ${command} (see wherdr --help)`)
@@ -56,6 +61,10 @@ export function parseArgs(argv) {
   if (command === 'service') {
     if (sub !== 'install' && sub !== 'uninstall') throw new Error('usage: wherdr service install|uninstall')
     out.sub = sub
+  } else if (command === 'dictation') {
+    if (sub !== 'fetch') throw new Error('usage: wherdr dictation fetch [set...]')
+    out.sub = sub
+    out.sets = extra.splice(0)
   } else if (sub !== undefined) throw new Error(`unexpected argument: ${sub}`)
   if (extra.length) throw new Error(`unexpected argument: ${extra[0]}`)
   if (out.port !== undefined && !/^\d+$/.test(out.port)) throw new Error(`--port must be a number (got: ${out.port})`)
@@ -70,8 +79,7 @@ export function expandHome(p, home = os.homedir()) {
   return p === '~' ? home : p.startsWith('~/') ? path.join(home, p.slice(2)) : p
 }
 
-// Folder of wherdr's own files (pid, log, settings, data): $WHERDR_DIR or ~/wherdr,
-// shared with the Herdr plugin and the install script.
+// Folder of wherdr's own files (pid, log, settings, data): $WHERDR_DIR or ~/wherdr.
 export function wherdrDir(env = process.env, home = os.homedir()) {
   return path.resolve(expandHome(env.WHERDR_DIR || path.join(home, 'wherdr'), home))
 }
@@ -106,13 +114,14 @@ export function serverEnv(opts, env, home = os.homedir(), bin = BIN) {
   out.PORT = opts.port ?? env.PORT ?? DEFAULT_PORT
   out.HOST = opts.host ?? env.HOST ?? '127.0.0.1'
   out.DATA_DIR = path.resolve(expandHome(opts.dataDir ?? env.DATA_DIR ?? path.join(dir, 'data'), home))
-  if (opts.session !== undefined) out.HERDR_WEB_SESSION = opts.session
+  const hc = opts.hcSocket ?? env.HC_SOCKET
+  if (hc) out.HC_SOCKET = path.resolve(expandHome(hc, home))
   out.NODE_ENV = 'production'
   // Open WebSockets do not hold Ctrl+C for 30 s; clients reconnect on their own.
   out.NITRO_SHUTDOWN_TIMEOUT ??= '1500'
   // Update command, or one-tap update, offered in the app (shared/updates.ts):
   // the package to replace and the folder of its state and log (bin/lib/updater.mjs).
-  out.WHERDR_INSTALL = installKind(bin, dir)
+  out.WHERDR_INSTALL = installKind(bin)
   out.WHERDR_ROOT = path.resolve(bin, '..', '..')
   out.WHERDR_DIR = dir
   if (out.CLAUDE_CONFIG_DIR) out.CLAUDE_CONFIG_DIR = path.resolve(home, expandHome(out.CLAUDE_CONFIG_DIR, home))

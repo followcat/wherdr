@@ -21,8 +21,9 @@ export const EVENTS_DEFLATE = {
   // against it. memLevel 7 takes 64 KB less than the default for the same
   // output on these frames.
   zlibDeflateOptions: { memLevel: 7 },
-  // The browser's messages are tiny ({"type":"ping"}): a 1 KB window for them.
-  clientMaxWindowBits: 10,
+  // No clientMaxWindowBits: iOS Safari drops the socket when the answer limits
+  // its window (client_max_window_bits=N), and the app stays offline on
+  // iPhone. Without it, the answer only carries what the client offered.
 } as const
 
 // ws applies `threshold` only to connections without context takeover: with
@@ -47,8 +48,13 @@ export function stripDeflateOffer(request: UpgradeRequest) {
   if (req?.headers && !compressionAllowed(req.url)) delete req.headers['sec-websocket-extensions']
 }
 
+// Largest message a client may send, on every route. ws stops inflating a
+// compressed frame past it (its default, 100 MiB, let a few-KB frame grow to
+// about 100 MB before messageText refused it).
+export const WS_MAX_PAYLOAD = 256 * 1024
+
 export function applyWsCompression(options: WsOptions) {
-  options.serverOptions = { ...options.serverOptions, perMessageDeflate: EVENTS_DEFLATE }
+  options.serverOptions = { ...options.serverOptions, perMessageDeflate: EVENTS_DEFLATE, maxPayload: WS_MAX_PAYLOAD }
   const previous = options.hooks?.upgrade
   options.hooks = {
     ...options.hooks,

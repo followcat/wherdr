@@ -11,9 +11,6 @@
   - `Cannot connect to herdr-core. Check HC_SOCKET and start hc.`: nothing answers on that socket;
   - `Incompatible herdr-core. Protocol generation 1 is required.`, or `herdr-core is missing
     required capabilities` with the missing methods: update hc ([Setup](core.md#setup)).
-- **The app looks for Herdr or shows the setup guide**: it was built or started
-  without `WHERDR_BACKEND=core`. Build again with `WHERDR_BACKEND=core NUXT_PUBLIC_CORE=true` and
-  start with `WHERDR_BACKEND=core` ([First launch](quick-start.md#quick-start)).
 - **"Unavailable with herdr-core"** (HTTP 503): that route is v2 only ([herdr-core › Setup](core.md#setup)).
 - **No conversation, only the terminal**: the agent is not Claude Code or Codex, or its
   transcript was not found. A core started from inside a Claude Code session inherits

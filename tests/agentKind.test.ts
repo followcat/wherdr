@@ -41,3 +41,9 @@ describe('transcriptKind', () => {
     expect(transcriptKind('/tmp/x.jsonl')).toBeNull()
   })
 })
+
+it('recognizes Devin transcripts and enables the shared conversation view', async () => {
+  const { hasTranscript } = await import('../shared/agentKind')
+  expect(hasTranscript('devin')).toBe(true)
+  expect(transcriptKind('/home/user/.local/share/devin/cli/transcripts/session-a.json')).toBe('devin')
+})

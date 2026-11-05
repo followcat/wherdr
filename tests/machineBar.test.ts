@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BAR_ALL, groupedBarItems, readMachineGroups, barMachineSelection, barFilter, barItems, barPick, barShown, moveBarItem, readBarList, readBarPick, setBarItemShown } from '../app/utils/machineBar'
+import { BAR_ALL, groupedBarItems, readMachineGroups, barMachineSelection, barItems, barPick, moveBarItem, readBarList, readBarPick, setBarItemShown } from '../app/utils/machineBar'
 
 // The local machine's key is ''.
 const machines = ['', 'laptop', 'devbox']
@@ -22,10 +22,6 @@ describe('machine bar items', () => {
     expect(barItems(['laptop', 'laptop', BAR_ALL], ['laptop'])).toEqual(['laptop', BAR_ALL])
   })
 
-  it('leaves hidden items off the bar, the local machine included', () => {
-    expect(barShown([], ['', 'devbox'], machines)).toEqual([BAR_ALL, 'laptop'])
-    expect(barShown([], [BAR_ALL], machines)).toEqual(['', 'laptop', 'devbox'])
-  })
 })
 
 describe('machine bar choice', () => {
@@ -46,12 +42,6 @@ describe('machine bar choice', () => {
     expect(barPick('laptop', [])).toBeNull()
   })
 
-  it('filters on a machine only', () => {
-    expect(barFilter(BAR_ALL)).toBeNull()
-    expect(barFilter(null)).toBeNull()
-    expect(barFilter('')).toBe('')
-    expect(barFilter('laptop')).toBe('laptop')
-  })
 })
 
 describe('machine bar settings', () => {

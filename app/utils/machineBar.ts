@@ -18,20 +18,12 @@ export function barItems(order: readonly string[], machines: readonly string[]):
     : [...kept, ...missing]
 }
 
-// The items the bar shows, in order.
-export function barShown(order: readonly string[], hidden: readonly string[], machines: readonly string[]): string[] {
-  return barItems(order, machines).filter(id => !hidden.includes(id))
-}
-
 // The item chosen now: the saved one while the bar shows it, else "All" when
 // the bar shows it, else its first item. null: nothing to choose (an empty bar).
 export function barPick(saved: string | null | undefined, shown: readonly string[]): string | null {
   if (saved != null && shown.includes(saved)) return saved
   return shown.includes(BAR_ALL) ? BAR_ALL : shown[0] ?? null
 }
-
-// The machine the home list is filtered on, or null for every machine.
-export const barFilter = (pick: string | null) => (pick === null || pick === BAR_ALL ? null : pick)
 
 // `id` moved to position `to` of `items` (indexes of the list before the move).
 export function moveBarItem(items: readonly string[], id: string, to: number): string[] {

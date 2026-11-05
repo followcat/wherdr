@@ -132,4 +132,26 @@ describe('Composer dictation', () => {
     expect(sent).toEqual([])
     w.unmount()
   })
+
+  it('after "too large", the next press loads a fresh engine (the model that fits), without a reload', async () => {
+    const tooLarge = createFakeEngine({ readiness: { ready: false, reason: 'too-large', detail: 'Canary 180M' } })
+    const made: FakeEngine[] = []
+    ENGINES.device = async () => { const e = made.length ? engine : tooLarge; made.push(e); return e }
+    const { w, field, mic } = await mount('w9:p5')
+    now = 1000
+    await mic().trigger('pointerdown', { pointerType: 'touch' })
+    await mic().trigger('pointerup', { pointerType: 'touch' })
+    await vi.waitFor(() => expect(made).toHaveLength(1))
+    await vi.waitFor(() => expect(mic().attributes('aria-pressed')).toBe('false'))
+    await flushPromises()
+    now = 5000
+    await mic().trigger('pointerdown', { pointerType: 'touch' })
+    await vi.waitFor(() => expect(mic().attributes('aria-pressed')).toBe('true'))
+    FakeAudioContext.last.feed()
+    now += HOLD_MS
+    await mic().trigger('pointerup', { pointerType: 'touch' })
+    await vi.waitFor(() => expect((field.element as HTMLTextAreaElement).value).toBe('fix the cache'))
+    expect(made).toEqual([tooLarge, engine])
+    w.unmount()
+  })
 })

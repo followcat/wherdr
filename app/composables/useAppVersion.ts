@@ -2,6 +2,7 @@
 // waiting service worker, periodic check of the served build.
 // Pure logic and anti-loop guard: app/utils/appVersion.ts.
 import { installedSwAction, isNewBuild, mayReloadForChunk } from '../utils/appVersion'
+import { onceEvery } from '../utils/onceEvery'
 
 export const newVersionReady = ref(false)
 export const newVersionDismissed = ref(false)
@@ -61,9 +62,25 @@ export async function reloadIfNewBuild(): Promise<boolean> {
   return true
 }
 
+// Returning to the page and reconnecting ask for a check: at most one a
+// minute. One asked meanwhile runs at the end of the minute, so a redeployment
+// right after a check is still seen.
+const WAKE_CHECK_MS = 60000
+const wakeCheck = onceEvery(WAKE_CHECK_MS)
+let wakeLater: ReturnType<typeof setTimeout> | undefined
+export function checkNewVersionOnWake() {
+  if (wakeCheck.take()) { void checkNewVersion(); return }
+  if (wakeLater) return
+  wakeLater = setTimeout(() => {
+    wakeLater = undefined
+    if (!document.hidden) checkNewVersionOnWake()
+  }, wakeCheck.wait())
+}
+
 // Is the server serving a build other than the one running?
 export async function checkNewVersion() {
   if (newVersionReady.value) return
+  wakeCheck.mark()
   try {
     const res = await fetch(`/_nuxt/builds/latest.json?${Date.now()}`, { cache: 'no-store' })
     if (res.ok && isNewBuild(useRuntimeConfig().app.buildId, await res.json())) markNew()

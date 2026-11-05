@@ -232,11 +232,14 @@ export function gateDecision(o: {
   // HTTP: Sec-Fetch-Site says another site; WS: the Origin differs from the host.
   crossSite: boolean
   ws?: boolean
+  // An agent's upload with its task's key (POST /api/pm/shot): the route
+  // checks the key, so the passkey session is not asked.
+  agentKey?: boolean
 }): GateVerdict {
   if (!o.check.ok) return 'network'
   if (!o.hostOk) return 'host'
   if (o.crossSite && (o.ws || o.path.startsWith('/api/'))) return 'origin'
-  if ((o.ws || needsUnlock(o.path)) && !o.unlocked) return 'locked'
+  if ((o.ws || needsUnlock(o.path)) && !o.unlocked && !(o.agentKey && !o.ws && o.path === '/api/pm/shot')) return 'locked'
   return 'ok'
 }
 
@@ -298,7 +301,6 @@ export async function refreshTailscale(read: TailscaleReader = defaultReader, no
 // a WebSocket upgrade asks for a reading started after it arrived.
 let inflight: { at: number, done: Promise<void> } | null = null
 export async function ensureFresh(maxAgeMs: number, read: TailscaleReader = defaultReader, now = Date.now()) {
-  if (forced) return
   if (ts && ts.at >= now - maxAgeMs) return
   if (inflight && inflight.at >= now - maxAgeMs) return inflight.done
   const at = Date.now()
@@ -307,14 +309,22 @@ export async function ensureFresh(maxAgeMs: number, read: TailscaleReader = defa
   return done
 }
 
-let forced: NetContext | null = null
-// Tests: a fixed context (null = the live one).
-export function setNetContextForTests(ctx: NetContext | null) { forced = ctx }
+// HTTP requests (server/middleware/guard.ts): a reading started at most
+// `freshMs` ago, else the current one while it is at most `blockMs` old, with
+// a new reading started in the background for the next requests. Older, or
+// none: the request waits for a new reading. Funnel traffic is still refused
+// on each request by its own header (checkClient), whatever the reading's age.
+export async function ensureRecent(freshMs: number, blockMs: number, read: TailscaleReader = defaultReader, now = Date.now()) {
+  if (ts && ts.at >= now - freshMs) return
+  const done = ensureFresh(freshMs, read, now)
+  if (ts && ts.at >= now - blockMs) return
+  return done
+}
+
 // Tests: forget what was read.
 export function resetNetworkStateForTests() { ts = null; inflight = null; started = 0; published = 0; funnelSeen = false; othersSeen = [] }
 
 export function netContext(now = Date.now()): NetContext {
-  if (forced) return forced
   // Stale (no reading finished lately): nothing is known.
   const fresh = ts && now - ts.at < STALE_MS ? ts : null
   return {

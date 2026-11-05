@@ -12,15 +12,27 @@ export function pushConfig(appUrl: string): { enabled: boolean, subject: string 
   return { enabled: false, subject: FALLBACK_VAPID_SUBJECT }
 }
 
+// Push services of the browsers: Apple (Safari), FCM (Chrome, Edge on
+// Android, Samsung, Opera, Brave), Mozilla autopush (Firefox), WNS (Edge on
+// Windows). The server posts to the endpoint, so nothing else is accepted (no
+// private address, no other host of the network).
+const PUSH_HOSTS = ['fcm.googleapis.com']
+const PUSH_DOMAINS = ['push.apple.com', 'push.services.mozilla.com', 'notify.windows.com']
+export function knownPushService(host: string): boolean {
+  const h = host.toLowerCase()
+  return PUSH_HOSTS.includes(h) || PUSH_DOMAINS.some(d => h.endsWith(`.${d}`))
+}
+
 // Subscription sent by the browser: the server will then post to
-// `endpoint`, so only an HTTPS address (push service), with its keys.
+// `endpoint`, so only an HTTPS address of a known push service (default
+// port), with its keys.
 export function validPushSubscription(b: unknown): boolean {
   if (!b || typeof b !== 'object') return false
   const { endpoint, keys } = b as { endpoint?: unknown, keys?: { p256dh?: unknown, auth?: unknown } }
   if (typeof endpoint !== 'string' || endpoint.length > 2048) return false
   try {
     const url = new URL(endpoint)
-    if (url.protocol !== 'https:' || url.username || url.password) return false
+    if (url.protocol !== 'https:' || url.username || url.password || url.port || !knownPushService(url.hostname)) return false
   } catch { return false }
   return Boolean(keys && typeof keys === 'object'
     && typeof keys.p256dh === 'string' && keys.p256dh.length > 0 && keys.p256dh.length <= 256

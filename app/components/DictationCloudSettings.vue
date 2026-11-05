@@ -2,7 +2,10 @@
 // Settings › Conversation › Dictation › Online (OpenRouter): the key, kept on
 // the wherdr server and never shown again (only its last 4 characters), then
 // this device's model, ZDR and pane terms, a Test button and the privacy note.
-import { CLOUD_MODELS, readCloudOptions, writeCloudOptions } from '~/utils/dictation/cloudOptions'
+// The model list is OpenRouter's speech-to-text models, fetched by the server
+// once a key is saved (GET /api/dictation/models), searched here.
+import { FALLBACK_CLOUD_MODELS, type DictationModel } from '#shared/dictationModels'
+import { readCloudOptions, writeCloudOptions } from '~/utils/dictation/cloudOptions'
 import { TAKE_RATE } from '~/utils/dictation/engine'
 
 interface KeyStatus { set: boolean, last4?: string, env?: boolean }
@@ -14,9 +17,23 @@ const testResult = ref<{ ok: boolean, text: string } | null>(null)
 const opts = reactive(readCloudOptions())
 watch(opts, o => writeCloudOptions({ ...o }))
 
+const models = ref<DictationModel[]>(FALLBACK_CLOUD_MODELS)
+// A saved model missing from the list (gone from OpenRouter) stays shown.
+const modelItems = computed(() => {
+  const list = models.value.some(m => m.id === opts.model) ? models.value : [{ id: opts.model, name: opts.model }, ...models.value]
+  return list.map(m => ({ value: m.id, label: m.name, description: m.id, price: m.perMinute }))
+})
+const price = (n: number) => tl(`$${n} / min`, `${String(n).replace('.', ',')} $ / min`)
+
+async function loadModels() {
+  try { models.value = (await api<{ models: DictationModel[] }>('/api/dictation/models')).models }
+  catch { /* keep the list we have */ }
+}
+
 async function load() {
   try { status.value = await api<KeyStatus>('/api/dictation/status') }
   catch (e) { toast((e as Error).message, true) }
+  if (status.value?.set) loadModels()
 }
 onMounted(load)
 
@@ -27,6 +44,7 @@ async function save() {
     keyInput.value = ''
     replacing.value = false
     testResult.value = null
+    loadModels()
   } catch (e) { toast((e as Error).message, true) }
   finally { busy.value = false }
 }
@@ -77,9 +95,17 @@ async function test() {
         <UButton v-if="replacing" color="neutral" variant="ghost" size="lg" :label="t('Cancel')" @click="replacing = false" />
       </form>
     </div>
-    <label class="settings-toggle">
-      <span><b>{{ tl('Model', 'Modèle') }}</b><small>{{ tl('Whisper turbo costs about $0.0002 a minute.', 'Whisper turbo coûte environ 0,0002 $ la minute.') }}</small></span>
-      <USelect v-model="opts.model" :items="CLOUD_MODELS" size="lg" class="dictation-cloud-model" />
+    <label class="settings-toggle dictation-cloud-model-row">
+      <span><b>{{ tl('Model', 'Modèle') }}</b><small>{{ tl('OpenRouter’s speech-to-text models, once the key is saved. Whisper turbo costs about $0.0002 a minute.', 'Les modèles de transcription d’OpenRouter, une fois la clé enregistrée. Whisper turbo coûte environ 0,0002 $ la minute.') }}</small></span>
+      <USelectMenu
+        v-model="opts.model" :items="modelItems" value-key="value" :filter-fields="['label', 'value']" size="lg" class="dictation-cloud-model"
+        :search-input="{ placeholder: tl('Search a model', 'Chercher un modèle'), autocomplete: 'off', ui: { base: 'pointer-coarse:text-[16px]' } }"
+        :aria-label="tl('Model', 'Modèle')" data-testid="dictation-model"
+      >
+        <template #item-trailing="{ item }">
+          <DictationModelPrice :id="item.value" :price="item.price === undefined ? undefined : price(item.price)" />
+        </template>
+      </USelectMenu>
     </label>
     <label class="settings-toggle">
       <span><b>{{ tl('Zero data retention (ZDR)', 'Aucune conservation (ZDR)') }}</b><small>{{ tl('Only providers that keep nothing. A model without one fails: Test shows it.', 'Seulement les fournisseurs qui ne gardent rien. Un modèle sans eux échoue : Tester le montre.') }}</small></span>
@@ -106,7 +132,9 @@ async function test() {
 .dictation-cloud-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .dictation-cloud > .dictation-cloud-actions { margin-top: 12px; }
 .dictation-cloud-input { flex: 1 1 220px; min-width: 0; }
-.dictation-cloud-model { min-width: 200px; }
+/* The list's names are long: the select gets a row of its own. */
+.dictation-cloud-model-row { flex-direction: column; align-items: stretch; gap: 10px; }
+.dictation-cloud-model { width: 100%; }
 .dictation-cloud-error { color: var(--rose); }
 .dictation-cloud .settings-lead { margin-top: 12px; }
 </style>

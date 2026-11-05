@@ -2,7 +2,6 @@
 // app's /api/* calls and feeds the live state, from scenario.ts. Nothing here
 // talks to a network or runs a command; agents "answer" with scripted turns.
 import type { ChatItem, HerdrState, Pane, QueuedMessage } from '#shared/types'
-import { dividers, resizePreview } from '../../shared/layout'
 import { applySettingsPatch, cleanSettingsPatch, type SettingsMap } from '../../shared/settings'
 import * as S from './scenario'
 
@@ -152,20 +151,6 @@ export class DemoServer {
       this.setHeld(id, rest)
       this.send(p, next.text)
     }, 600)
-  }
-
-  unqueue(id: string, text: string, msgId?: string): DemoReply {
-    const list = this.held.get(id) || []
-    const mine = list.find(q => q.id === msgId) || list.find(q => q.text === text)
-    if (!mine) return fail(409, 'Already read by the agent', 'already_read')
-    this.setHeld(id, list.filter(q => q !== mine))
-    return ok({ ok: true, text: mine.text })
-  }
-
-  // Nothing fails to send here: a held message is still waiting, as asked.
-  requeue(id: string, msgId: string): DemoReply {
-    const mine = (this.held.get(id) || []).find(q => q.id === msgId)
-    return mine ? ok({ ok: true, queued: mine }) : fail(404, 'Message not found', 'not_found')
   }
 
   private working(p: Pane, step: string) {
@@ -349,22 +334,11 @@ export class DemoServer {
       switch (path) {
         case '/api/auth/status': return ok({ enabled: false, unlocked: true, devices: [] })
         case '/api/config': return ok({ kinds: ['claude', 'codex', 'omp'], home: S.HOME, os: 'Darwin', dirs: [`${S.HOME}/code/acme-api`, `${S.HOME}/code/acme-web`], push: { enabled: false, key: null, devices: 0 } })
-        case '/api/onboarding': return ok({ done: true })
         case '/api/quotas': return ok(S.quotas(now))
-        case '/api/machine/order': return ok({ order: [] })
         case '/api/settings': return ok({ settings: this.settings })
-        case '/api/sessions': return ok({ sessions: [] })
-        case '/api/worktrees': return ok({ worktrees: [] })
-        case '/api/plugins/actions': return ok({ actions: [] })
         case '/api/push/quiet': return ok({})
         case '/api/push/devices': return ok({ devices: [] })
-        case '/api/close/status': return ok({ git: false })
-        case '/api/isgit': return ok({ git: false })
-        case '/api/efforts': return ok({ levels: ['low', 'medium', 'high'], current: this.pane(paneId)?.model?.effort || null })
-        case '/api/commands': return ok({ commands: S.COMMANDS[this.pane(paneId)?.agent || ''] || [] })
-        case '/api/models': return this.models(paneId)
         case '/api/chat': return this.chatReply(paneId, q.get('since'), q.get('before'))
-        case '/api/changes': return S.CHANGES[paneId] ? ok(S.CHANGES[paneId]) : ok({ git: false })
         case '/api/files': return ok(q.get('path') === 'src'
           ? { root: `${S.HOME}/code/acme-web`, path: 'src', truncated: false, entries: [
               { name: 'main.ts', kind: 'file', size: 236, link: false },
@@ -376,23 +350,11 @@ export class DemoServer {
               { name: 'README.md', kind: 'file', size: 88, link: false },
             ] })
         case '/api/files/read': return fail(404, DEMO_REFUSAL)
-        case '/api/screen': return ok({ text: this.interactiveScreen(paneId) || '', tabs: null, tab: null, interaction: this.pane(paneId)?.interaction })
         case '/api/search': return ok(this.search(String(q.get('q') || '')))
         case '/api/dirs': return ok({ path: S.HOME, parent: null, home: S.HOME, dirs: [
           { name: 'acme-api', path: `${S.HOME}/code/acme-api`, git: true },
           { name: 'acme-web', path: `${S.HOME}/code/acme-web`, git: true },
         ] })
-        case '/api/tasks': return this.tasks(q.get('since'))
-        case '/api/tasks/links': {
-          const l = S.boardLinks(this.clock.now(), { codex: this.pane(S.CODEX)?.status || 'done', omp: this.pane(S.OMP)?.status || 'done' })
-          return q.get('since') === l.version ? ok({ same: true, version: l.version }) : ok(l)
-        }
-        // Start's agent: the built-in default and the demo's agents (Start itself stays refused).
-        case '/api/tasks/start': return ok({ agent: { value: 'claude', kind: 'claude', place: 'builtin', from: 'built in' }, agents: ['claude', 'codex', 'omp'] })
-        case '/api/tasks/details': {
-          const t = this.tasksBoard().machines[0]!.tasks.find(x => x.id === q.get('id'))
-          return t ? ok(S.taskDetails(t)) : fail(404, 'Task not found', 'bad_task')
-        }
       }
       return fail(404, DEMO_REFUSAL)
     }
@@ -404,27 +366,12 @@ export class DemoServer {
         this.settings = applySettingsPatch(this.settings, patch, body.migrate === true).next
         return ok({ settings: this.settings })
       }
-      case '/api/space': {
-        // A demo divider changes only the in-memory layout, never a real pane.
-        if (body.op !== 'layout.ratio') return fail(403, DEMO_REFUSAL)
-        const tab = this.tabs.find(t => t.id === body.tab_id)
-        const ratio = body.ratio
-        if (!tab?.layout || typeof body.path !== 'string' || typeof ratio !== 'number'
-          || !Number.isFinite(ratio) || ratio < 0.1 || ratio > 0.9
-          || !dividers(tab.layout).some(d => d.path === body.path)) return fail(400, 'Invalid split')
-        const layout = resizePreview(tab.layout, body.path, ratio)
-        this.tabs = this.tabs.map(t => t === tab ? { ...t, layout } : t)
-        this.emit()
-        return ok()
-      }
       case '/api/prompt': return this.prompt(paneId, String(body.text || ''), typeof body.client_id === 'string' ? body.client_id : undefined)
       // The app types a written reply to Claude's or Codex's question (see
       // shared/sendRoute.ts): here it never answers the question in the
       // visitor's place, it waits like any message sent while one is open.
       case '/api/input': return this.terminalKeys(paneId, Array.isArray(body.keys) ? body.keys as string[] : []) ? ok()
         : typeof body.text === 'string' && body.text.trim() && this.pane(paneId)?.agent ? this.prompt(paneId, body.text) : fail(403, DEMO_REFUSAL)
-      case '/api/unqueue': return this.unqueue(paneId, String(body.text || ''), typeof body.id === 'string' ? body.id : undefined)
-      case '/api/requeue': return this.requeue(paneId, String(body.id || ''))
       case '/api/choose': return this.choose(paneId, Number(body.index), String(body.label || ''))
       case '/api/interrupt': return this.interrupt(paneId)
       case '/api/agents': return this.newAgent(body as Parameters<DemoServer['newAgent']>[0])
@@ -438,18 +385,6 @@ export class DemoServer {
         this.update(paneId, { label: String(body.label || '') || null })
         return ok()
       }
-      case '/api/model': {
-        const p = this.pane(paneId)
-        if (p?.model) this.update(paneId, { model: { ...p.model, label: String(body.label || p.model.label) } })
-        return ok()
-      }
-      case '/api/effort': {
-        const p = this.pane(paneId)
-        if (p?.model) this.update(paneId, { model: { ...p.model, effort: String(body.level || '') } })
-        return ok()
-      }
-      case '/api/dismiss': case '/api/push/unsubscribe': case '/api/sessions': return ok()
-      case '/api/onboarding': return ok()
     }
     return fail(403, DEMO_REFUSAL)
   }
@@ -463,24 +398,6 @@ export class DemoServer {
     if (before !== null) return ok({ available: true, file: `demo-${id}`, token, items: [], start: 0, older: true })
     if (since === token) return ok({ available: true, unchanged: true, token })
     return ok({ available: true, file: `demo-${id}`, session: `demo-${id}`, token, items: c.items, start: 0, queue: [], model: p.model || null })
-  }
-
-  private models(id: string): DemoReply {
-    const p = this.pane(id)
-    if (!p?.agent) return fail(404, 'Pane not found', 'bad_pane')
-    const current = p.model?.label
-    return ok({ agent: p.agent, at: this.clock.now(), options: (S.MODEL_OPTIONS[p.agent] || []).map((label, i) => ({ label, hint: null, current: label === current, isDefault: i === 0 })) })
-  }
-
-  // The Board: the demo's herdr-projects 1.x tasks (scenario.ts). Telling or
-  // approving would reach a real agent: refused like every other write.
-  private tasksBoard() {
-    return S.tasks({ codex: this.pane(S.CODEX)?.status || 'done', omp: this.pane(S.OMP)?.status || 'done' })
-  }
-
-  private tasks(since: string | null): DemoReply {
-    const b = this.tasksBoard()
-    return since === b.version ? ok({ same: true, version: b.version }) : ok(b)
   }
 
   private search(text: string) {

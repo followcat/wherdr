@@ -18,7 +18,7 @@ export interface TranscribeOptions {
   onPartial?: (text: string) => void
 }
 
-export type NotReadyReason = 'not-installed' | 'no-key' | 'unsupported' | 'offline'
+export type NotReadyReason = 'not-installed' | 'no-key' | 'unsupported' | 'offline' | 'too-large'
 
 export type Readiness =
   | { ready: true }
@@ -45,6 +45,12 @@ export const TAKE_RATE = 16000
 // The error an engine rejects with when its signal aborts.
 export function abortError(): Error {
   return new DOMException('The take was cancelled', 'AbortError')
+}
+
+// The model needs more memory than this device gives a page (worker out of
+// memory, or the page was killed while loading it).
+export class ModelTooLarge extends Error {
+  override name = 'ModelTooLarge'
 }
 
 export function isAbortError(e: unknown): boolean {

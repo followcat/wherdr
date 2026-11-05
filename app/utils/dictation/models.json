@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-11-04",
+  "updated": "2026-11-05",
   "models": [
     {
       "id": "parakeet-v3",
@@ -31,7 +31,47 @@
         "basis": "RTF 0.220, Cortex-A76, 1 thread, native sherpa-onnx (v2 int8, same encoder size)",
         "source": "https://k2-fsa.github.io/sherpa/onnx/pretrained_models/offline-transducer/nemo-transducer-models.html"
       },
-      "license": { "id": "CC-BY-4.0", "url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" }
+      "license": { "id": "CC-BY-4.0", "url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+      "memory": {
+        "heap": 857800704,
+        "peak": 1809170432,
+        "basis": "WASM heap after load and peak process memory (VmHWM) of the page, measured 2026-11-05 with the worker in headless Chromium and WebKit (Linux, Playwright); WebKit: the web process was killed during the load, as on a real iPhone"
+      }
+    },
+    {
+      "id": "canary-180m",
+      "name": "Canary 180M",
+      "kind": "canary",
+      "requires": [],
+      "set": "canary",
+      "dir": "canary-180m-flash-en-es-de-fr-int8",
+      "files": [
+        { "path": "encoder.int8.onnx", "bytes": 132678643 },
+        { "path": "decoder.int8.onnx", "bytes": 74437848 },
+        { "path": "tokens.txt", "bytes": 53555 }
+      ],
+      "source": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-canary-180m-flash-en-es-de-fr-int8.tar.bz2",
+        "sha256": "7a38ed8b13f014ad632b09ff8d22e0c6f1359dd046af9235d281dfae841b9ab9"
+      },
+      "languages": ["de", "en", "es", "fr"],
+      "autoDetect": false,
+      "punctuation": true,
+      "quality": [
+        { "lang": "fr", "dataset": "MLS", "wer": 4.75, "source": "https://huggingface.co/nvidia/canary-180m-flash" },
+        { "lang": "en", "dataset": "CV", "wer": 9.53, "source": "https://huggingface.co/nvidia/canary-180m-flash" }
+      ],
+      "speed": {
+        "estimate": 3,
+        "basis": "No published phone figure; in the same WASM worker on one desktop CPU it decodes at about the pace of Parakeet v3",
+        "source": "https://huggingface.co/nvidia/canary-180m-flash"
+      },
+      "license": { "id": "CC-BY-4.0", "url": "https://huggingface.co/nvidia/canary-180m-flash" },
+      "memory": {
+        "heap": 536870912,
+        "peak": 1492041728,
+        "basis": "WASM heap after load and peak process memory (VmHWM) of the page, measured 2026-11-05 with the worker in headless Chromium and WebKit (Linux, Playwright)"
+      }
     },
     {
       "id": "sensevoice",
@@ -49,7 +89,7 @@
         "sha256": "7305f7905bfcf77fa0b39388a313f3da35c68d971661a65475b56fb2162c8e63"
       },
       "languages": ["zh", "en", "ja", "ko", "yue"],
-      "punctuation": true,
+      "punctuation": false,
       "quality": [
         { "lang": "en", "dataset": "CV", "wer": 14.71, "source": "https://arxiv.org/html/2407.04051v3" }
       ],
@@ -58,7 +98,13 @@
         "basis": "RTF 0.099, Cortex-A76, 1 thread, native sherpa-onnx",
         "source": "https://k2-fsa.github.io/sherpa/onnx/sense-voice/pretrained.html"
       },
-      "license": { "id": "FunASR model license", "url": "https://huggingface.co/FunAudioLLM/SenseVoiceSmall" }
+      "license": { "id": "FunASR model license", "url": "https://huggingface.co/FunAudioLLM/SenseVoiceSmall" },
+      "memory": {
+        "heap": 536870912,
+        "peak": 1449693184,
+        "basis": "WASM heap after load and peak process memory (VmHWM) of the page, measured 2026-11-05 with the worker in headless Chromium and WebKit (Linux, Playwright)"
+      },
+      "textCase": "upper"
     }
   ]
 }

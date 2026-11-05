@@ -56,11 +56,35 @@ export function spaceRows(s: State, machine?: string): Row[] {
   })
 }
 
+// Rows rebuilt on each push: a row equal to the one of the same key handed
+// earlier is handed again, so a card whose row did not change does not
+// re-render. Panes are compared by identity (kept across pushes when
+// unchanged), the workspace and tabs by content.
+export function createRowReuse() {
+  const seen = new Map<string, { sig: string, row: Row }>()
+  const sigOf = (r: Row) => r.kind === 'pane'
+    ? ('individual' in r ? 'pi' : 'p')
+    : JSON.stringify([r.workspace, r.tabs.map(e => [e.tab, e.layout]), r.sum])
+  const same = (a: Row, b: Row) => {
+    if (a.kind !== b.kind || a.lead !== b.lead) return false
+    if (a.kind === 'pane' || b.kind === 'pane') return a.kind === 'pane' && b.kind === 'pane' && a.pane === b.pane
+    return a.panes.length === b.panes.length && a.panes.every((p, i) => p === b.panes[i])
+      && a.tabs.length === b.tabs.length && a.tabs.every((e, i) => e.panes.length === b.tabs[i]!.panes.length && e.panes.every((p, j) => p === b.tabs[i]!.panes[j]))
+  }
+  return (rows: Row[]): Row[] => rows.map((r) => {
+    const prev = seen.get(r.key)
+    const sig = sigOf(r)
+    if (prev && prev.sig === sig && same(prev.row, r)) return prev.row
+    if (seen.size > 500) seen.clear()
+    seen.set(r.key, { sig, row: r })
+    return r
+  })
+}
+
 // Group in the list: that of its representative pane. A shell space
 // (no agent) is sorted as an idle space, in Ready, as in Herdr's
 // first list.
 export type RowGroup = 'blocked' | 'working' | 'ready' | 'unknown'
-export const isShellRow = (r: Row) => !r.lead.agent
 export function paneGroup(p: Pick<Pane, 'agent' | 'status' | 'coreAddress'>): RowGroup {
   if (p.coreAddress && (!p.status || p.status === 'unknown')) return 'unknown'
   if ((p.coreAddress || p.agent) && p.status === 'blocked') return 'blocked'

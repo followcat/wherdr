@@ -3,7 +3,7 @@
 import type { H3Event, EventHandlerRequest } from 'h3'
 import type { IncomingMessage } from 'node:http'
 import { defineEventHandler, getRequestHeader, getRequestHeaders, setResponseHeader, setResponseStatus, getRequestURL } from 'h3'
-import { gzipBody } from './gzipJson'
+import { jsonBody } from './gzipJson'
 import { createAuth, type ReqLike } from './auth'
 import { DATA_DIR, PASSKEY_USER, log } from './env'
 import { HerdrError } from './herdr'
@@ -81,6 +81,9 @@ interface ApiOptions {
   // Largest binary body (default 20 MB) and the error given beyond it.
   max?: number
   tooLarge?: string
+  // Written to by an agent with its task's key, not by the app: no Origin to
+  // check (the route checks the key; server/api/pm/shot.post.ts).
+  agentKey?: boolean
 }
 
 // An API route: write checks, JSON body, known errors -> { error, code }.
@@ -92,13 +95,17 @@ export function defineApi<T>(
     const url = getRequestURL(event)
     try {
       let body: Json = {}
+      // Every write (POST, DELETE…) comes from the app's own origin; reads
+      // (GET, HEAD) change nothing.
+      const write = event.method !== 'GET' && event.method !== 'HEAD'
+      if (write && !opts.agentKey && !sameOrigin(getRequestHeaders(event))) return sendError(event, 403, { error: 'Origin refused' })
       if (event.method === 'POST') {
         const headers = getRequestHeaders(event)
         const ctype = String(headers['content-type'] || '')
         // Non-"simple" types (JSON, image/*): another site cannot send them
         // without a CORS preflight, which we never satisfy.
         const typeOk = opts.raw ? opts.raw.test(ctype) : ctype.startsWith('application/json')
-        if (!sameOrigin(headers) || !typeOk) return sendError(event, 403, { error: 'Origin refused' })
+        if (!typeOk) return sendError(event, 403, { error: 'Origin refused' })
         const max = opts.raw ? opts.max || 20 * 1024 * 1024 : BODY_MAX
         const tooLarge = opts.raw ? opts.tooLarge || 'Image too large (20 MB max)' : 'Request too large'
         const raw = await readBodyLimited(event.node.req, max)
@@ -133,13 +140,13 @@ export function defineApi<T>(
 }
 
 // Large JSON answers gzipped when the browser takes it (gzipJson.ts).
-function gzipJson<T>(event: H3Event, out: T): T | Buffer {
-  const body = gzipBody(getRequestHeader(event, 'accept-encoding'), out)
+function gzipJson<T>(event: H3Event, out: T): T | Buffer | string {
+  const r = jsonBody(getRequestHeader(event, 'accept-encoding'), out)
   setResponseHeader(event, 'vary', 'accept-encoding')
-  if (!body) return out
+  if (!r) return out
   setResponseHeader(event, 'content-type', 'application/json')
-  setResponseHeader(event, 'content-encoding', 'gzip')
-  return body
+  if (r.gzip) setResponseHeader(event, 'content-encoding', 'gzip')
+  return r.body
 }
 
 // Binary image (conversation or sent photo).

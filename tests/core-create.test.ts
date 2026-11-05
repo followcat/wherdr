@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { CoreError } from '../server/utils/core'
-import { coreAddMachine, coreForgetMachine, coreRenameMachine, coreStatus, versionAtLeast, coreCreate, sendFirstMessage, sendAfterDialog, coreIsGit, coreListDirs, type CoreAdminDeps } from '../server/utils/coreCreate'
+import { coreAddMachine, coreForgetMachine, coreRenameMachine, coreStatus, coreCreate, sendFirstMessage, sendAfterDialog, coreIsGit, coreListDirs, type CoreAdminDeps } from '../server/utils/coreCreate'
 import type { MachineInfo, Pane, Workspace } from '../shared/types'
+import core16 from './fixtures/core-0.1.16.json'
+import core17 from './fixtures/core-0.1.17.json'
 
 const b64 = (s: string) => Buffer.from(s).toString('base64')
 const machines: MachineInfo[] = [
@@ -140,17 +142,21 @@ describe('core creation', () => {
     const taken = setup(() => new CoreError('already_added', 'x'))
     await expect(coreAddMachine(taken.deps, { target: 'vps' })).rejects.toMatchObject({ code: 'already_added' })
   })
-  it('refuses host:port on a core older than 0.1.17, with a clear message', async () => {
-    const old = setup(m => m === 'server.status' ? { version: '0.1.16' } : {})
+  it('refuses host:port when rpc.discover shows the core takes no port (recorded 0.1.16 and 0.1.17)', async () => {
+    // Same version string either way: only the discover document decides.
+    const old = setup(m => m === 'rpc.discover' ? core16.discover : { version: '9.9.9' })
     await expect(coreAddMachine(old.deps, { target: 'me@10.0.0.7:2222' })).rejects.toMatchObject({ code: 'port_unsupported' })
     expect(old.calls.some(([m]) => m === 'machine.add')).toBe(false)
-    const current = setup(m => m === 'server.status' ? { version: '0.1.17' } : {})
-    await coreAddMachine(current.deps, { target: 'me@10.0.0.7:2222' })
-    expect(current.calls.at(-1)![0]).toBe('machine.add')
-    const plain = setup()
-    await coreAddMachine(plain.deps, { target: 'me@10.0.0.7' })
-    expect(plain.calls.map(([m]) => m)).toEqual(['machine.add'])
-    expect(versionAtLeast('0.2.0', [0, 1, 17]) && versionAtLeast('1.0.0', [0, 1, 17]) && !versionAtLeast('0.1.9', [0, 1, 17])).toBe(true)
+    // Without a port, the old core still adds it, with no capability read.
+    await coreAddMachine(old.deps, { target: 'me@10.0.0.7' })
+    expect(old.calls.slice(-1)).toEqual([['machine.add', { target: 'me@10.0.0.7' }]])
+    const current = setup(m => m === 'rpc.discover' ? core17.discover : { version: '0.0.1' })
+    await coreAddMachine(current.deps, { target: 'me@[::1]:2222' })
+    expect(current.calls.map(([m]) => m)).toEqual(['rpc.discover', 'machine.add'])
+    // Discover unreadable: machine.add answers for itself.
+    const unknown = setup(m => m === 'rpc.discover' ? new CoreError('timeout', 'x') : {})
+    await coreAddMachine(unknown.deps, { target: 'me@10.0.0.7:2222' })
+    expect(unknown.calls.at(-1)![0]).toBe('machine.add')
   })
   it('renames a machine by its listed name and maps a taken name', async () => {
     const t = setup()
@@ -166,7 +172,10 @@ describe('core creation', () => {
     await coreForgetMachine(t.deps, '7667')
     expect(t.calls.at(-1)).toEqual(['machine.rm', { machine: 'vps' }])
     await expect(coreForgetMachine(t.deps, '')).rejects.toMatchObject({ code: 'bad_machine' })
-    expect(await coreStatus(t.deps)).toEqual({ version: '0.1.17', pid: 4, uptimeMs: 5000, live: 2, finished: 0, name: 'me' })
+    expect(await coreStatus(t.deps)).toEqual({ version: '0.1.17', pid: 4, uptimeMs: 5000, live: 2, finished: 0, name: 'me', hostPort: null })
+    const withDiscover = (discover: unknown) => setup(m => m === 'server.status' ? { version: '0.1.17', pid: 4, uptime_ms: 5000, live: 2, finished: 0 } : m === 'rpc.discover' ? discover : {})
+    expect((await coreStatus(withDiscover(core17.discover).deps) as { hostPort: unknown }).hostPort).toBe(true)
+    expect((await coreStatus(withDiscover(core16.discover).deps) as { hostPort: unknown }).hostPort).toBe(false)
   })
 })
 

@@ -1,0 +1,11 @@
+{
+  "dirs": [
+    "/home/user/projects/app",
+    "/home/user/projects/site"
+  ],
+  "machines": {
+    "profile-laptop": [
+      "/Users/user/code/api"
+    ]
+  }
+}

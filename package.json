@@ -3,9 +3,9 @@
   "version": "2.5.0",
   "license": "MIT",
   "type": "module",
-  "description": "Unofficial mobile web client (PWA) to drive the coding agents running in Herdr",
+  "description": "Unofficial mobile web client (PWA) for the coding agents of herdr-core (hc)",
   "keywords": [
-    "herdr",
+    "herdr-core",
     "pwa",
     "claude-code",
     "codex",
@@ -26,7 +26,9 @@
     ".output",
     "!.output/**/*.map",
     "bin",
-    "skills/wherdr",
+    "scripts/fetch-dictation-files.mjs",
+    "scripts/dictation-files.mjs",
+    "app/utils/dictation/models.json",
     "docs/*.md"
   ],
   "engines": {

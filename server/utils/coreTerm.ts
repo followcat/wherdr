@@ -8,6 +8,9 @@
 // its own until it types, presses a key or asks to take control again: the latest
 // active viewer wins, and two viewers never resize each other in a loop.
 // `takeover=0` opens a watch-only viewer that keeps the terminal's current size.
+// Sizes set by others arrive as `size` events (events.subscribe), not by polling.
+// core 0.1.17's `resize_notifications` is for `observe` attaches only, which can
+// never type: these viewers type, so they do not ask for it.
 // Flow control: core grants 256 KiB; the browser returns credit after xterm has
 // written the bytes, so the WebSocket queue stays bounded by that window.
 import { CoreError } from './core'

@@ -1,4 +1,5 @@
 import type { AgentStatus } from './types'
+import { cleanTitle } from './paneTitle'
 // Deliberately independent of legacy panes, desktop layouts and conversation IDs.
 export interface CoreTerminal {
   agent?: string | null
@@ -43,7 +44,7 @@ export const ownTitle = (terminal: Pick<CoreTerminal, 'name' | 'labels' | 'addre
   return name && !addressOnly(name, terminal.address) ? name : null
 }
 export function coreTitle(terminal: CoreTerminal) {
-  return ownTitle(terminal) || terminal.title || terminal.cwd?.split('/').filter(Boolean).pop() || terminal.address
+  return ownTitle(terminal) || cleanTitle(terminal.title) || terminal.cwd?.split('/').filter(Boolean).pop() || terminal.address
 }
 // herdr-app's contract: `herdr.seen` holds the last turn somebody looked at. A terminal that
 // never got the label is not tracked (absent is not 0): it is never unread.

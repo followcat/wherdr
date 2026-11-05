@@ -2,7 +2,7 @@
 // screen shows it running (bug t-0106: wherdr showed "En attente").
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { elapsedMs, parseClaudeNotice, parseClaudeScreen } from '../server/utils/claudeScreen'
+import { elapsedMs, parseClaudeScreen } from '../server/utils/claudeScreen'
 import { queuedPhase } from '../shared/queuedPhase'
 
 const fx = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
@@ -110,29 +110,5 @@ describe('queued message against the screen', () => {
   it('photos: the paths sent do not count, nor does "[Image #1]"', () => {
     const s = { shell: null, sent: '[Image #1] Que vois-tu sur cette capture ?', queued: [] }
     expect(queuedPhase('/home/user/.cache/herdr-web/uploads/a.png\nQue vois-tu sur cette capture ?', s)).toBe('sent')
-  })
-})
-
-describe('parseClaudeNotice', () => {
-  const screen = (foot: string) => [
-    ' ▐▛███▜▌   Claude Code',
-    '',
-    '❯ /clear',
-    '',
-    '─'.repeat(40),
-    '❯ ',
-    '─'.repeat(40),
-    foot,
-  ].join('\n')
-  it('reads "Update installed" on the right of the footer', () => {
-    expect(parseClaudeNotice(screen('  ? for shortcuts                 ✔ Update installed · Restart to update'))).toBe('✔ Update installed · Restart to update')
-  })
-  it('lit le statut au-dessus du cadre', () => {
-    const s = ['❯ /clear', '                ✔ Update installed · Restart to update', '─'.repeat(40), '❯ ', '─'.repeat(40)].join('\n')
-    expect(parseClaudeNotice(s)).toBe('✔ Update installed · Restart to update')
-  })
-  it('ignore un statut inconnu ou absent', () => {
-    expect(parseClaudeNotice(screen('  ? for shortcuts'))).toBeNull()
-    expect(parseClaudeNotice(null)).toBeNull()
   })
 })

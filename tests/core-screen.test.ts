@@ -93,6 +93,27 @@ describe('enrich', () => {
     await screens.enrich([pane('a')])
     expect(reads.length).toBe(2)
   })
+  it('parses a screen once while its text, agent and core status stay the same', async () => {
+    const texts: Record<string, string> = { 'm/a': bash }
+    const { screens, reads, tick } = setup(texts, () => false)
+    const first = pane('a')
+    await screens.enrich([first])
+    tick(6000) // read again, same text: the same reading
+    const same = pane('a')
+    await screens.enrich([same])
+    expect(reads.length).toBe(2)
+    expect(same.prompt).toBe(first.prompt)
+    const blocked = pane('a', { status: 'blocked' }) // core's status changed: parsed again
+    await screens.enrich([blocked])
+    expect(blocked.prompt).not.toBe(first.prompt)
+    expect(blocked.prompt).toEqual(first.prompt)
+    texts['m/a'] = input
+    tick(6000)
+    const other = pane('a')
+    await screens.enrich([other])
+    expect(other).toMatchObject({ status: 'idle', interaction: 'input' })
+    expect(other.prompt).toBeUndefined()
+  })
   it('shows a new Claude\'s trust box as Your turn at the next poll, not at the background pace', async () => {
     const texts: Record<string, string> = { 'm/a': '' }
     const { screens, reads, tick } = setup(texts, () => false)

@@ -192,29 +192,6 @@ export interface Pane {
 export interface OmpStatus { line: string, meters: string | null }
 export interface OmpActivity { step: string | null, since: number | null }
 
-export interface ChangeLine { kind: 'add' | 'del' | 'context' | 'hunk' | 'meta', text: string }
-export interface ChangeFile {
-  path: string
-  previousPath?: string
-  status: string
-  added: number | null
-  deleted: number | null
-  lines: ChangeLine[]
-  binary: boolean
-  truncated: boolean
-  summary?: string
-}
-export interface ChangeSet { files: ChangeFile[], truncated: boolean, count: number }
-export interface ChangesResponse {
-  git: boolean
-  root?: string
-  branch?: string
-  working?: ChangeSet
-  committed?: ChangeSet | null
-  comparison?: string | null
-  commits?: number | null
-}
-
 // Model of an agent: readable label ("Opus 5.5", "GPT-6-Sol") and raw
 // identifier when known (`claude-opus-5-5`, `gpt-6-sol`).
 export interface ModelInfo {
@@ -389,14 +366,6 @@ export interface AuthStatus {
   // Server setting (lock enabled only).
   maxSessionDays?: MaxSessionDays
   devices: { name: string, createdAt: string, lastUsed: string | null }[]
-}
-
-// "/" command of an agent (input field menu).
-export interface SlashCommand {
-  name: string // without the slash
-  desc: string
-  hint?: string
-  source: 'builtin' | 'skill' | 'command'
 }
 
 // Usage quotas of an account (Claude or Codex): 5-hour window and week.

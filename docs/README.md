@@ -1,7 +1,6 @@
 # Documentation
 
-This is the documentation of **wherdr v3**, which runs on herdr-core (`hc`) with
-`WHERDR_BACKEND=core`. Pages and sections marked **v2 only** apply to wherdr 2.x on Herdr.
+This is the documentation of **wherdr v3**, which runs on herdr-core (`hc`). Pages and sections marked **v2 only** apply to wherdr 2.x on Herdr.
 
 Read only the page relevant to your task. Start with [herdr-core](core.md) for what v3 supports,
 [Installation and updates](installation.md) for setup, [Security](security.md) for remote access,

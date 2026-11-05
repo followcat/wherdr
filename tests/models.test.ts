@@ -1,11 +1,10 @@
-// Agent models: labels, reading from transcripts (Claude, Codex) and from
-// the agent's screen.
+// Agent models: labels and reading from transcripts (Claude, Codex).
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
-  claudeModelLabel, codexConfigModel, codexFooterModel, codexModelLabel, lastModel, modelFromLine, claudeScreenEffort, claudeScreenModel, sameModel,
+  claudeModelLabel, codexConfigModel, codexModelLabel, lastModel, modelFromLine,
 } from '../server/utils/models'
 import { createTranscripts, parseLines } from '../server/utils/transcripts'
 import { type MachineFs, localFs } from '../server/utils/fsx'
@@ -26,10 +25,6 @@ describe('labels', () => {
     expect(codexModelLabel('gpt-6-sol')).toBe('GPT-6-Sol')
     expect(codexModelLabel('gpt-5.6-terra')).toBe('GPT-5.6-Terra')
     expect(codexModelLabel('gpt-5.5')).toBe('GPT-5.5')
-  })
-  it('compares without the variants in parentheses', () => {
-    expect(sameModel('Opus 5.5', 'Opus 5.5 (1M)')).toBe(true)
-    expect(sameModel('Opus 5.5', 'Opus 5')).toBe(false)
   })
 })
 
@@ -78,11 +73,6 @@ describe('model in a Codex rollout', () => {
   it('takes the last turn_context, with the effort', () => {
     const lines = [tc('gpt-6-sol', 'medium', 't1'), j({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [] } }), tc('gpt-6-luna', 'high', 't2')]
     expect(lastModel(lines, 'codex')).toEqual({ id: 'gpt-6-luna', label: 'GPT-6-Luna', effort: 'high', at: 't2' })
-  })
-  it('reads Codex\'s status line when idle (model actually in effect)', () => {
-    expect(codexFooterModel(fx('codex-idle.txt'))).toEqual({ id: null, label: 'GPT-6-Sol', effort: 'medium', at: null })
-    expect(codexFooterModel('› Ask Codex to do anything\n\n  GPT-5.6-Terra medium · ~ · Répondre pong')!.label).toBe('GPT-5.6-Terra')
-    expect(codexFooterModel(fx('codex-model-1.txt'))).toBeNull()
   })
   it('reads the default model from config.toml (top-level keys only)', () => {
     const toml = 'model = "gpt-6-sol"\nmodel_reasoning_effort = "medium"\n[profiles.x]\nmodel = "gpt-5.5"\n'
@@ -161,28 +151,5 @@ describe('transcripts.model()', () => {
     // Nothing known yet (file found, then its read fails): the failure is not turned into "no model".
     const readDown: MachineFs = { ...localFs, read: async () => { throw drop() } }
     await expect(createTranscripts({ home, herdr: async () => ({}), fs: readDown }).model(pane)).rejects.toThrow('Connection closed')
-  })
-})
-
-describe('model on screen', () => {
-  it('reads Claude\'s current effort on the banner or the /effort output', () => {
-    expect(claudeScreenEffort(fx('claude-effort-low.txt'))).toBe('medium')
-    expect(claudeScreenEffort(' Opus 5.5 with low effort · Claude Pro')).toBe('low')
-    expect(claudeScreenEffort('Opus 5.5 with medium effort\n⎿  Set effort level to low (for this session only)')).toBe('low')
-    expect(claudeScreenEffort('rien')).toBeNull()
-  })
-  it('reads Claude\'s model on the header of a new agent', () => {
-    const head = (l: string) => ` ▐▛███▜▌   Claude Code v2.1.90\n▝▜█████▛▘  ${l}\n  ▘▘ ▝▝    ~/projets/demo\n\n────────\n❯ \n────────`
-    expect(claudeScreenModel(head('Opus 5.5 with low effort · Claude Pro'))).toEqual({ id: null, label: 'Opus 5.5', effort: 'low', at: null })
-    expect(claudeScreenModel(head('Sonnet 5 · Claude Max'))).toEqual({ id: null, label: 'Sonnet 5', effort: null, at: null })
-    expect(claudeScreenModel(head('Fable 5.1 (1M context) with xhigh effort · Claude Max'))?.label).toBe('Fable 5.1 (1M)')
-    expect(claudeScreenModel(head('Haiku 4.5 · API Usage Billing'))?.label).toBe('Haiku 4.5')
-    // /model typed before the first message: the lowest wins.
-    expect(claudeScreenModel(head('Opus 5.5 with low effort · Claude Pro') + '\n❯ /model\n  ⎿  Set model to Sonnet 5 for this session only')?.label).toBe('Sonnet 5')
-    expect(claudeScreenModel('rien · Claude')).toBeNull()
-    expect(claudeScreenModel(null)).toBeNull()
-  })
-  it('reads a new Codex\'s model on its status line', () => {
-    expect(codexFooterModel('\n› Write tests\n\n  GPT-5.6-Terra medium · ~/projets/demo')).toMatchObject({ label: 'GPT-5.6-Terra', effort: 'medium' })
   })
 })

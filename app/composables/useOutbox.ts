@@ -3,7 +3,8 @@
 // the order they were typed, whatever each one takes on the server.
 import { reactive } from 'vue'
 import type { Pane, QueuedMessage } from '#shared/types'
-import { type OutboxItem, type RecentSend, addSending, failLocal, isRepeat, newOutboxId, prune, recentSends, resend, settle } from '~/utils/outbox'
+import { type OutboxItem, type RecentSend, SendTimeout, addSending, chainSend, failLocal, isRepeat, newOutboxId, prune, recentSends, resend, settle } from '~/utils/outbox'
+import { tl } from '~/utils/i18n'
 import { sendMessage } from './useActions'
 
 // Plain module state: it outlives the views (switching conversations while sending).
@@ -36,14 +37,20 @@ const update = (paneId: string, f: (l: OutboxItem[]) => OutboxItem[]) => {
 
 export const outboxFor = (paneId: string): OutboxItem[] => boxes.get(paneId) || []
 
-// Send after the earlier sends of this conversation; the bubble moves to the
-// server's record, or to "Not sent" if the request fails (error rethrown).
+// Send after the earlier sends of this conversation (utils/outbox.ts
+// chainSend); the bubble moves to the server's record, or to "Not sent" if the
+// request fails or gets no answer (error rethrown).
 function deliver(p: Pane | undefined, paneId: string, id: string, text: string): Promise<QueuedMessage | null> {
-  const run = (chains.get(paneId) || Promise.resolve()).catch(() => {}).then(() => sendMessage(p, paneId, text, id))
+  const run = chainSend(chains.get(paneId), signal => sendMessage(p, paneId, text, id, signal))
   chains.set(paneId, run)
   return run.then(
     (q) => { update(paneId, l => settle(l, id, q, Date.now())); return q },
-    (err) => { update(paneId, l => failLocal(l, id)); throw err },
+    (err) => {
+      update(paneId, l => failLocal(l, id))
+      throw err instanceof SendTimeout
+        ? new Error(tl('No answer from the server: check the conversation before sending it again.', 'Pas de réponse du serveur : vérifie la conversation avant de le renvoyer.'))
+        : err
+    },
   )
 }
 

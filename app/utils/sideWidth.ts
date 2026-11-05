@@ -47,27 +47,3 @@ export function saveListCollapsed(collapsed: boolean) {
     else localStorage.removeItem(RAIL_KEY)
   } catch { /* stockage indisponible */ }
 }
-
-// Ticket panel: retain a usable Board alongside the navigation sidebar.
-export const PANEL_MIN = 320
-export const PANEL_MAX = 960
-export const BOARD_MIN = 640
-const PANEL_KEY = 'boardPanelWidth'
-export function clampPanelWidth(width: number, available: number): number {
-  return Math.round(Math.max(PANEL_MIN, Math.min(width, PANEL_MAX, available - BOARD_MIN)))
-}
-export function panelWidthCss(width: number | null): string {
-  return `clamp(${PANEL_MIN}px, ${width === null ? 'clamp(400px, 44vw, 720px)' : `${width}px`}, calc(100vw - var(--side) - ${BOARD_MIN}px))`
-}
-export function readPanelWidth(): number | null {
-  try {
-    const value = Number(localStorage.getItem(PANEL_KEY))
-    return Number.isFinite(value) && value >= PANEL_MIN && value <= PANEL_MAX ? Math.round(value) : null
-  } catch { return null }
-}
-export function savePanelWidth(width: number | null) {
-  try {
-    if (width === null) localStorage.removeItem(PANEL_KEY)
-    else localStorage.setItem(PANEL_KEY, String(width))
-  } catch { /* Storage unavailable. */ }
-}

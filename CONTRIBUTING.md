@@ -45,7 +45,7 @@ sent request, a stored value), not the wiring.
 | --- | --- | --- | --- |
 | Unit | `tests/*.test.ts` | `npx vitest run --project unit` | Pure modules of `server/`, `shared/`, `app/utils/`, in Node. |
 | Component | `tests/components/*.test.ts` | `npx vitest run --project components` | Vue components mounted in a Nuxt environment (auto-imports, Nuxt UI) on happy-dom, with `mountSuspended` and `registerEndpoint` from `@nuxt/test-utils/runtime`. |
-| End to end | `tests/e2e/*.spec.ts` | `npm run build && npx playwright test tests/e2e/<name>.spec.ts` | The built app in Chromium at iPhone size, each spec with its own server and fake herdr-core socket (`tests/e2e/core.ts`). |
+| End to end | `tests/e2e/*.spec.ts` | `npm run build && npx playwright test tests/e2e/<name>.spec.ts --project=chromium-phone` | The built app in Chromium at iPhone size (and the core smoke in WebKit), each spec with its own server and fake herdr-core socket (`tests/e2e/core.ts`). |
 
 **Where a test goes.** Browser tests are slow (2-3 s each, against milliseconds for a unit
 test) and they set the CI time, so each check goes to the fastest level that can catch it:
@@ -67,15 +67,17 @@ Playwright's fake clock past it (`page.clock.install()` before the page opens, t
 `page.clock.fastForward`), or waits for the state itself.
 
 `npx vitest run` runs the unit and component projects together. For the end-to-end tests,
-install Chromium once with `npx playwright install --with-deps chromium`, build, then run
-`npx playwright test` (one project, `chromium-phone`); `npx playwright test tests/e2e/<name>.spec.ts`
-runs one spec. They never touch a real herdr-core session.
+install the browsers once with `npx playwright install --with-deps chromium webkit`, build, then run
+`npx playwright test --project=chromium-phone` (every spec); `npx playwright test tests/e2e/<name>.spec.ts --project=chromium-phone`
+runs one spec. The `webkit-phone` project (Safari's engine, iPhone 13) runs only
+`tests/e2e/core-smoke.spec.ts`, which checks that `/ws/events` opens and sends a state frame,
+for iOS-only breakage: `npx playwright test --project=webkit-phone`. They never touch a real herdr-core session.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs the type check, all the Vitest tests, the leak
 check (gitleaks only: your `.leak-patterns` stays local), the build and the end-to-end specs on
-every pull request and push to v3. CI retries a failed e2e test once (it then shows as flaky);
-local runs never retry. The v2 suite (fake Herdr, WebKit and desktop projects, nightly runs)
-lives on develop and main.
+every pull request and push to v3: all specs on Chromium, then the core smoke on WebKit. CI retries a failed e2e test once (it then shows as flaky);
+local runs never retry. The v2 suite (fake Herdr, the full WebKit and desktop projects, nightly
+runs) lives on develop and main.
 
 
 ## Agent test rule

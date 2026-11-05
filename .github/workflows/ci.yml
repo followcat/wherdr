@@ -1,5 +1,6 @@
-# v3 smoke checks: a few minutes, just to catch obvious breakage. The v2 suite (fake
-# Herdr, WebKit, sharded e2e, releases) lives on main and develop only.
+# v3 smoke checks: a few minutes, just to catch obvious breakage, plus the core smoke
+# on WebKit for iOS-only breakage. The v2 suite (fake Herdr, desktop projects, sharded
+# e2e, releases) lives on main and develop only.
 # Merging v3 into main must keep the v2 ci.yml (its `checks` and `e2e` jobs are required).
 name: ci
 
@@ -51,12 +52,17 @@ jobs:
 
       - name: Build (herdr-core)
         run: npm run build
-        env:
-          WHERDR_BACKEND: core
-          NUXT_PUBLIC_CORE: 'true'
 
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
       - name: E2e (core, Chromium)
-        run: npx playwright test
+        run: npx playwright test --project=chromium-phone
+
+      # Safari's engine: catches what iOS rejects and Chromium accepts (the /ws/events
+      # handshake). Only tests/e2e/core-smoke.spec.ts runs here (playwright.config.ts).
+      - name: Install WebKit
+        run: npx playwright install --with-deps webkit
+
+      - name: E2e (core smoke, WebKit)
+        run: npx playwright test --project=webkit-phone

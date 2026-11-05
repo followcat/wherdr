@@ -89,6 +89,32 @@ describe('useDictation', () => {
     expect(d.status.value).toBe('idle')
   })
 
+  it('runs the optional rewrite after the transcript, and cancel drops it', async () => {
+    const { d, texts } = setup()
+    let release: (v: string) => void = () => {}
+    const rewrite = vi.fn((_t: string, _s: AbortSignal) => new Promise<string>((r) => { release = r }))
+    const go = () => d.start({ engine: 'device', onText: t => texts.push(t), rewrite })
+    await go()
+    FakeAudioContext.last.feed()
+    let stopping = d.stop()
+    await vi.waitFor(() => expect(d.status.value).toBe('rewriting'))
+    expect(rewrite.mock.calls[0]![0]).toBe('hello pane')
+    release('Hello, pane.')
+    await stopping
+    expect(texts).toEqual(['Hello, pane.'])
+    expect(d.status.value).toBe('idle')
+
+    await go()
+    FakeAudioContext.last.feed()
+    stopping = d.stop()
+    await vi.waitFor(() => expect(d.status.value).toBe('rewriting'))
+    d.cancel()
+    expect(rewrite.mock.calls[1]![1].aborted).toBe(true)
+    release('late')
+    await stopping
+    expect(texts).toEqual(['Hello, pane.'])
+  })
+
   it('keeps the PCM while the engine prepares and transcribes it after', async () => {
     const open = engine.holdPrepare()
     const { d, texts, start } = setup()

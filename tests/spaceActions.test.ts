@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { closeSummary } from '../shared/spaceActions'
 import { reduceSnapshot } from './helpers/snapshot'
 import layouts from './fixtures/snapshot-layouts.json'
 import { paneCloseConfirm } from '../app/utils/spaceConfirm'
@@ -9,15 +8,6 @@ const pane = (id: string, tab: string, agent: string | null = null) => ({
 })
 const panes = [pane('w1:p1', 'w1:t1', 'claude'), pane('w1:p2', 'w1:t1', 'codex'), pane('w1:p3', 'w1:t1'), pane('w1:p4', 'w1:t2'), pane('w2:p1', 'w2:t1'), pane('w2:p2', 'w2:t1'), pane('w3:p1', 'w3:t1')]
 const state = reduceSnapshot({ ...layouts, panes })
-
-describe('closeSummary', () => {
-  it('counts the agents a close would stop', () => {
-    const s = closeSummary(state.panes.filter(p => p.tab === 'w1:t1'))
-    expect(s.agents.map(p => p.agent)).toEqual(['claude', 'codex'])
-    expect(s.shells).toBe(1)
-    expect(closeSummary(state.panes.filter(p => p.workspace === 'w3'))).toEqual({ agents: [], shells: 1 })
-  })
-})
 
 describe('paneCloseConfirm', () => {
   const fr = (_: string, b: string) => b.replace(/\u00a0/g, ' ')

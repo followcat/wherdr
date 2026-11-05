@@ -52,3 +52,7 @@ it('lists three agents of one folder as three rows counted 1/1/1', async () => {
   expect(rows).toHaveLength(3)
   expect(coreRowCounts(rows)).toEqual({ working: 1, blocked: 1, ready: 1 })
 })
+
+it('recognizes a Devin command when core supplies no agent field', () => {
+  expect(coreState([terminal('t1', { argv: ['/opt/bin/devin', '-r', 'session-a'] })], []).panes[0]?.agent).toBe('devin')
+})

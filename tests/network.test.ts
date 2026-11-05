@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { funnelExposes, tailnetPeers, targetPort } from '../bin/lib/tailnet.mjs'
 import {
   checkClient, forwardedClients, gateDecision, isLoopbackIp, isTailnetIp, listenVerdict, netContext,
-  ensureFresh, parseTrustedNetworks, plainIp, refreshTailscale, resetNetworkStateForTests, tailnetKnown, type NetContext, type TailscaleState,
+  ensureFresh, ensureRecent, parseTrustedNetworks, plainIp, refreshTailscale, resetNetworkStateForTests, tailnetKnown, type NetContext, type TailscaleState,
 } from '../server/utils/network'
 
 const TS: TailscaleState = { running: true, selfIps: ['100.90.1.2', 'fd7a:115c:a1e0::2'], peerIps: ['100.101.102.103', 'fd7a:115c:a1e0::5'], funnel: false }
@@ -147,6 +147,45 @@ describe('tailnet state over time', () => {
     expect(reads).toBe(2)
     expect(checkClient('127.0.0.1', {}, netContext())).toEqual({ ok: false, reason: 'funnel' })
   })
+  it('HTTP: serves on a reading up to 10 s old while a new one runs in the background, waits past that', async () => {
+    let funnel = false
+    let reads = 0
+    let finish: (() => void) | null = null
+    const slow = () => new Promise<typeof up>((r) => { reads++; finish = () => r({ ...up, funnel }) })
+    const t0 = Date.now()
+    await refreshTailscale(async () => up, t0 - 5000)
+    funnel = true // turned on since that reading
+    // 5 s old: answered at once on it, a reading starts for the next requests (shared by them).
+    expect(await Promise.race([ensureRecent(2000, 10_000, slow, t0).then(() => 'now'), new Promise(r => setTimeout(r, 50, 'waited'))])).toBe('now')
+    await ensureRecent(2000, 10_000, slow, t0)
+    expect(reads).toBe(1)
+    // Funnel's own traffic is refused on its header meanwhile, whatever the reading says.
+    expect(checkClient('127.0.0.1', { 'tailscale-funnel-request': '?1' }, netContext())).toEqual({ ok: false, reason: 'funnel' })
+    finish!()
+    await new Promise(r => setTimeout(r, 0))
+    // The background reading saw Funnel: the next requests are refused.
+    expect(checkClient('127.0.0.1', {}, netContext())).toEqual({ ok: false, reason: 'funnel' })
+    // Over 10 s old: the request waits for the new reading.
+    resetNetworkStateForTests()
+    funnel = true
+    await refreshTailscale(async () => ({ ...up, funnel: false }), Date.now() - 11_000)
+    const waiting = ensureRecent(2000, 10_000, slow, Date.now())
+    let done = false
+    void waiting.then(() => { done = true })
+    await new Promise(r => setTimeout(r, 20))
+    expect(done).toBe(false)
+    finish!()
+    await waiting
+    expect(checkClient('127.0.0.1', {}, netContext())).toEqual({ ok: false, reason: 'funnel' })
+  })
+  it('HTTP: with no reading yet, waits for one; a failed one trusts no tailnet peer', async () => {
+    let reads = 0
+    await ensureRecent(2000, 10_000, async () => { reads++; throw new Error('tailscale hangs') })
+    expect(reads).toBe(1)
+    expect(checkClient('100.101.102.103', {}, netContext())).toEqual({ ok: false, reason: 'peer' })
+    expect(checkClient('127.0.0.1', { 'x-forwarded-for': '100.101.102.103' }, netContext())).toEqual({ ok: false, reason: 'forwarded' })
+    expect(checkClient('127.0.0.1', { 'tailscale-funnel-request': '?1' }, netContext())).toEqual({ ok: false, reason: 'funnel' })
+  })
   it('serves this computer without Tailscale: no Funnel when Tailscale is absent', async () => {
     const none = { installed: false, readable: true, running: false, selfIps: [], peerIps: [], funnel: false }
     await refreshTailscale(async () => none, 3_000_000)
@@ -280,6 +319,15 @@ describe('gate matrix', () => {
     for (const z of served) expect(decide(z, '/ws', false, false, true)).toBe('ok')
     expect(decide('lan', '/ws', false, false, true)).toBe('network')
     expect(decide('funnel', '/ws', false, false, true)).toBe('network')
+  })
+  it('with a passkey: an agent\'s screenshot upload with its task\'s key skips the lock, nothing else does', () => {
+    const agent = (zone: keyof typeof checks, path: string, ws = false, crossSite = false) =>
+      gateDecision({ check: checks[zone], unlocked: false, hostOk: true, crossSite, path, ws, agentKey: true })
+    expect(agent('tailnet', '/api/pm/shot')).toBe('ok') // the route checks the key
+    expect(agent('tailnet', '/api/config')).toBe('locked')
+    expect(agent('tailnet', '/ws', true)).toBe('locked')
+    expect(agent('lan', '/api/pm/shot')).toBe('network')
+    expect(agent('tailnet', '/api/pm/shot', false, true)).toBe('origin')
   })
   it('with a passkey: every accepted network needs the unlocked session for the API and WebSockets', () => {
     for (const z of served) {

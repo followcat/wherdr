@@ -1,6 +1,6 @@
 // New version after a deployment (replaces Nuxt's automatic
 // reloads, turned off in nuxt.config.ts): check every
-// 5 min, on returning to the page and on each reconnection to the server; missing code chunk during a
+// 5 min, on returning to the page and on reconnection to the server (at most once a minute); missing code chunk during a
 // navigation → a single reload to the requested view, otherwise the banner.
 import { isChunkLoadError, mayReloadForChunk } from '../utils/appVersion'
 
@@ -20,5 +20,5 @@ export default defineNuxtPlugin((nuxtApp) => {
   })
 
   setInterval(() => { if (!document.hidden) checkNewVersion() }, CHECK_EVERY_MS)
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkNewVersion() })
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkNewVersionOnWake() })
 })

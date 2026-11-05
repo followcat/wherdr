@@ -156,4 +156,3 @@ export function purgePastes(now = Date.now()) {
   if (kept !== saved) save()
 }
 export const chatPasted = <T extends { role: string, text: string, pasted?: string[] }>(items: T[]) => withPasted(items, keptTexts())
-export const queuedPasted = (q: QueuedMessage) => withQueuedPasted(q, keptTexts())

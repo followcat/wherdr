@@ -2,7 +2,7 @@
 // (private, only your devices). Reads Tailscale's state, publishes and
 // unpublishes wherdr's port, and checks that the address really answers.
 // Used by the server (Settings › Phone, server/utils/phone.ts) and by
-// `wherdr phone` / `wherdr panel`. No dependency on the rest of bin/lib nor
+// `wherdr phone`. No dependency on the rest of bin/lib nor
 // on packages: the server bundles this file.
 import { execFile } from 'node:child_process'
 import dns from 'node:dns'

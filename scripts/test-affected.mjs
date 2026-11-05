@@ -13,8 +13,8 @@ export const domains = [
   { name: 'terminal', source: /terminal|server\/routes\/.*ws/i, tests: /terminal/i, e2e: ['core-smoke'], reason: 'Terminal rendering and websocket lifecycle cross the built app.' },
   { name: 'machines', source: /machine/i, tests: /machine/i, e2e: ['core-machines'], reason: 'Machine tabs and cross-machine navigation need explicit coverage.' },
   { name: 'startup', source: /router|app\.vue|onboarding|app\/plugins/i, tests: /onboarding|directRoute|stateReady/i, e2e: ['core-smoke'], reason: 'Startup and routing depend on Nuxt registration.' },
-  { name: 'appearance', source: /app\/assets\/|themes?\.|font/i, tests: /layout|sheet|CompactDefault|ChatViewRendering|SettingsTyping|Composer/i, e2e: [], reason: 'CSS and themes affect layout and overlays without import edges.' },
-  { name: 'chat-rendering', source: /ChatView|OmpTool|Settings/i, tests: /ChatViewRendering|CompactDefault|SettingsTyping|OmpTool|settings/i, e2e: [], reason: 'Rendering assertions moved from e2e to components; retain integration boundaries.' },
+  { name: 'appearance', source: /app\/assets\/|themes?\.|font/i, tests: /layout|sheet|CompactDefault|ChatViewRendering|SettingsView|Composer/i, e2e: [], reason: 'CSS and themes affect layout and overlays without import edges.' },
+  { name: 'chat-rendering', source: /ChatView|OmpTool|Settings/i, tests: /ChatViewRendering|CompactDefault|SettingsView|OmpTool|settings/i, e2e: [], reason: 'Rendering assertions moved from e2e to components; retain integration boundaries.' },
 ]
 const doc = p => /\.(md|rst)$/.test(p) || /^docs\//.test(p)
 const test = p => /\.test\.[cm]?[jt]s$/.test(p)

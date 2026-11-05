@@ -66,7 +66,8 @@ function dragEnd(e: TouchEvent) {
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="title" :ui="ui">
+  <!-- The image viewer opened from the sheet: its taps and Escape are its own. -->
+  <UModal v-model:open="open" :title="title" :ui="ui" :dismissible="!lightboxSrc">
     <template #content>
       <button
         v-if="!screen" type="button" class="hw-sheet-handle" :aria-label="tl('Close', 'Fermer')"

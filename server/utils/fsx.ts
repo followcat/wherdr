@@ -21,6 +21,8 @@ export interface MachineFs {
   // Checksum of the first `len` bytes, computed where the file is (a remote
   // machine sends back a few bytes, not the file).
   digest?: (p: string, len: number) => Promise<string>
+  // Bounded small files and their stats in one remote round trip (PID locks).
+  readSmallMany?: (ps: string[], maxBytes: number) => Promise<{ stat: FsStat | null, body: Buffer | null }[]>
 }
 
 // ---------------------------------------------------------------- disque local
@@ -31,6 +33,15 @@ export const localFs: MachineFs = {
   statMany: ps => Promise.all(ps.map(p => fsp.stat(p).then(toStat, () => null))),
   readdir: p => fsp.readdir(p),
   readFile: p => fsp.readFile(p, 'utf8'),
+  async readSmallMany(ps, maxBytes) {
+    const out: { stat: FsStat | null, body: Buffer | null }[] = []
+    for (let i = 0; i < ps.length; i += 32) out.push(...await Promise.all(ps.slice(i, i + 32).map(async p => {
+      const stat = await localFs.stat(p).catch(() => null)
+      const body = stat?.isFile && stat.size <= maxBytes ? await localFs.read(p, 0, maxBytes + 1).catch(() => null) : null
+      return { stat, body }
+    })))
+    return out
+  },
   async read(p, start, len) {
     const fh = await fsp.open(p, 'r')
     try {
@@ -52,25 +63,6 @@ export interface ExecResult { code: number | null, stdout: Buffer, stderr: strin
 // `maxBytes`: past that much output the command is stopped and nothing of it is kept.
 export type ShellExec = (script: string, args?: string[], opts?: { input?: Buffer, timeoutMs?: number, maxBytes?: number }) => Promise<ExecResult>
 
-// A command's output, kept up to `max` bytes: past it, `push` says so and lets
-// go of what it held, so a long answer never sits in memory whole.
-export function boundedOutput(max = Infinity) {
-  let parts: Buffer[] = []
-  let size = 0
-  let over = false
-  return {
-    push(b: Buffer): boolean {
-      if (over) return false
-      size += b.length
-      if (size > max) { over = true; parts = []; return false }
-      parts.push(b)
-      return true
-    },
-    get over() { return over },
-    take: () => Buffer.concat(parts),
-  }
-}
-
 export class FsError extends Error {
   code: string
   constructor(code: string, message: string) {
@@ -81,10 +73,6 @@ export class FsError extends Error {
 
 // Shell quoting (arguments passed as is, never interpreted).
 export const shq = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`
-
-// Command line run by the remote login shell for `script` and its arguments:
-// every part quoted, so a path is never interpreted by either shell.
-export const remoteCommand = (script: string, args: string[] = []) => `sh -c ${shq(script)} sh ${args.map(shq).join(' ')}`.trimEnd()
 
 // BSD (macOS) or GNU `stat`: one "size mtime inode type" line per file, "x" if
 // missing. The mtime has its fraction of a second when `stat` can print it
@@ -162,6 +150,16 @@ export function createShellFs(exec: ShellExec, opts: { statTtlMs?: number } = {}
       return s
     },
     statMany,
+    async readSmallMany(ps, maxBytes) {
+      if (!ps.length) return []
+      const script = 'limit=$1; shift\n' + STAT_SCRIPT + `
+for f; do
+  if [ -f "$f" ]; then head -c "$limit" < "$f" 2>/dev/null | base64 | tr -d '\\n'; fi
+  printf '\\n'
+done`
+      const lines = (await run(script, [String(maxBytes + 1), ...ps])).toString('utf8').split('\n')
+      return ps.map((_, i) => ({ stat: parseStatLine(lines[i] || ''), body: Buffer.from(lines[ps.length + i] || '', 'base64') }))
+    },
     async readdir(p) {
       const b = await run(REQUIRE_PATH + 'cd "$1" && ls -1A', [p])
       return b.toString('utf8').split('\n').filter(Boolean)

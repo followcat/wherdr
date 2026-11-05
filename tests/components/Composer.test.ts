@@ -107,6 +107,22 @@ describe('Composer send', () => {
     w.unmount()
   })
 
+  it('a lone "!" is nothing to send: no Send, and Enter neither sends nor stops', async () => {
+    prompts.length = 0
+    interrupts.length = 0
+    const w = await mountSuspended(Composer, { props: { pane: pane('w1:b1', 'working'), paneId: 'w1:b1', sendKeys: async () => {} } })
+    const field = w.find('textarea')
+    await field.setValue('!')
+    expect(w.find('button.prompt-send').attributes('disabled')).toBeDefined()
+    await field.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(outboxFor('w1:b1')).toHaveLength(0)
+    expect(prompts).toEqual([])
+    expect(interrupts).toEqual([])
+    expect((field.element as HTMLTextAreaElement).value).toBe('!')
+    w.unmount()
+  })
+
   it('keeps paragraph spacing in the outgoing message', async () => {
     const { w, field } = await mount('w1:p3')
     const text = 'First paragraph.\n\nSecond paragraph.\n\n\nThird paragraph.'

@@ -26,10 +26,10 @@ watch(() => [route.path, route.query.section], () => {
 const section = computed<SettingsSection | null>(() => (SETTINGS_SECTIONS as readonly string[]).includes(String(route.query.section)) ? route.query.section as SettingsSection : null)
 const sectionIcons: Record<SettingsSection, string> = {
   appearance: 'i-lucide-palette', conversation: 'i-lucide-message-square', terminal: 'i-lucide-square-terminal',
-  agents: 'i-lucide-bot', plugins: 'i-lucide-puzzle', phone: 'i-lucide-smartphone', notifications: 'i-lucide-bell', security: 'i-lucide-lock', shortcuts: 'i-lucide-keyboard', advanced: 'i-lucide-bug', about: 'i-lucide-info',
+  agents: 'i-lucide-bot', projects: 'i-lucide-kanban', plugins: 'i-lucide-puzzle', phone: 'i-lucide-smartphone', notifications: 'i-lucide-bell', security: 'i-lucide-lock', shortcuts: 'i-lucide-keyboard', advanced: 'i-lucide-bug', about: 'i-lucide-info',
 }
 const sectionLabels: Record<SettingsSection, string> = {
-  appearance: 'Appearance', conversation: 'Conversation', terminal: 'Terminal', agents: 'Agents',
+  appearance: 'Appearance', conversation: 'Conversation', terminal: 'Terminal', agents: 'Agents', projects: 'Projects',
   plugins: 'Plugins', phone: 'Phone', notifications: 'Notifications', security: 'Security', shortcuts: 'Shortcuts', advanced: 'Advanced', about: 'About',
 }
 const sections = computed(() => SETTINGS_SECTIONS
@@ -408,10 +408,17 @@ onMounted(() => {
           </div>
           <div class="settings-group" data-testid="dictation-settings">
             <h3>{{ tl('Dictation', 'Dictée') }}</h3>
-            <p class="muted settings-lead">{{ tl('A mic next to Send: hold it and talk, or tap it to start and again to stop. The text goes into the field; nothing is sent on its own.', 'Un micro à côté d’Envoyer : maintiens-le et parle, ou touche-le pour démarrer puis encore pour arrêter. Le texte va dans le champ ; rien n’est envoyé tout seul.') }}</p>
+            <p class="muted settings-lead">{{ tl('A mic next to +: hold it and talk, or tap it to start and again to stop. The text goes into the field; nothing is sent on its own.', 'Un micro à côté de + : maintiens-le et parle, ou touche-le pour démarrer puis encore pour arrêter. Le texte va dans le champ ; rien n’est envoyé tout seul.') }}</p>
             <URadioGroup v-model="dictationChoice" :items="dictationItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
             <DictationDeviceSettings v-if="dictationChoice === 'device'" />
             <DictationCloudSettings v-if="dictationChoice === 'cloud'" />
+            <DictationRewriteSettings v-if="dictationChoice !== 'off'" />
+            <p class="muted settings-hint">{{ tl('Saved on this device.', 'Enregistré sur cet appareil.') }}</p>
+          </div>
+          <div class="settings-group" data-testid="read-aloud-group">
+            <h3>{{ tl('Read aloud', 'Lecture à voix haute') }}</h3>
+            <p class="muted settings-lead">{{ tl('Play under each agent reply reads it aloud: the words only, with “code block” in place of code. One reply at a time; tap Stop to end it. On iPhone, iOS may stop reading when the screen locks or you leave the app.', 'Lire sous chaque réponse d’agent la lit à voix haute : les mots seulement, avec « bloc de code » à la place du code. Une réponse à la fois ; Arrêter y met fin. Sur iPhone, iOS peut arrêter la lecture quand l’écran se verrouille ou que tu quittes l’app.') }}</p>
+            <ReadAloudSettings />
             <p class="muted settings-hint">{{ tl('Saved on this device.', 'Enregistré sur cet appareil.') }}</p>
           </div>
         </div>
@@ -496,6 +503,10 @@ onMounted(() => {
             <PushCard detailed />
             <PushDevices v-if="activeSection === 'notifications'" />
           </div>
+        </div>
+
+        <div v-show="activeSection === 'projects'" class="settings-section">
+          <ProjectsSettings :active="activeSection === 'projects'" />
         </div>
 
         <div v-show="activeSection === 'plugins'" class="settings-section">

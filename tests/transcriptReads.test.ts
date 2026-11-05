@@ -108,12 +108,12 @@ describe('bottom read from a cursor while the transcript grows', () => {
 
   // An empty transcript of `kind`, a cached reader counting its bytes, and a
   // reader without any cache to compare with.
-  function grow(kind: 'claude' | 'codex') {
+  function grow(kind: 'claude' | 'codex' | 'omp') {
     const home = mkdtempSync(path.join(tmpdir(), 'hw-grow-'))
     homes.push(home)
-    const dir = kind === 'claude' ? path.join(home, '.claude/projects/-x') : path.join(home, '.codex/sessions/2026/09/25')
+    const dir = path.join(home, { claude: '.claude/projects/-x', codex: '.codex/sessions/2026/09/25', omp: '.omp/agent/sessions/-x' }[kind])
     mkdirSync(dir, { recursive: true })
-    const file = path.join(dir, kind === 'claude' ? 'abc-123.jsonl' : `rollout-2026-09-25T11-29-56-${codexId}.jsonl`)
+    const file = path.join(dir, { claude: 'abc-123.jsonl', codex: `rollout-2026-09-25T11-29-56-${codexId}.jsonl`, omp: '2026-01-01T00-00-00-000Z_s1.jsonl' }[kind])
     writeFileSync(file, '')
     let bytes = 0
     const fs: MachineFs = { ...localFs, read: async (p, start, len) => {
@@ -122,7 +122,7 @@ describe('bottom read from a cursor while the transcript grows', () => {
       return b
     } }
     const t = createTranscripts({ home, herdr: noHerdr, fs })
-    const p = kind === 'claude' ? pane : codexPane
+    const p = kind === 'claude' ? pane : kind === 'codex' ? codexPane : { id: 'w1:p3', agent: 'omp', cwd: '/x', agentSession: file }
     const poll = async (from: number) => {
       bytes = 0
       const r = await t.chat(p, { from })
@@ -167,6 +167,42 @@ describe('bottom read from a cursor while the transcript grows', () => {
     const g = grow('codex')
     await feed(g, fixture('codex-rollout.jsonl'), 0)
     expect((await g.poll(0)).r.items!.length).toBeGreaterThan(0)
+  })
+
+  // omp: turns with tool calls, results and a failed attempt it marks later.
+  const om = (message: object) => JSON.stringify({ type: 'message', id: at(), timestamp: at(), message })
+  const ompTurn = (k: number) => [om({ role: 'user', content: [{ type: 'text', text: `Question ${k}` }], attribution: 'user' }),
+    om({ role: 'assistant', content: [{ type: 'text', text: `Answer ${k} ${'x'.repeat(3000)}` }, { type: 'toolCall', id: `t${k}`, name: 'bash', arguments: { command: 'ls' } }] }),
+    om({ role: 'toolResult', toolCallId: `t${k}`, isError: k % 2 === 1, content: [{ type: 'text', text: 'ok' }] })].join('\n') + '\n'
+  const omp = Buffer.from(JSON.stringify({ type: 'session', version: 3, id: 's1', timestamp: at(), cwd: '/x' }) + '\n' + Array.from({ length: 6 }, (_, k) => ompTurn(k)).join(''))
+
+  it('omp: same reply as a whole read, and a line rewritten far above the end is seen', async () => {
+    const g = grow('omp')
+    await feed(g, omp, 0)
+    const r = (await g.poll(0)).r
+    expect(r.items!.filter(i => i.role === 'tool' && i.error)).toHaveLength(3) // results marking their calls
+    // omp marks an early failed attempt as retried: same size class, rewritten in the middle.
+    const text = omp.toString('utf8').replace('"Question 1"', '"Question!1"')
+    writeFileSync(g.file, text)
+    const again = (await g.poll(0)).r
+    expect(again).toEqual(await g.fresh(0))
+    expect(again.items!.some(i => i.text === 'Question!1')).toBe(true)
+  })
+
+  it('Codex and omp: the turns before the last one are not parsed again, Claude reuses unchanged items', async () => {
+    for (const [kind, data] of [['omp', omp], ['codex', fixture('codex-rollout.jsonl')], ['claude', claude]] as const) {
+      const g = grow(kind)
+      appendFileSync(g.file, data)
+      const first = (await g.poll(0)).r.items!
+      appendFileSync(g.file, kind === 'omp' ? ompTurn(9) : kind === 'codex'
+        ? `${JSON.stringify({ timestamp: at(), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Next' }] } })}\n`
+        : `${user('Next')}\n`)
+      const next = (await g.poll(0)).r.items!
+      expect(next.length).toBeGreaterThan(first.length)
+      // Same objects for every item of the earlier turns (all but the last turn).
+      const lastStart = first.findLastIndex(i => i.role === 'user')
+      for (let k = 0; k < (kind === 'claude' ? first.length : lastStart); k++) expect(next[k]).toBe(first[k])
+    }
   })
 
   it('a transcript cut, replaced or rewritten is read again', async () => {

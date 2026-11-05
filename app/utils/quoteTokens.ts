@@ -17,11 +17,6 @@ export const DEFAULT_QUOTE_MODE: QuoteMode = 'native'
 export const QUOTE_MODE_KEY = 'quoteMode'
 export const OLD_QUOTE_MODE_KEYS = ['quoteModeComputer', 'quoteModePhone', 'quoteTokensComputer', 'quoteTokensPhone'] as const
 
-// A mode that no longer exists (the former "rich" field) is the default.
-export function readQuoteMode(saved: string | null): QuoteMode {
-  return QUOTE_MODES.includes(saved as QuoteMode) ? saved as QuoteMode : DEFAULT_QUOTE_MODE
-}
-
 // One pass per device, the first time the single key is missing or holds a
 // mode that is gone: the mode becomes the default whatever the old keys held
 // (a choice could not be told from the former default), and the old keys go.

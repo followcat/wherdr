@@ -45,7 +45,9 @@ only the routes listed in `shared/coreRoutes.ts` answer.
   are limited to 10 per minute per client, and at most 100 unlock challenges wait at once.
 - **Protected files**: the file browser and the file paths shown in conversations never preview,
   download or stream wherdr's data folder (`DATA_DIR`, with `auth.json`, the push keys and
-  subscriptions, the OpenRouter key), `~/.ssh` or `~/.config/herdr`, on any machine, even through a symlink or inside
+  subscriptions, the OpenRouter key), its settings (`wherdr.env`, which can hold
+  `OPENROUTER_API_KEY`, and `wherdr.json`, in `WHERDR_DIR` and in `~/wherdr`), `~/.ssh` or
+  `~/.config/herdr`, on any machine, even through a symlink or inside
   a browsed project. Agents themselves can still read them: the lock protects the app, not the
   machine.
 - <a id="new-device"></a>**New device**: it can only get in with an existing passkey. Unlock it
@@ -59,14 +61,24 @@ only the routes listed in `shared/coreRoutes.ts` answer.
   optional: it adds an automatic lock on each device if you want one, and then lets other
   people's tailnet devices reach that lock.
 - Writes require `Content-Type: application/json` (or `image/*` for photos, `application/octet-stream` for attached files, `audio/wav` for dictation) and an `Origin`
-  matching the host, WebSockets included. Request bodies are read with a size limit (256 KB for
+  matching the host, WebSockets included. Every method other than GET and HEAD (POST, DELETE…)
+  needs that `Origin`. Request bodies are read with a size limit (256 KB for
   JSON, 20 MB for photos, 30 MB for attached files, 8 MB for a dictation take), chunked bodies included: past it the server
   stops reading, answers `too_large` and closes the connection. API reads sent from another site (links, images,
   `no-cors` fetches, reported by the browser's `Sec-Fetch-Site`) are refused too.
+- A WebSocket message is limited to 256 KB, decompressed: a larger one closes the socket (1009)
+  before it is inflated further.
+- A push subscription is accepted only when its endpoint is an HTTPS address of a browser push
+  service (Apple `*.push.apple.com`, `fcm.googleapis.com`, Mozilla
+  `*.push.services.mozilla.com`, Windows `*.notify.windows.com`), on the default port: the server
+  never posts notifications to another host, private addresses included.
+- Only the API routes listed in `shared/coreRoutes.ts`, each one exactly, are answered; any other
+  path under `/api/` gets 503 (`Unavailable with herdr-core`).
 - A strict Content Security Policy limits scripts to the app's own origin and hashed inline
   scripts, and connections to that origin and its WebSockets. It also blocks embedded objects
-  and framing. It allows compiling WebAssembly (`'wasm-unsafe-eval'`), which on-device dictation
-  needs, but never `eval()` of JavaScript.
+  and framing. The page cannot compile WebAssembly: only the on-device dictation worker
+  (`/workers/dictation-worker.js`) gets `'wasm-unsafe-eval'`, in its own policy. `eval()` of
+  JavaScript is never allowed.
 - Images in agent replies load from the app's own origin (`data:` and `blob:` included) and,
   over HTTPS only, from any machine and port of the tailnet wherdr is reached on
   (`https://*.<tailnet>.ts.net:*`). That tailnet is read from Tailscale on the machine, from
@@ -84,7 +96,8 @@ only the routes listed in `shared/coreRoutes.ts` answer.
   words of the draft) are sent only if **Send pane terms** is on. The OpenRouter key stays on
   the server: `OPENROUTER_API_KEY`, or `DATA_DIR/openrouter.json` (mode 600) saved from
   Settings. It is never sent back to a browser (Settings shows its last 4 characters), never
-  logged, and scrubbed from OpenRouter's error messages. Dictation on the device sends nothing.
+  logged, and scrubbed from OpenRouter's error messages. The server relays at most 2 takes at
+  once and 10 per client per minute (`rate_limited` beyond). Dictation on the device sends nothing.
 
 See [SECURITY.md](../SECURITY.md) to report a vulnerability.
 

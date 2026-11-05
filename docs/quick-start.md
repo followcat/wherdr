@@ -14,12 +14,10 @@ With Git and **Node.js 22** or newer, and hc running:
 git clone -b v3 https://github.com/afloury/wherdr.git
 cd wherdr
 npm ci
-WHERDR_BACKEND=core NUXT_PUBLIC_CORE=true npm run build
-WHERDR_BACKEND=core HC_SOCKET=/path/to/hc.sock npm start   # listens on 127.0.0.1:7683
+npm run build
+HC_SOCKET=/path/to/hc.sock npm start   # listens on 127.0.0.1:7683
 ```
 
-- `WHERDR_BACKEND=core` is needed both to build and to start the server; without it you get the
-  v2 application, which looks for Herdr.
 - `HC_SOCKET` is the socket of the hc session to drive, from your hc configuration. wherdr never
   starts or installs hc, and never guesses the socket. If the home screen says
   **herdr-core is not responding**, start that session (`hc server start`).

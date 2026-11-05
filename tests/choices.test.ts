@@ -4,7 +4,7 @@
 // (claude-trust, claude-security-guide, codex-trust: the machine already trusts ~).
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { completeOmpAsk, inputVisible, keysFor, ompActiveTab, parseChoices, parseOmpAsk, pendingOmpAsk, sameQuestion, screenChoices } from '../server/utils/choices'
+import { completeOmpAsk, keysFor, ompActiveTab, parseChoices, parseOmpAsk, pendingOmpAsk, sameQuestion, screenChoices } from '../server/utils/choices'
 
 const fx = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
 
@@ -94,21 +94,6 @@ describe('keysFor', () => {
   it('descend depuis le curseur puis valide', () => {
     const c = parseChoices(fx('claude-ask.txt'))!
     expect(keysFor(c, 2)).toEqual(['down', 'down', 'enter'])
-  })
-})
-
-describe('inputVisible', () => {
-  it('voit le champ de saisie de Claude et de Codex', () => {
-    expect(inputVisible(fx('claude-idle.txt'))).toBe(true)
-    expect(inputVisible(fx('codex-idle.txt'))).toBe(true)
-  })
-  it('does not see it when a panel hides it', () => {
-    expect(inputVisible('  Usage\n  ████ 40%\n\n  Esc to close')).toBe(false)
-  })
-  it('does not mistake a menu cursor for the input field', () => {
-    expect(inputVisible(fx('claude-trust.txt'))).toBe(false)
-    expect(inputVisible(fx('claude-model-1.txt'))).toBe(false)
-    expect(inputVisible(' Manage MCP servers\n\n ❯ 1. demo-server · authenticate\n   2. other-server\n\n Esc to cancel')).toBe(false)
   })
 })
 

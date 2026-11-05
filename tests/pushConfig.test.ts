@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FALLBACK_VAPID_SUBJECT, pushConfig, replaceSubscription, validPushSubscription } from '../server/utils/pushConfig'
+import { FALLBACK_VAPID_SUBJECT, knownPushService, pushConfig, replaceSubscription, validPushSubscription } from '../server/utils/pushConfig'
 
 describe('configuration Web Push', () => {
   it('disables push with APP_URL on local HTTP', () => {
@@ -20,7 +20,18 @@ describe('configuration Web Push', () => {
 describe('received Web Push subscription', () => {
   const keys = { p256dh: 'BPk', auth: 'aut' }
   it('accepts an HTTPS subscription with its keys', () => {
-    expect(validPushSubscription({ endpoint: 'https://push.example/abc', keys })).toBe(true)
+    expect(validPushSubscription({ endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys })).toBe(true)
+  })
+  it('accepts the push services of the browsers only', () => {
+    for (const e of ['https://web.push.apple.com/QK', 'https://fcm.googleapis.com/fcm/send/x', 'https://updates.push.services.mozilla.com/wpush/v2/x', 'https://wns2-par02p.notify.windows.com/w/?token=x']) {
+      expect(validPushSubscription({ endpoint: e, keys }), e).toBe(true)
+    }
+    for (const e of ['https://push.example/abc', 'https://127.0.0.1/x', 'https://[::1]/x', 'https://192.168.1.10/x', 'https://box.example.ts.net/x',
+      'https://fcm.googleapis.com.evil.com/x', 'https://evilpush.apple.com/x', 'https://push.apple.com.evil.com/x', 'https://fcm.googleapis.com:8443/x', 'https://u@fcm.googleapis.com/x']) {
+      expect(validPushSubscription({ endpoint: e, keys }), e).toBe(false)
+    }
+    expect(knownPushService('WEB.PUSH.APPLE.COM')).toBe(true)
+    expect(knownPushService('push.apple.com')).toBe(false)
   })
   it('refuses a non-HTTPS address (the server would post to it)', () => {
     expect(validPushSubscription({ endpoint: 'http://127.0.0.1:7683/api/x', keys })).toBe(false)
@@ -28,9 +39,9 @@ describe('received Web Push subscription', () => {
     expect(validPushSubscription({ endpoint: 'pas une adresse', keys })).toBe(false)
   })
   it('refuses missing or malformed keys', () => {
-    expect(validPushSubscription({ endpoint: 'https://push.example/abc' })).toBe(false)
-    expect(validPushSubscription({ endpoint: 'https://push.example/abc', keys: { p256dh: 1, auth: 'a' } })).toBe(false)
-    expect(validPushSubscription({ endpoint: 'https://push.example/abc', keys: true })).toBe(false)
+    expect(validPushSubscription({ endpoint: 'https://fcm.googleapis.com/x' })).toBe(false)
+    expect(validPushSubscription({ endpoint: 'https://fcm.googleapis.com/x', keys: { p256dh: 1, auth: 'a' } })).toBe(false)
+    expect(validPushSubscription({ endpoint: 'https://fcm.googleapis.com/x', keys: true })).toBe(false)
     expect(validPushSubscription(null)).toBe(false)
   })
 })

@@ -45,9 +45,3 @@ export function tabEntry(s: State, tabId: string): TabEntry | null {
   const tab = tabsOf(s).find(t => t.id === tabId)
   return tab ? entryOf(tab, s.panes) : null
 }
-
-// State counters of a tab (agents only; `done` = ready unread).
-export function tabSummary(panes: Pane[]) {
-  const n = (st: string) => panes.filter(p => p.agent && p.status === st).length
-  return { blocked: n('blocked'), working: n('working'), done: n('done'), agents: panes.filter(p => p.agent).length }
-}

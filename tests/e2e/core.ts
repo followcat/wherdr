@@ -36,11 +36,13 @@ async function freePort() {
   throw new Error('No free isolated test port')
 }
 
-export async function startCore(answer: Answer = () => undefined) {
+// seed: writes files into the data folder before the server starts.
+export async function startCore(answer: Answer = () => undefined, seed?: (data: string) => Promise<void>) {
   const data = await mkdtemp(join(tmpdir(), 'core-e2e-'))
   const socketPath = join(data, 'core.sock')
   await writeFile(join(data, 'auth.json'), JSON.stringify(pdfAuthDb))
   await writeFile(join(data, 'push.json'), '{"subs":[]}')
+  await seed?.(data)
   const port = await freePort()
   const server = spawn(process.execPath, ['.output/server/index.mjs'], {
     env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: data, HC_SOCKET: socketPath, HERDR_WEB_MACHINES: 'off' },

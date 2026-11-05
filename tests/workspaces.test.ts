@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { reduceSnapshot } from './helpers/snapshot'
-import { tabEntry, tabSummary, workspaceTree } from '../shared/workspaces'
+import { tabEntry, workspaceTree } from '../shared/workspaces'
 import type { Pane } from '../shared/types'
 import layouts from './fixtures/snapshot-layouts.json'
 
@@ -44,7 +44,4 @@ describe('workspaceTree', () => {
     expect(tabEntry(old, 'w9:t9')).toBeNull()
   })
 
-  it('counters of a tab', () => {
-    expect(tabSummary(tabEntry(state, 'w1:t1')!.panes as Pane[])).toEqual({ blocked: 1, working: 1, done: 0, agents: 2 })
-  })
 })

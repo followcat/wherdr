@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { parseChoices } from '../server/utils/choices'
-import { isPermissionQuestion, lineStats, mergeDetail, pendingClaudeTool, pendingCodexTool } from '../server/utils/promptDetail'
+import { isPermissionQuestion, lineStats, pendingClaudeTool, pendingCodexTool } from '../server/utils/promptDetail'
 import { detailLine, diffKind } from '../app/utils/promptDetail'
 
 const fx = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
@@ -176,12 +176,6 @@ describe('outils', () => {
 
   it('counts added and removed lines', () => {
     expect(lineStats('a\nb\nc', 'a\nB\nc\nd')).toEqual({ added: 2, removed: 1 })
-  })
-
-  it('the transcript wins, the screen completes the description', () => {
-    expect(mergeDetail({ tool: 'Bash', command: 'ls -la' }, { tool: 'Bash command', command: 'ls', description: 'List files' }))
-      .toEqual({ tool: 'Bash', command: 'ls -la', description: 'List files' })
-    expect(mergeDetail(null, { tool: 'x' })).toEqual({ tool: 'x' })
   })
 
   it('one-line summary for the cards', () => {

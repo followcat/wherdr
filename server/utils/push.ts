@@ -8,7 +8,6 @@ import webpush from 'web-push'
 import { DATA_DIR, appUrl, log } from './env'
 import { auth } from './http'
 import { pushConfig } from './pushConfig'
-import type { Pane } from '../../shared/types'
 import { type Quiet, quietActive, silenced } from '../../shared/quiet'
 import { type PushDelivery, type PushDeviceView, classifyPushError, expiredLongAgo, pushProvider } from '../../shared/pushDelivery'
 
@@ -82,10 +81,6 @@ export async function writeSubs(subs: PushSub[]) {
 
 // `audience`: the devices a notification goes to (none given: all of them).
 export type PushAudience = (sub: PushSub) => boolean
-
-export function subWatchesSession(sub: PushSub, baseKey: string, session: string, baseSession: string): boolean {
-  return (sub.sessions?.[baseKey] || baseSession) === session
-}
 
 // Quiet mode for all devices (DATA_DIR/quiet.json, kept across restarts).
 export async function readGlobalQuiet(): Promise<Quiet | null> {

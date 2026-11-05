@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_QUOTE_MODE, QUOTE_MODES, migrateQuoteMode, readQuoteMode } from '../app/utils/quoteTokens'
+import { DEFAULT_QUOTE_MODE, QUOTE_MODES, migrateQuoteMode } from '../app/utils/quoteTokens'
 
 // A Storage stand-in over a plain record.
 function store(init: Record<string, string>) {
@@ -15,13 +15,9 @@ function store(init: Record<string, string>) {
 describe('quote mode saved on this device', () => {
   it('defaults to tokens in the native field', () => {
     expect(DEFAULT_QUOTE_MODE).toBe('native')
-    expect(readQuoteMode(null)).toBe('native')
-    expect(readQuoteMode('tokens')).toBe('native')
-    expect(readQuoteMode('lines')).toBe('lines')
   })
   it('offers two modes; the former rich field is the native one', () => {
     expect([...QUOTE_MODES]).toEqual(['lines', 'native'])
-    expect(readQuoteMode('rich')).toBe('native')
     const s = store({ quoteMode: 'rich', theme: 'dark' })
     expect(migrateQuoteMode(s)).toBe('native')
     expect(s.data).toEqual({ quoteMode: 'native', theme: 'dark' })

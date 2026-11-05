@@ -107,6 +107,16 @@ it('applies each event type and ignores unknown ones', () => {
   expect(m.size).toBe(0)
 })
 
+it('a title that only changes the spinner glyph in front is no change, and the state shows it without', async () => {
+  const { coreState } = await import('../shared/coreState')
+  const m: CoreTerminals = new Map([['t1', { address: 't1', cwd: '/w', state: 'live', agent: 'claude', title: '✳ Fix the bug' }]])
+  for (const g of ['⠂', '⠐', '✳']) expect(applyCoreEvent(m, { type: 'title', terminal: 't1', data: { title: `${g} Fix the bug` } })).toBeNull()
+  expect(applyCoreEvent(m, { type: 'title', terminal: 't1', data: { title: '⠂ Write the tests' } })).toBe('terminal')
+  const s = coreState([...m.values()], [])
+  expect(s.panes[0]!.title).toBe('Write the tests')
+  expect(s.tabs![0]!.label).toBe('Write the tests')
+})
+
 it('a finished turn advances stateSeq and the preview key (status events carry no status_ms)', async () => {
   const { coreState } = await import('../shared/coreState')
   // Snapshot as core sends it: status_ms set once.

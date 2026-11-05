@@ -32,7 +32,7 @@ const icon = (a: typeof busy.value, idle: string) => (busy.value === a ? 'i-luci
     <UChatMessage
       id="unsent-input" role="user" side="right" variant="soft"
       :parts="[{ type: 'text', text: pane.draft.text }]"
-      :ui="{ root: 'msg msg-user msg-pending queued', container: 'msg-c', content: 'msg-bubble queued', header: 'msg-files' }"
+      :ui="{ root: 'msg msg-user msg-pending queued', container: 'msg-c', content: 'msg-bubble queued' }"
     >
       <template #content>
         <span class="unsent-text">{{ pane.draft.text }}</span>

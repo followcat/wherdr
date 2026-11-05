@@ -2,10 +2,7 @@
 // "Running · 12 s" under a "!" command the agent runs: its own one-second
 // clock, so the tick re-renders this line and not the whole conversation.
 const props = defineProps<{ since: number | null | undefined }>()
-const now = ref(Date.now())
-let timer: ReturnType<typeof setInterval> | undefined
-onMounted(() => { timer = setInterval(() => { now.value = Date.now() }, 1000) })
-onBeforeUnmount(() => clearInterval(timer))
+const now = useSecondClock()
 const duration = computed(() => {
   if (!props.since) return null
   const s = Math.max(0, Math.round((now.value - props.since) / 1000))

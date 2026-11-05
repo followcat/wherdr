@@ -38,7 +38,7 @@
 // gaps ("❯ 1." … "5. Chat about this"). The full question and options come
 // from the transcript (pendingClaudeAsk, completeClaudeAsk).
 import { createHash } from 'node:crypto'
-import type { ChoiceOption, Choices, PromptDetail, InteractiveMenu, MenuEntry, WaitScreen } from '../../shared/types'
+import type { ChoiceOption, Choices, PromptDetail } from '../../shared/types'
 import { isPermissionQuestion, screenDetail } from './promptDetail'
 import { OMP_CURSOR, OMP_UP_DOWN, ompAlt } from '../../shared/ompSymbols'
 
@@ -595,10 +595,6 @@ function readOmpApproval(lines: string[], full: boolean): Choices | null {
     ? { question: title?.[1] ?? null, cursor: 0, options: [options[cursor]!], detail }
     : { question: title?.[1] ?? null, cursor, options, detail }
 }
-// omp 18.14's approval prompt open at the bottom of the screen, over its composer.
-export function ompApprovalOpen(text: string | null | undefined): boolean {
-  return Boolean(text && readOmpApproval(text.replace(/\s+$/, '').split('\n'), false))
-}
 
 // omp's blocking prompt on screen: an open select dialog (its legend is at the
 // bottom of the screen), otherwise its "Ask" box.
@@ -813,12 +809,6 @@ export function promptIdentity(text: string | null | undefined, agent?: string |
   const c = agent === 'omp' ? parseOmpPrompt(text, true) : agent ? parseChoices(text, { full: true }) : parseChoices(text, { full: true }) || parseOmpPrompt(text, true)
   return identity(c ? { question: c.question, options: c.options.map(({ label, hint, n, free }) => ({ label, hint, n, free })), detail: c.detail, multi: c.multi, tabs: c.tabs } : null)
 }
-export function menuIdentity(menu: InteractiveMenu, target: MenuEntry | undefined = menu.cursor === null ? undefined : menu.items[menu.cursor]): string {
-  return identity({ title: menu.title, target: target ? { label: target.label, hint: target.hint, header: target.header } : null, actions: menu.actions })
-}
-export function waitIdentity(screen: WaitScreen): string {
-  return identity({ kind: screen.kind, title: screen.title, lines: screen.lines, actions: screen.actions })
-}
 
 // On-screen prompt re-read before choose/nav; Claude questions can be
 // completed by the pending transcript call after their screen identity is set.
@@ -826,25 +816,4 @@ export function screenChoices(text: string | null | undefined, agent: string | n
   const c = agent === 'omp' ? parseOmpPrompt(text) : parseChoices(text) || parseChoices(text, { strict: true })
   if (c) c.identity = promptIdentity(text, agent)
   return c && agent === 'claude' ? completeClaudeAsk(c, asked) : c
-}
-
-// Visible input field = a "❯" (Claude) or "›" (Codex) line at the bottom of
-// the screen. Some commands (/usage, /context all…) open a full-screen
-// panel that hides it until Escape is pressed.
-// Claude's input field in bash mode (a "!" typed first): "!" prompt right
-// under the (pink) rule, "! for shell mode" below. Not a panel or a menu:
-// Escape there would throw away what the field holds.
-const bashInput = (line: string, above: string | undefined) => /^!(\s|$)/.test(line) && /^\s*─{3,}/.test(above || '')
-
-// Claude's input line sits right under a ─── rule: a menu's cursor line
-// ("❯ 1. Yes, proceed", /mcp, /hooks…) is not its input field. omp's field
-// ends with a "╰─" line followed by the text typed, under its status line
-// ("π > Opus > ~/demo ▶─1%────1M─"); a box's bottom is a longer rule.
-export function inputVisible(text: string | null | undefined): boolean {
-  if (ompApprovalOpen(text)) return false
-  const lines = String(text || '').replace(/\s+$/, '').split('\n').slice(-12)
-  return lines.some((l, i) => /^\s*›(\s|$)/.test(l)
-    || (/^\s*❯(\s|$)/.test(l) && /^\s*─{3,}/.test(lines[i - 1] || ''))
-    || /^╰─(\s|$)/.test(l)
-    || bashInput(l, lines[i - 1]))
 }

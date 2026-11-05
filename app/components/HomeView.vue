@@ -8,14 +8,14 @@
 // One row per agent terminal (individualAgentRows), as in v2.5; rows without
 // a status (plain shells) list as Ready.
 import type { MachineInfo, Pane } from '#shared/types'
-import { type ReadySort, type Row, readyLists, rowGroup, sortReady, spaceRows } from '#shared/spaces'
-import { spaceTitle } from '#shared/displayTitles'
+import { type ReadySort, type Row, createRowReuse, readyLists, rowGroup, sortReady, spaceRows } from '#shared/spaces'
 import { coreRowCounts } from '#shared/coreState'
 import { claudeApiShown, claudeSuggestion, machineQuotaRows, quotaRows, tabQuotaRows } from '~/utils/quotas'
 import { longPress } from '~/utils/longPress'
 import { LIST_DEFAULT, LIST_MAX, LIST_MIN, LIST_RAIL, clampListWidth, listWidthCss, readListCollapsed, readListWidth, saveListCollapsed, saveListWidth } from '~/utils/sideWidth'
 import { headerFold } from '~/utils/headerFold'
 import { quietPeriodEnd } from '~/utils/quietPeriodEnd'
+import { onceEvery } from '~/utils/onceEvery'
 import { listMode } from '~/utils/layoutMode'
 import { stateMachines } from '~/utils/homeGrouping'
 import { BAR_ALL } from '~/utils/machineBar'
@@ -33,7 +33,10 @@ const homeShown = computed(() => desk.value || atHome())
 const everOpen = ref(false)
 watch(eventsOpen, (v) => { if (v) everOpen.value = true })
 
-const st = herdrState
+// Hidden under a conversation on the phone, the list keeps the state it last
+// showed instead of re-rendering on every push, and catches up when it shows.
+let shownState = herdrState.value
+const st = computed(() => (homeShown.value ? (shownState = herdrState.value) : shownState))
 const agents = computed(() => st.value.panes)
 // Mounted only while the list is shown: mounting again reads at once.
 const HomePollers = defineComponent({
@@ -78,7 +81,9 @@ function groupsOf(list: Row[], rawGroup = rowGroup) {
   ] as const).filter(g => g.list.length).map(g => ({ ...g, lists: g.key === 'ready' ? readyLists(g.list, autoReorderReady.value).map(l => sortReady(l, readySort.value, rowTitle)) : [g.list] }))
 }
 const rowTitle = (r: Row) => isIndividualAgentRow(r) ? individualAgentTitle(r.lead) : homeTitle(r.lead, st.value.workspaces.find(w => w.id === r.lead.workspace))
-const standaloneRows = (rows: Row[]) => individualAgentRows(rows)
+// Same row object for a card whose row did not change: it does not re-render.
+const reuseRows = createRowReuse()
+const standaloneRows = (rows: Row[]) => reuseRows(individualAgentRows(rows))
 // Sort menu of the Ready group; sorted other than in the default order, the
 // list can no longer be reordered manually.
 const READY_SORT_LABELS: Record<ReadySort, [string, string]> = {
@@ -297,8 +302,13 @@ const quietHint = computed(() => {
   const day = new Date(end.at).toLocaleDateString(language, { weekday: 'short', day: 'numeric', month: 'short' })
   return tl(`Notifications silenced until ${day} ${time}`, `Notifications en silence jusqu’au ${day} ${time}`)
 })
-const onQuietVisible = () => { if (document.visibilityState === 'visible') refreshQuiet() }
-onMounted(() => { refreshQuiet(); document.addEventListener('visibilitychange', onQuietVisible) })
+// Read only while the list shows (not under a conversation on the phone), at
+// most once a minute when the page comes back or the list shows again.
+const quietRead = onceEvery(60000)
+const readQuiet = () => { if (homeShown.value && document.visibilityState === 'visible' && quietRead.take()) refreshQuiet() }
+const onQuietVisible = () => readQuiet()
+watch(homeShown, readQuiet)
+onMounted(() => { if (homeShown.value) { quietRead.mark(); refreshQuiet() } document.addEventListener('visibilitychange', onQuietVisible) })
 onBeforeUnmount(() => document.removeEventListener('visibilitychange', onQuietVisible))
 // Header buttons: when the list is too narrow, Settings moves into a "…" menu.
 const titleRow = ref<HTMLElement | null>(null)

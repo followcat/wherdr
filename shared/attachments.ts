@@ -27,9 +27,6 @@ export const ATTACH_MAX = Math.max(...Object.values(ATTACH_LIMITS))
 // Bytes read to tell text from binary (like git: a NUL byte means binary).
 export const SNIFF_BYTES = 8192
 
-// Store on the agent's machine, relative to its $HOME.
-export const ATTACH_SUBDIR = '.cache/herdr-web/files'
-
 const EXT_GROUPS: Record<Exclude<RefuseReason, 'binary' | 'pdf' | 'too_large' | 'empty'>, string[]> = {
   archive: ['zip', 'tar', 'gz', 'tgz', 'bz2', 'tbz', 'xz', 'txz', 'zst', '7z', 'rar', 'lz', 'lzma', 'z', 'cab', 'jar', 'war', 'ear', 'dmg', 'iso', 'img', 'pkg', 'deb', 'rpm', 'apk', 'ipa', 'xip', 'whl', 'nupkg', 'crx'],
   video: ['mp4', 'mov', 'm4v', 'avi', 'mkv', 'webm', 'wmv', 'flv', 'mpg', 'mpeg', '3gp', 'ogv', 'mts'],
@@ -122,11 +119,6 @@ export const isStoredAttachmentName = (name: string) => STORED_NAME_RE.test(name
 export function attachmentDisplayName(stored: string): string {
   const base = String(stored || '').split('/').pop() || ''
   return base.replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-f]{6}-/, '')
-}
-
-// Absolute path of a stored file on a machine whose home is `home`.
-export function attachmentPath(home: string, stored: string): string {
-  return `${String(home).replace(/\/+$/, '')}/${ATTACH_SUBDIR}/${stored}`
 }
 
 // Reference written in the message: `@<path>` puts a text file's content in

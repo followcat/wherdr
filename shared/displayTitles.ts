@@ -16,14 +16,7 @@ export function spaceTitle(p: Pane, workspace?: Workspace | null): string {
   return (!p.label && coordinatorTitle(p)) || workspace?.label?.trim() || paneTitle(p)
 }
 
-// One identity on a narrow header. Never replace a useful name with a
-// generated tab number, or change it when a neighbouring tab opens/closes.
-export function phoneHeaderTitle(p: Pane, workspace: Workspace | null | undefined, tabLabel: string | null | undefined, paneCount: number): string {
-  return p.label?.trim() || coordinatorTitle(p) || cleanLabel(tabLabel)
-    || (paneCount > 1 ? paneTitle(p) : spaceTitle(p, workspace))
-}
-
-// Desktop header: a renamed pane shows its own name, like the phone header.
+// Desktop header: a renamed pane shows its own name.
 export function desktopHeaderTitle(p: Pane, workspace: Workspace | null | undefined, ownTitle: boolean): string {
   return p.label?.trim() || (ownTitle ? paneTitle(p) : spaceTitle(p, workspace))
 }

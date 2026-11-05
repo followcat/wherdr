@@ -1,9 +1,7 @@
 // Content of the browser demo (wherdr.dev/demo): an invented session with two
 // projects, four agents and a dev server. Everything here is fiction, in
 // English, with no real path, machine, person or conversation.
-import type { ChangesResponse, ChatItem, ModelInfo, OmpToolView, Pane, Quotas, SlashCommand, Tab, Workspace } from '#shared/types'
-import { type TaskRow, type TasksBoard, groupOf } from '../../shared/projectsTasks'
-import type { BoardLinks, LinkedTask, MachineLinks } from '../../shared/boardLinks'
+import type { ChatItem, ModelInfo, OmpToolView, Pane, Quotas, Tab, Workspace } from '#shared/types'
 
 export const HOME = '/Users/demo'
 const REPO = `${HOME}/code/acme-api`
@@ -20,13 +18,6 @@ export const MODELS: Record<string, ModelInfo> = {
   claude: { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5', effort: 'high' },
   codex: { id: 'gpt-5-codex', label: 'GPT-5 Codex', effort: 'medium' },
   omp: { id: 'claude-opus-4-1', label: 'Opus 4.1', effort: 'medium' },
-}
-
-// Options of the model picker, per agent kind.
-export const MODEL_OPTIONS: Record<string, string[]> = {
-  claude: ['Sonnet 4.5', 'Opus 4.1', 'Haiku 4.5'],
-  codex: ['GPT-5 Codex', 'GPT-5', 'GPT-5 mini'],
-  omp: ['Opus 4.1', 'Sonnet 4.5', 'GPT-5 Codex'],
 }
 
 export function workspaces(): Workspace[] {
@@ -130,197 +121,10 @@ export const CODEX_FINISH: { after: number, item: ChatItem | null, activity?: st
   { after: 6000, item: { role: 'assistant', text: 'Rate limits are in:\n\n- `src/middleware/rateLimit.ts`: token bucket per API key, refilled continuously; limits from `req.plan.limits` (60/min on Free, 600/min on Team).\n- Over the limit: `429 Too Many Requests` with `Retry-After` and `RateLimit-Remaining` headers.\n- 9 new tests, including the refill and two keys sharing nothing.\n\nAll 162 tests pass. Ready for review.', ts: null } },
 ]
 
-// Diffs of the Changes view.
-const lines = (text: string) => text.split('\n').map((l) => {
-  const kind = l.startsWith('@@') ? 'hunk' as const : l.startsWith('+') ? 'add' as const : l.startsWith('-') ? 'del' as const : 'context' as const
-  return { kind, text: l }
-})
-const file = (path: string, status: string, diff: string) => {
-  const ls = lines(diff)
-  return { path, status, added: ls.filter(l => l.kind === 'add').length, deleted: ls.filter(l => l.kind === 'del').length, lines: ls, binary: false, truncated: false }
-}
-
-export const CHANGES: Record<string, ChangesResponse> = {
-  [CLAUDE_WEB]: {
-    git: true, root: WEB, branch: 'main', committed: null, comparison: null, commits: 0,
-    working: { truncated: false, count: 3, files: [
-      file('src/composables/useColorMode.ts', 'A', `@@ -0,0 +1,18 @@
-+export type ColorMode = 'system' | 'light' | 'dark'
-+
-+const KEY = 'color-mode'
-+const query = matchMedia('(prefers-color-scheme: dark)')
-+
-+export function useColorMode() {
-+  const mode = ref<ColorMode>((localStorage.getItem(KEY) as ColorMode) || 'system')
-+  const dark = computed(() => mode.value === 'dark' || (mode.value === 'system' && query.matches))
-+  watch(mode, (m) => {
-+    localStorage.setItem(KEY, m)
-+    apply()
-+  })
-+  function apply() {
-+    document.documentElement.classList.toggle('dark', dark.value)
-+  }
-+  query.addEventListener('change', apply)
-+  return { mode, dark, apply }
-+}`),
-      file('src/pages/settings.vue', 'M', `@@ -12,6 +12,17 @@ const { user } = useSession()
-   <section class="settings">
-     <h1>Settings</h1>
-+    <div class="row">
-+      <label for="appearance">Appearance</label>
-+      <select id="appearance" v-model="mode">
-+        <option value="system">System</option>
-+        <option value="light">Light</option>
-+        <option value="dark">Dark</option>
-+      </select>
-+    </div>
-     <div class="row">
-       <label for="language">Language</label>
-@@ -40,3 +51,4 @@ const { user } = useSession()
- <script setup lang="ts">
- const { user } = useSession()
-+const { mode } = useColorMode()
- </script>`),
-      file('src/assets/main.css', 'M', `@@ -1,8 +1,14 @@
- :root {
--  --bg: #ffffff;
--  --fg: #1d2129;
-+  --bg: #ffffff;
-+  --fg: #1d2129;
-+  color-scheme: light;
-+}
-+:root.dark {
-+  --bg: #12151b;
-+  --fg: #e6e8ec;
-+  color-scheme: dark;
- }`),
-    ] },
-  },
-  [OMP]: {
-    git: true, root: `${WT}/hp-acme-api-t-0013-flaky-export`, branch: 'hp/acme-api/t-0013-flaky-export', committed: null, comparison: 'main', commits: 0,
-    working: { truncated: false, count: 1, files: [
-      file('src/export/csv.ts', 'M', `@@ -18,7 +18,7 @@ export async function exportInvoices(accountId: string) {
-   const header = ['number', 'issued_at', 'customer', 'total']
--  const rows = await db.invoices.find({ accountId })
-+  const rows = await db.invoices.find({ accountId }, { orderBy: ['issued_at', 'id'] })
-   return toCsv(header, rows.map(r => [r.number, r.issuedAt, r.customer, r.total]))
- }`),
-    ] },
-  },
-  [CODEX]: {
-    git: true, root: `${WT}/hp-acme-api-t-0012-rate-limits`, branch: 'hp/acme-api/t-0012-rate-limits', committed: null, comparison: 'main', commits: 0,
-    working: { truncated: false, count: 2, files: [
-      file('src/middleware/rateLimit.ts', 'A', `@@ -0,0 +1,16 @@
-+import type { Middleware } from '../types'
-+import { MemoryStore, type Store } from './store'
-+
-+export function rateLimit(store: Store = new MemoryStore()): Middleware {
-+  return async (req, res, next) => {
-+    const { perMinute } = req.plan.limits
-+    const bucket = await store.take(req.apiKey, perMinute)
-+    res.setHeader('RateLimit-Remaining', String(bucket.remaining))
-+    if (bucket.allowed) return next()
-+    res.setHeader('Retry-After', String(Math.ceil(bucket.retryInMs / 1000)))
-+    res.status(429).json({ error: 'rate_limited' })
-+  }
-+}`),
-      file('src/app.ts', 'M', `@@ -9,6 +9,7 @@ const app = createApp()
- app.use(requestId())
- app.use(auth())
-+app.use(rateLimit())
- app.use('/v1', routes)`),
-    ] },
-  },
-}
-
 export function quotas(now: number): Quotas {
   return {
     claude: { five: { used: 34, resetsAt: now + 132 * 60_000, minutes: 300 }, week: { used: 21, resetsAt: now + 3.4 * 86400_000, minutes: 10080 }, at: now },
     codex: { five: { used: 12, resetsAt: now + 247 * 60_000, minutes: 300 }, week: { used: 46, resetsAt: now + 1.8 * 86400_000, minutes: 10080 }, at: now },
-  }
-}
-
-export const COMMANDS: Record<string, SlashCommand[]> = {
-  claude: [
-    { name: 'clear', desc: 'Clear the conversation history', source: 'builtin' },
-    { name: 'compact', desc: 'Summarize the conversation to free context', source: 'builtin' },
-    { name: 'model', desc: 'Choose the model', source: 'builtin' },
-    { name: 'review', desc: 'Review the current changes', source: 'command' },
-  ],
-  codex: [
-    { name: 'usage', desc: 'Open the interactive usage screen', source: 'builtin' },
-    { name: 'model', desc: 'Choose the model and reasoning effort', source: 'builtin' },
-    { name: 'diff', desc: 'Show the git diff', source: 'builtin' },
-    { name: 'status', desc: 'Session configuration and usage', source: 'builtin' },
-  ],
-  omp: [
-    { name: 'model', desc: 'Choose the model', source: 'builtin' },
-    { name: 'plan', desc: 'Plan before editing', source: 'builtin' },
-    { name: 'compact', desc: 'Summarize the conversation', source: 'builtin' },
-  ],
-}
-
-// herdr-projects 1.x board of the demo (the Board), as `list --json` gives it
-// once parsed (shared/projectsTasks.ts). The two agents' tasks follow their panes.
-export function tasks(agents: { codex: string, omp: string }): TasksBoard {
-  const row = (r: Omit<TaskRow, 'repo' | 'group' | 'progress' | 'eta' | 'pr' | 'review' | 'reviewRound' | 'research' | 'archived' | 'queue' | 'kind' | 'app'> & Partial<TaskRow>): TaskRow => {
-    const full = { repo: 'acme-api', kind: '', app: '', progress: null, eta: null, pr: '', review: null, reviewRound: 0, research: false, archived: false, queue: null, ...r }
-    return { ...full, group: groupOf(full) }
-  }
-  const of = (s: string, n: number, title: string, app: string, working: string, waiting: string) => s === 'working'
-    ? row({ id: `acme-api/${n}`, n, state: 'working', stage: 'working', title, msg: working, app, progress: 75 })
-    : s === 'blocked'
-      ? row({ id: `acme-api/${n}`, n, state: 'blocked', kind: 'permission', stage: 'asks', title, msg: waiting, app })
-      : row({ id: `acme-api/${n}`, n, state: 'blocked', kind: 'permission', stage: 'approval', title, msg: '', app, pr: `https://github.com/acme/acme-api/pull/${n + 30}`, review: { pass: true, tally: '1 minor', by: 'claude' }, reviewRound: 1 })
-  const list = [
-    of(agents.omp, 13, 'Fix the flaky CSV export test', 'omp', 'Repeating the spec', 'Asks to run npm test -- export.spec.ts'),
-    of(agents.codex, 12, 'Per-key rate limits on the public API', 'codex', 'Writing tests', 'Asks for your OK'),
-    row({ id: 'acme-api/14', n: 14, state: 'idle', stage: 'todo', title: 'OpenAPI spec for the v2 endpoints', msg: '' }),
-    row({ id: 'acme-api/15', n: 15, state: 'idle', stage: 'todo', title: 'Redis store for the rate limiter', msg: '' }),
-    row({ id: 'acme-api/10', n: 10, state: 'done', stage: 'done', title: 'Webhook retries with exponential backoff', msg: 'Merged', pr: 'https://github.com/acme/acme-api/pull/38' }),
-    row({ id: 'acme-api/9', n: 9, state: 'done', stage: 'done', title: 'Paginate the invoices endpoint', msg: 'Merged' }),
-    row({ id: 'acme-web/4', repo: 'acme-web', n: 4, state: 'idle', stage: 'todo', title: 'Show the rate limit headers on the API keys page', msg: '' }),
-    row({ id: 'acme-web/3', repo: 'acme-web', n: 3, state: 'done', stage: 'done', title: 'Dark mode for the dashboard', msg: 'Merged', pr: 'https://github.com/acme/acme-web/pull/21' }),
-  ]
-  return { version: `${agents.codex}-${agents.omp}`, machines: [{ machine: '', status: 'ready', version: '1.2.1', tasks: list }] }
-}
-
-// What the board's files link (GET /api/tasks/links): the Coordinator is the
-// acme-api project coordinator, the two tasks follow their agents' spaces.
-export function boardLinks(now: number, agents: { codex: string, omp: string }): BoardLinks {
-  const task = (n: number, title: string, pane: string, progress: number, minutes: number, msg: string): LinkedTask => ({
-    id: `acme-api/${n}`, repo: 'acme-api', n, key: `ACME-API-${n}`, title, panes: [{ id: pane, role: 'worker' }],
-    workspace: pane.split(':')[0]!, stage: 'working', progress, msg, since: now - minutes * 60_000,
-  })
-  const machines: MachineLinks[] = [{
-    machine: '',
-    coordinators: [{ level: 'project', repo: 'acme-api', pane: COORD, workspace: 'w1' }],
-    tasks: [
-      task(12, 'Per-key rate limits on the public API', CODEX, agents.codex === 'working' ? 75 : 100, 30, agents.codex === 'working' ? 'Writing tests' : 'Ready for review'),
-      task(13, 'Fix the flaky CSV export test', OMP, 40, 25, agents.omp === 'blocked' ? 'Asks to run npm test -- export.spec.ts' : 'Repeating the spec'),
-    ],
-    repos: [{ repo: 'acme-api', root: REPO, branch: 'main', behind: 3 }],
-  }]
-  return { version: `links-${agents.codex}-${agents.omp}`, machines }
-}
-
-// `details --json` of a demo task.
-const DESCRIPTIONS: Record<string, string> = {
-  'acme-api/12': 'A token bucket per API key in src/middleware/rateLimit.ts, 429 with Retry-After, limits read from the customer plan. Tests included.',
-  'acme-api/13': 'export.spec.ts fails one run in ten: the rows of the export come back in no defined order.',
-  'acme-api/10': 'Retry failed webhook deliveries with exponential backoff, then move them to the dead-letter list.',
-}
-// The agent's closing note, once it stopped.
-const SUMMARIES: Record<string, string> = {
-  'acme-api/12': 'Rate limiting is in: a token bucket per API key, limits from the customer plan, 429 with Retry-After. 14 new tests, all green.',
-}
-export function taskDetails(t: TaskRow) {
-  return {
-    id: t.id, title: t.title, stage: t.stage, msg: t.msg, description: DESCRIPTIONS[t.id] || '',
-    agent: t.app, pr: t.pr, branch: t.group === 'todo' ? '' : `acme-api-${t.n}`, worktree: '', failure: '', failureStage: '', failureAuth: false,
-    review: t.review, reviewRounds: t.reviewRound, plan: '', research: false, archived: t.archived,
-    summary: t.group === 'working' ? '' : SUMMARIES[t.id] || '', report: null,
-    pane: t.n === 12 ? CODEX : t.n === 13 ? OMP : null,
   }
 }
 

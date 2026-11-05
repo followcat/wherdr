@@ -1,7 +1,7 @@
 // A message shows in the conversation from the tap on Send: one bubble, from
 // "sending" to the server's record to the transcript, never two, never lost.
 import { describe, expect, it } from 'vitest'
-import { type OutboxItem, REPEAT_MS, SETTLED_MS, addSending, failLocal, isRepeat, newOutboxId, prune, recentSends, resend, settle, withOutbox } from '../app/utils/outbox'
+import { type OutboxItem, REPEAT_MS, SETTLED_MS, SendTimeout, addSending, chainSend, failLocal, isRepeat, newOutboxId, prune, recentSends, resend, settle, withOutbox } from '../app/utils/outbox'
 import { pendingQueue } from '../app/utils/pendingQueue'
 import type { ChatItem, QueuedMessage } from '../shared/types'
 
@@ -111,5 +111,38 @@ describe('outbox: an echo of the message just sent', () => {
     const list = [{ text: 'old', at: T0 - REPEAT_MS }, { text: 'new', at: T0 - 1 }]
     expect(recentSends(list, T0)).toEqual([{ text: 'new', at: T0 - 1 }])
     expect(isRepeat(list, 'old', T0)).toBe(false)
+  })
+})
+
+describe('outbox: sends of a conversation, one after the other', () => {
+  it('a message queued behind a failed one is still sent', async () => {
+    const sent: string[] = []
+    const first = chainSend(undefined, async () => { sent.push('! cd /x\nls'); throw new Error('refused') })
+    const second = chainSend(first, async () => { sent.push('!'); return 'ok' })
+    await expect(first).rejects.toThrow('refused')
+    await expect(second).resolves.toBe('ok')
+    expect(sent).toEqual(['! cd /x\nls', '!'])
+  })
+
+  it('a send with no answer fails at its deadline and frees the ones behind it', async () => {
+    let aborted = false
+    // Never answers, and ignores the signal (the deadline still fires).
+    const hung = chainSend(undefined, (signal) => { signal.addEventListener('abort', () => { aborted = true }); return new Promise<string>(() => {}) }, 20)
+    const next = chainSend(hung, async () => 'sent', 20)
+    await expect(hung).rejects.toBeInstanceOf(SendTimeout)
+    expect(aborted).toBe(true)
+    await expect(next).resolves.toBe('sent')
+  })
+
+  it('waits for the earlier send before starting the next', async () => {
+    const order: string[] = []
+    let release!: () => void
+    const first = chainSend(undefined, () => new Promise<void>((r) => { release = () => { order.push('first'); r() } }))
+    const second = chainSend(first, async () => { order.push('second') })
+    await new Promise(r => setTimeout(r, 5))
+    expect(order).toEqual([])
+    release()
+    await second
+    expect(order).toEqual(['first', 'second'])
   })
 })
