@@ -53,6 +53,17 @@ describe('affected test selector', () => {
     expect(Object.keys(plan.tests)).toContain('tests/reference.test.ts')
     expect(Object.keys(plan.tests)).toContain('tests/terminalSize.test.ts')
   })
+  it('routes frozen-copy changes to their own domain and spec', () => {
+    const plan = select(['app/components/TerminalCopyLayer.vue', 'app/utils/screenSpans.ts'], available.concat('tests/terminalCopy.test.ts', 'tests/e2e/terminal-copy.spec.ts'), undefined)
+    expect(Object.keys(plan.domains)).toEqual(['terminal', 'copy'])
+    expect(Object.keys(plan.e2e)).toContain('tests/e2e/terminal-copy.spec.ts')
+    expect(Object.keys(plan.tests)).toContain('tests/terminalCopy.test.ts')
+  })
+  it.each(['app/components/TerminalView.vue', 'app/composables/useTerminal.ts', 'app/components/AgentView.vue', 'app/components/InteractiveTerminal.vue'])('selects the copy journey for its %s integration path', file => {
+    const plan = select([file], available.concat('tests/terminalCopy.test.ts', 'tests/e2e/terminal-copy.spec.ts'), undefined)
+    expect(Object.keys(plan.domains)).toContain('copy')
+    expect(Object.keys(plan.e2e)).toContain('tests/e2e/terminal-copy.spec.ts')
+  })
   it('falls back visibly for an unknown file and a missing base', () => {
     const plan = select(['unknown source.ts'], available, undefined)
     expect(plan.broad).toBe(true)

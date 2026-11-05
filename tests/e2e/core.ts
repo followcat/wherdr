@@ -14,6 +14,8 @@ export { fixture }
 export interface Call { id: number, method: string, params?: any }
 // A spec's answer to a call, or undefined for the default one.
 export type Answer = (call: Call) => unknown
+// Frame kinds a spec asserts on (mirrors server/utils/coreFramed.ts FRAME).
+export const STREAM = { data: 0, credit: 1, close: 2, resize: 3 } as const
 
 // Framed relay: [channel u32][kind u8][len u32][payload].
 function frame(channel: number, payload: Buffer) {
@@ -36,8 +38,10 @@ async function freePort() {
   throw new Error('No free isolated test port')
 }
 
-// seed: writes files into the data folder before the server starts.
-export async function startCore(answer: Answer = () => undefined, seed?: (data: string) => Promise<void>) {
+// seed: writes files into the data folder before the server starts. feed tunes
+// the attach stream: firstPaint replaces the default 'hello from core' burst
+// (pass '' for none); output() pushes more terminal data after the attach.
+export async function startCore(answer: Answer = () => undefined, seed?: (data: string) => Promise<void>, feed: { firstPaint?: string | Uint8Array } = {}) {
   const data = await mkdtemp(join(tmpdir(), 'core-e2e-'))
   const socketPath = join(data, 'core.sock')
   await writeFile(join(data, 'auth.json'), JSON.stringify(pdfAuthDb))
@@ -51,6 +55,12 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
   // One-shot JSON-RPC calls, then the calls of the framed (event and terminal) connection.
   const calls: Call[] = []
   const framed: Call[] = []
+  // Inbound stream frames on the attach/event channels (input DATA, CREDIT,
+  // RESIZE): what the browser terminal sent to core. `keys` ride channel 0 as
+  // terminal.keys calls and are read from `framed`.
+  const inbound: { channel: number, kind: number, data: Buffer }[] = []
+  // Sockets that attached a terminal: output() writes on their stream channel.
+  const attachSockets = new Set<Socket>()
   const terminal = fixture.inventory.terminals[0]!
   const reply = (call: Call) => {
     const own = answer(call)
@@ -79,15 +89,20 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
         buf = Buffer.concat([buf, chunk])
         while (buf.length >= 9 && buf.length >= 9 + buf.readUInt32LE(5)) {
           const channel = buf.readUInt32LE(0)
+          const kind = buf.readUInt8(4)
           const payload = buf.subarray(9, 9 + buf.readUInt32LE(5))
           buf = buf.subarray(9 + payload.length)
-          if (channel) continue
+          if (channel) { inbound.push({ channel, kind, data: Buffer.from(payload) }); continue }
           const c = JSON.parse(payload.toString()) as Call
           framed.push(c)
           const result = c.method === 'events.subscribe'
             ? { channel: 2, seq: 1, terminals: [{ ...terminal, cols: 80, rows: 24 }] } : { channel: 3 }
           socket.write(frame(0, Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: c.id, result }))))
-          if (c.method === 'terminal.attach') socket.write(frame(3, Buffer.from('hello from core\r\n')))
+          if (c.method === 'terminal.attach') {
+            attachSockets.add(socket)
+            socket.once('close', () => attachSockets.delete(socket))
+            if (feed.firstPaint !== '') socket.write(frame(3, Buffer.from(feed.firstPaint ?? 'hello from core\r\n')))
+          }
         }
       })
     })
@@ -101,6 +116,11 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
     url,
     calls,
     framed,
+    inbound,
+    // More terminal output on the attach channel, after the first paint.
+    output(data: string | Uint8Array) {
+      for (const socket of attachSockets) socket.write(frame(3, Buffer.from(data)))
+    },
     // Signed in with the test passkey session, then on `path` of the app.
     async open(page: Page, path = '/') {
       await page.context().addCookies([{ name: 'hw_session', value: pdfSession(), url }])
