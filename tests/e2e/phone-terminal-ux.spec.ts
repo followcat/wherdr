@@ -529,3 +529,58 @@ test('computer chrome: hardware Alt steps cards and tab chips, virtual Alt stays
     await desk.close()
   }
 })
+
+test('coarse tablet: a viewport-only blip keeps a proven hardware edit', async ({ browser }, testInfo) => {
+  // iPad-class coarse pointer, one window: 744×1000 → 744×800 → 744×1000 in
+  // the same orientation. layout() sees an open/close pair, but a viewport
+  // change is not input — a proven hardware edit must stay focused.
+  const tablet = await browser.newContext({ viewport: { width: 744, height: 1000 }, hasTouch: true, isMobile: true, locale: 'en-US', timezoneId: 'UTC', serviceWorkers: 'block' })
+  try {
+    const page = await tablet.newPage()
+    const promptPosts: string[] = []
+    const interruptPosts: string[] = []
+    page.on('request', (r) => {
+      const path = new URL(r.url()).pathname
+      if (r.method() === 'POST' && path === '/api/prompt') promptPosts.push(r.url())
+      if (r.method() === 'POST' && path === '/api/interrupt') interruptPosts.push(r.url())
+    })
+    const core = await startCore()
+    const keyCalls = () => core.framed.filter(c => c.method === 'terminal.keys').map(c => (c.params as { keys: string[] }).keys)
+    const dataFrames = () => core.inbound.filter(f => f.kind === STREAM.data)
+    try {
+      await page.addInitScript(() => { localStorage.setItem('terminalRenderer', 'html') })
+      await core.open(page)
+      await page.locator('#home .card[data-pane]').click()
+      await expect(page.locator('.agent-head')).toContainText('review-agent')
+      const ta = page.locator('.composer textarea')
+      await expect(ta).toBeVisible()
+      // A tap focuses the field (the soft keyboard a real iPad opens here is a
+      // device boundary — headless resize cannot claim it).
+      await ta.tap()
+      await expect(ta).toBeFocused()
+      // A key only hardware sends: the real keydown listener proves it.
+      await page.keyboard.press('Control+b')
+      // The exact blip: the body's kb class proves the real layout() ran.
+      const kbClass = () => page.evaluate(() => document.body.classList.contains('kb'))
+      const focused = () => page.evaluate(() => document.activeElement === document.querySelector('.composer textarea'))
+      await page.setViewportSize({ width: 744, height: 800 })
+      await expect.poll(kbClass).toBe(true)
+      await page.setViewportSize({ width: 744, height: 1000 })
+      await expect.poll(kbClass).toBe(false)
+      // The edit survives: still focused, and typing lands once in the draft.
+      await expect.poll(focused).toBe(true)
+      await page.keyboard.type('kept')
+      await expect(ta).toHaveValue('kept')
+      // Viewport bookkeeping never talks to the agent.
+      expect(keyCalls()).toEqual([])
+      expect(dataFrames()).toEqual([])
+      expect(promptPosts).toEqual([])
+      expect(interruptPosts).toEqual([])
+      await page.screenshot({ path: testInfo.outputPath('fix01-hwkb-ipad.png') })
+    } finally {
+      await core.stop()
+    }
+  } finally {
+    await tablet.close()
+  }
+})

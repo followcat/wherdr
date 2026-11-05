@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import { readBody } from 'h3'
 import { nextTick } from 'vue'
@@ -6,7 +6,7 @@ import type { VueWrapper } from '@vue/test-utils'
 import Composer from '~/components/Composer.vue'
 import { useDraft } from '~/composables/useDraft'
 import { coarse, eventsOpen, hardwareKeyboard } from '~/composables/useHerdr'
-import { kbOpen } from '~/composables/useViewport'
+import { kbOpen, layout } from '~/composables/useViewport'
 import type { Pane } from '#shared/types'
 
 // Focus/expansion of the phone composer (one row at rest, toolbar open while
@@ -174,5 +174,58 @@ describe('Composer focus', () => {
     ta.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: 'x' }))
     await raf()
     expect(document.activeElement).toBe(ta)
+  })
+
+  // Through the real exported layout(): an iPad window 744×1000 → 744×800 →
+  // 744×1000 in one orientation. kbOpen sees an open/close pair, but nothing
+  // about the user's input changed — geometry is not input.
+  describe('through the real layout() path', () => {
+    const vp = { height: 1000, offsetTop: 0 }
+    const dims = (w: number, h: number) => {
+      vi.stubGlobal('innerWidth', w)
+      vi.stubGlobal('innerHeight', h)
+      vp.height = h
+      layout()
+    }
+    beforeEach(() => {
+      vi.stubGlobal('visualViewport', vp)
+      vi.stubGlobal('screen', { width: 820, height: 1180 })
+      dims(744, 1000)
+    })
+    afterEach(() => {
+      vi.unstubAllGlobals()
+      document.body.classList.remove('kb')
+      for (const p of ['--vv-h', '--vv-top', '--vv-bottom']) document.documentElement.style.removeProperty(p)
+    })
+
+    it('a proven hardware edit survives a viewport-only blip', async () => {
+      const { w, ta } = await mount('w1:f10')
+      focus(ta); focusIn(ta)
+      hardwareKeyboard.value = true
+      expect(kbOpen.value).toBe(false)
+      dims(744, 800)
+      expect(kbOpen.value).toBe(true)
+      expect(document.body.classList.contains('kb')).toBe(true)
+      await nextTick()
+      dims(744, 1000)
+      expect(kbOpen.value).toBe(false)
+      expect(document.body.classList.contains('kb')).toBe(false)
+      await nextTick()
+      expect(hardwareKeyboard.value).toBe(true)
+      expect(document.activeElement).toBe(ta)
+      expect(expanded(w)).toBe(true)
+    })
+
+    it('a soft close still releases an unproven field through the same path', async () => {
+      const { ta } = await mount('w1:f11')
+      focus(ta); focusIn(ta)
+      dims(744, 800)
+      expect(kbOpen.value).toBe(true)
+      await nextTick()
+      dims(744, 1000)
+      expect(kbOpen.value).toBe(false)
+      await nextTick()
+      expect(document.activeElement).not.toBe(ta)
+    })
   })
 })

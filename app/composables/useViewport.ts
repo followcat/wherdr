@@ -1,6 +1,5 @@
 // Dimensions on iPhone: keyboard, home bar, shortened page (iOS 26).
 import { sheetViewport } from '~/utils/sheetViewport'
-import { hardwareKeyboard } from '~/composables/useHerdr'
 
 // Clavier ouvert : hauteur et position de la zone visible au-dessus.
 export const kbOpen = ref(false)
@@ -26,8 +25,10 @@ export function layout() {
   fullH.h = Math.max(fullH.h, h, window.innerHeight)
   const kb = fullH.h - h > 120
   kbOpen.value = kb
-  // The on-screen keyboard is showing: no hardware keyboard in use.
-  if (kb) hardwareKeyboard.value = false
+  // A shrink this large only resembles a soft-keyboard open — it cannot be
+  // told apart from one here, so geometry must stay bookkeeping and never
+  // input evidence: hardwareKeyboard is forged and forgotten by input events
+  // alone (useHerdr — a key proves, a touch or a prompt blur forgets).
   vvHeight.value = h
   vvTop.value = top
   document.body.classList.toggle('kb', kb)

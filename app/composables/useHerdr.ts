@@ -242,8 +242,8 @@ export const slim = ref(false)
 export const listDrawer = ref(false)
 // Tablet (shortest side ≥ 700 px, or a touch tablet's screen while the
 // on-screen keyboard shortens the window) and hardware keyboard seen (a key an
-// on-screen keyboard does not send); forgotten on a touch, when the message
-// field loses focus, or when the on-screen keyboard shows.
+// on-screen keyboard does not send); forgotten on a touch or when the message
+// field loses focus.
 export const tablet = ref(false)
 export const hardwareKeyboard = ref(false)
 if (import.meta.client) {
