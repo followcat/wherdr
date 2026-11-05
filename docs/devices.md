@@ -13,7 +13,9 @@
 - **Keyboard shortcuts** (`Mod` is ⌘ on macOS, Ctrl elsewhere; `Mod+/` or `?` lists them all,
   also in Settings › Computer):
   - `Ctrl/⌘+K` global search across agents and conversations, `Alt+↑/↓` previous / next agent
-    in the list, `Mod+,` settings.
+    in the list, `Alt+←/→` previous / next tab of the viewed space, `Mod+,` settings.
+    The Alt steps are app navigation even with the terminal or a filled field
+    focused; the virtual key bar's Alt+arrow stays a literal chord for the agent.
   - `Mod+Alt+N` new agent in a new space, `Mod+Alt+T` new tab in the current space,
     `Mod+Alt+W` close the current pane (after confirmation). They work from the terminal too.
   - In an agent: `Mod+F` searches the conversation, ``Ctrl+` `` switches between conversation

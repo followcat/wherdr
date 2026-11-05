@@ -262,8 +262,11 @@ test('computer chrome: device-local interface scale, widths and terminal font', 
       await expect(page.locator('.xterm')).toBeVisible()
     }
     const openAgent = async () => {
-      await core.open(page, '/')
-      await page.getByRole('button', { name: /review-agent/ }).first().click()
+      // On a computer the card list is a persistent sidebar — mounted on
+      // Settings too — so click it straight instead of detouring through
+      // goto('/'). Then wait on the actual target: its route, its header.
+      await page.locator('#home .card[data-pane]').filter({ hasText: 'review-agent' }).click()
+      await expect(page).toHaveURL(/#\/a\//)
       await expect(page.locator('.agent-head')).toBeVisible()
       // The view choice persists per pane: restore the conversation when the
       // agent opens on its terminal.
@@ -277,6 +280,7 @@ test('computer chrome: device-local interface scale, widths and terminal font', 
     }
     try {
       await page.addInitScript(() => { localStorage.setItem('terminalRenderer', 'html') })
+      await core.open(page)
       await openAgent()
 
       // Large is the device default on a computer: dataset applied, the side
@@ -389,5 +393,139 @@ test('computer chrome: device-local interface scale, widths and terminal font', 
     }
   } finally {
     await phone.close()
+  }
+})
+
+// Task08: hardware Alt+arrows step the rendered sidebar cards (↑/↓) and the
+// current space's tab chips (←/→), taken at the window before a focused xterm
+// or a non-empty composer could see them — computer layout only. The desktop
+// keybar's Alt+arrow has no trusted KeyboardEvent: it stays the literal agent
+// chord, and Ctrl+arrows keep reaching the program.
+test('computer chrome: hardware Alt steps cards and tab chips, virtual Alt stays a chord', async ({ browser }, testInfo) => {
+  const desk = await browser.newContext({ ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 }, locale: 'en-US', timezoneId: 'UTC', serviceWorkers: 'block' })
+  try {
+    const page = await desk.newPage()
+    const promptPosts: string[] = []
+    const interruptPosts: string[] = []
+    page.on('request', (r) => {
+      const path = new URL(r.url()).pathname
+      if (r.method() === 'POST' && path === '/api/prompt') promptPosts.push(r.url())
+      if (r.method() === 'POST' && path === '/api/interrupt') interruptPosts.push(r.url())
+    })
+    // One row per agent pane: three cards, the first two sharing one space
+    // (distinct herdr.tab labels give the two-chip strip), ops in its own.
+    const core = await startCore(() => undefined, undefined, {
+      terminals: [
+        { address: 'host-a/t7', name: 'review-agent', cwd: '/home/user/acme-shop', labels: { 'herdr.space': 'acme-space', 'herdr.tab': 'tab-a' } },
+        { address: 'host-a/t8', name: 'build-agent', cwd: '/home/user/acme-shop', labels: { 'herdr.space': 'acme-space', 'herdr.tab': 'tab-b' } },
+        { address: 'host-a/t9', name: 'ops-agent', cwd: '/home/user/ops', labels: { 'herdr.space': 'ops-space', 'herdr.tab': 'tab-a' } },
+      ],
+    })
+    const keyCalls = () => core.framed.filter(c => c.method === 'terminal.keys').map(c => (c.params as { keys: string[] }).keys)
+    const dataFrames = () => core.inbound.filter(f => f.kind === STREAM.data)
+    const cardPanes = () => page.evaluate(() => [...document.querySelectorAll<HTMLElement>('#home .card[data-pane]')].map(e => e.dataset.pane!))
+    const selPane = () => page.evaluate(() => document.querySelector<HTMLElement>('#home .card.sel')?.dataset.pane ?? null)
+    try {
+      await page.addInitScript(() => { localStorage.setItem('terminalRenderer', 'html') })
+      await core.open(page, '/')
+      const cards = page.locator('#home .card[data-pane]')
+      await expect(cards).toHaveCount(3)
+      await cards.first().click()
+      await expect(page.locator('.agent-head')).toContainText('review-agent')
+      const chips = page.locator('.space-tabs .tab-chip[data-tab]')
+      await expect(chips).toHaveCount(2)
+      await expect(chips.first()).toHaveAttribute('aria-current', 'page')
+      const tabA = page.url()
+      const order = await cardPanes()
+      const xtermFocused = () => page.evaluate(() => Boolean(document.activeElement?.closest('.xterm')))
+
+      // Alt+→ steps the tab chips through the route even with xterm focused.
+      await page.getByRole('button', { name: 'Show terminal' }).click()
+      await expect(page.locator('.xterm')).toBeVisible()
+      await page.locator('.xterm').click()
+      await expect.poll(xtermFocused).toBe(true)
+      await page.keyboard.press('Alt+ArrowRight')
+      await expect(chips.nth(1)).toHaveAttribute('aria-current', 'page')
+      expect(page.url()).not.toBe(tabA)
+
+      // Back to the first chip; a second Alt+← has nowhere to step: a test-only
+      // later capture listener proves the trusted key was consumed (the
+      // browser's Back never sees it) and the route does not move.
+      await page.keyboard.press('Alt+ArrowLeft')
+      await expect(chips.first()).toHaveAttribute('aria-current', 'page')
+      await page.evaluate(() => {
+        (window as unknown as { rec: { trusted?: boolean, prevented?: boolean } }).rec = {}
+        window.addEventListener('keydown', (e) => {
+          if (e.key === 'ArrowLeft' && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+            (window as unknown as { rec: { trusted?: boolean, prevented?: boolean } }).rec = { trusted: e.isTrusted, prevented: e.defaultPrevented }
+          }
+        }, true)
+      })
+      await page.keyboard.press('Alt+ArrowLeft')
+      const rec = await page.evaluate(() => (window as unknown as { rec: { trusted?: boolean, prevented?: boolean } }).rec)
+      expect(rec.trusted).toBe(true)
+      expect(rec.prevented).toBe(true)
+      expect(page.url()).toBe(tabA)
+      await expect(chips.first()).toHaveAttribute('aria-current', 'page')
+
+      // Alt+↓ steps the rendered cards in DOM order (derived, not assumed);
+      // Alt+↑ steps back. No key reaches the agent in any of these steps.
+      expect(await selPane()).toBe(order[0])
+      await page.keyboard.press('Alt+ArrowDown')
+      await expect.poll(selPane).toBe(order[1])
+      expect(page.url()).toContain(order[1]!)
+      await expect(page.locator('.agent-head')).toContainText('build-agent')
+      await page.keyboard.press('Alt+ArrowDown')
+      await expect.poll(selPane).toBe(order[2])
+      expect(page.url()).toContain(order[2]!)
+      await expect(page.locator('.agent-head')).toContainText('ops-agent')
+      await page.keyboard.press('Alt+ArrowUp')
+      await expect.poll(selPane).toBe(order[1])
+      expect(page.url()).toContain(order[1]!)
+      await page.keyboard.press('Alt+ArrowUp')
+      await expect.poll(selPane).toBe(order[0])
+      await expect(page.locator('.agent-head')).toContainText('review-agent')
+      expect(keyCalls()).toEqual([])
+      expect(dataFrames()).toEqual([])
+
+      // A non-empty composer keeps the chord: navigation fires and the draft
+      // text survives the round trip.
+      await page.getByRole('button', { name: 'Show conversation' }).click()
+      const field = page.locator('.composer textarea')
+      await field.click()
+      await field.fill('draft one')
+      await page.keyboard.press('Alt+ArrowDown')
+      await expect(page.locator('.agent-head')).toContainText('build-agent')
+      await page.keyboard.press('Alt+ArrowUp')
+      await expect(page.locator('.agent-head')).toContainText('review-agent')
+      expect(await field.inputValue()).toBe('draft one')
+      expect(keyCalls()).toEqual([])
+      expect(dataFrames()).toEqual([])
+      expect(promptPosts).toEqual([])
+      expect(interruptPosts).toEqual([])
+
+      // The desktop keybar's Alt+→ is a click, not a trusted key: the agent
+      // gets the accepted named chord, the app does not navigate.
+      await page.getByRole('button', { name: 'Show terminal' }).click()
+      await expect(page.locator('.xterm')).toBeVisible()
+      const keybar = page.locator('.keybar')
+      await expect(keybar).toBeVisible()
+      await keybar.getByRole('button', { name: 'Alt', exact: true }).click()
+      await keybar.getByRole('button', { name: '→', exact: true }).click()
+      await expect.poll(keyCalls).toEqual([['alt+right']])
+      expect(page.url()).toBe(tabA)
+      expect(dataFrames()).toEqual([])
+      await page.screenshot({ path: testInfo.outputPath('08-altnav-1440.png') })
+
+      // Ctrl+arrows are not the app's: the program gets the CSI sequence.
+      await page.locator('.xterm').click()
+      await expect.poll(xtermFocused).toBe(true)
+      await page.keyboard.press('Control+ArrowRight')
+      await expect.poll(() => dataFrames().some(f => f.data.includes(Buffer.from('\x1b[1;5C')))).toBe(true)
+    } finally {
+      await core.stop()
+    }
+  } finally {
+    await desk.close()
   }
 })

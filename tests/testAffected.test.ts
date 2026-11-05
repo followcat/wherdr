@@ -101,6 +101,16 @@ describe('affected test selector', () => {
     expect(Object.keys(plan.domains)).toContain('ui-scale')
     expect(Object.keys(plan.e2e)).toContain('tests/e2e/phone-terminal-ux.spec.ts')
   })
+  it.each([
+    'app/utils/stepNav.ts', 'app/utils/shortcuts.ts', 'app/utils/cardKeys.ts',
+    'app/composables/useShortcuts.ts', 'app/components/ShortcutsReference.vue',
+    'app/components/SpaceTabs.vue', 'app/components/AgentCard.vue',
+    'app/components/HomeView.vue',
+  ])('selects the nav-keys journey for its %s integration path', file => {
+    const plan = select([file], available.concat('tests/components/StepNav.test.ts', 'tests/e2e/phone-terminal-ux.spec.ts'), undefined)
+    expect(Object.keys(plan.domains)).toContain('nav-keys')
+    expect(Object.keys(plan.e2e)).toContain('tests/e2e/phone-terminal-ux.spec.ts')
+  })
   it('falls back visibly for an unknown file and a missing base', () => {
     const plan = select(['unknown source.ts'], available, undefined)
     expect(plan.broad).toBe(true)

@@ -44,8 +44,10 @@ async function freePort() {
 // sized to the client's requested cols/rows); output() pushes more terminal
 // data after the attach.
 // feed.terminal overrides fixture fields on BOTH the one-shot terminal.list
-// answer and the framed events.subscribe snapshot (screen:'inexact' etc).
-export async function startCore(answer: Answer = () => undefined, seed?: (data: string) => Promise<void>, feed: { firstPaint?: string | Uint8Array | ((attach: Call) => string | Uint8Array), terminal?: Record<string, unknown> } = {}) {
+// answer and the framed events.subscribe snapshot (screen:'inexact' etc);
+// feed.terminals replaces the whole list the same way (each entry merged
+// onto the fixture's base terminal).
+export async function startCore(answer: Answer = () => undefined, seed?: (data: string) => Promise<void>, feed: { firstPaint?: string | Uint8Array | ((attach: Call) => string | Uint8Array), terminal?: Record<string, unknown>, terminals?: Record<string, unknown>[] } = {}) {
   const data = await mkdtemp(join(tmpdir(), 'core-e2e-'))
   const socketPath = join(data, 'core.sock')
   await writeFile(join(data, 'auth.json'), JSON.stringify(pdfAuthDb))
@@ -65,7 +67,8 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
   const inbound: { channel: number, kind: number, data: Buffer }[] = []
   // Sockets that attached a terminal: output() writes on their stream channel.
   const attachSockets = new Set<Socket>()
-  const terminal = { ...fixture.inventory.terminals[0]!, ...feed.terminal }
+  const terminals = feed.terminals?.map(t => ({ ...fixture.inventory.terminals[0]!, ...t }))
+    ?? [{ ...fixture.inventory.terminals[0]!, ...feed.terminal }]
   // What the server was answered for inventory/subscription (read-only record
   // for specs that must prove which metadata variant each path delivered).
   const served: { method: string, result: unknown }[] = []
@@ -73,7 +76,7 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
     const own = answer(call)
     if (own !== undefined) return own
     return call.method === 'hello' ? fixture.hello
-      : call.method === 'terminal.list' ? { ...fixture.inventory, terminals: [terminal, ...fixture.inventory.terminals.slice(1)] }
+      : call.method === 'terminal.list' ? { ...fixture.inventory, terminals: feed.terminals ? terminals : [terminals[0]!, ...fixture.inventory.terminals.slice(1)] }
       : call.method === 'machine.list' ? { machines: [{ name: 'host-a', state: 'connected' }] }
       : fixture.discover
   }
@@ -105,7 +108,7 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
           const c = JSON.parse(payload.toString()) as Call
           framed.push(c)
           const result = c.method === 'events.subscribe'
-            ? { channel: 2, seq: 1, terminals: [{ cols: 80, rows: 24, ...terminal }] } : { channel: 3 }
+            ? { channel: 2, seq: 1, terminals: terminals.map(t => ({ cols: 80, rows: 24, ...t })) } : { channel: 3 }
           served.push({ method: c.method, result })
           socket.write(frame(0, Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: c.id, result }))))
           if (c.method === 'terminal.attach') {
