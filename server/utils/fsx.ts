@@ -106,7 +106,7 @@ export function parseStatLine(line: string): FsStat | null {
 // The largest read a caller may request through a bounded transport: the
 // image budget (60 MiB), above the chat budget (24 MiB). Only enforced on
 // opted-in filesystems; the default single-exec path is untouched.
-const READ_LIMIT = 60 * 1024 * 1024
+export const READ_LIMIT = 60 * 1024 * 1024
 
 export function createShellFs(exec: ShellExec, opts: { statTtlMs?: number, chunkBytes?: number } = {}): MachineFs {
   const ttl = opts.statTtlMs ?? 700

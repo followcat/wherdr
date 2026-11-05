@@ -1,5 +1,6 @@
 import type { FsStat, MachineFs } from './fsx'
 import type { CommandCodeResult } from './transcripts'
+import { commandCodeIo } from './commandCodeIo'
 import { validWatch, verifyWatches, watchSpan, type CommandCodeWatch } from './commandCodeWatch'
 
 // Per-machine bounds: files a reader tracks, entries a file remembers, and
@@ -85,10 +86,11 @@ export function createCommandCodeState({ fs }: { fs: MachineFs }) {
   async function validate(s: CmdFile, file: string): Promise<boolean | null> {
     const span = watchSpan(s.watches.values())
     if (!span) return true
-    let buf: Buffer
-    // Unknown, not valid: the caller keeps the previous trusted state and
-    // retries on the next observation instead of trusting an unchecked one.
-    try { buf = await fs.read(file, span.start, span.end - span.start) } catch { return null }
+    // Unknown, not valid: a failed, short, or detached-in-flight read keeps
+    // the previous trusted state and retries on the next observation
+    // instead of trusting an unchecked one.
+    const buf = await io.readExact(file, span.start, span.end - span.start, s.stamp)
+    if (!buf) return null
     return verifyWatches(buf, span.start, span.selected)
   }
 
@@ -183,5 +185,10 @@ export function createCommandCodeState({ fs }: { fs: MachineFs }) {
   // The file's current invalidation stamp (0: no record). Tokens compare it.
   function stampOf(file: string): number { return files.get(file)?.stamp ?? 0 }
 
-  return { reader, handle, observe, stampOf }
+  // Raw reads bound to this service's stamps: readers share the context so
+  // every awaited byte range checks the same generations (see
+  // commandCodeIo).
+  const io = commandCodeIo({ fs, stampOf })
+
+  return { reader, handle, observe, stampOf, io }
 }
