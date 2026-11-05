@@ -1,7 +1,7 @@
 // Live xterm viewport -> styled span descriptors, so the copy surface can
 // render the screen as selectable text faithful to what the renderer paints.
 // Pure data, never HTML: the component interpolates every string as text.
-import type { IBufferCell, IBufferLine, Terminal } from '@xterm/xterm'
+import type { IBufferCell, Terminal } from '@xterm/xterm'
 
 export interface ScreenSpan {
   text: string
@@ -53,13 +53,6 @@ function cellColor(cell: IBufferCell, fg: boolean, theme: Record<string, string 
   return '#' + (PALETTE[i] ?? 'ffffff')
 }
 
-// A wide glyph cannot start in a row's last column: it wraps to the next row
-// (which then opens with its width-2 cell) and leaves that final cell empty.
-// The empty cell is wrap padding, not an intentional space.
-function wrappedWide(line: IBufferLine | undefined): boolean {
-  return Boolean(line?.isWrapped && line.getCell(0)?.getWidth() === 2)
-}
-
 // The visible rows only, at the current history position. A wrapped row
 // continues the previous logical line: join it so a copied long line stays in
 // one piece, like desktop selection copy. A viewport starting mid-paragraph
@@ -75,7 +68,10 @@ export function screenSpans(term: Terminal): ScreenSpan[][] {
     for (let x = 0; x < term.cols; x++) {
       const cell = line?.getCell(x)
       if (!cell || cell.getWidth() === 0) continue
-      if (x === term.cols - 1 && cell.getChars() === '' && wrappedWide(buf.getLine(y + 1))) continue
+      // An empty last-column cell can be wrap padding for a wide glyph that
+      // could not start there, but it can equally be an erased blank. Public
+      // cell data cannot tell them apart, so it stays a space: a stray space
+      // beats losing a real one.
       // Concealed (SGR 8) cells paint as blanks on screen but still occupy
       // their columns; conceal them the same way, styles included.
       const ch = cell.isInvisible() ? ' '.repeat(cell.getWidth()) : cell.getChars() || ' '

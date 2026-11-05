@@ -94,13 +94,16 @@ describe('frozen terminal snapshot', () => {
     expect(text(grid([{ text: 'suffix', wrapped: true }, { text: 'next' }], 0, 2))).toBe('suffix\nnext')
   })
 
-  it('drops only the pad an empty final cell leaves for a wrapped wide glyph', () => {
+  it('keeps the ambiguous final-cell blank a wrapped wide glyph can leave', () => {
     // 4 columns, `abc你`: the wide glyph cannot start in the last column, so
-    // xterm leaves that cell empty and wraps it. The copy must be `abc你`.
+    // xterm leaves that cell empty and wraps it. An erased cell (ESC[X) looks
+    // identical in the buffer, so the capture keeps it as a space — a stray
+    // space beats losing a real one. See screenSpansBuffer.test.ts, which
+    // proves the two cells indistinguishable on the real xterm.
     expect(text(grid([
       { text: 'abc' },
       { cells: [{ ch: '你', width: 2 }, { width: 0 }], wrapped: true },
-    ], 0, 2, 4))).toBe('abc你')
+    ], 0, 2, 4))).toBe('abc 你')
     // `ab  你`: intentional spaces before it are real cells and stay.
     expect(text(grid([
       { text: 'ab  ' },

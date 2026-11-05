@@ -62,7 +62,10 @@
   alternate-screen app's own pre-attach history is not recoverable passively —
   stitching it through `terminal.read` would scroll the application. Pressing and holding a
   still finger freezes the screen to copy from it; release and drag to select,
-  then Done leaves the copy surface.
+  then Done leaves the copy surface. Known limitation: a blank cell in a row's
+  last column can be padding a wide glyph wrapped early, but is copied as a
+  space — erased cells look identical in the buffer and real blanks must not
+  be lost.
   On iPhone and iPad a tap on the terminal does not open the on-screen keyboard: type in the
   message field, or tap the key bar's keyboard button to type in the terminal.
   Terminal links back to this app stay in the current window on a phone; external
