@@ -63,15 +63,39 @@ export function coreShell(call: Call, on: string): ShellExec {
         argv: ['sh', '-c', script, 'sh', ...args], ...(on ? { on } : {}), timeout: seconds,
         ...(opts.input ? { input: opts.input.toString('base64') } : {}),
       }, seconds * 1000 + 5000)
-      const stdout = Buffer.from(r.stdout || '', 'base64')
-      if (r.timed_out) return { code: 124, stdout, stderr: 'timed out' }
-      if (opts.maxBytes && (r.truncated || stdout.length > opts.maxBytes)) return { code: 125, stdout: Buffer.alloc(0), stderr: 'output too large' }
+      // A timed-out reply is a failure: its partial stdout is discarded,
+      // never decoded into a buffer.
+      if (r.timed_out) return { code: 124, stdout: Buffer.alloc(0), stderr: 'timed out' }
+      // base64 emits exactly 4*ceil(n/3) chars for n bytes: more than that for
+      // the bound means over-budget or cut output — reject before decoding.
+      const enc = r.stdout || ''
+      if (r.truncated || (opts.maxBytes && enc.length > Math.ceil(opts.maxBytes / 3) * 4)) {
+        return { code: 125, stdout: Buffer.alloc(0), stderr: 'output too large' }
+      }
+      const stdout = Buffer.from(enc, 'base64')
+      if (opts.maxBytes && stdout.length > opts.maxBytes) return { code: 125, stdout: Buffer.alloc(0), stderr: 'output too large' }
       return { code: r.code, stdout, stderr: Buffer.from(r.stderr || '', 'base64').toString('utf8') }
     } catch (e) {
       // An unreachable machine reads as the SSH failure code (the file's state is unknown).
       return { code: 255, stdout: Buffer.alloc(0), stderr: e instanceof CoreError ? e.message : 'unreachable' }
     }
   }
+}
+
+// $HOME over the wire: `printf %s` writes no newline. Only a successful
+// bounded reply is an absolute home — a timeout, nonzero code or truncated
+// answer cannot give a partial trusted path, and the bytes are never
+// trimmed: a path's own trailing whitespace is part of it, not a route
+// into another directory.
+async function machineHome(shell: ShellExec): Promise<string> {
+  const r = await shell('printf %s "$HOME"', [], { maxBytes: 4096 })
+  const s = r.code === 0 && r.stdout.length <= 4096 ? r.stdout.toString('utf8') : ''
+  // Roundtrip: bytes that are not valid UTF-8 would silently decode into
+  // another directory, so they are refused like any other failed lookup.
+  if (!s.startsWith('/') || /[\r\n\0]/.test(s) || !Buffer.from(s, 'utf8').equals(r.stdout)) {
+    throw new CoreError('unreachable', 'machine home unknown')
+  }
+  return s
 }
 
 export function createCoreTranscripts(deps: CoreTranscriptDeps) {
@@ -118,9 +142,10 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
         // itself — locally too (an omitted `on` runs on this machine); only
         // transcript file reads use localFs directly.
         const shell = coreShell(deps.call, name)
-        const home = name ? (await shell('printf %s "$HOME"')).stdout.toString('utf8').trim() : deps.localHome
-        if (!home.startsWith('/')) throw new CoreError('unreachable', 'machine home unknown')
-        const fs: MachineFs = name ? createShellFs(shell) : localFs
+        const home = name ? await machineHome(shell) : deps.localHome
+        if (!home.startsWith('/') || home.includes('\0')) throw new CoreError('unreachable', 'machine home unknown')
+        // Transcript reads ride core's reply ceiling in 4 MiB decoded chunks.
+        const fs: MachineFs = name ? createShellFs(shell, { chunkBytes: 4 * 1024 * 1024 }) : localFs
         // Command Code: the census-backed locator decides what this pane's
         // terminal really shows. Only THIS machine's terminal.get detail of
         // the pane's exact coreAddress feeds it — state is passed unchanged

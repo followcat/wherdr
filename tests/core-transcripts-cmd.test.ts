@@ -268,4 +268,69 @@ describe('Command Code panes resolve via core detail and per-machine wires', () 
     expect(md).toBeNull()
     expect([core.calls.census, core.calls.files, core.calls.headers]).toEqual([1, 1, 1])
   })
+
+  it('refuses a failed home reply and never reaches census or file select', async () => {
+    // A nonzero code or a timeout can carry a plausible absolute partial —
+    // it is never a trusted home, so nothing after it may run.
+    for (const bad of [
+      { code: 1, stdout: Buffer.from('/h/.commandcode').toString('base64') },
+      { timed_out: true, stdout: Buffer.from('/h/.com').toString('base64') },
+    ]) {
+      const execs: string[] = []
+      const call = async (method: string, params: { argv?: string[] }): Promise<any> => {
+        if (method === 'terminal.get') return liveD({ pid: 9000, argv: ['bash'], foreground: { pid: 4242 } })
+        if (method === 'machine.exec') { execs.push(String(params.argv?.[2] || '')); return bad }
+        throw new CoreError('rpc', method)
+      }
+      const panes = [pane('r1', 'box/t1', 'cmd')]
+      const t = createCoreTranscripts({ call, pane: id => panes.find(p => p.id === id), localHome: HOME })
+      expect(await t.locate(P('r1'))).toBeNull()
+      expect(execs).toEqual(['printf %s "$HOME"'])
+    }
+  })
+
+  it('uses a valid trailing-space home literally, never trimmed away', async () => {
+    const LITERAL = '/h '
+    const file = `${LITERAL}/.commandcode/projects/a/${U1}.jsonl`
+    const core = cmdCore(
+      { 'box/t1': liveD({ pid: 9000, argv: ['bash'], foreground: { pid: 4242 } }) },
+      {
+        census: H + S(4242) + T(1, 1),
+        files: filesWire([[file, st(POST)]]),
+        headers: hdrs({ [file]: { st: st(POST), body: sess(U1) } }),
+      },
+      { home: LITERAL }
+    )
+    const panes = [pane('r1', 'box/t1', 'cmd')]
+    const t = createCoreTranscripts({ call: core.call, pane: id => panes.find(p => p.id === id), localHome: '/unrelated' })
+    expect(await t.locate(P('r1'))).toEqual({ file, session: U1, guessed: true })
+  })
+
+  it('rejects home bytes that cannot decode back to themselves', async () => {
+    // Invalid UTF-8 would be replaced into ANOTHER path, never an option.
+    const execs: string[] = []
+    const call = async (method: string, params: { argv?: string[] }): Promise<any> => {
+      if (method === 'terminal.get') return liveD({ pid: 9000, argv: ['bash'], foreground: { pid: 4242 } })
+      if (method === 'machine.exec') {
+        execs.push(String(params.argv?.[2] || ''))
+        return { code: 0, stdout: Buffer.from([0x2f, 0x68, 0xff]).toString('base64') } // '/h\xff'
+      }
+      throw new CoreError('rpc', method)
+    }
+    const panes = [pane('r1', 'box/t1', 'cmd')]
+    const t = createCoreTranscripts({ call, pane: id => panes.find(p => p.id === id), localHome: HOME })
+    expect(await t.locate(P('r1'))).toBeNull()
+    expect(execs).toEqual(['printf %s "$HOME"'])
+  })
+
+  it('rejects a non-absolute or NUL-bearing local home for a local pane', async () => {
+    for (const bad of ['rel/home', '/h\0idden']) {
+      const core = cmdCore({ t1: liveD({ pid: 9000, argv: ['bash'], foreground: { pid: 4242 } }) }, okWire())
+      const panes = [pane('p1', 't1', 'cmd')]
+      const t = createCoreTranscripts({ call: core.call, pane: id => panes.find(p => p.id === id), localHome: bad })
+      expect(await t.locate(P('p1'))).toBeNull()
+      expect(core.calls.exec.length).toBe(0) // nothing ran on a guessed home
+      expect(core.calls.get.length).toBe(0)
+    }
+  })
 })
