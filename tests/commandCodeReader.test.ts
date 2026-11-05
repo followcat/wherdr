@@ -1,11 +1,11 @@
 // The guarded Command Code reader through the public createTranscripts chat:
 // generation-stamped tokens, cross-page outcomes, and the rewrite/short-read
 // guards — fake disk and gated IO only, never a real fs/agent.
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createTranscripts, type Loc, type TranscriptPane } from '../server/utils/transcripts'
 import type { ChatResponse } from '../shared/types'
 import { defer, memFs, type MemFile, type MemIo } from './cmdStateFixture'
-import { assistant, J, results, sess, user } from './cmdParserFixture'
+import { assistant, at, J, results, sess, user } from './cmdParserFixture'
 
 const FILE = '/home/alice/.commandcode/projects/-w/s1.jsonl'
 const PANE: TranscriptPane = { id: 'p1', agent: 'cmd', cwd: '/w' }
@@ -287,5 +287,288 @@ describe('Command Code reader', () => {
     g.resolve()
     expect(await old).toEqual({ file: FILE, session: 's1' })
     expect(t.live(PANE, rA)).toBe(false) // the late FILE1 never overwrote FILE2
+  })
+
+  // A result older than the window reports as a toolUpdates revision —
+  // images and the record's own ref included — and a later empty success
+  // clears the outcome instead of preserving it. An older page that
+  // re-parses the superseded record can never downgrade the shared map:
+  // the newest absolute revision wins whichever order pages arrived in.
+  it('carries a late image outcome, then an empty success clears it — an older page cannot downgrade', async () => {
+    const ownImg = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A'.repeat(9000) } }
+    const resImg = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'B'.repeat(9000) } }
+    const u2 = user('u2', 'while it runs', 8)
+    const v1 = body(sess('s1'), user('u1', 'q', 1), call(), u2)
+    const offU2 = Buffer.byteLength(J(sess('s1'), user('u1', 'q', 1), call()) + '\n')
+    const disk = { [FILE]: { body: v1 } }
+    const t = mk(disk)
+    const r1 = await t.chat(PANE, {})
+    // One own image before the result's: the result's image is imageAt 1.
+    const res1 = JSON.stringify({
+      type: 'message', id: 'r1', parentId: null, timestamp: at(10),
+      message: { role: 'user', meta: { source: 'tool', createdAt: 1700000000010 },
+        content: [ownImg, { type: 'tool_result', tool_use_id: 't1', content: [{ type: 'text', text: 'first' }, resImg] }] },
+    })
+    const res1Off = v1.length
+    const res1Len = Buffer.byteLength(res1)
+    disk[FILE].body = Buffer.concat([v1, Buffer.from(res1 + '\n')])
+    const r2 = await poll(t, r1.token, offU2)
+    expect(r2.toolUpdates).toEqual([{ id: 't1', at: res1Off, out: 'first', error: false, images: 1, ref: `${res1Off}:${res1Len}`, imageAt: 1 }])
+    // The update's own ref+imageAt publicly selects the RESULT's image
+    // bytes, not the own image the line carried before it.
+    const picked = await t.image(PANE, r2.file!, r2.toolUpdates![0]!.ref!, r2.toolUpdates![0]!.imageAt)
+    expect(picked).toMatchObject({ type: 'image/png' })
+    expect(picked!.body).toEqual(Buffer.from('B'.repeat(9000), 'base64'))
+    // The result directly before the empty success carries BOTH error and
+    // image — the later clear then proves removal, not absence.
+    const res2 = JSON.stringify({
+      type: 'message', id: 'r2', parentId: null, timestamp: at(11),
+      message: { role: 'user', meta: { source: 'tool', createdAt: 1700000000011 },
+        content: [{ type: 'tool_result', tool_use_id: 't1', is_error: true, content: [{ type: 'text', text: 'boom' }, resImg] }] },
+    })
+    const res2Off = res1Off + res1Len + 1
+    const res2Len = Buffer.byteLength(res2)
+    disk[FILE].body = Buffer.concat([disk[FILE].body, Buffer.from(res2 + '\n')])
+    const r3 = await poll(t, r2.token, offU2)
+    expect(r3.toolUpdates).toEqual([{ id: 't1', at: res2Off, out: 'boom', error: true, images: 1, ref: `${res2Off}:${res2Len}`, imageAt: 0 }])
+    // The older page re-parses res1's record but the shared map keeps res2.
+    const old = await t.chat(PANE, { before: res2Off, since: r3.token })
+    expect(old.older).toBe(true)
+    const callItem = old.items!.find(i => i.toolId === 't1')!
+    expect(callItem).toMatchObject({ out: 'boom', error: true, images: 1, ref: `${res2Off}:${res2Len}` })
+    // An empty success is a complete replacement: it clears, not preserves.
+    const res3 = out('r3', '', 12)
+    disk[FILE].body = Buffer.concat([disk[FILE].body, Buffer.from(JSON.stringify(res3) + '\n')])
+    const r4 = await poll(t, r3.token, offU2)
+    expect(r4.toolUpdates).toEqual([{ id: 't1', at: res2Off + res2Len + 1, out: '', error: false, images: 0, ref: '', imageAt: 0 }])
+    const old2 = await t.chat(PANE, { before: res2Off, since: r4.token })
+    const cleared = old2.items!.find(i => i.toolId === 't1')!
+    expect(cleared.out).toBeUndefined()
+    expect(cleared.error).toBeUndefined()
+    expect(cleared.images).toBeUndefined()
+    expect(cleared.ref).toBeUndefined()
+    expect(cleared.imageAt).toBeUndefined()
+    expect(cleared.hashes).toBeUndefined()
+  })
+
+  // The retained bottom is incremental: appended lines parse alone — an
+  // old record is never JSON-parsed again — and a record whose newline has
+  // not landed waits for the next poll.
+  it('parses only appended lines, and a partial record completes next poll', async () => {
+    const v1 = body(sess('s1'), user('u1', 'uniq-marker-1', 1))
+    const disk = { [FILE]: { body: v1 } }
+    const t = mk(disk)
+    // An explicit cursor warms the retained bottom (a null `from` walks
+    // backwards and retains nothing): later polls feed appends only.
+    const r1 = await t.chat(PANE, { from: 0 })
+    const spy = vi.spyOn(JSON, 'parse')
+    try {
+      const u2 = JSON.stringify(user('u2', 'second', 2))
+      disk[FILE].body = Buffer.concat([v1, Buffer.from(u2 + '\n')])
+      const r2 = await poll(t, r1.token, r1.start)
+      expect(r2.items!.some(i => i.text === 'second')).toBe(true)
+      // The marker lives inside the first record: re-parsing it would show.
+      expect(spy.mock.calls.filter(c => String(c[0]).includes('uniq-marker-1'))).toEqual([])
+      const u3 = JSON.stringify(user('u3', 'partial-xy', 3))
+      disk[FILE].body = Buffer.concat([disk[FILE].body, Buffer.from(u3.slice(0, 30))])
+      const r3 = await poll(t, r2.token, r1.start)
+      expect(r3.items!.some(i => i.text === 'partial-xy')).toBe(false)
+      disk[FILE].body = Buffer.concat([disk[FILE].body, Buffer.from(u3.slice(30) + '\n')])
+      const r4 = await poll(t, r3.token, r1.start)
+      expect(r4.items!.some(i => i.text === 'partial-xy')).toBe(true)
+    } finally { spy.mockRestore() }
+  })
+
+  // Every public reset shape reaches the same contract: the stale token
+  // answers a rewritten fresh bottom — never older:true — under a new stamp.
+  it('resets public clients on truncate, inode, same-size rewrite and a watched-result edit', async () => {
+    const v1 = body(sess('s1'), user('u1', 'q', 1), call(), out('r1', 'watched'), user('u2', 'tail one', 12))
+    const disk: Record<string, MemFile> = { [FILE]: { body: v1 } }
+    const t = mk(disk)
+    let r = await t.chat(PANE, {})
+    let prevStamp = stampOf(r.token)
+    const fresh = async (want: { text?: string, out?: string }) => {
+      r = await poll(t, r.token, r.start)
+      expect(r.rewritten).toBe(true)
+      expect(r.older).toBeUndefined()
+      // Each reset mints a new positive stamp — an anchor-only client reset
+      // could not mask a missing cross-client generation invalidation.
+      const stamp = Number(stampOf(r.token))
+      expect(stamp).toBeGreaterThan(Number(prevStamp))
+      prevStamp = stampOf(r.token)
+      if (want.text !== undefined) expect(r.items!.some(i => i.text === want.text)).toBe(true)
+      if (want.out !== undefined) expect(r.items!.find(i => i.toolId === 't1')).toMatchObject({ out: want.out })
+    }
+    // Shorter than the generation's trusted size (the client's from cursor
+    // is 0 — the file is still longer than it): reset.
+    disk[FILE] = { body: v1.subarray(0, v1.length - 30), mtimeMs: 5 }
+    await fresh({ text: 'q' })
+    // Same bytes under another inode: another file's generation.
+    disk[FILE] = { body: v1, mtimeMs: 5, ino: 4242 }
+    await fresh({ out: 'watched' })
+    // Same size, same inode, same session header, different content — the
+    // realistic rewrite shape: content identity wins, not the header.
+    const v2 = body(sess('s1'), user('u1', 'q', 1), call(), out('r1', 'watched'), user('u2', 'tail two', 12))
+    expect(v2.length).toBe(v1.length)
+    disk[FILE] = { body: v2, mtimeMs: 9, ino: 4242 }
+    await fresh({ text: 'tail two' })
+    // Same inode again: an in-place edit of a watched result record plus
+    // growth — the result watch catches what a pure size check cannot.
+    const resOff = Buffer.byteLength(J(sess('s1'), user('u1', 'q', 1), call()) + '\n')
+    const resLine = Buffer.byteLength(JSON.stringify(out('r1', 'watched')))
+    const edited = Buffer.from(JSON.stringify(out('r1', 'xatched')) + '\n')
+    expect(edited.length).toBe(resLine + 1)
+    disk[FILE] = { body: Buffer.concat([v2.subarray(0, resOff), edited, v2.subarray(resOff + resLine + 1), Buffer.from(J(user('u3', 'appended', 15)) + '\n')]), mtimeMs: 12, ino: 4242 }
+    await fresh({ out: 'xatched' })
+  })
+
+  // One client's stale proof cannot regress another client's state: an old
+  // token replays into a fresh bottom of the CURRENT generation — it mints
+  // nothing and never serves older:true. The remembered outcome must
+  // survive the replay itself: the shared map's NEWER result sits outside
+  // the fresh bottom's window, so the response can only carry it from the
+  // map, not from re-parsing the record — and an older page ending before
+  // it still shows it over the page's own older result. The raw anchor
+  // alone (since forgotten) is no better proof.
+  it('a stale token cannot downgrade another client nor mint a generation', async () => {
+    const callLine = call()
+    const rold = out('rold', 'old out', 8)
+    const rnew = out('rnew', 'new out', 9)
+    const roldOff = Buffer.byteLength(J(sess('s1'), user('u1', 'q', 1), callLine) + '\n')
+    const rnewOff = roldOff + Buffer.byteLength(JSON.stringify(rold)) + 1
+    const v1 = body(sess('s1'), user('u1', 'q', 1), callLine, rold, rnew)
+    const reads: { start: number, len: number }[] = []
+    const disk: Record<string, MemFile> = { [FILE]: { body: v1 } }
+    const t = mk(disk, { reads })
+    // A's token belongs to the previous generation: same-size rewrite.
+    const rA = await t.chat(PANE, {})
+    const v2 = body(sess('s1'), user('u1', 'w', 1), callLine, rold, rnew)
+    expect(v2.length).toBe(v1.length)
+    disk[FILE] = { body: v2, mtimeMs: 9 }
+    // B learns 'new out' into the current generation while the file is small.
+    const rB = await t.chat(PANE2, {})
+    expect(stampOf(rB.token)).not.toBe(stampOf(rA.token))
+    // A visible tail of distinct items, both deeper than one bottom window
+    // and dense enough that its last slice is already a full bottom: the
+    // remembered result now sits outside what a fresh bottom reaches.
+    const tail = Buffer.from(Array.from({ length: 160 }, (_, i) => J(user(`t${i}`, `tail ${i} ` + 'x'.repeat(14 * 1024), 20 + i))).join('\n') + '\n')
+    disk[FILE].body = Buffer.concat([v2, tail])
+    const b2 = await poll(t, rB.token, rB.start, PANE2)
+    expect(b2.rewritten).toBeUndefined()
+    expect(stampOf(b2.token)).toBe(stampOf(rB.token)) // growth mints nothing
+    // No disk mutation: A's stale replay serves the current generation's
+    // fresh bottom — it must mint nothing and must not re-read 'rnew'.
+    const spy = vi.spyOn(JSON, 'parse')
+    const rnewParses = () => spy.mock.calls.filter(c => String(c[0]).includes('"id":"rnew"')).length
+    spy.mockClear()
+    reads.length = 0
+    const a2 = await t.chat(PANE, { anchor: rA.token, from: rA.start })
+    expect(a2.rewritten).toBe(true)
+    expect(a2.older).toBeUndefined()
+    expect(stampOf(a2.token)).toBe(stampOf(b2.token)) // same generation, not a new one
+    expect(rnewParses()).toBe(0)
+    // Geometry: every content window began after the remembered record
+    // (only the session probe may read from 0), and the bottom's items are
+    // all from the tail — never u1, the call or either result.
+    expect(reads.filter(r => r.start > 0).every(r => r.start >= rnewOff + Buffer.byteLength(JSON.stringify(rnew)) + 1)).toBe(true)
+    expect(a2.items!.some(i => i.toolId === 't1')).toBe(false)
+    expect(a2.items!.some(i => i.text === 'w')).toBe(false)
+    // An older page ending BEFORE rnew but covering the call and rold: the
+    // page's own parse offers 'old out' — the remembered map still wins.
+    const old = await t.chat(PANE, { before: rnewOff, since: a2.token })
+    expect(old.older).toBe(true)
+    expect(old.items!.find(i => i.toolId === 't1')).toMatchObject({ out: 'new out' })
+    // The raw anchor alone (since forgotten) is no better proof: same fresh
+    // bottom, never an older page.
+    const a3 = await t.chat(PANE, { before: rnewOff, anchor: rA.token })
+    expect(a3.older).toBeUndefined()
+    expect(a3.rewritten).toBe(true)
+    spy.mockRestore()
+  })
+
+  // A reader restart drops every map: the nonce in new tokens differs and a
+  // token of the previous process is foreign proof. The file table is
+  // bounded at 64: the oldest file's record evicts, so its next read mints
+  // a new stamp — an unrelated still-retained file stays current.
+  it('changes the reader nonce on restart and the stamp past the 64-file bound', async () => {
+    const v1 = body(sess('s1'), user('u1', 'q', 1))
+    const disk = { [FILE]: { body: v1 } }
+    const t1 = mk(disk)
+    const r1 = await t1.chat(PANE, {})
+    const t2 = mk(disk)
+    const r2 = await t2.chat(PANE, {})
+    expect(/~r([a-z0-9]+)/.exec(r2.token!)![1]).not.toBe(/~r([a-z0-9]+)/.exec(r1.token!)![1])
+    const stale = await poll(t2, r1.token, r1.start)
+    expect(stale.rewritten).toBe(true) // the old process's proof is foreign
+    // Sixty-five distinct files through the real table: ev1 evicts.
+    const many: Record<string, MemFile> = {}
+    const pathOf = (id: string) => `/home/alice/.commandcode/projects/-w/${id}.jsonl`
+    for (let i = 1; i <= 65; i++) many[pathOf(`e${i}`)] = { body: body(sess(`e${i}`), user(`u${i}`, `file ${i}`, 1)) }
+    const t3 = createTranscripts({
+      home: '/h', herdr: noHerdr, fs: memFs(many),
+      locateCommandCode: async p => ({ file: pathOf(p.id), session: p.id }),
+    })
+    const kept = new Map<string, string>()
+    const evPane = (id: string): TranscriptPane => ({ id, agent: 'cmd', cwd: '/w' })
+    for (let i = 1; i <= 65; i++) {
+      const r = await t3.chat(evPane(`e${i}`), {})
+      kept.set(`e${i}`, r.token!)
+    }
+    const evicted = await t3.chat(evPane('e1'), { since: kept.get('e1')!, anchor: kept.get('e1')! })
+    expect(evicted.rewritten).toBe(true)
+    const current = await t3.chat(evPane('e40'), { since: kept.get('e40')!, anchor: kept.get('e40')! })
+    expect(current.unchanged).toBe(true)
+  })
+
+  // A backward window whose raw buffer begins inside a large preceding
+  // record: the result after it is the first parsed line of a buffer that
+  // starts BEFORE it — its watch must fingerprint the real record bytes,
+  // not an offset shifted to the aligned start. A second client whose list
+  // starts past the 9-KiB pad can never re-check those bytes (its 4-KiB
+  // anchor and its retained check cover the tail only): growth keeps its
+  // stamp — a fingerprint based on the aligned start instead of the raw
+  // buffer's would fail right there — and an in-place edit of the watched
+  // result still detaches its token.
+  it('a result watched through a nonaligned window still detaches old clients on an in-place edit', async () => {
+    const big = user('ub', 'x'.repeat(2300 * 1024), 4)
+    const res = out('r1', 'watched-result-content', 6)
+    const pad = user('u3', 'pad ' + 'y'.repeat(9 * 1024), 8)
+    const pre = J(sess('s1'), user('u1', 'q', 1), call(), big) + '\n'
+    const resOff = Buffer.byteLength(pre)
+    const resLen = Buffer.byteLength(JSON.stringify(res))
+    const resEnd = resOff + resLen + 1
+    const v1 = body(sess('s1'), user('u1', 'q', 1), call(), big, res, pad)
+    const reads: { start: number, len: number }[] = []
+    const disk = { [FILE]: { body: v1 } }
+    const t = mk(disk, { reads })
+    // An older page exists only under live proof — mint a token first.
+    const first = await t.chat(PANE, {})
+    reads.length = 0
+    const page = await t.chat(PANE, { before: v1.length, since: first.token })
+    expect(page.older).toBe(true)
+    expect(page.items!.find(i => i.toolId === 't1')).toMatchObject({ out: 'watched-result-content' })
+    // The first window's buffer began inside the big record — a positive
+    // read start before the result's offset, not a full-file aligned read.
+    expect(reads.some(r => r.start > 0 && r.start < resOff)).toBe(true)
+    // The second client's list starts at the old file end (after the pad):
+    // its anchor above and its retained check can cover the tail only.
+    const extra = Buffer.from(J(user('u4', 'fresh tail', 10)) + '\n')
+    disk[FILE].body = Buffer.concat([v1, extra])
+    const r2 = await t.chat(PANE2, { from: v1.length })
+    expect(r2.rewritten).toBeUndefined()
+    // Pure growth minted nothing: still the first client's generation — a
+    // wrongly-based fingerprint would already have forced a new stamp.
+    expect(stampOf(r2.token)).toBe(stampOf(first.token))
+    const same = await poll(t, r2.token, v1.length, PANE2)
+    expect(same.unchanged).toBe(true)
+    // An in-place edit of the watched record plus growth: the second
+    // client's token detaches even though its own checks cannot see it.
+    const res2 = Buffer.from(JSON.stringify(out('r1', 'xatched-result-content', 6)) + '\n')
+    expect(res2.length).toBe(resLen + 1)
+    disk[FILE] = { body: Buffer.concat([v1.subarray(0, resOff), res2, v1.subarray(resEnd), extra, Buffer.from(J(user('u5', 'later', 11)) + '\n')]), mtimeMs: 9 }
+    const det = await poll(t, r2.token, v1.length, PANE2)
+    expect(det.rewritten).toBe(true)
+    expect(det.older).toBeUndefined()
+    expect(stampOf(det.token)).not.toBe(stampOf(r2.token))
   })
 })
