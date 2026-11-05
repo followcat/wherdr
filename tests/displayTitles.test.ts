@@ -28,6 +28,9 @@ describe('titres du space', () => {
   })
   it('garde le sujet de conversation en secondaire', () => {
     expect(conversationSubtitle(p, w)).toBe('Customer portal brief')
+    for (const title of ['Command Code', 'command-code', 'cmdc'])
+      expect(conversationSubtitle({ ...p, agent: 'cmd', name: 'cmd', title }, w), title).toBe('')
+    expect(conversationSubtitle({ ...p, agent: 'cmd', name: 'cmd', title: 'Import regression sweep' }, w)).toBe('Import regression sweep')
   })
   it('hides redundant and generic titles', () => {
     expect(conversationSubtitle({ ...p, title: 'Customer Portal 2' }, w)).toBe('')

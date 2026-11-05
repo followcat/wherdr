@@ -47,6 +47,51 @@ describe('core input routes', () => {
     expect(w.calls.filter(c => c[0] === 'terminal.keys')).toHaveLength(0)
   })
 
+  it('sends to Command Code once and never adds a Claude Enter workaround', async () => {
+    const t = deps((m) => m === 'terminal.send' ? { started: true } : {})
+    const cmdPane = t.d.pane('t1') as Pane
+    cmdPane.agent = 'cmd'
+    cmdPane.coreAddress = 'host-a/proj/term-1'
+    expect(await coreSend(t.d, { pane_id: 't1', text: 'fix the bug' })).toEqual({ ok: true, started: true })
+    expect(t.calls).toEqual([['terminal.send', { terminal: 'host-a/proj/term-1', text: 'fix the bug' }, 30000]])
+
+    // started=false on a multi-line send: Command Code keeps its own submit; no
+    // status read, no extra Enter, no retry.
+    const w = deps((m) => m === 'terminal.send' ? { started: false } : {})
+    w.d.settleMs = 1
+    ;(w.d.pane('t1') as Pane).agent = 'cmd'
+    expect(await coreSend(w.d, { pane_id: 't1', text: 'see\n@/f/a.txt' })).toEqual({ ok: true, started: false })
+    await coreSend(w.d, { pane_id: 't1', text: 'one line' })
+    expect(w.calls.map(c => [c[0], c[1].terminal])).toEqual([
+      ['terminal.send', 'm/t1'], ['terminal.send', 'm/t1'],
+    ])
+
+    // A pane reported working still goes through one send, nothing else.
+    const g = deps((m) => m === 'terminal.send' ? { started: true } : {})
+    const working = g.d.pane('t1') as Pane
+    working.agent = 'cmd'
+    working.status = 'working'
+    await coreSend(g.d, { pane_id: 't1', text: 'keep\nworking' })
+    expect(g.calls.map(c => c[0])).toEqual(['terminal.send'])
+
+    // Other agents get no workaround either: one send, whatever core observed.
+    const o = deps((m) => m === 'terminal.send' ? { started: false } : {})
+    o.d.settleMs = 1
+    ;(o.d.pane('t1') as Pane).agent = 'codex'
+    expect(await coreSend(o.d, { pane_id: 't1', text: 'a\nb' })).toEqual({ ok: true, started: false })
+    expect(o.calls.map(c => c[0])).toEqual(['terminal.send'])
+  })
+
+  it('fails a Command Code send like any other: blocked and timeout mutate once', async () => {
+    for (const [kind, code] of [['blocked', 'blocked'], ['timeout', 'timeout']]) {
+      const t = deps(() => new CoreError(kind!, 'x'))
+      ;(t.d.pane('t1') as Pane).agent = 'cmd'
+      await expect(coreSend(t.d, { pane_id: 't1', text: 'hi\nthere' })).rejects.toMatchObject({ code })
+      expect(t.calls).toHaveLength(1)
+      expect(t.calls[0]![0]).toBe('terminal.send')
+    }
+  })
+
   it('sends a multi-line "!" command as it is, in one terminal.send', async () => {
     // Claude Code 2.1.318 runs the whole text in bash mode, lines included.
     const cmd = '! cd /srv/app\nnpm run build\n. ./env.sh dev\nls dist/'

@@ -8,6 +8,31 @@ import { cleanTitle } from './paneTitle'
 export interface CoreMachine { name: string; state: string; why?: string }
 // Lossless encoding keeps IDs stable across inventory order and core restarts.
 const key = (value: string) => Array.from(new TextEncoder().encode(value), b => b.toString(16).padStart(2, '0')).join('')
+const KNOWN_AGENTS = ['claude', 'codex', 'omp', 'devin', 'opencode', 'gemini', 'aider']
+const baseName = (c: string | null | undefined) => c?.split('/').pop() || undefined
+const canonical = (s: string) => s.replace(/^claude-code$/, 'claude').replace(/^gemini-cli$/, 'gemini')
+  .replace(/^(?:command-code|command_code|commandcode|cmdc)$/, 'cmd')
+// Core's agent field is an opaque kind, not an argv path: known aliases are
+// normalized, an unknown "custom/tool" stays exactly as declared.
+const canonicalAgent = (c: string | null | undefined) => c ? canonical(c) : undefined
+const commandAgent = (c: string | null | undefined) => {
+  const name = baseName(c)
+  return name ? canonical(name) : undefined
+}
+const declaredAgent = (c: string | null | undefined) => {
+  const name = commandAgent(c)
+  return name && (KNOWN_AGENTS.includes(name) || name === 'cmd') ? name : null
+}
+// Command Code only where the name declares it: core's agent field, the launch
+// template, the reported app — or the program itself behind a known `npx` /
+// `bunx` wrapper. An operand mentioning cmd/cmdc/commandcode, a prompt, or a
+// bare `cmd`/`cmd.exe` (Windows) never proves it.
+const CMD_LAUNCH = /^(?:command-code|command_code|commandcode|cmdc)$/
+const cmdProgram = (argv: string[] | null | undefined) => {
+  const [first, second] = argv ?? []
+  const name = baseName(first === 'npx' || first === 'bunx' ? second : first)
+  return name && CMD_LAUNCH.test(name) ? 'cmd' : null
+}
 // Placement of a terminal, in this order: its herdr.space / herdr.tab labels, the tab
 // of the machine's herdr-app document whose layout holds it, then its folder
 // (one workspace per folder, one tab per terminal) when nothing says otherwise.
@@ -46,7 +71,10 @@ export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], do
     }
     const activity = coreActivity(terminal)
     const commands = [terminal.template, terminal.status?.app, ...(terminal.foreground?.argv ?? []), ...(terminal.argv ?? [])]
-    const agent = terminal.agent || (commands.map(c => c?.split('/').pop()?.replace(/^claude-code$/, 'claude').replace(/^gemini-cli$/, 'gemini')).find(c => c && ['claude', 'codex', 'omp', 'devin', 'opencode', 'gemini', 'aider'].includes(c)) ?? null)
+    const agent = canonicalAgent(terminal.agent)
+      ?? declaredAgent(terminal.template) ?? declaredAgent(terminal.status?.app)
+      ?? cmdProgram(terminal.foreground?.argv) ?? cmdProgram(terminal.argv)
+      ?? (commands.map(commandAgent).find(c => c && KNOWN_AGENTS.includes(c)) ?? null)
     if (!result.tabs!.some(t => t.id === tab)) {
       result.tabs!.push({ id: tab, workspace, machine, label: docTab?.name || coreTitle(terminal), number: result.tabs!.length + 1, layout: null })
       if (docTab) order.set(tab, space!.tabs!.indexOf(docTab))

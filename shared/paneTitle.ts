@@ -4,7 +4,8 @@ export const cleanTitle = (title: string | null | undefined) =>
   (title || '').replace(/^[^\p{L}\p{N}~/]+/u, '').trim()
 
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'tcsh', 'csh', 'nu', 'pwsh', 'login', 'tmux', 'screen'])
-const GENERIC_AGENTS = new Set(['claude', 'claude code', 'codex', 'gemini', 'gemini cli', 'opencode', 'kimi', 'agent'])
+const CMD_NAMES = ['cmd', 'cmdc', 'command code', 'command-code', 'command_code', 'commandcode']
+const GENERIC_AGENTS = new Set(['claude', 'claude code', 'codex', 'gemini', 'gemini cli', 'opencode', 'kimi', 'agent', ...CMD_NAMES])
 
 const baseName = (dir: string | null | undefined) =>
   (dir || '').replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop() || ''
@@ -62,7 +63,7 @@ function titleOf(p: Pane, agentFallback: (kind: string) => string): string {
   if (p.agent && shown && !GENERIC_AGENTS.has(shown.toLocaleLowerCase()) && shown.toLocaleLowerCase() !== p.agent.toLocaleLowerCase()) return shown
   const title = meaningfulTitle(p)
   if (title) return title
-  if (p.agent) return p.name && p.name !== p.agent ? p.name : agentFallback(p.agent)
+  if (p.agent) return p.name && p.name !== p.agent && !(p.agent === 'cmd' && CMD_NAMES.includes(p.name.toLocaleLowerCase())) ? p.name : agentFallback(p.agent)
   if (p.command) return p.command
   return baseName(p.cwd) || (p.cwd ? '/' : 'Shell')
 }
@@ -73,5 +74,6 @@ function kindLabel(kind: string | null) {
   if (kind === 'opencode') return 'OpenCode'
   if (kind === 'gemini') return 'Gemini CLI'
   if (kind === 'kimi') return 'Kimi'
+  if (kind === 'cmd') return 'Command Code'
   return kind ? kind[0]!.toUpperCase() + kind.slice(1) : 'Shell'
 }
