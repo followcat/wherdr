@@ -25,7 +25,12 @@
 - In the message field, `↑` on the first line recalls previous messages and slash commands;
   `↓` on the last line returns to newer entries, then restores your draft. History keeps the
   last 100 texts sent from this device per agent, without attachments or quoted references.
-- **Settings** in a sidebar, with desktop-only options such as the content width.
+- **Settings** in a sidebar, with desktop-only options such as the content width
+  and the interface size. Computers default to **Interface size › Large**: the
+  agent surfaces and the terminal font enlarge a notch, and the reading column
+  can grow to 1500 px while the terminal keeps its fitted width — choosing
+  **Full width** still wins over that cap. Picking **Standard** returns to the
+  usual density. The choice is kept on the device.
 
 ### On a phone
 

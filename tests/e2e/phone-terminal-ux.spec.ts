@@ -223,3 +223,171 @@ test('phone chrome: composer focus, deferred collapse, keybar and sheets', async
     await desk.close()
   }
 })
+
+// /ws/term frames this page sends: typed JSON packets (want-resize intents,
+// control requests) — distinct from the core RESIZE frames counted elsewhere.
+function watchSent(page: Page) {
+  const sent: Record<string, unknown>[] = []
+  page.on('websocket', (ws) => {
+    if (!new URL(ws.url()).pathname.endsWith('/ws/term')) return
+    ws.on('framesent', ({ payload }) => {
+      if (typeof payload !== 'string') return
+      try { sent.push(JSON.parse(payload)) } catch { /* keepalive bytes */ }
+    })
+  })
+  return sent
+}
+
+test('computer chrome: device-local interface scale, widths and terminal font', async ({ browser }, testInfo) => {
+  // A real fine-pointer desktop at 1440×900 — the computer layout this
+  // device-local setting governs; the phone layout must stay untouched.
+  const desk = await browser.newContext({ ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 }, locale: 'en-US', timezoneId: 'UTC', serviceWorkers: 'block' })
+  try {
+    const page = await desk.newPage()
+    const sent = watchSent(page)
+    const core = await startCore()
+    const cssVar = (name: string) => page.evaluate(n => getComputedStyle(document.documentElement).getPropertyValue(n).trim(), name)
+    const termFont = () => page.locator('.xterm-rows').evaluate(el => ({
+      font: parseFloat(getComputedStyle(el).fontSize),
+      row: (el.firstElementChild as HTMLElement | null)?.getBoundingClientRect().height || 0,
+    }))
+    const chatWidth = () => page.locator('.chat-list').evaluate(el => el.getBoundingClientRect().width)
+    const termWidth = () => page.locator('.xterm').evaluate(el => el.getBoundingClientRect().width)
+    const resizes = () => sent.filter(m => m.type === 'terminal.resize') as { cols: number, rows: number }[]
+    const showTerm = async () => {
+      // Desk toggles the view with .view-toggle ("Show terminal" only when the
+      // conversation is up); .mode-btn only exists in the phone chrome.
+      const toggle = page.getByRole('button', { name: 'Show terminal' })
+      if (await toggle.count()) await toggle.click()
+      await expect(page.locator('.xterm')).toBeVisible()
+    }
+    const openAgent = async () => {
+      await core.open(page, '/')
+      await page.getByRole('button', { name: /review-agent/ }).first().click()
+      await expect(page.locator('.agent-head')).toBeVisible()
+      // The view choice persists per pane: restore the conversation when the
+      // agent opens on its terminal.
+      const toggle = page.getByRole('button', { name: 'Show conversation' })
+      if (await toggle.count()) await toggle.click()
+      await expect(page.locator('.chat-list')).toBeVisible()
+    }
+    const openAppearance = async () => {
+      await core.open(page, '/#/settings?section=appearance')
+      await expect(page.locator('.settings-group').filter({ hasText: 'Interface size' })).toBeVisible()
+    }
+    try {
+      await page.addInitScript(() => { localStorage.setItem('terminalRenderer', 'html') })
+      await openAgent()
+
+      // Large is the device default on a computer: dataset applied, the side
+      // rail defaults to 300 px, and the reading column stretches to its
+      // 1500 px cap (the 1440 − 300 pane leaves 1140, so 1092 rendered).
+      await expect(page.locator('html')).toHaveAttribute('data-ui-scale', 'lg')
+      expect(await cssVar('--side')).toBe('300px')
+      expect(await cssVar('--read')).toContain('1500')
+      expect(await chatWidth()).toBe(1092)
+
+      // The terminal is built with the scaled font (12 × 1.15 → 14): bigger
+      // cells, but the terminal host still obeys terminalPixelWidth — Normal
+      // stays a 760 px column, only the reading column grew.
+      await showTerm()
+      const fLg = await termFont()
+      expect(fLg.font).toBe(14)
+      expect(await termWidth()).toBe(760)
+      await page.screenshot({ path: testInfo.outputPath('07-scale-lg-1440.png') })
+
+      // Settings → Appearance → Interface size → Standard, persisted across a
+      // reload (localStorage only, no settings API in the journey).
+      await openAppearance()
+      await page.locator('.settings-group').filter({ hasText: 'Interface size' })
+        .getByRole('radio', { name: /standard/i }).click()
+      await expect(page.locator('html')).toHaveAttribute('data-ui-scale', 'md')
+      await page.reload()
+      await expect(page.locator('html')).toHaveAttribute('data-ui-scale', 'md')
+      expect(await cssVar('--side')).toBe('340px')
+      await page.screenshot({ path: testInfo.outputPath('07-scale-settings-1440.png') })
+
+      // Back on the agent: base font, the 760 px reading column, smaller
+      // cells — the construction honored the persisted Standard choice.
+      await openAgent()
+      expect(await chatWidth()).toBe(760)
+      await showTerm()
+      const fMd = await termFont()
+      expect(fMd.font).toBe(12)
+      expect(fMd.row).toBeLessThan(fLg.row)
+      await page.screenshot({ path: testInfo.outputPath('07-scale-md-1440.png') })
+
+      // Full width wins over the Large reading-column cap — the declaration
+      // itself changes hands, and the terminal host follows it to the pane.
+      await openAppearance()
+      await page.locator('.settings-group').filter({ hasText: 'Interface size' })
+        .getByRole('radio', { name: /large/i }).click()
+      await expect(page.locator('html')).toHaveAttribute('data-ui-scale', 'lg')
+      await page.locator('.settings-group').filter({ hasText: 'Content width' })
+        .getByRole('radio', { name: /full width/i }).click()
+      await expect(page.locator('html')).toHaveAttribute('data-content-width', 'full')
+      expect(await cssVar('--read')).toContain('calc(100% - 48px)')
+      await openAgent()
+      await showTerm()
+      expect(await termWidth()).toBeGreaterThan(900)
+      await page.screenshot({ path: testInfo.outputPath('07-scale-full-1440.png') })
+
+      // Watching through a scale flip, same mounted controller: another
+      // viewer's size event puts this client on the observe lease, then a
+      // desk→phone→desk viewport transition refits its font live (14→12→14).
+      // The remote grid stays the owner's (banner + overflowing 200-col grid
+      // stand), nothing on the wire asks for control or feeds input, and the
+      // only resize packets are local want-resize intents the server drops —
+      // core sees no RESIZE frame.
+      core.event('{"method":"event","params":{"type":"size","data":{"cols":200,"rows":60}}}\n')
+      const banner = page.locator('.term-banner').filter({ hasText: 'Shown at the size of another screen.' })
+      await expect(banner).toBeVisible()
+      await expect(banner.getByRole('button', { name: 'Fit to this screen' })).toBeVisible()
+      await expect.poll(() => page.locator('.xterm').evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true)
+      sent.length = 0
+      const coreResize0 = core.inbound.filter(f => f.kind === STREAM.resize).length
+      const blocked = () => sent.filter(m => ['take.control', 'terminal.input', 'keys', 'paste'].includes(String(m.type)))
+      await page.setViewportSize({ width: 500, height: 600 })
+      await expect.poll(async () => (await termFont()).font).toBe(12)
+      await page.setViewportSize({ width: 1440, height: 900 })
+      await expect.poll(async () => (await termFont()).font).toBe(14)
+      const want = resizes().at(-1)
+      expect(want, 'the refit still publishes its local want-resize').toBeTruthy()
+      expect(want!.cols).not.toBe(200)
+      expect(blocked()).toEqual([])
+      expect(core.inbound.filter(f => f.kind === STREAM.resize).length).toBe(coreResize0)
+      await expect(banner).toBeVisible()
+      await expect.poll(() => page.locator('.xterm').evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true)
+    } finally {
+      await core.stop()
+    }
+  } finally {
+    await desk.close()
+  }
+
+  // iPhone 13: the device default is still Large in storage but nothing in
+  // the phone layout reads it — no settings entry, base terminal font.
+  const phone = await browser.newContext({ ...devices['iPhone 13'], locale: 'en-US', timezoneId: 'UTC', serviceWorkers: 'block' })
+  try {
+    const page2 = await phone.newPage()
+    const core2 = await startCore()
+    try {
+      await page2.addInitScript(() => { localStorage.setItem('terminalRenderer', 'html') })
+      await core2.open(page2, '/#/settings?section=appearance')
+      await expect(page2.locator('.settings-group').filter({ hasText: 'Interface size' })).toHaveCount(0)
+      await core2.open(page2)
+      await page2.getByRole('button', { name: /review-agent/ }).first().click()
+      const modeBtn = page2.locator('.mode-btn')
+      if (await modeBtn.getAttribute('aria-pressed') !== 'true') await modeBtn.tap()
+      await expect(page2.locator('.xterm')).toBeVisible()
+      await expect(page2.locator('.xterm-rows')).toBeAttached()
+      const font = await page2.locator('.xterm-rows').evaluate(el => parseFloat(getComputedStyle(el).fontSize))
+      expect(font).toBe(12)
+      await page2.screenshot({ path: testInfo.outputPath('07-scale-iphone.png') })
+    } finally {
+      await core2.stop()
+    }
+  } finally {
+    await phone.close()
+  }
+})

@@ -71,8 +71,9 @@ install the browsers once with `npx playwright install --with-deps chromium webk
 `npx playwright test --project=chromium-phone` (every spec); `npx playwright test tests/e2e/<name>.spec.ts --project=chromium-phone`
 runs one spec. The `webkit-phone` project (Safari's engine, iPhone 13) runs the core smoke
 (`tests/e2e/core-smoke.spec.ts`, which checks that `/ws/events` opens and sends a state frame)
-plus the terminal journeys `terminal-copy.spec.ts`, `terminal-keys.spec.ts` and
-`terminal-touch.spec.ts`, for iOS-only breakage: `npx playwright test --project=webkit-phone`.
+plus the terminal journeys `terminal-copy.spec.ts`, `terminal-keys.spec.ts`,
+`terminal-touch.spec.ts` and the phone chrome journey `phone-terminal-ux.spec.ts`,
+for iOS-only breakage: `npx playwright test --project=webkit-phone`.
 They never touch a real herdr-core session.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs the type check, all the Vitest tests, the leak

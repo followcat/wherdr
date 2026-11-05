@@ -92,6 +92,15 @@ describe('affected test selector', () => {
     expect(Object.keys(plan.domains)).toContain('phone-ux')
     expect(Object.keys(plan.e2e)).toContain('tests/e2e/phone-terminal-ux.spec.ts')
   })
+  it.each([
+    'app/utils/uiScale.ts', 'app/utils/terminalFont.ts',
+    'app/composables/useTerminal.ts', 'app/composables/useHerdr.ts',
+    'app/components/SettingsView.vue', 'app/assets/css/main.css',
+  ])('selects the scale journey for its %s integration path', file => {
+    const plan = select([file], available.concat('tests/uiScale.test.ts', 'tests/e2e/phone-terminal-ux.spec.ts'), undefined)
+    expect(Object.keys(plan.domains)).toContain('ui-scale')
+    expect(Object.keys(plan.e2e)).toContain('tests/e2e/phone-terminal-ux.spec.ts')
+  })
   it('falls back visibly for an unknown file and a missing base', () => {
     const plan = select(['unknown source.ts'], available, undefined)
     expect(plan.broad).toBe(true)
