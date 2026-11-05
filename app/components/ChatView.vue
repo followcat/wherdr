@@ -65,6 +65,42 @@ const readOnly = computed(() => offlineView.value || paneStale(props.pane))
 const cachedTag = useDelayedFlag(computed(() => savedAt.value !== null && !readOnly.value && !netDown.value), 600, 0)
 // Nothing kept and the end still loading: its shapes, after 300 ms (ChatSkeleton).
 const skeleton = useDelayedFlag(computed(() => !rendered.value && !unavailable.value && !loadError.value))
+// The conversation belongs to one process identity: the same id showing
+// another agent — or another core address, Herdr session, machine, agent
+// session, process start or working directory — is another conversation.
+// A new pane object, title, status or preview alone changes none of it, so
+// the identity is compared by value (like the status/preview watcher below).
+const identityOf = (p: Pane) => JSON.stringify([
+  herdrState.value.session, p.id, p.agent, p.coreAddress, p.agentSession, p.machine, p.bornAt, p.cwd,
+])
+// Everything shown and every request in flight belongs to this generation.
+// A reset turns the old work's success, error and cleanup into no-ops, even
+// when file, start and cursor happen to coincide with the new conversation's.
+let resetGen = 0
+const staleGen = (gen: number) => gen !== resetGen
+function resetChat(reason: ChatResponse['reason'] | null = null) {
+  resetGen++
+  chat.value = fresh()
+  unavailable.value = reason
+  integration.value = null
+  loadError.value = null
+  misses.value = noMisses()
+  savedAt.value = null
+  rendered.value = false
+  olderBusy.value = false
+  typing.value = null
+  activeThought.value = null
+  knownReplies.clear()
+  knownThoughts.clear()
+  // An interrupted jump, search or page load was the old conversation's:
+  // its flags and marks stop with it. The typed query itself is kept.
+  jumping = false
+  search.loading = false
+  search.hits = []
+  search.cur = -1
+  clearMarks()
+  synced = false
+}
 // Commands in the agent's replies can be run in its shell mode (Run buttons,
 // utils/shellCommand.ts); the replies carry `can-run` then.
 const canRun = computed(() => canRunIn(props.pane))
@@ -73,12 +109,14 @@ const canRun = computed(() => canRunIn(props.pane))
 async function restoreChat() {
   if (!mayReadOffline(readOfflineAccess())) return
   const id = props.pane.id
+  const gen = resetGen
   const saved = await readChat(id)
-  if (!saved || synced || rendered.value || unavailable.value || id !== props.pane.id) return
+  if (!saved || synced || rendered.value || unavailable.value || staleGen(gen) || id !== props.pane.id) return
   await apply(() => {
     chat.value = { ...fresh(), tail: saved.items }
     savedAt.value = saved.at
   })
+  if (staleGen(gen) || id !== props.pane.id) return
   touchChat(props.pane.id)
 }
 
@@ -99,6 +137,7 @@ function scrollToEnd(force: boolean) {
 // Updates the conversation while keeping the current reading position: stuck to the bottom if
 // we were there (or on first display), otherwise at the same place.
 async function apply(update: () => void, keepScroll = false) {
+  const gen = resetGen
   const wasNear = !held && (stick || nearEnd(120))
   const first = !rendered.value
   const before = blocks.value.length
@@ -107,6 +146,8 @@ async function apply(update: () => void, keepScroll = false) {
   if (first) shown.value = FIRST_BLOCKS
   else if (shown.value !== Infinity) shown.value += Math.max(0, blocks.value.length - before)
   await nextTick()
+  // A reset crossed the tick: the new conversation owns the bookkeeping.
+  if (staleGen(gen)) return
   rendered.value = true
   if (hiddenBlocks.value) revealLater()
   // Back to a conversation already read: same position (see readingPosition.ts),
@@ -115,6 +156,8 @@ async function apply(update: () => void, keepScroll = false) {
   if (restoring && chat.value.file && box.value) {
     restoring = false
     if (hiddenBlocks.value && restoredScrollTop(props.pane.id, chat.value.file, box.value.scrollHeight) === 0) await revealAll()
+    // The reveal may have crossed a reset: the new conversation positions itself.
+    if (staleGen(gen)) return
     restoreTop = restoredScrollTop(props.pane.id, chat.value.file, box.value.scrollHeight)
   }
   if (!jumping && searchOpen.value && search.q.length >= 2) applySearchMarks(false)
@@ -182,10 +225,13 @@ onUnmounted(() => { unmounted = true })
 // More blocks above, the reading position kept.
 async function revealMore(n: number) {
   if (!hiddenBlocks.value) return
+  const gen = resetGen
   const b = box.value
   const fromBottom = b ? b.scrollHeight - b.scrollTop : 0
   shown.value = n === Infinity ? Infinity : blocks.value.length - hiddenBlocks.value + n
   await nextTick()
+  // An old reveal must not reposition the new conversation.
+  if (staleGen(gen)) return
   if (b) b.scrollTop = b.scrollHeight - fromBottom
 }
 const revealAll = () => revealMore(Infinity)
@@ -251,18 +297,23 @@ async function copyIntegration() {
 const chatIntent = useChatIntent()
 async function loadStep(current: () => boolean): Promise<boolean> {
   const pane = props.pane.id
-  const stale = () => !current() || pane !== props.pane.id
+  const gen = resetGen
+  const stale = () => !current() || pane !== props.pane.id || staleGen(gen)
   try {
     const ready = chat.value.tailStart === null ? await chatIntent.take(props.pane) : undefined
     if (stale()) return false
     const r = ready || await api<ChatResponse>(`/api/chat?${tailQuery(pane, chat.value)}`)
     if (stale()) return false
     if (!r.available) {
-      const m = onUnavailable(misses.value, Boolean(chat.value.file) && items.value.length > 0)
-      misses.value = m.next
-      if (!m.clear) return false
-      chat.value = fresh()
-      unavailable.value = r.reason || 'unsupported'
+      // Command Code: the selection server is authoritative — there is no
+      // conversation to keep, not a transcript briefly missing. The missed-poll
+      // grace only exists for readers that can lose their file.
+      if (props.pane.agent !== 'cmd') {
+        const m = onUnavailable(misses.value, Boolean(chat.value.file) && items.value.length > 0)
+        misses.value = m.next
+        if (!m.clear) return false
+      }
+      resetChat(r.reason || 'unsupported')
       integration.value = r.reason === 'no_integration' ? r.integration || null : null
       // Conversation opened before its first reply: that reply is new.
       synced = true
@@ -275,10 +326,11 @@ async function loadStep(current: () => boolean): Promise<boolean> {
     if (r.unchanged) return false
     savedAt.value = null
     // New session (/clear, new agent), or a bottom read from another byte:
-    // we start again from the bottom (utils/chatTail.ts).
+    // we start again from the bottom (utils/chatTail.ts). A full reset: the
+    // older request still in flight belongs to the old generation — its
+    // finally will not free our busy flag, so it has to be released here.
     if (restartsTail(chat.value, r)) {
-      chat.value = fresh()
-      synced = false
+      resetChat()
       return true
     }
     // Incremental reply that does not fit our list: ask for it in full.
@@ -300,6 +352,9 @@ async function loadStep(current: () => boolean): Promise<boolean> {
       chat.value = c
       noteReplies(c.tail)
     })
+    // The tick inside apply may have crossed a reset: the items now held
+    // belong to the new conversation and must not be saved under `pane`.
+    if (stale()) return false
     saveChat(pane, items.value)
     // Paint the prepared tail first, then revalidate using its token and cursor.
     if (ready) return true
@@ -312,8 +367,16 @@ async function loadStep(current: () => boolean): Promise<boolean> {
 }
 const tailLoader = createTailLoader(loadStep)
 const loadChat = tailLoader.load
-watch(() => props.pane.id, () => tailLoader.invalidate())
-
+// ChatView stays mounted across pane changes (AgentView has no key): the
+// conversation belongs to the identity, compared by value — a new pane
+// object, title, status or preview alone resets nothing. On a real change:
+// drop the old conversation and load the new one at once, do not wait for
+// an unrelated poll.
+watch(() => identityOf(props.pane), () => {
+  resetChat()
+  tailLoader.invalidate()
+  if (!offlineView.value) loadChat()
+})
 // Older slice, keeping on screen what we were reading.
 async function loadOlder() {
   if (olderBusy.value || !(chat.value.olderCursor > 0)) return
@@ -321,8 +384,29 @@ async function loadOlder() {
   const pane = props.pane.id
   const file = chat.value.file
   const before = chat.value.olderCursor
+  const gen = resetGen
   try {
     const r = await api<ChatResponse>(`/api/chat?pane=${encodeURIComponent(pane)}&before=${before}`)
+    if (staleGen(gen)) return
+    // Command Code: an unavailable reply is authoritative on any request —
+    // the selected conversation is gone, the shown one is cleared at once.
+    if (!r.available) {
+      if (props.pane.agent === 'cmd') {
+        resetChat(r.reason || 'unsupported')
+        integration.value = r.reason === 'no_integration' ? r.integration || null : null
+        synced = true
+      }
+      return
+    }
+    // A fresh bottom is not an older page. For Command Code it means the
+    // generation moved under the request: reset and load it, never prepend
+    // that bottom as history.
+    if (!r.older && props.pane.agent === 'cmd') {
+      resetChat()
+      tailLoader.invalidate()
+      loadChat()
+      return
+    }
     if (pane !== props.pane.id || r.file !== file || chat.value.olderCursor !== before) return
     const b = box.value
     const fromBottom = b ? b.scrollHeight - b.scrollTop : 0
@@ -335,12 +419,13 @@ async function loadOlder() {
         olderCursor: (r.start ?? 0) < before ? (r.start ?? 0) : 0,
       }
     }, true)
+    if (staleGen(gen)) return
     saveChat(pane, items.value)
     if (b) b.scrollTop = b.scrollHeight - fromBottom
   } catch (err) {
-    toast((err as Error).message, true)
+    if (!staleGen(gen)) toast((err as Error).message, true)
   } finally {
-    olderBusy.value = false
+    if (!staleGen(gen)) olderBusy.value = false
   }
 }
 
@@ -1130,7 +1215,8 @@ function stepSearch(d: number) {
   focusHit()
 }
 async function loadAllOlder() {
-  while (chat.value.olderCursor > 0) {
+  const gen = resetGen
+  while (!staleGen(gen) && chat.value.olderCursor > 0) {
     const before = chat.value.olderCursor
     await loadOlder()
     if (chat.value.olderCursor === before) break
@@ -1148,12 +1234,16 @@ async function runSearch() {
     search.cur = -1
     return
   }
+  const gen = resetGen
   if (chat.value.olderCursor > 0 && !readOnly.value) {
     search.loading = true
     await loadAllOlder()
+    // A reset crossed the load: the new conversation owns marks and loading.
+    if (staleGen(gen)) return
     search.loading = false
   }
   await revealAll()
+  if (staleGen(gen)) return
   applySearchMarks(true)
 }
 async function jumpToResult() {
@@ -1161,18 +1251,22 @@ async function jumpToResult() {
   const q = route.query.q
   if (typeof raw !== 'string' || typeof q !== 'string' || !/^\d+$/.test(raw)) return
   const offset = Number(raw)
+  const gen = resetGen
   searchOpen.value = true
   search.q = q
   search.loading = true
   jumping = true
   try {
     // Each load goes up one slice until the one of the target message.
-    while (chat.value.olderCursor > offset && !readOnly.value) {
+    while (!staleGen(gen) && chat.value.olderCursor > offset && !readOnly.value) {
       const before = chat.value.olderCursor
       await loadOlder()
       if (chat.value.olderCursor >= before) break
     }
+    if (staleGen(gen)) return
     await revealAll()
+    // The reveal may have crossed a reset: marks and scroll target the new one.
+    if (staleGen(gen)) return
     const role = String(route.query.role || '')
     const ts = String(route.query.ts || '')
     const prefix = String(route.query.prefix || '')
@@ -1181,7 +1275,10 @@ async function jumpToResult() {
     const target = [...(listEl.value?.querySelectorAll<HTMLElement>('[data-hit-key]') || [])].find(el => el.dataset.hitKey === key)
     applySearchMarks(false, target)
     if (target && !search.hits.length) target.scrollIntoView({ block: 'center' })
-  } finally { jumping = false; search.loading = false }
+  } finally {
+    // A newer generation may have started its own jump: not ours to clear.
+    if (!staleGen(gen)) { jumping = false; search.loading = false }
+  }
 }
 watch(() => route.query.hit, () => { if (route.params.pane === props.pane.id) jumpToResult() })
 function closeSearch() {
