@@ -60,6 +60,7 @@ let collapseFrame = 0
 function fieldFocus() {
   cancelAnimationFrame(collapseFrame)
   collapseAfterPress = false
+  editIntent()
   fieldFocused.value = true
 }
 // focusin/focusout bubble: on .composer they see the prompt's controls, not
@@ -78,7 +79,12 @@ function fieldBlur(e?: FocusEvent) {
 function fieldFocusOut(e: FocusEvent) {
   if (withinPrompt(e.target as Element | null)) fieldBlur(e)
 }
-function holdEditor() { pointerHeld = true }
+function holdEditor(e: PointerEvent) {
+  pointerHeld = true
+  // A tap on the already-focused field is an edit request too — it fires no
+  // focus event, so only this press can invalidate a pending release.
+  if (withinPrompt(e.target as Element | null)) editIntent()
+}
 function releaseEditor() {
   pointerHeld = false
   if (!collapseAfterPress) return
@@ -107,6 +113,17 @@ onBeforeUnmount(() => {
 const composing = ref(false)
 let kbCloseWhileComposing = false
 let kbReleaseFrame = 0
+// An editing request ends the session a deferred release was scheduled for:
+// it clears the remembered close, drops the queued frame and bumps the token
+// the frame re-checks (a frame can only be queued by a compend, and a fresh
+// intent clears the flag before it).
+let focusSession = 0
+function editIntent() {
+  focusSession++
+  kbCloseWhileComposing = false
+  cancelAnimationFrame(kbReleaseFrame)
+  kbReleaseFrame = 0
+}
 watch(kbOpen, open => {
   if (open || !coarse.value || hardwareKeyboard.value) return
   if (document.activeElement === ta.value) {
@@ -118,10 +135,14 @@ watch(kbOpen, open => {
 })
 function onComposition(e: CompositionEvent) {
   composing.value = e.type === 'compositionstart'
-  if (composing.value) { kbCloseWhileComposing = false; cancelAnimationFrame(kbReleaseFrame); kbReleaseFrame = 0; return }
+  if (composing.value) { editIntent(); return }
   if (!kbCloseWhileComposing) return
   kbCloseWhileComposing = false
+  const session = focusSession
   kbReleaseFrame = requestAnimationFrame(() => {
+    // The release belongs to the session that scheduled it: a newer edit
+    // request (focus, a press, a quote) ends it even if this frame still ran.
+    if (session !== focusSession) return
     kbReleaseFrame = 0
     // The release rechecks everything that made it safe at close time:
     // keyboard back up, a hardware key, a pointer change, a moved focus.
@@ -396,6 +417,7 @@ function stop() {
   escArmed.value = !pressEscape(escArm, Date.now())
   if (escArmed.value) escTimer = setTimeout(() => { escArmed.value = false }, ESC_CONFIRM_MS)
   else interrupt()
+  editIntent()
   ta.value?.focus()
   return true
 }
@@ -589,6 +611,7 @@ function focusEnd() {
   focusAt(null)
 }
 function focusAt(at: number | null) {
+  editIntent()
   ta.value?.focus()
   nextTick(() => {
     const el = ta.value
@@ -608,7 +631,7 @@ function focusAnswer(at: number) {
 }
 
 defineExpose({
-  focus: () => ta.value?.focus(),
+  focus: () => { editIntent(); ta.value?.focus() },
   focusEnd,
   focusAnswer,
   blur: () => ta.value?.blur(),

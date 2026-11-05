@@ -584,3 +584,79 @@ test('coarse tablet: a viewport-only blip keeps a proven hardware edit', async (
     await tablet.close()
   }
 })
+
+test('coarse tablet: fresh focus survives a pending composition-close release', async ({ browser }, testInfo) => {
+  // Same iPad-class coarse context as the blip test. One JS task commits the
+  // composition and issues a fresh programmatic focus (real focus events),
+  // then awaits a real frame — the deferred release scheduled at compend runs
+  // inside that frame and must not blur the newer request. Deterministic: the
+  // stale callback runs before the awaited RAF resolves. The IME sequence is
+  // SYNTHETIC and the re-focus is programmatic (both labeled): headless has
+  // no real CJK input method.
+  const tablet = await browser.newContext({ viewport: { width: 744, height: 1000 }, hasTouch: true, isMobile: true, locale: 'en-US', timezoneId: 'UTC', serviceWorkers: 'block' })
+  try {
+    const page = await tablet.newPage()
+    const promptPosts: string[] = []
+    const interruptPosts: string[] = []
+    page.on('request', (r) => {
+      const path = new URL(r.url()).pathname
+      if (r.method() === 'POST' && path === '/api/prompt') promptPosts.push(r.url())
+      if (r.method() === 'POST' && path === '/api/interrupt') interruptPosts.push(r.url())
+    })
+    const core = await startCore()
+    const keyCalls = () => core.framed.filter(c => c.method === 'terminal.keys').map(c => (c.params as { keys: string[] }).keys)
+    const dataFrames = () => core.inbound.filter(f => f.kind === STREAM.data)
+    try {
+      await page.addInitScript(() => { localStorage.setItem('terminalRenderer', 'html') })
+      await core.open(page)
+      await page.locator('#home .card[data-pane]').click()
+      await expect(page.locator('.agent-head')).toContainText('review-agent')
+      const ta = page.locator('.composer textarea')
+      await expect(ta).toBeVisible()
+      await ta.tap()
+      await expect(ta).toBeFocused()
+      // Synthetic IME: the composition opens on the focused field.
+      await ta.evaluate((el) => {
+        el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+        el.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: '好' }))
+      })
+      // The real layout() path closes the soft keyboard mid-composition; the
+      // close is remembered instead of blurring the composition.
+      const kbClass = () => page.evaluate(() => document.body.classList.contains('kb'))
+      await page.setViewportSize({ width: 744, height: 800 })
+      await expect.poll(kbClass).toBe(true)
+      await page.setViewportSize({ width: 744, height: 1000 })
+      await expect.poll(kbClass).toBe(false)
+      // Synthetic IME + programmatic focus, ONE task ahead of the pending
+      // frame: compend+input insert the candidate, blur()/focus() issue real
+      // focus events — a new edit request — then one real frame elapses, in
+      // which the stale release callback must not blur the newer focus.
+      const keptFocus = await ta.evaluate(async (el) => {
+        el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '好' }))
+        ;(el as HTMLTextAreaElement).value = 'draft 好'
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+        el.blur()
+        el.focus()
+        ;(el as HTMLTextAreaElement).setSelectionRange((el as HTMLTextAreaElement).value.length, (el as HTMLTextAreaElement).value.length)
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        return document.activeElement === el
+      })
+      // Without session invalidation the queued release blurs the fresh focus.
+      expect(keptFocus).toBe(true)
+      await expect(ta).toHaveValue('draft 好')
+      // Native typing after the survived request lands exactly once.
+      await page.keyboard.type('kept')
+      await expect(ta).toHaveValue('draft 好kept')
+      // Focus bookkeeping never talks to the agent.
+      expect(keyCalls()).toEqual([])
+      expect(dataFrames()).toEqual([])
+      expect(promptPosts).toEqual([])
+      expect(interruptPosts).toEqual([])
+      await page.screenshot({ path: testInfo.outputPath('fix02-focus-session.png') })
+    } finally {
+      await core.stop()
+    }
+  } finally {
+    await tablet.close()
+  }
+})

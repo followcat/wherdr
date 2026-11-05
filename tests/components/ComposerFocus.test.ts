@@ -176,6 +176,81 @@ describe('Composer focus', () => {
     expect(document.activeElement).toBe(ta)
   })
 
+  // A close remembered mid-composition defers its focus release one frame. An
+  // edit request that lands between the commit and the frame belongs to a new
+  // session — the deferred cleanup must not revoke it.
+  const composingClose = async (id: string) => {
+    const { w, ta } = await mount(id)
+    focus(ta); focusIn(ta)
+    await w.find('textarea').setValue('draft ')
+    ta.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+    ta.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: '好' }))
+    kbOpen.value = true
+    await nextTick()
+    kbOpen.value = false
+    await nextTick()
+    ta.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '好' }))
+    ta.value = 'draft 好'
+    ta.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    expect(useDraft(id).text).toBe('draft 好')
+    return { w, ta }
+  }
+
+  it('a focus request before the release frame survives it', async () => {
+    const { ta } = await composingClose('w1:f12')
+    focus(ta); focusIn(ta)
+    await raf()
+    expect(document.activeElement).toBe(ta)
+    expect(prompts).toEqual([])
+  })
+
+  it('a pointerdown on the already-focused field survives the release frame', async () => {
+    const { ta } = await composingClose('w1:f13')
+    ta.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    await raf()
+    expect(document.activeElement).toBe(ta)
+    expect(prompts).toEqual([])
+  })
+
+  it('a quote focusEnd before the release frame survives it', async () => {
+    const { w, ta } = await composingClose('w1:f14')
+    ;(w.vm as unknown as { focusEnd: () => void }).focusEnd()
+    await raf()
+    expect(document.activeElement).toBe(ta)
+    expect(prompts).toEqual([])
+  })
+
+  it('an exposed focus request before the release frame survives it', async () => {
+    const { w, ta } = await composingClose('w1:f15')
+    ;(w.vm as unknown as { focus: () => void }).focus()
+    await raf()
+    expect(document.activeElement).toBe(ta)
+    expect(prompts).toEqual([])
+  })
+
+  it('an intent before the composition ends clears the remembered close entirely', async () => {
+    const { w, ta } = await mount('w1:f16')
+    focus(ta); focusIn(ta)
+    await w.find('textarea').setValue('draft ')
+    ta.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+    kbOpen.value = true
+    await nextTick()
+    kbOpen.value = false
+    await nextTick()
+    // The intent lands while the composition is still open: the remembered
+    // close is cleared here, so the commit must not queue a frame at all.
+    ta.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    ta.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '好' }))
+    ta.value = 'draft 好'
+    ta.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    expect(useDraft('w1:f16').text).toBe('draft 好')
+    await raf()
+    expect(document.activeElement).toBe(ta)
+    expect(prompts).toEqual([])
+  })
+
   // Through the real exported layout(): an iPad window 744×1000 → 744×800 →
   // 744×1000 in one orientation. kbOpen sees an open/close pair, but nothing
   // about the user's input changed — geometry is not input.
