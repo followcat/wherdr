@@ -39,7 +39,7 @@ interface CodexRollout { file: string, id: string, ts: number, mtimeMs: number }
 // Window in which a Codex's conversation is created around its appearance.
 const CODEX_BIRTH_BEFORE = 5000
 const CODEX_BIRTH_AFTER = 120000
-type Lines = string[] & { refs?: string[] }
+export type Lines = string[] & { refs?: string[] }
 type Parsed = ChatItem[] & { queue?: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], updates?: CommandCodeToolUpdate[] }
 // `anchor`: fingerprint of the bytes just above `start` (see anchorAt).
 interface TailResult { start: number, items: ChatItem[], queue: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], anchor?: string }
@@ -911,9 +911,10 @@ function commandCodeTool(name: string, input: Json): string {
 }
 
 // Outcome remembered for a call whose tool_use is in an older page than the
-// tool_result being parsed (see parseCommandCode). Images and the result
-// watch fields arrive with their tasks.
-export type CommandCodeResult = { out?: string, error?: boolean, images?: number, ref?: string, imageAt?: number }
+// tool_result being parsed (see commandCodeParser). `at` is the result's
+// absolute byte offset: the revision chronology compares, never arrival
+// order. Images and the result watch fields arrive with their tasks.
+export type CommandCodeResult = { out?: string, error?: boolean, images?: number, ref?: string, imageAt?: number, at?: number }
 
 // Ids live in the bounded maps across parses: cap their bytes (a transcript
 // can carry an arbitrarily large one). An oversized id is rejected on call
@@ -923,13 +924,76 @@ const CMD_NAME_MAX = 100
 const cmdId = (v: unknown): string | null =>
   typeof v === 'string' && v.length > 0 && Buffer.byteLength(v) <= CMD_ID_MAX ? v : null
 
-// `results`: shared bounded map that lets a result parsed in a newer page
-// attach to its call parsed later in an older one. `updates`: late outcomes
-// for calls outside the current parse (they become ChatResponse.toolUpdates).
-// Served items are never mutated after the parse returns.
-export function parseCommandCode(lines: Lines, results?: Map<string, CommandCodeResult>, updates?: CommandCodeToolUpdate[]): Parsed {
-  const items: Parsed = []
-  const tools = new Map<string, ChatItem>()
+// State of an incremental Command Code parse (see commandCodeParser):
+// the items of the bottom fed so far, their served copies, the retained
+// call index, the outcome bookkeeping, and the opt-in cross-page map.
+interface CmdParseState {
+  items: ChatItem[]
+  copies: WeakMap<ChatItem, ChatItem>
+  tools: Map<string, ChatItem>
+  // Outcomes already on the wire per id: a repeat of the same revision must
+  // not amplify into repeated serialized updates, a changed outcome at the
+  // same offset (a rewritten record) still emits.
+  emitted: Map<string, CommandCodeToolUpdate>
+  pending: Map<string, CommandCodeToolUpdate>
+  updates: CommandCodeToolUpdate[]
+  // The cross-page orphan map is opt-in: without it a result before its
+  // call is dropped for this parse, exactly as a lone window always was.
+  results?: Map<string, CommandCodeResult>
+}
+
+// Chronology on absolute result byte offsets (`at`): an outcome replaces
+// only an equal-or-older one, whichever order pages were parsed in.
+const cmdNewer = (at: number | undefined, was: number | undefined) => (at ?? -Infinity) >= (was ?? -Infinity)
+// Absolute result offset of a "start:length" ref: only a well-formed,
+// safe-integer position is a revision — anything else is unknown, never a
+// NaN/Infinity offset on the wire or in the maps.
+const cmdRefAt = (ref: string | undefined): number | undefined => {
+  const m = ref && /^(\d+):(\d+)$/.exec(ref)
+  if (!m) return undefined
+  const at = Number(m[1])
+  const n = Number(m[2])
+  return at >= 0 && n >= 0 && Number.isSafeInteger(at) && Number.isSafeInteger(n) ? at : undefined
+}
+
+// Apply a result to a call item, if it is not older than what is shown.
+function cmdApply(p: CmdParseState, t: ChatItem, rec: CommandCodeResult) {
+  if (!cmdNewer(rec.at, t.toolAt)) return
+  p.copies.delete(t)
+  t.out = rec.out
+  t.error = rec.error || undefined
+  t.images = rec.images
+  t.ref = rec.ref
+  t.imageAt = rec.imageAt
+  if (rec.at !== undefined) t.toolAt = rec.at
+}
+
+// One update per id per feed, carrying the newest absolute revision.
+function cmdEmit(p: CmdParseState, id: string, rec: CommandCodeResult) {
+  const u: CommandCodeToolUpdate = { id, out: rec.out ?? '', error: rec.error === true, images: rec.images ?? 0, ref: rec.ref ?? '', imageAt: rec.imageAt ?? 0 }
+  if (rec.at !== undefined) u.at = rec.at
+  const was = p.pending.get(id)
+  if (was && !cmdNewer(u.at, was.at)) return
+  if (was) p.pending.delete(id)
+  p.pending.set(id, u)
+}
+
+// The normalized outcome an update carries, without its revision: two
+// updates of one revision differ only by this (a record rewritten in place).
+const cmdSame = (a: CommandCodeToolUpdate, b: CommandCodeToolUpdate) =>
+  a.out === b.out && a.error === b.error && a.images === b.images && a.ref === b.ref && a.imageAt === b.imageAt
+
+// Command Code's parser, fed complete lines appended to a transcript: each
+// poll feeds only the new lines (a transcript grows); old lines are never
+// re-parsed. `tools` indexes retained calls for constant-time result
+// matching — its entries live and die with their items (see drop), never
+// with the separate bounded orphan-outcome map (`results`). Served items
+// are immutable: result() hands out copies made once per item (chatDelta
+// signs each); an outcome applied to a call already served touches it, so
+// the next result() returns a fresh object while served ones never change.
+
+function feedCommandCode(p: CmdParseState, lines: Lines) {
+  const { items, tools, results } = p
   for (let i = 0; i < lines.length; i++) {
     let d: Json
     try { d = JSON.parse(lines[i]!) } catch { continue }
@@ -959,8 +1023,9 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
           if (!id) continue
           const raw = typeof part.name === 'string' ? part.name : 'Tool'
           const t: ChatItem = { role: 'tool', name: clip(raw, CMD_NAME_MAX), toolId: id, text: clip(commandCodeTool(raw, part.input), 300), ts }
-          // Its result may have been parsed in a newer page (a page boundary
-          // between the call and the result): apply the remembered outcome.
+          // Its result may have been parsed in a newer page (a page
+          // boundary between the call and the result): the remembered
+          // outcome applies — then the page's own older result cannot.
           const saved = results?.get(id)
           if (saved) {
             t.out = saved.out
@@ -968,6 +1033,7 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
             t.images = saved.images
             t.ref = saved.ref
             t.imageAt = saved.imageAt
+            if (saved.at !== undefined) t.toolAt = saved.at
           }
           tools.set(id, t)
           items.push(t)
@@ -975,9 +1041,9 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
           own++
         }
       }
-      // All accepted own images of the message form one ordered group on its
-      // last text reply (Copy/Reply identity stays the text's); with no text
-      // they are a single image reply — indices are the line's order.
+      // All accepted own images of the message form one ordered group on
+      // its last text reply (Copy/Reply identity stays the text's); with
+      // no text they are a single image reply — indices are the line's.
       if (own) {
         if (lastText) { lastText.images = own; lastText.ref = ref }
         else items.push(replyItem({ role: 'assistant', text: '', images: own, ref, ts }, ref))
@@ -1012,39 +1078,102 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
         const n = Array.isArray(part.content) ? part.content.reduce((s: number, q: Json) => s + (q && cmdLineImage(q) ? 1 : 0), 0) : 0
         const id = cmdId(part.tool_use_id)
         if (!id) { toolImages += n; continue }
-        const t = tools.get(id)
         const out = commandCodeText(part.content)
         // A result is the complete replacement of what the call showed: an
         // empty or successful one clears out/error/images instead of
-        // preserving them.
-        const rec: CommandCodeResult = { out: out ? clip(out, 8000) : undefined, error: part.is_error === true }
+        // preserving them. `at` is its absolute position: its revision.
+        const rec: CommandCodeResult = { out: out ? clip(out, 8000) : undefined, error: part.is_error === true, at: cmdRefAt(ref) }
         if (n && ref) {
           rec.images = n
           rec.ref = ref
           if (toolImages) rec.imageAt = toolImages
         }
-        if (t) {
-          t.out = rec.out
-          t.error = rec.error || undefined
-          t.images = rec.images
-          t.ref = rec.ref
-          t.imageAt = rec.imageAt
-        } else if (results) {
-          // The call is in an older page: remember the complete outcome for
-          // the page that will render it (a newer result replaces it whole).
-          results.set(id, rec)
-          if (results.size > 4096) results.delete(results.keys().next().value!)
-          // The call may already be shown in an older page the client
-          // loaded: send the complete outcome so it updates — or clears.
-          updates?.push({ id, out: rec.out ?? '', error: rec.error === true, images: rec.images ?? 0, ref: rec.ref ?? '', imageAt: rec.imageAt ?? 0 })
+        const t = tools.get(id)
+        if (results) {
+          // The newest known outcome wins — this feed's record, the shared
+          // entry, or the outcome already shown on the call itself: a shared
+          // eviction must not let an older record downgrade other parsers.
+          const saved = results.get(id)
+          const shown: CommandCodeResult | undefined = t && t.toolAt !== undefined
+            ? { out: t.out, error: t.error === true, images: t.images, ref: t.ref, imageAt: t.imageAt, at: t.toolAt }
+            : undefined
+          let best = rec
+          if (saved && !cmdNewer(best.at, saved.at)) best = saved
+          if (shown && !cmdNewer(best.at, shown.at)) best = shown
+          if (best !== saved) {
+            results.set(id, best)
+            if (results.size > 4096) results.delete(results.keys().next().value!)
+            // The call may already be shown in an older page the client
+            // loaded: send the complete outcome so it updates — or clears.
+            if (!t) cmdEmit(p, id, best)
+          }
         }
+        // Apply the newest outcome known for this call: the shared map may
+        // hold one another parser stored later than this feed's record.
+        if (t) cmdApply(p, t, results?.get(id) ?? rec)
         toolImages += n
       }
     }
     const human = !hidden && (source === 'user' || (!source && !content.some((p: Json) => p && p.type === 'tool_result')))
     if (human && (text.trim() || images)) items.push({ role: 'user', text: clip(text.trim()), ...(images ? { images, ref } : {}), ts })
   }
-  return items
+}
+
+export type CommandCodeParser = ReturnType<typeof commandCodeParser>
+export function commandCodeParser(shared?: Map<string, CommandCodeResult>) {
+  const p: CmdParseState = {
+    items: [],
+    copies: new WeakMap(),
+    tools: new Map(),
+    emitted: new Map(),
+    pending: new Map(),
+    updates: [],
+    results: shared,
+  }
+
+  // Items below `n` left the bottom (the reader's window slid): their calls
+  // leave the index with them; a later result then reports as an update.
+  function drop(n: number) {
+    const gone = new Set(p.items.splice(0, n))
+    if (!gone.size) return
+    for (const [id, t] of p.tools) if (gone.has(t)) p.tools.delete(id)
+  }
+
+  function result(): Parsed {
+    // Only a revision the wire has not carried crosses into the updates: a
+    // newer offset, or the same offset holding a different outcome.
+    for (const u of p.pending.values()) {
+      const e = p.emitted.get(u.id)
+      if (u.at === undefined || e === undefined || u.at > (e.at ?? -Infinity) || (u.at === e.at && !cmdSame(u, e))) {
+        p.updates.push(u)
+        if (u.at !== undefined) p.emitted.set(u.id, u)
+      }
+    }
+    p.pending.clear()
+    while (p.emitted.size > 4096) p.emitted.delete(p.emitted.keys().next().value!)
+    const out: Parsed = p.items.map((orig) => {
+      let it = p.copies.get(orig)
+      if (it) return it
+      it = { ...orig }
+      p.copies.set(orig, it)
+      const key = replyKeys.get(orig)
+      if (key) replyKeys.set(it, key)
+      return it
+    })
+    if (p.updates.length) out.updates = p.updates.splice(0)
+    return out
+  }
+  return { feed: (lines: Lines) => feedCommandCode(p, lines), result, drop }
+}
+
+// Stateless whole-lines parse: one feed of the window given. `updates`:
+// late outcomes for calls outside the parse (ChatResponse.toolUpdates).
+export function parseCommandCode(lines: Lines, results?: Map<string, CommandCodeResult>, updates?: CommandCodeToolUpdate[]): Parsed {
+  const p = commandCodeParser(results)
+  p.feed(lines)
+  const out = p.result()
+  if (updates && out.updates) updates.push(...out.updates)
+  return out
 }
 
 // `base`: position (in bytes) of `text` in the file. Each line keeps

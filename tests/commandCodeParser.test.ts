@@ -126,14 +126,15 @@ describe('parseLines for Command Code', () => {
     // Newer page first: the result's call lives in an older page.
     const newer = parse(J(results('u1', [{ tool_use_id: 't1', content: 'run ok' }])), map)
     expect(newer.length).toBe(0)
-    expect(newer.updates).toEqual([{ id: 't1', out: 'run ok', error: false, images: 0, ref: '', imageAt: 0 }])
+    expect(newer.updates).toMatchObject([{ id: 't1', out: 'run ok', error: false, images: 0, ref: '', imageAt: 0, at: expect.any(Number) }])
     // Older page later: the call inherits the remembered outcome.
     const older = parse(J(assistant('a1', [{ type: 'tool_use', id: 't1', name: 'shell_command', input: { command: 'npm test' } }], 5)), map)
     expect(older[0]).toMatchObject({ role: 'tool', toolId: 't1', out: 'run ok' })
     // Served items are never mutated afterwards: a second result replaces
     // the remembered outcome whole and does not touch the parsed item.
     parse(J(results('u2', [{ tool_use_id: 't1', content: '', is_error: true }])), map)
-    expect(map.get('t1')).toEqual({ error: true }) // out dropped, not preserved
+    expect(map.get('t1')).toMatchObject({ error: true }) // out dropped, not preserved
+    expect(map.get('t1')!.out).toBeUndefined()
     expect(older[0]).toMatchObject({ role: 'tool', toolId: 't1', out: 'run ok' })
     const last = parse(J(assistant('a2', [{ type: 'tool_use', id: 't1', name: 'shell_command', input: { command: 'npm test' } }], 5)), map)
     expect(last[0]).toMatchObject({ role: 'tool', toolId: 't1', error: true })
@@ -157,10 +158,11 @@ describe('parseLines for Command Code', () => {
     // the emitted update can clear out/error on a client page already shown.
     const map = new Map<string, CommandCodeResult>()
     parse(J(results('u2', [{ tool_use_id: 't2', content: 'kept' }])), map)
-    expect(map.get('t2')).toEqual({ out: 'kept', error: false })
+    expect(map.get('t2')).toMatchObject({ out: 'kept', error: false })
     const clearer = parse(J(results('u3', [{ tool_use_id: 't2', content: '' }])), map)
-    expect(map.get('t2')).toEqual({ error: false })
-    expect(clearer.updates).toEqual([{ id: 't2', out: '', error: false, images: 0, ref: '', imageAt: 0 }])
+    expect(map.get('t2')).toMatchObject({ error: false })
+    expect(map.get('t2')!.out).toBeUndefined()
+    expect(clearer.updates).toMatchObject([{ id: 't2', out: '', error: false, images: 0, ref: '', imageAt: 0 }])
     const older = parse(J(assistant('a2', [{ type: 'tool_use', id: 't2', name: 'shell_command', input: { command: 'x' } }], 5)), map)
     expect(older[0]!.out).toBeUndefined()
     expect(older[0]!.error).toBeUndefined()
@@ -222,7 +224,7 @@ describe('parseLines for Command Code', () => {
     expect(items.map(i => i.toolId)).toEqual(['x'.repeat(128), 'ok-1'])
     expect(items[1]!.name!.length).toBeLessThanOrEqual(101)
     expect(map.has(huge)).toBe(false)
-    expect(map.get('other-page')).toEqual({ out: 'kept', error: false })
+    expect(map.get('other-page')).toMatchObject({ out: 'kept', error: false })
   })
 
   it('bounds the result map and drops the oldest entry', () => {
@@ -383,14 +385,15 @@ describe('Command Code images', () => {
     const newer = parse(J(user('u1', [
       { type: 'tool_result', tool_use_id: 't1', content: [img(PNG)] },
     ], 10)), map)
-    expect(newer.updates).toEqual([{ id: 't1', out: '', error: false, images: 1, ref: expect.any(String), imageAt: 0 }])
+    expect(newer.updates).toMatchObject([{ id: 't1', out: '', error: false, images: 1, ref: expect.any(String), imageAt: 0, at: expect.any(Number) }])
     const older = parse(J(assistant('a1', [{ type: 'tool_use', id: 't1', name: 'read_file', input: {} }], 5)), map)
     expect(older[0]).toMatchObject({ toolId: 't1', images: 1, ref: expect.any(String) })
     expect(older[0]!.imageAt ?? 0).toBe(0)
     // A complete replacement result clears images/ref/imageAt, as out/error.
     const clearer = parse(J(user('u2', [{ type: 'tool_result', tool_use_id: 't1', content: 'just text' }], 20)), map)
-    expect(map.get('t1')).toEqual({ out: 'just text', error: false })
-    expect(clearer.updates).toEqual([{ id: 't1', out: 'just text', error: false, images: 0, ref: '', imageAt: 0 }])
+    expect(map.get('t1')).toMatchObject({ out: 'just text', error: false })
+    expect(map.get('t1')!.images).toBeUndefined()
+    expect(clearer.updates).toMatchObject([{ id: 't1', out: 'just text', error: false, images: 0, ref: '', imageAt: 0 }])
     const last = parse(J(assistant('a2', [{ type: 'tool_use', id: 't1', name: 'read_file', input: {} }], 5)), map)
     expect(last[0]!.images).toBeUndefined()
     expect(last[0]!.ref).toBeUndefined()

@@ -247,6 +247,9 @@ export interface ChatItem {
   // Command Code tool call id: lets a result appended after the page was
   // loaded update the item already shown (see toolUpdates).
   toolId?: string
+  // Command Code tool call: revision (absolute result byte offset) of the
+  // outcome applied to this item — compared when late outcomes arrive.
+  toolAt?: number
   // Output of a 'bash' or 'cmd' command (stdout / stderr).
   out?: string
   err?: string
@@ -297,6 +300,9 @@ export interface ClaudeQueueEntry { text: string, ts: string | null, images?: nu
 // Outcome appended to a Command Code tool call (see ChatResponse.toolUpdates).
 export interface CommandCodeToolUpdate {
   id: string
+  // Absolute byte offset of the result this outcome comes from: its
+  // revision — an older offset arriving later must not replace a newer one.
+  at?: number
   out?: string
   error?: boolean
   images?: number
