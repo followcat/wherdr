@@ -526,7 +526,12 @@ describe('Command Code images', () => {
     const reads: [string, number, number][] = []
     const ENOENT = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
     const fs: MachineFs = {
-      stat: async () => { throw ENOENT() },
+      // The selected file stats; anything else is absent (the guarded path
+      // needs the observation's stat before it reads).
+      stat: async p => {
+        if (p !== file) throw ENOENT()
+        return { size: raw.length, mtimeMs: 1, isFile: true, isDir: false }
+      },
       statMany: async () => [],
       readdir: async () => { throw ENOENT() },
       readFile: async () => { throw ENOENT() },
@@ -548,7 +553,11 @@ describe('Command Code images', () => {
     const reads: [string, number, number][] = []
     const ENOENT = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
     const fs: MachineFs = {
-      stat: async () => { throw ENOENT() },
+      // The selected file stats; anything else is absent.
+      stat: async p => {
+        if (p !== file) throw ENOENT()
+        return { size: Buffer.byteLength(raw), mtimeMs: 1, isFile: true, isDir: false }
+      },
       statMany: async () => [],
       readdir: async () => { throw ENOENT() },
       readFile: async () => { throw ENOENT() },

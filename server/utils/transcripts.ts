@@ -2072,12 +2072,34 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       // be trusted before its awaited reads run — unknown is a read error.
       const o = await cmd.observe(loc.file)
       if (!o.st) throw new Error('command code transcript state unknown')
-      // Purge on proven currency only, as in chat: a stale resolved
-      // observation must not clear a newer generation's caches first.
-      if (o.invalidated) {
-        if (cmd.stampOf(loc.file) !== o.stamp) throw new Error('command code transcript generation changed')
-        purgeFile(loc.file)
+      // The captured handle is bound and proven current before any purge:
+      // a stale resolved observation must not clear a newer generation's
+      // caches and then fail this check anyway.
+      const h = cmd.handle(loc.file)
+      if (h.stamp !== o.stamp) throw new Error('command code transcript generation changed')
+      if (o.invalidated) purgeFile(loc.file)
+      // A generation-bound view of the disk: every awaited stat/read of
+      // the search is enclosed by the liveness check — no raw fs.read
+      // bypass — and the client deadline reaches physical reads.
+      const stamp = h.stamp
+      const bound: MachineFs = {
+        ...fs,
+        stat: async p => {
+          if (!cmd.io.live(p, stamp)) throw new Error('command code transcript generation changed')
+          const st = await fs.stat(p)
+          if (!cmd.io.live(p, stamp)) throw new Error('command code transcript generation changed')
+          return st
+        },
+        read: async (p, start, len, timeoutMs) => {
+          const buf = await cmd.io.readExact(p, start, len, stamp, timeoutMs)
+          if (!buf) throw new Error('command code transcript read unknown')
+          return buf
+        },
       }
+      const r = await searchFile(bound, loc.file, kind, home, query, deadline)
+      // Hits of a moved generation are another transcript's: never served.
+      if (!cmd.io.live(loc.file, stamp)) throw new Error('command code transcript generation changed')
+      return { ...r, kind }
     }
     return { ...await searchFile(fs, loc.file, kind, home, query, deadline), kind }
   }
@@ -2261,10 +2283,42 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     const off = Number(m[1])
     const len = Number(m[2])
     if (len > 60 * 1024 * 1024) return null
+    const kind = transcriptKind(loc.file) || pane.agent
+    if (kind === 'cmd') {
+      // The extent is rejected before even the observation: a warm file
+      // reads its result watches inside observe — an unsafe range must
+      // start no IO at all.
+      if (!Number.isSafeInteger(off) || off < 0 || !Number.isSafeInteger(len)
+        || len < 0 || len > 60 * 1024 * 1024 || !Number.isSafeInteger(off + len)) return null
+      // The ref is `offset:length` — it carries no stamp. What bounds the
+      // request is the selected file's basename (above) and the current
+      // observation's generation; a captured read detached in flight
+      // serves nothing.
+      const o = await cmd.observe(loc.file).catch(() => null)
+      if (!o || !o.st || !o.st.isFile) return null
+      const h = cmd.handle(loc.file)
+      if (h.stamp !== o.stamp) return null
+      if (o.invalidated) purgeFile(loc.file)
+      // readExact rejects unsafe/negative/noninteger/sum/over-limit ranges
+      // before any allocation and answers only with exact coverage under
+      // a live generation — a failed or detached read is no image. Its own
+      // check runs before its promise resolves; this caller resumes in a
+      // later continuation, so an invalidation queued in between must be
+      // caught here too before the bytes are parsed.
+      const buf = await cmd.io.readExact(loc.file, off, len, h.stamp)
+      if (!buf || !cmd.io.live(loc.file, h.stamp)) return null
+      let d: Json
+      try { d = JSON.parse(buf.toString('utf8')) }
+      catch { return null }
+      const img = extractImage(d, index, kind)
+      // Command Code images are inline data only — never a blob/file/URL
+      // fetch (cmdLineImage never yields one, keep it unreachable anyway).
+      return img && !('blob' in img) ? img : null
+    }
     let d: Json
     try { d = JSON.parse((await fs.read(loc.file, off, len)).toString('utf8')) }
     catch { return null }
-    const img = extractImage(d, index, transcriptKind(loc.file) || pane.agent)
+    const img = extractImage(d, index, kind)
     if (!img || !('blob' in img)) return img
     const blob = path.join(home, '.omp/agent/blobs', img.blob)
     try {

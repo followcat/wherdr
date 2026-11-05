@@ -15,8 +15,9 @@ export interface CommandCodeIo {
   // `fs.read` answering only with the bytes asked for, under `stamp` —
   // null when the answer is unknown (failed, short, or detached in
   // flight). The returned buffer is the raw bytes: callers fingerprint
-  // against it directly, never a re-encoded copy.
-  readExact(file: string, start: number, len: number, stamp: number): Promise<Buffer | null>
+  // against it directly, never a re-encoded copy. `timeoutMs` forwards
+  // the caller's deadline to the physical read (search windows).
+  readExact(file: string, start: number, len: number, stamp: number, timeoutMs?: number): Promise<Buffer | null>
 }
 
 // One context per `stampOf` source — the state service shares its own, so
@@ -37,10 +38,10 @@ export function commandCodeIo({ fs, stampOf }: { fs: MachineFs, stampOf: (file: 
     Number.isSafeInteger(len) && len >= 0 && len <= READ_LIMIT &&
     Number.isSafeInteger(start + len)
 
-  async function readExact(file: string, start: number, len: number, stamp: number): Promise<Buffer | null> {
+  async function readExact(file: string, start: number, len: number, stamp: number, timeoutMs?: number): Promise<Buffer | null> {
     if (!live(file, stamp) || !valid(start, len)) return null
     let buf: Buffer
-    try { buf = await fs.read(file, start, len) }
+    try { buf = await fs.read(file, start, len, timeoutMs) }
     catch { return null }
     return live(file, stamp) && buf.length === len ? buf : null
   }
