@@ -5,6 +5,7 @@
 // lightbox, dividers) stay with that component.
 
 export type ShortcutId = 'search-all' | 'search-chat' | 'toggle-term' | 'stop' | 'prev-agent' | 'next-agent'
+  | 'prev-tab' | 'next-tab'
   | 'new-space' | 'new-tab' | 'close-pane' | 'open-editor' | 'settings' | 'help'
 
 type Mod = 'mod' | 'ctrl' | 'alt' | 'shift'
@@ -44,8 +45,14 @@ export const SHORTCUTS: readonly Shortcut[] = [
   // the key left of 1 as IntlBackslash (elsewhere it is the < key next to Shift).
   { id: 'toggle-term', mods: ['ctrl'], codes: ['Backquote'], macCodes: ['Backquote', 'IntlBackslash'], fields: 'any', terminal: true, kbds: ['ctrl', '`'] },
   { id: 'stop', mods: [], key: 'escape', fields: 'empty', terminal: false, kbds: ['escape'] },
-  { id: 'prev-agent', mods: ['alt'], key: 'arrowup', fields: 'empty', terminal: false, repeat: true, kbds: ['alt', 'arrowup'] },
-  { id: 'next-agent', mods: ['alt'], key: 'arrowdown', fields: 'empty', terminal: false, repeat: true, kbds: ['alt', 'arrowdown'] },
+  // HARDWARE Alt+arrows are app navigation in this fork, never text or
+  // terminal input: taken at the window before a focused xterm or field could
+  // see them, and consumed even with nothing to step to (Alt+←/→ = browser
+  // Back/Forward). The virtual keybar's Alt+arrow stays a literal agent chord.
+  { id: 'prev-agent', mods: ['alt'], key: 'arrowup', fields: 'any', terminal: true, capture: true, repeat: true, kbds: ['alt', 'arrowup'] },
+  { id: 'next-agent', mods: ['alt'], key: 'arrowdown', fields: 'any', terminal: true, capture: true, repeat: true, kbds: ['alt', 'arrowdown'] },
+  { id: 'prev-tab', mods: ['alt'], key: 'arrowleft', fields: 'any', terminal: true, capture: true, repeat: true, kbds: ['alt', 'arrowleft'] },
+  { id: 'next-tab', mods: ['alt'], key: 'arrowright', fields: 'any', terminal: true, capture: true, repeat: true, kbds: ['alt', 'arrowright'] },
   // Ctrl/⌘+N, T, W belong to the browser (pages never see them in Chromium).
   { id: 'new-space', mods: ['mod', 'alt'], key: 'n', fields: 'any', terminal: true, capture: true, kbds: ['meta', 'alt', 'N'] },
   { id: 'new-tab', mods: ['mod', 'alt'], key: 't', fields: 'any', terminal: true, capture: true, kbds: ['meta', 'alt', 'T'] },

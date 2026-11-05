@@ -68,7 +68,12 @@ it('shows the same reference component in Settings and the shortcut sheet', asyn
   const sheet = await mountSuspended(ShortcutsSheet, { global: { stubs: { AppSheet: { template: '<div><slot /></div>' } } } })
   try {
     expect(w.getComponent(ShortcutsReference).isVisible()).toBe(true)
-    expect(w.getComponent(ShortcutsReference).findAll('.shortcut-row')).toHaveLength(17)
+    const rows = w.getComponent(ShortcutsReference).findAll('.shortcut-row')
+    expect(rows).toHaveLength(18)
+    // The hardware Alt+←/→ tab step is a supported v3 row, not filtered v2-only.
+    const tabRow = rows.find(r => r.text().includes('tab of this space'))!
+    expect(tabRow.find('dt').text()).toBe('Previous / next tab of this space')
+    expect(tabRow.findAll('kbd').map(k => k.text())).toEqual(['Alt', '←', 'Alt', '→'])
     expect(sheet.findComponent(ShortcutsReference).exists()).toBe(true)
   } finally { w.unmount(); sheet.unmount() }
 })
