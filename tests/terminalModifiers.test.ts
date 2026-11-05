@@ -94,10 +94,12 @@ describe('one-shot terminal modifiers', () => {
     composition.end()
     expect(action('a', ['ctrl'])).toEqual({ text: 'a' }) // committed 'a' stays text
     expect(action('a', ['ctrl'])).toEqual({ key: 'a' })  // a real keystroke fires
-    // A cancelled composition produces no data; the next real keydown drops
-    // the stale flag before its keystroke can be eaten.
+    // A cancelled composition produces no data; once the settle boundary
+    // passes, the next real keydown drops the stale flag before its
+    // keystroke can be eaten.
     composition.start()
-    composition.end()
+    const cancel = composition.end()
+    composition.settle(cancel)
     composition.keydown()
     expect(action('c', ['ctrl'])).toEqual({ key: 'c' })
     // Safari ends a composition with a keyCode 229 keydown before the
@@ -109,6 +111,32 @@ describe('one-shot terminal modifiers', () => {
     composition.keydown({ isComposing: true })
     composition.keydown({ keyCode: 37 })
     expect(action('\x1b[D', ['alt'])).toEqual({ key: virtualInputKey('\x1b[D') })
+  })
+
+  it.each([
+    { mods: ['ctrl'], commit: 'a' },
+    { mods: ['ctrl'], commit: '好' },
+    { mods: ['alt'], commit: 'a' },
+  ])('keeps a pending commit through an ordinary keydown inside the finalize window: %o', ({ mods: armed, commit }) => {
+    const composition = createCompositionTracker()
+    let mods = armed
+    // Mirrors useTerminal's onData: a commit clears the armed modifiers like
+    // any text; a transportable keystroke spends them as a one-shot chord.
+    const action = (d: string) => {
+      if (composition.active || composition.takeEnded()) { mods = []; return { text: d } }
+      const key = mods.length ? virtualInputKey(d) : null
+      if (key) mods = []
+      return key ? { key } : { text: d }
+    }
+    composition.start()
+    composition.end()
+    // xterm flushes the deferred commit inside its own keydown handler —
+    // after this capture listener runs. The flag must survive so the flushed
+    // commit stays text and the arrow that triggered the flush stays a key.
+    composition.keydown({ keyCode: 37 })
+    expect(composition.pending).toBe(true)
+    expect(action(commit)).toEqual({ text: commit })
+    expect(action('\x1b[D')).toEqual({ text: '\x1b[D' }) // armed modifier spent by the commit
   })
 
   it.each([{ keyCode: 229 }, { isComposing: true }])('keeps the IME commit guard for a composition keydown: %o', event => {

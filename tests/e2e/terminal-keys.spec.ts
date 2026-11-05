@@ -73,6 +73,29 @@ test('IME commits stay exact text through compositionend, keyCode 229 and cancel
     await expect.poll(() => keyCalls(core).slice(keys)).toEqual([['ctrl+a']])
     keys = keyCalls(core).length
 
+    // An ordinary key that lands before xterm's 0ms finalize timer finds the
+    // commit still pending: xterm flushes it synchronously inside its own
+    // keydown — 'a' is DATA first, the arrow is DATA after, never ctrl+a.
+    await ctrl.click()
+    await ta.evaluate(el => {
+      el.value = ''
+      el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+      el.value = 'a'
+      el.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: 'a' }))
+    })
+    // xterm's compositionupdate timer establishes the commit's end position.
+    await tick(page)
+    const pending = dataIn(core).length
+    await ta.evaluate(el => {
+      el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: 'a' }))
+      el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'ArrowLeft', keyCode: 37, isComposing: false }))
+    })
+    await expect.poll(async () => { await tick(page); return dataIn(core).length }).toBe(pending + 2)
+    expect(dataIn(core).slice(pending)).toEqual(['a', '\x1b[D'])
+    expect(keyCalls(core).slice(keys)).toEqual([])
+    await expect(ctrl).toHaveAttribute('aria-pressed', 'false')
+    keys = keyCalls(core).length
+
     // An armed modifier never turns a commit into a chord: candidate edits
     // while composing send nothing, the pinyin commit arrives once, the
     // modifier clears and no warning appears.

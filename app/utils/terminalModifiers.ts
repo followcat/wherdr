@@ -83,9 +83,12 @@ export function createCompositionTracker() {
     end() { active = false; ended = true; pending = true; return ++gen },
     // A keydown outside any composition is a real keystroke: drop a stale
     // flag left behind by a cancelled composition that produced no text.
+    // Inside the finalize window the key reaches this capture listener before
+    // xterm's own keydown handler flushes the pending commit, so the window
+    // must outlive that keydown — only settle(gen)/takeEnded own `pending`.
     // Safari's keyCode 229 keydown still belongs to the composition.
     keydown(e?: { isComposing?: boolean, keyCode?: number }) {
-      if (!active && !e?.isComposing && e?.keyCode !== 229) { ended = false; pending = false }
+      if (!active && !pending && !e?.isComposing && e?.keyCode !== 229) ended = false
     },
     get active() { return active },
     // The deferred-commit flag without consuming it: a caller that refuses an
