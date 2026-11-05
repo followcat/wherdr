@@ -11,7 +11,7 @@ vi.mock('@xterm/xterm', () => ({ Terminal: class {
   write(_data: unknown, done?: () => void) { done?.() }
   resize() {} reset() {}
   loadAddon() {} open() {} dispose() {} refresh() {} attachCustomWheelEventHandler() {}
-  attachCustomKeyEventHandler() {} onData() {} onBinary() {}
+  attachCustomKeyEventHandler() {} onData() {} onBinary() {} onScroll() {}
   constructor() { terms.push(this) }
 } }))
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { proposeDimensions() { return null } } }))

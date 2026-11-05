@@ -89,8 +89,15 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     const screen = term?.element?.querySelector('.xterm-screen') as HTMLElement | null
     if (!term || !screen || !el) return
     const shown = el.clientHeight - (screen.offsetTop || 0)
-    const over = coreStream && !coreControl ? (term.buffer.active.cursorY + 1) * (screen.offsetHeight / term.rows) - shown : 0
-    screen.style.transform = over > 0 ? `translateY(${-Math.ceil(over)}px)` : ''
+    const rowPx = screen.offsetHeight / term.rows
+    const over = coreStream && !coreControl ? (term.buffer.active.cursorY + 1) * rowPx - shown : 0
+    // Scrolled back into retained history the lift releases toward the screen
+    // top as viewportY falls, so the oldest row can reach the clipped host —
+    // at the live tail (viewportY === baseY) it is the usual cursor follow.
+    const buf = term.buffer.active
+    const cap = buf.viewportY < buf.baseY ? buf.viewportY * rowPx : Infinity
+    const lift = Math.min(Math.max(over, 0), cap)
+    screen.style.transform = lift > 0 ? `translateY(${-Math.ceil(lift)}px)` : ''
   }
   function offerFit() {
     followCursor()
@@ -276,6 +283,13 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       const bytes = Uint8Array.from(d, c => c.charCodeAt(0) & 0xff)
       sendTerm({ type: 'terminal.input', bytes: bytesToB64(bytes) })
     })
+    // Any viewport move re-derives the follow transform so a scrolled-back
+    // viewer can reach the top rows: onScroll covers programmatic scrolls,
+    // and the viewport's own scroll event covers the native scrollbar (xterm
+    // suppresses onScroll for changes it originates there). The viewport dies
+    // with term.dispose() — no unbind needed.
+    term.onScroll(() => followCursor())
+    term.element?.querySelector('.xterm-viewport')?.addEventListener('scroll', () => followCursor())
     if (focusQueued) focus()
     return true
   }

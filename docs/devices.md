@@ -58,7 +58,9 @@
 - **Terminal key bar** (Esc, Enter, arrows, Shift+Tab, Ctrl+C…) and touch scrolling.
   A finger drag or the wheel browses the history the attach delivered locally —
   the attach requests up to 1000 lines, a bound the core fills from the main
-  screen only, so an alternate-screen attach gets none. Pressing and holding a
+  screen only, so an alternate-screen attach gets none. Known limitation: an
+  alternate-screen app's own pre-attach history is not recoverable passively —
+  stitching it through `terminal.read` would scroll the application. Pressing and holding a
   still finger freezes the screen to copy from it; release and drag to select,
   then Done leaves the copy surface.
   On iPhone and iPad a tap on the terminal does not open the on-screen keyboard: type in the

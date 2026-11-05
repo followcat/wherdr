@@ -267,7 +267,7 @@ test('an attach to an already-alternate screen requests history and gets none', 
   }
 })
 
-test('a watching viewer pans a wide grid horizontally without giving up the follow transform or the size lease', async ({ page, browserName }) => {
+test('a watching viewer pans a wide grid horizontally without giving up the follow transform or the size lease', async ({ page, browserName }, testInfo) => {
   // Another viewer owns this terminal's size: the size event flips this
   // client into watching mode (terminal.control off), followCursor's
   // translateY keeps the cursor row on screen, and the wider-than-viewport
@@ -311,6 +311,48 @@ test('a watching viewer pans a wide grid horizontally without giving up the foll
     expect(dataIn(core).length).toBe(d0)
     expect(resizeFrames()).toBe(r0)
     expect(silentPackets(sent)).toEqual([])
+
+    // Vertical boundary: the cursor row sits fully inside the clipped host
+    // while live (the follow translation's job), and scrolling to viewportY 0
+    // must put the oldest retained row fully inside it too — rendered text
+    // alone says nothing, only its rect against the host clip does. #term is
+    // the clipped host box (.xterm itself can be as tall as the 60-row grid).
+    const termBox = (await page.locator('#term').boundingBox())!
+    const wrapBox = (await page.locator('#termWrap').boundingBox())!
+    const clip = { top: Math.max(termBox.y, wrapBox.y), bottom: Math.min(termBox.y + termBox.height, wrapBox.y + wrapBox.height) }
+    const rowAt = async (re: RegExp) => {
+      const row = page.locator('.xterm-rows > div').filter({ hasText: re }).first()
+      return await row.boundingBox()
+    }
+    const inside = (b: { y: number, height: number } | null) => Boolean(b && b.y >= clip.top - 2 && b.y + b.height <= clip.bottom + 2)
+    expect(inside(await rowAt(/watcher cursor line/))).toBe(true)
+
+    // The native scrollbar path (not just ctl.scroll) must refresh the
+    // transform as the viewport moves: scrollTop 0 reaches the oldest row.
+    // scrollLeft goes home first so the line reads in the screenshot.
+    await xterm.evaluate(el => { el.scrollLeft = 0 })
+    await page.locator('.xterm-viewport').evaluate(el => { el.scrollTop = 0 })
+    await expect.poll(async () => { await tick(page, 40); return firstRow(page) }).toMatch(/history line 0/)
+    const oldest = firstRow(page)
+    await page.screenshot({ path: testInfo.outputPath(`05-watch-${testInfo.project.name}.png`) })
+    expect(inside(await rowAt(new RegExp(await oldest)))).toBe(true)
+
+    // Output and a resize repaint while viewing history must neither re-clip
+    // it nor seize the lease. The cols jump widens the grid: scrollWidth
+    // growing proves the resize actually landed before the clip check.
+    const w0 = await xterm.evaluate(el => el.scrollWidth)
+    core.output('\r\nwatcher extra line')
+    core.event('{"method":"event","params":{"type":"size","data":{"cols":220,"rows":60}}}\n')
+    await expect.poll(async () => { await tick(page, 40); return xterm.evaluate(el => el.scrollWidth) }).toBeGreaterThan(w0)
+    expect(inside(await rowAt(new RegExp(await oldest)))).toBe(true)
+    expect(resizeFrames()).toBe(r0)
+    expect(silentPackets(sent)).toEqual([])
+
+    // Back at the live bottom the cursor follow translation returns.
+    await page.locator('.xterm-viewport').evaluate(el => { el.scrollTop = el.scrollHeight })
+    await expect.poll(async () => (await screen.getAttribute('style')) || '').toContain('translateY(-')
+    await expectRows(page, /watcher extra line/)
+    expect(inside(await rowAt(/watcher extra line|watcher cursor line/))).toBe(true)
   } finally {
     await core.stop()
   }

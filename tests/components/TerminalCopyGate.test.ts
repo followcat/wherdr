@@ -51,6 +51,7 @@ class FakeTerm {
   attachCustomWheelEventHandler() {} attachCustomKeyEventHandler() {}
   onData(fn: (d: string) => void) { this.onDataCb = fn }
   onBinary(fn: (d: string) => void) { this.onBinaryCb = fn }
+  onScroll() {}
   write(_d: string | Uint8Array, cb?: () => void) { cb?.() }
 }
 

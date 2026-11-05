@@ -16,7 +16,7 @@ vi.mock('~/utils/xtermLoader', () => {
     focus() { this.state.focused = true }
     dispose() { this.state.disposed = true }
     write() {} open() {} refresh() {} reset() {} attachCustomWheelEventHandler() {}
-    attachCustomKeyEventHandler() {} onData() {} onBinary() {}
+    attachCustomKeyEventHandler() {} onData() {} onBinary() {} onScroll() {}
   }
   class FitAddon { kind = 'fit'; proposeDimensions() { return null } }
   class WebglAddon { kind = 'webgl'; onContextLoss() {} dispose() {} }
