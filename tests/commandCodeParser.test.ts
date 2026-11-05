@@ -47,7 +47,9 @@ describe('parseLines for Command Code', () => {
       // A result-only structured turn is automation, not a user message.
       results('u3', [{ tool_use_id: 't-x', content: 'exit code 1' }], 30),
     ))
-    expect(items).toEqual([{ role: 'user', text: 'Here is what the tool returned:\nexit code 1, see line 40', ts: at(10) }])
+    // The parse carries reader metadata (resultRefs) on the array itself:
+    // compare the items, not the metadata.
+    expect(Array.from(items)).toEqual([{ role: 'user', text: 'Here is what the tool returned:\nexit code 1, see line 40', ts: at(10) }])
   })
 
   it('parses assistant string and structured content: text and thinking without signatures', () => {
@@ -306,6 +308,16 @@ describe('parseLines for Command Code', () => {
     expect(second[1]).not.toBe(first[1])
     const shifted = parseLines(text, 'cmd', 4096, '', undefined, '')
     expect(shifted).toEqual(first)
+  })
+
+  it('carries each result record’s raw position for the reader watch — past the strip', () => {
+    // A base64 image in the result makes the raw line far longer than the
+    // stripped parse input; the reported length is the raw file length.
+    const r = results('u1', [{ tool_use_id: 't1', content: [{ type: 'text', text: 'ok' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A'.repeat(9000) } }] }], 10)
+    const items = parseLines(JSON.stringify(r), 'cmd', 4096, '', undefined, '')
+    expect(items.resultRefs).toEqual([{ id: 't1', at: 4096, len: Buffer.byteLength(JSON.stringify(r)) }])
+    // A line with no result record carries none.
+    expect(parse(J(user('u1', 'hi', 10))).resultRefs).toBeUndefined()
   })
 })
 

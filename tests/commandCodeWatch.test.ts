@@ -2,7 +2,7 @@
 // pure helpers over neutral buffers, no filesystem or processes.
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
-import { verifyWatches, watchFingerprint, watchSpan, type CommandCodeWatch } from '../server/utils/commandCodeWatch'
+import { fingerprintRefs, verifyWatches, watchFingerprint, watchSpan, type CommandCodeWatch } from '../server/utils/commandCodeWatch'
 
 const WATCH_BYTES = 64 * 1024
 const WATCH_SPAN = 4 * 1024 * 1024
@@ -104,5 +104,75 @@ describe('commandCodeWatch', () => {
     const head = Buffer.from(rec)
     head[WATCH_BYTES - 1] = 0x62
     expect(verifyWatches(head.subarray(0, WATCH_BYTES), 0, span.selected)).toBe(false)
+  })
+
+  it('fingerprints each ref’s slice of a buffer already held — multibyte before the offset', () => {
+    const a = Buffer.from('record a €')
+    const b = Buffer.from('record b')
+    // A header with a three-byte '€' puts every ref offset mid-buffer;
+    // bytes before and after the record never enter its fingerprint.
+    const buf = Buffer.concat([Buffer.from('hdr€\n'), a, Buffer.from('\n'), b, Buffer.from('tail')])
+    const base = 1000
+    const atA = base + Buffer.byteLength('hdr€\n')
+    const atB = atA + a.length + 1
+    const refs = [
+      { id: 'a', at: atA, len: a.length },
+      { id: 'b', at: atB, len: b.length },
+    ]
+    expect(fingerprintRefs(buf, base, refs)).toEqual([
+      { id: 'a', at: atA, len: a.length, hash: digest(a) },
+      { id: 'b', at: atB, len: b.length, hash: digest(b) },
+    ])
+    // No re-encoding: the fingerprint rides slices of the given buffer only.
+    const spy = vi.spyOn(Buffer, 'from')
+    try {
+      expect(fingerprintRefs(buf, base, refs)).toHaveLength(2)
+      expect(spy).not.toHaveBeenCalled()
+    } finally { spy.mockRestore() }
+  })
+
+  it('takes the bounded prefix of a giant logical record; insufficient source is skipped', () => {
+    const raw = Buffer.alloc(WATCH_BYTES, 0x62)
+    const big = { id: 'g', at: 5000, len: 5 * 1024 * 1024 }
+    expect(fingerprintRefs(raw, 5000, [big])).toEqual([
+      { id: 'g', at: 5000, len: 5 * 1024 * 1024, hash: digest(raw) },
+    ])
+    // One byte short of the claimed sample: the ref can't be proven — skipped.
+    expect(fingerprintRefs(raw.subarray(0, WATCH_BYTES - 1), 5000, [big])).toEqual([])
+  })
+
+  it('hashes each distinct record once however many ids share its position', () => {
+    const rec = Buffer.alloc(300, 0x61)
+    const other = Buffer.alloc(100, 0x62)
+    const buf = Buffer.concat([rec, other])
+    // One result record carrying many tool ids (a shared-result line):
+    // every id gets a watch, but the record's sample hashes once.
+    const refs = [
+      ...Array.from({ length: 50 }, (_, i) => ({ id: `t${i}`, at: 0, len: rec.length })),
+      { id: 'x', at: 300, len: other.length },
+    ]
+    const proto = Object.getPrototypeOf(createHash('sha256'))
+    const spy = vi.spyOn(proto, 'update')
+    try {
+      const ws = fingerprintRefs(buf, 0, refs)
+      expect(spy.mock.calls.length).toBe(2)
+      expect(ws).toHaveLength(51)
+      expect(ws.slice(0, 50).every(w => w.at === 0 && w.len === 300 && w.hash === digest(rec))).toBe(true)
+      expect(ws[50]).toEqual({ id: 'x', at: 300, len: 100, hash: digest(other) })
+    } finally { spy.mockRestore() }
+  })
+
+  it('skips positions outside coverage or with unsafe arithmetic', () => {
+    const buf = Buffer.alloc(200, 0x61)
+    expect(fingerprintRefs(buf, 100, [
+      { id: 'low', at: 50, len: 10 }, // before the buffer's own base
+      { id: 'over', at: 100, len: 300 }, // sample extends past the end
+      { id: 'neg', at: 100, len: -1 },
+      { id: 'frac', at: 100, len: 2.5 },
+      { id: 'huge', at: Number.MAX_SAFE_INTEGER - 10, len: 20 }, // off + n overflows
+      { id: 'edge', at: 150, len: 50 }, // ends exactly at the end — covered
+    ])).toEqual([{ id: 'edge', at: 150, len: 50, hash: digest(buf.subarray(50, 100)) }])
+    expect(fingerprintRefs(buf, -1, [{ id: 'x', at: 0, len: 1 }])).toEqual([])
+    expect(fingerprintRefs(buf, 1.5, [{ id: 'x', at: 2, len: 1 }])).toEqual([])
   })
 })

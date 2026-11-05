@@ -7,6 +7,7 @@ import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDet
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
 import { cleanModelName, lastModel, mergeOmpModel, ompLastModel, ompModelComplete, ompModelLabel, ompModelResult } from './models'
 import { type MachineFs, localFs } from './fsx'
+import type { CommandCodeResultRef } from './commandCodeWatch'
 import { searchFile } from './conversationSearch'
 import { hasTranscript, transcriptKind } from '../../shared/agentKind'
 import { type CommandTemplate, ompCommandTemplates } from './slash'
@@ -40,7 +41,7 @@ interface CodexRollout { file: string, id: string, ts: number, mtimeMs: number }
 const CODEX_BIRTH_BEFORE = 5000
 const CODEX_BIRTH_AFTER = 120000
 export type Lines = string[] & { refs?: string[] }
-type Parsed = ChatItem[] & { queue?: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], updates?: CommandCodeToolUpdate[] }
+type Parsed = ChatItem[] & { queue?: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], updates?: CommandCodeToolUpdate[], resultRefs?: CommandCodeResultRef[] }
 // `anchor`: fingerprint of the bytes just above `start` (see anchorAt).
 interface TailResult { start: number, items: ChatItem[], queue: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], anchor?: string }
 
@@ -940,20 +941,27 @@ interface CmdParseState {
   // The cross-page orphan map is opt-in: without it a result before its
   // call is dropped for this parse, exactly as a lone window always was.
   results?: Map<string, CommandCodeResult>
+  // Absolute positions of the result records parsed since the last result()
+  // — reader metadata for raw watch registration, drained once with the
+  // items, newest absolute offset per id (an equal offset may hold a
+  // changed record), bounded like the watch map.
+  resultRefs: Map<string, CommandCodeResultRef>
 }
 
 // Chronology on absolute result byte offsets (`at`): an outcome replaces
 // only an equal-or-older one, whichever order pages were parsed in.
 const cmdNewer = (at: number | undefined, was: number | undefined) => (at ?? -Infinity) >= (was ?? -Infinity)
-// Absolute result offset of a "start:length" ref: only a well-formed,
-// safe-integer position is a revision — anything else is unknown, never a
-// NaN/Infinity offset on the wire or in the maps.
-const cmdRefAt = (ref: string | undefined): number | undefined => {
+// Absolute position of a "start:length" ref: both halves well-formed,
+// non-negative safe integers and the record's end still on the number
+// line — anything else is no position at all (an impossible extent is
+// never revision or watch metadata), never a NaN/Infinity offset on the
+// wire or in the maps.
+const cmdRefPos = (ref: string | undefined): { at: number, len: number } | null => {
   const m = ref && /^(\d+):(\d+)$/.exec(ref)
-  if (!m) return undefined
+  if (!m) return null
   const at = Number(m[1])
-  const n = Number(m[2])
-  return at >= 0 && n >= 0 && Number.isSafeInteger(at) && Number.isSafeInteger(n) ? at : undefined
+  const len = Number(m[2])
+  return at >= 0 && len >= 0 && Number.isSafeInteger(at) && Number.isSafeInteger(len) && Number.isSafeInteger(at + len) ? { at, len } : null
 }
 
 // Apply a result to a call item, if it is not older than what is shown.
@@ -1082,7 +1090,18 @@ function feedCommandCode(p: CmdParseState, lines: Lines) {
         // A result is the complete replacement of what the call showed: an
         // empty or successful one clears out/error/images instead of
         // preserving them. `at` is its absolute position: its revision.
-        const rec: CommandCodeResult = { out: out ? clip(out, 8000) : undefined, error: part.is_error === true, at: cmdRefAt(ref) }
+        const pos = cmdRefPos(ref)
+        const rec: CommandCodeResult = { out: out ? clip(out, 8000) : undefined, error: part.is_error === true, at: pos?.at }
+        // The record's own raw position, for the reader's result watch:
+        // newest absolute offset per id — an equal offset may hold a
+        // changed record. Bounded like the watch map; drained by result().
+        if (pos) {
+          const was = p.resultRefs.get(id)
+          if (!was || pos.at >= was.at) {
+            p.resultRefs.set(id, { id, at: pos.at, len: pos.len })
+            if (p.resultRefs.size > 4096) p.resultRefs.delete(p.resultRefs.keys().next().value!)
+          }
+        }
         if (n && ref) {
           rec.images = n
           rec.ref = ref
@@ -1129,6 +1148,7 @@ export function commandCodeParser(shared?: Map<string, CommandCodeResult>) {
     pending: new Map(),
     updates: [],
     results: shared,
+    resultRefs: new Map(),
   }
 
   // Items below `n` left the bottom (the reader's window slid): their calls
@@ -1161,6 +1181,10 @@ export function commandCodeParser(shared?: Map<string, CommandCodeResult>) {
       return it
     })
     if (p.updates.length) out.updates = p.updates.splice(0)
+    if (p.resultRefs.size) {
+      out.resultRefs = [...p.resultRefs.values()]
+      p.resultRefs.clear()
+    }
     return out
   }
   return { feed: (lines: Lines) => feedCommandCode(p, lines), result, drop }
@@ -1669,12 +1693,18 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   // line, it is skipped: the returned `start` is always a line start. A
   // `start` already at a line start (the byte before is a newline) is kept:
   // re-reading the bottom from a known start must not lose its first message.
+  // `buf` is the fetched window itself (its first byte is absolute offset
+  // `bufStart`): Command Code result positions are fingerprinted against
+  // these bytes — never a re-encoded copy of a line.
   async function readRange(file: string, start: number, end: number) {
-    if (start <= 0) return { start: 0, text: (await fs.read(file, 0, end)).toString('utf8') }
+    if (start <= 0) {
+      const buf = await fs.read(file, 0, end)
+      return { start: 0, bufStart: 0, buf, text: buf.toString('utf8') }
+    }
     const buf = await fs.read(file, start - 1, end - start + 1)
     const nl = buf.indexOf(0x0a)
     const off = nl < 0 ? buf.length : nl + 1
-    return { start: start - 1 + off, text: buf.subarray(off).toString('utf8') }
+    return { start: start - 1 + off, bufStart: start - 1, buf, text: buf.subarray(off).toString('utf8') }
   }
 
   // omp session folder, from the file's first line ("session" entry): the

@@ -35,6 +35,38 @@ export function watchFingerprint(raw: Uint8Array, at: number, len: number): Comm
 
 const sampleLen = (w: CommandCodeWatch) => Math.min(w.len, WATCH_BYTES)
 
+// One parsed result position as the incremental parser reports it: the
+// record's absolute byte offset and its raw line length — never the bytes.
+export type CommandCodeResultRef = { id: string, at: number, len: number }
+
+// Bounded raw fingerprints for a drain of parsed result positions: only
+// slices of `buf` — the bytes the reader already holds, `base` being the
+// absolute offset of buf[0] — are hashed, never a re-encoded copy of a
+// multi-MiB line. A giant record keeps its bounded prefix sample. A
+// position outside coverage or with unsafe arithmetic is skipped: an
+// unwatched record is weaker validation, never half-trusted.
+export function fingerprintRefs(buf: Uint8Array, base: number, refs: Iterable<CommandCodeResultRef>): (CommandCodeWatch & { id: string })[] {
+  const out: (CommandCodeWatch & { id: string })[] = []
+  if (!Number.isSafeInteger(base) || base < 0) return out
+  // One record position may serve many ids (a shared-result line): hash
+  // each distinct record's sample once — never once per id.
+  const byPos = new Map<string, CommandCodeWatch | null>()
+  for (const r of refs) {
+    if (!Number.isSafeInteger(r.at) || !Number.isSafeInteger(r.len) || r.at < base || r.len < 0) continue
+    const off = r.at - base
+    const n = Math.min(r.len, WATCH_BYTES)
+    if (!Number.isSafeInteger(off + n) || off + n > buf.length) continue
+    const key = `${r.at}:${r.len}`
+    let w = byPos.get(key)
+    if (w === undefined) {
+      w = watchFingerprint(buf.subarray(off, off + n), r.at, r.len)
+      byPos.set(key, w)
+    }
+    if (w) out.push({ id: r.id, ...w })
+  }
+  return out
+}
+
 // The one bounded read validating a file's watch set: identical
 // fingerprints collapse, positions sort ascending, and when the whole
 // span exceeds WATCH_SPAN only the newest records that fit are selected —

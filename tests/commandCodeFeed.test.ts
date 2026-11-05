@@ -208,4 +208,69 @@ describe('commandCodeParser fed incrementally', () => {
       spy.mockRestore()
     }
   })
+
+  describe('result positions', () => {
+    const pos = (base: number, raw: unknown) => ({ at: base, len: Buffer.byteLength(JSON.stringify(raw)) })
+
+    it('drains each parsed result position once — matched and orphan alike', () => {
+      const p = commandCodeParser(new Map())
+      p.feed(L(0, assistant('a1', [CALL('t1')], 20)))
+      p.result()
+      const r1 = results('u2', [{ tool_use_id: 't1', content: 'ok' }], 30)
+      const r2 = results('u3', [{ tool_use_id: 'gone', content: 'orphan' }], 31)
+      p.feed(L(500, r1, r2))
+      expect(p.result().resultRefs).toEqual([
+        { id: 't1', ...pos(500, r1) },
+        { id: 'gone', ...pos(500 + pos(500, r1).len + 1, r2) },
+      ])
+      // Drained once: a repeat result() reports no positions again.
+      expect(p.result().resultRefs).toBeUndefined()
+    })
+
+    it('keeps the newest absolute offset per id; an equal offset may change', () => {
+      const p = commandCodeParser(new Map())
+      const r1 = results('u1', [{ tool_use_id: 't1', content: 'v1' }], 10)
+      const r2 = results('u2', [{ tool_use_id: 't1', content: 'v2' }], 20)
+      p.feed(L(100, r1))
+      p.feed(L(900, r2))
+      expect(p.result().resultRefs).toEqual([{ id: 't1', ...pos(900, r2) }])
+      // Same offset holding a rewritten record: still a position worth re-watching.
+      const r3 = results('u3', [{ tool_use_id: 't1', content: 'rewritten!' }], 30)
+      p.feed(L(900, r3))
+      expect(p.result().resultRefs).toEqual([{ id: 't1', ...pos(900, r3) }])
+    })
+
+    it('ignores malformed refs, invalid ids, and unpositioned lines', () => {
+      const p = commandCodeParser(new Map())
+      const r1 = results('u1', [{ tool_use_id: 't1', content: 'x' }], 10)
+      p.feed(L(100, r1))
+      // The record end must stay on the number line: individually safe
+      // halves whose at+len overflows are no position at all — and never a
+      // revision (the record's toolAt stays unknown).
+      for (const ref of ['x:y', '-1:5', '5:-2', `${Number.MAX_SAFE_INTEGER + 1}:5`, '5:99999999999999999999', `${Number.MAX_SAFE_INTEGER - 5}:20`]) {
+        const lines = L(400, results('u', [{ tool_use_id: `t-${ref}`, content: 'x' }], 20))
+        lines.refs![0] = ref
+        p.feed(lines)
+      }
+      // An over-128-byte id rejects the whole result — no position either.
+      p.feed(L(600, results('u', [{ tool_use_id: 'x'.repeat(200), content: 'x' }], 30)))
+      // A line with no position at all.
+      p.feed([JSON.stringify(results('u', [{ tool_use_id: 't6', content: 'x' }], 40))] as Lines)
+      // Malformed positions never poison the drain: the next valid ref works.
+      const ok = results('u7', [{ tool_use_id: 't9', content: 'y' }], 50)
+      p.feed(L(2000, ok))
+      expect(p.result().resultRefs).toEqual([
+        { id: 't1', ...pos(100, r1) },
+        { id: 't9', ...pos(2000, ok) },
+      ])
+    })
+
+    it('bounds the drained positions at 4096', () => {
+      const p = commandCodeParser(new Map())
+      p.feed(L(0, results('u', Array.from({ length: 4200 }, (_, i) => ({ tool_use_id: `t${i}`, content: 'x' })), 1)))
+      const refs = p.result().resultRefs!
+      expect(refs).toHaveLength(4096)
+      expect(refs[refs.length - 1]!.id).toBe('t4199')
+    })
+  })
 })
