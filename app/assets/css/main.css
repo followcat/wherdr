@@ -963,6 +963,9 @@ body.short-bottom { --safe-bottom: 0px; }
 #term { position: absolute; inset: 6px 4px 0 6px; z-index: 0; }
 #touch { position: absolute; inset: 0; z-index: 1; touch-action: none; pointer-events: none; }
 @media (hover: none) and (pointer: coarse) { #touch { pointer-events: auto; } }
+/* The native selection surface needs selectable ancestors on Android too. */
+#termWrap.copying-screen { user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; }
+.agent-main:has(.copying-screen), #agent:has(.copying-screen), .cell-view:has(.copying-screen) { user-select: text; -webkit-user-select: text; }
 .term-loading { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
 .term-loading.static { position: static; padding: 30px; }
 .xterm .xterm-viewport { background: transparent !important; overflow-y: hidden !important; }

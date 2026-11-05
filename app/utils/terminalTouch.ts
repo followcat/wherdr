@@ -10,7 +10,7 @@ export function touchPreviewOffset(px: number, rowHeight: number) {
 
 // Touch-only physics: preserve fractional pixels, lock the drag direction,
 // and keep momentum bounded. Scrolling never becomes arrow keys.
-export function createTerminalTouch({ vertical, momentum, horizontal, canHorizontal, maxMomentum,
+export function createTerminalTouch({ vertical, momentum, horizontal, canHorizontal, maxMomentum, dragStart,
   now = () => performance.now(), frame = fn => requestAnimationFrame(fn), cancelFrame = id => cancelAnimationFrame(id),
 }: {
   vertical: (pixels: number, point: Point) => void
@@ -20,6 +20,9 @@ export function createTerminalTouch({ vertical, momentum, horizontal, canHorizon
   horizontal: (pixels: number) => void
   canHorizontal: () => boolean
   maxMomentum: () => number
+  // Axis lock means a drag exists — however small the total displacement ends
+  // up — so a held finger can no longer become a long press.
+  dragStart?: () => void
   now?: () => number
   frame?: (fn: FrameRequestCallback) => number
   cancelFrame?: (id: number) => void
@@ -49,6 +52,7 @@ export function createTerminalTouch({ vertical, momentum, horizontal, canHorizon
         const totalX = x - start.x, totalY = y - start.y
         if (Math.hypot(totalX, totalY) < 5) return
         axis = canHorizontal() && Math.abs(totalX) > Math.abs(totalY) * 1.25 ? 'x' : 'y'
+        dragStart?.()
       }
       if (axis === 'x') horizontal(dx)
       else {
