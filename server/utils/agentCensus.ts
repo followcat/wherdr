@@ -133,6 +133,23 @@ export function agentArgsOf(argv: string[]): string[] | null {
   return sp.kind === 'script' ? argv.slice(sp.index + 1) : null
 }
 
+// A RECORDED launch argv (what the terminal ran, not reconstructed ps argv):
+// proven Command Code when argv0 names a known bin directly, or an
+// interpreter's script position or preload resolves to the package. Returns
+// the agent's own arguments past the boundary, null when unproven — a shell
+// root that later exec'd cmd can never pass this, so its older start ticks
+// can never be mistaken for the agent's birth.
+export function cmdLaunchArgs(argv: string[]): string[] | null {
+  if (!argv.length) return null
+  const a0b = base(argv[0])
+  if (CMD_BIN.has(a0b)) return argv.slice(1)
+  if (!INTERPRETER.test(a0b)) return null
+  const sp = scriptPos(argv, true)
+  if (sp.kind !== 'script') return null
+  const hit = (c: string) => CMD_BIN.has(base(c)) || ENTRY.test(c)
+  return hit(sp.raw) || sp.preloads.some(hit) ? argv.slice(sp.index + 1) : null
+}
+
 const MAX_CMDLINE = 16384
 const MAX_RES = 16384
 const MAX_LINE = 64 * 1024

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { parseAgentCensus } from '../server/utils/agentCensus'
+import { cmdLaunchArgs, parseAgentCensus } from '../server/utils/agentCensus'
 
 const b64 = (s: string | Buffer) => Buffer.from(s).toString('base64')
 const arg64 = (a: string[]) => b64(a.join('\0') + '\0')
@@ -179,4 +179,32 @@ it('distinguishes unavailable, truncated, oversize, raced and unreadable peers',
   expect(u.incomplete).toBe('metadata')
   expect(u.unknown).toBe(4)
   expect(u.processes).toHaveLength(1)
+})
+
+it('cmdLaunchArgs: proven direct and package launches yield agent args past the boundary', () => {
+  // Direct bin/alias launches: argv0 alone proves it; args start after it.
+  expect(cmdLaunchArgs(['cmd', '--session', '01234567-89ab-cdef-0123-456789abcdef'])).toEqual(['--session', '01234567-89ab-cdef-0123-456789abcdef'])
+  expect(cmdLaunchArgs(['command-code', 'chat'])).toEqual(['chat'])
+  expect(cmdLaunchArgs(['cmdc'])).toEqual([])
+  // Node launches: the script position resolves to a proven bin/package path.
+  expect(cmdLaunchArgs(['node', '/x/bin/cmd', '--resume', 'x'])).toEqual(['--resume', 'x'])
+  expect(cmdLaunchArgs(['node', `${PKGD}/index.mjs`, '--session', '01234567-89ab-cdef-0123-456789abcdef'])).toEqual(['--session', '01234567-89ab-cdef-0123-456789abcdef'])
+  expect(cmdLaunchArgs(['node', '--watch', `${PKGD}/cli.mjs`])).toEqual([])
+  expect(cmdLaunchArgs(['node', '-r', '/x/bin/cmd', '/srv/app.js', 'go'])).toEqual(['go']) // preload proves, app arg boundary intact
+})
+
+it('cmdLaunchArgs: unproven launch shapes return null, never a guessed boundary', () => {
+  // Shell roots — a shell that later exec'd cmd can never claim its own ticks.
+  expect(cmdLaunchArgs(['bash', '-l'])).toBeNull()
+  expect(cmdLaunchArgs(['sh', '-c', 'exec cmd'])).toBeNull()
+  // Windows cmd.exe and any operand merely MENTIONING a cmd name are not a launch.
+  expect(cmdLaunchArgs(['cmd.exe', '/c', 'cmd'])).toBeNull()
+  expect(cmdLaunchArgs(['node', '-e', 'require("command-code")'])).toBeNull()
+  expect(cmdLaunchArgs(['node', '-p', 'cmd'])).toBeNull()
+  expect(cmdLaunchArgs(['node', '--eval', 'spawn("cmd")'])).toBeNull()
+  // Arbitrary script paths, unterminated option operands, empty argv.
+  expect(cmdLaunchArgs(['node', '/srv/server.js'])).toBeNull()
+  expect(cmdLaunchArgs(['node', '/x/command-code/server.js'])).toBeNull() // dir name alone is not an entrypoint
+  expect(cmdLaunchArgs(['node', '--import'])).toBeNull()
+  expect(cmdLaunchArgs([])).toBeNull()
 })
