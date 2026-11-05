@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 import { createTerminal } from '~/composables/useTerminal'
-import { smoothTouchScrolling, terminalRenderer } from '~/composables/useHerdr'
+import { setToaster, smoothTouchScrolling, terminalRenderer } from '~/composables/useHerdr'
 
 // The controller gates user input while the phone copy surface is open, but
 // never the stream itself: frames, credit and lifecycle keep flowing, and an
@@ -258,5 +258,46 @@ describe('IME composition lifecycle under the gate', () => {
     term.onDataCb!('x')
     expect(ws.messages().filter(m => m.type === 'keys')).toEqual([{ type: 'keys', keys: ['ctrl+x'] }])
     ctl.dispose(); wrapper.unmount()
+  })
+})
+
+describe('armed-modifier input contract', () => {
+  it('sends a transportable chord once as a named key, then spends nothing more', async () => {
+    const { ctl, ws, term, wrapper } = await setup()
+    ctl.toggleModifier('ctrl')
+    ctl.toggleModifier('alt')
+    term.onDataCb!('\x1b[C')
+    expect(ws.messages().filter(m => m.type === 'keys')).toEqual([{ type: 'keys', keys: ['ctrl+alt+right'] }])
+    expect(ctl.virtualModifiers.value).toEqual([])
+    expect(ctl.lastVirtualChord.value).toBe('Ctrl + Alt + →')
+    // The very next input is plain text: the chord was spent exactly once.
+    term.onDataCb!('x')
+    expect(ws.messages().at(-1)).toEqual({ type: 'terminal.input', text: 'x' })
+    ctl.dispose(); wrapper.unmount()
+  })
+
+  it('keeps unrepresentable input as exact data, warns once and calls no key', async () => {
+    const added: { title?: string }[] = []
+    setToaster({ clear: vi.fn(), add: (o: { title?: string }) => { added.push(o) } } as never)
+    const { ctl, ws, term, wrapper } = await setup()
+    try {
+      // Typed punctuation has no transportable chord name (`+` names `plus`,
+      // which herdr-core cannot resolve); byte 29 is Ctrl+]. Composed text and
+      // multi-character writes are not shortcuts either.
+      for (const ch of [']', '+', '\x1d', 'é', 'ab']) {
+        ctl.toggleModifier('ctrl')
+        term.onDataCb!(ch)
+        expect(ws.messages().at(-1)).toEqual({ type: 'terminal.input', text: ch })
+        expect(ctl.virtualModifiers.value).toEqual([])
+      }
+      expect(ws.messages().filter(m => m.type === 'keys')).toEqual([])
+      expect(added.map(a => a.title)).toEqual(new Array(5).fill('Chord not applied — text sent as typed'))
+      // A bracketed paste stays quiet and still spends the armed modifiers.
+      ctl.toggleModifier('ctrl')
+      term.onDataCb!('\x1b[200~echo ok\x1b[201~')
+      expect(ws.messages().at(-1)).toEqual({ type: 'terminal.input', text: '\x1b[200~echo ok\x1b[201~' })
+      expect(ctl.virtualModifiers.value).toEqual([])
+      expect(added).toHaveLength(5)
+    } finally { setToaster(null as never); ctl.dispose(); wrapper.unmount() }
   })
 })

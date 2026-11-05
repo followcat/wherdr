@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createCompositionTracker, toggleVirtualModifier, virtualChord, virtualInputKey } from '../app/utils/terminalModifiers'
+import { createCompositionTracker, toggleVirtualModifier, virtualChord, virtualInputAction, virtualInputKey } from '../app/utils/terminalModifiers'
 
 describe('one-shot terminal modifiers', () => {
   it('stacks and toggles modifiers without duplicates', () => {
@@ -19,6 +19,61 @@ describe('one-shot terminal modifiers', () => {
     expect(virtualInputKey('hello')).toBeNull()
     for (const text of ['toString', 'constructor', '__proto__']) expect(virtualInputKey(text)).toBeNull()
     expect(virtualInputKey('\x1b[200~hello\x1b[201~')).toBeNull()
+  })
+  it('recognizes the navigation and control sequences a keyboard can emit', () => {
+    expect(virtualInputKey('\x1b[H')).toBe('home')
+    expect(virtualInputKey('\x1b[F')).toBe('end')
+    expect(virtualInputKey('\x1b[5~')).toBe('pageup')
+    expect(virtualInputKey('\x1b[6~')).toBe('pagedown')
+    expect(virtualInputKey('\x1b[2~')).toBe('insert')
+    expect(virtualInputKey('\x1b[3~')).toBe('delete')
+    // Ctrl+\ (byte 28) is the only non-letter control name the key API accepts.
+    expect(virtualInputKey('\x1c')).toBe('ctrl+backslash')
+  })
+  it('classifies armed-modifier input as a key, a paste or unsupported text', () => {
+    expect(virtualInputAction('c')).toEqual({ kind: 'key', key: 'c' })
+    expect(virtualInputAction('\r')).toEqual({ kind: 'key', key: 'enter' })
+    expect(virtualInputAction('\x1b[D')).toEqual({ kind: 'key', key: 'left' })
+    expect(virtualInputAction('\x1b[H')).toEqual({ kind: 'key', key: 'home' })
+    expect(virtualInputAction('\x1b[3~')).toEqual({ kind: 'key', key: 'delete' })
+    expect(virtualInputAction('\x03')).toEqual({ kind: 'key', key: 'ctrl+c' })
+    expect(virtualInputAction('\x1c')).toEqual({ kind: 'key', key: 'ctrl+backslash' })
+    expect(virtualInputAction('A')).toEqual({ kind: 'key', key: 'shift+a' })
+    expect(virtualInputAction('6')).toEqual({ kind: 'key', key: '6' })
+    // `-` is the one punctuation name in the grammar herdr-core resolves as a
+    // physical key (it supports `ctrl+shift+-`); every other symbol is blocked.
+    expect(virtualInputAction('-')).toEqual({ kind: 'key', key: '-' })
+    expect(virtualInputAction('\x1b[200~rm example\x1b[201~')).toEqual({ kind: 'paste' })
+    expect(virtualInputAction('hello')).toEqual({ kind: 'blocked' })
+    expect(virtualInputAction('你好')).toEqual({ kind: 'blocked' })
+    expect(virtualInputAction('é')).toEqual({ kind: 'blocked' })
+    // Bytes 29–31 are Ctrl+], Ctrl+^ and Ctrl+_: their chord names cannot pass
+    // the key API's validation, so the armed modifier is not applied and the
+    // byte goes through as the text it already is.
+    expect(virtualInputAction('\x1d')).toEqual({ kind: 'blocked' })
+    expect(virtualInputAction('\x1e')).toEqual({ kind: 'blocked' })
+    expect(virtualInputAction('\x1f')).toEqual({ kind: 'blocked' })
+    // Typed punctuation is no better: `]`, `^`, `_` and friends fail the name
+    // grammar, and `+` names `plus` which passes it although herdr-core has no
+    // such alias — none may be consumed into a rejected named key.
+    for (const text of [']', '[', '^', '_', '+', '=', ';', "'", ',', '.', '/', '\\', '`', '!', '@', '#', '$', '%', '&', '*', '(', ')', '{', '}', '|', ':', '"', '<', '>', '?', '~'])
+      expect(virtualInputAction(text)).toEqual({ kind: 'blocked' })
+  })
+  it('canonicalizes and deduplicates armed modifiers on every arrow', () => {
+    for (const arrow of ['up', 'down', 'left', 'right']) {
+      expect(virtualChord(arrow, [])).toBe(arrow)
+      expect(virtualChord(arrow, ['ctrl'])).toBe(`ctrl+${arrow}`)
+      expect(virtualChord(arrow, ['alt'])).toBe(`alt+${arrow}`)
+      expect(virtualChord(arrow, ['shift'])).toBe(`shift+${arrow}`)
+      expect(virtualChord(arrow, ['shift', 'ctrl', 'alt'])).toBe(`ctrl+alt+shift+${arrow}`)
+      expect(virtualChord(`ctrl+${arrow}`, ['ctrl', 'alt'])).toBe(`ctrl+alt+${arrow}`)
+    }
+    // The modifier order is canonical whatever the tap order was.
+    expect(virtualChord('a', ['shift', 'alt', 'ctrl'])).toBe('ctrl+alt+shift+a')
+    expect(virtualChord('ctrl+backslash', ['ctrl'])).toBe('ctrl+backslash')
+    expect(virtualChord('ctrl+c', ['ctrl', 'alt'])).toBe('ctrl+alt+c')
+    expect(virtualChord('+', ['ctrl'])).toBe('ctrl+plus')
+    expect(virtualChord('pageup', ['alt'])).toBe('alt+pageup')
   })
   it('keeps the real keyboard Shift in a typed capital', () => {
     expect(virtualInputKey('A')).toBe('shift+a')

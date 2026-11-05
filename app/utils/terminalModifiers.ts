@@ -16,6 +16,7 @@ const INPUT_KEYS: Record<string, string> = {
   '\r': 'enter', '\n': 'enter', '\t': 'tab', '\x1b': 'esc', '\x7f': 'backspace', '\b': 'backspace', ' ': 'space',
   '\x1b[A': 'up', '\x1b[B': 'down', '\x1b[C': 'right', '\x1b[D': 'left',
   '\x1bOA': 'up', '\x1bOB': 'down', '\x1bOC': 'right', '\x1bOD': 'left', '\x1b[Z': 'shift+tab',
+  '\x1b[H': 'home', '\x1b[F': 'end', '\x1b[5~': 'pageup', '\x1b[6~': 'pagedown', '\x1b[2~': 'insert', '\x1b[3~': 'delete',
 }
 
 // Android IMEs may emit text without KeyboardEvents. Only a single ASCII
@@ -34,8 +35,34 @@ export function virtualInputKey(data: string): string | null {
     const code = data.charCodeAt(0)
     if (code === 0) return 'ctrl+space'
     if (code >= 1 && code <= 26) return `ctrl+${String.fromCharCode(code + 96)}`
+    // Ctrl+\ is the only non-letter control key whose name the key API
+    // accepts; Ctrl+], Ctrl+^ and Ctrl+_ have no representable name.
+    if (code === 28) return 'ctrl+backslash'
   }
   return null
+}
+
+export type VirtualInputAction = { kind: 'key', key: string } | { kind: 'paste' } | { kind: 'blocked' }
+
+// The server's named-key grammar (server/utils/coreInput.ts): the client must
+// never emit a name outside it, and grammar alone is not enough — herdr-core
+// resolves `backslash` and `-` as physical keys but has no `plus` alias.
+// Punctuation bases like `ctrl+]`, `ctrl+^` and `ctrl+_` fail the grammar.
+const WIRE_KEY = /^[a-z0-9+\-]{1,24}$/i
+function transportable(key: string): boolean {
+  return key.split('+').every(part => WIRE_KEY.test(part)) && key.slice(key.lastIndexOf('+') + 1) !== 'plus'
+}
+
+// Armed modifiers turn xterm's data into a key only when the chord name is
+// transportable end to end. A bracketed paste is still a paste; anything
+// else — composed text, a multi-character write, a typed punctuation key
+// (`]`, `^`, `_`, `+`) or a control byte without a valid name (Ctrl+],
+// Ctrl+^, Ctrl+_) — keeps its text and reports the chord as not applied
+// instead of silently consuming the armed modifiers into a rejected name.
+export function virtualInputAction(data: string): VirtualInputAction {
+  if (data.startsWith('\x1b[200~')) return { kind: 'paste' }
+  const key = virtualInputKey(data)
+  return key && transportable(key) ? { kind: 'key', key } : { kind: 'blocked' }
 }
 
 // Committed IME text reaches onData exactly like a keystroke. Track the

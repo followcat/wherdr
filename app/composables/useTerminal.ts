@@ -25,8 +25,8 @@ import { uploadPhoto } from '~/utils/photoUpload'
 import { terminalClosedText, terminalUnavailableText } from '~/utils/terminalClosed'
 import { bindTerminalMouse, terminalCell } from '~/utils/terminalMouse'
 import { TERM_FONT, onFontsLoaded } from '~/utils/terminalFont'
-import { virtualNavigationBytes, virtualNavigationKeys } from '~/utils/keybarKeys'
-import { createCompositionTracker, toggleVirtualModifier, virtualChord, virtualInputKey, type VirtualModifier } from '~/utils/terminalModifiers'
+import { displayVirtualChord, virtualNavigationBytes, virtualNavigationKeys } from '~/utils/keybarKeys'
+import { createCompositionTracker, toggleVirtualModifier, virtualChord, virtualInputAction, type VirtualModifier } from '~/utils/terminalModifiers'
 import { captureTerminalScreen, type TerminalCopySnapshot } from '~/utils/terminalCopy'
 
 const CORE_SCROLLBACK = 5000
@@ -254,8 +254,12 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
         return
       }
       if (virtualModifiers.value.length) {
-        const key = virtualInputKey(d)
-        if (key) { void sendVirtualKey(key); return }
+        const action = virtualInputAction(d)
+        if (action.kind === 'key') { void sendVirtualKey(action.key); return }
+        // Unsupported text keeps its bytes and the chord does not apply —
+        // say so instead of silently dropping the armed modifiers. A paste
+        // is quiet.
+        if (action.kind === 'blocked') toast(tl('Chord not applied — text sent as typed', 'Accord non appliqué — texte envoyé tel quel'), true)
         clearVirtualModifiers()
       }
       sendTerm({ type: 'terminal.input', text: d })
@@ -312,7 +316,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     if (opts.input?.() === false) return
     const chord = virtualChord(key, virtualModifiers.value)
     clearVirtualModifiers()
-    lastVirtualChord.value = chord
+    lastVirtualChord.value = displayVirtualChord(chord)
     const bytes = virtualNavigationBytes(chord)
     if (bytes) {
       if (!sendTerm({ type: 'terminal.input', text: bytes })) await sendKeys(virtualNavigationKeys(chord, useRuntimeConfig().public.core === true))

@@ -91,6 +91,21 @@ describe('core input routes', () => {
     expect(t.calls.map(c => (c[1] as { keys: string[] }).keys[0])).toEqual(['home', 'end', 'pageup', 'pagedown', 'insert', 'delete', 'ctrl+shift+end'])
   })
 
+  it('forwards canonical modifier chords and refuses names outside the key grammar', async () => {
+    const t = deps()
+    // `ctrl+plus` is deliberately absent: the grammar accepts it, but herdr-core
+    // resolves no `plus` alias — grammar acceptance proves nothing about core
+    // encoding, so the client blocks it before the wire.
+    for (const k of ['ctrl+alt+shift+left', 'ctrl+alt+up', 'shift+left', 'ctrl+backslash', 'alt+shift+a']) await coreInput(t.d, { pane_id: 't1', keys: [k] })
+    expect(t.calls.map(c => (c[1] as { keys: string[] }).keys[0])).toEqual(['ctrl+alt+shift+left', 'ctrl+alt+up', 'shift+left', 'ctrl+backslash', 'alt+shift+a'])
+    // The chord names of control bytes 29–31 (Ctrl+], Ctrl+^, Ctrl+_) cannot
+    // be represented: the client keeps such a byte as text, and the API
+    // refuses the name if one ever arrives.
+    for (const bad of ['ctrl+]', 'ctrl+^', 'ctrl+_', ']', 'ctrl+ left']) {
+      await expect(coreInput(t.d, { pane_id: 't1', keys: [bad] })).rejects.toMatchObject({ code: 'bad_keys' })
+    }
+  })
+
   it('reports what interrupt observed without escalating', async () => {
     for (const [outcome, stopped] of [['stopped', true], ['exited', true], ['still_working', false], ['unknown', false]] as const) {
       const t = deps(() => ({ outcome, key: 'esc' }))
