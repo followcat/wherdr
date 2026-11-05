@@ -16,27 +16,49 @@ export default defineApi(async (event) => {
   const count = num('n')
   const since = chatDelta.sinceOf(p.id, sent, count)
   const from = num('from')
-  const r = await transcripts.chat(p, {
-    since: mark ? (since.endsWith(mark) ? since.slice(0, -mark.length) : '') : since,
-    from, // re-read from this byte (bottom of the conversation already shown)
-    anchor: sent, // join check above `from`, even for a list the server forgot
-    before: num('before'), // older slice, ending at this byte
-  })
-  if (r.token) r.token += mark
-  if (r.unchanged) r.token = sent
-  if (r.items) {
-    r.items = chatPasted(withoutTakenBack(r.items, hidden))
-    await addUploadHashes(r.items)
-    // Bottom of the conversation: only what changed since the client's list
-    // when the server still knows it (`n`: the number of items it holds).
-    if (r.token && !r.older) {
-      const d = chatDelta.reply(p.id, r.token, r.items, sent, count, from !== null && r.start === from && !r.rewritten)
-      r.token = d.token
-      r.items = d.items
-      if (d.keep !== undefined) r.keep = d.keep
+  // A Command Code reply is bound to the generation it read: the awaited
+  // steps below (upload hashes, model) can observe a rewrite that detaches
+  // it. Re-check the reply's own context after them — one re-issue under
+  // the generation now current; a repeated detach is a read error, never
+  // the detached body.
+  for (let attempt = 0; ; attempt++) {
+    const r = await transcripts.chat(p, {
+      since: mark ? (since.endsWith(mark) ? since.slice(0, -mark.length) : '') : since,
+      from, // re-read from this byte (bottom of the conversation already shown)
+      anchor: sent, // join check above `from`, even for a list the server forgot
+      before: num('before'), // older slice, ending at this byte
+    })
+    if (r.token) r.token += mark
+    if (r.unchanged) r.token = sent
+    if (r.items) {
+      r.items = chatPasted(withoutTakenBack(r.items, hidden))
+      await addUploadHashes(r.items)
     }
+    // Current model ("Opus 5.5", "GPT-6-Sol"): cached by transcript state. Not read
+    // for an unchanged reply (most polls): the client keeps what it has.
+    const model = r.available && !r.unchanged ? await currentModel(p).catch(() => null) : undefined
+    // The selection check is a real awaited lookup; the generation check
+    // after it is the reply's own origin-bound predicate, synchronous, so
+    // nothing can interleave before the delta registration and the return.
+    const cur = r.available && !r.unchanged ? await transcripts.current(p, r) : null
+    // The selection moved or is gone: never authorize the prior file's reply.
+    if (cur === 'gone') return { available: false, reason: 'not_found' }
+    if (cur === 'stale' || transcripts.live(p, r) === false) {
+      if (attempt < 1) continue
+      throw new Error('command code transcript generation changed')
+    }
+    if (r.items) {
+      // Bottom of the conversation: only what changed since the client's list
+      // when the server still knows it (`n`: the number of items it holds).
+      // Registered after the currency check: a stale list is never remembered
+      // as one the client could hold.
+      if (r.token && !r.older) {
+        const d = chatDelta.reply(p.id, r.token, r.items, sent, count, from !== null && r.start === from && !r.rewritten)
+        r.token = d.token
+        r.items = d.items
+        if (d.keep !== undefined) r.keep = d.keep
+      }
+    }
+    return model === undefined ? r : { ...r, model }
   }
-  // Current model ("Opus 5.5", "GPT-6-Sol"): cached by file size. Not read
-  // for an unchanged reply (most polls): the client keeps what it has.
-  return r.available && !r.unchanged ? { ...r, model: await currentModel(p).catch(() => null) } : r
 })
