@@ -262,12 +262,24 @@ test('computer chrome: device-local interface scale, widths and terminal font', 
       await expect(page.locator('.xterm')).toBeVisible()
     }
     const openAgent = async () => {
-      // On a computer the card list is a persistent sidebar — mounted on
-      // Settings too — so click it straight instead of detouring through
-      // goto('/'). Then wait on the actual target: its route, its header.
-      await page.locator('#home .card[data-pane]').filter({ hasText: 'review-agent' }).click()
-      await expect(page).toHaveURL(/#\/a\//)
+      // The real return path: an explicit home arrival, then a real click on
+      // the rendered card. On a computer the card list is a persistent
+      // sidebar — mounted on Settings too — so the route, not the element,
+      // is what marks the arrival.
+      await core.open(page, '/')
+      await expect(page).toHaveURL(/#\/$/)
+      const card = page.locator('#home .card[data-pane]').filter({ hasText: 'review-agent' })
+      const pane = await card.getAttribute('data-pane')
+      expect(pane).toBeTruthy()
+      await card.click()
+      // The card's open() emits `/a/${encodeURIComponent(id)}`; the hash
+      // router renders the pane id itself — observed `#/a/host-a/t7` here on
+      // both engines — so compare the decoded route: an exact target derived
+      // from this card, not a generic /a/ match. (A mismatch between hash
+      // encoding forms is a test-expectation failure, not a product one.)
+      await expect(page).toHaveURL(u => decodeURIComponent(u.hash) === `#/a/${pane}`)
       await expect(page.locator('.agent-head')).toBeVisible()
+      await expect(page.locator('.agent-head')).toContainText('review-agent')
       // The view choice persists per pane: restore the conversation when the
       // agent opens on its terminal.
       const toggle = page.getByRole('button', { name: 'Show conversation' })
