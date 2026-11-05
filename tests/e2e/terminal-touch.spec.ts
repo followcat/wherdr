@@ -432,7 +432,57 @@ test('a watching viewer pans a wide grid horizontally without giving up the foll
     for (let i = 0; i < 40 && downs.at(-1) !== tailIdx; i++) { await wheel(1); downs.push(await topIndex()) }
     for (let i = 1; i < downs.length; i++) expect(downs[i]).toBe(downs[i - 1]! === tailIdx ? tailIdx : downs[i - 1]! + 1)
     expect(downs.at(-1)).toBe(tailIdx)
+    // The downs walk stops at floor(tail): a fractional live tail can sit a
+    // row lower. Wheel the remainder so the pin is exact — the newest cursor
+    // row must sit inside the clip before the fill begins.
+    await wheel(2)
     expect(inside(await rowAt(/watcher extra 2|watcher tail line/))).toBe(true)
+    expect(silentPackets(sent)).toEqual([])
+
+    // Full scrollback: one burst pushes past the 5000-row cap so every later
+    // newline trims the oldest row while baseY/viewportY stay pinned. A row
+    // parked in the lifted region must keep its text AND its rect — the old
+    // numeric view drifted one row per trim. One bounded payload, not a loop.
+    // The ~76KB burst parses through many WriteBuffer slices — each yield
+    // needs a poll round-trip — so this wait gets a longer window.
+    const fill = Array.from({ length: 5060 }, (_, i) => `fill line ${String(i + 1).padStart(4, '0')}`).join('\r\n')
+    core.output(fill + '\r\nfill tail line')
+    await expect.poll(async () => { await tick(page, 80); return await page.locator('.xterm-rows').textContent() }, { timeout: 45000 }).toMatch(/fill tail line/)
+    await expect.poll(async () => { await tick(page, 60); return scrollbackRows(page) }).toBe(5000)
+    expect(await viewportY(page)).toBe(5000)
+    const cap = await scrollbackRows(page)
+    // Park ~15 rows off the live tail inside the lifted region: the viewport
+    // stays at its bottom edge while the transform carries the window.
+    for (let i = 0; i < 15; i++) await wheel(-1)
+    expect(await viewportY(page)).toBe(5000)
+    const parkedText = await xterm.evaluate((el, top) => {
+      const rows = el.querySelector('.xterm-rows')
+      if (!rows) return ''
+      for (const d of Array.from(rows.children) as HTMLElement[]) {
+        if (d.getBoundingClientRect().bottom > top + 1) return d.textContent || ''
+      }
+      return ''
+    }, clip.top)
+    // The parked position is a lift: the top row carries fill text, not the
+    // tail — an empty read would let hasText match every row.
+    expect(parkedText).toMatch(/fill line \d{4}/)
+    const parkedRow = page.locator('.xterm-rows > div').filter({ hasText: parkedText }).first()
+    const parkedBox = (await parkedRow.boundingBox())!
+    expect((await screen.getAttribute('style')) || '').toContain('translateY(-')
+    // One newline, then a coalesced three: two trim rounds must not move the
+    // parked text or its row rectangle, and the cap holds.
+    core.output('\r\nfill extra 1')
+    await expectRows(page, /fill extra 1/)
+    const stillBox = (await page.locator('.xterm-rows > div').filter({ hasText: parkedText }).first().boundingBox())!
+    expect(stillBox.y).toBeCloseTo(parkedBox.y, 0)
+    core.output('\r\nfill extra 2\r\nfill extra 3\r\nfill extra 4')
+    await expectRows(page, /fill extra 4/)
+    const finalBox = (await page.locator('.xterm-rows > div').filter({ hasText: parkedText }).first().boundingBox())!
+    expect(finalBox.y).toBeCloseTo(parkedBox.y, 0)
+    expect(await scrollbackRows(page)).toBe(cap)
+    await page.screenshot({ path: testInfo.outputPath(`05-watch-full-${testInfo.project.name}.png`) })
+    expect(dataIn(core).length).toBe(d0)
+    expect(resizeFrames()).toBe(r0)
     expect(silentPackets(sent)).toEqual([])
   } finally {
     await core.stop()

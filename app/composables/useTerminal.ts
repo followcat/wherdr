@@ -6,7 +6,7 @@
 import { createSocketProbe } from '~/utils/socketProbe'
 import { DESK_QUERY } from '~/utils/layoutMode'
 // Types only: the code is loaded when a terminal is shown (utils/xtermLoader.ts).
-import type { Terminal, IBuffer } from '@xterm/xterm'
+import type { Terminal, IBuffer, IMarker } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
 import type { WebglAddon } from '@xterm/addon-webgl'
 import { loadWebgl, loadXterm } from '~/utils/xtermLoader'
@@ -105,11 +105,21 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   // like baseY 0 / viewportY 0 would otherwise read as output at the bottom
   // edge and keep a stale position from the previous buffer.
   let activeBuf: IBuffer | null = null
+  // A parked lifted position is anchored to the row under the window's top
+  // edge: when the scrollback is full, each scrolling newline trims the
+  // oldest row — every row's index shifts down one while ybase/ydisp hold —
+  // and a plain buffer coordinate drifts onto different text. The public
+  // marker carries the row's live index; the viewport's own tracking already
+  // covers parked history rows, so the anchor exists only at or below baseY
+  // (never on row 0, where the oldest-row clamp is the position anyway).
+  let anchor: IMarker | null = null
   function followCursor() {
     const buf = term?.buffer.active
     if (!term || !buf) return
     if (buf !== activeBuf) {
       activeBuf = buf
+      anchor?.dispose()
+      anchor = null
       view = 0
       atTail = true
       lastY = -1
@@ -148,6 +158,20 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     if (screen) screen.style.transform = lift > 0 ? `translateY(${-Math.round(lift * 100) / 100}px)` : ''
     lastY = buf.viewportY
     lastBaseY = buf.baseY
+    // Keep the anchor on the row the parked window top sits on. A marker is
+    // registered at the cursor's row plus an offset, so convert the absolute
+    // buffer row. Watching only: a controlled terminal's domain ends at
+    // baseY and needs no anchor.
+    const top = Math.floor(view)
+    if (watching && !atTail && top >= buf.baseY && top > 0) {
+      if (!anchor || anchor.isDisposed || anchor.line !== top) {
+        anchor?.dispose()
+        anchor = term.registerMarker(top - (buf.baseY + buf.cursorY))
+      }
+    } else if (anchor) {
+      anchor.dispose()
+      anchor = null
+    }
   }
   // A viewport move we did not make is an absolute position in xterm's own
   // domain: its bottom edge (viewportY === baseY) is the live tail. A move
@@ -161,6 +185,14 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       lastY = buf.viewportY
       lastBaseY = buf.baseY
       if (!viewDrive && !trackedTail) { view = buf.viewportY; atTail = view >= buf.baseY }
+    } else if (anchor && !atTail) {
+      // Neither coordinate moved, yet the buffer scrolled: rows were trimmed
+      // off the top and every row's index slid under the parked text. The
+      // anchor reports the row's new index (the fraction is viewport
+      // geometry, kept); a disposed anchor means the row itself is gone —
+      // clamp to the oldest position.
+      const frac = view - Math.floor(view)
+      view = anchor.isDisposed ? frac : anchor.line + frac
     }
     followCursor()
   }
@@ -357,6 +389,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     lastY = -1
     lastBaseY = -1
     activeBuf = null
+    anchor = null
     term.onScroll(() => viewportMoved())
     term.element?.querySelector('.xterm-viewport')?.addEventListener('scroll', () => viewportMoved())
     if (focusQueued) focus()
@@ -638,7 +671,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   }
   const isConnected = () => Boolean(tws && tws.readyState <= 1)
 
-  function reset() { view = 0; atTail = true; term?.reset() }
+  function reset() { view = 0; atTail = true; anchor?.dispose(); anchor = null; term?.reset() }
   function focus() {
     focusQueued = !term && mounting
     term?.focus()
@@ -738,6 +771,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     mouse = null
     links?.dispose()
     links = null
+    anchor?.dispose()
+    anchor = null
     webgl = null // term.dispose() destroys its addons
     term?.dispose()
     term = null

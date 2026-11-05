@@ -15,6 +15,36 @@ import { terminalRenderer } from '~/composables/useHerdr'
 // capabilities/control/frame lifecycle so watching mode is genuine.
 const terms = vi.hoisted(() => [] as FakeTerm[])
 
+// A public IMarker stand-in: an absolute buffer-row anchor that follows its
+// row through trims (line decreases) and is disposed when the row is gone —
+// exactly what the installed xterm does (verified in a Node probe).
+class FakeMarker {
+  isDisposed = false
+  private _d: (() => void) | null = null
+  constructor(public line: number) {}
+  dispose() { if (!this.isDisposed) { this.isDisposed = true; this._d?.() } }
+  onDispose(fn: () => void) { this._d = fn; return { dispose: () => {} } }
+}
+
+interface FakeBuf {
+  viewportY: number
+  baseY: number
+  length: number
+  cursorY: number
+  lines: { text: string }[]
+  markers: FakeMarker[]
+  getLine: (y: number) => { text: string } | undefined
+}
+
+const newBuffer = (): FakeBuf => {
+  const b: FakeBuf = {
+    viewportY: 0, baseY: 0, length: 0, cursorY: 0,
+    lines: [], markers: [],
+    getLine: (y: number) => b.lines[y],
+  }
+  return b
+}
+
 class FakeTerm {
   cols = 200
   rows = 60
@@ -24,12 +54,13 @@ class FakeTerm {
   screen = document.createElement('div')
   viewportEl = document.createElement('div')
   modes = { mouseTrackingMode: 'none' }
-  buffer = {
-    active: {
-      viewportY: 0, baseY: 0, length: 0, cursorY: 0,
-      getLine: () => undefined,
-    },
-  }
+  buffer = { active: newBuffer() }
+  // Infinite by default (xterm's scrollback option): tests set a finite one
+  // to exercise trimming at capacity.
+  scrollbackRows = Infinity
+  // xterm's user-scroll lock: scrolls up set it, reaching the bottom edge
+  // clears it — while set, trims keep the displayed row instead of ydisp.
+  isUserScrolling = false
   onScrollCb: ((y: number) => void) | null = null
   constructor() {
     terms.push(this)
@@ -37,27 +68,55 @@ class FakeTerm {
     this.viewportEl.className = 'xterm-viewport'
     this.element.append(this.viewportEl, this.screen, this.textarea)
   }
+  // BufferService.scrollLines' flag semantics: a scroll up means user
+  // scrolling; reaching the bottom edge ends it.
+  private scrollFlag(d: number, from: number) {
+    if (d < 0) this.isUserScrolling = true
+    else if (from + d >= this.buffer.active.baseY) this.isUserScrolling = false
+  }
   scrollLines = (d: number) => {
     const b = this.buffer.active
+    if (d < 0 && b.viewportY === 0) return
+    this.scrollFlag(d, b.viewportY)
     const y = Math.max(0, Math.min(b.viewportY + d, b.baseY))
     if (y !== b.viewportY) { b.viewportY = y; this.onScrollCb?.(y) }
   }
   scrollToLine = (y: number) => { this.scrollLines(y - this.buffer.active.viewportY) }
-  // A native scrollbar seek: xterm's own handler has already mapped the new
-  // scrollTop to a viewport position before our listener runs.
+  // A native scrollbar seek: same flag rules as scrollLines but xterm
+  // suppresses the public event — only the DOM scroll fires.
   seekViewport(y: number) {
-    this.buffer.active.viewportY = Math.max(0, Math.min(y, this.buffer.active.baseY))
+    const b = this.buffer.active
+    const d = Math.max(0, Math.min(y, b.baseY)) - b.viewportY
+    this.scrollFlag(d, b.viewportY)
+    b.viewportY += d
     this.viewportEl.dispatchEvent(new Event('scroll'))
   }
-  // Output scrolling the grid: ybase grows, and when the viewport sat at the
-  // bottom edge ydisp tracks it (xterm's real auto-advance) — firing onScroll.
-  pushOutput(n = 1) {
+  // Public marker API: registers at the cursor's buffer row plus an offset.
+  registerMarker = (offset = 0) => {
     const b = this.buffer.active
-    const wasBottom = b.viewportY === b.baseY
-    b.baseY += n
-    b.length += n
-    if (wasBottom && b.viewportY !== b.baseY) {
-      b.viewportY = b.baseY
+    const m = new FakeMarker(b.baseY + b.cursorY + offset)
+    ;(b.markers ??= []).push(m)
+    return m
+  }
+  // Output scrolling the grid, one line at a time like BufferService.scroll:
+  // below capacity ybase grows; at capacity the oldest row is trimmed instead,
+  // markers and a user-scrolled ydisp track the shifted rows, and a
+  // non-user-scrolled viewport is pinned to the bottom. onScroll fires once
+  // per scrolling line even when the position did not change.
+  pushOutput(n = 1, text = 'out') {
+    const b = this.buffer.active
+    const cap = this.rows + this.scrollbackRows
+    for (let i = 0; i < n; i++) {
+      if (b.length >= cap) {
+        b.lines?.shift()
+        for (const m of b.markers ?? []) { m.line--; if (m.line < 0) m.dispose() }
+        if (this.isUserScrolling) b.viewportY = Math.max(b.viewportY - 1, 0)
+      } else {
+        b.baseY++
+        b.length++
+      }
+      if (!this.isUserScrolling) b.viewportY = b.baseY
+      ;(b.lines ??= []).push({ text: `${text} ${i}` })
       this.onScrollCb?.(b.viewportY)
     }
   }
@@ -96,9 +155,10 @@ class FakeSocket {
 }
 
 // The clipped host shows 30 of the 60 grid rows at 300px, or a fractional
-// 30.4 at 304px — phone hosts are fractional in practice.
+// 30.4 at 304px — phone hosts are fractional in practice. Small fixtures pass
+// `rows` for a fast saturated buffer (scrollback 5, grid 4, host 2).
 const ROWPX = 10
-async function setup(buffer: { viewportY: number, baseY: number, length: number, cursorY: number }, hostPx = 300) {
+async function setup(buffer: { viewportY: number, baseY: number, length: number, cursorY: number }, hostPx = 300, rows = 60) {
   const host = document.createElement('div')
   document.body.appendChild(host)
   Object.defineProperty(host, 'clientHeight', { value: hostPx, configurable: true })
@@ -112,7 +172,8 @@ async function setup(buffer: { viewportY: number, baseY: number, length: number,
   terminalRenderer.value = 'html'
   expect(await ctl.mount(host)).toBe(true)
   const term = terms[0]!
-  Object.defineProperty(term.screen, 'offsetHeight', { value: term.rows * ROWPX, configurable: true })
+  term.rows = rows
+  Object.defineProperty(term.screen, 'offsetHeight', { value: rows * ROWPX, configurable: true })
   Object.assign(term.buffer.active, buffer)
   ctl.connect(false)
   const ws = FakeSocket.all.at(-1)!
@@ -266,13 +327,19 @@ it('an active-buffer swap re-pins the window instead of holding a stale lifted p
     await nextTick()
     ctl.scroll(16)
     expect(windowTop(term)).toBe(15)
+    expect(liveMarkers(term)).toBe(1)
+    const mainBuf = term.buffer.active
     // The application switches to its alternate screen: buffer.active is a
     // new object whose baseY 0 / viewportY 0 read numerically as "output at
     // the bottom edge" — only the buffer's identity says the domain changed.
-    term.buffer.active = { viewportY: 0, baseY: 0, length: 60, cursorY: 59, getLine: () => undefined }
+    term.buffer.active = { viewportY: 0, baseY: 0, length: 60, cursorY: 59, lines: [], markers: [], getLine: () => undefined }
     frame(ws)
     await nextTick()
     expect(windowTop(term)).toBe(30)
+    // The lifted anchor is dropped with the domain: the old buffer keeps no
+    // live marker and the new buffer has none.
+    expect(mainBuf.markers.filter(m => !m.isDisposed).length).toBe(0)
+    expect(liveMarkers(term)).toBe(0)
     ctl.scroll(10)
     expect(windowTop(term)).toBe(20)
   } finally {
@@ -289,6 +356,7 @@ it('output preserves the reading position, control returning drops the lift, a f
     await nextTick()
     ctl.scroll(10)
     expect(windowTop(term)).toBe(21)
+    expect(liveMarkers(term)).toBe(1)
     // Output while scrolled back inside history: xterm leaves the viewport
     // where it is — the reader's row does not move.
     term.pushOutput(1)
@@ -301,6 +369,7 @@ it('output preserves the reading position, control returning drops the lift, a f
     ctl.scroll(8)
     expect(windowTop(term)).toBe(13)
     expect(term.buffer.active.viewportY).toBe(2)
+    expect(liveMarkers(term)).toBe(1)
     term.pushOutput(2)
     frame(ws)
     await nextTick()
@@ -311,6 +380,7 @@ it('output preserves the reading position, control returning drops the lift, a f
     // the bottom edge, which re-pins the window to live output.
     term.seekViewport(0)
     expect(windowTop(term)).toBe(0)
+    expect(liveMarkers(term)).toBe(0)
     term.seekViewport(4)
     expect(windowTop(term)).toBe(34)
     term.pushOutput(1)
@@ -332,9 +402,151 @@ it('output preserves the reading position, control returning drops the lift, a f
     Object.assign(term.buffer.active, { viewportY: 2, baseY: 2, length: 62, cursorY: 59 })
     ctl.scroll(10)
     expect(windowTop(term)).toBe(10)
+    expect(liveMarkers(term)).toBe(1)
     ws.receive({ type: 'terminal.frame', full: true, bytes: btoa('x'), credit: 10 })
     await nextTick()
     expect(windowTop(term)).toBe(32)
+    expect(liveMarkers(term)).toBe(0)
+  } finally {
+    ctl.dispose()
+    host.remove()
+    wrapper.unmount()
+  }
+})
+
+const seedRows = (term: FakeTerm, n: number, prefix = 'row') => {
+  term.buffer.active.lines = Array.from({ length: n }, (_, i) => ({ text: `${prefix} ${i}` }))
+}
+const topText = (term: FakeTerm) => term.buffer.active.getLine(Math.floor(windowTop(term)))?.text
+// The owned anchor: at most one live marker on the active buffer, ever.
+const liveMarkers = (term: FakeTerm) => (term.buffer.active.markers ?? []).filter(m => !m.isDisposed).length
+
+it('keeps the parked text at full scrollback while trims shift its row', async () => {
+  // The finding's exact shape: 5000 retained rows, a 60-row grid and a
+  // 30-row host. Each scrolling newline trims the oldest row — every index
+  // slides under the parked text while ybase/ydisp hold at 5000.
+  const { ctl, term, ws, host, wrapper } = await setup({ viewportY: 5000, baseY: 5000, length: 5060, cursorY: 59 })
+  term.scrollbackRows = 5000
+  seedRows(term, 5060)
+  try {
+    frame(ws)
+    await nextTick()
+    expect(windowTop(term)).toBe(5030)
+    // The live tail keeps following at capacity.
+    term.pushOutput(2)
+    frame(ws)
+    await nextTick()
+    expect(windowTop(term)).toBe(5030)
+    expect(term.buffer.active.viewportY).toBe(5000)
+    // Park inside the lifted grid: the window top is buffer row 5015. The
+    // live-tail trims above already shifted seeded names off their index —
+    // capture the parked row's actual content and track that identity.
+    expect(liveMarkers(term)).toBe(0)
+    ctl.scroll(15)
+    expect(windowTop(term)).toBe(5015)
+    expect(liveMarkers(term)).toBe(1)
+    const parked = topText(term)
+    // One scrolling newline trims one row: the same text must stay under the
+    // window top as its index decreases.
+    term.pushOutput(1)
+    frame(ws)
+    await nextTick()
+    expect(windowTop(term)).toBe(5014)
+    expect(topText(term)).toBe(parked)
+    // A coalesced batch the same way.
+    term.pushOutput(3)
+    frame(ws)
+    await nextTick()
+    expect(windowTop(term)).toBe(5011)
+    expect(topText(term)).toBe(parked)
+    // A non-scrolling repaint at capacity is not a trim, and the trailing
+    // DOM echo does not disturb the anchored position.
+    frame(ws)
+    await nextTick()
+    term.echoViewport()
+    expect(windowTop(term)).toBe(5011)
+    expect(topText(term)).toBe(parked)
+    // The reader's own scroll still wins: one step up lands on the next row
+    // — re-anchored, still exactly one live marker. Back at the live tail
+    // the anchor is dropped entirely.
+    ctl.scroll(1)
+    expect(windowTop(term)).toBe(5010)
+    expect(liveMarkers(term)).toBe(1)
+    ctl.scroll(-25)
+    expect(liveMarkers(term)).toBe(0)
+  } finally {
+    ctl.dispose()
+    host.remove()
+    wrapper.unmount()
+  }
+})
+
+it('a history-parked row tracks trims through the viewport', async () => {
+  const { ctl, term, ws, host, wrapper } = await setup({ viewportY: 5000, baseY: 5000, length: 5060, cursorY: 59 })
+  term.scrollbackRows = 5000
+  seedRows(term, 5060)
+  try {
+    frame(ws)
+    await nextTick()
+    // Scrolled back inside history: the row sits in xterm's own viewport
+    // domain — its isUserScrolling tracking already decrements ydisp per
+    // trim, and the resync must not double-count or lose the row.
+    ctl.scroll(40)
+    expect(windowTop(term)).toBe(4990)
+    const parked = topText(term)
+    term.pushOutput(2)
+    frame(ws)
+    await nextTick()
+    expect(windowTop(term)).toBe(4988)
+    expect(topText(term)).toBe(parked)
+  } finally {
+    ctl.dispose()
+    host.remove()
+    wrapper.unmount()
+  }
+})
+
+it('a parked row survives the transition into capacity, then clamps to the oldest row once trimmed away', async () => {
+  // Small saturated fixture: scrollback 5 + grid 4, a 2-row host.
+  const { ctl, term, ws, host, wrapper } = await setup({ viewportY: 3, baseY: 3, length: 7, cursorY: 3 }, 20, 4)
+  term.scrollbackRows = 5
+  seedRows(term, 7)
+  try {
+    frame(ws)
+    await nextTick()
+    expect(windowTop(term)).toBe(5)
+    // Park on the grid's top row (the baseY boundary counts as lifted).
+    ctl.scroll(1)
+    expect(windowTop(term)).toBe(4)
+    expect(topText(term)).toBe('row 4')
+    // Growing toward capacity: appends do not move the row's index.
+    term.pushOutput(1)
+    frame(ws)
+    await nextTick()
+    expect(term.buffer.active.baseY).toBe(4)
+    expect(windowTop(term)).toBe(4)
+    expect(topText(term)).toBe('row 4')
+    // Reaching capacity: baseY tops out and trims start — the parked text
+    // slides into history one index per trim and the window follows it.
+    term.pushOutput(2)
+    frame(ws)
+    await nextTick()
+    expect(term.buffer.active.baseY).toBe(5)
+    expect(term.buffer.active.length).toBe(9)
+    expect(windowTop(term)).toBe(3)
+    expect(topText(term)).toBe('row 4')
+    term.pushOutput(3)
+    frame(ws)
+    await nextTick()
+    expect(windowTop(term)).toBe(0)
+    expect(topText(term)).toBe('row 4')
+    // The row itself is trimmed away: clamp to the oldest position — the
+    // window must not wrap or hold a row that no longer exists.
+    term.pushOutput(1)
+    frame(ws)
+    await nextTick()
+    expect(windowTop(term)).toBe(0)
+    expect(topText(term)).toBe('row 5')
   } finally {
     ctl.dispose()
     host.remove()
