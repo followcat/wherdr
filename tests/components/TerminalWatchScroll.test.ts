@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { defineComponent, h, nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createTerminal } from '~/composables/useTerminal'
-import { terminalRenderer } from '~/composables/useHerdr'
+import { desk, fontSize, terminalRenderer, uiScale } from '~/composables/useHerdr'
 
 // Watching a grid taller than the clipped host: the visible window's top is a
 // buffer row reachable either through xterm's viewport (scrollback positions)
@@ -62,7 +62,8 @@ class FakeTerm {
   // clears it — while set, trims keep the displayed row instead of ydisp.
   isUserScrolling = false
   onScrollCb: ((y: number) => void) | null = null
-  constructor() {
+  constructor(init?: Record<string, unknown>) {
+    if (init) Object.assign(this.options, init)
     terms.push(this)
     this.screen.className = 'xterm-screen'
     this.viewportEl.className = 'xterm-viewport'
@@ -149,7 +150,7 @@ vi.mock('~/utils/terminalMouse', () => ({ bindTerminalMouse: () => ({ dispose() 
 vi.mock('~/utils/terminalSelection', () => ({ bindTerminalSelection: () => () => {} }))
 vi.mock('~/utils/terminalLinks', () => ({ bindTerminalLinks: () => ({ dispose() {} }) }))
 vi.mock('~/utils/terminalOsc52', () => ({ OSC52_MAX_BYTES: 1000, bindTerminalOsc52: () => () => {} }))
-vi.mock('~/utils/terminalFont', () => ({ TERM_FONT: 'monospace', onFontsLoaded: () => () => {} }))
+vi.mock('~/utils/terminalFont', async (importOriginal) => ({ ...(await importOriginal() as object), TERM_FONT: 'monospace', onFontsLoaded: () => () => {} }))
 
 class FakeSocket {
   readyState = 0
@@ -175,9 +176,10 @@ async function setup(buffer: { viewportY: number, baseY: number, length: number,
   document.body.appendChild(host)
   Object.defineProperty(host, 'clientHeight', { value: hostPx, configurable: true })
   let ctl!: ReturnType<typeof createTerminal>
+  const setBanner = vi.fn()
   const wrapper = mount(defineComponent({
     setup() {
-      ctl = createTerminal('w1:p1', { setBanner: vi.fn(), hasBanner: () => false })
+      ctl = createTerminal('w1:p1', { setBanner, hasBanner: () => false })
       return () => h('div')
     },
   }), { attachTo: document.body })
@@ -192,7 +194,7 @@ async function setup(buffer: { viewportY: number, baseY: number, length: number,
   ws.open()
   ws.receive({ type: 'web.capabilities', core: true })
   ws.receive({ type: 'terminal.control', on: false })
-  return { ctl, term, ws, host, wrapper }
+  return { ctl, term, ws, host, wrapper, setBanner }
 }
 
 // The visible window's top as a buffer row: xterm's viewport position plus
@@ -683,5 +685,153 @@ it('a parked row survives the transition into capacity, then clamps to the oldes
     ctl.dispose()
     host.remove()
     wrapper.unmount()
+  }
+})
+
+// Settings › Appearance › Interface size › Large: on a computer layout the
+// terminal text zooms ~15% over the device's own size; phones keep the base.
+// The refit rides the same bounded fitNow path as a window resize — under
+// control it is a want-resize the server applies, while watching it only
+// updates the local metrics and the fit banner.
+function measurable(term: FakeTerm, host: HTMLElement, cell = { width: 8, height: 18 }) {
+  // proposeTerminalSize reads the element's parent's computed box and xterm's
+  // cell. Its own box is a fixed wrapper (fitNow rewrites the mount host's
+  // width), the cell stands in for xterm's measure of the applied font.
+  const wrap = document.createElement('div')
+  wrap.style.width = '800px'
+  wrap.style.height = '600px'
+  host.appendChild(wrap)
+  wrap.appendChild(term.element)
+  ;(term as unknown as { _core: unknown })._core = { _renderService: { dimensions: { css: { cell } } } }
+  return { cols: Math.floor(800 / cell.width), rows: Math.floor(600 / cell.height) }
+}
+
+it('applies the interface scale to the terminal font on a computer layout', async () => {
+  const keep = { desk: desk.value, scale: uiScale.value, size: fontSize.value }
+  const fontsLoad = vi.fn(() => Promise.resolve([] as unknown))
+  const hadFonts = 'fonts' in document
+  const oldFonts = (document as { fonts?: unknown }).fonts
+  Object.defineProperty(document, 'fonts', { value: { load: fontsLoad }, configurable: true })
+  desk.value = true
+  uiScale.value = 'lg'
+  fontSize.value = 12
+  try {
+    const { ctl, term, ws, host, wrapper } = await setup({ viewportY: 0, baseY: 0, length: 60, cursorY: 59 })
+    try {
+      // Construction and the font preload both take the scaled size.
+      expect(term.options.fontSize).toBe(14)
+      expect(fontsLoad).toHaveBeenCalledWith('14px "JetBrains Mono Variable"')
+      // lg → md returns to the device size and invalidates the gesture geometry.
+      const geom = ctl.scrollGeometryVersion.value
+      uiScale.value = 'md'
+      await nextTick()
+      expect(term.options.fontSize).toBe(12)
+      expect(ctl.scrollGeometryVersion.value).toBeGreaterThan(geom)
+      // md → lg refits through the regular path (no unbounded loop).
+      uiScale.value = 'lg'
+      await nextTick()
+      expect(term.options.fontSize).toBe(14)
+    } finally {
+      ctl.dispose()
+      host.remove()
+      wrapper.unmount()
+    }
+  } finally {
+    desk.value = keep.desk
+    uiScale.value = keep.scale
+    fontSize.value = keep.size
+    if (hadFonts) Object.defineProperty(document, 'fonts', { value: oldFonts, configurable: true })
+    else delete (document as { fonts?: unknown }).fonts
+  }
+})
+
+it('never scales a phone layout, even while the preference says Large', async () => {
+  const keep = { desk: desk.value, scale: uiScale.value, size: fontSize.value }
+  desk.value = false
+  uiScale.value = 'lg'
+  fontSize.value = 12
+  try {
+    const { ctl, term, ws, host, wrapper } = await setup({ viewportY: 0, baseY: 0, length: 60, cursorY: 59 })
+    try {
+      expect(term.options.fontSize).toBe(12)
+      // lg → md on a phone is the same effective font: no refit, no geometry
+      // invalidation, nothing on the wire.
+      const geom = ctl.scrollGeometryVersion.value
+      const sent = ws.messages().length
+      uiScale.value = 'md'
+      await nextTick()
+      expect(term.options.fontSize).toBe(12)
+      expect(ctl.scrollGeometryVersion.value).toBe(geom)
+      expect(ws.messages().length).toBe(sent)
+    } finally {
+      ctl.dispose()
+      host.remove()
+      wrapper.unmount()
+    }
+  } finally {
+    desk.value = keep.desk
+    uiScale.value = keep.scale
+    fontSize.value = keep.size
+  }
+})
+
+it('a scale change refits an owned terminal and only updates want/banner while watching', async () => {
+  const keep = { desk: desk.value, scale: uiScale.value, size: fontSize.value }
+  desk.value = true
+  uiScale.value = 'lg'
+  fontSize.value = 12
+  try {
+    const { ctl, term, ws, host, wrapper, setBanner } = await setup({ viewportY: 0, baseY: 0, length: 60, cursorY: 59 })
+    try {
+      const cell = { width: 8, height: 18 }
+      const d = measurable(term, host, cell)
+      // Owner first: control on — exactly one want-resize at the locally
+      // measured size reaches the server; the core stream's grid itself stays
+      // the remote size until a core frame applies the new one.
+      ws.receive({ type: 'terminal.control', on: true })
+      const sent0 = ws.messages().length
+      uiScale.value = 'md'
+      await nextTick()
+      expect(term.options.fontSize).toBe(12)
+      expect(ws.messages().slice(sent0)).toEqual([{ type: 'terminal.resize', cols: d.cols, rows: d.rows }])
+      expect(term.cols).toBe(200)
+      expect(term.rows).toBe(60)
+      // Watching: losing control already installed the fit banner — the
+      // viewer knows its local size would differ before it ever asks.
+      ws.receive({ type: 'terminal.control', on: false })
+      expect(setBanner).toHaveBeenLastCalledWith(expect.objectContaining({
+        text: 'Shown at the size of another screen.',
+        btn: 'Fit to this screen',
+      }))
+      setBanner.mockClear()
+      // A font change re-measures cells and updates this viewer's want-resize
+      // — the local intent the server drops while control is off, not a
+      // remote RESIZE frame or a lease takeover. The remote grid keeps its
+      // owner's dimensions, and the installed banner is neither cleared nor
+      // re-sent across the change.
+      cell.width = 9
+      cell.height = 20
+      const sent1 = ws.messages().length
+      uiScale.value = 'lg'
+      await nextTick()
+      expect(term.options.fontSize).toBe(14)
+      const d2 = { cols: Math.floor(800 / 9), rows: Math.floor(600 / 20) }
+      expect(ws.messages().slice(sent1)).toEqual([{ type: 'terminal.resize', cols: d2.cols, rows: d2.rows }])
+      expect(term.cols).toBe(200)
+      expect(term.rows).toBe(60)
+      expect(setBanner).not.toHaveBeenCalled()
+      // desk → phone transition is a transition too: back to the base font.
+      desk.value = false
+      await nextTick()
+      expect(term.options.fontSize).toBe(12)
+    } finally {
+      ctl.dispose()
+      host.remove()
+      wrapper.unmount()
+    }
+  } finally {
+    desk.value = keep.desk
+    uiScale.value = keep.scale
+    fontSize.value = keep.size
   }
 })

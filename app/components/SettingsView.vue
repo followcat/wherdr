@@ -109,10 +109,24 @@ const typingItems = computed(() => [
 const renderer = terminalRenderer
 const smoothScrollingOn = smoothTouchScrolling
 const width = contentWidth
-const widthItems = computed(() => [
-  { label: t('Normal'), description: t('760 px column · terminal fitted to width.'), value: 'normal' },
-  { label: t('Wide'), description: t('Up to 1100 px · terminal fitted to width.'), value: 'wide' },
-  { label: t('Full width'), description: t('The whole width, terminal included.'), value: 'full' },
+// Interface size › Large widens the reading column to 1500 px for Normal and
+// Wide alike (Content width › Full still wins); what keeps differing is the
+// width the terminal itself is fitted to — the copy says which is which.
+const widthItems = computed(() => uiScale.value === 'lg'
+  ? [
+      { label: t('Normal'), description: t('Reading column up to 1500 px · terminal fitted to 760 px.'), value: 'normal' },
+      { label: t('Wide'), description: t('Reading column up to 1500 px · terminal fitted to 1100 px.'), value: 'wide' },
+      { label: t('Full width'), description: t('The whole width, terminal included.'), value: 'full' },
+    ]
+  : [
+      { label: t('Normal'), description: t('760 px column · terminal fitted to width.'), value: 'normal' },
+      { label: t('Wide'), description: t('Up to 1100 px · terminal fitted to width.'), value: 'wide' },
+      { label: t('Full width'), description: t('The whole width, terminal included.'), value: 'full' },
+    ])
+const scale = uiScale
+const scaleItems = computed(() => [
+  { label: t('Standard'), description: t('The usual density.'), value: 'md' },
+  { label: t('Large'), description: t('Interface and text enlarged by about 15%, terminal included; the terminal text size stays the base.'), value: 'lg' },
 ])
 // What an agent pane opens on: the Conversation, or the Terminal.
 const defaultPane = defaultViewMode
@@ -373,6 +387,11 @@ onMounted(() => {
               <h3>{{ t('Content width') }}</h3>
               <URadioGroup v-model="width" :items="widthItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
               <p class="muted settings-hint">{{ t('Conversation, terminal, settings and other content. Saved on this device.') }}</p>
+            </div>
+            <div class="settings-group">
+              <h3>{{ t('Interface size') }}</h3>
+              <URadioGroup v-model="scale" :items="scaleItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
+              <p class="muted settings-hint">{{ t('The agent side and its text, enlarged. Saved on this device.') }}</p>
             </div>
           </template>
         </div>

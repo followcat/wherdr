@@ -18,6 +18,7 @@ import { checkNewVersionOnWake } from './useAppVersion'
 import { onceEvery } from '~/utils/onceEvery'
 import { keepIfSame } from '~/utils/keepIfSame'
 import { migrateContentWidth } from '~/utils/contentWidth'
+import { readUiScale, type UiScale } from '~/utils/uiScale'
 import { readQuotaDisplay } from '~/utils/quotas'
 import { readShowShells } from '~/utils/terminalVisibility'
 import { readHomeGrouping } from '~/utils/homeGrouping'
@@ -98,6 +99,12 @@ watch(contentWidth, (v) => {
     try { localStorage.removeItem('chatWidth') } catch { /* stockage indisponible */ }
     document.documentElement.dataset.contentWidth = v
   }
+}, { immediate: true })
+// Interface size on a computer; applied as data-ui-scale, desk media only.
+export const uiScale = ref<UiScale>(readUiScale(ls.get('uiScale')))
+watch(uiScale, (v) => {
+  ls.set('uiScale', v)
+  if (import.meta.client) document.documentElement.dataset.uiScale = v
 }, { immediate: true })
 // Independent settings; migration of the old modes on first read.
 const savedTyping = parseTypingSettings(ls.get('typewriterSpeed'), ls.get('encryptedText'), ls.get('typewriterMode'), ls.get('typewriter'))
