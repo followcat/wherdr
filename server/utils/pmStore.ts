@@ -2,7 +2,8 @@
 // host): pm.json (the on/off switch and this install's id), projects.json,
 // templates/<id>.json, template-log/<id>.json, tasks/<KEY>-<n>.json, runs/<id>.json, receipts/<id>.json,
 // shots/<KEY>-<n>/<file> (a task's screenshots),
-// coordinators/<KEY>.json (the hash of the coordinator's token, its current turn).
+// coordinators/<KEY>.json (the hash of the coordinator's token, its current turn, its autopilot),
+// wakes.jsonl (the coordinators' wake queue, append-only: the last line of an id wins).
 // Atomic writes (temp file + rename), one at a time. Switched off, every
 // write is refused except turning it back on.
 import fs from 'node:fs/promises'
@@ -16,6 +17,8 @@ import type { Receipt } from '../../shared/pm/actions'
 import { SHOT_FILE_RE } from '../../shared/pm/shots'
 import { HerdrError } from './herdr'
 import type { CoordinatorAgent, Proposal, ProposalOutcome } from '../../shared/pm/coordinator'
+import type { Autopilot, TaskStatus } from '../../shared/pm/autopilot'
+import { readQueue, type Wake } from '../../shared/pm/wakes'
 import { DATA_DIR } from './env'
 
 // A project coordinator: the sha256 of its token, its terminal (herdr-core
@@ -25,6 +28,8 @@ import { DATA_DIR } from './env'
 export interface CoordinatorRecord {
   project: string, tokenHash: string, terminal?: string, turn?: { kind: 'user' | 'wake', at: number, said?: string }
   agent?: CoordinatorAgent, ran?: CoordinatorAgent, proposal?: Proposal, answered?: { outcome: ProposalOutcome, at: number }
+  // userAt: the user's last message. seen: each task's status at the last tick; ranAt: the last interval wake.
+  userAt?: number, autopilot?: Autopilot, seen?: Record<string, TaskStatus>, ranAt?: number
 }
 
 // The checks the store cannot make itself: the machine, a git folder there.
@@ -59,7 +64,7 @@ export function createPmStore(dir = path.join(DATA_DIR, 'projects')) {
   const files = {
     pm: path.join(dir, 'pm.json'), projects: path.join(dir, 'projects.json'), templates: path.join(dir, 'templates'), templateLog: path.join(dir, 'template-log'),
     tasks: path.join(dir, 'tasks'), runs: path.join(dir, 'runs'), receipts: path.join(dir, 'receipts'), shots: path.join(dir, 'shots'),
-    coordinators: path.join(dir, 'coordinators'),
+    coordinators: path.join(dir, 'coordinators'), wakes: path.join(dir, 'wakes.jsonl'),
   }
   let queue: Promise<unknown> = Promise.resolve()
   const serial = <T>(fn: () => Promise<T>): Promise<T> => {
@@ -146,6 +151,21 @@ export function createPmStore(dir = path.join(DATA_DIR, 'projects')) {
     coordinator: (key: string) => readJson<CoordinatorRecord>(path.join(files.coordinators, `${key}.json`)),
     coordinators: () => readAll<CoordinatorRecord>(files.coordinators),
     saveCoordinator: (c: CoordinatorRecord) => write(() => writeJson(path.join(files.coordinators, `${c.project}.json`), c)),
+    wakes: async () => readQueue((await fs.readFile(files.wakes, 'utf8').catch(() => '')).split('\n'), Date.now()),
+    // Appends the changed wakes; the file is rewritten (atomically) once it holds many old lines.
+    saveWakes: (changed: Wake[]) => write(async () => {
+      if (!changed.length) return
+      const lines = (await fs.readFile(files.wakes, 'utf8').catch(() => '')).split('\n').filter(Boolean)
+      if (lines.length < 500) {
+        await fs.mkdir(dir, { recursive: true, mode: 0o700 })
+        return fs.appendFile(files.wakes, changed.map(w => JSON.stringify(w) + '\n').join(''), { mode: 0o600 })
+      }
+      const ids = new Set(changed.map(w => w.id))
+      const keep = [...readQueue(lines, Date.now()).filter(w => !ids.has(w.id)), ...changed]
+      const temp = `${files.wakes}.${randomUUID()}.tmp`
+      await fs.writeFile(temp, keep.map(w => JSON.stringify(w) + '\n').join(''), { mode: 0o600 })
+      await fs.rename(temp, files.wakes)
+    }),
     saveRun: (r: Run) => write(() => writeJson(path.join(files.runs, `${r.id}.json`), r)),
     receipt: (id: string) => readJson<Receipt>(path.join(files.receipts, `${id}.json`)),
     saveReceipt: (r: Receipt) => write(() => writeJson(path.join(files.receipts, `${r.id}.json`), r)),

@@ -46,7 +46,7 @@ if [ "\${cur%% *}" != "$base" ]; then e=$(gh pr edit "\${cur#* }" --base "$base"
 echo "\${cur#* }"`,
   // The commit, then the open PR as JSON on the last line.
   prInfo: `${IN} git rev-parse HEAD || exit 1
-j=$(gh pr list --head "$1" --state open --json url,baseRefName,headRefOid,statusCheckRollup 2>&1) || { echo "$j"; exit 1; }
+j=$(gh pr list --head "$1" --state open --json url,baseRefName,headRefOid,mergeStateStatus,statusCheckRollup 2>&1) || { echo "$j"; exit 1; }
 echo "$j" | tail -1`,
   // The first merge method the repo allows: merge commit, squash, rebase.
   merge: `${IN} m=$(gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed -q 'if .mergeCommitAllowed then "merge" elif .squashMergeAllowed then "squash" else "rebase" end' 2>&1) || { echo "$m"; exit 1; }
@@ -77,11 +77,19 @@ if git merge-base --is-ancestor HEAD "origin/$t"; then
 else why="commit $(git rev-parse --short HEAD) is not in $t"; fi
 [ -z "$ghe" ] || { echo "$why (GitHub not checked: $(echo "$ghe" | head -1))"; exit 1; }
 echo "$why"; exit ${CODE.NOT_MERGED}`,
+  // The engine's catch-up: the target merged into the task branch, pushed there.
+  catchUp: `${IN} ${CLEAN} git fetch -q origin "$1" 2>&1 || exit 1
+if ! git merge -q --no-edit "origin/$1" >/dev/null 2>&1; then
+  f=$(git diff --name-only --diff-filter=U | head -3 | paste -sd ' ' -); git merge --abort; echo "conflict with $1 in $f"; exit ${CODE.SEND_BACK}; fi
+git push -q origin "HEAD:refs/heads/$2" 2>&1 || exit 1; git rev-parse HEAD`,
+  // Runs again the failed or cancelled workflow runs of a commit.
+  rerun: `${IN} ids=$(gh run list --commit "$1" --json databaseId,conclusion -q '.[] | select(.conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral" and .conclusion != "") | .databaseId' 2>&1) || { echo "$ids"; exit 1; }
+for i in $ids; do gh run rerun "$i" --failed 2>&1 || exit 1; done`,
   // Remote branches holding the task's commit, for the protected-branch alert.
   contains: `${IN} git fetch -q origin 2>&1 || exit 1; git branch -r --contains HEAD --format='%(refname:short)'`,
 }
 
-interface Check { status?: string, conclusion?: string, state?: string }
+interface Check { name?: string, context?: string, status?: string, conclusion?: string, state?: string }
 export interface PrInfo { url: string, baseRefName: string, headRefOid: string, statusCheckRollup?: Check[] }
 
 const GREEN = ['SUCCESS', 'NEUTRAL', 'SKIPPED']

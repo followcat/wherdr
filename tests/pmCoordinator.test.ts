@@ -3,13 +3,15 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createPmStore } from '../server/utils/pmStore'
-import { answerProposal, coordinatorsView, deliverWakes, issueToken, noteTurn, runCommand, setCoordinatorAgent, startCoordinator, userMessageTo } from '../server/utils/pmCoordinator'
+import { answerProposal, coordinatorsView, issueToken, noteTurn, runCommand, setCoordinatorAgent, startCoordinator, userMessageTo } from '../server/utils/pmCoordinator'
 import { parseCommand, roleFiles, coordinatorArgs } from '../shared/pm/coordinator'
 import { EXAMPLES, common, company } from '../shared/pm/examples'
 import { onEvent, planSteps, type StepState } from '../shared/pm/steps'
 import type { Finding } from '../shared/pm/verdict'
 import type { Template } from '../shared/pm/workflow'
 import type { CoreAdminDeps } from '../server/utils/coreCreate'
+import { runNow, wakeTick } from '../server/utils/pmWakes'
+import { WAKE } from '../shared/pm/wakes'
 // @ts-expect-error plain JavaScript module
 import { pm } from '../bin/lib/pm.mjs'
 
@@ -311,13 +313,15 @@ it('the folder\'s wherdr script sends any words and stdin, and fails on a refusa
 
 describe('wakes', () => {
   const deliver = (status: string, now: number) => {
-    const sent: { terminal: string, text: string }[] = []
+    const sent: { terminal: string, text: string }[] = [], pushed: string[] = []
     const call = async (method: string, params: Record<string, string>) => {
       if (method === 'terminal.get') return { status }
       if (method === 'terminal.send') sent.push({ terminal: params.terminal!, text: params.text! })
       return {}
     }
-    return { sent, run: () => deliverWakes({ store, call } as unknown as Parameters<typeof deliverWakes>[0], now) }
+    const notify = async (title: string) => { pushed.push(title) }
+    const d = { store, call, notify } as unknown as Parameters<typeof wakeTick>[0]
+    return { sent, pushed, d, run: () => wakeTick(d, now) }
   }
   const atDeploy = async (since: number) => {
     await store.saveCoordinator({ ...(await store.coordinator('CO'))!, terminal: 'host/t9' })
@@ -325,31 +329,108 @@ describe('wakes', () => {
     await store.saveTask({ ...task, state: 'working', step: state(5, { since, recheckAt: since + 300_000 }) })
     return task.id
   }
+  const wakeId = (text: string) => /wherdr pm ack ([0-9a-f]{8})/.exec(text)![1]!
 
   it('tells the coordinator its step once, then each recheck, as an Autopilot wake turn', async () => {
     const id = await atDeploy(1000)
     const first = deliver('idle', 2000)
     expect(await first.run()).toEqual(['CO'])
-    expect(first.sent).toEqual([{ terminal: 'host/t9', text: expect.stringMatching(/^Autopilot:\n\nCO-1 \(Fix\): Base branch is develop\.[\s\S]*Watch the develop pipeline/) }])
+    expect(first.sent).toEqual([{ terminal: 'host/t9', text: expect.stringMatching(/^Autopilot: wake [0-9a-f]{8}\n\nCO-1 \(Fix\): Base branch is develop\.[\s\S]*Watch the develop pipeline/) }])
     expect((await store.coordinator('CO'))!.turn).toMatchObject({ kind: 'wake' })
     // A wake turn: the user's words cannot be claimed.
     await store.saveTask({ ...(await store.task(id))!, step: { ...(await store.task(id))!.step!, at: 4, yourTurn: { reason: 'user', badge: 'Merge the PR' } } })
     await refused(cli(['step', 'done', id, '--user-said', 'merged']), 'not a wake')
     await store.saveTask({ ...(await store.task(id))!, step: { ...(await store.task(id))!.step!, at: 5, yourTurn: undefined } })
-    const again = deliver('idle', 3000)
-    expect(await again.run()).toEqual([])
+    expect(await deliver('idle', 3000).run()).toEqual([])
+    await cli(['ack', wakeId(first.sent[0]!.text)])
     const recheck = deliver('idle', 1000 + 300_000)
     await recheck.run()
     expect(recheck.sent[0]!.text).toContain('Check again: ')
   })
 
-  it('waits while the coordinator works or the user just wrote', async () => {
+  it('waits while the coordinator works or the user just wrote; the queue keeps the reason', async () => {
     await atDeploy(1000)
-    const busy = deliver('working', 2000)
-    expect(await busy.run()).toEqual([])
-    await noteTurn(store, 'CO', 'user', 'hi')
+    expect(await deliver('working', 2000).run()).toEqual([])
+    expect(await store.wakes()).toHaveLength(1)
+    await userMessageTo(store, 'host/t9', 'hi')
     const quiet = deliver('idle', Date.now() + 10_000)
     expect(await quiet.run()).toEqual([])
-    expect(quiet.sent).toEqual([])
+    const later = deliver('idle', Date.now() + WAKE.QUIET_MS)
+    expect(await later.run()).toEqual(['CO'])
+    expect(later.sent[0]!.text).toContain('CO-1 (Fix)')
+  })
+
+  it('an unacked wake comes back once, then the user gets a push', async () => {
+    await atDeploy(1000)
+    await deliver('idle', 2000).run()
+    // Its turn ends after 2 min idle; 15 min without ack: again.
+    await deliver('idle', 3000).run()
+    const again = deliver('idle', 2000 + WAKE.ACK_MS + WAKE.IDLE_MS)
+    await again.run()
+    expect(again.sent[0]!.text).toContain('(again: no ack after 15 min)')
+    await deliver('idle', 3000 + WAKE.ACK_MS + WAKE.IDLE_MS).run()
+    const last = deliver('idle', 3000 + 2 * (WAKE.ACK_MS + WAKE.IDLE_MS))
+    await last.run()
+    expect(last.pushed).toEqual(['CO: the coordinator is not answering'])
+    await refused(cli(['ack', 'deadbeef']), 'No wake deadbeef')
+  })
+
+  it('run now goes over an open wake; the autopilot wakes for its events', async () => {
+    const ap = { on: true, goal: 'Ship lot 10', events: ['added'], perDay: 3, atOnce: 1 }
+    await atDeploy(1000)
+    await store.saveCoordinator({ ...(await store.coordinator('CO'))!, autopilot: { ...ap, events: ['added'] } })
+    const first = deliver('idle', 2000)
+    await first.run() // notes where tasks stand: no "added" for what was there
+    expect(first.sent[0]!.text).not.toContain('added')
+    await store.addTask({ project: 'CO', title: 'New', type: 'feature' })
+    const now = deliver('idle', 4000)
+    await runNow(now.d, 'CO', 4000)
+    expect(now.sent[0]!.text).toContain('The user asked you to run now. Your goal: Ship lot 10.')
+    expect(now.sent[0]!.text).toContain('CO-2 (New): added')
+  })
+})
+
+describe('commands of lot 10', () => {
+  it('a new token (the coordinator started again) keeps the autopilot the user set', async () => {
+    const autopilot = { on: true, goal: 'ship lot 10', every: '2h', events: ['done' as const], perDay: 4, atOnce: 1, hours: { from: 22, to: 6 } }
+    await store.saveCoordinator({ ...(await store.coordinator('CO'))!, autopilot, seen: { 'CO-1': 'working' }, ranAt: 5, userAt: 6, terminal: 'host/t1', turn: { kind: 'wake', at: 1 } })
+    await issueToken(store, 'CO')
+    const c = (await store.coordinator('CO'))!
+    expect(c).toMatchObject({ autopilot, seen: { 'CO-1': 'working' }, ranAt: 5, userAt: 6 })
+    expect([c.terminal, c.turn]).toEqual([undefined, undefined])
+  })
+
+  it('approve, merge, settings and the autopilot\'s limits are the user\'s', async () => {
+    await refused(cli(['approve', 'CO-1']), 'Approving is the user\'s')
+    await refused(cli(['merge', 'CO-1']), 'Merging is the user\'s gesture')
+    await refused(cli(['settings']), 'Settings change only in wherdr')
+    await refused(cli(['autopilot', 'set', '--perDay', '50']), 'change only in wherdr')
+  })
+
+  it('autopilot show gives the goal and what is left today', async () => {
+    await store.saveCoordinator({ ...(await store.coordinator('CO'))!, autopilot: { on: true, goal: 'Ship', events: [], perDay: 4, atOnce: 2 } })
+    await store.saveTask({ ...(await store.addTask({ project: 'CO', title: 'Fix', type: 'feature' })), state: 'working' })
+    expect(await cli(['autopilot', 'show'])).toMatchObject({ autopilot: { goal: 'Ship' }, today: { started: 0, perDay: 4, working: 1, atOnce: 2, startLeft: 1 } })
+  })
+
+  it('tell: an agent\'s question in a wake; never a permission', async () => {
+    const sent: string[] = []
+    const call = async (method: string, p: { text: string }) => { if (method === 'terminal.send') sent.push(p.text); return {} }
+    const tell = (argv: string[]) => runCommand({ store, call } as unknown as Parameters<typeof runCommand>[0], token, { argv })
+    const task = await store.addTask({ project: 'CO', title: 'Fix', type: 'feature' })
+    await store.saveRun({ id: 'r1', task: task.id, role: 'worker', program: 'claude', model: 'opus', machine: '', worktree: '/w', branch: 'b', instructions: '', terminal: 'host/t3', attempt: 1, state: 'running', startedAt: 1 })
+    await store.saveTask({ ...task, run: 'r1', state: 'waiting', waiting: 'Run the migration?', waitKind: 'permission' })
+    await refused(tell(['tell', task.id, 'yes']), 'permission request is the user\'s')
+    await store.saveTask({ ...(await store.task(task.id))!, waiting: 'Which DB?', waitKind: 'question' })
+    await noteTurn(store, 'CO', 'wake')
+    await tell(['tell', task.id, 'Postgres,', 'as in the README'])
+    expect(sent).toEqual(['From the project coordinator: Postgres, as in the README'])
+    const told = (await store.task(task.id))!
+    expect([told.state, told.waitKind, told.log?.at(-1)?.text]).toEqual(['working', undefined, 'told the agent: Postgres, as in the README'])
+    await refused(tell(['tell', task.id, 'and also…']), 'only answers an agent\'s question')
+    // A permission prompt on its screen, even in the user's turn: never typed into.
+    await noteTurn(store, 'CO', 'user', 'tell it')
+    const blocked = async (method: string, p: { text: string }) => (method === 'terminal.get' ? { status: { state: 'blocked' } } : call(method, p))
+    await refused(runCommand({ store, call: blocked } as unknown as Parameters<typeof runCommand>[0], token, { argv: ['tell', task.id, 'yes'] }), 'permission request is the user\'s')
   })
 })

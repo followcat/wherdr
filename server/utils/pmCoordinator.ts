@@ -2,13 +2,15 @@
 // it), where its current turn comes from, the `wherdr pm` commands it runs,
 // and its role files, written in its own folder on the project's machine.
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
-import { COORDINATOR_AGENTS, coordinatorArgs, coordinatorWake, parseCommand, roleFiles, stepDoneEvent, templateDiff, templateEditRefusal, type CoordinatorAgent, type CoordinatorView, type ProposalOutcome, type Turn } from '../../shared/pm/coordinator'
+import { COORDINATOR_AGENTS, coordinatorArgs, parseCommand, roleFiles, stepDoneEvent, templateDiff, templateEditRefusal, type CoordinatorAgent, type CoordinatorView, type ProposalOutcome, type Turn } from '../../shared/pm/coordinator'
 import { initialState, onEvent, planSteps, currentStep } from '../../shared/pm/steps'
 import { templateChanges } from '../../shared/pm/templateText'
 import { validateTemplate } from '../../shared/pm/workflow'
 import { EXAMPLES } from '../../shared/pm/examples'
+import { DEFAULT_AUTOPILOT, USER_ONLY, limitsLeft, tellRefusal } from '../../shared/pm/autopilot'
+import { ackWakes } from '../../shared/pm/wakes'
 import type { Template } from '../../shared/pm/workflow'
-import type { Task } from '../../shared/pm/run'
+import { waitOf, type Task } from '../../shared/pm/run'
 import { HerdrError } from './herdr'
 import { PATH_SETUP, homeOf, machineOn, type CoreAdminDeps } from './coreCreate'
 import { WRITE_SCRIPT, exec } from './pmLaunch'
@@ -21,9 +23,10 @@ const sha = (s: string) => createHash('sha256').update(s).digest()
 // A new token for the project's coordinator; the one before stops working.
 export async function issueToken(store: PmStore, key: string) {
   const token = randomBytes(32).toString('hex')
-  // Its default agent and pending change stay; its turn and terminal are the old conversation's.
-  const { agent, proposal, answered } = (await store.coordinator(key)) ?? {}
-  await store.saveCoordinator({ project: key, tokenHash: sha(token).toString('hex'), ...(agent ? { agent } : {}), ...(proposal ? { proposal } : {}), ...(answered ? { answered } : {}) })
+  // Its settings stay (default agent, autopilot, pending change…); its turn,
+  // terminal and agent that ran are the old conversation's.
+  const { turn: _turn, terminal: _terminal, ran: _ran, tokenHash: _hash, ...keep } = (await store.coordinator(key)) ?? {}
+  await store.saveCoordinator({ ...keep, project: key, tokenHash: sha(token).toString('hex') })
   return token
 }
 
@@ -41,7 +44,8 @@ export async function scopeOf(store: PmStore, token: unknown) {
 export async function noteTurn(store: PmStore, key: string, kind: 'user' | 'wake', said?: string) {
   const c = await store.coordinator(key)
   if (!c) throw new HerdrError('not_found', 'No coordinator for this project')
-  await store.saveCoordinator({ ...c, turn: { kind, at: Date.now(), ...(kind === 'user' && said ? { said: said.slice(0, 500) } : {}) } })
+  const at = Date.now()
+  await store.saveCoordinator({ ...c, turn: { kind, at, ...(kind === 'user' && said ? { said: said.slice(0, 500) } : {}) }, ...(kind === 'user' ? { userAt: at } : {}) })
 }
 
 const TURN_MS = 3_600_000
@@ -69,6 +73,9 @@ export async function runCommand(deps: Deps, token: unknown, body: { argv?: unkn
   const key = await scopeOf(store, token)
   if (!key) throw new HerdrError('forbidden', 'Unknown coordinator token')
   if (Array.isArray(body.argv64)) body = { argv: body.argv64.map(unb64), input: unb64(body.input64) }
+  const words = Array.isArray(body.argv) ? body.argv.filter(a => typeof a === 'string' && !a.startsWith('--')) : []
+  const userOnly = USER_ONLY[words.slice(0, 2).join(' ')] ?? USER_ONLY[words[0] ?? '']
+  if (userOnly) throw new HerdrError('refused', userOnly)
   const cmd = parseCommand(body.argv)
   if ('error' in cmd) throw new HerdrError('bad_input', cmd.error)
   const projects = await store.projects()
@@ -129,6 +136,29 @@ export async function runCommand(deps: Deps, token: unknown, body: { argv?: unkn
       const r = onEvent(plan, state, ev, Date.now())
       if (r.refused) throw new HerdrError('refused', r.refused)
       return { task: await store.logTask({ ...task, step: r.state }, by, `${step}: done`) }
+    }
+    case 'ack': {
+      const r = ackWakes(await store.wakes(), key, cmd.wakes, Date.now())
+      if (r.unknown.length) throw new HerdrError('not_found', `No wake ${r.unknown.join(', ')} was delivered to you`)
+      await store.saveWakes(r.changed)
+      return { acked: cmd.wakes }
+    }
+    case 'autopilot show': {
+      const ap = rec?.autopilot ?? DEFAULT_AUTOPILOT
+      const mine = (await store.tasks()).filter(x => x.project === key)
+      return { autopilot: ap, today: limitsLeft(ap, mine, await store.runs(), Date.now()), note: 'Only the user changes these, in wherdr' }
+    }
+    case 'tell': {
+      const task = await taskOf(cmd.task)
+      const run = task.run ? (await store.runs()).find(r => r.id === task.run) : undefined
+      if (!run?.terminal || run.state === 'ended') throw new HerdrError('not_found', 'The task\'s agent is not running')
+      // What the agent waits for now, from its terminal: a permission prompt is never typed into.
+      const live = waitOf(await deps.call<Parameters<typeof waitOf>[0]>('terminal.get', { terminal: run.terminal }, 3000).catch(() => null))
+      const why = tellRefusal({ state: live ? 'waiting' : task.state, waitKind: live ?? task.waitKind }, turn !== 'user')
+      if (why) throw new HerdrError('refused', why)
+      await deps.call('terminal.send', { terminal: run.terminal, text: `From the project coordinator: ${cmd.text}` }, 30000)
+      const saved = await store.logTask(task.state === 'waiting' && task.waitKind === 'question' ? { ...task, state: 'working', waiting: undefined, waitKind: undefined } : task, by, `told the agent: ${cmd.text.slice(0, 300)}`)
+      return { task: saved }
     }
     case 'task decide': {
       const task = await taskOf(cmd.task)
@@ -252,49 +282,4 @@ export async function startCoordinator(deps: Deps, key: unknown, agent: { progra
   // A new conversation replaces the one before (another agent's, or ended).
   if (before?.terminal && before.terminal !== address) await deps.call('terminal.kill', { terminal: before.terminal }, 15000).catch(() => {})
   return { terminal: address, folder: c.folder }
-}
-
-const QUIET_MS = 60_000 // no wake within a minute of the user's message
-
-// The engine's wakes (server/plugins/pm.ts, every 30 s): for each task, its
-// recheck reminders and the start of a step the coordinator holds go to the
-// project's coordinator as one "Autopilot:" message, once it is idle and the
-// user has not written in the last minute. The turn is noted as a wake first.
-// Undelivered, nothing is marked: the next tick tries again.
-export async function deliverWakes(deps: Deps, now = Date.now()) {
-  const { store } = deps
-  if (!(await store.enabled())) return []
-  const projects = await store.projects()
-  const templates = new Map<string, Template | null>()
-  const pending = new Map<string, { task: Task, state: NonNullable<Task['step']>, texts: string[] }[]>()
-  for (const task of await store.tasks()) {
-    if (!task.step?.started || task.step.done) continue
-    const p = projects.find(x => x.key === task.project)
-    if (!p?.template) continue
-    if (!templates.has(p.template)) templates.set(p.template, await store.template(p.template))
-    const t = templates.get(p.template)
-    if (!t) continue
-    const w = coordinatorWake(planOf(t, task), task.step, now)
-    if (w.texts.length) pending.set(p.key, [...(pending.get(p.key) ?? []), { task, state: w.state, texts: w.texts }])
-    else if (JSON.stringify(w.state) !== JSON.stringify(task.step)) await store.saveTask({ ...task, step: w.state })
-  }
-  const sent: string[] = []
-  for (const [key, items] of pending) {
-    const c = await store.coordinator(key)
-    if (!c?.terminal) {
-      // No coordinator: the tick still counts (timeouts), the step start stays to announce.
-      for (const i of items) await store.saveTask({ ...i.task, step: { ...i.state, told: i.task.step!.told } })
-      continue
-    }
-    if (c.turn?.kind === 'user' && now - c.turn.at < QUIET_MS) continue
-    const st = await deps.call<{ status?: string | { state?: string } | null }>('terminal.get', { terminal: c.terminal }, 3000).catch(() => null)
-    const state = typeof st?.status === 'string' ? st.status : st?.status?.state
-    if (state !== 'idle' && state !== 'done') continue
-    const text = ['Autopilot:', ...items.map(i => `${i.task.id} (${i.task.title}): ${i.texts.join('\n')}`)].join('\n\n')
-    await noteTurn(store, key, 'wake')
-    try { await deps.call('terminal.send', { terminal: c.terminal, text }, 30000) } catch { continue }
-    for (const i of items) await store.saveTask({ ...(await store.task(i.task.id))!, step: i.state })
-    sent.push(key)
-  }
-  return sent
 }

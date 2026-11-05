@@ -13,6 +13,8 @@ export interface Task {
   type: string // a task type of the project's template
   state: 'todo' | 'working' | 'waiting'
   waiting?: string // why it waits for the user
+  waitKind?: 'question' | 'permission' | 'auth' // what it waits for
+  mech?: Record<string, number> // the engine's mechanical moves made (key → when): never twice
   run?: string // the current run
   step?: StepState // where the step engine has it
   prefs?: Prefs
@@ -45,7 +47,19 @@ export interface Run {
   startedAt: number
 }
 
-export const LABEL = { install: 'wherdr.install', task: 'wherdr.task', run: 'wherdr.run', role: 'wherdr.role' } as const
+export const LABEL = { install: 'wherdr.install', task: 'wherdr.task', run: 'wherdr.run', role: 'wherdr.role', report: 'wherdr.report' } as const
+
+export type WaitKind = NonNullable<Task['waitKind']>
+// What a running agent waits for: its wherdr.report label (blocked:<kind>),
+// else herdr-core's 'blocked' status, a tool's permission prompt.
+export function waitOf(t: { labels?: Record<string, string>, status?: string | { state?: string } | null } | null | undefined): WaitKind | undefined {
+  const m = /^blocked:(question|permission|auth)$/.exec(t?.labels?.[LABEL.report] ?? '')
+  if (m) return m[1] as WaitKind
+  const s = typeof t?.status === 'string' ? t.status : t?.status?.state
+  if (s === 'blocked') return 'permission'
+}
+// An agent that stopped because it is not logged in.
+export const isAuthFailure = (text: string) => /not logged in|log ?in again|please (run )?\/?login|authenticat|unauthori[sz]ed|invalid api key|\b401\b/i.test(text)
 // Agents the engine knows how to start with a pinned model and a first message.
 export const PROGRAMS = ['claude', 'codex'] as const
 const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:[\]/-]{0,63}$/

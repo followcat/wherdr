@@ -40,6 +40,8 @@ export type Command =
   | { name: 'task link', task: string, url: string, label: string }
   | { name: 'step done', task: string, userSaid?: string, link?: string }
   | { name: 'task decide', task: string, choice: Choice, reason: string }
+  | { name: 'ack', wakes: string[] } | { name: 'autopilot show' }
+  | { name: 'tell', task: string, text: string }
 
 // One table for the parser, the skill and the role file.
 export const COMMANDS: { usage: string, does: string }[] = [
@@ -53,6 +55,9 @@ export const COMMANDS: { usage: string, does: string }[] = [
   { usage: 'step done <task> [--link <url>]', does: 'end the task\'s current step when you hold it (holder: coordinator)' },
   { usage: 'step done <task> --user-said "<their words>"', does: 'end a step that waits for the user, with the user\'s own words; only in a turn that comes from the user' },
   { usage: 'task decide <task> <choice> --reason "<one sentence>"', does: 'after N send-backs, pick one of the engine\'s options' },
+  { usage: 'ack <wake> [<wake>…]', does: 'say you handled an Autopilot wake (each wake ends with its id); unacked, it comes back once, then the user is told' },
+  { usage: 'autopilot show', does: 'your autopilot\'s goal, hours, and what is left of today\'s limits' },
+  { usage: 'tell <task> "<text>"', does: 'a message to the task\'s agent; in a wake, only to answer its question (a permission request is the user\'s)' },
 ]
 
 const TASK_RE = /^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/
@@ -76,6 +81,12 @@ export function parseCommand(argv: unknown): Command | { error: string } {
   const known = (...k: string[]) => Object.keys(flags).find(f => !k.includes(f))
   const extra = known(...({ 'task link': ['label'], 'step done': ['user-said', 'link'], 'task decide': ['reason'] }[verb] ?? []))
   if (extra) return { error: `unknown option --${extra}` }
+  if (w0 === 'ack') return words.length > 1 && words.slice(1).every(w => /^[0-9a-f]{8}$/.test(w)) ? { name: 'ack', wakes: words.slice(1) } : usage('ack')
+  if (verb === 'autopilot show') return w2 ? { error: `unexpected argument: ${w2}` } : { name: verb }
+  if (w0 === 'tell') {
+    const text = words.slice(2).join(' ').trim()
+    return w1 && TASK_RE.test(w1) && text && text.length <= 4000 ? { name: 'tell', task: w1, text } : usage('tell')
+  }
   if (w0 === 'list' || w0 === 'plan') return w1 ? { error: `unexpected argument: ${w1}` } : { name: w0 }
   if (w0 === 'show') return w1 && TASK_RE.test(w1) && !w2 ? { name: 'show', task: w1 } : usage('show')
   if (verb === 'template show' || verb === 'template edit') return w2 ? { error: `unexpected argument: ${w2}` } : { name: verb }
@@ -210,7 +221,9 @@ export function roleFiles(p: Project, t: Template | null, examples: Template[]):
     '- change a guard (protected branches, who merges): the user does it in Settings › Projects;',
     '- end a step that waits for the user unless they just told you so (`--user-said` with their words);',
     '- edit the template on your own: only the user\'s request starts a proposal, and only their yes in wherdr saves it;',
-    '- pass a critical finding with proof, or a send-back whose next step is a guarded merge: those go to the user.', '',
+    '- pass a critical finding with proof, or a send-back whose next step is a guarded merge: those go to the user;',
+    '- approve, merge, change settings or your autopilot\'s limits; answer a permission request: those are the user\'s.', '',
+    'Each Autopilot wake ends with its id: once you have handled it, run `wherdr pm ack <id>`. The engine already fixes PR bases, re-runs CI, retries pushes, catches up branches, sends red CI back and merges what the branch rule allows: leave those to it.', '',
     '## Plans of this project\'s task types', '', `Template: ${t ? `${t.id} v${t.version ?? 1}` : 'none'}`, '', ...plans,
     '## Turning a workflow request into steps', '',
     'wherdr imposes no workflow: it knows ordered steps, who holds each (worker, reviewer, coordinator, none), how it ends (report, verdict, user, action), the proofs it needs (evidence) and the user\'s guards. What an agent must do is plain text in `instructions`.',

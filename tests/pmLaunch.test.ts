@@ -58,7 +58,7 @@ let dir = '', n = 0
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-launch-')) })
 afterEach(() => fs.rm(dir, { recursive: true, force: true }))
 
-async function setup(opts: { installed?: string[], exits?: (number | null)[], template?: Template } = {}) {
+async function setup(opts: { installed?: string[], exits?: (number | null)[], template?: Template, screen?: string } = {}) {
   const store: PmStore = createPmStore(dir)
   await store.setEnabled(true)
   await store.saveTemplate(opts.template ?? template)
@@ -78,7 +78,7 @@ async function setup(opts: { installed?: string[], exits?: (number | null)[], te
     }
     if (method === 'terminal.run') { runs.push(p); const a = `${machine}/t${runs.length}`; states[a] = exits.shift(); return { address: a } }
     if (method === 'terminal.get') return states[p.terminal as string] === undefined ? { state: 'running' } : { state: 'finished', exit_code: states[p.terminal as string] }
-    if (method === 'terminal.read') return { text: 'claude: bad flag\n' }
+    if (method === 'terminal.read') return { text: opts.screen ?? 'claude: bad flag\n' }
     throw new Error(`unexpected ${method}`)
   }
   const deps = {
@@ -136,10 +136,16 @@ describe('startTask', () => {
     expect(runs).toHaveLength(0)
   })
 
+  it('an agent that stops on its login: the task waits for the login (the engine restarts it once back)', async () => {
+    const { deps } = await setup({ exits: [1, 1], screen: 'Invalid API key · Please run /login\n' })
+    expect(await startTask(deps, 'WEB-1')).toMatchObject({ state: 'waiting', waitKind: 'auth' })
+  })
+
   it('an agent that exits at once gets one more attempt, never a third', async () => {
     const { store, deps, runs } = await setup({ exits: [1, 1, 1] })
     const t = await startTask(deps, 'WEB-1')
     expect(t).toMatchObject({ state: 'waiting', waiting: expect.stringContaining('exit code 1') })
+    expect(t.waitKind).toBeUndefined() // not a login
     expect(runs).toHaveLength(2)
     expect((await store.runs()).map(r => [r.attempt, r.state])).toEqual(expect.arrayContaining([[1, 'ended'], [2, 'ended']]))
   })

@@ -2,7 +2,7 @@
 import { boardColumns, cardOf, type Board } from '../../shared/pm/board'
 import { initialState, onEvent, planSteps } from '../../shared/pm/steps'
 import { taskGuards, type ActionResult } from '../../shared/pm/actions'
-import type { Template } from '../../shared/pm/workflow'
+import type { MergeBy, Template } from '../../shared/pm/workflow'
 import { addShot, isImage, SHOT_TYPES, type Shot } from '../../shared/pm/shots'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 import type { Task } from '../../shared/pm/run'
@@ -33,7 +33,11 @@ export async function board(store: PmStore): Promise<Board> {
 // The step's userLabel button: the same 'user' event as "it is merged" said
 // by the user. A step with an action (git.verify-merged) runs it at once,
 // started by the user, and its result moves the task on or back to Your turn.
-export async function userStep(deps: CoreAdminDeps & { store: PmStore }, id: unknown): Promise<Task> {
+export const userStep = (deps: CoreAdminDeps & { store: PmStore }, id: unknown) => stepAction(deps, id, 'user')
+
+// by 'engine': a failed action tried again, or one entered and not run yet
+// (a merge the branch rule gives the engine); its guard is checked again.
+export async function stepAction(deps: CoreAdminDeps & { store: PmStore }, id: unknown, by: MergeBy): Promise<Task> {
   const { store } = deps
   const task = await store.task(id)
   if (!task) throw new HerdrError('not_found', 'Unknown task')
@@ -41,8 +45,12 @@ export async function userStep(deps: CoreAdminDeps & { store: PmStore }, id: unk
   const t = p?.template ? await store.template(p.template) : null
   if (!p || !t) throw new HerdrError('not_found', 'The project has no template')
   const plan = planOf(t, task)
-  const r = onEvent(plan, task.step ?? initialState(), { kind: 'user' }, Date.now())
-  if (r.refused) throw new HerdrError('refused', r.refused)
+  const cur = task.step ?? initialState()
+  const step = plan[cur.at]
+  const r = by === 'engine' && cur.acting && step?.action
+    ? { state: cur, effects: [{ kind: 'action' as const, step: step.id, action: step.action, attempt: cur.tries?.[step.id] ?? 1 }] }
+    : onEvent(plan, cur, { kind: 'user' }, Date.now())
+  if ('refused' in r && r.refused) throw new HerdrError('refused', r.refused)
   let state = r.state
   const act = r.effects.find(e => e.kind === 'action')
   if (act?.kind === 'action') {
@@ -50,13 +58,13 @@ export async function userStep(deps: CoreAdminDeps & { store: PmStore }, id: unk
     const run = (await store.runs()).filter(x => x.task === task.id && x.role === 'worker').sort((a, b) => b.startedAt - a.startedAt)[0]
     const result: ActionResult = run
       ? await runAction({ store, sh: actionShell(deps, machineOn(deps, p.machine).on) }, {
-          task, step: act.step, attempt: act.attempt, action: act.action, by: 'user', guards: taskGuards(t, task.type), worktree: run.worktree, branch: run.branch,
+          task, step: act.step, attempt: act.attempt, action: act.action, by, guards: taskGuards(t, task.type), worktree: run.worktree, branch: run.branch,
         }).catch((e: Error) => ({ ok: false, error: e.message }))
       : { ok: false, error: 'No worktree: the task never started' }
     const evidence = { ...(result.link ? { link: result.link } : {}), ...(result.commit ? { commit: result.commit } : {}) }
     state = onEvent(plan, state, { kind: 'action-result', ok: result.ok, ...(result.error ? { error: result.error } : {}), evidence }, Date.now()).state
   }
-  return store.saveTask({ ...task, step: state })
+  return store.saveTask({ ...(await store.task(task.id) ?? task), step: state })
 }
 
 const sameKey = (a: string | undefined, b: unknown) =>
