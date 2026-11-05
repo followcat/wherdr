@@ -56,6 +56,11 @@
 - **Web Push notifications** when an agent finishes or needs you.
 - **Quick replies**: answer permissions and questions in one tap from the agent list.
 - **Terminal key bar** (Esc, Enter, arrows, Shift+Tab, Ctrl+C…) and touch scrolling.
+  A finger drag or the wheel browses the history the attach delivered locally —
+  the attach requests up to 1000 lines, a bound the core fills from the main
+  screen only, so an alternate-screen attach gets none. Pressing and holding a
+  still finger freezes the screen to copy from it; release and drag to select,
+  then Done leaves the copy surface.
   On iPhone and iPad a tap on the terminal does not open the on-screen keyboard: type in the
   message field, or tap the key bar's keyboard button to type in the terminal.
   Terminal links back to this app stay in the current window on a phone; external

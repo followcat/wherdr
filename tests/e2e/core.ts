@@ -40,8 +40,12 @@ async function freePort() {
 
 // seed: writes files into the data folder before the server starts. feed tunes
 // the attach stream: firstPaint replaces the default 'hello from core' burst
-// (pass '' for none); output() pushes more terminal data after the attach.
-export async function startCore(answer: Answer = () => undefined, seed?: (data: string) => Promise<void>, feed: { firstPaint?: string | Uint8Array } = {}) {
+// (pass '' for none, or a function of the attach call when the paint must be
+// sized to the client's requested cols/rows); output() pushes more terminal
+// data after the attach.
+// feed.terminal overrides fixture fields on BOTH the one-shot terminal.list
+// answer and the framed events.subscribe snapshot (screen:'inexact' etc).
+export async function startCore(answer: Answer = () => undefined, seed?: (data: string) => Promise<void>, feed: { firstPaint?: string | Uint8Array | ((attach: Call) => string | Uint8Array), terminal?: Record<string, unknown> } = {}) {
   const data = await mkdtemp(join(tmpdir(), 'core-e2e-'))
   const socketPath = join(data, 'core.sock')
   await writeFile(join(data, 'auth.json'), JSON.stringify(pdfAuthDb))
@@ -61,12 +65,15 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
   const inbound: { channel: number, kind: number, data: Buffer }[] = []
   // Sockets that attached a terminal: output() writes on their stream channel.
   const attachSockets = new Set<Socket>()
-  const terminal = fixture.inventory.terminals[0]!
+  const terminal = { ...fixture.inventory.terminals[0]!, ...feed.terminal }
+  // What the server was answered for inventory/subscription (read-only record
+  // for specs that must prove which metadata variant each path delivered).
+  const served: { method: string, result: unknown }[] = []
   const reply = (call: Call) => {
     const own = answer(call)
     if (own !== undefined) return own
     return call.method === 'hello' ? fixture.hello
-      : call.method === 'terminal.list' ? fixture.inventory
+      : call.method === 'terminal.list' ? { ...fixture.inventory, terminals: [terminal, ...fixture.inventory.terminals.slice(1)] }
       : call.method === 'machine.list' ? { machines: [{ name: 'host-a', state: 'connected' }] }
       : fixture.discover
   }
@@ -80,7 +87,9 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
       const call = JSON.parse(first.toString().split('\n')[0]!) as Call
       if (call.method !== 'hello' || !call.params?.framed) {
         calls.push(call)
-        socket.end(JSON.stringify({ jsonrpc: '2.0', id: call.id, result: reply(call) }) + '\n')
+        const result = reply(call)
+        served.push({ method: call.method, result })
+        socket.end(JSON.stringify({ jsonrpc: '2.0', id: call.id, result }) + '\n')
         return
       }
       socket.write(JSON.stringify({ jsonrpc: '2.0', id: call.id, result: { ...fixture.hello, framed: true } }) + '\n')
@@ -96,12 +105,16 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
           const c = JSON.parse(payload.toString()) as Call
           framed.push(c)
           const result = c.method === 'events.subscribe'
-            ? { channel: 2, seq: 1, terminals: [{ ...terminal, cols: 80, rows: 24 }] } : { channel: 3 }
+            ? { channel: 2, seq: 1, terminals: [{ cols: 80, rows: 24, ...terminal }] } : { channel: 3 }
+          served.push({ method: c.method, result })
           socket.write(frame(0, Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: c.id, result }))))
           if (c.method === 'terminal.attach') {
             attachSockets.add(socket)
             socket.once('close', () => attachSockets.delete(socket))
-            if (feed.firstPaint !== '') socket.write(frame(3, Buffer.from(feed.firstPaint ?? 'hello from core\r\n')))
+            if (feed.firstPaint !== '') {
+              const paint = typeof feed.firstPaint === 'function' ? feed.firstPaint(c) : (feed.firstPaint ?? 'hello from core\r\n')
+              socket.write(frame(3, Buffer.from(paint)))
+            }
           }
         }
       })
@@ -117,9 +130,15 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
     calls,
     framed,
     inbound,
+    served,
     // More terminal output on the attach channel, after the first paint.
     output(data: string | Uint8Array) {
       for (const socket of attachSockets) socket.write(frame(3, Buffer.from(data)))
+    },
+    // An events-channel payload after the subscribe — e.g. the size event
+    // another viewer set, which flips this client into watching mode.
+    event(data: string | Uint8Array) {
+      for (const socket of attachSockets) socket.write(frame(2, Buffer.from(data)))
     },
     // Signed in with the test passkey session, then on `path` of the app.
     async open(page: Page, path = '/') {

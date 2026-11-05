@@ -1,0 +1,317 @@
+import { expect, test, type Page } from '@playwright/test'
+import { startCore, STREAM, type Call } from './core'
+
+// Local-scroll journeys through the fake herdr-core socket (tests/e2e/core.ts):
+// the attach delivers retained history ("Scrollback lines to show first (main
+// screen only)", v0.1.17 schema), a trusted (Chromium CDP) or synthetic
+// (WebKit) finger drags through it inside xterm's own buffer, and the spec
+// watches everything the browser sends back. Scrolling must move only the
+// local viewport: no DATA, no terminal.scroll, no input and no lease traffic —
+// a programmatic blur under DECSET1004 must not let xterm's ESC[O reach the
+// wire either. Keyboard dismissal shares the same swallowed blur() path; the
+// drag and the off-cursor tap cover it here.
+
+type Core = Awaited<ReturnType<typeof startCore>>
+
+// What a real attach looks like on the stream: retained history lines first,
+// then a full-screen repaint. Lines written each with a trailing \r\n scroll
+// once per line past `rows - 1`, so `ABOVE + rows - 1` written lines push
+// exactly ABOVE rows into scrollback; ED2+home then repaints the visible
+// screen in place. firstPaint receives the attach call, so the paint is sized
+// to the very rows the client requested.
+const ABOVE = 60
+const firstPaint = (attach: Call) => {
+  const rows = Number(attach.params?.rows) || 24
+  const push = Array.from({ length: ABOVE + rows - 1 }, (_, i) => `history line ${String(i + 1).padStart(3, '0')}`).join('\r\n') + '\r\n'
+  const screen = Array.from({ length: rows - 1 }, (_, i) => `acme-shop screen row ${String(i + 1).padStart(2, '0')}`).join('\r\n') + '\r\nscreen ready'
+  return push + '\x1b[2J\x1b[H' + screen
+}
+
+const tick = (page: Page, ms = 120) => page.clock.runFor(ms)
+
+// Browser -> server /ws/term packets: nothing a scroll may legitimately send.
+const SILENT_TYPES = new Set(['terminal.input', 'keys', 'paste', 'terminal.scroll', 'terminal.mouse', 'take.control', 'terminal.resize', 'scroll.ack', 'touch.cancel'])
+const silentPackets = (sent: Record<string, unknown>[]) => sent.filter(m => SILENT_TYPES.has(String(m.type)))
+function watchSent(page: Page) {
+  const sent: Record<string, unknown>[] = []
+  page.on('websocket', (ws) => {
+    if (!new URL(ws.url()).pathname.endsWith('/ws/term')) return
+    ws.on('framesent', ({ payload }) => {
+      if (typeof payload !== 'string') return
+      try { sent.push(JSON.parse(payload)) } catch { /* keepalive bytes */ }
+    })
+  })
+  return sent
+}
+// DATA frames are the only wire effect a scroll could wrongly produce; credit
+// and resize frames are unrelated and must not dilute the baseline.
+const dataIn = (core: Core) => core.inbound.filter(f => f.kind === STREAM.data).map(f => f.data.toString())
+
+async function openTerminal(page: Page, core: Core, paint: RegExp = /acme-shop/) {
+  await page.addInitScript(() => {
+    localStorage.setItem('terminalRenderer', 'html')
+    localStorage.setItem('smoothTouchScrolling', '1')
+  })
+  await core.open(page)
+  await page.getByRole('button', { name: /review-agent/ }).first().click()
+  await page.getByRole('button', { name: /^(show )?terminal$/i }).first().click()
+  await expect(page.locator('.xterm')).toBeVisible()
+  await expect.poll(() => core.framed.filter(c => c.method === 'terminal.attach').length).toBeGreaterThan(0)
+  await expectRows(page, paint)
+}
+
+// xterm parses written frames behind a setTimeout: poll while the fake clock runs.
+async function expectRows(page: Page, re: RegExp) {
+  await expect.poll(async () => { await tick(page, 80); return await page.locator('.xterm-rows').textContent() }).toMatch(re)
+}
+
+// Delivered history, measured inside xterm's own viewport: the scrollable
+// pixels above the live screen, in rows. This is what the attach actually
+// delivered — distinct from the 1000 the attach requested.
+const rowPx = (page: Page) => page.locator('.xterm-rows > div').first().evaluate(el => el.getBoundingClientRect().height || 1)
+async function scrollbackRows(page: Page) {
+  const vp = page.locator('.xterm-viewport')
+  const rowH = await rowPx(page)
+  return Math.round(await vp.evaluate(el => el.scrollHeight - el.clientHeight) / rowH)
+}
+const viewportY = async (page: Page) => Math.round(await page.locator('.xterm-viewport').evaluate(el => el.scrollTop) / await rowPx(page))
+const firstRow = (page: Page) => page.locator('.xterm-rows').evaluate(el => (el.firstElementChild as HTMLElement | null)?.innerText || '')
+
+// One finger on the gesture layer: a real CDP gesture on Chromium, the same
+// touch-event path synthesized on WebKit (no OS-native claim there).
+async function finger(page: Page, browserName: string) {
+  const box = (await page.locator('#touch').boundingBox())!
+  const x0 = box.x + box.width / 2
+  const y0 = box.y + box.height / 2
+  if (browserName === 'chromium') {
+    const cdp = await page.context().newCDPSession(page)
+    return {
+      down: () => cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y: y0 }] }),
+      move: (x: number, y: number) => cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] }),
+      up: () => cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }),
+    }
+  }
+  const fire = (type: string, x: number, y: number) => page.locator('#touch').evaluate((el, { type, x, y }) => {
+    let ev: Event
+    try {
+      const t = new Touch({ identifier: 0, target: el, clientX: x, clientY: y })
+      ev = new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === 'touchend' ? [] : [t], changedTouches: [t] })
+    } catch {
+      ev = new Event(type, { bubbles: true, cancelable: true })
+      const ts = [{ clientX: x, clientY: y }]
+      Object.defineProperties(ev, { touches: { value: type === 'touchend' ? [] : ts }, changedTouches: { value: ts } })
+    }
+    el.dispatchEvent(ev)
+  }, { type, x, y })
+  return { down: () => fire('touchstart', x0, y0), move: (x: number, y: number) => fire('touchmove', x, y), up: () => fire('touchend', x0, y0) }
+}
+
+// The attach asks core for the same retained history on every screen variant:
+// the requested amount (source contract: coreTerm.ts HISTORY = 1000).
+function expectAttachHistory(core: Core) {
+  const attach = core.framed.find(c => c.method === 'terminal.attach')
+  expect(attach?.params?.history).toBe(1000)
+  expect(Number.isInteger(attach?.params?.cols)).toBe(true)
+  expect(Number.isInteger(attach?.params?.rows)).toBe(true)
+}
+// Both inventory and subscription must carry the fixture's screen variant.
+// served also records the one-shot events.subscribe answered with discover —
+// the framed subscription result is the one carrying a terminals snapshot.
+function expectServedScreen(core: Core, screen: string) {
+  const list = core.served.find(s => s.method === 'terminal.list')
+  const sub = core.served.find(s => s.method === 'events.subscribe' && Array.isArray((s.result as { terminals?: unknown[] })?.terminals))
+  expect((list?.result as { terminals?: { screen?: string }[] })?.terminals?.[0]?.screen).toBe(screen)
+  expect((sub?.result as { terminals?: { screen?: string }[] })?.terminals?.[0]?.screen).toBe(screen)
+}
+
+test('attach delivers history, a drag scrolls it locally and emits no input, focus-report or lease traffic', async ({ page, browserName }, testInfo) => {
+  const core = await startCore(() => undefined, undefined, { firstPaint })
+  const sent = watchSent(page)
+  try {
+    await page.clock.install()
+    await openTerminal(page, core)
+    expectAttachHistory(core)
+    expectServedScreen(core, 'exact')
+    // The attach requested 1000 lines; the core retained 60 above the screen.
+    // The delivered bound is measured in the viewport, not assumed.
+    expect(await scrollbackRows(page)).toBe(ABOVE)
+    expect(await viewportY(page)).toBe(ABOVE)
+    // DECSET1004 turns on xterm focus reporting: a real ESC[I first proves
+    // the report path reaches the wire (intentional focus is input intent).
+    // Enabling the mode itself reports the current state once — that report
+    // is protocol traffic, so counters are frozen only after it settles.
+    core.output('\x1b[?1004h')
+    await tick(page)
+    const ta = page.locator('.xterm-helper-textarea')
+    const count = (s: string) => dataIn(core).filter(d => d === s).length
+    await ta.focus()
+    await expect.poll(() => count('\x1b[I')).toBe(1)
+    const o0 = count('\x1b[O')
+
+    // Drag down into the attach's history: the local viewport moves, the
+    // passive blurs along the way emit nothing.
+    sent.length = 0
+    let d0 = dataIn(core).length
+    const v0 = await viewportY(page)
+    const f = await finger(page, browserName)
+    const box = (await page.locator('#touch').boundingBox())!
+    const x = box.x + box.width / 2
+    await f.down()
+    for (let i = 1; i <= 4; i++) { await f.move(x, box.y + box.height / 2 + i * 60); await tick(page, 40) }
+    await f.up()
+    await expect.poll(async () => { await tick(page, 60); return viewportY(page) }).toBeLessThan(v0)
+    await expectRows(page, /history line/)
+    expect(dataIn(core).length).toBe(d0)
+    expect(silentPackets(sent)).toEqual([])
+    expect(count('\x1b[O')).toBe(o0)
+
+    // Fresh intentional proof, then a new baseline: the second ESC[I is
+    // legitimate user input and must not be confused with passive traffic.
+    await ta.focus()
+    await expect.poll(() => count('\x1b[I')).toBe(2)
+    sent.length = 0
+    d0 = dataIn(core).length
+    // A tap off the cursor row only blurs — and even that programmatic blur
+    // stays silent under DECSET1004.
+    await f.down()
+    await f.up()
+    await tick(page, 80)
+    expect(dataIn(core).length).toBe(d0)
+    expect(silentPackets(sent)).toEqual([])
+    expect(count('\x1b[O')).toBe(o0)
+    await expect(ta).not.toBeFocused()
+
+    // The delivered block's top is the oldest retained line. xterm renders the
+    // new scrollTop on a later frame — drive the clock until it settles.
+    await page.locator('.xterm-viewport').evaluate(el => { el.scrollTop = 0 })
+    await expect.poll(async () => { await tick(page, 40); return firstRow(page) }).toMatch(/history line 001/)
+    await page.screenshot({ path: testInfo.outputPath(`05-scroll-${testInfo.project.name}.png`) })
+
+    // Input itself is untouched: an IME commit still lands exactly once and
+    // an intentional refocus reports ESC[I again.
+    await ta.focus()
+    await expect.poll(() => count('\x1b[I')).toBe(3)
+    await ta.dispatchEvent('compositionstart')
+    await ta.evaluate((el: HTMLTextAreaElement) => { el.value = '好' })
+    await ta.dispatchEvent('compositionend')
+    await tick(page)
+    await expect.poll(() => dataIn(core).filter(d => d === '好').length).toBe(1)
+  } finally {
+    await core.stop()
+  }
+})
+
+test('an inexact screen requests the same attach history and scrolls identically', async ({ page, browserName }) => {
+  // screen:'inexact' marks a terminal whose older history may be missing
+  // (v0.1.17 schema): the viewer still asks for 1000 lines and scrolls what
+  // the attach delivered — identically to an exact screen.
+  const core = await startCore(() => undefined, undefined, { firstPaint, terminal: { screen: 'inexact' } })
+  const sent = watchSent(page)
+  try {
+    await page.clock.install()
+    await openTerminal(page, core)
+    expectAttachHistory(core)
+    expectServedScreen(core, 'inexact')
+    expect(await scrollbackRows(page)).toBe(ABOVE)
+    sent.length = 0
+    const d0 = dataIn(core).length
+    const v0 = await viewportY(page)
+    const f = await finger(page, browserName)
+    const box = (await page.locator('#touch').boundingBox())!
+    const x = box.x + box.width / 2
+    await f.down()
+    for (let i = 1; i <= 4; i++) { await f.move(x, box.y + box.height / 2 + i * 60); await tick(page, 40) }
+    await f.up()
+    await expect.poll(async () => { await tick(page, 60); return viewportY(page) }).toBeLessThan(v0)
+    await expectRows(page, /history line/)
+    expect(dataIn(core).length).toBe(d0)
+    expect(silentPackets(sent)).toEqual([])
+  } finally {
+    await core.stop()
+  }
+})
+
+test('an attach to an already-alternate screen requests history and gets none', async ({ page, browserName }) => {
+  // The schema scopes attach history to the main screen: a fresh attach to an
+  // app already on its alternate buffer delivers no scrollback at all. The
+  // request is still 1000 — the attach call has no alt_screen branch — the
+  // drag has nothing to scroll and stays silent.
+  const core = await startCore(() => undefined, undefined, {
+    firstPaint: (attach: Call) => {
+      const rows = Number(attach.params?.rows) || 24
+      const screen = Array.from({ length: rows - 1 }, (_, i) => `alt screen row ${String(i + 1).padStart(2, '0')}`).join('\r\n') + '\r\nalt app ready'
+      return '\x1b[?1049h' + screen
+    },
+  })
+  const sent = watchSent(page)
+  try {
+    await page.clock.install()
+    await openTerminal(page, core, /alt screen row/)
+    expectAttachHistory(core)
+    expect(await scrollbackRows(page)).toBe(0)
+    sent.length = 0
+    const d0 = dataIn(core).length
+    const f = await finger(page, browserName)
+    const box = (await page.locator('#touch').boundingBox())!
+    const x = box.x + box.width / 2
+    await f.down()
+    for (let i = 1; i <= 4; i++) { await f.move(x, box.y + box.height / 2 + i * 60); await tick(page, 40) }
+    await f.up()
+    await tick(page, 300)
+    expect(await scrollbackRows(page)).toBe(0)
+    await expectRows(page, /alt screen row|alt app ready/)
+    expect(dataIn(core).length).toBe(d0)
+    expect(silentPackets(sent)).toEqual([])
+  } finally {
+    await core.stop()
+  }
+})
+
+test('a watching viewer pans a wide grid horizontally without giving up the follow transform or the size lease', async ({ page, browserName }) => {
+  // Another viewer owns this terminal's size: the size event flips this
+  // client into watching mode (terminal.control off), followCursor's
+  // translateY keeps the cursor row on screen, and the wider-than-viewport
+  // grid pans horizontally on the gesture layer. No DATA, no take.control,
+  // no RESIZE frame — the observe lease holds through the whole pan.
+  const core = await startCore(() => undefined, undefined, { firstPaint })
+  const sent = watchSent(page)
+  try {
+    await page.clock.install()
+    await openTerminal(page, core)
+    const xterm = page.locator('.xterm')
+    const screen = page.locator('.xterm-screen')
+    // A narrow fake size event: another viewer resized the terminal wider
+    // and taller than this screen. The server follows it and stops imposing.
+    core.event('{"method":"event","params":{"type":"size","data":{"cols":200,"rows":60}}}\n')
+    await tick(page)
+    const rows60 = Array.from({ length: 60 }, (_, i) => `watcher row ${String(i + 1).padStart(2, '0')}`).join('\r\n')
+    core.output(rows60 + '\r\nwatcher cursor line')
+    await expectRows(page, /watcher cursor line/)
+    // Watching mode evidence: the screen is translated so the cursor row
+    // stays visible — and the grid overflows horizontally.
+    await expect.poll(async () => (await screen.getAttribute('style')) || '').toContain('translateY(-')
+    await expect.poll(async () => xterm.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true)
+    sent.length = 0
+    const d0 = dataIn(core).length
+    const resizeFrames = () => core.inbound.filter(f => f.kind === STREAM.resize).length
+    const r0 = resizeFrames()
+    const left0 = await xterm.evaluate(el => el.scrollLeft)
+    const transform = (await screen.getAttribute('style')) || ''
+    const f = await finger(page, browserName)
+    const box = (await page.locator('#touch').boundingBox())!
+    const y = box.y + box.height / 2
+    await f.down()
+    for (let i = 1; i <= 4; i++) { await f.move(box.x + box.width / 2 - i * 30, y); await tick(page, 40) }
+    await f.up()
+    await tick(page, 200)
+    // The pan moved the horizontal scroll position; the watcher transform
+    // and the lease survived it untouched.
+    expect(await xterm.evaluate(el => el.scrollLeft)).toBeGreaterThan(left0)
+    expect((await screen.getAttribute('style')) || '').toBe(transform)
+    expect(dataIn(core).length).toBe(d0)
+    expect(resizeFrames()).toBe(r0)
+    expect(silentPackets(sent)).toEqual([])
+  } finally {
+    await core.stop()
+  }
+})

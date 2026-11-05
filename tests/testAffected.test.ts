@@ -65,6 +65,14 @@ describe('affected test selector', () => {
     expect(Object.keys(plan.e2e)).toContain('tests/e2e/terminal-copy.spec.ts')
   })
   it.each([
+    'app/utils/terminalTouch.ts', 'app/utils/terminalWheel.ts', 'app/utils/smoothTouch.ts',
+    'app/components/TerminalView.vue', 'app/composables/useTerminal.ts',
+  ])('selects the touch-scroll journey for its %s integration path', file => {
+    const plan = select([file], available.concat('tests/components/TerminalTouchBeta.test.ts', 'tests/e2e/terminal-touch.spec.ts'), undefined)
+    expect(Object.keys(plan.domains)).toContain('touch-scroll')
+    expect(Object.keys(plan.e2e)).toContain('tests/e2e/terminal-touch.spec.ts')
+  })
+  it.each([
     'app/utils/terminalModifiers.ts', 'app/utils/keybarKeys.ts', 'app/utils/phoneKeys.ts',
     'app/utils/keybarOrder.ts', 'app/components/PhoneKeybar.vue', 'app/components/Keybar.vue',
     'app/utils/terminalKeys.ts', 'app/composables/useTerminal.ts', 'server/utils/coreInput.ts', 'server/utils/coreTerm.ts',
