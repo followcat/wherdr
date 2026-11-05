@@ -9,6 +9,11 @@ vi.mock('@xterm/xterm', () => ({ Terminal: class {
   cols = 80; rows = 24; options = {}; modes = { mouseTrackingMode: 'none' }
   buffer = { active: { viewportY: 10, baseY: 10, length: 34, cursorY: 23 } }
   scrollToLine = vi.fn(function (this: { buffer: { active: { viewportY: number } } }, y: number) { this.buffer.active.viewportY = y })
+  registerMarker(offset = 0) {
+    const b = this.buffer.active as { baseY: number, cursorY: number }
+    const m = { line: b.baseY + b.cursorY + offset, isDisposed: false, dispose() { this.isDisposed = true }, onDispose() { return { dispose() {} } } }
+    return m
+  }
   write(_data: unknown, done?: () => void) { done?.() }
   resize() {} reset() {}
   loadAddon() {} open() {} dispose() {} refresh() {} attachCustomWheelEventHandler() {}

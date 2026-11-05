@@ -120,6 +120,18 @@ class FakeTerm {
       this.onScrollCb?.(b.viewportY)
     }
   }
+  // An in-place row deletion (ESC[M): the deleted row's markers die while
+  // rows below shift up — no top-trim, no scroll event. The trailing output
+  // line that scrolls is what fires onScroll, at unchanged baseY/viewportY.
+  deleteRow(y: number) {
+    const b = this.buffer.active
+    b.lines?.splice(y, 1)
+    b.lines?.push({ text: '' })
+    for (const m of b.markers ?? []) {
+      if (m.line === y) m.dispose()
+      else if (m.line > y) m.line--
+    }
+  }
   // The DOM scroll event a scrollTop sync produces after ANY change, ours
   // included: viewportY is already current when it fires.
   echoViewport() { this.viewportEl.dispatchEvent(new Event('scroll')) }
@@ -474,6 +486,126 @@ it('keeps the parked text at full scrollback while trims shift its row', async (
     expect(liveMarkers(term)).toBe(1)
     ctl.scroll(-25)
     expect(liveMarkers(term)).toBe(0)
+  } finally {
+    ctl.dispose()
+    host.remove()
+    wrapper.unmount()
+  }
+})
+
+it('keeps a parked fractional offset through output growth, batches and trims', async () => {
+  // 304px host at 10px rows: hostRows 30.4 — the parked window top carries a
+  // 0.6-row fraction. A scrolling newline that only grows ybase moves no
+  // row: the position, fraction included, must not be snapped to viewportY.
+  const { ctl, term, ws, host, wrapper } = await setup({ viewportY: 100, baseY: 100, length: 160, cursorY: 59 }, 304)
+  try {
+    frame(ws)
+    await nextTick()
+    ctl.scroll(100)
+    expect(windowTop(term)).toBeCloseTo(29.6, 5)
+    expect(term.buffer.active.viewportY).toBe(29)
+    expect(liveMarkers(term)).toBe(1)
+    // One line, then a coalesced batch: base-only growth leaves every row in
+    // place — the parked 29.6 stays 29.6, not 29.
+    term.pushOutput(1)
+    frame(ws)
+    await nextTick()
+    expect(windowTop(term)).toBeCloseTo(29.6, 5)
+    term.pushOutput(3)
+    frame(ws)
+    await nextTick()
+    expect(term.buffer.active.baseY).toBe(104)
+    expect(windowTop(term)).toBeCloseTo(29.6, 5)
+    // A real native seek is absolute: it replaces the position, fraction
+    // included, and its bottom edge re-pins the live tail.
+    term.seekViewport(40)
+    expect(windowTop(term)).toBe(40)
+    term.seekViewport(104)
+    expect(windowTop(term)).toBeCloseTo(104 + 60 - 30.4, 5)
+    expect(liveMarkers(term)).toBe(0)
+    // An owned scroll back into the fraction plus its trailing DOM echo
+    // must not reinterpret the delta.
+    ctl.scroll(100)
+    expect(windowTop(term)).toBeCloseTo(33.6, 5)
+    term.echoViewport()
+    expect(windowTop(term)).toBeCloseTo(33.6, 5)
+  } finally {
+    ctl.dispose()
+    host.remove()
+    wrapper.unmount()
+  }
+})
+
+it('keeps the parked fraction on its text at full scrollback, and clamps the lost oldest fraction to 0', async () => {
+  // Saturated: every newline trims the oldest row. xterm tracks a parked
+  // history viewport down one index per trim (user-scrolled ydisp) — an
+  // output trim and a one-row native seek produce the same viewportY step,
+  // so the marker's own line is what tells them apart.
+  const { ctl, term, ws, host, wrapper } = await setup({ viewportY: 5000, baseY: 5000, length: 5060, cursorY: 59 }, 304)
+  term.scrollbackRows = 5000
+  try {
+    frame(ws)
+    await nextTick()
+    ctl.scroll(5000)
+    expect(windowTop(term)).toBeCloseTo(29.6, 5)
+    expect(term.buffer.active.viewportY).toBe(29)
+    // One trim: the anchored row slides to index 28, the viewport follows it
+    // natively — the fraction survives on the same text.
+    term.pushOutput(1)
+    frame(ws)
+    await nextTick()
+    expect(term.buffer.active.viewportY).toBe(28)
+    expect(windowTop(term)).toBeCloseTo(28.6, 5)
+    // A one-row native seek yields the same viewportY step a trim does but
+    // must NOT keep the fraction — the reader asked for an absolute row.
+    term.seekViewport(27)
+    expect(windowTop(term)).toBe(27)
+    // Re-park fractionally (the tail carries the 0.6) and sit on the oldest
+    // row: once it is trimmed away the position clamps exactly — 0, not a
+    // lingering fraction.
+    ctl.scroll(-6000)
+    ctl.scroll(5000)
+    expect(windowTop(term)).toBeCloseTo(29.6, 5)
+    ctl.scroll(29)
+    expect(windowTop(term)).toBeCloseTo(0.6, 5)
+    expect(liveMarkers(term)).toBe(1)
+    term.pushOutput(1)
+    frame(ws)
+    await nextTick()
+    expect(windowTop(term)).toBe(0)
+    expect(liveMarkers(term)).toBe(0)
+    term.pushOutput(1)
+    frame(ws)
+    await nextTick()
+    expect(windowTop(term)).toBe(0)
+  } finally {
+    ctl.dispose()
+    host.remove()
+    wrapper.unmount()
+  }
+})
+
+it('keeps the nearest position when the parked row is deleted in place, not trimmed', async () => {
+  // scrollback 5, 4-row grid, 2-row host — the Node repro's exact shape: a
+  // marker on buffer row 6 dies when ESC[M deletes its line in place, then
+  // a trailing newline scrolls and fires onScroll at the same baseY/vp.
+  // Disposal is not always a top-trim: teleporting the reader to row 0
+  // would be wrong — the index is still valid, so keep it and re-anchor.
+  const { ctl, term, ws, host, wrapper } = await setup({ viewportY: 5, baseY: 5, length: 9, cursorY: 3 }, 20, 4)
+  term.scrollbackRows = 5
+  try {
+    seedRows(term, 9, 'row')
+    frame(ws)
+    await nextTick()
+    ctl.scroll(1)
+    expect(windowTop(term)).toBe(6)
+    expect(liveMarkers(term)).toBe(1)
+    term.deleteRow(6)
+    term.pushOutput(1)
+    frame(ws)
+    await nextTick()
+    expect(windowTop(term)).toBe(6)
+    expect(liveMarkers(term)).toBe(1)
   } finally {
     ctl.dispose()
     host.remove()

@@ -439,6 +439,29 @@ test('a watching viewer pans a wide grid horizontally without giving up the foll
     expect(inside(await rowAt(/watcher extra 2|watcher tail line/))).toBe(true)
     expect(silentPackets(sent)).toEqual([])
 
+    // Fractional history park: the live tail carries hostRows' fraction, so
+    // wheeling floor(tail) rows up leaves the window top part-way down the
+    // oldest row (view 0.x — native viewport 0 plus a sub-row transform
+    // lift). Base-only output must not snap that to the integer viewport
+    // edge; the parked row's rect is the honest measure. The new line lands
+    // below the rendered window, so scrollback growth — not row text — is
+    // the parse-completion signal.
+    await wheel(-Math.floor(2 + 60 - hostRows))
+    expect(await viewportY(page)).toBe(0)
+    const fracLift = Number(/translateY\(-([\d.]+)px\)/.exec((await screen.getAttribute('style')) || '')?.[1] ?? -1)
+    expect(fracLift).toBeGreaterThan(0)
+    expect(fracLift).toBeLessThan(await rowPx(page))
+    const fracRow = page.locator('.xterm-rows > div').first()
+    const fracBox = (await fracRow.boundingBox())!
+    core.output('\r\nwatcher extra 3')
+    await expect.poll(async () => { await tick(page, 40); return scrollbackRows(page) }).toBe(3)
+    const fracBox2 = (await page.locator('.xterm-rows > div').first().boundingBox())!
+    expect(fracBox2.y).toBeCloseTo(fracBox.y, 0)
+    expect(silentPackets(sent)).toEqual([])
+    // Back to the live pin for the fill.
+    await wheel(Math.floor(2 + 60 - hostRows) + 4)
+    expect(inside(await rowAt(/watcher extra 3|watcher extra 2|watcher tail line/))).toBe(true)
+
     // Full scrollback: one burst pushes past the 5000-row cap so every later
     // newline trims the oldest row while baseY/viewportY stay pinned. A row
     // parked in the lifted region must keep its text AND its rect — the old

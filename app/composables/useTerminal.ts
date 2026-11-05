@@ -105,13 +105,13 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   // like baseY 0 / viewportY 0 would otherwise read as output at the bottom
   // edge and keep a stale position from the previous buffer.
   let activeBuf: IBuffer | null = null
-  // A parked lifted position is anchored to the row under the window's top
-  // edge: when the scrollback is full, each scrolling newline trims the
-  // oldest row — every row's index shifts down one while ybase/ydisp hold —
-  // and a plain buffer coordinate drifts onto different text. The public
-  // marker carries the row's live index; the viewport's own tracking already
-  // covers parked history rows, so the anchor exists only at or below baseY
-  // (never on row 0, where the oldest-row clamp is the position anyway).
+  // A parked position is anchored to the row under the window's top edge:
+  // when the scrollback is full, each scrolling newline trims the oldest
+  // row — every row's index shifts down one while ybase/ydisp hold — and a
+  // plain buffer coordinate drifts onto different text. The public marker
+  // carries the row's live index through lifts and parked history alike,
+  // and the reader's own position is what distinguishes a genuine top-trim
+  // from an in-place edit (a disposed marker always reports line -1).
   let anchor: IMarker | null = null
   function followCursor() {
     const buf = term?.buffer.active
@@ -161,9 +161,12 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     // Keep the anchor on the row the parked window top sits on. A marker is
     // registered at the cursor's row plus an offset, so convert the absolute
     // buffer row. Watching only: a controlled terminal's domain ends at
-    // baseY and needs no anchor.
+    // baseY and needs no anchor. Parked history rows get one too — at full
+    // scrollback a trim and a one-row native seek step viewportY identically
+    // and only the row's live line tells them apart; the top edge parked on
+    // the oldest row (view 0.x) anchors row 0 for the exact-0 clamp.
     const top = Math.floor(view)
-    if (watching && !atTail && top >= buf.baseY && top > 0) {
+    if (watching && !atTail && view > 0) {
       if (!anchor || anchor.isDisposed || anchor.line !== top) {
         anchor?.dispose()
         anchor = term.registerMarker(top - (buf.baseY + buf.cursorY))
@@ -182,17 +185,37 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     if (!term || !buf) return
     if (buf.viewportY !== lastY || buf.baseY !== lastBaseY) {
       const trackedTail = lastY === lastBaseY && buf.viewportY === buf.baseY
+      // Output moves rows, not the reader's position: growth that leaves the
+      // viewport unmoved keeps every index (fraction included) intact, and
+      // at capacity a trim slides the anchored row down to exactly the new
+      // viewport edge — same text, shifted index. Anything the anchor does
+      // not explain is an absolute native seek and replaces the position.
+      const held = buf.viewportY === lastY && buf.baseY >= lastBaseY
       lastY = buf.viewportY
       lastBaseY = buf.baseY
-      if (!viewDrive && !trackedTail) { view = buf.viewportY; atTail = view >= buf.baseY }
+      if (!viewDrive && !trackedTail && !held) {
+        if (anchor && buf.viewportY === anchor.line) {
+          const frac = view - Math.floor(view)
+          view = anchor.line + frac
+        } else {
+          view = buf.viewportY
+          atTail = view >= buf.baseY
+        }
+      }
     } else if (anchor && !atTail) {
       // Neither coordinate moved, yet the buffer scrolled: rows were trimmed
       // off the top and every row's index slid under the parked text. The
       // anchor reports the row's new index (the fraction is viewport
-      // geometry, kept); a disposed anchor means the row itself is gone —
-      // clamp to the oldest position.
+      // geometry, kept). A disposed anchor means its row is gone — and a
+      // dead marker reports line -1 whether the loss was a top-trim or an
+      // in-place edit (xterm disposes markers on lines it touches), so the
+      // parked position is the context that decides: a park already on the
+      // oldest row clamps exactly to 0; anywhere higher the index is still
+      // valid, so keep the nearest position and re-anchor on whatever row
+      // now sits there.
       const frac = view - Math.floor(view)
-      view = anchor.isDisposed ? frac : anchor.line + frac
+      if (!anchor.isDisposed) view = anchor.line + frac
+      else if (Math.floor(view) === 0) view = 0
     }
     followCursor()
   }
