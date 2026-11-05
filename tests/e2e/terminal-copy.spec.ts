@@ -350,6 +350,84 @@ test('copy refusal keeps the native selection, system Copy yields frozen text, a
   }
 })
 
+// A real bubbling DragEvent carrying a File. DragEvent's dataTransfer init is
+// honored on Chromium; other engines get the same real DataTransfer bound to
+// a plain bubbling drop event — the listener path is identical.
+function dispatchDrop(page: Page, selector: string, name = 'demo.txt') {
+  return page.locator(selector).evaluate((el, name) => {
+    const dt = new DataTransfer()
+    dt.items.add(new File(['demo'], name, { type: 'text/plain' }))
+    let e: Event
+    try { e = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }) }
+    catch { e = new Event('drop', { bubbles: true, cancelable: true }) }
+    if (!(e as DragEvent).dataTransfer) Object.defineProperty(e, 'dataTransfer', { value: dt })
+    el.dispatchEvent(e)
+    return e.defaultPrevented
+  }, name)
+}
+
+test('an iPad-computer-layout drop on the frozen surface is refused, an in-flight upload waits for Done', async ({ browser, browserName }) => {
+  // Touch + desk width: the 'term' drop target exists (computer layout) and
+  // the hold-to-copy surface still opens — the case the review flagged.
+  const context = await browser.newContext({ viewport: { width: 1180, height: 820 }, hasTouch: true, isMobile: true })
+  const page = await context.newPage()
+  const sent = watchSent(page)
+  const putCalls = (core: Core) => core.calls.filter(c => c.method === 'terminal.put')
+  const sendCalls = (core: Core) => core.calls.filter(c => c.method === 'terminal.send')
+  const inputRequests: string[] = []
+  const heldUploads: import('@playwright/test').Route[] = []
+  const core = await startCore((call) =>
+    call.method === 'terminal.put' ? { path: '/home/user/upload-demo.txt' }
+      : call.method === 'terminal.send' ? { started: true } : undefined,
+  undefined, { firstPaint: PAINT })
+  try {
+    page.on('request', (r) => { if (r.url().includes('/api/input')) inputRequests.push(r.url()) })
+    // Held at the network: the upload answer arrives when the spec allows it.
+    await page.route('**/api/file?*', (route) => { heldUploads.push(route) })
+    await page.clock.install()
+    await openTerminal(page, core)
+    // Drop on the live terminal: the upload request leaves the browser.
+    await dispatchDrop(page, '.xterm-screen')
+    await expect.poll(() => heldUploads.length).toBe(1)
+    // Freeze the surface, then let the in-flight upload answer land.
+    await holdCopy(page, browserName)
+    await expect(page.locator('.terminal-copy-layer')).toBeVisible()
+    await heldUploads[0]!.fulfill({ json: { path: '/home/user/upload-demo.txt', name: 'upload-demo.txt' } })
+    await tick(page)
+    // The upload completed mid-freeze: retained, not sent — no input escaped.
+    expect(putCalls(core)).toEqual([])
+    expect(sendCalls(core)).toEqual([])
+    expect(inputRequests).toEqual([])
+    expect(userPackets(sent)).toEqual([])
+    expect(dataIn(core)).toEqual([])
+    // A drop onto the frozen layer itself: refused before any upload, with
+    // the browser's open-the-file default still suppressed.
+    expect(await dispatchDrop(page, '.terminal-copy-layer')).toBe(true)
+    await tick(page)
+    // The refusal is said through the shared toaster — a Nuxt UI status toast
+    // whose title carries .hw-toast-title (its aria-hidden live-region span
+    // is not a role=alert).
+    await expect(page.locator('.hw-toast-title')).toHaveText('Finish copying before dropping files')
+    expect(heldUploads.length).toBe(1)
+    expect(putCalls(core)).toEqual([])
+    expect(sendCalls(core)).toEqual([])
+    expect(inputRequests).toEqual([])
+    expect(userPackets(sent)).toEqual([])
+    expect(dataIn(core)).toEqual([])
+    // Done releases exactly the retained send, once, with the uploaded path.
+    await page.getByRole('button', { name: 'Done', exact: true }).click()
+    await expect(page.locator('.terminal-copy-layer')).toHaveCount(0)
+    await expect.poll(() => sendCalls(core).length).toBe(1)
+    expect(sendCalls(core)[0]!.params.text).toBe('/home/user/upload-demo.txt')
+    await tick(page, 300)
+    expect(sendCalls(core)).toHaveLength(1)
+    expect(putCalls(core)).toEqual([])
+  } finally {
+    await core.stop()
+    await context.close()
+  }
+})
+
 test('the 1440x900 surface keeps native xterm selection and shows no copy layer', async ({ browser }, testInfo) => {
   // newContext inherits the phone project's hasTouch: opt out, or the coarse
   // pointer media query keeps #touch interactive and the mouse never reaches xterm.
