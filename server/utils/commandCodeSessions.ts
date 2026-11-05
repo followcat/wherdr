@@ -51,16 +51,16 @@ export function cmdHeaderOf(firstLine: string): { id: string, cwd: string } | nu
 // Already canonical: absolute, no NUL, and no '.', '..' or empty raw segments.
 // Symlink resolution can make a normalized path different from the raw one, so
 // normalization is never allowed to bless a non-canonical shape.
-const canonical = (p: string) => absPath(p) && !p.split('/').slice(1).some(s => !s || s === '.' || s === '..')
+export const cmdCanonicalPath = (p: string) => absPath(p) && !p.split('/').slice(1).some(s => !s || s === '.' || s === '..')
 
 // <root>/<one project dir>/<full UUID>.jsonl, confined under the projects
 // root. Traversal, extra depth, non-UUID basenames and sidecar files
 // (.checkpoints.jsonl, .meta.json…) are all rejected; path resolution is
 // never used to bless a file outside this shape.
 export function cmdSessionFile(root: string, file: string): { dir: string, id: string } | null {
-  if (!canonical(root) || !canonical(file)) return null
+  if (!cmdCanonicalPath(root) || !cmdCanonicalPath(file)) return null
   const rel = path.relative(root, file)
-  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null
+  if (!rel || rel === '..' || rel.startsWith('../') || path.isAbsolute(rel)) return null
   const parts = rel.split('/')
   if (parts.length !== 2 || !parts[1]!.endsWith('.jsonl')) return null
   const id = parts[1]!.slice(0, -'.jsonl'.length)
