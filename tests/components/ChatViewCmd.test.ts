@@ -43,6 +43,12 @@ vi.mock('~/utils/offlineCache', async (importOriginal) => {
     touchChat: vi.fn(),
   }
 })
+const holdReads = () => {
+  let release!: () => void
+  cache.gate = new Promise<void>((resolve) => { release = resolve })
+  return release
+}
+
 type Reply = Record<string, unknown>
 const HOLD = Symbol('hold')
 type Held = { q: Record<string, string>, resolve: (r: Reply) => void, reject: (e: Error) => void }
@@ -110,6 +116,87 @@ describe('Command Code conversation identity', () => {
     eventsOpen.value = false
     herdrState.value = { ok: false, workspaces: [], panes: [] }
     localStorage.clear()
+  })
+
+  it('restores a kept tail for a legacy agent but never for Command Code online', async () => {
+    answer = () => HOLD
+    cache.kept.set('w1:p2', { id: 'w1:p2', items: SAVED, at: 1 })
+    const a = await mountChat(claude)
+    await expect.poll(a.text).toContain('kept tail item')
+    held.shift()?.resolve(live({ file: 'c.jsonl' }))
+    await expect.poll(a.text).toContain('live reply')
+    a.w.unmount()
+
+    cache.kept.set('w1:p1', { id: 'w1:p1', items: SAVED, at: 1 })
+    cache.reads.length = 0
+    const b = await mountChat(cmd)
+    await settle()
+    // The snapshot is not even opened, and nothing of it flashes on screen.
+    expect(cache.reads).not.toContain('w1:p1')
+    expect(b.text()).not.toContain('kept tail item')
+    held.shift()?.resolve(live())
+    await expect.poll(b.text).toContain('live reply')
+  })
+
+  it('does not paint a kept tail read while offline once the pane is back online', async () => {
+    answer = () => HOLD
+    cachedAt.value = 1 // explicit offline view: the passkey policy allows the read
+    cache.kept.set('w1:p1', { id: 'w1:p1', items: SAVED, at: 1 })
+    const release = holdReads()
+    const a = await mountChat(cmd)
+    await settle()
+    expect(cache.reads).toEqual(['w1:p1'])
+    cachedAt.value = null // back online while the read is still in flight
+    release()
+    await settle()
+    expect(a.text()).not.toContain('kept tail item')
+    expect(touchChat).not.toHaveBeenCalled()
+    held.shift()?.resolve(live())
+    await expect.poll(a.text).toContain('live reply')
+  })
+
+  it('does not paint a kept tail whose passkey lease was revoked while reading', async () => {
+    answer = () => HOLD
+    cache.kept.set('w1:p2', { id: 'w1:p2', items: SAVED, at: 1 })
+    const release = holdReads()
+    const a = await mountChat(claude)
+    await settle()
+    expect(cache.reads).toEqual(['w1:p2'])
+    localStorage.removeItem('wherdr-offline-access') // lease revoked mid-read
+    release()
+    await settle()
+    expect(a.text()).not.toContain('kept tail item')
+    expect(touchChat).not.toHaveBeenCalled()
+    held.shift()?.resolve(live())
+    await expect.poll(a.text).toContain('live reply')
+  })
+
+  it('shows the kept tail for Command Code in an explicit offline view', async () => {
+    answer = () => HOLD
+    cachedAt.value = 1
+    cache.kept.set('w1:p1', { id: 'w1:p1', items: SAVED, at: 1 })
+    const a = await mountChat(cmd)
+    await expect.poll(a.text).toContain('kept tail item')
+    expect(touchChat).toHaveBeenCalledWith('w1:p1')
+  })
+
+  it('clears an unvalidated cached Command Code view when it comes back online', async () => {
+    answer = () => HOLD
+    cachedAt.value = 1
+    cache.kept.set('w1:p1', { id: 'w1:p1', items: SAVED, at: 1 })
+    const a = await mountChat(cmd)
+    await expect.poll(a.text).toContain('kept tail item')
+    const before = requests
+    cachedAt.value = null
+    await settle()
+    // The unvalidated view is dropped and a fresh identity is requested —
+    // nothing passes for the live conversation while the answer is out.
+    expect(a.text()).not.toContain('kept tail item')
+    expect(requests).toBeGreaterThan(before)
+    for (const h of held.splice(0)) h.resolve(live())
+    await expect.poll(a.text).toContain('live reply')
+    // The authorized snapshot itself was never deleted.
+    expect(cache.kept.get('w1:p1')).toBeTruthy()
   })
 
   it('clears a Command Code conversation on the first unavailable and keeps its snapshot', async () => {

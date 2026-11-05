@@ -108,15 +108,23 @@ const canRun = computed(() => canRunIn(props.pane))
 // shown only if it comes first.
 async function restoreChat() {
   if (!mayReadOffline(readOfflineAccess())) return
+  // Online, a kept tail cannot prove it came from the live Command Code
+  // process. The explicit offline / stale-pane read-only policy still applies.
+  if (props.pane.agent === 'cmd' && !readOnly.value) return
   const id = props.pane.id
   const gen = resetGen
   const saved = await readChat(id)
+  // The lease that allowed the read may be revoked or expired by now.
+  if (!mayReadOffline(readOfflineAccess())) return
   if (!saved || synced || rendered.value || unavailable.value || staleGen(gen) || id !== props.pane.id) return
+  // Offline when the read began is not enough: it must still be read-only.
+  if (props.pane.agent === 'cmd' && !readOnly.value) return
   await apply(() => {
     chat.value = { ...fresh(), tail: saved.items }
     savedAt.value = saved.at
   })
-  if (staleGen(gen) || id !== props.pane.id) return
+  if (!mayReadOffline(readOfflineAccess()) || staleGen(gen) || id !== props.pane.id
+    || (props.pane.agent === 'cmd' && !readOnly.value)) return
   touchChat(props.pane.id)
 }
 
@@ -377,6 +385,17 @@ watch(() => identityOf(props.pane), () => {
   tailLoader.invalidate()
   if (!offlineView.value) loadChat()
 })
+// A Command Code view painted offline from the kept tail is unvalidated:
+// back online (or the machine reachable again) it must not pass for the
+// live conversation — drop it and read the identity fresh before showing
+// anything as current. The authorized snapshot itself is never deleted.
+watch(readOnly, (ro, was) => {
+  if (ro || !was || props.pane.agent !== 'cmd' || savedAt.value === null) return
+  resetChat()
+  tailLoader.invalidate()
+  loadChat()
+})
+
 // Older slice, keeping on screen what we were reading.
 async function loadOlder() {
   if (olderBusy.value || !(chat.value.olderCursor > 0)) return

@@ -44,3 +44,25 @@ it('guards lock, offline and remote state; invalidation survives the card unmoun
     eventsOpen.value = false
   }
 })
+
+it('never preloads or takes a Command Code pane', async () => {
+  herdrState.value = { ok: true, session: 'test', panes: [pane], workspaces: [], machines: [{ key: 'demo', label: 'Demo', local: false, status: 'online', error: null }] }
+  eventsOpen.value = true
+  reads = 0
+  let intent!: ReturnType<typeof useChatIntent>
+  const card = await mountSuspended(defineComponent({ setup() { intent = useChatIntent(); return () => h('div') } }))
+  try {
+    const cmd = { ...pane, agent: 'cmd' } as Pane
+    intent.preload(cmd)
+    await flushPromises()
+    expect(reads).toBe(0)
+    expect(await intent.take(cmd)).toBeUndefined()
+    intent.preload(pane)
+    await flushPromises()
+    expect(reads).toBe(1)
+  } finally {
+    card.unmount()
+    eventsOpen.value = false
+    herdrState.value = { ok: false, workspaces: [], panes: [] }
+  }
+})
