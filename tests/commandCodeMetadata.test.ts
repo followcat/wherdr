@@ -354,4 +354,162 @@ describe('Command Code metadata', () => {
     gate.resolve()
     expect(await aP).toBeNull()
   })
+
+  // Previews are the guarded chat's bottom: a same-size rewrite and an
+  // inode replacement both refresh the text, a moved selection serves the
+  // new file's reply, and a lost selection serves nothing — never the
+  // last preview of a file no longer selected.
+  it('latestReply() refreshes on rewrite and inode, and follows a moved or lost selection', async () => {
+    const v1 = body(sess('s1'), user('u1', 'q', 1), assistant('a1', 'first reply', 2))
+    const disk: Record<string, MemFile> = {
+      [FILE]: { body: v1 },
+      [FILE2]: { body: body(sess('s2'), user('u2', 'other file', 1), assistant('a1', 'other file reply', 2)) },
+    }
+    let cur: Loc | null = sel()
+    const t = mk(disk, {}, async () => cur)
+    expect(await t.latestReply(PANE)).toMatchObject({ text: 'first reply' })
+    // Same size, new content: the preview reflects the rewrite, not a cache.
+    const v2 = body(sess('s1'), user('u1', 'q', 1), assistant('a1', 'other reply', 2))
+    expect(v2.length).toBe(v1.length) // same-size rewrite, never append growth
+    disk[FILE] = { body: v2, mtimeMs: 9 }
+    expect(await t.latestReply(PANE)).toMatchObject({ text: 'other reply' })
+    // Another inode at the same size is another file's generation.
+    const v3 = body(sess('s1'), user('u1', 'q', 1), assistant('a1', 'third reply', 2))
+    expect(v3.length).toBe(v1.length)
+    disk[FILE] = { body: v3, mtimeMs: 9, ino: 4242 }
+    expect(await t.latestReply(PANE)).toMatchObject({ text: 'third reply' })
+    cur = sel(FILE2, 's2')
+    expect(await t.latestReply(PANE)).toMatchObject({ text: 'other file reply' })
+    cur = null
+    expect(await t.latestReply(PANE)).toBeNull()
+    expect((await t.chat(PANE, {})).available).toBe(false)
+  })
+
+  // /clear and a lost selection hide the whole previous session: nothing
+  // the first file produced — conversation, model, preview, search hits or
+  // an image ref — can leak through the new or missing identity.
+  it('a moved or lost selection exposes none of the previous session', async () => {
+    const disk: Record<string, MemFile> = {
+      [FILE]: { body: body(sess('s1'), user('u1', 'first hit', 1), call(), out('r1', 'first out'), imgLine('a9', 20), mc('example/model-a', 25)) },
+      [FILE2]: { body: body(sess('s2'), user('u2', 'second hit', 1), assistant('a2', 'other file reply', 3), mc('example/model-b', 5)) },
+    }
+    let cur: Loc | null = sel()
+    const t = mk(disk, {}, async () => cur)
+    const chat1 = await t.chat(PANE, {})
+    const img = chat1.items!.find(i => i.images)!
+    expect(await t.image(PANE, chat1.file!, img.ref!, 0)).toMatchObject({ type: 'image/png' })
+    expect((await t.model(PANE))!.id).toBe('example/model-a')
+    expect(await t.latestReply(PANE)).toMatchObject({ text: 'here it is' })
+    expect((await t.search(PANE, 'first', Date.now() + 5000)).hits.length).toBeGreaterThan(0)
+    // /clear: the new file owns every answer; none of the first file's
+    // records, its model, its reply, its hits or its image ref leak.
+    cur = sel(FILE2, 's2')
+    const chat2 = await t.chat(PANE, {})
+    expect(chat2.items!.some(i => i.text === 'first hit' || i.toolId === 't1')).toBe(false)
+    expect((await t.model(PANE))!.id).toBe('example/model-b')
+    expect(await t.latestReply(PANE)).toMatchObject({ text: 'other file reply' })
+    expect((await t.search(PANE, 'first', Date.now() + 5000)).hits).toEqual([])
+    expect((await t.search(PANE, 'second', Date.now() + 5000)).hits.length).toBeGreaterThan(0)
+    expect(await t.image(PANE, chat1.file!, img.ref!, 0)).toBeNull() // 's1.jsonl' is not the selected file
+    // Identity unavailable: every surface is empty, not the last known one.
+    cur = null
+    expect((await t.chat(PANE, {})).available).toBe(false)
+    expect(await t.model(PANE)).toBeNull()
+    expect(await t.latestReply(PANE)).toBeNull()
+    expect((await t.search(PANE, 'second', Date.now() + 5000)).hits).toEqual([])
+    expect(await t.image(PANE, chat1.file!, img.ref!, 0)).toBeNull()
+  })
+
+  // A moved or lost selection leaves the OLD file's bytes and stamp
+  // perfectly live — every post-await check that only asks "is this file's
+  // generation still current" would still pass. The known-selection veto
+  // is what must publish nothing: the same pane observes FILE2 (or no
+  // selection) while A's raw read pends with the old bytes captured, then
+  // A resumes — its answer is another transcript's, never served, cached
+  // or returned.
+  const pendOnce = (disk: Record<string, MemFile>) => {
+    const gate = defer()
+    const entered = defer()
+    let arm = true
+    const io: MemIo = {
+      onRead: (start, len) => {
+        if (!arm) return undefined
+        arm = false
+        const snap = disk[FILE]!.body.subarray(start, start + len)
+        entered.resolve()
+        return gate.promise.then(() => snap)
+      },
+    }
+    return { gate, entered, io }
+  }
+
+  it('a model read pending across an observed selection move serves nothing and overwrites no cache', async () => {
+    const disk: Record<string, MemFile> = {
+      [FILE]: { body: body(sess('s1'), user('u1', 'q', 1), mc('example/model-a', 2)) },
+      [FILE2]: { body: body(sess('s2'), user('u2', 'q', 1), mc('example/model-z', 2)) },
+    }
+    let cur: Loc | null = sel()
+    const { gate, entered, io } = pendOnce(disk)
+    const t = mk(disk, io, async () => cur)
+    const aP = t.model(PANE)
+    await entered.promise
+    // The SAME pane observes the moved selection — FILE1's stamp stays live.
+    cur = sel(FILE2, 's2')
+    expect((await t.model(PANE))!.id).toBe('example/model-z')
+    gate.resolve()
+    expect(await aP).toBeNull()
+    // The late answer overwrote nothing of the newer selection's entry.
+    expect((await t.model(PANE))!.id).toBe('example/model-z')
+  })
+
+  it('a preview read pending across an observed selection move serves nothing', async () => {
+    const disk: Record<string, MemFile> = {
+      [FILE]: { body: body(sess('s1'), user('u1', 'q', 1), assistant('a1', 'first reply', 2)) },
+      [FILE2]: { body: body(sess('s2'), user('u2', 'q', 1), assistant('a1', 'other file reply', 2)) },
+    }
+    let cur: Loc | null = sel()
+    const { gate, entered, io } = pendOnce(disk)
+    const t = mk(disk, io, async () => cur)
+    const aP = t.latestReply(PANE)
+    await entered.promise
+    cur = sel(FILE2, 's2')
+    expect(await t.chat(PANE, {})).toMatchObject({ available: true })
+    gate.resolve()
+    expect(await aP).toBeNull()
+  })
+
+  it('a search pending across an observed selection loss serves no hits', async () => {
+    const disk: Record<string, MemFile> = {
+      [FILE]: { body: body(sess('s1'), user('u1', 'the needle is here', 1), assistant('a1', 'reply', 2)) },
+    }
+    let cur: Loc | null = sel()
+    const { gate, entered, io } = pendOnce(disk)
+    const t = mk(disk, io, async () => cur)
+    const aP = t.search(PANE, 'needle', Date.now() + 5000)
+    await entered.promise
+    // The same pane observes the lost selection — sel.file is now null.
+    cur = null
+    expect((await t.chat(PANE, {})).available).toBe(false)
+    gate.resolve()
+    expect((await aP).hits).toEqual([])
+  })
+
+  it('an image read pending across an observed selection move serves nothing', async () => {
+    const img = imgLine('a2', 6)
+    const imgOff = Buffer.byteLength(J(sess('s1'), user('u1', 'q', 1)) + '\n')
+    const imgLen = Buffer.byteLength(JSON.stringify(img))
+    const disk: Record<string, MemFile> = {
+      [FILE]: { body: body(sess('s1'), user('u1', 'q', 1), img) },
+      [FILE2]: { body: body(sess('s2'), user('u2', 'q', 1), assistant('a1', 'other', 2)) },
+    }
+    let cur: Loc | null = sel()
+    const { gate, entered, io } = pendOnce(disk)
+    const t = mk(disk, io, async () => cur)
+    const aP = t.image(PANE, 's1.jsonl', `${imgOff}:${imgLen}`, 0)
+    await entered.promise
+    cur = sel(FILE2, 's2')
+    expect((await t.chat(PANE, {})).available).toBe(true)
+    gate.resolve()
+    expect(await aP).toBeNull()
+  })
 })

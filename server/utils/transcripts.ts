@@ -2114,6 +2114,11 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       const r = await searchFile(bound, loc.file, kind, home, query, deadline)
       // Hits of a moved generation are another transcript's: never served.
       if (!cmd.io.live(loc.file, stamp)) throw new Error('command code transcript generation changed')
+      // The file's stamp stays live when the pane's SELECTION moved or was
+      // lost while its reads awaited — the known-selection veto, the same
+      // one `live` applies to replies, decides here too: another selected
+      // session's hits are never served.
+      if (selections.get(pane.id)?.file !== loc.file) return { hits: [], limited: false, kind: null }
       return { ...r, kind }
     }
     return { ...await searchFile(fs, loc.file, kind, home, query, deadline), kind }
@@ -2285,6 +2290,10 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       if (short) return short
       const r = await chat(pane, {})
       if (!r.available || !r.items) return null
+      // The reply carries its origin-bound context: `live` is the same
+      // publication guard the route applies — a selection observed moving
+      // or lost while the guarded read awaited vetoes it here too.
+      if (pane.agent === 'cmd' && live(pane, r) !== true) return null
       return lastReplyOf(r.items)
     } catch { /* no preview */ }
     return null
@@ -2364,6 +2373,10 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       // caught here too before the bytes are parsed.
       const buf = await cmd.io.readExact(loc.file, off, len, h.stamp)
       if (!buf || !cmd.io.live(loc.file, h.stamp)) return null
+      // A moved/lost selection keeps the old file's stamp live: the known
+      // selection is what decides — another selected session's image is
+      // never served.
+      if (selections.get(pane.id)?.file !== loc.file) return null
       let d: Json
       try { d = JSON.parse(buf.toString('utf8')) }
       catch { return null }
@@ -2412,9 +2425,11 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     const stale = (e: unknown) => {
       if (kind === 'cmd') {
         // Missing file means "no model", warm cache or not — only a
-        // transport unknown may retain current same-generation metadata.
+        // transport unknown may retain current same-generation metadata,
+        // and only while this file is still the pane's known selection.
         if (isMissing(e)) return null
-        if (c && c.file === loc.file && c.stamp !== undefined && c.stamp === cmd.stampOf(loc.file)) return c.info
+        if (c && c.file === loc.file && c.stamp !== undefined && c.stamp === cmd.stampOf(loc.file)
+          && selections.get(pane.id)?.file === loc.file) return c.info
         throw e
       }
       if (c && c.file === loc.file) return c.info
@@ -2433,7 +2448,8 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       // same-generation; anything else is a read error, never another
       // generation's model.
       if (!o.st) {
-        if (c && c.file === loc.file && c.stamp !== undefined && c.stamp === o.stamp && cmd.io.live(loc.file, o.stamp)) return c.info
+        if (c && c.file === loc.file && c.stamp !== undefined && c.stamp === o.stamp && cmd.io.live(loc.file, o.stamp)
+          && selections.get(pane.id)?.file === loc.file) return c.info
         throw new Error('command code transcript state unknown')
       }
       // A folder where the transcript was expected has no model.
@@ -2444,7 +2460,8 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       if (h.stamp !== o.stamp) throw new Error('command code transcript generation changed')
       if (o.invalidated) purgeFile(loc.file)
       size = o.st.size
-      if (c && c.file === loc.file && c.size === size && c.stamp === h.stamp) return c.info
+      if (c && c.file === loc.file && c.size === size && c.stamp === h.stamp
+        && selections.get(pane.id)?.file === loc.file) return c.info
     } else {
       try { size = (await fs.stat(loc.file)).size }
       catch (e) { return stale(e) }
@@ -2487,6 +2504,10 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     // The generation must still be live before its metadata is cached or
     // returned — a detached answer is never published.
     if (h && !cmd.io.live(loc.file, h.stamp)) throw new Error('command code transcript generation changed')
+    // A moved/lost selection observed while the windows awaited keeps this
+    // file's stamp live — the known selection veto decides: nothing is
+    // cached over the newer selection's entry and nothing is returned.
+    if (h && selections.get(pane.id)?.file !== loc.file) return null
     const info = omp ? ompModelResult(raw) : raw
     modelCache.set(pane.id, { file: loc.file, size: done, raw, info, stamp: h?.stamp })
     return info
