@@ -87,19 +87,29 @@ describe('commandCodeState', () => {
     // real bytes and invalidate — never just shrink the verified span.
     fresh.results.set('t2', { out: 'fresh' })
     fresh.watch('t2', watchFingerprint(disk[FILE]!.body, 0, disk[FILE]!.body.length)!)
-    old.watch('t3', { at: 1, len: 4, hash: 'WRONGFINGERPRINT' })
+    old.watch('t3', watchFingerprint(Buffer.from('different'), 1, 4)!)
     disk[FILE]!.body = Buffer.concat([disk[FILE]!.body, Buffer.from('\nmore')])
     const o = await s.observe(FILE)
     expect(o).toMatchObject({ invalidated: false, stamp: fresh.stamp })
     expect(o.st?.size).toBe(disk[FILE]!.body.length)
     expect(s.handle(FILE).results.size).toBe(1)
-    // And after the file's entry is evicted entirely, the same holds.
+    // And after the file's entry is evicted entirely, the same holds:
+    // a fresh generation observes and grows while stale writes stay void.
     const before = s.handle(FILE)
     for (let i = 0; i < 64; i++) s.handle(`/f/x${i}`)
     expect(before.stamp).not.toBe(s.stampOf(FILE))
     before.results.set('t3', { out: 'stale' })
-    before.watch('t3', { at: 0, len: 1, hash: 'h' })
     expect(s.handle(FILE).results.size).toBe(0)
+    const fresh2 = s.handle(FILE)
+    expect((await s.observe(FILE)).invalidated).toBe(true) // re-created entry
+    fresh2.results.set('t2', { out: 'fresh2' })
+    fresh2.watch('t2', watchFingerprint(disk[FILE]!.body, 0, disk[FILE]!.body.length)!)
+    before.watch('t3', watchFingerprint(Buffer.from('different'), 1, 4)!)
+    disk[FILE]!.body = Buffer.concat([disk[FILE]!.body, Buffer.from(' tail')])
+    const o2 = await s.observe(FILE)
+    expect(o2).toMatchObject({ invalidated: false, stamp: fresh2.stamp })
+    expect(o2.st?.size).toBe(disk[FILE]!.body.length)
+    expect(s.handle(FILE).results.size).toBe(1)
   })
 
   it('exposes an unvalidated observation as unknown and retries it', async () => {

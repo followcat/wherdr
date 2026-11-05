@@ -2,9 +2,13 @@ import type { FsStat, MachineFs } from './fsx'
 import type { CommandCodeResult } from './transcripts'
 import { validWatch, verifyWatches, watchSpan, type CommandCodeWatch } from './commandCodeWatch'
 
-// Per-machine bounds: files a reader tracks, and entries a file remembers.
+// Per-machine bounds: files a reader tracks, entries a file remembers, and
+// distinct observations it may have in flight.
 const FILE_MAX = 64
 const ENTRY_MAX = 4096
+const PENDING_MAX = 64
+// The parser's command-id contract: nonempty, at most 128 UTF-8 bytes.
+const CMD_ID_MAX = 128
 
 // Same formula as transcripts' genOf: another inode or another modification
 // microsecond is another generation.
@@ -143,6 +147,11 @@ export function createCommandCodeState({ fs }: { fs: MachineFs }) {
   function observe(file: string): Promise<CommandCodeObservation> {
     const inFlight = pending.get(file)
     if (inFlight) return inFlight
+    // At the cap a new file resolves unknown: no IO is launched and no
+    // running observation is forgotten to make room — retry next call.
+    if (pending.size >= PENDING_MAX) {
+      return Promise.resolve({ st: null, stamp: files.get(file)?.stamp ?? 0, invalidated: false })
+    }
     const run = doObserve(file)
     const tracked = run.finally(() => { if (pending.get(file) === tracked) pending.delete(file) })
     pending.set(file, tracked)
@@ -159,7 +168,10 @@ export function createCommandCodeState({ fs }: { fs: MachineFs }) {
       stamp: s.stamp,
       results: s.results,
       watch(id, w) {
-        if (id.length > 256 || w.hash.length > 64 || !validWatch(w)) return
+        // The parser's id contract — nonempty, ≤128 UTF-8 bytes (the char
+        // check short-circuits before byteLength on bounded input).
+        if (id.length === 0 || id.length > CMD_ID_MAX || Buffer.byteLength(id, 'utf8') > CMD_ID_MAX
+          || w.hash.length > 64 || !validWatch(w)) return
         const was = s.watches.get(id)
         if (was && w.at < was.at) return
         s.watches.set(id, w)
