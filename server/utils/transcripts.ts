@@ -131,8 +131,14 @@ export function sameMsg(queued: string, said: string): boolean {
 
 // Base64 images (Claude: source.data, Codex: data:image/…): we
 // empty them before JSON.parse, only their count matters to us.
-export const stripBlobs = (line: string) => (line.length > 50000
-  ? line.replace(/"data":"[A-Za-z0-9+/=]{500,}"/g, '"data":""').replace(/"data:image\/[^"]{500,}"/g, '""')
+// For cmd the strip must not turn a rejected payload into an accepted
+// empty image: only shapes its filter would accept are emptied — an
+// invalid data URL stays verbatim and stays rejected.
+export const stripBlobs = (line: string, kind?: string | null) => (line.length > 50000
+  ? kind === 'cmd'
+    ? line.replace(/"data":"[A-Za-z0-9+/=]{500,}"/g, '"data":""')
+      .replace(/"data":"data:image\/[\w.+-]+;base64,[A-Za-z0-9+/=]{500,}"/g, '"data":""')
+    : line.replace(/"data":"[A-Za-z0-9+/=]{500,}"/g, '"data":""').replace(/"data:image\/[^"]{500,}"/g, '""')
   : line)
 
 export function toolSummary(name: string, input: Json, home = ''): string {
@@ -907,7 +913,7 @@ function commandCodeTool(name: string, input: Json): string {
 // Outcome remembered for a call whose tool_use is in an older page than the
 // tool_result being parsed (see parseCommandCode). Images and the result
 // watch fields arrive with their tasks.
-export type CommandCodeResult = { out?: string, error?: boolean }
+export type CommandCodeResult = { out?: string, error?: boolean, images?: number, ref?: string, imageAt?: number }
 
 // Ids live in the bounded maps across parses: cap their bytes (a transcript
 // can carry an arbitrarily large one). An oversized id is rejected on call
@@ -939,12 +945,15 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
         continue
       }
       const content = Array.isArray(m.content) ? m.content : []
+      let lastText: ChatItem | null = null
+      let own = 0
       for (const [block, part] of content.entries()) {
         if (!part || typeof part !== 'object') continue
         if (part.type === 'thinking' && typeof part.thinking === 'string' && part.thinking.trim()) {
           items.push({ role: 'thinking', text: clip(part.thinking), ts })
         } else if (part.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
-          items.push(replyItem({ role: 'assistant', text: clip(part.text), ts }, ref, block))
+          lastText = replyItem({ role: 'assistant', text: clip(part.text), ts }, ref, block)
+          items.push(lastText)
         } else if (part.type === 'tool_use') {
           const id = cmdId(part.id)
           if (!id) continue
@@ -956,10 +965,22 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
           if (saved) {
             t.out = saved.out
             t.error = saved.error || undefined
+            t.images = saved.images
+            t.ref = saved.ref
+            t.imageAt = saved.imageAt
           }
           tools.set(id, t)
           items.push(t)
+        } else if (part.type === 'image' && cmdLineImage(part)) {
+          own++
         }
+      }
+      // All accepted own images of the message form one ordered group on its
+      // last text reply (Copy/Reply identity stays the text's); with no text
+      // they are a single image reply — indices are the line's order.
+      if (own) {
+        if (lastText) { lastText.images = own; lastText.ref = ref }
+        else items.push(replyItem({ role: 'assistant', text: '', images: own, ref, ts }, ref))
       }
       continue
     }
@@ -976,21 +997,38 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
     }
     if (!Array.isArray(content)) continue
     let text = ''
+    let images = 0
+    // Accepted images of a line are ordered own-first then per tool result
+    // (lineImages): the offset starts at the count of accepted own images
+    // and runs through every result, matched or not.
+    let toolImages = content.reduce((n, p) => n + (p && cmdLineImage(p) ? 1 : 0), 0)
     for (const part of content) {
       if (!part || typeof part !== 'object') continue
       if (part.type === 'text' && typeof part.text === 'string') {
         text += (text ? '\n' : '') + part.text
+      } else if (part.type === 'image') {
+        if (cmdLineImage(part)) images++
       } else if (part.type === 'tool_result') {
+        const n = Array.isArray(part.content) ? part.content.reduce((s: number, q: Json) => s + (q && cmdLineImage(q) ? 1 : 0), 0) : 0
         const id = cmdId(part.tool_use_id)
-        if (!id) continue
+        if (!id) { toolImages += n; continue }
         const t = tools.get(id)
         const out = commandCodeText(part.content)
         // A result is the complete replacement of what the call showed: an
-        // empty or successful one clears out/error instead of preserving them.
+        // empty or successful one clears out/error/images instead of
+        // preserving them.
         const rec: CommandCodeResult = { out: out ? clip(out, 8000) : undefined, error: part.is_error === true }
+        if (n && ref) {
+          rec.images = n
+          rec.ref = ref
+          if (toolImages) rec.imageAt = toolImages
+        }
         if (t) {
           t.out = rec.out
           t.error = rec.error || undefined
+          t.images = rec.images
+          t.ref = rec.ref
+          t.imageAt = rec.imageAt
         } else if (results) {
           // The call is in an older page: remember the complete outcome for
           // the page that will render it (a newer result replaces it whole).
@@ -998,12 +1036,13 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
           if (results.size > 4096) results.delete(results.keys().next().value!)
           // The call may already be shown in an older page the client
           // loaded: send the complete outcome so it updates — or clears.
-          updates?.push({ id, out: rec.out ?? '', error: rec.error === true })
+          updates?.push({ id, out: rec.out ?? '', error: rec.error === true, images: rec.images ?? 0, ref: rec.ref ?? '', imageAt: rec.imageAt ?? 0 })
         }
+        toolImages += n
       }
     }
     const human = !hidden && (source === 'user' || (!source && !content.some((p: Json) => p && p.type === 'tool_result')))
-    if (human && text.trim()) items.push({ role: 'user', text: clip(text.trim()), ts })
+    if (human && (text.trim() || images)) items.push({ role: 'user', text: clip(text.trim()), ...(images ? { images, ref } : {}), ts })
   }
   return items
 }
@@ -1018,7 +1057,7 @@ const parseKind = (lines: Lines, kind: string | null, home: string, templates?: 
 // positions, the lines without their base64, and the content hashes of their
 // images (as parseLines gives them).
 interface LineStore { lines: Lines & { refs: string[] }, hashes: Map<string, string[]>, keep: boolean }
-export function storeLines(store: LineStore, text: string, base: number): Lines {
+export function storeLines(store: LineStore, text: string, base: number, kind?: string | null): Lines {
   const added: Lines = []
   added.refs = []
   let off = base
@@ -1026,9 +1065,9 @@ export function storeLines(store: LineStore, text: string, base: number): Lines 
     const n = Buffer.byteLength(l)
     const ref = `${off}:${n}`
     off += n + 1
-    const h = lineImageHashes(l)
+    const h = lineImageHashes(l, kind)
     if (h.length) store.hashes.set(ref, h)
-    added.push(stripBlobs(l))
+    added.push(stripBlobs(l, kind))
     added.refs.push(ref)
   }
   if (store.keep) {
@@ -1057,7 +1096,7 @@ export function parseLines(text: string, kind: string | null, base = 0, home = '
     refs.push(`${off}:${n}`)
     off += n + 1
   }
-  const lines: Lines = raw.map(stripBlobs)
+  const lines: Lines = raw.map(l => stripBlobs(l, kind))
   lines.refs = refs
   const cmdUpdates: CommandCodeToolUpdate[] = []
   const items = parseKind(lines, kind, home, templates, cwd, { results: cmdResults, updates: cmdUpdates })
@@ -1065,11 +1104,18 @@ export function parseLines(text: string, kind: string | null, base = 0, home = '
   // Content hash of each image, to spot one shown twice (see shared/imageDupes.ts).
   const byRef = new Map<string, number>()
   refs.forEach((r, i) => byRef.set(r, i))
+  // A ref's hash list is computed once per parse however many items carry
+  // its images — for cmd each lookup pays a whole-line digest for its key.
+  const hashed = new Map<string, string[]>()
   for (const it of items) {
     if (!it.images || !it.ref) continue
-    const i = byRef.get(it.ref)
-    if (i === undefined) continue
-    const all = lineImageHashes(raw[i]!)
+    let all = hashed.get(it.ref)
+    if (!all) {
+      const i = byRef.get(it.ref)
+      if (i === undefined) continue
+      all = lineImageHashes(raw[i]!, kind)
+      hashed.set(it.ref, all)
+    }
     const at = it.imageAt || 0
     const own = all.slice(at, at + it.images)
     if (own.length === it.images) it.hashes = own
@@ -1090,14 +1136,21 @@ export function turnStart(line: string, kind: string | null): boolean {
 // and its multi-MB base64 is decoded and hashed once, not at every poll.
 const HASH_CACHE_MAX = 2000
 const hashCache = new Map<string, string[]>()
-export function lineImageHashes(line: string): string[] {
-  if (!line.includes('"type":"image"') && !line.includes('"input_image"')) return []
-  const key = `${line.length}:${line.slice(0, 200)}:${line.slice(-200)}`
+export function lineImageHashes(line: string, kind?: string | null): string[] {
+  // The compact precheck matches how Claude/Codex/omp writers serialize; cmd
+  // transcripts may pretty-print `"type" : "image"`, so it uses a looser gate.
+  if (kind === 'cmd' ? !line.includes('"image"') : !line.includes('"type":"image"') && !line.includes('"input_image"')) return []
+  // The legacy key is approximate (length + first/last 200 chars): two large
+  // images differing only in the middle would collide. cmd needs exact
+  // identity — a digest of the whole line, never a retained payload.
+  const key = kind === 'cmd'
+    ? `c:${createHash('sha256').update(line).digest('hex')}`
+    : `${line.length}:${line.slice(0, 200)}:${line.slice(-200)}`
   const hit = hashCache.get(key)
   if (hit) return hit
   let hashes: string[] = []
   try {
-    hashes = lineImages(JSON.parse(line)).map(img => 'blob' in img ? img.blob : createHash('sha256').update(Buffer.from(img.data, 'base64')).digest('hex'))
+    hashes = lineImages(JSON.parse(line), kind).map(img => 'blob' in img ? img.blob : createHash('sha256').update(Buffer.from(img.data, 'base64')).digest('hex'))
   } catch { hashes = [] }
   if (hashCache.size >= HASH_CACHE_MAX) hashCache.delete(hashCache.keys().next().value!)
   hashCache.set(key, hashes)
@@ -1113,9 +1166,53 @@ const IMAGE_TYPES = /^image\/(?:png|jpeg|gif|webp)$/
 // ~/.omp/agent/blobs (see image()).
 export type TranscriptImage = { type: string, body: Buffer } | { type: string, blob: string }
 type LineImage = { type: string, data: string } | { type: string, blob: string }
+// Command Code accepts inline image payloads only — positive base64 or
+// data-URL shape, never a storage key, file/URL or path. Nothing a record
+// says can make this open a filesystem or network resource, so it can't
+// reach omp's blob store either. `''` counts: stripBlobs empties a large
+// payload before parse but the image's position survives.
+const B64 = /^[A-Za-z0-9+/=]*$/
+const DATA_URL = /^data:(image\/[\w.+-]+);base64,(.*)$/
+// One accepted-image rule shared by parse counting, hashing and extraction:
+// `{type:'image', source:{type:'base64', data}}` (Claude's shape) or flat
+// `{type:'image', data}` as inline base64 or a data: URL.
+function cmdLineImage(p: Json): LineImage | null {
+  if (!p || typeof p !== 'object' || p.type !== 'image') return null
+  if (p.source && typeof p.source === 'object' && !Array.isArray(p.source)) {
+    const s = p.source
+    return s.type === 'base64' && typeof s.data === 'string' && B64.test(s.data)
+      ? { type: typeof s.media_type === 'string' ? s.media_type : 'image/png', data: s.data } : null
+  }
+  if (typeof p.data !== 'string') return null
+  const mm = DATA_URL.exec(p.data)
+  if (mm && mm[2] !== undefined) return B64.test(mm[2]) ? { type: mm[1]!, data: mm[2] } : null
+  return B64.test(p.data)
+    ? { type: typeof p.mimeType === 'string' ? p.mimeType : 'image/png', data: p.data } : null
+}
 // Images of a line, in the order of the `i` of /api/chat/image.
-function lineImages(d: Json): LineImage[] {
+// A malformed record (`null`, a number, an array) carries no images.
+function lineImages(d: Json, kind?: string | null): LineImage[] {
   const found: LineImage[] = []
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return found
+  if (kind === 'cmd') {
+    // Exactly what parseCommandCode reads: the message's own images first,
+    // then each tool result's accepted images. attachment/payload metadata
+    // is not part of cmd messages and cannot shift these indices.
+    const content = d.message && Array.isArray(d.message.content) ? d.message.content : null
+    for (const p of content || []) {
+      const img = cmdLineImage(p)
+      if (img) found.push(img)
+    }
+    for (const p of content || []) {
+      if (p && p.type === 'tool_result' && Array.isArray(p.content)) {
+        for (const q of p.content) {
+          const img = cmdLineImage(q)
+          if (img) found.push(img)
+        }
+      }
+    }
+    return found
+  }
   const visit = (parts: Json[] | null) => {
     for (const p of parts || []) {
       if (p && p.type === 'image' && p.source && p.source.data) found.push({ type: p.source.media_type || 'image/png', data: p.source.data })
@@ -1140,8 +1237,8 @@ function lineImages(d: Json): LineImage[] {
   }
   return found
 }
-export function extractImage(d: Json, index: number): TranscriptImage | null {
-  const img = lineImages(d)[index]
+export function extractImage(d: Json, index: number, kind?: string | null): TranscriptImage | null {
+  const img = lineImages(d, kind)[index]
   if (!img) return null
   const lower = String(img.type).toLowerCase()
   const type = IMAGE_TYPES.test(lower) ? lower : 'application/octet-stream'
@@ -1647,7 +1744,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     }
     const nl = fresh.lastIndexOf(0x0a)
     if (nl >= 0) {
-      const added = storeLines(b, fresh.subarray(0, nl).toString('utf8'), b.end)
+      const added = storeLines(b, fresh.subarray(0, nl).toString('utf8'), b.end, kind)
       b.claude?.feed(added)
       b.end += nl + 1
       // From c0 (or the start) to the new end: covers the bytes to check next time.
@@ -1671,7 +1768,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     const partial = fresh.subarray(nl + 1)
     if (partial.length) {
       try {
-        JSON.parse(stripBlobs(partial.toString('utf8')))
+        JSON.parse(stripBlobs(partial.toString('utf8'), kind))
         return await readSlice(file, kind, size, from)
       } catch { /* incomplete: ignored as the parsers would */ }
     }
@@ -1826,7 +1923,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     let d: Json
     try { d = JSON.parse((await fs.read(loc.file, off, len)).toString('utf8')) }
     catch { return null }
-    const img = extractImage(d, index)
+    const img = extractImage(d, index, transcriptKind(loc.file) || pane.agent)
     if (!img || !('blob' in img)) return img
     const blob = path.join(home, '.omp/agent/blobs', img.blob)
     try {
@@ -1883,7 +1980,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
           continue
         }
         if (end === size && !r.text.endsWith('\n')) done = size - Buffer.byteLength(r.text.slice(r.text.lastIndexOf('\n') + 1))
-        const lines = r.text.split('\n').map(stripBlobs)
+        const lines = r.text.split('\n').map(l => stripBlobs(l, pane.agent))
         raw = omp ? mergeOmpModel(raw, ompLastModel(lines)) : lastModel(lines, pane.agent)
         if (omp ? ompModelComplete(raw) : raw) break
         end = r.start
@@ -1912,7 +2009,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     let detail: PromptDetail | null = null
     try {
       const r = await readRange(loc.file, Math.max(0, size - PENDING_WINDOW), size)
-      const lines = r.text.split('\n').map(stripBlobs)
+      const lines = r.text.split('\n').map(l => stripBlobs(l))
       const kind = transcriptKind(loc.file) || pane.agent
       detail = kind === 'codex' ? pendingCodexTool(lines) : kind === 'omp' ? pendingOmpTool(lines, tool) : pendingClaudeTool(lines, home)
     } catch { detail = null }
@@ -1932,7 +2029,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     const c = askCache.get(pane.id)
     if (c && c.file === loc.file && c.size === size) return c.asked
     let asked: OmpAsked[] = []
-    try { asked = pendingOmpAsk((await readRange(loc.file, Math.max(0, size - PENDING_WINDOW), size)).text.split('\n').map(stripBlobs)) }
+    try { asked = pendingOmpAsk((await readRange(loc.file, Math.max(0, size - PENDING_WINDOW), size)).text.split('\n').map(l => stripBlobs(l))) }
     catch { asked = [] }
     askCache.set(pane.id, { file: loc.file, size, asked })
     return asked
@@ -1950,7 +2047,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     const c = claudeAskCache.get(pane.id)
     if (c && c.file === loc.file && c.size === size) return c.asked
     let asked: ClaudeAsked[] = []
-    try { asked = pendingClaudeAsk((await readRange(loc.file, Math.max(0, size - PENDING_WINDOW), size)).text.split('\n').map(stripBlobs)) }
+    try { asked = pendingClaudeAsk((await readRange(loc.file, Math.max(0, size - PENDING_WINDOW), size)).text.split('\n').map(l => stripBlobs(l))) }
     catch { asked = [] }
     claudeAskCache.set(pane.id, { file: loc.file, size, asked })
     return asked

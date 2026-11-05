@@ -1,5 +1,19 @@
-import { describe, expect, it } from 'vitest'
-import { type CommandCodeResult, parseLines } from '../server/utils/transcripts'
+import { createHash } from 'node:crypto'
+import { describe, expect, it, vi } from 'vitest'
+
+// Count whole-line digests during a parse: every createHash call in the cmd
+// image path is real work — a line-key sha256 plus one digest per image.
+const cryptoCount = vi.hoisted(() => ({ n: 0 }))
+vi.mock('node:crypto', async (importOriginal) => {
+  const real = await importOriginal<typeof import('node:crypto')>()
+  return {
+    ...real,
+    createHash: (...args: Parameters<typeof real.createHash>) => { cryptoCount.n++; return real.createHash(...args) },
+  }
+})
+import { type CommandCodeResult, createTranscripts, extractImage, lineImageHashes, parseLines } from '../server/utils/transcripts'
+import type { MachineFs } from '../server/utils/fsx'
+import { lastModel, modelFromLine } from '../server/utils/models'
 import type { ChatItem } from '../shared/types'
 import { AT, at, assistant, J, modelChange, results, sess, user } from './cmdParserFixture'
 
@@ -112,7 +126,7 @@ describe('parseLines for Command Code', () => {
     // Newer page first: the result's call lives in an older page.
     const newer = parse(J(results('u1', [{ tool_use_id: 't1', content: 'run ok' }])), map)
     expect(newer.length).toBe(0)
-    expect(newer.updates).toEqual([{ id: 't1', out: 'run ok', error: false }])
+    expect(newer.updates).toEqual([{ id: 't1', out: 'run ok', error: false, images: 0, ref: '', imageAt: 0 }])
     // Older page later: the call inherits the remembered outcome.
     const older = parse(J(assistant('a1', [{ type: 'tool_use', id: 't1', name: 'shell_command', input: { command: 'npm test' } }], 5)), map)
     expect(older[0]).toMatchObject({ role: 'tool', toolId: 't1', out: 'run ok' })
@@ -146,7 +160,7 @@ describe('parseLines for Command Code', () => {
     expect(map.get('t2')).toEqual({ out: 'kept', error: false })
     const clearer = parse(J(results('u3', [{ tool_use_id: 't2', content: '' }])), map)
     expect(map.get('t2')).toEqual({ error: false })
-    expect(clearer.updates).toEqual([{ id: 't2', out: '', error: false }])
+    expect(clearer.updates).toEqual([{ id: 't2', out: '', error: false, images: 0, ref: '', imageAt: 0 }])
     const older = parse(J(assistant('a2', [{ type: 'tool_use', id: 't2', name: 'shell_command', input: { command: 'x' } }], 5)), map)
     expect(older[0]!.out).toBeUndefined()
     expect(older[0]!.error).toBeUndefined()
@@ -290,5 +304,265 @@ describe('parseLines for Command Code', () => {
     expect(second[1]).not.toBe(first[1])
     const shifted = parseLines(text, 'cmd', 4096, '', undefined, '')
     expect(shifted).toEqual(first)
+  })
+})
+
+describe('Command Code images', () => {
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+  const PNG2 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+  // A real-shape JPEG: valid base64 commonly starts with '/9j/'.
+  const JPEG = `/9j/4AAQSkZ${'QUFB'.repeat(16)}`
+  const img = (data: string, media_type = 'image/png') => ({ type: 'image', source: { type: 'base64', media_type, data } })
+  const sha = (b64: string) => createHash('sha256').update(Buffer.from(b64, 'base64')).digest('hex')
+
+  it('keeps an assistant image on its text reply, including a JPEG whose base64 starts with /', () => {
+    const items = parse(J(
+      assistant('a1', [{ type: 'text', text: 'Here is the screenshot' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: JPEG } }], 10),
+      assistant('a2', [img(PNG)], 20),
+    ))
+    expect(items[0]).toMatchObject({ role: 'assistant', text: 'Here is the screenshot', images: 1, ts: at(10) })
+    expect(items[0]!.ref).toBeTruthy()
+    expect(items[0]!.hashes).toEqual([sha(JPEG)])
+    expect(items[1]).toMatchObject({ role: 'assistant', text: '', images: 1, ts: at(20) })
+    expect(items[1]!.hashes).toEqual([sha(PNG)])
+  })
+
+  it('groups all own assistant images on the last text reply in line order', () => {
+    // An image before the first text and images between texts still belong,
+    // as one ordered group, to the LAST text reply — each with its own bytes.
+    const rec = assistant('a1', [
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG2 } },
+      { type: 'text', text: 'first' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG } },
+      { type: 'text', text: 'second' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: JPEG } },
+    ], 10)
+    const items = parse(J(rec))
+    expect(items.map(i => [i.role, i.text, i.images ?? 0])).toEqual([
+      ['assistant', 'first', 0],
+      ['assistant', 'second', 3],
+    ])
+    expect(items[1]!.hashes).toEqual([sha(PNG2), sha(PNG), sha(JPEG)])
+    const d = JSON.parse(J(rec))
+    expect(extractImage(d, 0, 'cmd')).toEqual({ type: 'image/png', body: Buffer.from(PNG2, 'base64') })
+    expect(extractImage(d, 1, 'cmd')).toEqual({ type: 'image/png', body: Buffer.from(PNG, 'base64') })
+    expect(extractImage(d, 2, 'cmd')).toEqual({ type: 'image/jpeg', body: Buffer.from(JPEG, 'base64') })
+  })
+
+  it('makes one image reply of several image-only parts, in order', () => {
+    const items = parse(J(assistant('a1', [img(PNG), img(JPEG), img(PNG2)], 10)))
+    expect(items.length).toBe(1)
+    expect(items[0]).toMatchObject({ role: 'assistant', text: '', images: 3, ref: expect.any(String), ts: at(10) })
+    expect(items[0]!.hashes).toEqual([sha(PNG), sha(JPEG), sha(PNG2)])
+  })
+
+  it('orders images own-first then each tool result, even for an unmatched call', () => {
+    const items = parse(J(
+      assistant('a1', [
+        { type: 'tool_use', id: 't1', name: 'read_file', input: { file_path: '/x/a.png' } },
+        { type: 'tool_use', id: 't2', name: 'read_file', input: { file_path: '/x/b.png' } },
+      ], 5),
+      user('u1', [
+        img(PNG2),
+        { type: 'tool_result', tool_use_id: 't-gone', content: [img(PNG2)] },
+        { type: 'tool_result', tool_use_id: 't1', content: [{ type: 'text', text: 'found' }, img(PNG)] },
+        { type: 'tool_result', tool_use_id: 't2', content: [img(PNG2)] },
+      ], 10),
+    ))
+    const [t1, t2] = items as ChatItem[]
+    expect(t1).toMatchObject({ toolId: 't1', out: 'found', images: 1, imageAt: 2 })
+    expect(t1!.hashes).toEqual([sha(PNG)])
+    expect(t2).toMatchObject({ toolId: 't2', images: 1, imageAt: 3 })
+    expect(t2!.hashes).toEqual([sha(PNG2)])
+    // The message's own image is a user item and counts before result images.
+    expect(items[2]).toMatchObject({ role: 'user', text: '', images: 1 })
+  })
+
+  it('carries image ref/imageAt through the shared map and clears them on replacement', () => {
+    const map = new Map<string, CommandCodeResult>()
+    const newer = parse(J(user('u1', [
+      { type: 'tool_result', tool_use_id: 't1', content: [img(PNG)] },
+    ], 10)), map)
+    expect(newer.updates).toEqual([{ id: 't1', out: '', error: false, images: 1, ref: expect.any(String), imageAt: 0 }])
+    const older = parse(J(assistant('a1', [{ type: 'tool_use', id: 't1', name: 'read_file', input: {} }], 5)), map)
+    expect(older[0]).toMatchObject({ toolId: 't1', images: 1, ref: expect.any(String) })
+    expect(older[0]!.imageAt ?? 0).toBe(0)
+    // A complete replacement result clears images/ref/imageAt, as out/error.
+    const clearer = parse(J(user('u2', [{ type: 'tool_result', tool_use_id: 't1', content: 'just text' }], 20)), map)
+    expect(map.get('t1')).toEqual({ out: 'just text', error: false })
+    expect(clearer.updates).toEqual([{ id: 't1', out: 'just text', error: false, images: 0, ref: '', imageAt: 0 }])
+    const last = parse(J(assistant('a2', [{ type: 'tool_use', id: 't1', name: 'read_file', input: {} }], 5)), map)
+    expect(last[0]!.images).toBeUndefined()
+    expect(last[0]!.ref).toBeUndefined()
+    expect(last[0]!.imageAt).toBeUndefined()
+  })
+
+  it('ignores references and metadata images without shifting accepted indices', () => {
+    const rec = user('u1', [
+      { type: 'image', source: { type: 'file', path: '/home/alice/id_rsa' } },
+      { type: 'image', data: 'blob:sha256:' + 'a'.repeat(64) },
+      { type: 'image', data: 'https://example.com/shot.png' },
+      { type: 'image', data: '/home/alice/shot.png' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png' } },
+      { type: 'image', source: 'nope' },
+      { type: 'input_image', image_url: { url: `data:image/png;base64,${PNG2}` } },
+      { type: 'tool_result', tool_use_id: 't1', content: [img(PNG)] },
+    ], 10)
+    // attachment/payload metadata is not part of cmd messages: its images
+    // must not shift the accepted tool-result image's index.
+    const line = JSON.stringify({
+      ...rec,
+      attachment: { prompt: [img(PNG2)] },
+      payload: { content: [img(PNG2)], output: [img(PNG2)] },
+    })
+    expect(lineImageHashes(line, 'cmd')).toEqual([sha(PNG)])
+    const d = JSON.parse(line)
+    expect(extractImage(d, 0, 'cmd')).toEqual({ type: 'image/png', body: Buffer.from(PNG, 'base64') })
+    expect(extractImage(d, 1, 'cmd')).toBeNull()
+    // Nothing of that line is a user turn either.
+    expect(parse(line).length).toBe(0)
+  })
+
+  it('supports inline data URLs and keeps count, hash and bytes aligned over 50KiB', () => {
+    const big = 'QUFB'.repeat(14000)
+    const rec = user('u1', [{ type: 'text', text: 'look' }, { type: 'image', data: `data:image/png;base64,${big}` }], 10)
+    const line = J(rec)
+    expect(line.length).toBeGreaterThan(50000) // stripBlobs empties the payload
+    const items = parse(line)
+    expect(items[0]).toMatchObject({ role: 'user', text: 'look', images: 1 })
+    expect(items[0]!.hashes).toEqual([sha(big)])
+    expect(extractImage(JSON.parse(line), 0, 'cmd')).toEqual({ type: 'image/png', body: Buffer.from(big, 'base64') })
+    // A valid JPEG data URL keeps its declared type on raw extraction.
+    const jpegUrl = `data:image/jpeg;base64,${JPEG}`
+    const jd = JSON.parse(J(user('u2', [{ type: 'image', data: jpegUrl }], 10)))
+    expect(extractImage(jd, 0, 'cmd')).toEqual({ type: 'image/jpeg', body: Buffer.from(JPEG, 'base64') })
+    // Spaced JSON: the compact `"type":"image"` precheck must not hide cmd images.
+    const spaced = JSON.stringify(rec).replace(/"type":"/g, '"type" : "')
+    expect(spaced).not.toContain('"type":"image"')
+    expect(lineImageHashes(spaced, 'cmd')).toEqual([sha(big)])
+  })
+
+  it('keeps an invalid long image entry rejected after stripping', () => {
+    // Over 50KiB: stripping must not turn a rejected payload into an
+    // accepted empty image — count, hash and extraction stay aligned.
+    for (const bad of [
+      `data:image/png;not-base64,${'x'.repeat(55000)}`,
+      `data:image/png;base64,${'!'.repeat(55000)}`,
+    ]) {
+      const rec = user('u1', [{ type: 'image', data: bad }, img(PNG)], 10)
+      const line = J(rec)
+      expect(line.length).toBeGreaterThan(50000)
+      const items = parse(line)
+      expect(items.length).toBe(1)
+      expect(items[0]).toMatchObject({ role: 'user', text: '', images: 1, ref: expect.any(String), ts: at(10) })
+      expect(items[0]!.hashes).toEqual([sha(PNG)])
+      const d = JSON.parse(line)
+      expect(extractImage(d, 0, 'cmd')).toEqual({ type: 'image/png', body: Buffer.from(PNG, 'base64') })
+      expect(extractImage(d, 1, 'cmd')).toBeNull()
+    }
+  })
+
+  it('hashes two long images differing only mid-payload as distinct', () => {
+    // Equal line length, identical first/last 200 chars, difference only in
+    // the middle: the legacy approximate cache key would collide; the exact
+    // cmd key must not — and each hash matches its own decoded bytes.
+    const pre = `QUFB${'QkJC'.repeat(60)}` // 244 base64 chars
+    const suf = 'RERE'.repeat(60) // 240 base64 chars
+    const a = `${pre}${'QUJD'.repeat(50)}${suf}`
+    const b = `${pre}${'WFla'.repeat(50)}${suf}`
+    const la = J(user('u1', [img(a)], 10))
+    const lb = J(user('u1', [img(b)], 10))
+    expect(la.length).toBe(lb.length)
+    expect(la.slice(0, 200)).toBe(lb.slice(0, 200))
+    expect(la.slice(-200)).toBe(lb.slice(-200))
+    expect(`${la.length}:${la.slice(0, 200)}:${la.slice(-200)}`).toBe(`${lb.length}:${lb.slice(0, 200)}:${lb.slice(-200)}`)
+    const ha = lineImageHashes(la, 'cmd')
+    const hb = lineImageHashes(lb, 'cmd')
+    expect(ha).toEqual([sha(a)])
+    expect(hb).toEqual([sha(b)])
+    expect(ha[0]).not.toBe(hb[0])
+  })
+
+  it('hashes an image line once per ref however many items share it', () => {
+    cryptoCount.n = 0
+    const items = parse(J(
+      assistant('a1', [
+        { type: 'tool_use', id: 't1', name: 'read_file', input: {} },
+        { type: 'tool_use', id: 't2', name: 'read_file', input: {} },
+      ], 5),
+      user('u1', [
+        { type: 'tool_result', tool_use_id: 't1', content: [img(PNG)] },
+        { type: 'tool_result', tool_use_id: 't2', content: [img(PNG2)] },
+      ], 10),
+    ))
+    // One whole-line digest for the ref key plus one per accepted image —
+    // without the per-ref memo each of the two items paid its own line hash.
+    expect(cryptoCount.n).toBe(3)
+    expect(items[0]!.hashes).toEqual([sha(PNG)])
+    expect(items[1]!.hashes).toEqual([sha(PNG2)])
+  })
+
+  it('resolves null on malformed image records, through image() too', async () => {
+    expect(extractImage(null, 0, 'cmd')).toBeNull()
+    expect(extractImage(JSON.parse('42'), 0, 'cmd')).toBeNull()
+    expect(extractImage(JSON.parse('[1]'), 0, 'cmd')).toBeNull()
+    const file = '/home/alice/.commandcode/projects/x/s1.jsonl'
+    const raw = 'null'
+    const reads: [string, number, number][] = []
+    const ENOENT = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+    const fs: MachineFs = {
+      stat: async () => { throw ENOENT() },
+      statMany: async () => [],
+      readdir: async () => { throw ENOENT() },
+      readFile: async () => { throw ENOENT() },
+      read: async (p, s, l) => { reads.push([p, s, l]); return Buffer.from(raw).subarray(s, s + l) },
+    }
+    const t = createTranscripts({ home: '/h', herdr: (async () => { throw new Error('x') }) as never, fs, locateCommandCode: async () => ({ file, session: 's1' }) })
+    expect(await t.image({ id: 'p1', agent: 'cmd', cwd: '/w' }, 's1.jsonl', `0:${raw.length}`, 0)).toBeNull()
+    expect(reads).toEqual([[file, 0, raw.length]])
+  })
+
+  it('image() reads only the selected file — never a referenced path or blob store', async () => {
+    const file = '/home/alice/.commandcode/projects/x/s1.jsonl'
+    const rec = user('u1', [
+      { type: 'image', data: 'blob:sha256:' + 'b'.repeat(64) },
+      { type: 'image', data: 'file:///home/alice/.ssh/id_rsa' },
+      img(PNG),
+    ], 10)
+    const raw = JSON.stringify(rec)
+    const reads: [string, number, number][] = []
+    const ENOENT = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+    const fs: MachineFs = {
+      stat: async () => { throw ENOENT() },
+      statMany: async () => [],
+      readdir: async () => { throw ENOENT() },
+      readFile: async () => { throw ENOENT() },
+      read: async (p, s, l) => { reads.push([p, s, l]); return Buffer.from(raw).subarray(s, s + l) },
+    }
+    const t = createTranscripts({ home: '/h', herdr: (async () => { throw new Error('x') }) as never, fs, locateCommandCode: async () => ({ file, session: 's1' }) })
+    const got = await t.image({ id: 'p1', agent: 'cmd', cwd: '/w' }, 's1.jsonl', `0:${Buffer.byteLength(raw)}`, 0)
+    expect(got).toEqual({ type: 'image/png', body: Buffer.from(PNG, 'base64') })
+    // Exactly one read: the transcript line itself, nothing referenced by it.
+    expect(reads).toEqual([[file, 0, Buffer.byteLength(raw)]])
+  })
+})
+
+describe('Command Code model', () => {
+  it('reads model_change and outer assistant model, most recent valid wins', () => {
+    expect(modelFromLine(JSON.stringify(modelChange(5)), 'cmd')).toEqual({ id: 'example/model-a', label: 'example/model-a', at: at(5) })
+    const a = JSON.stringify(assistant('a1', 'hi', 10))
+    expect(modelFromLine(a, 'cmd')!.id).toBe('example/model-a')
+    expect(modelFromLine(JSON.stringify(user('u1', 'q', 15)), 'cmd')).toBeNull()
+    expect(modelFromLine(JSON.stringify(sess('s1')), 'cmd')).toBeNull()
+    const lines = [
+      JSON.stringify(modelChange(5)),
+      JSON.stringify({ ...modelChange(20), model: 42 }),
+      JSON.stringify({ type: 'model_change', id: 'x' }),
+      JSON.stringify(assistant('a1', 'older', 10)),
+      JSON.stringify({ ...assistant('a2', 'newer', 25), model: 'example/model-b' }),
+      JSON.stringify({ type: 'model_change', model: 'example/model-c' }),
+    ]
+    expect(lastModel(lines, 'cmd')!.id).toBe('example/model-c')
+    expect(lastModel(lines.slice(0, 4), 'cmd')!.id).toBe('example/model-a')
   })
 })
