@@ -1459,6 +1459,17 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   }
   const locCache = new Map<string, { at: number, loc: Loc | null, session?: string | null }>()
   const lastLoc = new Map<string, Loc>() // last file found, fallback if a lookup fails
+  // Command Code replies bound to their generation (see withGen): the
+  // file the reply was read from and an origin-bound live predicate.
+  // Stamps are reader-local — a foreign reader's contexts never match.
+  const contexts = new WeakMap<ChatResponse, { file: string, live: () => boolean }>()
+  // Latest observed Command Code selection per pane: each lookup takes an
+  // opaque ticket, so a lookup started before a forget (or a reused pane
+  // id) can never carry a ticket that is reissued — a late stale lookup
+  // never overwrites a newer observation. Publication guard only (see
+  // live) — never a locator or cache fallback.
+  const selections = new Map<string, { ticket: object, file: string | null }>()
+  const selSeq = new Map<string, object>()
   const parseCache = new Map<string, { size: number, gen: string, settled: boolean, r: TailResult, stamp?: number }>()
   const tailReads = new Map<string, Promise<TailResult>>()
   const previewCache = new Map<string, { size: number, gen: string, reply: { key: string, text: string } }>()
@@ -1668,7 +1679,11 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     if (pane.agent === 'cmd') {
       locCache.delete(pane.id)
       lastLoc.delete(pane.id)
-      return locateCommandCode ? await locateCommandCode(pane).catch(() => null) : null
+      const ticket = {}
+      selSeq.set(pane.id, ticket)
+      const l = locateCommandCode ? await locateCommandCode(pane).catch(() => null) : null
+      if (selSeq.get(pane.id) === ticket) selections.set(pane.id, { ticket, file: l?.file ?? null })
+      return l
     }
     const hit = locCache.get(pane.id)
     if (hit && (hit.loc || !fresh) && Date.now() - hit.at < (pane.agent === 'devin' ? 1500 : 8000) && hit.session === pane.agentSession) return hit.loc
@@ -2164,6 +2179,18 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     // The generation every read and cache write is bound to — every
     // awaited step must still find it live before its result is used.
     const ctx = h ? { h, stamp: h.stamp } : undefined
+    // The reply's bound context for the route's post-await re-check
+    // (current/live below): held in a per-reader WeakMap, never on the
+    // reply — no callback or path can reach the wire, and a foreign
+    // reader can never claim this context (its stamps are its own).
+    const withGen = <T extends ChatResponse>(r: T): T => {
+      if (h) {
+        const file = loc.file
+        const stamp = h.stamp
+        contexts.set(r, { file, live: () => cmd.io.live(file, stamp) })
+      }
+      return r
+    }
     // The token the client claims to have read from (its anchor doubles as
     // the join check when `since` was forgotten). For Command Code it must
     // name this exact generation and reader: a missing or stale stamp can
@@ -2178,7 +2205,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       // while its windows were awaited makes this page another
       // transcript's — reject, never return it.
       if (h && !cmd.io.live(loc.file, h.stamp)) throw new Error('command code transcript generation changed')
-      return { ...base, older: true, items: r.items, start: r.start, ...(r.updates?.length ? { toolUpdates: r.updates } : {}) }
+      return withGen({ ...base, older: true, items: r.items, start: r.start, ...(r.updates?.length ? { toolUpdates: r.updates } : {}) })
     }
     const from = opts.from === undefined ? null : opts.from
     const gen = genOf(st)
@@ -2191,7 +2218,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     // the head also carries the generation stamp and the reader nonce — the
     // unchanged comparison then includes both, exactly.
     const head = `${fileId}:${st.size}:${from}:${gen}${h ? `~s${h.stamp}~r${cmd.reader}` : ''}`
-    if (settled && opts.since && opts.since.split('/')[0] === head) return { ...base, unchanged: true, token: opts.since }
+    if (settled && opts.since && opts.since.split('/')[0] === head) return withGen({ ...base, unchanged: true, token: opts.since })
     let r = await tail(loc.file, kind, st.size, gen, from, settled, st.ino, ctx)
     // The client's list starts at the cursor, and the file was rewritten
     // above it: replaced by another file (inode), shorter, rewritten at the
@@ -2213,7 +2240,37 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     const mark = `${fileId}:${st.size}:${from}:${gen}${settled ? '' : '!'}${h ? `~s${h.stamp}~r${cmd.reader}` : ''}`
     const token = r.anchor ? `${mark}/${r.start}.${r.anchor}` : mark
     if (h && !cmd.io.live(loc.file, h.stamp)) throw new Error('command code transcript generation changed')
-    return { ...base, token, items: r.items, start: r.start, queue: r.queue || [], ...(r.popped?.length ? { popped: r.popped } : {}), ...(rewritten ? { rewritten: true } : {}), ...(r.updates?.length ? { toolUpdates: r.updates } : {}) }
+    return withGen({ ...base, token, items: r.items, start: r.start, queue: r.queue || [], ...(r.popped?.length ? { popped: r.popped } : {}), ...(rewritten ? { rewritten: true } : {}), ...(r.updates?.length ? { toolUpdates: r.updates } : {}) })
+  }
+
+  // The context a Command Code reply was bound under still authorizes it
+  // while the selection names the same file and that generation is live:
+  // 'gone' — no or another selected file, or a reply this reader never
+  // bound (a Command Code available reply must have been bound by some
+  // reader — a miss is foreign, never "nothing to check"); 'stale' — it
+  // detached; null — an unbound reply (other agents, unavailable),
+  // nothing to check. One awaited locate, nothing else.
+  async function current(pane: TranscriptPane, r: ChatResponse): Promise<'ok' | 'stale' | 'gone' | null> {
+    const ctx = contexts.get(r)
+    if (!ctx) return pane.agent === 'cmd' && r.available ? 'gone' : null
+    const loc = await locate(pane)
+    if (!loc || loc.file !== ctx.file) return 'gone'
+    return ctx.live() ? 'ok' : 'stale'
+  }
+
+  // The synchronous final predicate for the same bound context — the
+  // route's last word after all its awaits; never awaits itself. The
+  // generation predicate is joined by the latest observed selection
+  // evidence (never a fallback, only a guard): a bound Command Code reply
+  // needs a known selection still on its file — moved, lost or forgotten
+  // evidence fails closed even while the stamp stays live. Same
+  // fail-closed miss rule as current().
+  function live(pane: TranscriptPane, r: ChatResponse): boolean | null {
+    const ctx = contexts.get(r)
+    if (!ctx) return pane.agent === 'cmd' && r.available ? false : null
+    const sel = selections.get(pane.id)
+    if (!sel || sel.file !== ctx.file) return false
+    return ctx.live()
   }
 
   // Agent's last reply, for cards and notifications.
@@ -2499,13 +2556,15 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   function forget(paneId: string) {
     locCache.delete(paneId)
     lastLoc.delete(paneId)
+    selections.delete(paneId)
+    selSeq.delete(paneId)
     modelCache.delete(paneId)
     pendingCache.delete(paneId)
     askCache.delete(paneId)
     claudeAskCache.delete(paneId)
   }
 
-  return { chat, preview, latestReply, image, forget, locate, model, observe, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions }
+  return { chat, preview, latestReply, image, forget, locate, model, observe, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions, current, live }
 }
 
 export type Transcripts = ReturnType<typeof createTranscripts>

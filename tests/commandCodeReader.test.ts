@@ -2,7 +2,8 @@
 // generation-stamped tokens, cross-page outcomes, and the rewrite/short-read
 // guards — fake disk and gated IO only, never a real fs/agent.
 import { describe, expect, it } from 'vitest'
-import { createTranscripts, type TranscriptPane } from '../server/utils/transcripts'
+import { createTranscripts, type Loc, type TranscriptPane } from '../server/utils/transcripts'
+import type { ChatResponse } from '../shared/types'
 import { defer, memFs, type MemFile, type MemIo } from './cmdStateFixture'
 import { assistant, J, results, sess, user } from './cmdParserFixture'
 
@@ -230,5 +231,61 @@ describe('Command Code reader', () => {
     // check, and widening re-reads overlap, so bytes transferred can be more.
     expect(Math.max(...lens.map(x => x.len))).toBeLessThanOrEqual(CAP + 1)
     expect(Math.min(...lens.map(x => x.start))).toBeGreaterThanOrEqual(disk[FILE].body.length - CAP - 1)
+  })
+
+  // Reply contexts are reader-local: a reply bound by another
+  // createTranscripts — or no reader at all — can never authorize through
+  // this one. An available Command Code reply whose context is unknown
+  // fails closed; other agents keep "nothing to check".
+  it('never authorizes a reply bound by a foreign or unknown reader', async () => {
+    const FILE2 = '/home/alice/.commandcode/projects/-w/s2.jsonl'
+    const disk = { [FILE]: { body: body(sess('s1'), user('u1', 'q', 1)) }, [FILE2]: { body: body(sess('s2'), user('u2', 'q', 1)) } }
+    const locate = async (): Promise<Loc | null> => ({ file: FILE, session: 's1' })
+    const t1 = createTranscripts({ home: '/h', herdr: noHerdr, fs: memFs(disk), locateCommandCode: locate })
+    const t2 = createTranscripts({ home: '/h', herdr: noHerdr, fs: memFs(disk), locateCommandCode: locate })
+    const r2 = await t2.chat(PANE, {}) // same file, same stamp numbers
+    expect(await t1.current(PANE, r2)).toBe('gone')
+    expect(t1.live(PANE, r2)).toBe(false)
+    const r1 = await t1.chat(PANE, {})
+    expect(await t1.current(PANE, r1)).toBe('ok')
+    expect(t1.live(PANE, r1)).toBe(true)
+    const bare = { available: true, file: 'x.jsonl' } as ChatResponse
+    expect(await t1.current(PANE, bare)).toBe('gone')
+    expect(t1.live(PANE, bare)).toBe(false)
+    const other: TranscriptPane = { id: 'p9', agent: 'claude', cwd: '/w' }
+    expect(await t1.current(other, bare)).toBeNull()
+    expect(t1.live(other, bare)).toBeNull()
+  })
+
+  // A lookup started before forget holds a ticket that can never be
+  // reissued: its late FILE1 answer cannot overwrite the newer FILE2
+  // observation. With selection evidence unknown (post-forget) a bound
+  // reply fails closed — FILE1's stamp stays live throughout (its
+  // generation was never invalidated), so the selection guard is what
+  // keeps it unpublishable.
+  it('keeps a bound reply unpublishable through forget and a late stale lookup', async () => {
+    const FILE2 = '/home/alice/.commandcode/projects/-w/s2.jsonl'
+    const disk = { [FILE]: { body: body(sess('s1'), user('u1', 'q', 1)) }, [FILE2]: { body: body(sess('s2'), user('u2', 'q', 1)) } }
+    let cur: Loc | null = { file: FILE, session: 's1' }
+    let gated = false
+    const started = defer()
+    const g = defer()
+    const t = createTranscripts({
+      home: '/h', herdr: noHerdr, fs: memFs(disk),
+      locateCommandCode: async () => { if (gated) { started.resolve(); await g.promise; return { file: FILE, session: 's1' } } return cur },
+    })
+    const rA = await t.chat(PANE, {})
+    expect(t.live(PANE, rA)).toBe(true)
+    gated = true
+    const old = t.locate(PANE) // a lookup that started before forget
+    await started.promise
+    t.forget('p1')
+    expect(t.live(PANE, rA)).toBe(false) // selection evidence unknown: closed
+    gated = false
+    cur = { file: FILE2, session: 's2' }
+    await t.locate(PANE) // the newer lookup observes FILE2
+    g.resolve()
+    expect(await old).toEqual({ file: FILE, session: 's1' })
+    expect(t.live(PANE, rA)).toBe(false) // the late FILE1 never overwrote FILE2
   })
 })

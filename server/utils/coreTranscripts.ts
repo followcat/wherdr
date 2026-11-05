@@ -5,7 +5,7 @@
 import { createShellFs, localFs, type ExecResult, type MachineFs, type ShellExec } from './fsx'
 import { createTranscripts, type Loc, type TranscriptPane, type Transcripts } from './transcripts'
 import { CoreError } from './core'
-import type { Pane } from '../../shared/types'
+import type { ChatResponse, Pane } from '../../shared/types'
 import { DEVIN_PROCESS_SCRIPT, devinProcesses } from './devinProcesses'
 import { createCmdCore } from './commandCodeCore'
 
@@ -134,6 +134,11 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
   }
 
   const machines = new Map<string, Promise<Transcripts>>()
+  // Warm instances by machine name: the synchronous final predicate
+  // (live below) reaches the reader that produced a reply without a new
+  // dispatch. A superseded entry is still the owning reader for replies
+  // it bound; a new instance overwrites it when its promise resolves.
+  const resolved = new Map<string, Transcripts>()
   function forMachine(name: string): Promise<Transcripts> {
     let t = machines.get(name)
     if (!t) {
@@ -162,8 +167,10 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
         return createTranscripts({ home, herdr, fs, locateCommandCode })
       })()
       machines.set(name, t)
-      // Not remembered when it fails: the machine may come back.
-      t.catch(() => { if (machines.get(name) === t) machines.delete(name) })
+      // One derived promise, both branches handled — a failed build is
+      // not remembered (the machine may come back) and never unhandled.
+      void t.then(x => { if (machines.get(name) === t) resolved.set(name, x) },
+        () => { if (machines.get(name) === t) machines.delete(name) })
     }
     return t
   }
@@ -214,6 +221,21 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
     pendingAsk: viaPane('pendingAsk'),
     pendingClaudeQuestions: viaPane('pendingClaudeQuestions'),
     search: viaPane('search'),
+    // The reply-context revalidation exists for Command Code replies only:
+    // gated before any machine/birth resolution so other agents gain no
+    // extra failure path — they answer null (nothing to check) without
+    // ever dispatching.
+    current: async (p: TranscriptPane, r: ChatResponse) => {
+      if (p.agent !== 'cmd') return null
+      const t = await machineOf(p)
+      return t ? t.current(await withBirth(p), r) : 'gone'
+    },
+    // The synchronous final predicate for a reply's bound context — the
+    // already-warm machine's own reader answers it; a cold machine or a
+    // reply no reader bound answers null for other agents, false for a
+    // Command Code available reply (it must have been bound somewhere).
+    live: (p: TranscriptPane, r: ChatResponse) =>
+      resolved.get(machineOfAddress(deps.pane(p.id)?.coreAddress))?.live(p, r) ?? (p.agent === 'cmd' && r.available ? false : null),
     image: async (p: TranscriptPane, file: string | null, ref: string | null, i: number) => {
       const t = await machineOf(p)
       return t ? t.image(await withBirth(p), file, ref, i) : null

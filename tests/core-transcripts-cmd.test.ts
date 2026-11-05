@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { createCoreTranscripts } from '../server/utils/coreTranscripts'
-import { createTranscripts } from '../server/utils/transcripts'
+import { createTranscripts, type TranscriptPane } from '../server/utils/transcripts'
 import type { MachineFs } from '../server/utils/fsx'
 import { CoreError } from '../server/utils/core'
-import type { Pane } from '../shared/types'
+import type { ChatResponse, Pane } from '../shared/types'
 import {
   AGENT_CENSUS_SCRIPT, CMD_FILES_SCRIPT, CMD_HEADERS_SCRIPT, clock,
   F, filesWire, H, hdrs, HOME, OTHER, POST, POST2, retitled, S, sess, st, T, U1, U2, WORK
@@ -334,5 +334,22 @@ describe('Command Code panes resolve via core detail and per-machine wires', () 
       expect(core.calls.exec.length).toBe(0) // nothing ran on a guessed home
       expect(core.calls.get.length).toBe(0)
     }
+  })
+
+  // Reply revalidation dispatches only for Command Code: other agents
+  // answer null without touching any machine; a Command Code available
+  // reply on a cold machine fails closed (a bound reply must exist
+  // somewhere), and its unbound verdict is 'gone', never 'ok'.
+  it('gates reply revalidation to Command Code: legacy null, cold Cmd closed', async () => {
+    const core = cmdCore({}, {})
+    const t = createCoreTranscripts({ call: core.call, pane: () => undefined, localHome: HOME })
+    const other = { id: 'x', agent: 'claude', cwd: WORK } as TranscriptPane
+    const avail = { available: true, file: 'x.jsonl' } as ChatResponse
+    expect(await t.current(other, avail)).toBeNull()
+    expect(t.live(other, avail)).toBeNull()
+    expect(core.calls.get).toEqual([]) // no terminal.get, no machine.exec
+    expect(core.calls.exec).toEqual([])
+    expect(await t.current(P('c1'), avail)).toBe('gone')
+    expect(t.live(P('c1'), avail)).toBe(false)
   })
 })
