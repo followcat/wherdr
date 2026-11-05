@@ -42,21 +42,36 @@ export function virtualInputKey(data: string): string | null {
 // composition so its output stays text and never spends an armed modifier
 // as a shortcut.
 export function createCompositionTracker() {
-  let active = false, ended = false
+  // `pending` is the live window's state; `gen` is a monotonic token minted
+  // per window. They are separate because the window resets on every
+  // resolution path while an old settle callback can still be queued — only
+  // the latest token may close the window it armed.
+  let active = false, ended = false, pending = false, gen = 0
   return {
     start() { active = true; ended = false },
     // compositionend fires before the committed text reaches onData: the
-    // next data event is composition output, whatever it looks like.
-    end() { active = false; ended = true },
+    // next data event is composition output, whatever it looks like. Returns
+    // the generation of the pending-commit window it opens, so a settle armed
+    // for an older composition can never clear a newer one's window.
+    end() { active = false; ended = true; pending = true; return ++gen },
     // A keydown outside any composition is a real keystroke: drop a stale
     // flag left behind by a cancelled composition that produced no text.
     // Safari's keyCode 229 keydown still belongs to the composition.
     keydown(e?: { isComposing?: boolean, keyCode?: number }) {
-      if (!active && !e?.isComposing && e?.keyCode !== 229) ended = false
+      if (!active && !e?.isComposing && e?.keyCode !== 229) { ended = false; pending = false }
     },
     get active() { return active },
+    // The deferred-commit flag without consuming it: a caller that refuses an
+    // action while a commit is pending must not steal it from the next data.
+    get ended() { return ended },
+    // A real commit may still be in flight only until xterm's deferred
+    // finalize tick after compositionend. A cancelled session produces no
+    // data at all, so it stops looking pending once that boundary passes
+    // even though `ended` may still be set.
+    get pending() { return pending },
+    settle(g: number) { if (g === gen) pending = false },
     // The flag is consumed by the first data event after the end, so a
     // cancelled composition cannot swallow a later real keystroke.
-    takeEnded() { const t = ended; ended = false; return t },
+    takeEnded() { const t = ended; ended = false; pending = false; return t },
   }
 }

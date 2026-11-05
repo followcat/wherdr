@@ -27,6 +27,7 @@ import { bindTerminalMouse, terminalCell } from '~/utils/terminalMouse'
 import { TERM_FONT, onFontsLoaded } from '~/utils/terminalFont'
 import { virtualNavigationBytes, virtualNavigationKeys } from '~/utils/keybarKeys'
 import { createCompositionTracker, toggleVirtualModifier, virtualChord, virtualInputKey, type VirtualModifier } from '~/utils/terminalModifiers'
+import { captureTerminalScreen, type TerminalCopySnapshot } from '~/utils/terminalCopy'
 
 const CORE_SCROLLBACK = 5000
 
@@ -176,6 +177,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       upload: async f => (await uploadPhoto(paneId, f)).path,
       paste: text => sendTerm({ type: 'paste', text }),
       report: message => toast(message, true),
+      enabled: () => opts.input?.() !== false,
     })
     // OSC 52: what the agent copies lands in this device's clipboard. Refused
     // without a gesture (iOS Safari): offered again on a tap.
@@ -222,7 +224,16 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       ta.addEventListener('blur', () => { kbdOn.value = false })
       ta.addEventListener('focus', () => { kbdOn.value = true })
       ta.addEventListener('compositionstart', composition.start)
-      ta.addEventListener('compositionend', composition.end)
+      ta.addEventListener('compositionend', () => {
+        const gen = composition.end()
+        // xterm's CompositionHelper reads the textarea on a 0 ms timer armed
+        // by its own compositionend listener (attached at open, before this
+        // one), so a real commit always reaches onData before this settle
+        // runs; only a cancelled composition crosses the boundary still
+        // pending. compositionend.data is unreliable on Chromium: the
+        // ordering, not the event data, decides what was committed.
+        setTimeout(() => composition.settle(gen), 0)
+      })
     }
     // Capture on the terminal's element runs before xterm's own keydown
     // listener on the textarea, so the stale flag is dropped before xterm
@@ -269,8 +280,12 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   })
 
   function sendTerm(obj: unknown): boolean {
-    if ((obj as { type?: string })?.type === 'paste') clearVirtualModifiers()
-    if (smoothTouchScrolling.value && ['terminal.input', 'paste'].includes((obj as { type?: string })?.type || '')) {
+    const type = (obj as { type?: string })?.type
+    // Paste goes through the input gate like every user action: an image
+    // upload completing while the copy surface is open must not reach the agent.
+    if (type === 'paste' && opts.input?.() === false) return false
+    if (type === 'paste') clearVirtualModifiers()
+    if (smoothTouchScrolling.value && ['terminal.input', 'paste'].includes(type || '')) {
       scrollInputVersion.value++
       cancelTouchScroll()
     }
@@ -284,6 +299,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   // Logical keys (esc, up, shift+tab…), encoded by Herdr according to the terminal
   // mode: through the WebSocket if it is open, otherwise through the API.
   async function sendKeys(keys: string[]) {
+    if (opts.input?.() === false) return
     if (smoothTouchScrolling.value) { scrollInputVersion.value++; cancelTouchScroll() }
     if (sendTerm({ type: 'keys', keys })) return
     try {
@@ -546,6 +562,15 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   }
   // Tap on the touch layer: opens the link under the finger, if any.
   const tapLink = (x: number, y: number) => links?.tap(x, y) ?? false
+  // The phone copy layer's frozen screen: refused while an IME composition or
+  // its deferred commit may still be in flight — entering copy must never
+  // disturb the candidate window or drop the pending text. `pending` settles
+  // one finalize tick after compositionend; `ended` can linger set after a
+  // cancelled composition until the next keystroke and must not block copy.
+  const captureScreen = (): TerminalCopySnapshot | null => {
+    if (!term || composition.active || composition.pending) return null
+    return captureTerminalScreen(term)
+  }
   const hasFocus = () => Boolean(term && document.activeElement === term.textarea)
   const rowHeight = () => {
     if (!smoothTouchScrolling.value) return term && term.rows && el ? el.clientHeight / term.rows : 16
@@ -613,7 +638,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
 
   return {
     mount, connect, disconnect, takeControl, isConnected, sendTerm, sendKeys, fitNow, setFontSize,
-    reset, scroll, focus, blur, tapLink, tapMouse: (x: number, y: number) => mouse?.tap(x, y), hasFocus, rowHeight, pageRows, setVisible, dispose, loading, kbdOn,
+    reset, scroll, focus, blur, tapLink, tapMouse: (x: number, y: number) => mouse?.tap(x, y), hasFocus, rowHeight, pageRows, setVisible, dispose, loading, kbdOn, captureScreen,
     hasBanner: opts.hasBanner, selectionHint,
     cancelTouchScroll, scrollInputVersion, frameTick, scrollAck,
     virtualModifiers, lastVirtualChord, toggleModifier, toggleVirtualModifier: toggleModifier, clearVirtualModifiers, sendVirtualKey,

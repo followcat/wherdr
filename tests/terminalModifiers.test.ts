@@ -64,4 +64,52 @@ describe('one-shot terminal modifiers', () => {
     expect(composition.takeEnded()).toBe(true)
     expect(composition.takeEnded()).toBe(false)
   })
+
+  it('lets a caller refuse an action while a commit is pending without spending the flag', () => {
+    const composition = createCompositionTracker()
+    expect(composition.ended).toBe(false)
+    composition.start()
+    expect(composition.ended).toBe(false)
+    composition.end()
+    // A refusal must observe the pending commit twice without consuming it:
+    // the deferred data still goes through the composition path afterwards.
+    expect(composition.ended).toBe(true)
+    expect(composition.ended).toBe(true)
+    expect(composition.takeEnded()).toBe(true)
+    expect(composition.ended).toBe(false)
+  })
+
+  it('never reuses a pending generation after the window resets', () => {
+    const composition = createCompositionTracker()
+    const first = composition.end()
+    // The commit resolves the window; the next composition must get a fresh
+    // token even though the first settle callback is still queued.
+    expect(composition.takeEnded()).toBe(true)
+    composition.start()
+    const second = composition.end()
+    composition.settle(first)
+    expect(composition.pending).toBe(true)
+    composition.settle(second)
+    expect(composition.pending).toBe(false)
+  })
+
+  it('keeps the finalize window until its own generation settles, not the guard', () => {
+    const composition = createCompositionTracker()
+    expect(composition.pending).toBe(false)
+    composition.start()
+    const first = composition.end()
+    expect(composition.pending).toBe(true)
+    // A settle armed for an older window cannot clear a newer one's.
+    composition.start()
+    const second = composition.end()
+    composition.settle(first)
+    expect(composition.pending).toBe(true)
+    composition.settle(second)
+    expect(composition.pending).toBe(false)
+    // Settling resolves only the pending window: the first-data guard stays
+    // armed until real data or an ordinary keydown consumes it.
+    expect(composition.ended).toBe(true)
+    expect(composition.takeEnded()).toBe(true)
+    expect(composition.pending).toBe(false)
+  })
 })
