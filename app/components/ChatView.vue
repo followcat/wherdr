@@ -5,7 +5,7 @@
 // "unchanged" as long as the file has not grown).
 // Shown = older pages loaded on demand (`older`, up to
 // byte `olderCursor`) + bottom re-read continuously from byte `tailStart`.
-import type { ChatItem, ChatResponse, ClaudeQueueEntry, ClaudeScreen, OmpToolView, Pane, QueuedMessage } from '#shared/types'
+import type { ChatItem, ChatResponse, ClaudeQueueEntry, ClaudeScreen, CommandCodeToolUpdate, OmpToolView, Pane, QueuedMessage } from '#shared/types'
 import { readChat, saveChat, touchChat } from '~/utils/offlineCache'
 import { mayReadOffline, readOfflineAccess } from '~/utils/offlineAccess'
 import { restoreDraft } from '~/utils/queuedCancel'
@@ -13,7 +13,7 @@ import { isUploadLine, uploadSrc } from '#shared/queuedMatch'
 import { pendingQueue, rememberSent } from '~/utils/pendingQueue'
 import { clampRange, createSelectionSettler, lastLineRect, selectionReplyPos } from '~/utils/selectionReply'
 import { addAnswer, addQuote, answerEnd, answerOf, forgetReply, isQuoted, replyTargets, rowOf, rowRef, rowSettled, tableRank, tableRef, tappedAnswer, toggleOkAll, unansweredCount, withQuestions, type Answer } from '~/utils/questionReply'
-import { createTailLoader, nextTail, restartsTail, tailQuery } from '~/utils/chatTail'
+import { applyToolUpdates, createTailLoader, mergeToolUpdates, nextTail, restartsTail, retainToolUpdates, tailQuery } from '~/utils/chatTail'
 import { pickTyping, replyId } from '~/utils/typewriter'
 import { newestThought } from '~/utils/reasoningReveal'
 import { restoredScrollTop, saveReadingPosition } from '~/utils/readingPosition'
@@ -78,9 +78,14 @@ const identityOf = (p: Pane) => JSON.stringify([
 // when file, start and cursor happen to coincide with the new conversation's.
 let resetGen = 0
 const staleGen = (gen: number) => gen !== resetGen
+// Command Code tool results can land after their call was already shown:
+// the newest revision per tool id waits here for the page that displays the
+// call — and dies with the conversation that produced it (resetChat).
+const pendingUpdates = new Map<string, CommandCodeToolUpdate>()
 function resetChat(reason: ChatResponse['reason'] | null = null) {
   resetGen++
   chat.value = fresh()
+  pendingUpdates.clear()
   unavailable.value = reason
   integration.value = null
   loadError.value = null
@@ -347,6 +352,10 @@ async function loadStep(current: () => boolean): Promise<boolean> {
       chat.value = { ...chat.value, token: '' }
       return true
     }
+    // Late Command Code outcomes: pending ∪ this reply once, newest revision
+    // per id, applied immutably to the tail AND the retained older pages — a
+    // result whose call page is still in flight stays pending, not lost.
+    const updates = mergeToolUpdates(pendingUpdates, r.toolUpdates)
     await apply(() => {
       const c = { ...chat.value }
       if (c.tailStart === null) {
@@ -355,7 +364,8 @@ async function loadStep(current: () => boolean): Promise<boolean> {
       }
       c.file = r.file || null
       c.token = r.token || ''
-      c.tail = tail
+      c.tail = applyToolUpdates(tail, updates)
+      c.older = applyToolUpdates(c.older, updates)
       c.queue = r.queue || []
       chat.value = c
       noteReplies(c.tail)
@@ -363,6 +373,7 @@ async function loadStep(current: () => boolean): Promise<boolean> {
     // The tick inside apply may have crossed a reset: the items now held
     // belong to the new conversation and must not be saved under `pane`.
     if (stale()) return false
+    retainToolUpdates(pendingUpdates, [chat.value.tail, chat.value.older], updates)
     saveChat(pane, items.value)
     // Paint the prepared tail first, then revalidate using its token and cursor.
     if (ready) return true
@@ -404,8 +415,11 @@ async function loadOlder() {
   const file = chat.value.file
   const before = chat.value.olderCursor
   const gen = resetGen
+  // Command Code: the current tail token rides along as the raw anchor — the
+  // proof this page request belongs to the generation the server selected.
+  const since = props.pane.agent === 'cmd' ? `&since=${encodeURIComponent(chat.value.token)}` : ''
   try {
-    const r = await api<ChatResponse>(`/api/chat?pane=${encodeURIComponent(pane)}&before=${before}`)
+    const r = await api<ChatResponse>(`/api/chat?pane=${encodeURIComponent(pane)}&before=${before}${since}`)
     if (staleGen(gen)) return
     // Command Code: an unavailable reply is authoritative on any request —
     // the selected conversation is gone, the shown one is cleared at once.
@@ -429,16 +443,22 @@ async function loadOlder() {
     if (pane !== props.pane.id || r.file !== file || chat.value.olderCursor !== before) return
     const b = box.value
     const fromBottom = b ? b.scrollHeight - b.scrollTop : 0
+    // A result remembered while this page was in flight rides along with the
+    // page's own updates — newest revision wins, so an older page can only
+    // fill its calls' outcomes, never downgrade them. Applied to both lists.
+    const updates = mergeToolUpdates(pendingUpdates, r.toolUpdates)
     await apply(() => {
       shown.value = Infinity
       chat.value = {
         ...chat.value,
-        older: (r.items || []).concat(chat.value.older),
+        older: applyToolUpdates((r.items || []).concat(chat.value.older), updates),
+        tail: applyToolUpdates(chat.value.tail, updates),
         // no progress: stop there
         olderCursor: (r.start ?? 0) < before ? (r.start ?? 0) : 0,
       }
     }, true)
     if (staleGen(gen)) return
+    retainToolUpdates(pendingUpdates, [chat.value.tail, chat.value.older], updates)
     saveChat(pane, items.value)
     if (b) b.scrollTop = b.scrollHeight - fromBottom
   } catch (err) {

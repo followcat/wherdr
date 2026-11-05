@@ -22,6 +22,16 @@ const LIVE: ChatItem[] = [
 const NEW: ChatItem[] = [{ role: 'assistant', text: 'new conversation reply', ts: '2026-01-02T00:00:00Z' }]
 const PAGE: ChatItem[] = [{ role: 'user', text: 'stale older page', ts: '2025-12-31T00:00:00Z' }]
 const PAGE2: ChatItem[] = [{ role: 'user', text: 'second older page', ts: '2025-12-30T00:00:00Z' }]
+// A Command Code tool call: `toolId` lets a result appended later update the
+// item already shown; the update's `at` is the outcome's revision.
+const TOOL = (id: string, over: Partial<ChatItem> = {}): ChatItem =>
+  ({ role: 'tool', text: 'run suite', name: 'Bash', ts: '2026-01-01T00:00:30Z', toolId: id, ...over })
+// The last list passed to saveChat is the whole shown conversation.
+const savedTool = (id: string): ChatItem | undefined => {
+  const calls = vi.mocked(saveChat).mock.calls
+  const items = calls.length ? calls[calls.length - 1]![1] : []
+  return items.find(i => i.toolId === id)
+}
 
 // The kept tail (readChat/saveChat/touchChat): reads can be held, writes are
 // observed, the store itself stays inspectable.
@@ -414,5 +424,139 @@ describe('Command Code conversation identity', () => {
     expect(held.length).toBe(0)
     newPage.resolve({ available: true, older: true, file: reset.file ?? 's.jsonl', items: PAGE2, start: 0 })
     await expect.poll(a.text).toContain('second older page')
+  })
+
+  it('applies a late outcome to a tool on an older page, and an empty one clears it', async () => {
+    answer = q => q.before
+      ? { available: true, older: true, file: 's.jsonl', items: [TOOL('call-1')], start: 0 }
+      : live({ start: 500 })
+    const a = await mountChat(cmd)
+    await expect.poll(a.text).toContain('live reply')
+    await loadEarlier(a.w)
+    await expect.poll(a.text).toContain('run suite')
+    // The result lands on the tail reply while the call sits on the older page.
+    answer = q => q.before ? HOLD
+      : q.since ? live({ start: 500, keep: 2, items: [], toolUpdates: [{ id: 'call-1', at: 900, out: 'tool output', error: true, images: 1, ref: '40:70' }] })
+      : live({ start: 500 })
+    await a.push({ ...cmd, preview: 'x' })
+    await expect.poll(() => a.w.find('.tool.err').exists()).toBe(true)
+    expect(a.w.find('.tool-thumbs').exists()).toBe(true)
+    expect(savedTool('call-1')).toMatchObject({ out: 'tool output', error: true, images: 1, ref: '40:70', toolAt: 900 })
+    // A newer empty success is a full clear: output, error and image all go.
+    answer = q => q.before ? HOLD
+      : q.since ? live({ start: 500, keep: 2, items: [], toolUpdates: [{ id: 'call-1', at: 1000, out: '', error: false, images: 0, ref: '', imageAt: 0 }] })
+      : live({ start: 500 })
+    await a.push({ ...cmd, preview: 'y' })
+    await expect.poll(() => a.w.find('.tool.err').exists()).toBe(false)
+    expect(a.w.find('.tool-thumbs').exists()).toBe(false)
+    const cleared = savedTool('call-1')
+    expect(cleared?.toolAt).toBe(1000)
+    expect(cleared?.out).toBeUndefined()
+    expect(cleared?.error).toBeUndefined()
+    expect(cleared?.images).toBeUndefined()
+    expect(cleared?.ref).toBeUndefined()
+    expect(cleared?.imageAt).toBeUndefined()
+  })
+
+  it.each<[string, Reply]>([
+    ['none', {}],
+    ['an older revision', { toolUpdates: [{ id: 'call-9', at: 500, out: 'stale page outcome' }] }],
+  ])('remembers a result while its call page is in flight and applies it on arrival (page carries %s)', async (_why, pageExtra) => {
+    answer = q => q.before ? HOLD
+      : q.since ? live({ start: 500, keep: 2, items: [], toolUpdates: [{ id: 'call-9', at: 900, out: 'pending result', images: 1, ref: '40:70' }] })
+      : live({ start: 500 })
+    const a = await mountChat(cmd)
+    await expect.poll(a.text).toContain('live reply')
+    // The page request goes out FIRST — held, call-9 still unseen.
+    await loadEarlier(a.w)
+    await settle()
+    const page = held.shift()!
+    expect(page.q).toMatchObject({ before: '500', since: 't1' })
+    // …then the result lands on the tail reply: pending, no call on screen.
+    await a.push({ ...cmd, preview: 'x' })
+    await settle()
+    // Whether the page brings no update or an older one, the remembered
+    // newest outcome fills its call — never the stale revision.
+    page.resolve({ available: true, older: true, file: 's.jsonl', items: [TOOL('call-9')], start: 100, ...pageExtra })
+    await expect.poll(a.text).toContain('run suite')
+    expect(a.w.find('.tool-thumbs').exists()).toBe(true)
+    expect(savedTool('call-9')).toMatchObject({ out: 'pending result', images: 1, toolAt: 900 })
+  })
+
+  it('sends the tail token on Command Code before requests — never on a legacy one', async () => {
+    answer = q => q.before ? HOLD : live({ start: 500 })
+    const a = await mountChat(cmd)
+    await expect.poll(a.text).toContain('live reply')
+    await loadEarlier(a.w)
+    await settle()
+    expect(held.shift()!.q).toEqual({ pane: 'w1:p1', before: '500', since: 't1' })
+    a.w.unmount()
+    mounted.length = 0
+    const b = await mountChat({ ...claude })
+    await expect.poll(b.text).toContain('live reply')
+    await loadEarlier(b.w)
+    await settle()
+    expect(held.shift()!.q).toEqual({ pane: 'w1:p2', before: '500' })
+  })
+
+  it('a current-bottom reply to a before request resets — never prepended as history', async () => {
+    answer = q => q.before ? HOLD : live({ start: 500 })
+    const a = await mountChat(cmd)
+    await expect.poll(a.text).toContain('live reply')
+    // A real older page is already part of the shown history.
+    await loadEarlier(a.w)
+    await settle()
+    held.shift()!.resolve({ available: true, older: true, file: 's.jsonl', items: PAGE, start: 100 })
+    await expect.poll(a.text).toContain('stale older page')
+    // The next page request is answered with the fresh bottom, not a page.
+    await loadEarlier(a.w)
+    await settle()
+    const page = held.shift()!
+    expect(page.q.before).toBe('100')
+    answer = () => HOLD // the reset retry must surface as a request, not a splice
+    page.resolve({ available: true, file: 's.jsonl', token: 't2', items: [{ role: 'assistant', text: 'supplied bottom', ts: '2026-01-02T00:00:01Z' }] })
+    await expect.poll(() => held.length).toBe(1)
+    const retry = held.shift()!
+    expect(retry.q.before).toBeUndefined() // a genuine new tail read
+    retry.resolve(live({ token: 't2', items: NEW }))
+    await expect.poll(a.text).toContain('new conversation reply')
+    // Neither the supplied bottom nor the dropped history survives the reset.
+    expect(a.text()).not.toContain('supplied bottom')
+    expect(a.text()).not.toContain('stale older page')
+  })
+
+  it('drops remembered outcomes when the conversation resets', async () => {
+    answer = q => q.before ? HOLD
+      : q.since ? live({ start: 500, keep: 2, items: [], toolUpdates: [{ id: 'call-9', at: 900, out: 'stale pending' }] })
+      : live({ start: 500 })
+    const a = await mountChat(cmd)
+    await expect.poll(a.text).toContain('live reply')
+    // Remembered with the old conversation — its call never showed.
+    await a.push({ ...cmd, preview: 'x' })
+    await settle()
+    answer = q => q.before ? HOLD
+      : q.since ? { available: true, unchanged: true }
+      : live({ start: 500, token: 't2', items: [TOOL('call-9'), ...NEW] })
+    await a.push({ ...cmd, bornAt: 2000 })
+    await expect.poll(a.text).toContain('run suite')
+    // Same tool id in the new file: the old outcome must not be inherited.
+    const t = savedTool('call-9')
+    expect(t?.out).toBeUndefined()
+    expect(t?.toolAt).toBeUndefined()
+    expect(a.w.find('.tool.err').exists()).toBe(false)
+  })
+
+  it('keeps the shown Command Code conversation on a transport read error', async () => {
+    answer = () => live({ start: 500, items: [TOOL('call-1', { error: true, out: 'kept output' }), ...LIVE] })
+    const a = await mountChat(cmd)
+    await expect.poll(a.text).toContain('run suite')
+    answer = () => { throw new Error('read failed') }
+    await a.push({ ...cmd, preview: 'x' })
+    await settle()
+    // Not unavailable, not cleared: the shown outcome and history stay.
+    expect(a.text()).toContain('live reply')
+    expect(a.text()).toContain('run suite')
+    expect(a.text()).not.toContain('Conversation unavailable')
+    expect(a.w.find('.tool.err').exists()).toBe(true)
   })
 })
