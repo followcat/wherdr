@@ -84,8 +84,9 @@
 - **Computer layout in both orientations**: in portrait the agent list folds to a narrow column
   and slides over the conversation; in landscape it stays docked. Buttons are 44 px, and the
   layout does not change when the on-screen keyboard opens.
-- **Hardware keyboard**: Enter sends (Shift+Enter adds a line) once a key only a hardware
-  keyboard sends (arrows, Esc, a ⌘ chord) has been typed.
+- **Hardware keyboard**: Enter sends (Shift+Enter adds a line) once a detector key
+  (arrows, Esc, a ⌘ chord) is typed while no on-screen keyboard is open — some
+  soft keyboards do send those, so they only count then.
 
 The terminal key bar also has **Ctrl**, **Alt** and **Shift** toggles. Select one or
 several, then tap a key or type one ASCII character on the phone keyboard. The

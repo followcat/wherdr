@@ -302,5 +302,60 @@ describe('Composer focus', () => {
       await nextTick()
       expect(document.activeElement).not.toBe(ta)
     })
+
+    // The Android case: a soft keyboard that emits hardware-looking keys
+    // (arrows do arrive from some IMEs). A real keydown while kbOpen is true
+    // must neither prove nor clear — otherwise the close keeps stale focus.
+    it('a key heard while the soft keyboard is open is not hardware proof', async () => {
+      const { w, ta } = await mount('w1:f17')
+      focus(ta); focusIn(ta)
+      dims(744, 800)
+      expect(kbOpen.value).toBe(true)
+      await nextTick()
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }))
+      expect(hardwareKeyboard.value).toBe(false)
+      // An intermediate resize keeps the keyboard open; the restore closes
+      // it with no touch or focusout to clear a false proof.
+      dims(744, 850)
+      expect(kbOpen.value).toBe(true)
+      await nextTick()
+      dims(744, 1000)
+      expect(kbOpen.value).toBe(false)
+      await nextTick()
+      expect(document.activeElement).not.toBe(ta)
+      expect(expanded(w)).toBe(false)
+    })
+
+    it('an existing proof is unchanged by a key while the keyboard is open', async () => {
+      const { ta } = await mount('w1:f18')
+      focus(ta); focusIn(ta)
+      hardwareKeyboard.value = true
+      dims(744, 800)
+      expect(kbOpen.value).toBe(true)
+      await nextTick()
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }))
+      expect(hardwareKeyboard.value).toBe(true)
+    })
+
+    it('the deferred release is not blocked by a soft-keyboard key', async () => {
+      const { w, ta } = await mount('w1:f19')
+      focus(ta); focusIn(ta)
+      await w.find('textarea').setValue('draft ')
+      ta.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+      dims(744, 800)
+      expect(kbOpen.value).toBe(true)
+      await nextTick()
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }))
+      dims(744, 1000)
+      expect(kbOpen.value).toBe(false)
+      await nextTick()
+      ta.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '好' }))
+      ta.value = 'draft 好'
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+      await nextTick()
+      expect(useDraft('w1:f19').text).toBe('draft 好')
+      await raf()
+      expect(document.activeElement).not.toBe(ta)
+    })
   })
 })

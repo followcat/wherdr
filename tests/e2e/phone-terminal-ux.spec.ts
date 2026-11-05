@@ -672,3 +672,60 @@ test('coarse tablet: fresh focus survives a pending composition-close release', 
     await tablet.close()
   }
 })
+
+test('coarse tablet: a key heard under the soft keyboard is not hardware proof', async ({ browser }, testInfo) => {
+  // Android-like: some soft keyboards do emit arrows. A headless trusted
+  // keydown + synthetic geometry stand in for them — NOT a physical Android
+  // keyboard proof. The key must not become a permanent proof that defeats
+  // the keyboard-close cleanup: the field releases and collapses.
+  const tablet = await browser.newContext({ viewport: { width: 744, height: 1000 }, hasTouch: true, isMobile: true, locale: 'en-US', timezoneId: 'UTC', serviceWorkers: 'block' })
+  try {
+    const page = await tablet.newPage()
+    const promptPosts: string[] = []
+    const interruptPosts: string[] = []
+    page.on('request', (r) => {
+      const path = new URL(r.url()).pathname
+      if (r.method() === 'POST' && path === '/api/prompt') promptPosts.push(r.url())
+      if (r.method() === 'POST' && path === '/api/interrupt') interruptPosts.push(r.url())
+    })
+    const core = await startCore()
+    const keyCalls = () => core.framed.filter(c => c.method === 'terminal.keys').map(c => (c.params as { keys: string[] }).keys)
+    const dataFrames = () => core.inbound.filter(f => f.kind === STREAM.data)
+    try {
+      await page.addInitScript(() => { localStorage.setItem('terminalRenderer', 'html') })
+      await core.open(page)
+      await page.locator('#home .card[data-pane]').click()
+      await expect(page.locator('.agent-head')).toContainText('review-agent')
+      const ta = page.locator('.composer textarea')
+      await expect(ta).toBeVisible()
+      await ta.tap()
+      await expect(ta).toBeFocused()
+      const kbClass = () => page.evaluate(() => document.body.classList.contains('kb'))
+      const focused = () => page.evaluate(() => document.activeElement === document.querySelector('.composer textarea'))
+      // The real layout() path opens the soft keyboard.
+      await page.setViewportSize({ width: 744, height: 800 })
+      await expect.poll(kbClass).toBe(true)
+      // A real detector key under the open keyboard — the Android-like event.
+      await page.keyboard.press('ArrowLeft')
+      // An intermediate resize keeps it open; the restore closes it with no
+      // touch or focusout to clear whatever the key left behind.
+      await page.setViewportSize({ width: 744, height: 850 })
+      await expect.poll(kbClass).toBe(true)
+      await page.setViewportSize({ width: 744, height: 1000 })
+      await expect.poll(kbClass).toBe(false)
+      // The close still does its job: stale focus released, empty composer
+      // collapsed — a soft-keyboard key must not outlive the keyboard.
+      await expect.poll(focused).toBe(false)
+      await expect(page.locator('.composer .prompt')).not.toHaveClass(/expanded/)
+      expect(keyCalls()).toEqual([])
+      expect(dataFrames()).toEqual([])
+      expect(promptPosts).toEqual([])
+      expect(interruptPosts).toEqual([])
+      await page.screenshot({ path: testInfo.outputPath('round2-softkey-proof.png') })
+    } finally {
+      await core.stop()
+    }
+  } finally {
+    await tablet.close()
+  }
+})
