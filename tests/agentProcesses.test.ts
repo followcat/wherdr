@@ -6,7 +6,7 @@ import { AGENT_CENSUS_SCRIPT, agentCensus, localShell } from '../server/utils/ag
 import { parseAgentCensus } from '../server/utils/agentCensus'
 import { createCmdCore } from '../server/utils/commandCodeCore'
 import { type ShellExec, shq } from '../server/utils/fsx'
-import { CMD_FILES_SCRIPT, CMD_HEADERS_SCRIPT, F, filesWire, hdrs, HOME, live, POST, sess, st, U1 } from './cmdCoreFixture'
+import { CMD_FILES_SCRIPT, CMD_HEADERS_SCRIPT, F, filesWire, hdrs, HOME, live, POST2, sess, st, U1 } from './cmdCoreFixture'
 
 const linux = it.runIf(process.platform === 'linux')
 const roots: string[] = []
@@ -145,8 +145,8 @@ linux('real emitted unknowns reach the locator scoped by cwd', async () => {
   }
   const wire = (root: string): ShellExec => async (s, a, o) => {
     if (s === AGENT_CENSUS_SCRIPT) return inPath(root)(s, [root], o)
-    if (s === CMD_FILES_SCRIPT) return { code: 0, stdout: Buffer.from(filesWire([[F('a', U1), st(POST)]])), stderr: '' }
-    if (s === CMD_HEADERS_SCRIPT) return { code: 0, stdout: Buffer.from(hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) } })(a ?? [])), stderr: '' }
+    if (s === CMD_FILES_SCRIPT) return { code: 0, stdout: Buffer.from(filesWire([[F('a', U1), st(POST2)]])), stderr: '' }
+    if (s === CMD_HEADERS_SCRIPT) return { code: 0, stdout: Buffer.from(hdrs({ [F('a', U1)]: { st: st(POST2), body: sess(U1) } })(a ?? [])), stderr: '' }
     return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
   }
   const detail = live({ pid: 9000, foreground: { pid: 301 } })
@@ -157,6 +157,43 @@ linux('real emitted unknowns reach the locator scoped by cwd', async () => {
   // An emitted unknown with no readable cwd can never prove irrelevance.
   expect(await createCmdCore(wire(mkProc(['/w/repl', '/w/eval', '/w/bun', '/w/deno', undefined])), HOME).locate(detail))
     .toEqual({ unavailable: 'peers' })
+})
+
+linux('a cmdline flip at the wall sample can never mint a pre-exec cmd bound', async () => {
+  const root = fakeRoot()
+  // `date` runs inside the record's own emit sequence. If wall were sampled
+  // before the argvb re-read, flipping the cmdline during the date call
+  // would mint a Cmd observation time before the Cmd evidence existed: the
+  // record's argvb would show cmd while its wall predates the "exec".
+  fs.writeFileSync(`${root}/bin/date`,
+    `#!/bin/sh\nprintf '%s\\n' '1767226100.5'\nprintf 'node\\0/x/bin/cmd\\0' > '${root}/301/cmdline'\n`,
+    { mode: 0o755 })
+  fakeProc(root, 301, { ppid: 9000, argv: ['node', '-e', 'tick()'], cwd: '/w/proj', exe: '/usr/bin/node' })
+  // One snapshot: argvb is read before wall, so the flip lands too late to
+  // change the record's shape. (A SECOND census would legitimately see the
+  // flipped cmdline — that is an honest new observation, not a minted one.)
+  const snap = await inPath(root)(AGENT_CENSUS_SCRIPT, [root], { timeoutMs: 8000 })
+  const c = parseAgentCensus(snap.stdout.toString('utf8'))
+  // The row is still classified from the pre-flip argvb: unknown, kept as
+  // scoped evidence — never a cmd witness and never an observation bound.
+  expect(c.complete).toBe(true)
+  expect(c.processes).toEqual([])
+  expect(c.uncertain.map(p => p.pid)).toEqual([301])
+  // Restore the pre-flip cmdline so any re-observation (not just the replayed
+  // snapshot below) still sees the same raced state, never the flipped one.
+  fs.writeFileSync(`${root}/301/cmdline`, 'node\0-e\0tick()\0')
+  // Replayed through the locator: no cmd row exists, so no bound can ever
+  // admit the intervening file — fail closed, before any file IO.
+  let files = 0
+  const wire: ShellExec = async (s, a) => {
+    if (s === AGENT_CENSUS_SCRIPT) return snap
+    if (s === CMD_FILES_SCRIPT) { files++; return { code: 0, stdout: Buffer.from(filesWire([[F('a', U1), st(POST2)]])), stderr: '' } }
+    if (s === CMD_HEADERS_SCRIPT) return { code: 0, stdout: Buffer.from(hdrs({ [F('a', U1)]: { st: st(POST2), body: sess(U1) } })(a ?? [])), stderr: '' }
+    return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+  }
+  expect(await createCmdCore(wire, HOME).locate(live({ pid: 9000, foreground: { pid: 301 } })))
+    .toEqual({ unavailable: 'target' })
+  expect(files).toBe(0)
 })
 
 linux('producer stdout is capped before the exec reply', async () => {

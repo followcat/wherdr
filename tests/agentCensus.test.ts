@@ -22,6 +22,15 @@ it('resolves a single cmd process: exact cwd, argv, birth bound, complete census
   expect(p?.argv).toEqual(['node', '/x/bin/cmd', '--resume', 'acme-shop work'])
   expect(p?.argvExact).toBe(true)
   expect(p?.startedAt).toBe(BORN)
+  // The record's machine wall is the first-Cmd-observation witness: sampled
+  // after every classification byte by the producer, carried as ms.
+  expect(p?.observedAt).toBe(1767226100124)
+  // A wall whose scaled ms would overflow 2^53-1 also breaks the birth
+  // bound's wall/uptime/boot consistency: the record is metadata-incomplete
+  // and can never carry a bound — observedAt is additionally guarded to a
+  // safe integer ms at parse, so no path can mint one.
+  const big = parseAgentCensus(H() + S(4242, { wall: '9999999999999.99', argv: ['node', '/x/bin/cmd'], res: ENTRY }) + T())
+  expect(big.complete).toBe(false)
 })
 
 it('keeps every independent and nested cmd peer (no ancestry dedup)', () => {

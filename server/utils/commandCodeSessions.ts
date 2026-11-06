@@ -22,8 +22,12 @@ export interface CmdCandidate {
 }
 
 // The census row to resolve: pid and startTicks together identify one
-// process generation; pid alone is reusable.
-export interface CmdTarget { pid: number, startTicks: number }
+// process generation; pid alone is reusable. bornMs is the caller's proven
+// upper bound on the agent's own start — e.g. the first machine wall at
+// which this generation was observed classified as cmd, the only bound that
+// survives a fork->exec gap. It may raise the generation bound, never lower
+// it; omitted means the process-generation bound (launch-proven targets).
+export interface CmdTarget { pid: number, startTicks: number, bornMs?: number }
 
 export type CmdUnavailable = 'incomplete' | 'target' | 'peers' | 'empty' | 'tie'
 export type CmdSelection = { file: string, session: string } | { unavailable: CmdUnavailable }
@@ -158,7 +162,13 @@ export function cmdSelect(input: {
   // session after /clear or /resume, and peer ids are never subtracted.
   if (census.processes.filter(p => p.cwd === proc.cwd).length !== 1) return { unavailable: 'peers' }
 
-  const born = proc.startedAt!
+  // The strict bound: a proven upper bound on agent start, defaulting to
+  // the generation bound. A supplied bornMs below process birth would
+  // WEAKEN the proof — refuse; a missing or non-finite one fails closed.
+  if (input.target.bornMs !== undefined && (!Number.isFinite(input.target.bornMs) || input.target.bornMs < proc.startedAt!)) {
+    return { unavailable: 'target' }
+  }
+  const born = input.target.bornMs ?? proc.startedAt!
   const post = (c: CmdCandidate) => c.mtimeMs > born // strict: a write at the bound is not after it
   // A candidate must re-validate even on a "complete" list: file confined to
   // <root>/<dir>/<uuid>.jsonl, basename equal to id, header cwd absolute.

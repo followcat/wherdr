@@ -94,6 +94,25 @@ describe('commandCodeSessions', () => {
     expect(ok(r)?.session).toBe(U1)
   })
 
+  it('applies a raised proven birth bound and refuses a weakening one', () => {
+    // bornMs is the caller's proven upper bound on agent start (e.g. first
+    // machine observation of this generation as cmd): files in the
+    // fork->exec gap are no longer eligible.
+    const target = (bornMs?: number) => ({ pid: 9001, startTicks: TICKS, ...(bornMs === undefined ? {} : { bornMs }) })
+    const items = { complete: true, items: [cand(U1, CWD, BORN + 10), cand(U2, CWD, BORN + 50)] }
+    expect(why(select({ target: target(BORN + 40), candidates: { complete: true, items: [cand(U1, CWD, BORN + 10)] } }))).toBe('empty')
+    expect(ok(select({ target: target(BORN + 40), candidates: items }))?.session).toBe(U2)
+    // The raised bound gates the cross-cwd seed too — no seed exception.
+    const argv = { argv: ['cmd', '--session', U3], argvExact: true }
+    const seedItems = { complete: true, items: [cand(U3, OTHER, BORN + 30, 'proj')] }
+    expect(why(select({ argv, target: target(BORN + 40), candidates: seedItems }))).toBe('empty')
+    // A bound below process birth would WEAKEN the proof — refused.
+    expect(why(select({ target: target(BORN - 1), candidates: items }))).toBe('target')
+    expect(why(select({ target: target(Number.NaN), candidates: items }))).toBe('target')
+    // Omitted: the generation bound defaults (launch-proven targets only).
+    expect(ok(select({ target: target(), candidates: items }))?.session).toBe(U2)
+  })
+
   it('is unavailable before the first flush writes anything', () => {
     expect(why(select())).toBe('empty')
   })

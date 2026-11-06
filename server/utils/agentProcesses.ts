@@ -116,7 +116,6 @@ for d in "$P"/[0-9]*; do
   [ "$em" = 1 ] || continue
   [ $((r + rr)) -lt "$maxr" ] || { o=$((o|2)); continue; }
   up=$(cut -d ' ' -f 1 "$P/uptime" 2>/dev/null); [ -n "$up" ] || up=-
-  wall=$(date +%s.%N 2>/dev/null); [ -n "$wall" ] || wall=-
   argvb=$(head -c ${MAX_CMDLINE + 1} "$d/cmdline" 2>/dev/null | base64 2>/dev/null | tr -d '\\n')
   cwdb=$(readlink "$d/cwd" 2>/dev/null | base64 | tr -d '\\n')
   exeb=$(readlink "$d/exe" 2>/dev/null | base64 | tr -d '\\n')
@@ -126,6 +125,11 @@ for d in "$P"/[0-9]*; do
   t2=$(printf %s "$st2" | awk '{ print $20 }')
   pp=$(printf %s "$st1" | awk '{ print $2 }'); [ -n "$pp" ] || pp=-
   commb=$(printf %s "$comm" | base64 | tr -d '\\n')
+  # The wall stamp must follow every byte the parser may classify on: only
+  # then is it a machine-time witness that this record's shape existed — a
+  # fork->exec flip can never mint an earlier cmd bound. Uptime stays first
+  # so the birth upper bound keeps its before-wall ordering.
+  wall=$(date +%s.%N 2>/dev/null); [ -n "$wall" ] || wall=-
   if [ "$t1" != "$t2" ]; then emit "R $pid" && rr=$((rr+1)) || break
   else emit "S $pid $pp $t1 $up $wall $commb $argvb $cwdb $exeb $resb" && r=$((r+1)) || break
   fi

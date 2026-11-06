@@ -22,6 +22,11 @@ export interface AgentProcess {
   exe?: string // resolved /proc/pid/exe
   startTicks?: number // process generation token (jiffies since boot)
   startedAt?: number // conservative ms upper bound on birth
+  // Machine wall ms this record was sampled at, stamped by the producer
+  // AFTER every byte the classifier may read (see AGENT_CENSUS_SCRIPT): the
+  // only first-Cmd-observation witness for a fork->exec gap. Machine clock —
+  // the same epoch as remote file mtimes, never the coordinator's.
+  observedAt?: number
 }
 export type CensusIncomplete = 'unavailable' | 'truncated' | 'oversize' | 'raced' | 'metadata'
 export interface AgentCensus {
@@ -227,6 +232,9 @@ export function parseAgentCensus(stdout: string): AgentCensus {
     if (resParts.at(-1) === '') resParts.pop()
     if (resParts.length % 2) fail('truncated')
     for (let i = 0; i + 1 < resParts.length; i += 2) res.push({ raw: resParts[i]!, res: resParts[i + 1]! })
+    // The observation witness must be a safe finite millisecond value —
+    // a wall that overflows when scaled is unusable evidence, not a bound.
+    const obsMs = wall === undefined ? undefined : Math.ceil(wall * 1000)
     const proc: AgentProcess = {
       pid: pid!,
       ppid: Number.isSafeInteger(ppid) && ppid! >= 0 ? ppid : undefined,
@@ -236,6 +244,7 @@ export function parseAgentCensus(stdout: string): AgentCensus {
       exe: link(p[9])?.replace(/ \(deleted\)$/, ''),
       startTicks: Number.isSafeInteger(ticks) && ticks! >= 0 ? ticks : undefined,
       startedAt: birthUpperBound(ticks!, hz, boot, up!, wall!),
+      observedAt: Number.isSafeInteger(obsMs) && obsMs! >= 0 ? obsMs : undefined,
       argvTruncated: argvTruncated || undefined,
       argvExact: parts.length ? !argvTruncated && terminated : undefined,
     }

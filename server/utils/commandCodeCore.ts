@@ -9,14 +9,24 @@
 // root PID itself, else exactly one DIRECT cmd child of root. A root PID that
 // IS a cmd process must additionally have recorded launch argv proving a cmd
 // launch — an old shell that exec'd cmd keeps its older start ticks, which
-// cannot bound the agent's birth (cmdLaunchArgs). Deeper wrappers are
-// unproven: the census only carries cmd rows, so a non-direct ancestry chain
-// can never be established. Process cwd/startTicks/birth come from the census
-// row alone — never pane.cwd/created_ms — and two same-cwd cmd peers refuse
-// before any file IO. Seed argv is only the recorded root argv (root-equal
-// target, launch-exact by definition) or a census row's argvExact-sampled
-// argv; a full-UUID seed must be unique across the WHOLE basename catalog
-// including pre-birth entries, or it is omitted before cmdSelect.
+// cannot bound the agent's birth (cmdLaunchArgs). The same exec gap exists
+// for EVERY non-root target (foreground or direct child): nothing records
+// exec time, so the strict birth bound there is the first machine wall at
+// which this generation (pid+startTicks) was sampled as a classified cmd
+// row — the census record's own observedAt, never the coordinator clock,
+// which is not in the remote mtime epoch. Missing/unreliable observation:
+// unavailable, no local-clock fallback. AVAILABILITY: a child session saved
+// before our first observation (or after an app restart/eviction re-arms
+// it) stays unavailable until its NEXT persisted write — an additional
+// conservative wait on top of the first-assistant-flush rule.
+// Deeper wrappers are unproven: the census only carries cmd rows, so a
+// non-direct ancestry chain can never be established. Process
+// cwd/startTicks/birth come from the census row alone — never
+// pane.cwd/created_ms — and two same-cwd cmd peers refuse before any file
+// IO. Seed argv is only the recorded root argv (root-equal target,
+// launch-exact by definition) or a census row's argvExact-sampled argv; a
+// full-UUID seed must be unique across the WHOLE basename catalog including
+// pre-birth entries, or it is omitted before cmdSelect.
 //
 // Evidence coalesces across pane lookups with a short TTL: at most one census
 // and one lazily-shared metadata+header pass per window, so chat/preview/
@@ -93,6 +103,15 @@ export function createCmdCore(exec: ShellExec, home: string, opts: { root?: stri
   })())
 
   const un = (unavailable: CmdLocateUnavailable): CmdLocate => ({ unavailable })
+  // The earliest machine wall at which a generation was sampled as a
+  // classified cmd row: the ONLY provable upper bound on a non-root agent's
+  // start (a shell can exec cmd much later without changing pid/startTicks,
+  // and no protocol field records exec). Rows feed it only from a COMPLETE
+  // census; entries whose generation is absent from a complete census are
+  // pruned — pid+startTicks can never recur, so forgetting only ever raises
+  // a bound, never lowers it. An incomplete census prunes nothing. Bounded
+  // by the census itself; a fresh instance re-arms conservatively.
+  const seen = new Map<string, number>()
 
   return {
     async locate(detail) {
@@ -104,6 +123,18 @@ export function createCmdCore(exec: ShellExec, home: string, opts: { root?: stri
       const s = current()
       const census = await s.census
       if (!census.complete) return un('incomplete')
+
+      // Record the first cmd observation of every generation in this
+      // census, then prune generations no longer live. Rows without a
+      // generation token or a usable machine wall can never be targets.
+      const gens = new Set<string>()
+      for (const p of census.processes) {
+        if (p.startTicks === undefined || p.observedAt === undefined) continue
+        const k = `${p.pid}:${p.startTicks}`
+        gens.add(k)
+        if (!seen.has(k)) seen.set(k, p.observedAt)
+      }
+      for (const k of seen.keys()) if (!gens.has(k)) seen.delete(k)
 
       let proc: AgentProcess
       const fg = detail.foreground?.pid
@@ -130,6 +161,19 @@ export function createCmdCore(exec: ShellExec, home: string, opts: { root?: stri
         argv = { argv: detail.argv, argvExact: true } // recorded == launch-exact
       } else argv = proc.argv?.length ? { argv: proc.argv, argvExact: proc.argvExact === true } : undefined
       if (proc.startTicks === undefined || !proc.cwd) return un('target')
+      // A non-root target can be an old shell that exec'd cmd: startTicks
+      // bounds the shell's fork, not the agent's start. The strict bound is
+      // the first machine wall we observed this generation classified as
+      // cmd — carried by the census record, never the coordinator clock.
+      // Missing observation: unavailable, no fallback. An observedAt just
+      // BELOW startedAt is valid too (the birth upper bound adds one clock
+      // tick): both are proven upper bounds — take the stricter one.
+      let bornMs = proc.startedAt
+      if (proc.pid !== detail.pid) {
+        const obs = seen.get(`${proc.pid}:${proc.startTicks}`)
+        if (obs === undefined || bornMs === undefined) return un('target')
+        bornMs = Math.max(bornMs, obs)
+      }
       // Two live same-cwd cmd peers — nested, external, anywhere — make the
       // unique-conversation premise unproven: refuse before any file IO.
       if (census.processes.filter(p => p.cwd === proc.cwd).length !== 1) return un('peers')
@@ -149,7 +193,7 @@ export function createCmdCore(exec: ShellExec, home: string, opts: { root?: stri
       }
       const sel: CmdSelection = cmdSelect({
         root, census,
-        target: { pid: proc.pid, startTicks: proc.startTicks },
+        target: { pid: proc.pid, startTicks: proc.startTicks, ...(bornMs === undefined ? {} : { bornMs }) },
         ...(argv ? { argv } : {}),
         candidates: { complete: hdr.complete, items: hdr.items }
       })

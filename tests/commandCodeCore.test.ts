@@ -3,8 +3,8 @@ import { createCmdCore } from '../server/utils/commandCodeCore'
 import type { ShellExec } from '../server/utils/fsx'
 import { AGENT_CENSUS_SCRIPT, CMD_HEADERS_SCRIPT } from './cmdCoreFixture'
 import {
-  AT, clock, F, filesWire, H, hdrs, HOME, live, OTHER, PKG,
-  POST, POST2, PRE, retitled, S, sess, st, stub, T, U1, U2, U3
+  AT, clock, F, filesWire, GAP, H, hdrs, HOME, live, OTHER, PKG,
+  POST, POST2, POSTOBS, PRE, retitled, S, sess, st, stub, T, U1, U2, U3, WORK
 } from './cmdCoreFixture'
 
 describe('createCmdCore', () => {
@@ -30,8 +30,9 @@ describe('createCmdCore', () => {
   it('locates a proven foreground cmd to its newest post-birth file', async () => {
     const { exec, calls } = stub({
       census: H + S(4242) + T(1, 1),
-      files: filesWire([[F('a', U1), st(POST)], [F('b', U2), st(POST2)]]),
-      headers: hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) }, [F('b', U2)]: { st: st(POST2), body: sess(U2) } })
+      // Both writes post-observation (POSTOBS/POST2 > obs wall): newest wins.
+      files: filesWire([[F('a', U1), st(POSTOBS)], [F('b', U2), st(POST2)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) }, [F('b', U2)]: { st: st(POST2), body: sess(U2) } })
     })
     const r = await createCmdCore(exec, HOME).locate(live({ pid: 9000, argv: ['bash', '-l'], foreground: { pid: 4242 } }))
     expect(r).toEqual({ file: F('b', U2), session: U2 }) // newest write wins (/clear, /resume shape)
@@ -65,8 +66,8 @@ describe('createCmdCore', () => {
   it('targets the single direct cmd child of a shell root', async () => {
     const { exec } = stub({
       census: H + S(4242, { ppid: 9000 }) + T(1, 1),
-      files: filesWire([[F('a', U1), st(POST)]]),
-      headers: hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) } })
+      files: filesWire([[F('a', U1), st(POSTOBS)]]), // post-observation write
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
     })
     // Foreground reports the shell itself; ppid makes the child's own
     // generation the target — the shell's recorded argv is never consulted.
@@ -92,8 +93,8 @@ describe('createCmdCore', () => {
     // A second agent elsewhere does not collide.
     const { exec: e2 } = stub({
       census: H + S(4242) + S(5555, { cwd: '/w/elsewhere' }) + T(2, 2),
-      files: filesWire([[F('a', U1), st(POST)]]),
-      headers: hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) } })
+      files: filesWire([[F('a', U1), st(POSTOBS)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
     })
     expect(await createCmdCore(e2, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ file: F('a', U1), session: U1 })
   })
@@ -107,8 +108,8 @@ describe('createCmdCore', () => {
         + S(7704, { comm: 'deno', argv: ['deno', 'run', '/srv/x.ts'], cwd: '/w/deno' })
         + S(7705, { argv: ['node', '-'], cwd: '/w/stdin' }) // script on stdin
         + T(6, 6),
-      files: filesWire([[F('a', U1), st(POST)]]),
-      headers: hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) } })
+      files: filesWire([[F('a', U1), st(POSTOBS)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
     })
     expect(await createCmdCore(exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ file: F('a', U1), session: U1 })
   })
@@ -151,6 +152,163 @@ describe('createCmdCore', () => {
     expect(await createCmdCore(exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ unavailable: 'incomplete' })
   })
 
+  it('bounds non-root birth by first machine-wall observation, never the shell fork', async () => {
+    // ticks 12000 -> fork bound ~1767225720014; the GAP write lands between
+    // that fork and this census's wall (1767226100.1). An old subshell that
+    // exec'd cmd is indistinguishable from a fresh one — the gap file must
+    // never win; the session resolves only on a post-observation write.
+    const gap = (rows: string) => stub({
+      census: H + rows + T(1, 1),
+      files: filesWire([[F('a', U1), st(GAP)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(GAP), body: sess(U1) } })
+    })
+    const d = (fg = 4242) => live({ pid: 9000, argv: ['bash', '-l'], foreground: { pid: fg } })
+    // Foreground child.
+    expect(await createCmdCore(gap(S(4242, { ticks: '12000' })).exec, HOME).locate(d())).toEqual({ unavailable: 'empty' })
+    // Direct child (ppid links it; the shell root is the reported foreground).
+    expect(await createCmdCore(gap(S(4242, { ppid: 9000, ticks: '12000' })).exec, HOME).locate(d(9000))).toEqual({ unavailable: 'empty' })
+    // Retitled argv proves nothing either way — same bound.
+    expect(await createCmdCore(gap(retitled(4242, { cwd: WORK, ticks: '12000' })).exec, HOME).locate(d())).toEqual({ unavailable: 'empty' })
+    // Strict equality at the observation bound is still not after it.
+    const eq = stub({
+      census: H + S(4242, { ticks: '12000' }) + T(1, 1),
+      files: filesWire([[F('a', U1), st('1767226100.124')]]),
+      headers: hdrs({ [F('a', U1)]: { st: st('1767226100.124'), body: sess(U1) } })
+    })
+    expect(await createCmdCore(eq.exec, HOME).locate(d())).toEqual({ unavailable: 'empty' })
+  })
+
+  it('excludes a pre-observation seeded file even with a globally unique seed', async () => {
+    const { exec } = stub({
+      census: H + S(4242, { ticks: '12000', argv: ['node', '/x/bin/cmd', '--session', U2] }) + T(1, 1),
+      // The seeded file is strictly newer than the cwd one — today it would
+      // win outright — but BOTH writes predate the first observation.
+      files: filesWire([[F('a', U1), st(GAP)], [F('r', U2), st(POST)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(GAP), body: sess(U1) }, [F('r', U2)]: { st: st(POST), body: sess(U2, OTHER) } })
+    })
+    // The sampled argv seeds fine — but the exec-gap write is still pre-Cmd.
+    expect(await createCmdCore(exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ unavailable: 'empty' })
+  })
+
+  it('resolves a normal child on its first post-observation write, then updates', async () => {
+    const cl = clock()
+    const o = {
+      census: H + S(4242, { ppid: 9000 }) + T(1, 1),
+      files: filesWire([[F('a', U1), st(GAP)], [F('b', U2), st(POSTOBS)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(GAP), body: sess(U1) }, [F('b', U2)]: { st: st(POSTOBS), body: sess(U2) } })
+    }
+    const { exec } = stub(o)
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const d = live({ pid: 9000, argv: ['bash', '-l'], foreground: { pid: 9000 } })
+    // GAP is pre-observation; POSTOBS is the first write the witness proves.
+    expect(await c.locate(d)).toEqual({ file: F('b', U2), session: U2 })
+    // Machine wall/uptime advance coherently (same generation, unchanged
+    // startedAt) PAST the file's mtime: firstSeen must stay the ORIGINAL
+    // observation — if it moved to the latest wall, POSTOBS turns
+    // pre-bound and this resolves 'empty'. The file does not change.
+    cl.advance(1500)
+    o.census = H + S(4242, { ppid: 9000, up: '1300.12', wall: '1767226900.123' }) + T(1, 1)
+    expect(await c.locate(d)).toEqual({ file: F('b', U2), session: U2 })
+    // A newer persisted write still supersedes it in a later window.
+    cl.advance(1500)
+    o.files = filesWire([[F('a', U1), st(GAP)], [F('b', U2), st(POST2)]])
+    o.headers = hdrs({ [F('a', U1)]: { st: st(GAP), body: sess(U1) }, [F('b', U2)]: { st: st(POST2), body: sess(U2) } })
+    expect(await c.locate(d)).toEqual({ file: F('b', U2), session: U2 })
+  })
+
+  it('never carries an observation bound across generation reuse or prune', async () => {
+    const cl = clock()
+    const o = {
+      census: H + S(4242, { ticks: '12000' }) + T(1, 1),
+      files: filesWire([[F('a', U1), st(GAP)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(GAP), body: sess(U1) } })
+    }
+    const { exec } = stub(o)
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const d = live({ pid: 9000, foreground: { pid: 4242 } })
+    expect(await c.locate(d)).toEqual({ unavailable: 'empty' }) // gap file: pre-observation
+    // The pid is reborn as a NEW generation (new ticks, later wall): a file
+    // fine for the old generation predates THIS one's first observation.
+    cl.advance(1500)
+    o.census = H + S(4242, { ticks: '12100', up: '900.5', wall: '1767226500.5' }) + T(1, 1)
+    o.files = filesWire([[F('a', U1), st(POSTOBS)]])
+    o.headers = hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+    expect(await c.locate(d)).toEqual({ unavailable: 'empty' })
+    // A generation absent from a complete census is pruned; when the same
+    // pid+ticks reappears it re-arms from the NEW wall, never a stale bound.
+    cl.advance(1500)
+    o.census = H + T(0, 0) // a COMPLETE census with zero rows: gens all pruned
+    expect(await c.locate(d)).toEqual({ unavailable: 'target' })
+    cl.advance(1500)
+    o.census = H + S(4242, { ticks: '12000', up: '1400.5', wall: '1767227000.5' }) + T(1, 1)
+    // uptime/wall keep the old fork bound consistent; obs is now 1767227000.
+    expect(await c.locate(d)).toEqual({ unavailable: 'empty' })
+    // A fresh instance re-arms the same way — restart is always conservative.
+    expect(await createCmdCore(exec, HOME).locate(d)).toEqual({ unavailable: 'empty' })
+  })
+
+  it('never consults the coordinator clock for the observation bound', async () => {
+    const d = live({ pid: 9000, foreground: { pid: 4242 } })
+    // Behind + a GAP-ONLY catalog: a local-now bound near t=0 would admit the
+    // stale file — only the machine wall can reject it. Not masked by a
+    // newer candidate; this is what proves the bound is the remote one.
+    const { exec: gapOnly } = stub({
+      census: H + S(4242) + T(1, 1),
+      files: filesWire([[F('a', U1), st(GAP)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(GAP), body: sess(U1) } })
+    })
+    const behind = clock()
+    expect(await createCmdCore(gapOnly, HOME, { now: behind.now }).locate(d)).toEqual({ unavailable: 'empty' })
+    // The same skewed coordinator still resolves a genuinely post-observation
+    // write (and a far-ahead one never permanently rejects it either).
+    const { exec } = stub({
+      census: H + S(4242) + T(1, 1),
+      files: filesWire([[F('a', U1), st(GAP)], [F('b', U2), st(POSTOBS)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(GAP), body: sess(U1) }, [F('b', U2)]: { st: st(POSTOBS), body: sess(U2) } })
+    })
+    expect(await createCmdCore(exec, HOME, { now: behind.now }).locate(d)).toEqual({ file: F('b', U2), session: U2 })
+    const ahead = clock()
+    ahead.set(9e15)
+    expect(await createCmdCore(exec, HOME, { now: ahead.now }).locate(d)).toEqual({ file: F('b', U2), session: U2 })
+  })
+
+  it('uses max of two valid bounds when observation precedes the rounded birth upper', async () => {
+    // birthUpperBound adds one clock tick, so a VERY young process can carry
+    // an observedAt a few ms BEFORE its conservative process bound — both
+    // are valid upper bounds on agent start, not inconsistent evidence.
+    // ticks 50000 + up 500.001 + wall 1767226100.001: upper 1767226100010,
+    // observedAt 1767226100001.
+    const cl = clock()
+    const o = {
+      census: H + S(4242, { ppid: 9000, ticks: '50000', up: '500.001', wall: '1767226100.001' }) + T(1, 1),
+      files: filesWire([[F('a', U1), st('1767226100.005')]]),
+      headers: hdrs({ [F('a', U1)]: { st: st('1767226100.005'), body: sess(U1) } })
+    }
+    const { exec } = stub(o)
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const d = live({ pid: 9000, foreground: { pid: 4242 } })
+    // .005 is after observedAt but before the process upper — still in the
+    // exec gap under max(): ineligible. Kept alone so the positive below
+    // cannot mask this exclusion.
+    expect(await c.locate(d)).toEqual({ unavailable: 'empty' })
+    // .020 is after BOTH bounds: the same generation resolves.
+    cl.advance(1500)
+    o.files = filesWire([[F('a', U1), st('1767226100.020')]])
+    o.headers = hdrs({ [F('a', U1)]: { st: st('1767226100.020'), body: sess(U1) } })
+    expect(await c.locate(d)).toEqual({ file: F('a', U1), session: U1 })
+    // A later census advancing up/wall coherently keeps the same generation's
+    // remembered observation — still resolves.
+    cl.advance(1500)
+    o.census = H + S(4242, { ppid: 9000, ticks: '50000', up: '1300.001', wall: '1767226900.001' }) + T(1, 1)
+    expect(await c.locate(d)).toEqual({ file: F('a', U1), session: U1 })
+  })
+
+  it('fails closed when the record carries no usable machine wall', async () => {
+    const { exec } = stub({ census: H + S(4242, { wall: '-' }) + T(1, 1) })
+    // NaN wall => no startedAt either: the row is incomplete metadata.
+    expect(await createCmdCore(exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ unavailable: 'incomplete' })
+  })
+
   it('enforces the strict post-birth write boundary', async () => {
     const { exec } = stub({
       census: H + S(4242) + T(1, 1),
@@ -165,9 +323,10 @@ describe('createCmdCore', () => {
   it('seeds a cross-cwd resume only from proven exact argv and only when globally unique', async () => {
     const seeded = (extra: [string, string][] = [], argv: string[] = ['node', '/x/bin/cmd', '--session', U2]) => stub({
       census: H + S(4242, { argv }) + T(1, 1),
-      files: filesWire([[F('a', U1), st(POST)], [F('r', U2), st(POST2)], ...extra]),
+      // Both candidate writes are post-observation.
+      files: filesWire([[F('a', U1), st(POSTOBS)], [F('r', U2), st(POST2)], ...extra]),
       headers: hdrs({
-        [F('a', U1)]: { st: st(POST), body: sess(U1) },
+        [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) },
         [F('r', U2)]: { st: st(POST2), body: sess(U2, OTHER) } // old header cwd: only the seed admits it
       })
     })
@@ -180,8 +339,8 @@ describe('createCmdCore', () => {
     // Retitled argv is not launch-exact: an argv array alone never seeds.
     const rt = stub({
       census: H + retitled(4242) + T(1, 1),
-      files: filesWire([[F('a', U1), st(POST)], [F('r', U2), st(POST2)]]),
-      headers: hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) }, [F('r', U2)]: { st: st(POST2), body: sess(U2, OTHER) } })
+      files: filesWire([[F('a', U1), st(POSTOBS)], [F('r', U2), st(POST2)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) }, [F('r', U2)]: { st: st(POST2), body: sess(U2, OTHER) } })
     })
     expect(await createCmdCore(rt.exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ file: F('a', U1), session: U1 })
     // Recorded root argv seeds a root-equal target the same way.
@@ -196,8 +355,8 @@ describe('createCmdCore', () => {
   it('coalesces census and header evidence across simultaneous lookups', async () => {
     const { exec, calls } = stub({
       census: H + S(4242) + S(5555, { cwd: '/w/two' }) + T(2, 2),
-      files: filesWire([[F('a', U1), st(POST)], [F('b', U2), st(POST2)]]),
-      headers: hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) }, [F('b', U2)]: { st: st(POST2), body: sess(U2, '/w/two') } })
+      files: filesWire([[F('a', U1), st(POSTOBS)], [F('b', U2), st(POST2)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) }, [F('b', U2)]: { st: st(POST2), body: sess(U2, '/w/two') } })
     })
     const c = createCmdCore(exec, HOME)
     const [r1, r2, r3] = await Promise.all([
@@ -214,8 +373,8 @@ describe('createCmdCore', () => {
   it('refreshes after the TTL and clears location on failure without storms', async () => {
     const o = {
       census: H + S(4242) + T(1, 1),
-      files: filesWire([[F('a', U1), st(POST)], [F('b', U2), st(POST2)]]),
-      headers: hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) }, [F('b', U2)]: { st: st(POST2), body: sess(U2, OTHER) } })
+      files: filesWire([[F('a', U1), st(POSTOBS)], [F('b', U2), st(POST2)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) }, [F('b', U2)]: { st: st(POST2), body: sess(U2, OTHER) } })
     }
     const { exec, calls } = stub(o)
     const cl = clock()
@@ -263,8 +422,8 @@ describe('createCmdCore', () => {
     // must join it even after the TTL would have expired.
     const { exec: base } = stub({
       census: H + S(4242) + T(1, 1),
-      files: filesWire([[F('a', U1), st(POST)]]),
-      headers: hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) } })
+      files: filesWire([[F('a', U1), st(POSTOBS)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
     })
     let censusCalls = 0
     const exec: ShellExec = (s, a, o) => s === AGENT_CENSUS_SCRIPT ? (censusCalls++, gate.then(() => base(s, a, o))) : base(s, a, o)
@@ -284,8 +443,8 @@ describe('createCmdCore', () => {
     const gate2 = new Promise<void>(res => { release2 = res })
     const { exec: b2, calls: c2 } = stub({
       census: H + S(4242) + T(1, 1),
-      files: filesWire([[F('a', U1), st(POST)]]),
-      headers: hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) } })
+      files: filesWire([[F('a', U1), st(POSTOBS)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
     })
     let headerCalls = 0
     const exec2: ShellExec = (s, a, o) => s === CMD_HEADERS_SCRIPT ? (headerCalls++, gate2.then(() => b2(s, a, o))) : b2(s, a, o)
@@ -308,8 +467,8 @@ describe('createCmdCore', () => {
     const gate = new Promise<void>(res => { release = res })
     const { exec: base } = stub({
       census: H + S(4242) + T(1, 1),
-      files: filesWire([[F('a', U1), st(POST)]]),
-      headers: hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) } })
+      files: filesWire([[F('a', U1), st(POSTOBS)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
     })
     let gating = true
     let censusCalls = 0

@@ -6,7 +6,7 @@ import { CoreError } from '../server/utils/core'
 import type { ChatResponse, Pane } from '../shared/types'
 import {
   AGENT_CENSUS_SCRIPT, CMD_FILES_SCRIPT, CMD_HEADERS_SCRIPT, clock,
-  F, filesWire, H, hdrs, HOME, OTHER, POST, POST2, retitled, S, sess, st, T, U1, U2, WORK
+  F, filesWire, GAP, H, hdrs, HOME, OTHER, POST, POST2, POSTOBS, retitled, S, sess, st, T, U1, U2, WORK
 } from './cmdCoreFixture'
 
 const pane = (id: string, address: string, agent: string | null, cwd = WORK) =>
@@ -48,10 +48,12 @@ function cmdCore(details: Record<string, object>, wires: Wires | ((on: string) =
 }
 
 describe('Command Code panes resolve via core detail and per-machine wires', () => {
+  // A CHILD target (fg 4242 under shell root 9000) binds birth to the first
+  // machine observation, so every positive write here is post-observation.
   const okWire = (extra: Partial<Wires> = {}): Wires => ({
     census: H + S(4242) + T(1, 1),
-    files: filesWire([[F('a', U1), st(POST)]]),
-    headers: hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) } }),
+    files: filesWire([[F('a', U1), st(POSTOBS)]]),
+    headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } }),
     ...extra
   })
   const P = (id: string) => ({ id, agent: 'cmd', cwd: WORK })
@@ -113,8 +115,8 @@ describe('Command Code panes resolve via core detail and per-machine wires', () 
     // a foreign-session seed inside it can never leak into the selection.
     const rt = cmdCore({ t1: liveD({ pid: 9000, argv: ['bash'], foreground: { pid: 4242 } }) }, {
       census: H + retitled(4242) + T(1, 1),
-      files: filesWire([[F('a', U1), st(POST)], [F('r', U2), st(POST2)]]),
-      headers: hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) }, [F('r', U2)]: { st: st(POST2), body: sess(U2, OTHER) } })
+      files: filesWire([[F('a', U1), st(POSTOBS)], [F('r', U2), st(POST2)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) }, [F('r', U2)]: { st: st(POST2), body: sess(U2, OTHER) } })
     })
     const t2 = createCoreTranscripts({ call: rt.call, pane: id => panes.find(p => p.id === id), localHome: HOME })
     expect(await t2.locate(P('p1'))).toEqual({ file: F('a', U1), session: U1, guessed: true }) // cwd file, never the resumed one
@@ -162,11 +164,32 @@ describe('Command Code panes resolve via core detail and per-machine wires', () 
     expect(await t.locate(P('p1'))).toBeNull()
     expect(core.calls.census).toBe(2)
     cl.advance(2000)
-    // The pid was reused by a generation born at 450 s of 500.12 s uptime:
-    // the only candidate, written at 400.5 s, is pre-birth for it.
-    wires.census = H + S(4242, { ticks: '45000' }) + T(1, 1)
+    // The pid was reused by a NEW generation (ticks 45000, first observed at
+    // the later coherent wall 1767226900.123): the POSTOBS write the old
+    // generation could claim predates this generation's own bound.
+    wires.census = H + S(4242, { ticks: '45000', up: '1300.12', wall: '1767226900.123' }) + T(1, 1)
     expect(await t.locate(P('p1'))).toBeNull()
     expect(core.calls.census).toBe(3)
+  })
+
+  it('waits for a post-observation write on a child target, then resolves it', async () => {
+    // The M1 availability policy at the wrapper boundary: a child session
+    // saved before our first observation stays unavailable until the NEXT
+    // persisted write — null, then the same file resolves.
+    const cl = clock()
+    const wires = okWire({
+      census: H + S(4242, { ppid: 9000 }) + T(1, 1),
+      files: filesWire([[F('a', U1), st(GAP)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(GAP), body: sess(U1) } })
+    })
+    const core = cmdCore({ t1: liveD({ pid: 9000, argv: ['bash', '-l'], foreground: { pid: 4242 } }) }, wires)
+    const panes = [pane('p1', 't1', 'cmd')]
+    const t = createCoreTranscripts({ call: core.call, pane: id => panes.find(p => p.id === id), localHome: HOME, now: cl.now })
+    expect(await t.locate(P('p1'))).toBeNull()
+    cl.advance(2000) // TTL expired: the persisted write is re-read
+    wires.files = filesWire([[F('a', U1), st(POSTOBS)]])
+    wires.headers = hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+    expect(await t.locate(P('p1'))).toEqual({ file: F('a', U1), session: U1, guessed: true })
   })
 
   it('drops any earlier legacy location so a later agent change cannot resurrect it', async () => {
@@ -249,8 +272,8 @@ describe('Command Code panes resolve via core detail and per-machine wires', () 
       'box/t3': liveD({ pid: 9999, argv: ['bash'] })
     }, {
       census: H + S(4242) + S(5555, { cwd: '/w/two' }) + T(2, 2),
-      files: filesWire([[F('a', U1), st(POST)], [F('b', U2), st(POST2)]]),
-      headers: hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) }, [F('b', U2)]: { st: st(POST2), body: sess(U2, '/w/two') } })
+      files: filesWire([[F('a', U1), st(POSTOBS)], [F('b', U2), st(POST2)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) }, [F('b', U2)]: { st: st(POST2), body: sess(U2, '/w/two') } })
     })
     const panes = [pane('p1', 'box/t1', 'cmd'), pane('p2', 'box/t2', 'cmd'), pane('p3', 'box/t3', 'cmd')]
     const t = createCoreTranscripts({ call: core.call, pane: id => panes.find(p => p.id === id), localHome: '/unrelated' })
@@ -298,8 +321,8 @@ describe('Command Code panes resolve via core detail and per-machine wires', () 
       { 'box/t1': liveD({ pid: 9000, argv: ['bash'], foreground: { pid: 4242 } }) },
       {
         census: H + S(4242) + T(1, 1),
-        files: filesWire([[file, st(POST)]]),
-        headers: hdrs({ [file]: { st: st(POST), body: sess(U1) } }),
+        files: filesWire([[file, st(POSTOBS)]]),
+        headers: hdrs({ [file]: { st: st(POSTOBS), body: sess(U1) } }),
       },
       { home: LITERAL }
     )

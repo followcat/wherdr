@@ -23,10 +23,10 @@ export const ENTRY: [string, string][] = [['/x/bin/cmd', PKG]]
 
 export const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64')
 export const H = 'H 100 1767225600 1\n'
-export const S = (pid: number, o: { ppid?: number, ticks?: string, comm?: string, argv?: string[], cwd?: string | null } = {}) =>
-  `S ${pid} ${o.ppid ?? 1} ${o.ticks ?? '12345'} 500.12 1767226100.123456789 ${b64(o.comm ?? 'node')} ${b64((o.argv ?? ['node', '/x/bin/cmd']).join('\0') + '\0')} ${o.cwd === null ? '' : b64((o.cwd ?? WORK) + '\n')} ${b64('/usr/bin/node\n')} ${b64(ENTRY.map(([r, s]) => `${r}\x01${s}\x01`).join(''))}\n`
+export const S = (pid: number, o: { ppid?: number, ticks?: string, up?: string, wall?: string, comm?: string, argv?: string[], cwd?: string | null } = {}) =>
+  `S ${pid} ${o.ppid ?? 1} ${o.ticks ?? '12345'} ${o.up ?? '500.12'} ${o.wall ?? '1767226100.123456789'} ${b64(o.comm ?? 'node')} ${b64((o.argv ?? ['node', '/x/bin/cmd']).join('\0') + '\0')} ${o.cwd === null ? '' : b64((o.cwd ?? WORK) + '\n')} ${b64('/usr/bin/node\n')} ${b64(ENTRY.map(([r, s]) => `${r}\x01${s}\x01`).join(''))}\n`
 export const T = (n: number, r: number, o = 0, u = 0) => `T ${n} ${r} ${o} ${u}\n`
-export const retitled = (pid: number, o: { cwd?: string } = {}) => S(pid, { comm: 'command-code', argv: ['command-code'], cwd: o.cwd }) // launch argv lost -> argvExact false
+export const retitled = (pid: number, o: { cwd?: string, ticks?: string } = {}) => S(pid, { comm: 'command-code', argv: ['command-code'], cwd: o.cwd, ticks: o.ticks }) // launch argv lost -> argvExact false
 
 export const st = (m: string, ino = 42) => `7 ${m} ${ino} regular file`
 export const F = (dir: string, id: string) => `${ROOT}/${dir}/${id}.jsonl`
@@ -38,10 +38,12 @@ export const hdrs = (tbl: Record<string, { st: string, body: string }>) => (args
   return `H\n${args.slice(1).map(p => tbl[p] ? `R\x01${b64(p)}\x01${tbl[p].st}\x01${b64(tbl[p].body)}` : `E\x01${b64(p)}\x01gone`).join('\n')}\nT ${rs} ${args.length - 1 - rs} ${rs === args.length - 1 ? 0 : 2}\n`
 }
 
-export const POST = '1767226000.5' // mtimeMs 1767226000500 > BORN
+export const POST = '1767226000.5' // mtimeMs 1767226000500 > BORN, < firstObs
+export const POSTOBS = '1767226200.5' // post-observation write (> obs wall 1767226100.124)
 export const POST2 = '1767226500.5'
 export const PRE = '1700000000.5' // pre-birth
 export const AT = '1767225723.464' // exactly the birth bound
+export const GAP = '1767225800.5' // in the fork->exec gap: > old-shell birth, < firstObs
 
 export const stub = (o: { census?: string, files?: string, headers?: (a: string[]) => string, code?: number }) => {
   const calls = { census: 0, files: 0, headers: 0 }
