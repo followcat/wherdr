@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createCmdCore } from '../server/utils/commandCodeCore'
 import type { ShellExec } from '../server/utils/fsx'
-import { AGENT_CENSUS_SCRIPT, CMD_HEADERS_SCRIPT } from './cmdCoreFixture'
+import { AGENT_CENSUS_SCRIPT, CMD_FILES_SCRIPT, CMD_HEADERS_SCRIPT } from './cmdCoreFixture'
 import {
   AT, clock, F, filesWire, GAP, H, hdrs, HOME, live, OTHER, PKG, POST3,
   POST, POST2, POSTOBS, PRE, retitled, S, sess, st, stub, T, U1, U2, U3, WORK
@@ -36,7 +36,7 @@ describe('createCmdCore', () => {
     })
     const r = await createCmdCore(exec, HOME).locate(live({ pid: 9000, argv: ['bash', '-l'], foreground: { pid: 4242 } }))
     expect(r).toEqual({ file: F('b', U2), session: U2 }) // newest write wins (/clear, /resume shape)
-    expect(calls).toEqual({ census: 1, files: 1, headers: 1 })
+    expect(calls).toEqual({ census: 2, files: 1, headers: 1 }) // ownership census + post-collection census
   })
 
   it('locates a root cmd pid only when recorded argv proves a cmd launch', async () => {
@@ -341,6 +341,327 @@ describe('createCmdCore', () => {
       .toEqual({ unavailable: 'peers' })
   })
 
+  it('re-samples the census after candidate collection before selecting', async () => {
+    // B can start and flush while the listing is in flight: the selection
+    // must be made on a census sampled AFTER collection — the pre-collection
+    // rows are never relabeled as the final sample.
+    const cl = clock()
+    const o = {
+      census: H + S(4242, { ppid: 9000 }) + T(1, 1), // c1: A only
+      files: filesWire([[F('a', U1), st(POSTOBS)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+    }
+    const seq: string[] = []
+    let active = 0, maxActive = 0
+    let filesBegan!: () => void, filesRelease!: () => void
+    const began = new Promise<void>(res => { filesBegan = res })
+    const gate = new Promise<void>(res => { filesRelease = res })
+    const exec: ShellExec = async (script, args = []) => {
+      const out = (s: string) => ({ code: 0, stdout: Buffer.from(s), stderr: '' })
+      if (script === AGENT_CENSUS_SCRIPT) {
+        seq.push('census')
+        active++; maxActive = Math.max(maxActive, active)
+        try { return out(o.census) } finally { active-- }
+      }
+      if (script === CMD_FILES_SCRIPT) { seq.push('files'); filesBegan(); await gate; return out(o.files) }
+      if (script === CMD_HEADERS_SCRIPT) { seq.push('headers'); return out(o.headers(args ?? [])) }
+      return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+    }
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const d = live({ pid: 9000, foreground: { pid: 4242 } })
+    const pending = c.locate(d)
+    await began // the listing is in-flight and held
+    // B starts between the samples (coherent later wall/up) and flushes a
+    // newer same-cwd file before the listing resolves.
+    o.census = H + S(4242, { ppid: 9000, up: '1300.12', wall: '1767226900.123' })
+      + S(5555, { ticks: '70000', up: '1300.12', wall: '1767226900.123' }) + T(2, 2)
+    o.files = filesWire([[F('a', U1), st(POSTOBS)], [F('c', U3), st(POST3)]])
+    o.headers = hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) }, [F('c', U3)]: { st: st(POST3), body: sess(U3) } })
+    filesRelease()
+    // A live same-cwd Cmd at the post-collection sample makes A's ownership
+    // unproven — never B's file.
+    expect(await pending).toEqual({ unavailable: 'peers' })
+    // The post-collection census is a real second call, begun only after the
+    // header pass: never concurrent, never an earlier queued promise.
+    expect(seq).toEqual(['census', 'files', 'headers', 'census'])
+    expect(maxActive).toBe(1)
+  })
+
+  it('begins the post-collection census only after the header pass resolves', async () => {
+    const cl = clock()
+    const o = {
+      census: H + S(4242, { ppid: 9000 }) + T(1, 1),
+      files: filesWire([[F('a', U1), st(POSTOBS)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+    }
+    const seq: string[] = []
+    let headersBegan!: () => void, headersRelease!: () => void
+    const began = new Promise<void>(res => { headersBegan = res })
+    const gate = new Promise<void>(res => { headersRelease = res })
+    const exec: ShellExec = async (script, args = []) => {
+      const out = (s: string) => ({ code: 0, stdout: Buffer.from(s), stderr: '' })
+      if (script === AGENT_CENSUS_SCRIPT) { seq.push('census'); return out(o.census) }
+      if (script === CMD_FILES_SCRIPT) { seq.push('files'); return out(o.files) }
+      if (script === CMD_HEADERS_SCRIPT) { seq.push('headers'); headersBegan(); await gate; return out(o.headers(args ?? [])) }
+      return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+    }
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const d = live({ pid: 9000, foreground: { pid: 4242 } })
+    const pending = c.locate(d)
+    await began // collection is in-flight inside the header pass
+    expect(seq).toEqual(['census', 'files', 'headers']) // postscan has not begun
+    headersRelease()
+    expect(await pending).toEqual({ file: F('a', U1), session: U1 })
+    expect(seq).toEqual(['census', 'files', 'headers', 'census'])
+  })
+
+  it('rejects when the target changed between the census samples', async () => {
+    // A generation lost, reused or moved between c1 and c2 can never be the
+    // proven target: unavailable, never the earlier rows' answer.
+    for (const c2 of [
+      H + T(0, 0), // pid gone at the second sample
+      H + S(4242, { ppid: 9000, ticks: '70000', up: '1300.12', wall: '1767226900.123' }) + T(1, 1), // reused: LATER generation ticks
+      H + S(4242, { ppid: 9000, cwd: OTHER, up: '1300.12', wall: '1767226900.123' }) + T(1, 1) // moved cwd
+    ]) {
+      const cl = clock()
+      const o = {
+        census: H + S(4242, { ppid: 9000 }) + T(1, 1),
+        files: filesWire([[F('a', U1), st(POSTOBS)]]),
+        headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+      }
+      let filesBegan!: () => void, release!: () => void
+      const began = new Promise<void>(res => { filesBegan = res })
+      const gate = new Promise<void>(res => { release = res })
+      const exec: ShellExec = async (script, args = []) => {
+        const out = (s: string) => ({ code: 0, stdout: Buffer.from(s), stderr: '' })
+        if (script === AGENT_CENSUS_SCRIPT) return out(o.census)
+        if (script === CMD_FILES_SCRIPT) { filesBegan(); await gate; return out(o.files) }
+        if (script === CMD_HEADERS_SCRIPT) return out(o.headers(args ?? []))
+        return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+      }
+      const c = createCmdCore(exec, HOME, { now: cl.now })
+      const pending = c.locate(live({ pid: 9000, foreground: { pid: 4242 } }))
+      await began // deterministic: the listing is in-flight and held
+      o.census = c2
+      release()
+      expect(await pending).toEqual({ unavailable: 'target' })
+    }
+  })
+
+  it('never falls back to the pre-collection census when the post sample fails', async () => {
+    // Whatever shape the post-collection failure takes — an incomplete wire,
+    // a nonzero exec, a thrown exec — the answer is unavailable, never the
+    // c1-based selection.
+    for (const fail of ['incomplete', 'code', 'throw'] as const) {
+      const cl = clock()
+      const o = {
+        census: H + S(4242, { ppid: 9000 }) + T(1, 1),
+        files: filesWire([[F('a', U1), st(POSTOBS)]]),
+        headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+      }
+      let censusN = 0
+      let filesBegan!: () => void, release!: () => void
+      const began = new Promise<void>(res => { filesBegan = res })
+      const gate = new Promise<void>(res => { release = res })
+      const exec: ShellExec = async (script, args = []) => {
+        const out = (s: string) => ({ code: 0, stdout: Buffer.from(s), stderr: '' })
+        if (script === AGENT_CENSUS_SCRIPT) {
+          if (++censusN === 2) {
+            if (fail === 'throw') throw new Error('gone')
+            if (fail === 'code') return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+            return out('H 100 1767225600 0\nT 0 0 0 0\n') // ok=0: incomplete
+          }
+          return out(o.census)
+        }
+        if (script === CMD_FILES_SCRIPT) { filesBegan(); await gate; return out(o.files) }
+        if (script === CMD_HEADERS_SCRIPT) return out(o.headers(args ?? []))
+        return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+      }
+      const c = createCmdCore(exec, HOME, { now: cl.now })
+      const pending = c.locate(live({ pid: 9000, foreground: { pid: 4242 } }))
+      await began // the listing is in-flight and held
+      release()
+      expect(await pending).toEqual({ unavailable: 'incomplete' })
+    }
+  })
+
+  it('scopes post-collection unknown and foreign peers to the final sample', async () => {
+    // An unknown in the target's cwd — or a live cmd at the seed's header
+    // cwd — must be judged on the post-collection census, not the stale one.
+    for (const [c2, want] of [
+      [H + S(4242, { ppid: 9000, up: '1300.12', wall: '1767226900.123' }) + S(7701, { argv: ['/opt/tools/node_repl'], up: '1300.12', wall: '1767226900.123' }) + T(2, 2), 'peers'],
+      [H + S(4242, { ppid: 9000, up: '1300.12', wall: '1767226900.123' }) + S(7701, { argv: ['/opt/tools/node_repl'], cwd: OTHER, up: '1300.12', wall: '1767226900.123' }) + T(2, 2), 'file']
+    ] as const) {
+      const cl = clock()
+      const o = {
+        census: H + S(4242, { ppid: 9000 }) + T(1, 1),
+        files: filesWire([[F('a', U1), st(POSTOBS)]]),
+        headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+      }
+      let filesBegan!: () => void, release!: () => void
+      const began = new Promise<void>(res => { filesBegan = res })
+      const gate = new Promise<void>(res => { release = res })
+      const exec: ShellExec = async (script, args = []) => {
+        const out = (s: string) => ({ code: 0, stdout: Buffer.from(s), stderr: '' })
+        if (script === AGENT_CENSUS_SCRIPT) return out(o.census)
+        if (script === CMD_FILES_SCRIPT) { filesBegan(); await gate; return out(o.files) }
+        if (script === CMD_HEADERS_SCRIPT) return out(o.headers(args ?? []))
+        return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+      }
+      const c = createCmdCore(exec, HOME, { now: cl.now })
+      const pending = c.locate(live({ pid: 9000, foreground: { pid: 4242 } }))
+      await began // the listing is in-flight and held
+      o.census = c2
+      release()
+      if (want === 'file') expect(await pending).toEqual({ file: F('a', U1), session: U1 })
+      else expect(await pending).toEqual({ unavailable: 'peers' })
+    }
+  })
+
+  it('judges the M2 foreign-seed peer on the post-collection census', async () => {
+    // A's exact seed admits the foreign S; c1 knows A alone. The retitled
+    // Cmd B at S's header cwd appears only at the post-collection sample —
+    // the contested candidate can never be resurrected under A's name.
+    const cl = clock()
+    const seed = ['node', '/x/bin/cmd', '--session', U3] // real interpreter+entry argv
+    const o = {
+      census: H + S(4242, { ppid: 9000, argv: seed }) + T(1, 1),
+      files: filesWire([[F('a', U1), st(POSTOBS)], [F('s', U3), st(POST3)]]),
+      headers: hdrs({
+        [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) },
+        [F('s', U3)]: { st: st(POST3), body: sess(U3, OTHER) }
+      })
+    }
+    let filesBegan!: () => void, release!: () => void
+    const began = new Promise<void>(res => { filesBegan = res })
+    const gate = new Promise<void>(res => { release = res })
+    const exec: ShellExec = async (script, args = []) => {
+      const out = (s: string) => ({ code: 0, stdout: Buffer.from(s), stderr: '' })
+      if (script === AGENT_CENSUS_SCRIPT) return out(o.census)
+      if (script === CMD_FILES_SCRIPT) { filesBegan(); await gate; return out(o.files) }
+      if (script === CMD_HEADERS_SCRIPT) return out(o.headers(args ?? []))
+      return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+    }
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const pending = c.locate(live({ pid: 9000, foreground: { pid: 4242 } }))
+    await began // the listing is in-flight and held
+    // Same generation, same launch argv — plus B, a retitled live cmd whose
+    // own launch argv is unknowable, sitting at the seeded file's cwd.
+    o.census = H + S(4242, { ppid: 9000, argv: seed, up: '1300.12', wall: '1767226900.123' })
+      + S(5555, { comm: 'command-code', argv: ['command-code'], cwd: OTHER, up: '1300.12', wall: '1767226900.123' }) + T(2, 2)
+    release()
+    expect(await pending).toEqual({ unavailable: 'peers' })
+  })
+
+  it('keeps a generation bound first witnessed by the post-collection census', async () => {
+    // B appears only at c2. A second lookup inside the same window must NOT
+    // replay the older c1 rows and prune B: next window B resolves by its
+    // first (c2) bound, not a bound re-armed from a later sample.
+    const cl = clock()
+    const o = {
+      census: H + S(4242, { ppid: 9000 }) + T(1, 1),
+      files: filesWire([[F('a', U1), st(POSTOBS)]]), // only A's own file exists yet
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+    }
+    let filesBegan!: () => void, release!: () => void
+    const began = new Promise<void>(res => { filesBegan = res })
+    const gate = new Promise<void>(res => { release = res })
+    const exec: ShellExec = async (script, args = []) => {
+      const out = (s: string) => ({ code: 0, stdout: Buffer.from(s), stderr: '' })
+      if (script === AGENT_CENSUS_SCRIPT) return out(o.census)
+      if (script === CMD_FILES_SCRIPT) { filesBegan(); await gate; return out(o.files) }
+      if (script === CMD_HEADERS_SCRIPT) return out(o.headers(args ?? []))
+      return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+    }
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const pA = c.locate(live({ pid: 9000, foreground: { pid: 4242 } }))
+    await began // the listing is in-flight and held
+    // c2: B's generation is first witnessed here — bound ~1767226900123.
+    o.census = H + S(4242, { ppid: 9000, up: '1300.12', wall: '1767226900.123' })
+      + S(5555, { cwd: '/w/two', up: '1300.12', wall: '1767226900.123' }) + T(2, 2)
+    release()
+    expect(await pA).toEqual({ file: F('a', U1), session: U1 }) // A renders its own file
+    // B's write is persisted only now — after the sample that witnessed B.
+    o.files = filesWire([[F('a', U1), st(POSTOBS)], [F('b', U2), st('1767226950.5')]])
+    o.headers = hdrs({
+      [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) },
+      [F('b', U2)]: { st: st('1767226950.5'), body: sess(U2, '/w/two') }
+    })
+    // A later lookup on the OLDER c1 rows honestly refuses B — and must not
+    // silently prune the bound c2 just recorded.
+    expect(await c.locate(live({ pid: 9001, foreground: { pid: 5555 } }))).toEqual({ unavailable: 'target' })
+    // Next window: B is live in BOTH phases again and the listing now sees
+    // its file. The write postdates the first c2 bound but predates this
+    // sample — a bound pruned and re-armed here would wrongly reject it.
+    cl.advance(1500)
+    o.census = H + S(4242, { ppid: 9000, up: '1600.12', wall: '1767227200.12' })
+      + S(5555, { cwd: '/w/two', up: '1600.12', wall: '1767227200.12' }) + T(2, 2)
+    expect(await c.locate(live({ pid: 9001, foreground: { pid: 5555 } }))).toEqual({ file: F('b', U2), session: U2 })
+  })
+
+  it('shares both census phases and the collection across concurrent lookups', async () => {
+    // Late callers join wherever the shared window actually is: locates
+    // started while the LISTING is held share c1+files+headers, and locates
+    // started while the post-collection census is held share c2 as well —
+    // never a second scan, never a stale answer, even past the nominal TTL.
+    const cl = clock()
+    const o = {
+      census: H + S(4242, { ppid: 9000 }) + S(5555, { cwd: '/w/two' }) + T(2, 2),
+      files: filesWire([[F('a', U1), st(POSTOBS)], [F('b', U2), st(POST2)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) }, [F('b', U2)]: { st: st(POST2), body: sess(U2, '/w/two') } })
+    }
+    const calls = { census: 0, files: 0, headers: 0 }
+    let filesBegan!: () => void, filesRelease!: () => void
+    const filesBeganP = new Promise<void>(res => { filesBegan = res })
+    const filesGate = new Promise<void>(res => { filesRelease = res })
+    let c2Began!: () => void, c2Release!: () => void
+    const c2BeganP = new Promise<void>(res => { c2Began = res })
+    const c2Gate = new Promise<void>(res => { c2Release = res })
+    let censusN = 0, active = 0, maxActive = 0
+    const exec: ShellExec = async (script, args = []) => {
+      const out = (s: string) => ({ code: 0, stdout: Buffer.from(s), stderr: '' })
+      if (script === AGENT_CENSUS_SCRIPT) {
+        calls.census++
+        active++
+        maxActive = Math.max(maxActive, active)
+        try {
+          if (++censusN === 2) { c2Began(); await c2Gate } // the post-collection sample, genuinely held
+          return out(o.census)
+        } finally { active-- }
+      }
+      if (script === CMD_FILES_SCRIPT) { calls.files++; filesBegan(); await filesGate; return out(o.files) }
+      if (script === CMD_HEADERS_SCRIPT) { calls.headers++; return out(o.headers(args ?? [])) }
+      return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+    }
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const p1 = c.locate(live({ pid: 9000, foreground: { pid: 4242 } }))
+    const p2 = c.locate(live({ pid: 9001, foreground: { pid: 5555 } }))
+    await filesBeganP // the listing is in-flight and held — not merely c1 shared
+    cl.advance(3000) // TTL expired mid-collection: still the SAME window's work
+    const p3 = c.locate(live({ pid: 9000, foreground: { pid: 4242 } }))
+    const p4 = c.locate(live({ pid: 9001, foreground: { pid: 5555 } }))
+    filesRelease()
+    // Race the held post-collection sample against early-settled lookups:
+    // under a stale-census implementation the locates resolve instead, so
+    // the failure is observable at the asserts, not a deadlock.
+    const phase = await Promise.race([
+      c2BeganP.then(() => 'held' as const),
+      Promise.all([p1, p2, p3, p4]).then(() => 'settled' as const)
+    ])
+    const p5 = c.locate(live({ pid: 9000, foreground: { pid: 4242 } })) // late caller during held c2
+    if (phase === 'held') c2Release()
+    expect(phase).toBe('held')
+    expect(await Promise.all([p1, p2, p3, p4, p5])).toEqual([
+      { file: F('a', U1), session: U1 },
+      { file: F('b', U2), session: U2 },
+      { file: F('a', U1), session: U1 },
+      { file: F('b', U2), session: U2 },
+      { file: F('a', U1), session: U1 }
+    ])
+    expect(calls).toEqual({ census: 2, files: 1, headers: 1 })
+    expect(maxActive).toBe(1) // real awaited bound: c2 never overlaps c1 or a second scan
+  })
+
   it('fails closed when the record carries no usable machine wall', async () => {
     const { exec } = stub({ census: H + S(4242, { wall: '-' }) + T(1, 1) })
     // NaN wall => no startedAt either: the row is incomplete metadata.
@@ -405,7 +726,7 @@ describe('createCmdCore', () => {
     expect(r1).toEqual({ file: F('a', U1), session: U1 })
     expect(r2).toEqual({ file: F('b', U2), session: U2 })
     expect(r3).toEqual({ unavailable: 'target' })
-    expect(calls).toEqual({ census: 1, files: 1, headers: 1 }) // ONE machine snapshot across panes
+    expect(calls).toEqual({ census: 2, files: 1, headers: 1 }) // ONE machine snapshot across panes: c1 + collection + c2
   })
 
   it('refreshes after the TTL and clears location on failure without storms', async () => {
@@ -421,22 +742,22 @@ describe('createCmdCore', () => {
     expect(await c.locate(d)).toEqual({ file: F('a', U1), session: U1 })
     cl.advance(500)
     expect(await c.locate(d)).toEqual({ file: F('a', U1), session: U1 }) // same window: no refetch
-    expect(calls.census).toBe(1)
+    expect(calls.census).toBe(2) // c1 + c2 inside one window
     cl.advance(1000) // past the ~1s TTL
     // The pid was reused: a NEW generation in another cwd claims it — the
     // fresh census, never a cached by-pid answer, decides.
     o.census = H + S(4242, { ticks: '12400', cwd: OTHER }) + T(1, 1)
     expect(await c.locate(d)).toEqual({ file: F('b', U2), session: U2 })
-    expect(calls.census).toBe(2)
+    expect(calls.census).toBe(4)
     cl.advance(1500)
     o.census = 'H 100 1767225600 0\nT 0 0 0 0\n' // machine evidence unavailable
     expect(await c.locate(d)).toEqual({ unavailable: 'incomplete' }) // never the previous file
     expect(await c.locate(d)).toEqual({ unavailable: 'incomplete' })
-    expect(calls.census).toBe(3) // the failed window is shared too: no RPC storm
+    expect(calls.census).toBe(5) // the failed window is shared too: no RPC storm
     cl.advance(1500)
     o.census = H + S(4242) + T(1, 1)
     expect(await c.locate(d)).toEqual({ file: F('a', U1), session: U1 }) // recovery refetches
-    expect(calls.census).toBe(4)
+    expect(calls.census).toBe(7)
   })
 
   it('scopes all evidence to its own machine instance', async () => {
@@ -523,7 +844,7 @@ describe('createCmdCore', () => {
     gating = false
     cl.advance(1) // settled + ttl 0 => every new call refreshes
     expect(await c.locate(d)).toEqual({ file: F('a', U1), session: U1 })
-    expect(censusCalls).toBe(2)
+    expect(censusCalls).toBe(4) // window 1: c1+c2; refreshed window: c1+c2
     // A backwards injected clock can never produce a negative-age cache hit.
     const { exec: e2, calls: c3 } = stub({ census: H + S(4242) + T(1, 1) })
     const cl3 = clock()
@@ -532,7 +853,7 @@ describe('createCmdCore', () => {
     expect(await c3i.locate(d)).toEqual({ unavailable: 'empty' }) // complete census, empty files
     cl3.set(500) // clock moved backwards: previous evidence must not count
     await c3i.locate(d)
-    expect(c3.census).toBe(2)
+    expect(c3.census).toBe(4)
   })
 
   it('clamps the TTL to the ~1s bound', async () => {
@@ -543,6 +864,6 @@ describe('createCmdCore', () => {
     await c.locate(d)
     cl.advance(1500) // beyond 1s: a 60s override must not keep it warm
     await c.locate(d)
-    expect(calls.census).toBe(2)
+    expect(calls.census).toBe(4)
   })
 })

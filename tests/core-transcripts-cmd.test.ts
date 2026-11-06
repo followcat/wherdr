@@ -65,7 +65,7 @@ describe('Command Code panes resolve via core detail and per-machine wires', () 
     expect(await t.locate(P('p1'))).toEqual({ file: F('a', U1), session: U1, guessed: true })
     expect(core.calls.get).toEqual(['t1'])
     for (const e of core.calls.exec) expect(e.hasOn).toBe(false) // never an empty machine name
-    expect([core.calls.census, core.calls.files, core.calls.headers]).toEqual([1, 1, 1])
+    expect([core.calls.census, core.calls.files, core.calls.headers]).toEqual([2, 1, 1])
   })
 
   it('scopes remote evidence to the pane machine and the exact address', async () => {
@@ -162,14 +162,14 @@ describe('Command Code panes resolve via core detail and per-machine wires', () 
     cl.advance(2000) // evidence TTL expired: a fresh census decides again
     wires.census = 'H 100 1767225600 0\nT 0 0 0 0\n' // machine evidence unavailable
     expect(await t.locate(P('p1'))).toBeNull()
-    expect(core.calls.census).toBe(2)
+    expect(core.calls.census).toBe(3) // two-census window 1 + the failed c1
     cl.advance(2000)
     // The pid was reused by a NEW generation (ticks 45000, first observed at
     // the later coherent wall 1767226900.123): the POSTOBS write the old
     // generation could claim predates this generation's own bound.
     wires.census = H + S(4242, { ticks: '45000', up: '1300.12', wall: '1767226900.123' }) + T(1, 1)
     expect(await t.locate(P('p1'))).toBeNull()
-    expect(core.calls.census).toBe(3)
+    expect(core.calls.census).toBe(5)
   })
 
   it('waits for a post-observation write on a child target, then resolves it', async () => {
@@ -291,7 +291,7 @@ describe('Command Code panes resolve via core detail and per-machine wires', () 
     expect(r3).toBeNull() // unproven root: no location, no storm
     expect(pv).toBeNull() // guarded chat can't stat the dead remote either
     expect(md).toBeInstanceOf(Error)
-    expect([core.calls.census, core.calls.files, core.calls.headers]).toEqual([1, 1, 1])
+    expect([core.calls.census, core.calls.files, core.calls.headers]).toEqual([2, 1, 1])
   })
 
   it('refuses a failed home reply and never reaches census or file select', async () => {
