@@ -106,6 +106,28 @@ older pages that held the call, so reloaded history includes its result. Only
 inline image data is shown; image paths in ATIF are never opened. Model metadata comes from that checkpoint too; model
 pickers remain v2 only.
 
+Command Code (`cmd`) terminals open in the same conversation mode: wherdr reads its
+project transcripts under `~/.commandcode/projects`, matching the format inspected at
+1.88.3 — a static target, not a live version check. Which file a pane displays follows a
+process-anchored rule: a candidate's own header must record the process's exact cwd, or
+the exact launch arguments must name it (a full session id or transcript path adds a
+candidate but never pins it), and of the candidates the unique newest one persisted after
+a conservative bound on the process's birth is shown — Linux process evidence; without
+it, with live same-folder peers, or with an ambiguous newest file, the conversation stays
+unavailable (the pane offers **View terminal**) rather than a guess: the reader never
+falls back to the parent folder's files or to a file older than the bound. A new process shows no conversation until its first persisted
+assistant write lands; an exited short-lived peer may still own the newest file; and an
+in-process `/clear` or resume that has not written yet keeps the prior eligible file
+until the next write. What the disk holds is what shows: a turn appears once Command
+Code has persisted it, and a reply still being written arrives with its next flush. Only
+inline image data is shown, and sending stays the normal terminal send. For model or
+effort pickers, launch shortcuts and permission prompts, use the Command Code terminal
+itself. Reads are bounded: a 24 MiB logical window aligned to line starts and anchored
+on what was already read (overlapping reads can transfer more than the window), remote
+chunks of at most 4 MiB, rewrite checks that sample up to 64 KiB of each watched record
+prefix rather than cover every byte, a newest span of at most 4 MiB, and caps of 4096
+watched records and 64 files.
+
 Text left unsent in Claude Code's own input box (a draft or paste never submitted, or the
 prompt Claude puts back after an interrupt) shows at the end of the conversation as
 **Not sent** once it has stayed unchanged for two seconds and the colored screen (the first

@@ -2,13 +2,14 @@
 
 [Documentation](README.md) · [Project](../README.md)
 
-Claude Code, Codex and Devin terminals open in conversation mode; any other terminal shows only its
+Claude Code, Codex, Devin and Command Code terminals open in conversation mode; any other terminal shows only its
 [terminal](terminal.md). How wherdr finds the conversation file on herdr-core is described in
 [herdr-core › Conversations](core.md#conversations).
 
-- **Conversation view**: the agent's real transcript (Claude Code, Codex and Devin), rendered as
+- **Conversation view**: the agent's real transcript (Claude Code, Codex, Devin and Command Code), rendered as
   Markdown, with grouped tool calls, images (full-screen viewer with pinch / wheel zoom and pan),
-  timestamps, search and infinite scroll back to the first message. Reading a conversation never
+  timestamps, search and scrolling through older messages (Command Code follows the bounded
+  reads described under [herdr-core › Conversations](core.md#conversations)). Reading a conversation never
   touches the terminal, so it never resizes it. A command the agent proposes (shell code block,
   or inline `! command`) can be copied without its prompt.
 - **Questions and permissions**: native questions, approvals and menus show their options; a tap

@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -35,5 +35,24 @@ describe('search in transcripts', () => {
     expect(bytes).toBeLessThanOrEqual(SEARCH_BYTES_PER_AGENT)
     const expired = await searchFile(fs, file, 'codex', '', 'elephant', Date.now() - 1)
     expect(expired).toMatchObject({ hits: [], limited: true })
+  })
+
+  it('walks past a line too large for one window instead of stalling inside it', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'hw-search-'))
+    try {
+      const file = path.join(dir, 'conversation.jsonl')
+      const early = JSON.stringify({ type: 'response_item', timestamp: '2026-09-26T11:00:00Z', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'early elephant note' }] } }) + '\n'
+      // Larger than one window: a window inside it holds no complete line —
+      // its only newline is the last byte. The walk must keep moving down.
+      const giant = JSON.stringify({ type: 'progress', blob: 'y'.repeat(300 * 1024) }) + '\n'
+      const late = JSON.stringify({ type: 'response_item', timestamp: '2026-09-26T11:01:00Z', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'neutral tail note' }] } }) + '\n'
+      writeFileSync(file, early + giant + late)
+      const result = await searchFile(localFs, file, 'codex', '', 'elephant', Date.now() + 5000)
+      expect(result.hits).toHaveLength(1)
+      expect(result.hits[0]!.offset).toBe(0)
+      expect(result.limited).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
