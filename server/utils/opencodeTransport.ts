@@ -345,16 +345,36 @@ export type OpencodeDiscovery =
 export const HELPER_ERRORS = new Set(['not_running', 'state_invalid', 'url_unsafe', 'unsupported',
   'credentials', 'unreachable', 'auth', 'reply_invalid', 'helper_error'])
 export const REPLY_LIMIT = 8192
+// The largest reply any fixed helper may emit: the chunk envelope carries at
+// most one 4 MiB piece as base64 plus its fixed fields.
+export const CHUNK_REPLY_LIMIT = 4 * Math.ceil(4 * 1024 * 1024 / 3) + 256
 const VERSION_OK = /^2\.\d+(\.\d+)?$/
 export const SERVER_OK = /^[a-f0-9]{32}$/
+export const SESSION_OK = /^[0-9A-Za-z_-]{1,128}$/
+export const CURSOR_OK = /^[\x21-\x7e]{1,256}$/
+export const FINGERPRINT_OK = /^[a-f0-9]{64}$/
+// Snapshots stay under the helper's fixed 24 MiB raw/canonical ceiling.
+export const READ_LIMIT = 24 * 1024 * 1024
+
+// The fixed read target shared by the metadata and chunk requests: a session
+// or page op, an ASCII session id and an optional native page cursor only;
+// a cursor on a session op, or a null/malformed one, is invalid. Callers keep
+// their own allowed fields and extra descriptor checks on top.
+export const validReadTarget = (request: Record<string, unknown>) =>
+  (request.op === 'session' || request.op === 'page')
+  && typeof request.session === 'string' && SESSION_OK.test(request.session)
+  && (request.cursor === undefined || (request.op === 'page' && typeof request.cursor === 'string' && CURSOR_OK.test(request.cursor)))
 
 export const validHome = (home: string) => home.startsWith('/') && !home.includes('\0') && Buffer.byteLength(home, 'utf8') <= 1024
 export const helperTimeout = (v?: number) => v === undefined ? 15000 : Number.isFinite(v) ? Math.min(Math.max(v, 1), 30000) : 15000
 
 // The bound is on the bytes received, before any decode or parse; a reply
 // must be one complete JSON envelope carrying exactly its allowed fields.
-export function replyObject(r: ExecResult): Record<string, unknown> | null {
-  if (r.stdout.length > REPLY_LIMIT) return null
+// A caller may bound a differently shaped reply (the chunk envelope) with an
+// explicit positive integer no wider than the fixed chunk ceiling: anything
+// else (a fraction, zero, an unbounded value) is refused outright.
+export function replyObject(r: ExecResult, limit: number = REPLY_LIMIT): Record<string, unknown> | null {
+  if (!Number.isSafeInteger(limit) || limit <= 0 || limit > CHUNK_REPLY_LIMIT || r.stdout.length > limit) return null
   let out: unknown
   try { out = JSON.parse(r.stdout.toString('utf8').trim()) } catch { return null }
   return out && typeof out === 'object' && !Array.isArray(out) ? out as Record<string, unknown> : null

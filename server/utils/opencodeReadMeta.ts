@@ -5,8 +5,8 @@
 // helper's exact reply envelope before use; home, timeout, reply and
 // transport-failure validation are shared with discovery, never duplicated.
 import type { ShellExec } from './fsx'
-import { HELPER_ERRORS, OPENCODE_META, REPLY_LIMIT, SERVER_OK,
-  failure, helperTimeout, replyObject, validHome } from './opencodeTransport'
+import { FINGERPRINT_OK, HELPER_ERRORS, OPENCODE_META, READ_LIMIT, REPLY_LIMIT, SERVER_OK,
+  failure, helperTimeout, replyObject, validHome, validReadTarget } from './opencodeTransport'
 
 export type OpencodeReadMeta =
   | { ok: true, server: string, fingerprint: string, size: number, unchanged: boolean }
@@ -14,10 +14,6 @@ export type OpencodeReadMeta =
   | { ok: false, error: string }
 
 const META_ERRORS = new Set([...Array.from(HELPER_ERRORS), 'invalid_request', 'too_large'])
-const READ_LIMIT = 24 * 1024 * 1024
-const FINGERPRINT_OK = /^[a-f0-9]{64}$/
-const SESSION_OK = /^[0-9A-Za-z_-]{1,128}$/
-const CURSOR_OK = /^[\x21-\x7e]{1,256}$/
 
 export async function opencodeReadMeta(exec: ShellExec, home: string, request: Record<string, unknown>, opts: { timeoutMs?: number } = {}): Promise<OpencodeReadMeta> {
   if (!validHome(home)) {
@@ -27,10 +23,7 @@ export async function opencodeReadMeta(exec: ShellExec, home: string, request: R
   // refused before anything is sent to the machine.
   const keys = request && typeof request === 'object' && !Array.isArray(request) ? Object.keys(request) : null
   if (!keys || keys.some(k => !['op', 'session', 'cursor', 'expect'].includes(k))
-    || (request.op !== 'session' && request.op !== 'page')
-    || typeof request.session !== 'string' || !SESSION_OK.test(request.session)
-    || (request.cursor !== undefined && request.op !== 'page')
-    || (request.cursor !== undefined && (typeof request.cursor !== 'string' || !CURSOR_OK.test(request.cursor)))
+    || !validReadTarget(request)
     || (request.expect !== undefined && (typeof request.expect !== 'string' || !FINGERPRINT_OK.test(request.expect)))) {
     return { ok: false, error: 'invalid_request' }
   }
