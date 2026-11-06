@@ -1431,7 +1431,32 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   const genSeen = new Map<string, { state: string, at: number }>()
   const firstSums = new Map<string, Promise<string | null>>()
   const sumKey = (file: string, size: number, gen: string) => `${file}|${size}|${gen}`
-  async function settledGen(file: string, st: { size: number, mtimeMs: number }, gen: string) {
+  // Command Code transcripts grow without bound: their continuity evidence
+  // is the head and tail 64 KiB windows of the claimed prefix — one read
+  // of the whole claim when they touch (≤ 128 KiB), two disjoint reads
+  // otherwise — hashed with its size, inode and generation, whatever
+  // st.size says, instead of a whole-file digest a multi-GiB transcript
+  // could not afford. A rewrite strictly between the windows can evade
+  // this check: it is a sample, never a whole-content proof. A failed or
+  // short sample is *unknown* — the callers treat it as changed, and there
+  // is no digest fallback. Reads go through readExact, so a generation
+  // detached while the sample is in flight fails the proof instead of
+  // minting one.
+  const FINGER_BYTES = 64 * 1024
+  async function cmdFingerprint(file: string, claim: { size: number, ino?: number, gen: string, stamp: number }): Promise<string | null> {
+    const { size, ino, gen, stamp } = claim
+    if (!Number.isSafeInteger(size) || size < 0) return null
+    const windows = size <= 2 * FINGER_BYTES ? [[0, size]] : [[0, FINGER_BYTES], [size - FINGER_BYTES, FINGER_BYTES]]
+    const hash = createHash('sha1')
+    hash.update(`${gen}|${size}|${ino ?? 0}|`)
+    for (const [start, len] of windows) {
+      const b = len ? await cmd.io.readExact(file, start!, len!, stamp) : Buffer.alloc(0)
+      if (b === null || b.length !== len) return null
+      hash.update(b)
+    }
+    return hash.digest('hex')
+  }
+  async function settledGen(file: string, st: { size: number, mtimeMs: number, ino?: number }, gen: string, stamp?: number) {
     if (Math.round(st.mtimeMs * 1000) % 1_000_000) return true // sub-second mtime: exact
     const state = `${st.size}|${gen}`
     const seen = genSeen.get(file)
@@ -1439,10 +1464,12 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     genSeen.delete(file)
     genSeen.set(file, { state, at: now() })
     if (genSeen.size > 64) genSeen.delete(genSeen.keys().next().value!)
-    if (fs.digest) {
+    const sum = stamp !== undefined
+      ? cmdFingerprint(file, { size: st.size, ino: st.ino, gen, stamp })
+      : fs.digest ? fs.digest(file, st.size).catch(() => null) : null
+    if (sum) {
       // Taken before the bottom is read: what any client reads of this
       // state comes after it.
-      const sum = fs.digest(file, st.size).catch(() => null)
       firstSums.set(sumKey(file, st.size, gen), sum)
       if (firstSums.size > 64) firstSums.delete(firstSums.keys().next().value!)
       await sum
@@ -1451,11 +1478,14 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   }
   // A client list read from a state not settled yet: is its part of the file
   // (its first `size` bytes, appends only add after them) still the same?
-  async function stillThere(file: string, prev: { size: number, gen: string }) {
-    if (!fs.digest) return true // no checksum on this machine: cannot tell
+  async function stillThere(file: string, prev: { size: number, ino: number | null, gen: string }, stamp?: number) {
+    if (stamp === undefined && !fs.digest) return true // no checksum on this machine: cannot tell
     const before = await firstSums.get(sumKey(file, prev.size, prev.gen))
     if (!before) return false // forgotten (server restarted): start again to be safe
-    return await fs.digest(file, prev.size).catch(() => null) === before
+    const fresh = stamp !== undefined
+      ? await cmdFingerprint(file, { size: prev.size, ino: prev.ino ?? undefined, gen: prev.gen, stamp })
+      : await fs.digest!(file, prev.size).catch(() => null)
+    return fresh === before
   }
   const locCache = new Map<string, { at: number, loc: Loc | null, session?: string | null }>()
   const lastLoc = new Map<string, Loc>() // last file found, fallback if a lookup fails
@@ -2214,7 +2244,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     }
     const from = opts.from === undefined ? null : opts.from
     const gen = genOf(st)
-    const settled = await settledGen(loc.file, st, gen)
+    const settled = await settledGen(loc.file, st, gen, h?.stamp)
     // digests may have awaited: an "unchanged" answer must still be of this
     // generation — a replacement mid-await means the client must reset.
     if (h && !cmd.io.live(loc.file, h.stamp)) throw new Error('command code transcript generation changed')
@@ -2239,7 +2269,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       || (same && prev.ino !== null && st.ino !== undefined && prev.ino !== st.ino)
       || (same && st.size < prev.size)
       || (same && st.size === prev.size && prev.gen !== gen)
-      || (same && prev.unsettled && !await stillThere(loc.file, prev))))
+      || (same && prev.unsettled && !await stillThere(loc.file, prev, h?.stamp))))
     if (rewritten) r = await tail(loc.file, kind, st.size, gen, null, settled, st.ino, ctx)
     // `!` (unsettled) rides right after the generation where headOf finds it.
     const mark = `${fileId}:${st.size}:${from}:${gen}${settled ? '' : '!'}${h ? `~s${h.stamp}~r${cmd.reader}` : ''}`

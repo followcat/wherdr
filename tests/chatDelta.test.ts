@@ -464,6 +464,55 @@ describe('incremental re-read of a Claude transcript', () => {
     expect(r.rewritten).toBeUndefined()
     expect(r.keep).toBe(load.items!.length)
   })
+
+  // Legacy agents keep the whole-prefix digest: the bounded fingerprint is
+  // Command Code's only. Counting the actual calls pins the exact claimed
+  // sizes on the initial coarse capture and the unsettled-token validation.
+  it('still digests the exact claimed prefix for legacy settling and continuity', async () => {
+    let clock = 1_000_000
+    const digests: { file: string, len: number }[] = []
+    const remote = createShellFs(sh, { statTtlMs: 0 })
+    const floor = (st: FsStat) => ({ ...st, mtimeMs: Math.floor(st.mtimeMs / 1000) * 1000 })
+    const fs: MachineFs = {
+      ...localFs,
+      stat: async p => { const st = await remote.stat(p); return st && floor(st) },
+      statMany: async ps => (await remote.statMany(ps)).map(st => st && floor(st)),
+      digest: async (f, len) => { digests.push({ file: f, len }); return remote.digest!(f, len) },
+    }
+    const { file, call } = setup(6000, ` ${'x'.repeat(400)}`, { fs, now: () => clock })
+    const second = 1767225600
+    utimesSync(file, second + 0.5, second + 0.5)
+    const load = await call('', null, 0)
+    const size0 = statSync(file).size
+    expect(load.token).toContain('!') // whole-second mtime: unsettled
+    expect(digests).toEqual([{ file, len: size0 }])
+    // Growth only: the unsettled claim is validated against its own size.
+    clock += 200
+    appendFileSync(file, user('More') + '\n')
+    utimesSync(file, second + 0.9, second + 0.9)
+    const size1 = statSync(file).size
+    const first = await call(load.token!, load.start!, load.items!.length)
+    expect(first.rewritten).toBeUndefined()
+    expect(digests.slice(1)).toEqual([{ file, len: size1 }, { file, len: size0 }])
+    // A rewrite at the same size, inode and mtime is still the digest of the
+    // grown claim that sees it (not an anchor or a generation change).
+    writeFileSync(file, readFileSync(file, 'utf8').replace('Question 1 ', 'Answered 1 '))
+    utimesSync(file, second + 0.9, second + 0.9)
+    const r = await call(first.token!, first.start!, load.items!.length)
+    expect(r.rewritten).toBe(true)
+    expect(digests[3]).toEqual({ file, len: size1 })
+    // Once the state is seen settled, an unchanged poll takes no evidence.
+    // The held `!` token keeps naming the pre-rewrite bytes — one more
+    // claimed-prefix digest says so again; the settled token it earns then
+    // polls unchanged with zero further work.
+    clock += 2000
+    const again = await call(r.token!, first.start!, r.items!.length)
+    expect(again.rewritten).toBe(true)
+    expect(digests[4]).toEqual({ file, len: size1 })
+    const same = await call(again.token!, first.start!, again.items!.length)
+    expect(same.unchanged).toBe(true)
+    expect(digests.length).toBe(5)
+  })
 })
 
 describe('anchorOf', () => {

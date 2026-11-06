@@ -8,10 +8,12 @@ export const WATCH_SPAN = 4 * 1024 * 1024
 export const line = (id: string, out: string) =>
   JSON.stringify(results(id, [{ tool_use_id: 't1', content: out }], 10))
 
-export interface MemFile { body: Buffer, mtimeMs?: number, ino?: number, isDir?: boolean }
+// `size` overrides the stat size only: a file whose bytes are synthesized
+// per range by `onRead` can claim any size without a real allocation.
+export interface MemFile { body: Buffer, size?: number, mtimeMs?: number, ino?: number, isDir?: boolean }
 const ENOENT = () => Object.assign(new Error('no such file or directory'), { code: 'ENOENT' })
 const statOf = (f: MemFile | undefined): FsStat | null =>
-  f ? { size: f.body.length, mtimeMs: f.mtimeMs ?? 1, isFile: f.isDir !== true, isDir: f.isDir === true, ino: f.ino } : null
+  f ? { size: f.size ?? f.body.length, mtimeMs: f.mtimeMs ?? 1, isFile: f.isDir !== true, isDir: f.isDir === true, ino: f.ino } : null
 
 export interface MemIo {
   reads?: { start: number, len: number }[]

@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createTranscripts, type Loc, type TranscriptPane } from '../server/utils/transcripts'
 import type { ChatResponse } from '../shared/types'
+import type { MachineFs } from '../server/utils/fsx'
 import { defer, memFs, type MemFile, type MemIo } from './cmdStateFixture'
 import { assistant, at, J, results, sess, user } from './cmdParserFixture'
 
@@ -570,5 +571,261 @@ describe('Command Code reader', () => {
     expect(det.rewritten).toBe(true)
     expect(det.older).toBeUndefined()
     expect(stampOf(det.token)).not.toBe(stampOf(r2.token))
+  })
+})
+
+// M5: Command Code continuity evidence is a bounded head+tail fingerprint
+// of the claimed prefix (64 KiB windows, merged where they touch), never a
+// whole-file digest a multi-GiB transcript could not afford.
+describe('Command Code bounded fingerprint', () => {
+  const K = 64 * 1024
+  const BIG = 3 * 1024 * 1024 * 1024 // virtual: stat claims it, reads synthesize
+  const SEC = 1767225600000 // a whole-second mtime: the settling path
+  const located = { file: FILE, session: 's1' }
+  const mkAt = (disk: Record<string, MemFile>, io: MemIo, now: () => number, digest?: MachineFs['digest']) =>
+    createTranscripts({
+      home: '/h', herdr: noHerdr,
+      fs: digest ? { ...memFs(disk, io), digest } : memFs(disk, io),
+      now, locateCommandCode: async () => located,
+    })
+  // The ranges a bounded fingerprint of a `size`-byte claim covers: head
+  // and tail 64 KiB windows — one read of the whole claim when they touch
+  // (≤ 128 KiB), two disjoint reads otherwise.
+  const fingerWindows = (size: number): [number, number][] =>
+    size <= 2 * K ? [[0, size]] : [[0, K], [size - K, K]]
+  const fingerHit = (size: number, r: { start: number, len: number }) =>
+    fingerWindows(size).some(([s, l]) => r.start === s && r.len === l)
+  // Reads attributable to fingerprinting any of the given claims — exact
+  // claimed ranges, so ordinary tail/anchor reads can't be confused with
+  // validation. A shared window is counted once per actual read.
+  const fingerReads = (io: MemIo, ...sizes: number[]) =>
+    io.reads!.filter(r => sizes.some(s => fingerHit(s, r)))
+  // A sparse file: `size` is only claimed by stat; ranges are synthesized —
+  // `segs` at absolute offsets, `patch` byte edits on top, 'x' fill
+  // elsewhere — so growth by new segments keeps the old prefix
+  // position-stable like a real append.
+  const sparse = (size: number, mtimeMs: number, ...segs: { at: number, buf: Buffer }[]) => {
+    const patch = new Map<number, number>()
+    const file: MemFile = { body: Buffer.alloc(0), size, mtimeMs, ino: 77 }
+    const io: MemIo = {
+      reads: [],
+      onRead: (start, len) => {
+        const b = Buffer.alloc(len, 0x78)
+        for (const { at, buf } of segs) {
+          const s = Math.max(start, at), e = Math.min(start + len, at + buf.length)
+          if (e > s) buf.copy(b, s - start, s - at, e - at)
+        }
+        for (const [off, v] of patch) if (off >= start && off < start + len) b[off - start] = v
+        return b
+      },
+    }
+    return { file, io, patch, segs }
+  }
+  const tail = (...l: unknown[]) => body(...l)
+
+  it('serves a virtual 3 GiB transcript through chat — the cmd preview path — bounded, never digested', async () => {
+    let clock = 1_000_000
+    const tailBuf = tail(sess('s1'), user('u1', 'question', 1), call(), out('r1', 'result'))
+    const sp = sparse(BIG, SEC, { at: BIG - tailBuf.length, buf: tailBuf })
+    const digest = vi.fn(async () => 'x')
+    const t = mkAt({ [FILE]: sp.file }, sp.io, () => clock, digest)
+    const r1 = await t.chat(PANE, {})
+    expect(r1.items!.map(i => i.role)).toEqual(['user', 'tool'])
+    expect(r1.items!.find(i => i.toolId === 't1')).toMatchObject({ out: 'result' })
+    expect(r1.start).toBeGreaterThan(0) // the unsettled-token gate needs from > 0
+    expect(r1.token).toContain('!') // coarse whole-second state: unsettled
+    // Command Code never digests — even with fs.digest on this machine —
+    // and its capture fits the two 64 KiB windows whatever st.size claims.
+    expect(digest).not.toHaveBeenCalled()
+    const first = fingerReads(sp.io, BIG)
+    expect(first.length).toBe(2)
+    expect(first.reduce((n, r) => n + r.len, 0)).toBeLessThanOrEqual(2 * K)
+    // The reused unsettled token re-samples exactly the claimed prefix.
+    clock += 1600 // past the settling window
+    sp.io.reads!.length = 0
+    const r2 = await poll(t, r1.token, r1.start)
+    expect(r2.rewritten).toBeUndefined()
+    expect(r2.token).not.toContain('!')
+    expect(digest).not.toHaveBeenCalled()
+    const second = fingerReads(sp.io, BIG)
+    expect(second.length).toBe(2)
+    expect(second.reduce((n, r) => n + r.len, 0)).toBeLessThanOrEqual(2 * K)
+    // A settled state polled with its full settled token: zero IO at all.
+    sp.io.reads!.length = 0
+    const same = await t.chat(PANE, { since: r2.token, from: r1.start, anchor: r2.token })
+    expect(same.unchanged).toBe(true)
+    expect(sp.io.reads).toEqual([])
+    expect(digest).not.toHaveBeenCalled()
+  })
+
+  it('merges the head and tail windows where they touch — 64/128 KiB boundaries', async () => {
+    for (const size of [K, K + 1, 2 * K, 2 * K + 1]) {
+      let clock = 1_000_000
+      const tailBuf = tail(sess('s1'), user('u1', 'q', 1))
+      const sp = sparse(size, SEC, { at: size - tailBuf.length, buf: tailBuf })
+      const digest = vi.fn(async () => 'x')
+      const t = mkAt({ [FILE]: sp.file }, sp.io, () => clock, digest)
+      const r = await t.chat(PANE, {})
+      expect(r.token).toContain('!')
+      expect(digest).not.toHaveBeenCalled()
+      // The fingerprint reads lead the request (the capture is taken before
+      // the bottom is read): assert the initial ranges, not a `.some`
+      // anywhere that could match ordinary body IO.
+      const wins = fingerWindows(size)
+      expect(sp.io.reads!.slice(0, wins.length)).toEqual(wins.map(([start, len]) => ({ start, len })))
+    }
+  })
+
+  it('answers the public preview through the guarded chat on a fresh coarse 3 GiB reader', async () => {
+    let clock = 1_000_000
+    const tailBuf = tail(sess('s1'), user('u1', 'q', 1), assistant('a2', [{ type: 'text', text: 'All done' }], 5))
+    const sp = sparse(BIG, SEC, { at: BIG - tailBuf.length, buf: tailBuf })
+    const digest = vi.fn(async () => 'x')
+    const t = mkAt({ [FILE]: sp.file }, sp.io, () => clock, digest)
+    const p = await t.preview(PANE)
+    expect(p).toBe('All done')
+    expect(digest).not.toHaveBeenCalled()
+    const fr = fingerReads(sp.io, BIG)
+    expect(fr.length).toBe(2)
+    expect(fr.reduce((n, r) => n + r.len, 0)).toBeLessThanOrEqual(2 * K)
+  })
+
+  it('keeps an appended claimed prefix continuous and revalidates exactly it', async () => {
+    let clock = 1_000_000
+    const S0 = BIG // past the tail window: the reply starts > 0
+    const tailBuf = tail(sess('s1'), user('u1', 'q', 1), call(), out('r1', 'result'))
+    const sp = sparse(S0, SEC, { at: S0 - tailBuf.length, buf: tailBuf })
+    const digest = vi.fn(async () => 'x')
+    const t = mkAt({ [FILE]: sp.file }, sp.io, () => clock, digest)
+    const r1 = await t.chat(PANE, {})
+    expect(r1.token).toContain('!')
+    expect(r1.start).toBeGreaterThan(0) // positive-from continuity, per brief
+    // Append only: new bytes land after the claimed end — a real append.
+    const extra = Buffer.from(J(user('u2', 'more', 2)) + '\n')
+    const S1 = S0 + extra.length
+    sp.segs.push({ at: S0, buf: extra })
+    sp.file.size = S1
+    sp.file.mtimeMs = SEC + 1000
+    clock += 200
+    sp.io.reads!.length = 0
+    const r2 = await poll(t, r1.token, r1.start)
+    expect(r2.rewritten).toBeUndefined()
+    expect(r2.items!.map(i => i.role)).toContain('user')
+    expect(digest).not.toHaveBeenCalled()
+    // One request, two fingerprints: the grown state's capture and the OLD
+    // claim's validation — ≤ 4 bounded reads, ~256 KiB together.
+    const frs = fingerReads(sp.io, S0, S1)
+    expect(frs.length).toBeLessThanOrEqual(4)
+    expect(frs.reduce((n, r) => n + r.len, 0)).toBeLessThanOrEqual(4 * K)
+    // The old claim's tail window really was re-sampled — validation of the
+    // OLD size, not the current total — and the grown capture's tail too.
+    expect(frs.some(r => r.start === S0 - K && r.len === K)).toBe(true)
+    expect(frs.some(r => r.start === S1 - K && r.len === K)).toBe(true)
+    // A head-window edit outside any anchor, plus further growth: stat
+    // fields, inode and anchors stay consistent with a plain append — only
+    // the fingerprint can see it.
+    sp.patch.set(100, 0x21)
+    const more = Buffer.from(J(user('u3', 'again', 3)) + '\n')
+    sp.segs.push({ at: S1, buf: more })
+    sp.file.size = S1 + more.length
+    sp.file.mtimeMs = SEC + 2000
+    const r3 = await poll(t, r2.token, r2.start)
+    expect(r3.rewritten).toBe(true)
+    expect(digest).not.toHaveBeenCalled()
+  })
+
+  it('reports changed on head and tail window mutations, truncation and an inode flip', async () => {
+    for (const spot of ['head', 'tail', 'truncate', 'inode'] as const) {
+      let clock = 1_000_000
+      const tailBuf = tail(sess('s1'), user('u1', 'q', 1))
+      const sp = sparse(BIG, SEC, { at: BIG - tailBuf.length, buf: tailBuf })
+      const digest = vi.fn(async () => 'x')
+      const t = mkAt({ [FILE]: sp.file }, sp.io, () => clock, digest)
+      const r1 = await t.chat(PANE, {})
+      expect(r1.token).toContain('!')
+      // 'head' and 'tail' edit inside the sampled windows but outside the
+      // items' anchor region — the fingerprint alone can see them.
+      if (spot === 'head') sp.patch.set(100, 0x21)
+      else if (spot === 'tail') sp.patch.set(BIG - 32 * 1024, 0x21)
+      else if (spot === 'truncate') sp.file.size = BIG / 2
+      else sp.file.ino = 78
+      const r = await poll(t, r1.token, r1.start)
+      expect(r.rewritten).toBe(true)
+      expect(digest).not.toHaveBeenCalled()
+    }
+  })
+
+  it('reports changed on failed or short samples, and a failed first sample stays conservative', async () => {
+    for (const mode of ['fail', 'short', 'firstfail'] as const) {
+      let clock = 1_000_000
+      const tailBuf = tail(sess('s1'), user('u1', 'q', 1))
+      const sp = sparse(BIG, SEC, { at: BIG - tailBuf.length, buf: tailBuf })
+      // 'fail'/'short' arm after the first capture so the bad answer lands
+      // on the reused-token validation; 'firstfail' lands on the capture.
+      let armed = mode === 'firstfail'
+      const failing: MemIo = {
+        ...sp.io,
+        onRead: (start: number, len: number) => {
+          if (armed && (start === 0 || start === BIG - K)) {
+            return mode === 'short' ? Buffer.alloc(len - 1, 0x78) : Promise.reject(new Error('sample io'))
+          }
+          return sp.io.onRead!(start, len)
+        },
+      }
+      const t = mkAt({ [FILE]: sp.file }, failing, () => clock, vi.fn(async () => 'x'))
+      const r1 = await t.chat(PANE, {})
+      expect(r1.items!.length).toBeGreaterThan(0)
+      armed = true
+      clock += 1600
+      const r = await poll(t, r1.token, r1.start)
+      // Unknown evidence is never a proven match: same shape as a checksum
+      // this machine could not take — the client is told to start again.
+      expect(r.rewritten).toBe(true)
+    }
+  })
+
+  it('detects mutations even with no fs.digest on the machine at all', async () => {
+    let clock = 1_000_000
+    const tailBuf = tail(sess('s1'), user('u1', 'q', 1))
+    const sp = sparse(BIG, SEC, { at: BIG - tailBuf.length, buf: tailBuf })
+    const t = mkAt({ [FILE]: sp.file }, sp.io, () => clock) // no digest
+    const r1 = await t.chat(PANE, {})
+    sp.patch.set(100, 0x21)
+    const r = await poll(t, r1.token, r1.start)
+    expect(r.rewritten).toBe(true)
+  })
+
+  it('never publishes evidence sampled across a generation replacement', async () => {
+    let clock = 1_000_000
+    const tailBuf = tail(sess('s1'), user('u1', 'q', 1))
+    const sp = sparse(BIG, SEC, { at: BIG - tailBuf.length, buf: tailBuf })
+    const gate = defer<Buffer>()
+    const entered = defer()
+    // A's fingerprint head read is held in flight; its bytes were captured
+    // before the gate — what resolves is genuinely the old evidence.
+    let armed = true
+    const io: MemIo = {
+      reads: [],
+      onRead: (start, len) => {
+        const b = sp.io.onRead!(start, len) as Buffer
+        if (armed && start === 0 && len === K) {
+          armed = false
+          entered.resolve()
+          return gate.promise.then(() => b)
+        }
+        return b
+      },
+    }
+    const t = mkAt({ [FILE]: sp.file }, io, () => clock, vi.fn(async () => 'x'))
+    const a = t.chat(PANE, {})
+    await entered.promise
+    // A replacement lands; another caller observes it and the generation
+    // stamp moves — A's in-flight sample detaches before it resolves.
+    sp.file.ino = 78
+    sp.file.mtimeMs = SEC + 1000
+    const b = await t.chat(PANE, {})
+    expect(b.items!.length).toBeGreaterThan(0)
+    gate.resolve()
+    await expect(a).rejects.toThrow('generation changed')
   })
 })
