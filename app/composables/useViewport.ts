@@ -1,5 +1,6 @@
 // Dimensions on iPhone: keyboard, home bar, shortened page (iOS 26).
 import { sheetViewport } from '~/utils/sheetViewport'
+import { provesHardwareKeyboard } from '~/utils/layoutMode'
 import { hardwareKeyboard } from '~/composables/useHerdr'
 
 // Clavier ouvert : hauteur et position de la zone visible au-dessus.
@@ -8,6 +9,15 @@ export const vvHeight = ref(0)
 export const vvTop = ref(0)
 // Incremented on each dimension change (the terminal readjusts on it).
 export const layoutTick = ref(0)
+
+// Hardware-keyboard proof: a detector key only counts while no soft keyboard
+// is showing — some soft keyboards do send arrows, Escape and Tab, so kbOpen
+// gates it here where that state lives. While open, a key neither proves nor
+// clears; an existing proof is untouched (forgotten by a touch or a prompt
+// blur — useHerdr owns the proof itself).
+if (import.meta.client) {
+  window.addEventListener('keydown', (e) => { if (!kbOpen.value && provesHardwareKeyboard(e)) hardwareKeyboard.value = true }, true)
+}
 
 const fullH = { orient: '', h: 0 }
 
@@ -26,8 +36,11 @@ export function layout() {
   fullH.h = Math.max(fullH.h, h, window.innerHeight)
   const kb = fullH.h - h > 120
   kbOpen.value = kb
-  // The on-screen keyboard is showing: no hardware keyboard in use.
-  if (kb) hardwareKeyboard.value = false
+  // A shrink this large only resembles a soft-keyboard open — it cannot be
+  // told apart from one here, so geometry must stay bookkeeping and never
+  // input evidence: hardwareKeyboard is forged and forgotten by input events
+  // alone (a kbOpen-gated key here proves; a touch or a prompt blur in
+  // useHerdr forgets).
   vvHeight.value = h
   vvTop.value = top
   document.body.classList.toggle('kb', kb)

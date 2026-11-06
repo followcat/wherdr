@@ -7,12 +7,12 @@ import { useRouter } from '#app'
 import SettingsView from '~/components/SettingsView.vue'
 import ShortcutsSheet from '~/components/ShortcutsSheet.vue'
 import ShortcutsReference from '~/components/ShortcutsReference.vue'
-import { coarse, defaultViewMode, desk, encryptedText, reducedMotion, smoothTouchScrolling, typewriterSpeed } from '~/composables/useHerdr'
+import { coarse, defaultViewMode, desk, encryptedText, reducedMotion, smoothTouchScrolling, typewriterSpeed, uiScale } from '~/composables/useHerdr'
 
 const global = { stubs: { UTooltip: { template: '<span><slot /></span>' } } }
 const original = {
   desk: desk.value, coarse: coarse.value, mode: defaultViewMode.value, smooth: smoothTouchScrolling.value,
-  encrypted: encryptedText.value, motion: reducedMotion.value, speed: typewriterSpeed.value,
+  encrypted: encryptedText.value, motion: reducedMotion.value, speed: typewriterSpeed.value, scale: uiScale.value,
 }
 afterEach(async () => {
   vi.restoreAllMocks()
@@ -24,8 +24,10 @@ afterEach(async () => {
   reducedMotion.value = original.motion
   typewriterSpeed.value = original.speed
   smoothTouchScrolling.value = original.smooth
+  uiScale.value = original.scale
   await nextTick()
   localStorage.removeItem('smoothTouchScrolling')
+  localStorage.removeItem('uiScale')
 })
 
 for (const device of ['desktop', 'phone', 'tablet']) {
@@ -66,7 +68,12 @@ it('shows the same reference component in Settings and the shortcut sheet', asyn
   const sheet = await mountSuspended(ShortcutsSheet, { global: { stubs: { AppSheet: { template: '<div><slot /></div>' } } } })
   try {
     expect(w.getComponent(ShortcutsReference).isVisible()).toBe(true)
-    expect(w.getComponent(ShortcutsReference).findAll('.shortcut-row')).toHaveLength(17)
+    const rows = w.getComponent(ShortcutsReference).findAll('.shortcut-row')
+    expect(rows).toHaveLength(18)
+    // The hardware Alt+←/→ tab step is a supported v3 row, not filtered v2-only.
+    const tabRow = rows.find(r => r.text().includes('tab of this space'))!
+    expect(tabRow.find('dt').text()).toBe('Previous / next tab of this space')
+    expect(tabRow.findAll('kbd').map(k => k.text())).toEqual(['Alt', '←', 'Alt', '→'])
     expect(sheet.findComponent(ShortcutsReference).exists()).toBe(true)
   } finally { w.unmount(); sheet.unmount() }
 })
@@ -79,6 +86,49 @@ it('redirects the former Desktop query to Conversation', async () => {
     // The desktop layout can render a fallback before the redirect finishes.
     await vi.waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/settings?section=conversation'))
     await vi.waitFor(() => expect(w.findAll('.settings-group').find(g => g.text().includes('Default pane view'))!.isVisible()).toBe(true))
+  } finally { w.unmount() }
+})
+
+it('Desktop: Interface size is a device choice, applied as data-ui-scale and kept on remount', async () => {
+  desk.value = true
+  uiScale.value = 'lg'
+  const mount = () => mountSuspended(SettingsView, { route: '/settings?section=appearance', global })
+  let w = await mount()
+  const group = () => w.findAll('.settings-group').find(g => g.text().includes('Interface size'))!
+  try {
+    expect(group().isVisible()).toBe(true)
+    const radios = group().findAll('[role="radio"]')
+    expect(radios).toHaveLength(2)
+    // Nuxt UI renders each item's label/description next to the radio control.
+    expect(group().text()).toContain('Standard')
+    expect(group().text()).toContain('Large')
+    expect(group().text()).toContain('Saved on this device')
+    // Under Large the Content width copy says what still differs — the
+    // terminal's fitted cap — while the reading column is 1500 px for both.
+    const widthGroup = () => w.findAll('.settings-group').find(g => g.text().includes('Content width'))!
+    expect(widthGroup().text()).toContain('1500 px')
+    expect(widthGroup().text()).toContain('terminal fitted to 760 px')
+    expect(widthGroup().text()).toContain('terminal fitted to 1100 px')
+    await radios[0]!.trigger('click')
+    expect(uiScale.value).toBe('md')
+    expect(localStorage.getItem('uiScale')).toBe('md')
+    expect(document.documentElement.dataset.uiScale).toBe('md')
+    // Back at Standard the fitted caps are the column widths again.
+    expect(widthGroup().text()).toContain('760 px column')
+    expect(widthGroup().text()).toContain('Up to 1100 px')
+    w.unmount()
+    w = await mount()
+    expect(group().findAll('[role="radio"]')[0]!.attributes('aria-checked')).toBe('true')
+    expect(localStorage.getItem('uiScale')).toBe('md')
+  } finally { w.unmount() }
+})
+
+it('hides Interface size outside the computer layout', async () => {
+  desk.value = false
+  const w = await mountSuspended(SettingsView, { route: '/settings?section=appearance', global })
+  try {
+    expect(w.findAll('.settings-group').some(g => g.text().includes('Interface size'))).toBe(false)
+    expect(w.findAll('.settings-group').some(g => g.text().includes('Content width'))).toBe(false)
   } finally { w.unmount() }
 })
 

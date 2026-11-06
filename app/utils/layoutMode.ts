@@ -52,8 +52,9 @@ export function listMode(o: { desk: boolean, slim: boolean, collapsed: boolean, 
   return o.collapsed ? 'rail' : 'docked'
 }
 
-// Proof of a hardware keyboard: keys an on-screen keyboard (docked or
-// floating) does not send — arrows, Escape, Tab, or a ⌘ / Ctrl / Alt chord.
+// Proof of a hardware keyboard: detector keys — arrows, Escape, Tab, or a
+// ⌘ / Ctrl / Alt chord. Some soft keyboards do send these, so a key only
+// counts while no on-screen keyboard is open (the kbOpen gate, useViewport).
 export function provesHardwareKeyboard(e: { key: string, metaKey: boolean, ctrlKey: boolean, altKey: boolean }): boolean {
   if (e.metaKey || e.ctrlKey || e.altKey) return true
   return ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Escape', 'Tab'].includes(e.key)

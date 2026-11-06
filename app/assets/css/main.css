@@ -963,6 +963,9 @@ body.short-bottom { --safe-bottom: 0px; }
 #term { position: absolute; inset: 6px 4px 0 6px; z-index: 0; }
 #touch { position: absolute; inset: 0; z-index: 1; touch-action: none; pointer-events: none; }
 @media (hover: none) and (pointer: coarse) { #touch { pointer-events: auto; } }
+/* The native selection surface needs selectable ancestors on Android too. */
+#termWrap.copying-screen { user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; }
+.agent-main:has(.copying-screen), #agent:has(.copying-screen), .cell-view:has(.copying-screen) { user-select: text; -webkit-user-select: text; }
 .term-loading { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
 .term-loading.static { position: static; padding: 30px; }
 .xterm .xterm-viewport { background: transparent !important; overflow-y: hidden !important; }
@@ -2811,6 +2814,30 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
   .menu button:hover, .dir-list button:hover { background: var(--surface-2); }
 
   ol[data-slot="viewport"] { top: 16px !important; }
+
+  /* Settings › Appearance › Interface size › Large: a wider reading column and
+     ~15% bigger text on the main surfaces (the terminal's own text scales in
+     code — useTerminal's scaledTermFont). Font sizes only: paddings and
+     layouts stay untouched. */
+  :root[data-ui-scale="lg"] { --side: 300px; }
+  /* Large grows the reading column — except over Content width › Full
+     width, whose (same-specificity) --read is defined above and wins on
+     document order; keep full's explicit choice by scoping ours out. */
+  :root[data-ui-scale="lg"]:not([data-content-width="full"]) { --read: min(1500px, 100% - 48px); }
+  :root[data-ui-scale="lg"] .md-body { font-size: 16.5px; }
+  :root[data-ui-scale="lg"] .md-body pre { font-size: 14px; }
+  :root[data-ui-scale="lg"] .prompt-input { font-size: 16px; }
+  :root[data-ui-scale="lg"] .agent-title { font-size: 17.5px; }
+  :root[data-ui-scale="lg"] .agent-meta .pill { font-size: 12px; }
+  :root[data-ui-scale="lg"] .agent-meta { max-height: 18px; }
+  :root[data-ui-scale="lg"] .tab-chip { font-size: 12.5px; }
+  :root[data-ui-scale="lg"] .card .card-title { font-size: 16.5px; }
+  :root[data-ui-scale="lg"] .card.compact .card-title { font-size: 15px; }
+  :root[data-ui-scale="lg"] .group-title { font-size: 11.5px; }
+  :root[data-ui-scale="lg"] .stat b { font-size: 34px; }
+  :root[data-ui-scale="lg"] .composer-status { font-size: 12px; }
+  :root[data-ui-scale="lg"] .msg-time { font-size: 11.5px; }
+  :root[data-ui-scale="lg"] .settings-body { font-size: 16px; }
 }
 
 .sheet-btn { padding: 11px 16px; font: 600 11.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; }

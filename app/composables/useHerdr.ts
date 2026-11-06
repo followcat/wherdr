@@ -1,7 +1,7 @@
 // Global app state: live agents (WebSocket /ws/events), device
 // settings, lock, API calls. Module singletons (client app).
 import { createSocketProbe } from '~/utils/socketProbe'
-import { DESK_QUERY, SLIM_QUERY, TABLET_QUERY, provesHardwareKeyboard } from '~/utils/layoutMode'
+import { DESK_QUERY, SLIM_QUERY, TABLET_QUERY } from '~/utils/layoutMode'
 import type { AppConfig, AuthStatus, HerdrState, MachineConfig, MachineInfo, Pane, Quotas } from '#shared/types'
 import { LOCAL, splitId } from '#shared/ids'
 import { clearOffline, readHome, saveHome } from '~/utils/offlineCache'
@@ -18,6 +18,7 @@ import { checkNewVersionOnWake } from './useAppVersion'
 import { onceEvery } from '~/utils/onceEvery'
 import { keepIfSame } from '~/utils/keepIfSame'
 import { migrateContentWidth } from '~/utils/contentWidth'
+import { readUiScale, type UiScale } from '~/utils/uiScale'
 import { readQuotaDisplay } from '~/utils/quotas'
 import { readShowShells } from '~/utils/terminalVisibility'
 import { readHomeGrouping } from '~/utils/homeGrouping'
@@ -33,6 +34,7 @@ import type { SettingsMap } from '#shared/settings'
 import type { QuotaDisplay } from '~/utils/quotas'
 import type { ContentWidth } from '~/utils/contentWidth'
 import { PHONE_KEY_ORDER_KEY, readKeyOrder, writeKeyOrder, type PhoneKeyId } from '~/utils/keybarOrder'
+import { smoothTouchDefault } from '~/utils/smoothTouch'
 
 const ls = {
   get(k: string) {
@@ -98,6 +100,12 @@ watch(contentWidth, (v) => {
     document.documentElement.dataset.contentWidth = v
   }
 }, { immediate: true })
+// Interface size on a computer; applied as data-ui-scale, desk media only.
+export const uiScale = ref<UiScale>(readUiScale(ls.get('uiScale')))
+watch(uiScale, (v) => {
+  ls.set('uiScale', v)
+  if (import.meta.client) document.documentElement.dataset.uiScale = v
+}, { immediate: true })
 // Independent settings; migration of the old modes on first read.
 const savedTyping = parseTypingSettings(ls.get('typewriterSpeed'), ls.get('encryptedText'), ls.get('typewriterMode'), ls.get('typewriter'))
 // Writes the new keys right at migration so as no longer to depend on the
@@ -136,8 +144,11 @@ watch(dictationEngine, v => ls.set(DICTATION_KEY, v))
 export const homeQuotas = ref<Quotas | null>(null)
 export const fontSize = ref(Number(ls.get('fontSize')) || 12)
 watch(fontSize, v => ls.set('fontSize', String(v)))
-// Experimental touch physics is a device rendering preference, like the renderer.
-export const smoothTouchScrolling = ref(ls.get('smoothTouchScrolling') === '1')
+// Touch physics is a device rendering preference, like the renderer: on for
+// coarse-pointer devices that scroll with a finger, off on computers; a saved
+// '0'/'1' always wins.
+const coarsePointer = typeof matchMedia !== 'undefined' && matchMedia('(hover: none) and (pointer: coarse)').matches
+export const smoothTouchScrolling = ref(smoothTouchDefault(ls.get('smoothTouchScrolling'), coarsePointer))
 watch(smoothTouchScrolling, v => ls.set('smoothTouchScrolling', v ? '1' : '0'))
 
 export const terminalRenderer = ref(parseTerminalRenderer(ls.get('terminalRenderer')))
@@ -178,7 +189,7 @@ export function refreshTerminalRenderStatus() {
 }
 if (import.meta.client) {
   window.addEventListener('storage', (event) => {
-    if (event.key === 'smoothTouchScrolling') smoothTouchScrolling.value = event.newValue === '1'
+    if (event.key === 'smoothTouchScrolling') smoothTouchScrolling.value = smoothTouchDefault(event.newValue, coarsePointer)
     if (event.key === PHONE_KEY_ORDER_KEY) phoneKeyOrder.value = readKeyOrder(event.newValue)
     if (event.key === 'terminalRenderer') {
       terminalRenderer.value = parseTerminalRenderer(event.newValue)
@@ -230,16 +241,16 @@ export const slim = ref(false)
 // Slim: the list opened over the agent (HomeView; backdrop in app.vue).
 export const listDrawer = ref(false)
 // Tablet (shortest side ≥ 700 px, or a touch tablet's screen while the
-// on-screen keyboard shortens the window) and hardware keyboard seen (a key an
-// on-screen keyboard does not send); forgotten on a touch, when the message
-// field loses focus, or when the on-screen keyboard shows.
+// on-screen keyboard shortens the window) and hardware keyboard seen (a
+// detector key while no on-screen keyboard is open — some soft keyboards do
+// send arrows; the gate lives in useViewport); forgotten on a touch or when
+// the message field loses focus.
 export const tablet = ref(false)
 export const hardwareKeyboard = ref(false)
 if (import.meta.client) {
   const tq = matchMedia(TABLET_QUERY)
   tablet.value = tq.matches
   tq.addEventListener('change', () => { tablet.value = tq.matches })
-  window.addEventListener('keydown', (e) => { if (provesHardwareKeyboard(e)) hardwareKeyboard.value = true }, true)
   // The proof only covers the current typing: a touch (the on-screen keyboard,
   // possibly floating, may be next) or leaving the message field forgets it.
   const forget = () => { hardwareKeyboard.value = false }

@@ -60,7 +60,7 @@ jobs:
         run: npx playwright test --project=chromium-phone
 
       # Safari's engine: catches what iOS rejects and Chromium accepts (the /ws/events
-      # handshake). Only tests/e2e/core-smoke.spec.ts runs here (playwright.config.ts).
+      # handshake). The project's spec list lives in playwright.config.ts.
       - name: Install WebKit
         run: npx playwright install --with-deps webkit
 

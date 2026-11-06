@@ -69,13 +69,17 @@ Playwright's fake clock past it (`page.clock.install()` before the page opens, t
 `npx vitest run` runs the unit and component projects together. For the end-to-end tests,
 install the browsers once with `npx playwright install --with-deps chromium webkit`, build, then run
 `npx playwright test --project=chromium-phone` (every spec); `npx playwright test tests/e2e/<name>.spec.ts --project=chromium-phone`
-runs one spec. The `webkit-phone` project (Safari's engine, iPhone 13) runs only
-`tests/e2e/core-smoke.spec.ts`, which checks that `/ws/events` opens and sends a state frame,
-for iOS-only breakage: `npx playwright test --project=webkit-phone`. They never touch a real herdr-core session.
+runs one spec. The `webkit-phone` project (Safari's engine, iPhone 13) runs the core smoke
+(`tests/e2e/core-smoke.spec.ts`, which checks that `/ws/events` opens and sends a state frame)
+plus the terminal journeys `terminal-copy.spec.ts`, `terminal-keys.spec.ts`,
+`terminal-touch.spec.ts` and the phone chrome journey `phone-terminal-ux.spec.ts`,
+for iOS-only breakage: `npx playwright test --project=webkit-phone`.
+They never touch a real herdr-core session.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs the type check, all the Vitest tests, the leak
 check (gitleaks only: your `.leak-patterns` stays local), the build and the end-to-end specs on
-every pull request and push to v3: all specs on Chromium, then the core smoke on WebKit. CI retries a failed e2e test once (it then shows as flaky);
+every pull request and push to v3: all specs on Chromium, then the WebKit project's specs
+(`testMatch` in `playwright.config.ts`). CI retries a failed e2e test once (it then shows as flaky);
 local runs never retry. The v2 suite (fake Herdr, the full WebKit and desktop projects, nightly
 runs) lives on develop and main.
 
@@ -168,7 +172,7 @@ both change the account's default model. wherdr itself only uses "this session" 
   swallow the next shortcut. Composition output and paste clear virtual modifiers and
   stay text; ordinary keys still consume one-shot modifiers and preserve real Shift.
   Keybar layout changes must preserve input focus and these contracts. The browser
-  regressions are in `tests/e2e/terminal-ime.spec.ts` and `terminal-modifiers.spec.ts`.
+  regressions are in `tests/e2e/terminal-keys.spec.ts`.
 - Server code lives in `server/` (Nitro), shared types and pure helpers in `shared/`, the
   client in `app/`.
 

@@ -1,25 +1,22 @@
 type Point = { x: number, y: number }
 
-// Predictive visual offset: the screen follows the finger 1:1 while sent
-// scrolls wait for their frames (no local scrollback, history lives in
-// Herdr). Clamp at one row so a slow network never drags the grid out of its frame.
-export function touchPreviewOffset(px: number, rowHeight: number) {
-  const h = Math.max(1, rowHeight)
-  return Math.max(-h, Math.min(h, px))
-}
-
 // Touch-only physics: preserve fractional pixels, lock the drag direction,
 // and keep momentum bounded. Scrolling never becomes arrow keys.
-export function createTerminalTouch({ vertical, momentum, horizontal, canHorizontal, maxMomentum,
+export function createTerminalTouch({ vertical, momentum, horizontal, canHorizontal, maxMomentum, dragStart,
   now = () => performance.now(), frame = fn => requestAnimationFrame(fn), cancelFrame = id => cancelAnimationFrame(id),
 }: {
   vertical: (pixels: number, point: Point) => void
-  // Momentum ticks may take a different path than the finger: nothing follows
-  // a finger anymore, so fabricated preview only shows as an afterimage.
-  momentum?: (pixels: number, point: Point) => void
+  // Momentum ticks take the local scroll path; returning false ends the
+  // glide early (e.g. the viewport reached the end of its scrollback).
+  momentum?: (pixels: number, point: Point) => boolean | void
   horizontal: (pixels: number) => void
   canHorizontal: () => boolean
-  maxMomentum: () => number
+  // Called with the release velocity (px/ms) so a harder flick may
+  // be allowed a longer glide.
+  maxMomentum: (speed: number) => number
+  // Axis lock means a drag exists — however small the total displacement ends
+  // up — so a held finger can no longer become a long press.
+  dragStart?: () => void
   now?: () => number
   frame?: (fn: FrameRequestCallback) => number
   cancelFrame?: (id: number) => void
@@ -49,6 +46,7 @@ export function createTerminalTouch({ vertical, momentum, horizontal, canHorizon
         const totalX = x - start.x, totalY = y - start.y
         if (Math.hypot(totalX, totalY) < 5) return
         axis = canHorizontal() && Math.abs(totalX) > Math.abs(totalY) * 1.25 ? 'x' : 'y'
+        dragStart?.()
       }
       if (axis === 'x') horizontal(dx)
       else {
@@ -64,9 +62,11 @@ export function createTerminalTouch({ vertical, momentum, horizontal, canHorizon
       last = point
       at = t
     },
-    end() {
+    end(point?: Point) {
       if (!start) return false
-      const tap = axis === null
+      // Chrome can coalesce a sub-slop drag into touchend without delivering
+      // touchmove. Check its final displacement before treating it as a tap.
+      const tap = axis === null && (!point || Math.hypot(point.x - start.x, point.y - start.y) < 5)
       start = null
       const held = now() - at
       if (axis !== 'y' || held > 90) return tap
@@ -76,15 +76,25 @@ export function createTerminalTouch({ vertical, momentum, horizontal, canHorizon
       if (Math.abs(speed) < .16) return tap
       const began = now()
       let previous = began, distance = 0
-      const limit = Math.max(0, maxMomentum())
+      const limit = Math.max(0, maxMomentum(speed))
       const step: FrameRequestCallback = () => {
         raf = 0
-        const t = now(), dt = Math.min(40, Math.max(0, t - previous))
+        // Integrate the real elapsed interval — a 50ms/20Hz frame covers its
+        // full 50ms of decay. The 750ms lifetime bound below is what keeps a
+        // pathological gap from dumping unbounded distance in one frame.
+        const t = now(), dt = Math.max(0, t - previous)
         previous = t
-        speed *= Math.exp(-dt / 170)
-        const pixels = Math.sign(speed) * Math.min(Math.abs(speed * dt), Math.max(0, limit - distance))
+        // Analytic decay over the whole frame interval: the integrated
+        // distance is speed·τ·(1−e^(−dt/τ)), identical at any refresh rate.
+        // A per-frame Euler rectangle under-counts low rates instead.
+        const decay = Math.exp(-dt / 240)
+        const pixels = Math.sign(speed) * Math.min(Math.abs(speed) * 240 * (1 - decay), Math.max(0, limit - distance))
+        speed *= decay
         distance += Math.abs(pixels)
-        if (pixels) (momentum ?? vertical)(pixels, last)
+        if (pixels) {
+          if (momentum) { if (momentum(pixels, last) === false) speed = 0 }
+          else vertical(pixels, last)
+        }
         if (Math.abs(speed) > .045 && t - began < 750 && distance < limit) raf = frame(step)
       }
       raf = frame(step)

@@ -64,6 +64,7 @@ watch(() => (core && live.value && pageVisible.value && pane.value?.agent && pan
 }, { immediate: true })
 const compactPhone = computed(() => !desk.value && !tablet.value && !props.cell)
 const phoneKeysOpen = ref(false)
+const terminalCopying = ref(false)
 watch(() => props.paneId, () => { phoneKeysOpen.value = false })
 // Remember this optional hint for the same agent on this device. A different
 // agent in a reused pane gets its own choice; hiding it never hides errors.
@@ -115,11 +116,18 @@ const mode = computed<PaneViewMode | null>(() => {
 })
 
 const banner = shallowRef<Banner | null>(null)
+// The one input predicate, shared with the terminal-drop path below: input
+// (data, keys, paste, mouse, files) is refused while the surface is frozen.
+const inputAllowed = () => live.value && !terminalCopying.value
+// Setup-owned lifecycle flag: every async continuation of a drop checks it —
+// a parked upload or send never outlives the view.
+const dead = ref(false)
+onUnmounted(() => { dead.value = true })
 const ctl = createTerminal(props.paneId, {
   setBanner: (b) => { banner.value = b },
   hasBanner: () => Boolean(banner.value),
   fill: () => Boolean(props.cell),
-  input: () => live.value,
+  input: inputAllowed,
 })
 const chatRef = ref<{ scrollToEnd: (force: boolean) => void, reload: () => void, focusSearch: () => void, gotoUnanswered: () => void } | null>(null)
 // Questions of the agent's last message the draft does not answer yet (ChatView): the composer's reminder.
@@ -291,17 +299,55 @@ const canAttachTerminal = computed(() => terminalAttachment({
   available: Boolean(pane.value && eventsOpen.value && !offlineView.value && !machineDown.value && !paneStale(pane.value)),
 }))
 
+// Resolves once the shared input gate is open for the same target pane —
+// false when the pane left the state, the view switched panes or unmounted
+// first, so nothing stale is ever sent.
+function inputOpen(target: string): Promise<boolean> {
+  const bad = () => dead.value || props.paneId !== target || !pane.value
+  if (!bad() && inputAllowed()) return Promise.resolve(true)
+  if (bad()) return Promise.resolve(false)
+  return new Promise<boolean>((resolve) => {
+    const stop = watch([inputAllowed, () => props.paneId, () => dead.value, () => !pane.value], () => {
+      if (bad()) { stop(); resolve(false) }
+      else if (inputAllowed()) { stop(); resolve(true) }
+    })
+  })
+}
+
 async function sendFiles(files: File[]) {
+  const target = props.paneId
   if (!canAttachTerminal.value || !pane.value) return
+  // A drop on the frozen surface is refused before any upload starts, like a
+  // file given to the inert composer (onDrop guards the same refusal).
+  if (!inputAllowed()) return toast(t('Finish copying before dropping files'), true)
+  const bad = () => dead.value || props.paneId !== target || !pane.value
   for (const file of files) {
+    // Every file re-waits on the gate and the target pane before uploading —
+    // and re-checks them live in the same synchronous continuation that calls
+    // fetch: a resolved wait is only a snapshot, so a gate that closed in
+    // between must keep waiting, never upload into the freeze.
+    for (;;) {
+      if (!(await inputOpen(target)) || bad()) return
+      if (inputAllowed() && !bad()) break
+    }
     try {
       const ext = file.name.includes('.') ? file.name.split('.').pop() || '' : ''
-      const r = await fetch(`/api/file?pane=${encodeURIComponent(props.paneId)}&ext=${encodeURIComponent(ext)}`, {
+      const r = await fetch(`/api/file?pane=${encodeURIComponent(target)}&ext=${encodeURIComponent(ext)}`, {
         method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: file,
       })
       const data = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(t(data.error || `HTTP ${r.status}`))
-      onSent(await sendMessage(pane.value, props.paneId, data.path))
+      // Same live check immediately before sendMessage, again in the same
+      // synchronous continuation: an upload that finishes mid-freeze keeps
+      // its result parked until Done (the drop already asked to send, like a
+      // Composer attachment kept for a later send) — it is only abandoned
+      // when the view or the target pane is gone.
+      for (;;) {
+        if (!(await inputOpen(target)) || bad()) return
+        if (inputAllowed() && !bad()) break
+      }
+      if (!pane.value) return
+      onSent(await sendMessage(pane.value, target, data.path))
       haptic()
     } catch (err) { toast(`${t('File upload failed')} : ${(err as Error).message}`, true) }
   }
@@ -329,6 +375,10 @@ function onDrop(e: DragEvent) {
   e.preventDefault()
   const files = [...(e.dataTransfer?.files || [])]
   if (!files.length) return
+  // Both drop routes share the freeze refusal: the composer is inert while
+  // copying, so a programmatic addFiles must be refused the same way. The
+  // browser's own open-the-file default stays suppressed above either way.
+  if (terminalCopying.value) return toast(t('Finish copying before dropping files'), true)
   if (dropTarget.value === 'term') return sendFiles(files)
   composer.value?.addFiles(files).then((n) => {
     if (!n) return
@@ -458,8 +508,9 @@ function scrollsSideways(el: EventTarget | null, root: HTMLElement) {
 // only scrolls vertically); not on the key bar or the input field.
 function onSwipeStart(e: TouchEvent) {
   axis = 'off'
-  // A cell (side by side, the Board's panel) never swipes to its neighbours.
-  if (props.cell || desk.value || !inTab.value || e.touches.length !== 1) return
+  // A cell (side by side, the Board's panel) never swipes to its neighbours;
+  // nor does a finger held on the frozen screen.
+  if (terminalCopying.value || props.cell || desk.value || !inTab.value || e.touches.length !== 1) return
   const zone = (e.target as HTMLElement | null)?.closest?.('.swipe-area, .choices, #termWrap') as HTMLElement | null
   if (!zone || scrollsSideways(e.target, zone)) return
   sx = e.touches[0]!.clientX
@@ -613,7 +664,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
     </div>
     <div v-else-if="mode === 'term' && (!eventsOpen || offlineView || machineDown)" class="chat-empty offline-terminal"><UIcon name="i-lucide-wifi-off" class="chat-empty-icon" /><p>{{ t('Terminal unavailable offline') }}</p></div>
     <TerminalView
-      v-else-if="mode === 'term'" :ctl="ctl" :class="enter ? (enter > 0 ? 'enter-next' : 'enter-prev') : undefined" :style="swipeStyle"
+      v-else-if="mode === 'term'" :ctl="ctl" @copying="terminalCopying = $event" :class="enter ? (enter > 0 ? 'enter-next' : 'enter-prev') : undefined" :style="swipeStyle"
     />
     <div v-else class="chat" />
     <div v-if="pane?.agent && !paneChat(pane) && mode === 'term' && !cell && !transcriptNoteHidden" class="terminal-transcript-note dismissible-transcript-note">
@@ -626,12 +677,12 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
       <UIcon name="i-lucide-square-terminal" />{{ tl('Open interactive terminal', 'Ouvrir le terminal interactif') }}
     </button>
     <ChoicesPanel v-if="prompt && !interactionOpen && !interactive && !termShown && eventsOpen && !offlineView && !machineDown" :pane-id="paneId" :prompt="prompt" :keys="live" />
-    <div v-if="keybarToggleShown" class="phone-keybar-controls">
+    <div v-if="keybarToggleShown" class="phone-keybar-controls" :inert="terminalCopying">
       <button type="button" class="phone-keybar-toggle" :class="{ on: phoneKeysOpen }" :aria-label="t('Show or hide terminal keys')" :aria-expanded="phoneKeysOpen" :aria-controls="keybarId"
         @pointerdown.prevent @mousedown.prevent @click.stop="togglePhoneKeys"><UIcon :name="phoneKeysOpen ? 'i-lucide-chevron-down' : 'i-lucide-chevron-up'" /></button>
     </div>
-    <Keybar v-if="keybarShown" :id="keybarId" :ctl="ctl" :compact="compactPhone" :terminal="termShown" @keyboard="toggleComposerKeyboard" />
-    <Composer v-if="composerShown" ref="composer" :pane="pane" :pane-id="paneId" :send-keys="ctl.sendKeys" :conversation="mode === 'chat'" :term-shown="termShown" :esc-stops="!searchOpen" :take-back="mode === 'chat'" :unanswered="mode === 'chat' ? unanswered : 0" @sent="onSent" @pointerdown="takeTerminalControl" @keydown="onComposerKey" @show-terminal="setMode('term')" @show-unanswered="chatRef?.gotoUnanswered()" />
+    <Keybar v-if="keybarShown" :id="keybarId" :inert="terminalCopying" :ctl="ctl" :compact="compactPhone" :terminal="termShown" @keyboard="toggleComposerKeyboard" />
+    <Composer v-if="composerShown" ref="composer" :inert="terminalCopying" :pane="pane" :pane-id="paneId" :send-keys="ctl.sendKeys" :conversation="mode === 'chat'" :term-shown="termShown" :esc-stops="!searchOpen && !terminalCopying" :take-back="mode === 'chat'" :unanswered="mode === 'chat' ? unanswered : 0" @sent="onSent" @pointerdown="takeTerminalControl" @keydown="onComposerKey" @show-terminal="setMode('term')" @show-unanswered="chatRef?.gotoUnanswered()" />
     </div>
     </div>
     <AppSheet v-model:open="filesOpen" :title="t('Files')" wide full screen>

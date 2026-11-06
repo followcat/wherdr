@@ -10,13 +10,14 @@ const terminals = vi.hoisted(() => [] as { focused: boolean, disposed: boolean, 
 vi.mock('~/utils/xtermLoader', () => {
   class Terminal {
     cols = 80; rows = 24; options = {}; textarea = null; element = null
+    buffer = { active: { viewportY: 0, baseY: 0, length: 0, cursorY: 0 } }
     state = { focused: false, disposed: false, addons: [] as string[] }
     constructor() { terminals.push(this.state) }
     loadAddon(a: { kind: string }) { this.state.addons.push(a.kind) }
     focus() { this.state.focused = true }
     dispose() { this.state.disposed = true }
-    write() {} open() {} refresh() {} reset() {} attachCustomWheelEventHandler() {}
-    attachCustomKeyEventHandler() {} onData() {} onBinary() {}
+    write() {} open() {} refresh() {} reset() {} scrollToLine() {} attachCustomWheelEventHandler() {}
+    attachCustomKeyEventHandler() {} onData() {} onBinary() {} onScroll() {}
   }
   class FitAddon { kind = 'fit'; proposeDimensions() { return null } }
   class WebglAddon { kind = 'webgl'; onContextLoss() {} dispose() {} }
@@ -38,7 +39,7 @@ vi.mock('~/utils/terminalMouse', () => ({ bindTerminalMouse: () => ({ dispose() 
 vi.mock('~/utils/terminalSelection', () => ({ bindTerminalSelection: () => () => {} }))
 vi.mock('~/utils/terminalLinks', () => ({ bindTerminalLinks: () => ({ dispose() {} }) }))
 vi.mock('~/utils/terminalOsc52', () => ({ OSC52_MAX_BYTES: 1000, bindTerminalOsc52: () => () => {} }))
-vi.mock('~/utils/terminalFont', () => ({ TERM_FONT: 'monospace', onFontsLoaded: () => () => {} }))
+vi.mock('~/utils/terminalFont', async (importOriginal) => ({ ...(await importOriginal() as object), TERM_FONT: 'monospace', onFontsLoaded: () => () => {} }))
 
 const sockets: { url: string }[] = []
 beforeEach(() => {

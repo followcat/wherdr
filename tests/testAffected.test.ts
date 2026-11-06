@@ -53,6 +53,64 @@ describe('affected test selector', () => {
     expect(Object.keys(plan.tests)).toContain('tests/reference.test.ts')
     expect(Object.keys(plan.tests)).toContain('tests/terminalSize.test.ts')
   })
+  it('routes frozen-copy changes to their own domain and spec', () => {
+    const plan = select(['app/components/TerminalCopyLayer.vue', 'app/utils/screenSpans.ts'], available.concat('tests/terminalCopy.test.ts', 'tests/e2e/terminal-copy.spec.ts'), undefined)
+    expect(Object.keys(plan.domains)).toEqual(['terminal', 'copy'])
+    expect(Object.keys(plan.e2e)).toContain('tests/e2e/terminal-copy.spec.ts')
+    expect(Object.keys(plan.tests)).toContain('tests/terminalCopy.test.ts')
+  })
+  it.each(['app/components/TerminalView.vue', 'app/composables/useTerminal.ts', 'app/components/AgentView.vue', 'app/components/InteractiveTerminal.vue'])('selects the copy journey for its %s integration path', file => {
+    const plan = select([file], available.concat('tests/terminalCopy.test.ts', 'tests/e2e/terminal-copy.spec.ts'), undefined)
+    expect(Object.keys(plan.domains)).toContain('copy')
+    expect(Object.keys(plan.e2e)).toContain('tests/e2e/terminal-copy.spec.ts')
+  })
+  it.each([
+    'app/utils/terminalTouch.ts', 'app/utils/terminalWheel.ts', 'app/utils/smoothTouch.ts',
+    'app/components/TerminalView.vue', 'app/composables/useTerminal.ts',
+  ])('selects the touch-scroll journey for its %s integration path', file => {
+    const plan = select([file], available.concat('tests/components/TerminalTouchBeta.test.ts', 'tests/e2e/terminal-touch.spec.ts'), undefined)
+    expect(Object.keys(plan.domains)).toContain('touch-scroll')
+    expect(Object.keys(plan.e2e)).toContain('tests/e2e/terminal-touch.spec.ts')
+  })
+  it.each([
+    'app/utils/terminalModifiers.ts', 'app/utils/keybarKeys.ts', 'app/utils/phoneKeys.ts',
+    'app/utils/keybarOrder.ts', 'app/components/PhoneKeybar.vue', 'app/components/Keybar.vue',
+    'app/utils/terminalKeys.ts', 'app/composables/useTerminal.ts', 'server/utils/coreInput.ts', 'server/utils/coreTerm.ts',
+  ])('selects the virtual-keys journey for its %s integration path', file => {
+    const plan = select([file], available.concat('tests/terminalModifiers.test.ts', 'tests/e2e/terminal-keys.spec.ts'), undefined)
+    expect(Object.keys(plan.domains)).toContain('keys')
+    expect(Object.keys(plan.e2e)).toContain('tests/e2e/terminal-keys.spec.ts')
+  })
+  it('routes phone chrome changes to the phone-ux journey', () => {
+    const plan = select(['app/components/Composer.vue', 'app/components/PhoneIdentity.vue'], available.concat('tests/components/ComposerFocus.test.ts', 'tests/e2e/phone-terminal-ux.spec.ts'), undefined)
+    expect(Object.keys(plan.domains)).toContain('phone-ux')
+    expect(Object.keys(plan.e2e)).toContain('tests/e2e/phone-terminal-ux.spec.ts')
+    expect(Object.keys(plan.tests)).toContain('tests/components/ComposerFocus.test.ts')
+  })
+  it.each(['app/components/AppSheet.vue', 'app/components/MenuSheet.vue', 'app/composables/useViewport.ts', 'app/utils/viewMode.ts'])('selects the phone-ux journey for its %s integration path', file => {
+    const plan = select([file], available.concat('tests/components/PhoneIdentity.test.ts', 'tests/e2e/phone-terminal-ux.spec.ts'), undefined)
+    expect(Object.keys(plan.domains)).toContain('phone-ux')
+    expect(Object.keys(plan.e2e)).toContain('tests/e2e/phone-terminal-ux.spec.ts')
+  })
+  it.each([
+    'app/utils/uiScale.ts', 'app/utils/terminalFont.ts',
+    'app/composables/useTerminal.ts', 'app/composables/useHerdr.ts',
+    'app/components/SettingsView.vue', 'app/assets/css/main.css',
+  ])('selects the scale journey for its %s integration path', file => {
+    const plan = select([file], available.concat('tests/uiScale.test.ts', 'tests/e2e/phone-terminal-ux.spec.ts'), undefined)
+    expect(Object.keys(plan.domains)).toContain('ui-scale')
+    expect(Object.keys(plan.e2e)).toContain('tests/e2e/phone-terminal-ux.spec.ts')
+  })
+  it.each([
+    'app/utils/stepNav.ts', 'app/utils/shortcuts.ts', 'app/utils/cardKeys.ts',
+    'app/composables/useShortcuts.ts', 'app/components/ShortcutsReference.vue',
+    'app/components/SpaceTabs.vue', 'app/components/AgentCard.vue',
+    'app/components/HomeView.vue',
+  ])('selects the nav-keys journey for its %s integration path', file => {
+    const plan = select([file], available.concat('tests/components/StepNav.test.ts', 'tests/e2e/phone-terminal-ux.spec.ts'), undefined)
+    expect(Object.keys(plan.domains)).toContain('nav-keys')
+    expect(Object.keys(plan.e2e)).toContain('tests/e2e/phone-terminal-ux.spec.ts')
+  })
   it('falls back visibly for an unknown file and a missing base', () => {
     const plan = select(['unknown source.ts'], available, undefined)
     expect(plan.broad).toBe(true)

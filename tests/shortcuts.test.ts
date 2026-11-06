@@ -64,19 +64,32 @@ describe('matchShortcut', () => {
     expect(match({ key: '§', code: 'IntlBackslash', ctrlKey: true })).toBe('toggle-term')
   })
 
-  it('the terminal keeps keys not meant for it: Escape, Alt+arrows, ⌘F, ?', () => {
+  it('the terminal keeps keys not meant for it: Escape, ⌘F, ? — Alt+arrows are app navigation', () => {
     expect(match({ key: 'Escape' }, term)).toBeNull()
-    expect(match({ key: 'ArrowDown', altKey: true }, term)).toBeNull()
     expect(match({ key: 'f', metaKey: true }, term)).toBeNull()
     expect(match({ key: '?', shiftKey: true }, term)).toBeNull()
     expect(match({ key: ',', metaKey: true }, term)).toBe('settings')
+    // Taken at the window in the capture phase, before xterm could send them.
+    const cap = { ...linux, phase: 'capture' as const }
+    expect(match({ key: 'ArrowUp', altKey: true }, term, cap)).toBe('prev-agent')
+    expect(match({ key: 'ArrowDown', altKey: true }, term, cap)).toBe('next-agent')
+    expect(match({ key: 'ArrowLeft', altKey: true }, term, cap)).toBe('prev-tab')
+    expect(match({ key: 'ArrowRight', altKey: true }, term, cap)).toBe('next-tab')
+    expect(match({ key: 'ArrowDown', altKey: true }, term)).toBeNull()
+    // Ctrl+arrows and bare arrows still belong to the program.
+    expect(match({ key: 'ArrowRight', ctrlKey: true }, term, cap)).toBeNull()
+    expect(match({ key: 'ArrowRight' }, term, cap)).toBeNull()
   })
 
-  it('text being typed: plain and Alt keys left to the field, Mod chords still work', () => {
+  it('text being typed: plain keys left to the field, Mod chords and Alt+arrows still work', () => {
+    const cap = { ...mac, phase: 'capture' as const }
     expect(match({ key: 'Escape' }, field(''))).toBe('stop')
     expect(match({ key: 'Escape' }, field('half a sentence'))).toBeNull()
-    expect(match({ key: 'ArrowUp', altKey: true }, field(''))).toBe('prev-agent')
-    expect(match({ key: 'ArrowUp', altKey: true }, field('line one'))).toBeNull()
+    // Navigation works in a field, empty or not: Alt+↑/↓ are never text.
+    expect(match({ key: 'ArrowUp', altKey: true }, field(''), cap)).toBe('prev-agent')
+    expect(match({ key: 'ArrowUp', altKey: true }, field('line one'), cap)).toBe('prev-agent')
+    expect(match({ key: 'ArrowLeft', altKey: true }, field('draft'), cap)).toBe('prev-tab')
+    expect(match({ key: 'ArrowUp', altKey: true }, field(''))).toBeNull()
     expect(match({ key: '?', shiftKey: true }, field(''))).toBeNull()
     expect(match({ key: '?', shiftKey: true })).toBe('help')
     expect(match({ key: '/', metaKey: true }, field('draft'))).toBe('help')
@@ -89,24 +102,42 @@ describe('matchShortcut', () => {
 
   it('open window, composition, already handled: nothing, except what toggles a window', () => {
     const overlay = { ...body, overlay: true }
+    const cap = { ...mac, phase: 'capture' as const }
     expect(match({ key: 'Escape' }, overlay)).toBeNull()
-    expect(match({ key: 'ArrowDown', altKey: true }, overlay)).toBeNull()
+    expect(match({ key: 'ArrowDown', altKey: true }, overlay, cap)).toBeNull()
     expect(match({ key: 'k', metaKey: true }, overlay)).toBe('search-all')
     expect(match({ key: '/', metaKey: true }, overlay)).toBe('help')
     expect(match({ key: 'Escape', isComposing: true })).toBeNull()
+    expect(match({ key: 'ArrowDown', altKey: true, isComposing: true }, body, cap)).toBeNull()
+    expect(match({ key: 'ArrowDown', altKey: true, keyCode: 229 }, body, cap)).toBeNull()
     expect(match({ key: 'Escape', defaultPrevented: true })).toBeNull()
   })
 
-  it('held keys repeat agent navigation only', () => {
-    expect(match({ key: 'ArrowDown', altKey: true, repeat: true })).toBe('next-agent')
+  it('Alt+arrows want exactly Alt: no ⌘, no Ctrl/AltGr, no extra Shift', () => {
+    const cap = { ...mac, phase: 'capture' as const }
+    const win = { ...linux, phase: 'capture' as const }
+    expect(match({ key: 'ArrowUp', altKey: true, shiftKey: true }, body, cap)).toBeNull()
+    expect(match({ key: 'ArrowDown', altKey: true, metaKey: true }, body, cap)).toBeNull()
+    expect(match({ key: 'ArrowLeft', altKey: true, ctrlKey: true }, body, cap)).toBeNull()
+    // Windows/Linux AltGr reads as Ctrl+Alt: still not the app chord.
+    expect(match({ key: 'ArrowRight', altKey: true, ctrlKey: true }, body, win)).toBeNull()
+  })
+
+  it('held keys repeat step navigation only', () => {
+    const cap = { ...mac, phase: 'capture' as const }
+    expect(match({ key: 'ArrowDown', altKey: true, repeat: true }, body, cap)).toBe('next-agent')
+    expect(match({ key: 'ArrowRight', altKey: true, repeat: true }, body, cap)).toBe('next-tab')
     expect(match({ key: 'Escape', repeat: true })).toBeNull()
-    expect(match({ key: 'n', code: 'KeyN', metaKey: true, altKey: true, repeat: true }, body, { ...mac, phase: 'capture' })).toBeNull()
+    expect(match({ key: 'n', code: 'KeyN', metaKey: true, altKey: true, repeat: true }, body, cap)).toBeNull()
   })
 
   it('phone layout: only ⌘K', () => {
     const phone = { ...mac, desk: false }
+    const cap = { ...phone, phase: 'capture' as const }
     expect(match({ key: 'k', metaKey: true }, body, phone)).toBe('search-all')
     expect(match({ key: 'Escape' }, body, phone)).toBeNull()
     expect(match({ key: 'f', metaKey: true }, body, phone)).toBeNull()
+    expect(match({ key: 'ArrowDown', altKey: true }, body, cap)).toBeNull()
+    expect(match({ key: 'ArrowRight', altKey: true }, body, cap)).toBeNull()
   })
 })

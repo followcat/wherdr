@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createTerminalTouch, touchPreviewOffset } from '../app/utils/terminalTouch'
+import { createTerminalTouch } from '../app/utils/terminalTouch'
 
 function gesture(horizontal = false) {
   let time = 0, id = 0
@@ -88,7 +88,7 @@ describe('terminal touch gestures', () => {
     expect(calls()).toBeGreaterThan(3)
   })
   it('bleeds release velocity while the finger holds instead of a hard cut', () => {
-    for (const hold of [0, 60]) {
+    const distance = (hold: number) => {
       let time = 0, id = 0
       const frames = new Map<number, FrameRequestCallback>()
       const vertical = vi.fn()
@@ -101,16 +101,69 @@ describe('terminal touch gestures', () => {
       time += 16; touch.move(0, -120)
       time += hold; touch.end()
       for (let i = 0; i < 80; i++) { time += 16; for (const [n, fn] of [...frames]) { frames.delete(n); fn(time) } }
-      const momentum = Math.abs(vertical.mock.calls.slice(3).reduce((n, [dy]) => n + dy, 0))
-      if (!hold) expect(momentum).toBeGreaterThan(350)
-      else expect(momentum).toBeLessThan(250) // bled to roughly a half
+      return Math.abs(vertical.mock.calls.slice(3).reduce((n, [dy]) => n + dy, 0))
     }
+    const instant = distance(0), held = distance(60)
+    expect(instant).toBeGreaterThan(350)
+    // A 60ms hold bleeds most of the release speed — a shorter glide, not a
+    // hard cut to zero.
+    expect(held).toBeLessThan(instant * 0.7)
+    expect(held).toBeGreaterThan(50)
   })
-  it('follows the finger up to one row and clamps prediction without a rubber spring', () => {
-    expect(touchPreviewOffset(4, 16)).toBe(4)
-    expect(touchPreviewOffset(-16, 16)).toBe(-16)
-    expect(touchPreviewOffset(400, 16)).toBe(16)
-    expect(touchPreviewOffset(-400, 16)).toBe(-16)
-    expect(touchPreviewOffset(12, 0)).toBe(1)
+  it('checks the coalesced touchend displacement before treating it as a tap', () => {
+    const g = gesture()
+    // Chrome can deliver a sub-slop drag without a touchmove: the release
+    // point itself must decide tap versus drag.
+    g.touch.start(0, 0)
+    g.touch.move(1, 1)
+    expect(g.touch.end({ x: 7, y: 0 })).toBe(false)
+    g.touch.start(0, 0)
+    g.touch.move(1, 1)
+    expect(g.touch.end({ x: 2, y: 1 })).toBe(true)
+  })
+  it('integrates momentum analytically: the glide is the same at any refresh rate', () => {
+    const run = (stepMs: number) => {
+      let time = 0, id = 0
+      const frames = new Map<number, FrameRequestCallback>()
+      const vertical = vi.fn()
+      const touch = createTerminalTouch({ vertical, horizontal: vi.fn(), canHorizontal: () => false,
+        maxMomentum: () => 100000, now: () => time,
+        frame: fn => { frames.set(++id, fn); return id }, cancelFrame: n => { frames.delete(n) } })
+      touch.start(0, 0)
+      for (let i = 0; i < 3; i++) { time += 16; touch.move(0, -40 * (i + 1)) }
+      touch.end()
+      for (let i = 0; i < 3000 / stepMs; i++) { time += stepMs; for (const [n, fn] of [...frames]) { frames.delete(n); fn(time) } }
+      return vertical.mock.calls.reduce((n, [dy]) => n + dy, 0)
+    }
+    // Identical release speed: a 60 Hz and a 20 Hz ticker must travel the
+    // same distance — a per-frame rectangle under-counts the slow one.
+    const fast = run(16), slow = run(50)
+    expect(slow).not.toBe(0)
+    expect(Math.abs(slow - fast) / Math.abs(fast)).toBeLessThan(0.02)
+  })
+  it('scales the glide limit with release speed and lets momentum end itself', () => {
+    let time = 0, id = 0
+    const frames = new Map<number, FrameRequestCallback>()
+    const limits: number[] = []
+    const vertical = vi.fn()
+    const touch = createTerminalTouch({ vertical, horizontal: vi.fn(), canHorizontal: () => false,
+      maxMomentum: (speed: number) => { limits.push(speed); return 40 + Math.abs(speed) * 100 },
+      now: () => time,
+      frame: fn => { frames.set(++id, fn); return id }, cancelFrame: n => { frames.delete(n) },
+      momentum: (pixels: number, point: { x: number, y: number }) => { vertical(pixels, point); return vertical.mock.calls.length < 2 },
+    })
+    touch.start(0, 0)
+    for (let i = 0; i < 3; i++) { time += 16; touch.move(0, -40 * (i + 1)) }
+    touch.end()
+    expect(limits.length).toBe(1)
+    // An upward flick releases at negative velocity — valid input; the
+    // callback takes its magnitude when sizing the glide.
+    expect(limits[0]).toBeLessThan(0)
+    // The drag's own vertical calls share the mock: clear them so only
+    // momentum ticks are counted.
+    vertical.mockClear()
+    for (let i = 0; i < 200; i++) { time += 16; for (const [n, fn] of [...frames]) { frames.delete(n); fn(time) } }
+    // Returning false ended the glide after two ticks, far under the limit.
+    expect(vertical.mock.calls.length).toBe(2)
   })
 })

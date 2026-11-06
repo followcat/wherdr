@@ -1,19 +1,19 @@
 // Terminal of a pane: xterm.js connected to /ws/term (Herdr's ANSI frames).
-// Herdr keeps the history: no local scrollback, scrolling is
-// requested from the server (terminal.scroll).
-// herdr-core (`web.capabilities.core`): the raw stream, with its history, is
-// kept and scrolled by xterm; the server owns the size and gets credit back
-// once xterm has written each frame (see server/utils/coreTerm.ts).
+// herdr-core (`web.capabilities.core`): the attach writes the raw stream with
+// its history into xterm, which owns the scrollback and the viewport; the
+// server owns the size and gets credit back once xterm has written each
+// frame (see server/utils/coreTerm.ts).
 import { createSocketProbe } from '~/utils/socketProbe'
 import { DESK_QUERY } from '~/utils/layoutMode'
 // Types only: the code is loaded when a terminal is shown (utils/xtermLoader.ts).
-import type { Terminal } from '@xterm/xterm'
+import type { Terminal, IBuffer, IMarker } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
 import type { WebglAddon } from '@xterm/addon-webgl'
 import { loadWebgl, loadXterm } from '~/utils/xtermLoader'
 import { reloadIfNewBuild } from '~/composables/useAppVersion'
 import { proposeTerminalSize, terminalPixelWidth } from '~/utils/terminalSize'
 import { writeTerminalFrame } from '~/utils/terminalFrame'
+import { kbOpen } from './useViewport'
 import { guardWebglCanvasSize } from '~/utils/terminalRenderer'
 import { bindTerminalSelection } from '~/utils/terminalSelection'
 import { bindTerminalLinks, type TerminalLinks } from '~/utils/terminalLinks'
@@ -24,9 +24,10 @@ import { OSC52_MAX_BYTES, bindTerminalOsc52, copyAgentText } from '~/utils/termi
 import { uploadPhoto } from '~/utils/photoUpload'
 import { terminalClosedText, terminalUnavailableText } from '~/utils/terminalClosed'
 import { bindTerminalMouse, terminalCell } from '~/utils/terminalMouse'
-import { TERM_FONT, onFontsLoaded } from '~/utils/terminalFont'
-import { virtualNavigationBytes, virtualNavigationKeys } from '~/utils/keybarKeys'
-import { createCompositionTracker, toggleVirtualModifier, virtualChord, virtualInputKey, type VirtualModifier } from '~/utils/terminalModifiers'
+import { TERM_FONT, onFontsLoaded, scaledTermFont } from '~/utils/terminalFont'
+import { displayVirtualChord, virtualNavigationBytes, virtualNavigationKeys } from '~/utils/keybarKeys'
+import { createCompositionTracker, toggleVirtualModifier, virtualChord, virtualInputAction, type VirtualModifier } from '~/utils/terminalModifiers'
+import { captureTerminalScreen, type TerminalCopySnapshot } from '~/utils/terminalCopy'
 
 const CORE_SCROLLBACK = 5000
 
@@ -53,11 +54,12 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   const loading = ref(false)
   const kbdOn = ref(false)
   const scrollInputVersion = ref(0)
-  // Count parsed frames separately from the scroll rows they acknowledge.
+  // Resizes and viewport changes invalidate a gesture's coordinates but must
+  // not cancel it — the finger still owns its touch.
+  const scrollGeometryVersion = ref(0)
+  // Count frames the core stream finished writing through xterm; the smooth
+  // gesture path tracks them.
   const frameTick = ref(0)
-  // Cumulative signed rows acknowledged after xterm parses the next frame.
-  const scrollAck = ref(0)
-  let touchEpoch = 0
   const virtualModifiers = ref<VirtualModifier[]>([])
   const lastVirtualChord = ref('')
   const composition = createCompositionTracker()
@@ -81,14 +83,141 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     if (coreStream && sendTerm({ type: 'take.control' })) controlPending = false
     else controlPending = true
   }
-  // Watching a terminal taller than this screen: shift it so the cursor row,
-  // where the newest output is, stays in view.
+  // Watching a terminal taller than this screen: the visible window's top is
+  // a scalar buffer-row position. Positions inside scrollback ride xterm's
+  // own viewport (view === viewportY); the clipped bottom of the grid is
+  // reached by lifting the rendered screen (view - baseY rows). viewportY
+  // alone has only baseY+1 stops, so it cannot reach every row or move one
+  // row at a time.
+  let view = 0
+  // The window is pinned to live output while it sits on the cursor's tail
+  // position; scrolling back releases the pin until the tail is reached.
+  let atTail = true
+  // Set for the synchronous onScroll our own scrollToLine produces.
+  let viewDrive = false
+  // The viewport position and base last seen: a DOM scroll event reporting no
+  // move is the trailing echo of our own scrollToLine, and output arriving at
+  // the bottom edge grows ybase and ydisp together — neither is a user seek.
+  let lastY = -1
+  let lastBaseY = -1
+  // The buffer the owned view position belongs to: the alternate screen is a
+  // different buffer object with its own scroll domain, and numeric values
+  // like baseY 0 / viewportY 0 would otherwise read as output at the bottom
+  // edge and keep a stale position from the previous buffer.
+  let activeBuf: IBuffer | null = null
+  // A parked position is anchored to the row under the window's top edge:
+  // when the scrollback is full, each scrolling newline trims the oldest
+  // row — every row's index shifts down one while ybase/ydisp hold — and a
+  // plain buffer coordinate drifts onto different text. The public marker
+  // carries the row's live index through lifts and parked history alike,
+  // and the reader's own position is what distinguishes a genuine top-trim
+  // from an in-place edit (a disposed marker always reports line -1).
+  let anchor: IMarker | null = null
   function followCursor() {
-    const screen = term?.element?.querySelector('.xterm-screen') as HTMLElement | null
-    if (!term || !screen || !el) return
-    const shown = el.clientHeight - (screen.offsetTop || 0)
-    const over = coreStream && !coreControl ? (term.buffer.active.cursorY + 1) * (screen.offsetHeight / term.rows) - shown : 0
-    screen.style.transform = over > 0 ? `translateY(${-Math.ceil(over)}px)` : ''
+    const buf = term?.buffer.active
+    if (!term || !buf) return
+    if (buf !== activeBuf) {
+      activeBuf = buf
+      anchor?.dispose()
+      anchor = null
+      view = 0
+      atTail = true
+      lastY = -1
+      lastBaseY = -1
+    }
+    const watching = coreStream && !coreControl
+    const screen = term.element?.querySelector('.xterm-screen') as HTMLElement | null
+    const rowPx = screen && term.rows ? screen.offsetHeight / term.rows : 0
+    const hostRows = el && rowPx ? (el.clientHeight - (screen!.offsetTop || 0)) / rowPx : term.rows
+    // The live tail puts the cursor's bottom edge at the host bottom — never
+    // less than the plain baseY tail a fitting terminal scrolls to anyway.
+    const tail = buf.baseY + (watching ? Math.max(0, buf.cursorY + 1 - hostRows) : 0)
+    // The scroll range spans the whole remote grid: a cursor that moved up
+    // leaves the rendered rows below it parked and reachable, out to the
+    // grid's own bottom edge.
+    const limit = buf.baseY + (watching ? Math.max(0, term.rows - hostRows) : 0)
+    if (atTail) view = tail
+    view = Math.min(Math.max(view, 0), limit)
+    // The pin re-engages at the live edge — within a row of the cursor's
+    // tail. A position below it (rows still reachable while the cursor sits
+    // higher) stays parked through output instead of snapping back.
+    atTail = view >= tail && view < tail + 1
+    // scrollToLine needs an integer line; whatever the floor drops — the
+    // fractional part of a view inside history, or the whole clipped bottom
+    // of the grid past baseY — the lift carries it, so the window's top is
+    // exactly the view position at any host metric.
+    const y = Math.floor(Math.min(view, buf.baseY))
+    if (y !== buf.viewportY) {
+      viewDrive = true
+      try { term.scrollToLine(y) } finally { viewDrive = false }
+    }
+    const lift = watching ? Math.max(0, view - y) * rowPx : 0
+    // Hundredth-pixel rounding keeps the text crisp while collapsing the
+    // float noise in view*rowPx (a ceil would turn 126.00000000000001 into a
+    // whole extra pixel, shifting the projected window by a visible step).
+    if (screen) screen.style.transform = lift > 0 ? `translateY(${-Math.round(lift * 100) / 100}px)` : ''
+    lastY = buf.viewportY
+    lastBaseY = buf.baseY
+    // Keep the anchor on the row the parked window top sits on. A marker is
+    // registered at the cursor's row plus an offset, so convert the absolute
+    // buffer row. Watching only: a controlled terminal's domain ends at
+    // baseY and needs no anchor. Parked history rows get one too — at full
+    // scrollback a trim and a one-row native seek step viewportY identically
+    // and only the row's live line tells them apart; the top edge parked on
+    // the oldest row (view 0.x) anchors row 0 for the exact-0 clamp.
+    const top = Math.floor(view)
+    if (watching && !atTail && view > 0) {
+      if (!anchor || anchor.isDisposed || anchor.line !== top) {
+        anchor?.dispose()
+        anchor = term.registerMarker(top - (buf.baseY + buf.cursorY))
+      }
+    } else if (anchor) {
+      anchor.dispose()
+      anchor = null
+    }
+  }
+  // A viewport move we did not make is an absolute position in xterm's own
+  // domain: its bottom edge (viewportY === baseY) is the live tail. A move
+  // where the viewport simply stayed pinned to the bottom edge is output
+  // growing ybase and ydisp together — the reader's buffer row did not move.
+  function viewportMoved() {
+    const buf = term?.buffer.active
+    if (!term || !buf) return
+    if (buf.viewportY !== lastY || buf.baseY !== lastBaseY) {
+      const trackedTail = lastY === lastBaseY && buf.viewportY === buf.baseY
+      // Output moves rows, not the reader's position: growth that leaves the
+      // viewport unmoved keeps every index (fraction included) intact, and
+      // at capacity a trim slides the anchored row down to exactly the new
+      // viewport edge — same text, shifted index. Anything the anchor does
+      // not explain is an absolute native seek and replaces the position.
+      const held = buf.viewportY === lastY && buf.baseY >= lastBaseY
+      lastY = buf.viewportY
+      lastBaseY = buf.baseY
+      if (!viewDrive && !trackedTail && !held) {
+        if (anchor && buf.viewportY === anchor.line) {
+          const frac = view - Math.floor(view)
+          view = anchor.line + frac
+        } else {
+          view = buf.viewportY
+          atTail = view >= buf.baseY
+        }
+      }
+    } else if (anchor && !atTail) {
+      // Neither coordinate moved, yet the buffer scrolled: rows were trimmed
+      // off the top and every row's index slid under the parked text. The
+      // anchor reports the row's new index (the fraction is viewport
+      // geometry, kept). A disposed anchor means its row is gone — and a
+      // dead marker reports line -1 whether the loss was a top-trim or an
+      // in-place edit (xterm disposes markers on lines it touches), so the
+      // parked position is the context that decides: a park already on the
+      // oldest row clamps exactly to 0; anywhere higher the index is still
+      // valid, so keep the nearest position and re-anchor on whatever row
+      // now sits there.
+      const frac = view - Math.floor(view)
+      if (!anchor.isDisposed) view = anchor.line + frac
+      else if (Math.floor(view) === 0) view = 0
+    }
+    followCursor()
   }
   function offerFit() {
     followCursor()
@@ -150,11 +279,11 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     loading.value = false
     term = new xterm.Terminal({
       fontFamily: TERM_FONT,
-      fontSize: fontSize.value,
+      fontSize: scaledFont(fontSize.value),
       // Line height 1: block characters (Claude Code logo) and
       // box-drawing lines must touch from one line to the next.
       lineHeight: 1,
-      scrollback: 0, // Herdr keeps the history; scrolling happens on the server
+      scrollback: 0, // raised to CORE_SCROLLBACK once the core stream attaches
       cursorBlink: false,
       allowProposedApi: true,
       macOptionIsMeta: true,
@@ -176,6 +305,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       upload: async f => (await uploadPhoto(paneId, f)).path,
       paste: text => sendTerm({ type: 'paste', text }),
       report: message => toast(message, true),
+      enabled: () => opts.input?.() !== false,
     })
     // OSC 52: what the agent copies lands in this device's clipboard. Refused
     // without a gesture (iOS Safari): offered again on a tap.
@@ -199,8 +329,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     // JetBrains Mono (bundled): once loaded, xterm re-measures its cells.
     const t0 = term
     Promise.all([
-      document.fonts?.load(`${fontSize.value}px "JetBrains Mono Variable"`),
-      document.fonts?.load(`${fontSize.value}px "Wherdr Symbols"`, '─▀█⎿⏵⏺✻✳'),
+      document.fonts?.load(`${scaledFont(fontSize.value)}px "JetBrains Mono Variable"`),
+      document.fonts?.load(`${scaledFont(fontSize.value)}px "Wherdr Symbols"`, '─▀█⎿⏵⏺✻✳'),
     ]).then(() => {
       if (disposed || term !== t0) return
       t0.options.fontFamily = TERM_FONT
@@ -222,19 +352,34 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       ta.addEventListener('blur', () => { kbdOn.value = false })
       ta.addEventListener('focus', () => { kbdOn.value = true })
       ta.addEventListener('compositionstart', composition.start)
-      ta.addEventListener('compositionend', composition.end)
+      ta.addEventListener('compositionend', () => {
+        const gen = composition.end()
+        // xterm's CompositionHelper reads the textarea on a 0 ms timer armed
+        // by its own compositionend listener (attached at open, before this
+        // one), so a real commit always reaches onData before this settle
+        // runs; only a cancelled composition crosses the boundary still
+        // pending. compositionend.data is unreliable on Chromium: the
+        // ordering, not the event data, decides what was committed.
+        setTimeout(() => composition.settle(gen), 0)
+      })
     }
     // Capture on the terminal's element runs before xterm's own keydown
     // listener on the textarea, so the stale flag is dropped before xterm
     // emits the keystroke's data (cancelled IME, then Alt + ←).
     term.element?.addEventListener('keydown', composition.keydown, true)
-    // Wheel: xterm does nothing with it (it would send ↑/↓ to the agent, see
-    // utils/terminalWheel.ts); TerminalView converts it to terminal.scroll.
+    // Wheel: xterm must not see it (it would send ↑/↓ to the agent, see
+    // utils/terminalWheel.ts); TerminalView scrolls the local viewport instead.
     term.attachCustomWheelEventHandler(() => false)
     // Shift+Enter as a named key; Ctrl+V (outside Apple) and F12 left to the browser.
     bindTerminalKeys(term, key => sendVirtualKey(key))
     term.onData(d => {
       if (opts.input?.() === false) return
+      // A programmatic blur is bookkeeping, not input: with focus reporting
+      // (DECSET1004) xterm emits ESC[O through onData. Swallow only the
+      // sequence this synchronous blur produced — a scroll drag, a keyboard
+      // dismissal or copy entry must not send bytes or seize a watching
+      // lease, while typed input and real focus events keep flowing.
+      if (swallowFocusOut && d === '\x1b[O') return
       // IME-committed text is data, not a keystroke: a composed ASCII
       // character must not spend an armed modifier as a shortcut.
       if (composition.active || composition.takeEnded()) {
@@ -243,8 +388,12 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
         return
       }
       if (virtualModifiers.value.length) {
-        const key = virtualInputKey(d)
-        if (key) { void sendVirtualKey(key); return }
+        const action = virtualInputAction(d)
+        if (action.kind === 'key') { void sendVirtualKey(action.key); return }
+        // Unsupported text keeps its bytes and the chord does not apply —
+        // say so instead of silently dropping the armed modifiers. A paste
+        // is quiet.
+        if (action.kind === 'blocked') toast(tl('Chord not applied — text sent as typed', 'Accord non appliqué — texte envoyé tel quel'), true)
         clearVirtualModifiers()
       }
       sendTerm({ type: 'terminal.input', text: d })
@@ -254,6 +403,18 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       const bytes = Uint8Array.from(d, c => c.charCodeAt(0) & 0xff)
       sendTerm({ type: 'terminal.input', bytes: bytesToB64(bytes) })
     })
+    // Any viewport move re-derives the window: onScroll covers programmatic
+    // scrolls, and the viewport's own scroll event covers the native
+    // scrollbar (xterm suppresses onScroll for changes it originates there).
+    // The viewport dies with term.dispose() — no unbind needed.
+    view = 0
+    atTail = true
+    lastY = -1
+    lastBaseY = -1
+    activeBuf = null
+    anchor = null
+    term.onScroll(() => viewportMoved())
+    term.element?.querySelector('.xterm-viewport')?.addEventListener('scroll', () => viewportMoved())
     if (focusQueued) focus()
     return true
   }
@@ -269,11 +430,14 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   })
 
   function sendTerm(obj: unknown): boolean {
-    if ((obj as { type?: string })?.type === 'paste') clearVirtualModifiers()
-    if (smoothTouchScrolling.value && ['terminal.input', 'paste'].includes((obj as { type?: string })?.type || '')) {
-      scrollInputVersion.value++
-      cancelTouchScroll()
-    }
+    const type = (obj as { type?: string })?.type
+    // Paste goes through the input gate like every user action: an image
+    // upload completing while the copy surface is open must not reach the agent.
+    if (type === 'paste' && opts.input?.() === false) return false
+    if (type === 'paste') clearVirtualModifiers()
+    // Typed or pasted bytes change the screen a gesture measured — invalid
+    // in every scroll mode, locally without any remote cancel.
+    if (['terminal.input', 'paste'].includes(type || '')) scrollInputVersion.value++
     if (tws && tws.readyState === 1) {
       tws.send(JSON.stringify(obj))
       return true
@@ -284,7 +448,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   // Logical keys (esc, up, shift+tab…), encoded by Herdr according to the terminal
   // mode: through the WebSocket if it is open, otherwise through the API.
   async function sendKeys(keys: string[]) {
-    if (smoothTouchScrolling.value) { scrollInputVersion.value++; cancelTouchScroll() }
+    if (opts.input?.() === false) return
+    scrollInputVersion.value++
     if (sendTerm({ type: 'keys', keys })) return
     try {
       await api('/api/input', { pane_id: paneId, keys })
@@ -296,7 +461,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     if (opts.input?.() === false) return
     const chord = virtualChord(key, virtualModifiers.value)
     clearVirtualModifiers()
-    lastVirtualChord.value = chord
+    lastVirtualChord.value = displayVirtualChord(chord)
     const bytes = virtualNavigationBytes(chord)
     if (bytes) {
       if (!sendTerm({ type: 'terminal.input', text: bytes })) await sendKeys(virtualNavigationKeys(chord, useRuntimeConfig().public.core === true))
@@ -381,11 +546,21 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   }
   watch(terminalRenderer, r => void setRenderer(r))
 
+  // Settings › Appearance › Interface size › Large also enlarges the terminal
+  // text by ~15%; its own text size stays the base (8–20). Computer only —
+  // uiScale is a desk media preference and phones have no such setting.
+  const scaledFont = (n: number) => scaledTermFont(n, desk.value, uiScale.value)
+
   function setFontSize(n: number) {
     if (!term) return
-    term.options.fontSize = n
+    const s = scaledFont(n)
+    if (term.options.fontSize === s) return
+    term.options.fontSize = s
+    // A cell-size change invalidates a gesture's pixel geometry like a resize.
+    scrollGeometryVersion.value++
     fitNow(true)
   }
+  watch([uiScale, desk], () => setFontSize(fontSize.value))
 
   function connect(takeover: boolean) {
     if (disposed) return
@@ -410,8 +585,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     let closedReason: string | null = null
     let gotFrame = false
     let lastErr = ''
-    touchEpoch++
-    if (smoothTouchScrolling.value) scrollInputVersion.value++
+    scrollInputVersion.value++
     const ws = new WebSocket(`${wsBase()}/ws/term?${q}`)
     tws = ws
     // A CONNECTING socket fires nothing: if the handshake hangs (network not
@@ -447,10 +621,13 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
         const credit = coreStream && Number.isInteger(m.credit) && m.credit > 0 ? m.credit : 0
         // Size and reset apply in stream order (see utils/terminalFrame.ts).
         // Core repaints the screen and its history on each attach.
+        // A full repaint replaces the screen the gesture measured — input
+        // version kills it. A resize only invalidates its coordinates.
+        if (coreStream && m.full === true) { scrollInputVersion.value++; atTail = true }
         writeTerminalFrame(current, { width: m.width, height: m.height, reset: coreStream && m.full === true, bytes: b64ToBytes(m.bytes || '') }, {
           resized: () => {
             if (term !== current) return
-            if (smoothTouchScrolling.value) { scrollInputVersion.value++; cancelTouchScroll() }
+            scrollGeometryVersion.value++
             if (coreStream) offerFit()
           },
           written: () => {
@@ -465,13 +642,6 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
         if (controlPending && !coreControl) takeControl()
         else controlPending = false
         offerFit()
-      } else if (m.type === 'scroll.ack') {
-        if (smoothTouchScrolling.value && m.epoch === touchEpoch && Number.isFinite(m.lines) && term) {
-          // Queue behind the covering frame, including when write's callback
-          // ran before the separate ack packet arrived.
-          const epoch = touchEpoch
-          term.write('', () => { if (epoch === touchEpoch && smoothTouchScrolling.value) scrollAck.value += m.lines })
-        }
       } else if (m.type === 'pong') {
         probe.pong(ws)
       } else if (m.type === 'terminal.closed') {
@@ -484,7 +654,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     }
     ws.onclose = () => {
       if (tws !== ws) return
-      if (smoothTouchScrolling.value) { scrollInputVersion.value++; touchEpoch++ }
+      scrollInputVersion.value++
       clearTimeout(handshake)
       tws = null
       mouseSupported = false
@@ -519,7 +689,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
 
   function disconnect() {
     clearVirtualModifiers()
-    if (smoothTouchScrolling.value) { scrollInputVersion.value++; touchEpoch++ }
+    scrollInputVersion.value++
     mouseSupported = false
     twsIntent = false
     clearTimeout(twsTimer)
@@ -534,52 +704,79 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   }
   const isConnected = () => Boolean(tws && tws.readyState <= 1)
 
-  function reset() { term?.reset() }
+  function reset() { view = 0; atTail = true; anchor?.dispose(); anchor = null; term?.reset() }
   function focus() {
     focusQueued = !term && mounting
     term?.focus()
     kbdOn.value = true
   }
+  // Set only around the synchronous textarea blur: the ESC[O that DECSET1004
+  // reporting emits through onData for it is swallowed there.
+  let swallowFocusOut = false
   function blur() {
     focusQueued = false
-    term?.textarea?.blur()
+    swallowFocusOut = true
+    try { term?.textarea?.blur() }
+    finally { swallowFocusOut = false }
   }
   // Tap on the touch layer: opens the link under the finger, if any.
   const tapLink = (x: number, y: number) => links?.tap(x, y) ?? false
+  // The phone copy layer's frozen screen: refused while an IME composition or
+  // its deferred commit may still be in flight — entering copy must never
+  // disturb the candidate window or drop the pending text. `pending` settles
+  // one finalize tick after compositionend; `ended` can linger set after a
+  // cancelled composition until the next keystroke and must not block copy.
+  const captureScreen = (): TerminalCopySnapshot | null => {
+    if (!term || composition.active || composition.pending) return null
+    return captureTerminalScreen(term)
+  }
+  // An active composition or a deferred commit that may still land: a
+  // programmatic blur could disturb the candidate window or drop the text.
+  const imeBusy = () => composition.active || composition.pending
   const hasFocus = () => Boolean(term && document.activeElement === term.textarea)
   const rowHeight = () => {
-    if (!smoothTouchScrolling.value) return term && term.rows && el ? el.clientHeight / term.rows : 16
+    // The rendered grid's own row height: a watching terminal can be taller
+    // than the host (clipped + translateY'd), so host height must never
+    // divide the grid's rows. Fall back to the host, then to a safe row.
     const screen = el?.querySelector('.xterm-screen') as HTMLElement | null
-    return term?.rows && screen?.clientHeight ? screen.clientHeight / term.rows : 16
+    if (term?.rows && screen?.clientHeight) return screen.clientHeight / term.rows
+    return term?.rows && el?.clientHeight ? el.clientHeight / term.rows : 16
   }
   const pageRows = () => term?.rows || 24
-  // Scrolling requested from Herdr (the history lives there).
-  function scroll(lines: number, x?: number, y?: number, modifiers = 0, touch = false, preview = true): boolean {
-    if (coreStream && term) {
-      term.scrollLines(-lines)
-      if (touch && preview && smoothTouchScrolling.value) scrollAck.value += lines
-      return true
-    }
-    if (!smoothTouchScrolling.value || !touch) return sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines) })
+  // A tap on the cursor's own row asks to type at the field; a tap anywhere
+  // else only acts on the pane (stop inertia, open a link).
+  function tapOnCursor(x: number, y: number): boolean {
     const screen = term?.element?.querySelector('.xterm-screen') as HTMLElement | null
     const rect = screen?.getBoundingClientRect()
-    const offset = screen?.style.transform ? new DOMMatrixReadOnly(screen.style.transform).m42 : 0
-    const fixedRect = rect ? { left: rect.left, top: rect.top - offset, width: rect.width, height: rect.height } : null
-    const position = fixedRect && term && x !== undefined && y !== undefined ? terminalCell(x, y, fixedRect, term.cols, term.rows) : null
-    return sendTerm({ type: 'terminal.scroll', direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), ...position, modifiers, source: 'touch', epoch: touchEpoch, preview })
+    const cell = rect && term ? terminalCell(x, y, rect, term.cols, term.rows) : null
+    if (!cell || !term) return false
+    const buffer = term.buffer.active
+    return cell.row + buffer.viewportY === buffer.cursorY + buffer.baseY
   }
-  function cancelTouchScroll() {
-    touchEpoch++
-    if (smoothTouchScrolling.value) sendTerm({ type: 'touch.cancel' })
+  // Scrolling is local: the attach delivered the scrollback and xterm owns
+  // the viewport — plus, for a watched grid taller than the host, the lifted
+  // part below it. Positive lines look back: one line moves the window one
+  // row, inside history and the clipped grid alike.
+  function scroll(lines: number): boolean {
+    if (!term) return false
+    view -= lines
+    atTail = false
+    followCursor()
+    return true
   }
-  const stopSmoothWatch = watch(smoothTouchScrolling, (_, wasEnabled) => {
-    touchEpoch++
+  const stopSmoothWatch = watch(smoothTouchScrolling, () => {
     scrollInputVersion.value++
-    if (wasEnabled) sendTerm({ type: 'touch.cancel', disabled: true })
   }, { flush: 'sync' })
+  // Android Back can hide the IME while the textarea keeps its focus; the
+  // next touch would reopen the keyboard instantly. On a coarse pointer the
+  // IME closing releases the terminal focus it was held for — never while a
+  // composition or a deferred commit is still in flight.
+  const stopKeyboardWatch = watch(kbOpen, (open, wasOpen) => {
+    if (wasOpen && !open && matchMedia('(hover: none) and (pointer: coarse)').matches && hasFocus() && !imeBusy()) blur()
+  })
 
   function setVisible(visible: boolean) {
-    if (!visible && smoothTouchScrolling.value) { scrollInputVersion.value++; cancelTouchScroll() }
+    if (!visible) scrollInputVersion.value++
     sendTerm({ type: 'visibility', visible })
     // Another client may have resized the pane while we were away.
     if (visible) nextTick(() => fitNow(true))
@@ -593,6 +790,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     takeoverQueued = false
     focusQueued = false
     stopSmoothWatch()
+    stopKeyboardWatch()
     disconnect()
     unbindSelection?.()
     unbindPaste?.()
@@ -606,6 +804,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     mouse = null
     links?.dispose()
     links = null
+    anchor?.dispose()
+    anchor = null
     webgl = null // term.dispose() destroys its addons
     term?.dispose()
     term = null
@@ -613,9 +813,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
 
   return {
     mount, connect, disconnect, takeControl, isConnected, sendTerm, sendKeys, fitNow, setFontSize,
-    reset, scroll, focus, blur, tapLink, tapMouse: (x: number, y: number) => mouse?.tap(x, y), hasFocus, rowHeight, pageRows, setVisible, dispose, loading, kbdOn,
+    reset, scroll, focus, blur, tapLink, tapMouse: (x: number, y: number) => mouse?.tap(x, y), tapOnCursor, hasFocus, rowHeight, pageRows, setVisible, dispose, loading, kbdOn, captureScreen, imeBusy,
     hasBanner: opts.hasBanner, selectionHint,
-    cancelTouchScroll, scrollInputVersion, frameTick, scrollAck,
+    scrollInputVersion, scrollGeometryVersion, frameTick,
     virtualModifiers, lastVirtualChord, toggleModifier, toggleVirtualModifier: toggleModifier, clearVirtualModifiers, sendVirtualKey,
   }
 }

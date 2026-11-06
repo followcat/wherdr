@@ -30,7 +30,8 @@ promise that wherdr "can replace the Herdr terminal client day to day".
 | Action | Keys | Where | From the terminal |
 |---|---|---|---|
 | Global search (existing) | Ctrl/⌘+K | Anywhere, phone included | macOS only (on Windows/Linux, xterm sends Ctrl+K to the program) |
-| Previous / next agent: the card a click would open, in sidebar order; stops at the ends | Alt+↑ / Alt+↓ | Computer | No (the program gets Alt+arrows) |
+| Previous / next agent: the card a click would open, in sidebar order; stops at the ends | Alt+↑ / Alt+↓ | Computer | Yes (caught before the terminal) |
+| Previous / next tab of the viewed space: the chip a click would switch to, in shown order; stops at the ends | Alt+← / Alt+→ | Computer | Yes (caught before the terminal) |
 | New agent in a new space: the "New agent" sheet, which creates the space (`workspace.create`) | Mod+Alt+N | Computer, online | Yes (caught before the terminal) |
 | New tab in the current pane's space: the "Start in a new tab" sheet | Mod+Alt+T | Computer, online, a pane being viewed | Yes (caught before the terminal) |
 | Close the current pane, through the same confirmation as the menu | Mod+Alt+W | Computer, online, a pane being viewed | Yes (caught before the terminal) |
@@ -78,7 +79,15 @@ Per xterm.js:
 - **Decision:** Mod+Alt+N, T and W are caught on `window` in the capture phase, before xterm.
   - On Linux, the terminal program therefore never receives Ctrl+Alt+N, T or W.
   - This follows the precedent of Ctrl/⌘+Alt+arrows (`TabView.vue:72`).
-  - No other new shortcut takes a key the program would receive.
+- **Alt+arrows** are caught the same way and are app navigation (step the sidebar
+  cards, step the current space's tab chips), so the program never sees them —
+  the one approved exception to "the terminal owns its keys". The key is still
+  consumed at the ends or with nothing to step to, so a loose Alt+←/→ cannot
+  reach the browser as Back/Forward. Accepted trade-off: on macOS, Option+←/→
+  word-caret movement in a filled field now steps tabs instead. Ctrl+arrows
+  stay with the program, and the
+  virtual keybar's Alt+arrow is not a trusted hardware key: it stays a literal
+  agent chord. No other shortcut takes a key the program would receive.
 - New shortcuts accept only the platform modifier. On macOS that leaves Ctrl+F, B, K, A and E to
   text editing. ⌘K still accepts both modifiers, as before.
 - Synthetic key events (`isTrusted` false) are ignored. HeaderMenu closes its menu with a fake
@@ -115,8 +124,8 @@ Per xterm.js:
   blurs itself.
 - Never during IME composition, including Safari's composition-ending key (`keyCode` 229). Never
   when another handler has already marked the key handled.
-- With focus in a field that contains text, only Mod/Ctrl chords fire. Esc and Alt+↑/↓ fire only
-  if the field is empty. `?` never fires in a field.
+- With focus in a field that contains text, only Mod/Ctrl chords and the hardware Alt+arrows
+  fire. Esc fires only if the field is empty. `?` never fires in a field.
 - Actions that create or close something are disabled exactly when their buttons are: offline view,
   events closed, or a stale pane.
 - Agent actions apply to `curPane`, which side by side is the active cell.

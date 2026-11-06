@@ -13,7 +13,9 @@
 - **Keyboard shortcuts** (`Mod` is ⌘ on macOS, Ctrl elsewhere; `Mod+/` or `?` lists them all,
   also in Settings › Computer):
   - `Ctrl/⌘+K` global search across agents and conversations, `Alt+↑/↓` previous / next agent
-    in the list, `Mod+,` settings.
+    in the list, `Alt+←/→` previous / next tab of the viewed space, `Mod+,` settings.
+    The Alt steps are app navigation even with the terminal or a filled field
+    focused; the virtual key bar's Alt+arrow stays a literal chord for the agent.
   - `Mod+Alt+N` new agent in a new space, `Mod+Alt+T` new tab in the current space,
     `Mod+Alt+W` close the current pane (after confirmation). They work from the terminal too.
   - In an agent: `Mod+F` searches the conversation, ``Ctrl+` `` switches between conversation
@@ -25,7 +27,12 @@
 - In the message field, `↑` on the first line recalls previous messages and slash commands;
   `↓` on the last line returns to newer entries, then restores your draft. History keeps the
   last 100 texts sent from this device per agent, without attachments or quoted references.
-- **Settings** in a sidebar, with desktop-only options such as the content width.
+- **Settings** in a sidebar, with desktop-only options such as the content width
+  and the interface size. Computers default to **Interface size › Large**: the
+  agent surfaces and the terminal font enlarge a notch, and the reading column
+  can grow to 1500 px while the terminal keeps its fitted width — choosing
+  **Full width** still wins over that cap. Picking **Standard** returns to the
+  usual density. The choice is kept on the device.
 
 ### On a phone
 
@@ -56,6 +63,16 @@
 - **Web Push notifications** when an agent finishes or needs you.
 - **Quick replies**: answer permissions and questions in one tap from the agent list.
 - **Terminal key bar** (Esc, Enter, arrows, Shift+Tab, Ctrl+C…) and touch scrolling.
+  A finger drag or the wheel browses the history the attach delivered locally —
+  the attach requests up to 1000 lines, a bound the core fills from the main
+  screen only, so an alternate-screen attach gets none. Known limitation: an
+  alternate-screen app's own pre-attach history is not recoverable passively —
+  stitching it through `terminal.read` would scroll the application. Pressing and holding a
+  still finger freezes the screen to copy from it; release and drag to select,
+  then Done leaves the copy surface. Known limitation: a blank cell in a row's
+  last column can be padding a wide glyph wrapped early, but is copied as a
+  space — erased cells look identical in the buffer and real blanks must not
+  be lost.
   On iPhone and iPad a tap on the terminal does not open the on-screen keyboard: type in the
   message field, or tap the key bar's keyboard button to type in the terminal.
   Terminal links back to this app stay in the current window on a phone; external
@@ -67,8 +84,9 @@
 - **Computer layout in both orientations**: in portrait the agent list folds to a narrow column
   and slides over the conversation; in landscape it stays docked. Buttons are 44 px, and the
   layout does not change when the on-screen keyboard opens.
-- **Hardware keyboard**: Enter sends (Shift+Enter adds a line) once a key only a hardware
-  keyboard sends (arrows, Esc, a ⌘ chord) has been typed.
+- **Hardware keyboard**: Enter sends (Shift+Enter adds a line) once a detector key
+  (arrows, Esc, a ⌘ chord) is typed while no on-screen keyboard is open — some
+  soft keyboards do send those, so they only count then.
 
 The terminal key bar also has **Ctrl**, **Alt** and **Shift** toggles. Select one or
 several, then tap a key or type one ASCII character on the phone keyboard. The

@@ -107,6 +107,17 @@ describe('openCoreTerm', () => {
     expect(t.calls.filter(c => c.method === 'terminal.keys').map(c => c.params)).toEqual([{ terminal: 'm/t7', keys: ['esc'] }])
   })
 
+  it('forwards canonical chords and refuses a batch containing an unnameable key', async () => {
+    const t = setup()
+    await tick()
+    t.sess.onMessage(JSON.stringify({ type: 'keys', keys: ['ctrl+alt+shift+left', 'ctrl+backslash', 'alt+shift+a'] }))
+    t.sess.onMessage(JSON.stringify({ type: 'keys', keys: ['ctrl+]', 'esc'] }))
+    await tick()
+    // One name outside the key grammar refuses the whole batch: Ctrl+],
+    // Ctrl+^ and Ctrl+_ have no representable name and stay text on the client.
+    expect(t.calls.filter(c => c.method === 'terminal.keys').map(c => c.params)).toEqual([{ terminal: 'm/t7', keys: ['ctrl+alt+shift+left', 'ctrl+backslash', 'alt+shift+a'] }])
+  })
+
   it('closes with the exit reason, and detaches on client close', async () => {
     const t = setup()
     await tick()
