@@ -7,7 +7,7 @@ import { codexLimitReset, lastCodexLimits, mergeQuotas, readCodexMachine } from 
 
 const nullTokens = (t: string) => JSON.stringify({ timestamp: t, type: 'event_msg', payload: { type: 'token_count', rate_limits: { limit_id: 'premium', primary: null, secondary: null, credits: { has_credits: false, unlimited: false, balance: '0' }, rate_limit_reached_type: null } } })
 const limitError = (t: string, text = 'try again at Nov 8th, 2026 2:52 PM.') => JSON.stringify({ timestamp: t, type: 'event_msg', payload: { type: 'task_complete', last_agent_message: null, error: { message: `You’ve hit your usage limit. Upgrade to Pro, or ${text}`, codex_error_info: 'usage_limit_exceeded' } } })
-const numbers = (t: string, used: number) => JSON.stringify({ timestamp: t, type: 'event_msg', payload: { type: 'token_count', rate_limits: { primary: { used_percent: used, window_minutes: 300, resets_at: 1793900000 }, secondary: { used_percent: 69, window_minutes: 10080, resets_at: 1794200000 }, rate_limit_reached_type: null } } })
+const numbers = (t: string, used: number, resets = 1793900000) => JSON.stringify({ timestamp: t, type: 'event_msg', payload: { type: 'token_count', rate_limits: { primary: { used_percent: used, window_minutes: 300, resets_at: resets }, secondary: { used_percent: 69, window_minutes: 10080, resets_at: 1794200000 }, rate_limit_reached_type: null } } })
 
 describe('Codex usage limit reached', () => {
   it('reads the reset time of the message', () => {
@@ -40,10 +40,12 @@ describe('Codex usage limit reached', () => {
     fs.mkdirSync(dir, { recursive: true })
     const meta = JSON.stringify({ timestamp: new Date(now.getTime() - 3600000).toISOString(), type: 'session_meta', payload: { creator_account_id: 'acc-1' } })
     const ts = (min: number) => new Date(now.getTime() - min * 60000).toISOString()
+    // Reset times relative to now: the stale gauge's window has ended, the new reading is in the current one.
+    const resets = (min: number) => Math.round(now.getTime() / 1000) + min * 60
     const old = path.join(dir, 'rollout-a.jsonl')
     const cur = path.join(dir, 'rollout-b.jsonl')
     try {
-      fs.writeFileSync(old, [meta, numbers(ts(50), 100)].join('\n'))
+      fs.writeFileSync(old, [meta, numbers(ts(50), 100, resets(-1))].join('\n'))
       fs.writeFileSync(cur, [meta, nullTokens(ts(5)), limitError(ts(5))].join('\n'))
       const r = (await readCodexMachine(localFs, home)).q!
       expect(r.limited).toBeTruthy()
@@ -51,7 +53,7 @@ describe('Codex usage limit reached', () => {
       expect(r.account).toBeTruthy()
       const merged = mergeQuotas([{ key: '', label: 'Local', claude: null, codex: r }])
       expect(merged.codex!.limited).toBeTruthy()
-      fs.appendFileSync(cur, `\n${numbers(ts(1), 4)}`)
+      fs.appendFileSync(cur, `\n${numbers(ts(1), 4, resets(240))}`)
       const back = (await readCodexMachine(localFs, home)).q!
       expect(back.limited).toBeUndefined()
       expect(back.five!.used).toBe(4)
