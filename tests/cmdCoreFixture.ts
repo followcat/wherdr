@@ -41,6 +41,7 @@ export const hdrs = (tbl: Record<string, { st: string, body: string }>) => (args
 export const POST = '1767226000.5' // mtimeMs 1767226000500 > BORN, < firstObs
 export const POSTOBS = '1767226200.5' // post-observation write (> obs wall 1767226100.124)
 export const POST2 = '1767226500.5'
+export const POST3 = '1767226800.5'
 export const PRE = '1700000000.5' // pre-birth
 export const AT = '1767225723.464' // exactly the birth bound
 export const GAP = '1767225800.5' // in the fork->exec gap: > old-shell birth, < firstObs

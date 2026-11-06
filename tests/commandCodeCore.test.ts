@@ -3,7 +3,7 @@ import { createCmdCore } from '../server/utils/commandCodeCore'
 import type { ShellExec } from '../server/utils/fsx'
 import { AGENT_CENSUS_SCRIPT, CMD_HEADERS_SCRIPT } from './cmdCoreFixture'
 import {
-  AT, clock, F, filesWire, GAP, H, hdrs, HOME, live, OTHER, PKG,
+  AT, clock, F, filesWire, GAP, H, hdrs, HOME, live, OTHER, PKG, POST3,
   POST, POST2, POSTOBS, PRE, retitled, S, sess, st, stub, T, U1, U2, U3, WORK
 } from './cmdCoreFixture'
 
@@ -301,6 +301,44 @@ describe('createCmdCore', () => {
     cl.advance(1500)
     o.census = H + S(4242, { ppid: 9000, ticks: '50000', up: '1300.001', wall: '1767226900.001' }) + T(1, 1)
     expect(await c.locate(d)).toEqual({ file: F('a', U1), session: U1 })
+  })
+
+  it('never resurrects a foreign-cwd file a live peer may own', async () => {
+    // A seeded to S (header OTHER) from its own cwd, /clear to T, then a live
+    // retitled Cmd appears at OTHER and writes S: S's ownership is ambiguous
+    // forever — unavailable, never S and never silently T.
+    const cl = clock()
+    const o = {
+      census: H + S(9000) + T(1, 1), // the root cmd row itself, own cwd
+      files: filesWire([[F('b', U2), st(POSTOBS)]]),
+      headers: hdrs({ [F('b', U2)]: { st: st(POSTOBS), body: sess(U2, OTHER) } })
+    }
+    const { exec } = stub(o)
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const d = live({ pid: 9000, argv: ['cmd', '--session', U2], foreground: { pid: 9000 } })
+    // 1. The exact id seed admits foreign-cwd S: no live peer there yet.
+    expect(await c.locate(d)).toEqual({ file: F('b', U2), session: U2 })
+    // 2. /clear writes own-cwd T newest: the newer file wins.
+    cl.advance(1500)
+    o.files = filesWire([[F('b', U2), st(POSTOBS)], [F('a', U1), st(POST2)]])
+    o.headers = hdrs({ [F('b', U2)]: { st: st(POSTOBS), body: sess(U2, OTHER) }, [F('a', U1)]: { st: st(POST2), body: sess(U1) } })
+    expect(await c.locate(d)).toEqual({ file: F('a', U1), session: U1 })
+    // 3. A retitled live Cmd at OTHER writes S newest: contested — refuse,
+    //    argv-lost B is still a peer (no argv subtraction ever).
+    cl.advance(1500)
+    o.census = H + S(9000) + retitled(5151, { cwd: OTHER }) + T(2, 2)
+    o.files = filesWire([[F('b', U2), st(POST3)], [F('a', U1), st(POST2)]])
+    o.headers = hdrs({ [F('b', U2)]: { st: st(POST3), body: sess(U2, OTHER) }, [F('a', U1)]: { st: st(POST2), body: sess(U1) } })
+    expect(await c.locate(d)).toEqual({ unavailable: 'peers' })
+    // 4. B still live with T newest again: still unavailable — the contested
+    //    candidate is never dropped to silently pick the own-cwd file.
+    cl.advance(1500)
+    o.files = filesWire([[F('b', U2), st(POSTOBS)], [F('a', U1), st(POST2)]])
+    o.headers = hdrs({ [F('b', U2)]: { st: st(POSTOBS), body: sess(U2, OTHER) }, [F('a', U1)]: { st: st(POST2), body: sess(U1) } })
+    expect(await c.locate(d)).toEqual({ unavailable: 'peers' })
+    // The same ambiguity under a path-form seed: identical answer.
+    expect(await createCmdCore(exec, HOME).locate(live({ pid: 9000, argv: ['cmd', '--session', F('b', U2)], foreground: { pid: 9000 } })))
+      .toEqual({ unavailable: 'peers' })
   })
 
   it('fails closed when the record carries no usable machine wall', async () => {

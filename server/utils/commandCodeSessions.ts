@@ -195,6 +195,16 @@ export function cmdSelect(input: {
     }
   }
 
+  // An eligible candidate in a FOREIGN cwd is only reachable via an exact
+  // seed. A live cmd process in that cwd makes its ownership ambiguous —
+  // the peer's own launch target is unknowable after retitle, so peers are
+  // never subtracted by sampled argv, and the seed never "pins" the file to
+  // this launch either. Refuse entirely rather than drop the contested file
+  // and silently choose a same-cwd one.
+  const foreign = new Set<string>()
+  for (const c of eligible.values()) if (c.cwd !== proc.cwd) foreign.add(c.cwd)
+  if (foreign.size && census.processes.some(p => p.cwd && foreign.has(p.cwd))) return { unavailable: 'peers' }
+
   // An unclassifiable process voids only the lookups it could affect: same
   // cwd (a possible hidden peer), the header cwd of an ELIGIBLE candidate
   // (that file may be the unknown's write — the cross-cwd launch target

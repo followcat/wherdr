@@ -154,6 +154,32 @@ describe('commandCodeSessions', () => {
     expect(ok(select({ argv, candidates: { complete: true, items } }))?.session).toBe(U2)
   })
 
+  it('refuses a cross-cwd seed a live peer may own — never S, never silently T', () => {
+    // A seeded S at OTHER while a live cmd peer sits in OTHER: ownership is
+    // ambiguous (the peer's launch argv is unknowable), so the answer is
+    // unavailable regardless of which eligible candidate would win.
+    const argv = { argv: ['cmd', '--session', U3], argvExact: true }
+    const peers = census([proc(9001), proc(9002, OTHER)])
+    // S newest: contested — never S.
+    expect(why(select({ argv, census: peers, candidates: { complete: true, items: [cand(U1, CWD, BORN + 20), cand(U3, OTHER, BORN + 80)] } }))).toBe('peers')
+    // T newest: the contested seed is never dropped to silently pick T.
+    expect(why(select({ argv, census: peers, candidates: { complete: true, items: [cand(U1, CWD, BORN + 80), cand(U3, OTHER, BORN + 20)] } }))).toBe('peers')
+    // The path-form seed binds the same file: identical refusal.
+    const pargv = { argv: ['cmd', '--session', `${ROOT}/proj/${U3}.jsonl`], argvExact: true }
+    expect(why(select({ argv: pargv, census: peers, candidates: { complete: true, items: [cand(U3, OTHER, BORN + 80)] } }))).toBe('peers')
+    // Positives: no peer at OTHER resolves to S even with peers/unknowns in
+    // cwds this lookup cannot touch.
+    const items = [cand(U1, CWD, BORN + 20), cand(U3, OTHER, BORN + 80)]
+    expect(ok(select({ argv, census: census([proc(9001), proc(9002, '/w/z')]), candidates: { complete: true, items } }))?.session).toBe(U3)
+    expect(ok(select({ argv, census: census([proc(9001)], { uncertain: [proc(7001, '/w/z')] }), candidates: { complete: true, items } }))?.session).toBe(U3)
+    // An unknown process AT the seed's header cwd still refuses (L1 scope).
+    expect(why(select({ argv, census: census([proc(9001)], { uncertain: [proc(7001, OTHER)] }), candidates: { complete: true, items } }))).toBe('peers')
+    // A seeded file whose header cwd cannot be proven is never admitted:
+    // without it the lookup is just empty.
+    const bad = cand(U3, 'relative/cwd', BORN + 80)
+    expect(why(select({ argv, candidates: { complete: true, items: [bad] } }))).toBe('empty')
+  })
+
   it('requires a full-id seed to be unique across project dirs', () => {
     const argv = { argv: ['cmd', '--session', U1], argvExact: true }
     const items = [cand(U1, CWD, BORN + 20, 'p1'), cand(U1, CWD, BORN + 20, 'p2'), cand(U2, CWD, BORN + 80)]
