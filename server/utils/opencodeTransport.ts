@@ -1,18 +1,19 @@
-// OpenCode discovery/auth runs on the agent's own machine: a local child
-// process here, machine.exec over the multiplexed connection on a remote core
-// host. Adapted from wherdr v2's OpenCode transport, reduced to the read-only
-// discovery/auth/info subset. Credentials and the loopback address never
-// leave that machine: the only replies are a fixed error key or
-// {ok, server generation, version}. The helper discovers an already-running
-// 2.x service, authenticates to it and checks /api/info. It never starts,
-// installs, restarts or writes anything, and it is the only code that ever
-// sees the service password.
+// OpenCode transport runs on the agent's own machine: a local child process
+// here, machine.exec over the multiplexed connection on a remote core host.
+// Adapted from wherdr v2's OpenCode transport, reduced to read-only fixed
+// operations. Credentials and the loopback address never leave that machine:
+// the only replies are a fixed error key, an HTTP status or sanitized
+// metadata, never a transcript byte, password, URL or diagnostic.
+// PY_COMMON is the shared half of every fixed helper: discovery, the bounded
+// debug probe, URL/credential validation and the authenticated /api/info
+// handshake that yields the opaque server generation. Each helper composes
+// it with a single-purpose main; nothing below is duplicated per op.
 // Keep the -c payload ASCII for service/SSH launchers that decode argv before
 // applying Python's UTF-8 setting.
 import type { ShellExec } from './fsx'
 
-export const OPENCODE_DISCOVER = String.raw`
-import base64, hashlib, json, os, pathlib, re, select, shutil, signal, subprocess, sys, time
+const PY_COMMON = String.raw`
+import base64, hashlib, json, math, os, pathlib, re, select, shutil, signal, subprocess, sys, time
 import urllib.request, urllib.error, urllib.parse
 
 home = sys.argv[1]
@@ -158,10 +159,10 @@ def discover():
     auth = 'Basic ' + base64.b64encode(('opencode:' + password).encode()).decode()
     return base, auth, registration, password
 
-try:
-    base, auth, registration, password = discover()
-    # No proxies, no redirects: Basic credentials may only ever reach the
-    # validated loopback address above, directly.
+def connect(base, auth, registration, password):
+    # Authenticate and check /api/info on every one-shot invocation; the
+    # opaque generation binds registration, endpoint, credentials and the
+    # running service instance.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     try:
         with opener.open(urllib.request.Request(base + '/api/info',
@@ -189,11 +190,140 @@ try:
     pid = info.get('pid')
     if not isinstance(pid, int) or isinstance(pid, bool) or not 0 < pid <= 4194304:
         raise Fail('reply_invalid')
-    # Opaque generation: a registration, endpoint, credential or service
-    # restart change gives a new value. It exists only when every input is
-    # present and validated.
     server = hashlib.sha256(json.dumps([registration, base, password, pid], sort_keys=True).encode()).hexdigest()[:32]
+    return opener, server, name
+`
+
+export const OPENCODE_DISCOVER = PY_COMMON + String.raw`
+try:
+    base, auth, registration, password = discover()
+    opener, server, name = connect(base, auth, registration, password)
     emit({'ok': True, 'server': server, 'version': name})
+except Fail as e:
+    emit({'error': e.key})
+    sys.exit(1)
+except Exception:
+    emit({'error': 'helper_error'})
+    sys.exit(1)
+`
+
+export const OPENCODE_META = PY_COMMON + String.raw`
+READ_LIMIT = 24 * 1024 * 1024
+REQUEST_LIMIT = 4096
+
+try:
+    # The request is fixed before any machine work: exact fields and types
+    # only, inside its own UTF-8 byte cap, before it is ever parsed.
+    raw_request = sys.argv[2] if len(sys.argv) > 2 else ''
+    if len(raw_request.encode('utf-8', 'surrogateescape')) > REQUEST_LIMIT:
+        raise Fail('invalid_request')
+    try:
+        request = json.loads(raw_request)
+    except ValueError:
+        raise Fail('invalid_request')
+    if not isinstance(request, dict) or set(request) - {'op', 'session', 'cursor', 'expect'}:
+        raise Fail('invalid_request')
+    op = request.get('op')
+    session = request.get('session')
+    cursor = request.get('cursor')
+    expect = request.get('expect')
+    if op not in ('session', 'page') \
+            or not isinstance(session, str) or not re.fullmatch(r'[0-9A-Za-z_-]{1,128}', session) \
+            or op != 'page' and cursor is not None \
+            or cursor is not None and (not isinstance(cursor, str) or not re.fullmatch(r'[\x21-\x7e]{1,256}', cursor)) \
+            or expect is not None and (not isinstance(expect, str) or not re.fullmatch(r'[a-f0-9]{64}', expect)):
+        raise Fail('invalid_request')
+    # Fixed paths only: a validated session id, and for a page the fixed
+    # descending page size with either its initial order or the opaque
+    # native cursor as an encoded query value. Never a numeric coercion.
+    path = '/api/session/' + urllib.parse.quote(session, safe='')
+    if op == 'page':
+        query = {'limit': '120'}
+        if cursor is None:
+            query['order'] = 'desc'
+        else:
+            query['cursor'] = cursor
+        path += '/message?' + urllib.parse.urlencode(query)
+    base, auth, registration, password = discover()
+    opener, server, name = connect(base, auth, registration, password)
+    try:
+        with opener.open(urllib.request.Request(base + path,
+                headers={'Authorization': auth, 'Accept': 'application/json'}), timeout=8) as reply:
+            body = reply.read(READ_LIMIT + 1)
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise Fail('auth')
+        emit({'status': e.code, 'server': server})
+        sys.exit(0)
+    except Fail:
+        raise
+    except Exception:
+        raise Fail('unreachable')
+    if len(body) > READ_LIMIT:
+        raise Fail('too_large')
+    def reject(value):
+        raise ValueError(value)
+    try:
+        # The body must be standard JSON: NaN and Infinity literals are not.
+        data = json.loads(body, parse_constant=reject)
+    except ValueError:
+        raise Fail('reply_invalid')
+    # Canonical bytes are produced incrementally: the 24 MiB ceiling applies
+    # while encoding, never to a finished whole-string allocation. Scalars
+    # encode in bounded slices too: one JSONEncoder token can be an entire
+    # escaped string, so its allocation is chunked here the same way the
+    # aggregate is.
+    escape = json.encoder.encode_basestring_ascii
+    def canon(value):
+        if value is None:
+            yield 'null'
+        elif value is True:
+            yield 'true'
+        elif value is False:
+            yield 'false'
+        elif isinstance(value, str):
+            yield '"'
+            for i in range(0, len(value), 65536):
+                yield escape(value[i:i + 65536])[1:-1]
+            yield '"'
+        elif isinstance(value, (int, float)):
+            # Overflowed exponents (1e999) parse to non-finite floats; those
+            # have no standard JSON canonical form either.
+            if isinstance(value, float) and not math.isfinite(value):
+                raise Fail('reply_invalid')
+            yield json.dumps(value)
+        elif isinstance(value, list):
+            yield '['
+            for i, item in enumerate(value):
+                if i:
+                    yield ','
+                yield from canon(item)
+            yield ']'
+        elif isinstance(value, dict):
+            yield '{'
+            for i, key in enumerate(sorted(value)):
+                if i:
+                    yield ','
+                yield from canon(key)
+                yield ':'
+                yield from canon(value[key])
+            yield '}'
+        else:
+            raise Fail('reply_invalid')
+    digest = hashlib.sha256()
+    size = 0
+    for piece in canon(data):
+        chunk = piece.encode('utf-8')
+        size += len(chunk)
+        if size > READ_LIMIT:
+            raise Fail('too_large')
+        digest.update(chunk)
+    # The fingerprint binds this server generation, the fixed request fields
+    # and the canonical content; it is all the metadata a poll needs.
+    fingerprint = hashlib.sha256(json.dumps([server, session, op, cursor or '',
+        digest.hexdigest()], sort_keys=True).encode()).hexdigest()
+    emit({'status': 200, 'server': server, 'fingerprint': fingerprint, 'size': size,
+        'unchanged': expect == fingerprint})
 except Fail as e:
     emit({'error': e.key})
     sys.exit(1)
