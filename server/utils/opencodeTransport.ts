@@ -2,8 +2,10 @@
 // here, machine.exec over the multiplexed connection on a remote core host.
 // Adapted from wherdr v2's OpenCode transport, reduced to read-only fixed
 // operations. Credentials and the loopback address never leave that machine:
-// the only replies are a fixed error key, an HTTP status or sanitized
-// metadata, never a transcript byte, password, URL or diagnostic.
+// replies are a fixed error key, an HTTP status, sanitized metadata, or, for
+// the fixed chunk helper in opencodeChunk.ts only, a validated bounded piece
+// of a snapshot the caller already fingerprinted. Never a password, URL or
+// diagnostic.
 // PY_COMMON is the shared half of every fixed helper: discovery, the bounded
 // debug probe, URL/credential validation and the authenticated /api/info
 // handshake that yields the opaque server generation. Each helper composes
@@ -12,11 +14,13 @@
 // applying Python's UTF-8 setting.
 import type { ExecResult, ShellExec } from './fsx'
 
-const PY_COMMON = String.raw`
+export const PY_COMMON = String.raw`
 import base64, hashlib, json, math, os, pathlib, re, select, shutil, signal, subprocess, sys, time
 import urllib.request, urllib.error, urllib.parse
 
 home = sys.argv[1]
+READ_LIMIT = 24 * 1024 * 1024
+REQUEST_LIMIT = 4096
 
 def emit(value):
     print(json.dumps(value, ensure_ascii=True), flush=True)
@@ -192,6 +196,49 @@ def connect(base, auth, registration, password):
         raise Fail('reply_invalid')
     server = hashlib.sha256(json.dumps([registration, base, password, pid], sort_keys=True).encode()).hexdigest()[:32]
     return opener, server, name
+
+# Canonical bytes come out of canon() in small pieces: the 24 MiB ceiling
+# applies while encoding, never to a finished whole-string allocation.
+# Scalars encode in bounded slices too: one JSONEncoder token can be an
+# entire escaped string, so its allocation is chunked here the same way the
+# aggregate is.
+ESCAPE = json.encoder.encode_basestring_ascii
+def canon(value):
+    if value is None:
+        yield 'null'
+    elif value is True:
+        yield 'true'
+    elif value is False:
+        yield 'false'
+    elif isinstance(value, str):
+        yield '"'
+        for i in range(0, len(value), 65536):
+            yield ESCAPE(value[i:i + 65536])[1:-1]
+        yield '"'
+    elif isinstance(value, (int, float)):
+        # Overflowed exponents (1e999) parse to non-finite floats; those
+        # have no standard JSON canonical form either.
+        if isinstance(value, float) and not math.isfinite(value):
+            raise Fail('reply_invalid')
+        yield json.dumps(value)
+    elif isinstance(value, list):
+        yield '['
+        for i, item in enumerate(value):
+            if i:
+                yield ','
+            yield from canon(item)
+        yield ']'
+    elif isinstance(value, dict):
+        yield '{'
+        for i, key in enumerate(sorted(value)):
+            if i:
+                yield ','
+            yield from canon(key)
+            yield ':'
+            yield from canon(value[key])
+        yield '}'
+    else:
+        raise Fail('reply_invalid')
 `
 
 export const OPENCODE_DISCOVER = PY_COMMON + String.raw`
@@ -208,9 +255,6 @@ except Exception:
 `
 
 export const OPENCODE_META = PY_COMMON + String.raw`
-READ_LIMIT = 24 * 1024 * 1024
-REQUEST_LIMIT = 4096
-
 try:
     # The request is fixed before any machine work: exact fields and types
     # only, inside its own UTF-8 byte cap, before it is ever parsed.
@@ -268,48 +312,6 @@ try:
         data = json.loads(body, parse_constant=reject)
     except ValueError:
         raise Fail('reply_invalid')
-    # Canonical bytes are produced incrementally: the 24 MiB ceiling applies
-    # while encoding, never to a finished whole-string allocation. Scalars
-    # encode in bounded slices too: one JSONEncoder token can be an entire
-    # escaped string, so its allocation is chunked here the same way the
-    # aggregate is.
-    escape = json.encoder.encode_basestring_ascii
-    def canon(value):
-        if value is None:
-            yield 'null'
-        elif value is True:
-            yield 'true'
-        elif value is False:
-            yield 'false'
-        elif isinstance(value, str):
-            yield '"'
-            for i in range(0, len(value), 65536):
-                yield escape(value[i:i + 65536])[1:-1]
-            yield '"'
-        elif isinstance(value, (int, float)):
-            # Overflowed exponents (1e999) parse to non-finite floats; those
-            # have no standard JSON canonical form either.
-            if isinstance(value, float) and not math.isfinite(value):
-                raise Fail('reply_invalid')
-            yield json.dumps(value)
-        elif isinstance(value, list):
-            yield '['
-            for i, item in enumerate(value):
-                if i:
-                    yield ','
-                yield from canon(item)
-            yield ']'
-        elif isinstance(value, dict):
-            yield '{'
-            for i, key in enumerate(sorted(value)):
-                if i:
-                    yield ','
-                yield from canon(key)
-                yield ':'
-                yield from canon(value[key])
-            yield '}'
-        else:
-            raise Fail('reply_invalid')
     digest = hashlib.sha256()
     size = 0
     for piece in canon(data):
