@@ -2,9 +2,13 @@
 // classification for the A5 display-only session fallback. Pure functions
 // over the bounded records emitted by AGENT_CENSUS_SCRIPT (agentProcesses.ts);
 // no IO here. Selection fails closed: anything that makes the peer set
-// unreliable (overflow, truncated output or records, a raced, unreadable or
-// unclassifiable potential peer) marks the census incomplete instead of
-// leaving a misleading sole-peer count.
+// unreliable (overflow, truncated output or records, a raced or recordless
+// unreadable potential peer) marks the census incomplete instead of leaving
+// a misleading sole-peer count. An EMITTED record no supported shape can
+// classify is kept in `uncertain` — bounded evidence the lookup scopes by
+// cwd, never a proven other and never a global failure. Only producer-side
+// unknowns (the footer count: no usable record at all) still fail closed —
+// without a cwd they can never be proven irrelevant.
 import { birthUpperBound } from './devinProcesses'
 
 export interface AgentProcess {
@@ -24,8 +28,9 @@ export interface AgentCensus {
   complete: boolean
   incomplete?: CensusIncomplete
   processes: AgentProcess[] // classified Command Code processes only
+  uncertain: AgentProcess[] // emitted records no shape could classify — scoped per lookup
   scanned: number
-  unknown: number // live PIDs that could not be classified at all
+  unknown: number // live PIDs that yielded no usable record at all (footer count)
 }
 
 // command-code 1.88.3 package bins all map to dist/index.mjs, which imports
@@ -115,6 +120,11 @@ function classify(p: { comm?: string, argv?: string[], exe?: string, terminated?
     const hit = (c: string) => CMD_BIN.has(base(c)) || ENTRY.test(c) || ENTRY.test(res.get(c) ?? '')
     return hit(sp.raw) || sp.preloads.some(hit) ? 'peer' : 'other'
   }
+  // No usable argv: only affirmative comm/exe evidence above could have
+  // returned 'peer'. A bare cmd/cmd.exe name or an unreadable comm can never
+  // prove exclusion — unknown, never a silently dropped other.
+  const noArgv = !p.argv?.length || p.argv.every(a => a === '')
+  if (noArgv && (!p.comm || p.comm === 'cmd' || p.comm === 'cmd.exe')) return 'unknown'
   // A bare `cmd` name alone is never sufficient (Windows cmd.exe, scripts,
   // exec -a): require interpreter or package evidence.
   if (a0b === 'cmd' && (INTERPRETER.test(base(p.exe)) || ENTRY.test(p.exe ?? ''))) return 'peer'
@@ -162,7 +172,7 @@ const link = (s: string | undefined) => { const v = dec(s).toString('utf8'); ret
 // Format: one `H hz boot ok` header first, `S`/`R` records, one
 // `T scanned records overflow unknown` footer last. Anything else is unsafe.
 export function parseAgentCensus(stdout: string): AgentCensus {
-  const out: AgentCensus = { complete: true, processes: [], scanned: 0, unknown: 0 }
+  const out: AgentCensus = { complete: true, processes: [], uncertain: [], scanned: 0, unknown: 0 }
   const fail = (w: CensusIncomplete) => { if (!out.incomplete) out.incomplete = w; out.complete = false }
   const raw = String(stdout || '')
   // Hard gate before any split/decode/record allocation.
@@ -230,7 +240,10 @@ export function parseAgentCensus(stdout: string): AgentCensus {
       argvExact: parts.length ? !argvTruncated && terminated : undefined,
     }
     const cls = classify({ comm: proc.comm, argv: proc.argv, exe: proc.exe, terminated, res })
-    if (cls === 'unknown') { fail('metadata'); continue }
+    // An unclassifiable emitted record is bounded evidence: pid + cwd stay,
+    // the lookup scopes its blocking. Never fail the census, never drop it,
+    // never call it a proven other.
+    if (cls === 'unknown') { out.uncertain.push(proc); continue }
     if (cls !== 'peer') continue
     // The process.title rewrite leaves argv == [comm] on an interpreter exe:
     // classifying evidence, but the launch arguments are gone.

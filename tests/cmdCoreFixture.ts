@@ -23,8 +23,8 @@ export const ENTRY: [string, string][] = [['/x/bin/cmd', PKG]]
 
 export const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64')
 export const H = 'H 100 1767225600 1\n'
-export const S = (pid: number, o: { ppid?: number, ticks?: string, comm?: string, argv?: string[], cwd?: string } = {}) =>
-  `S ${pid} ${o.ppid ?? 1} ${o.ticks ?? '12345'} 500.12 1767226100.123456789 ${b64(o.comm ?? 'node')} ${b64((o.argv ?? ['node', '/x/bin/cmd']).join('\0') + '\0')} ${b64((o.cwd ?? WORK) + '\n')} ${b64('/usr/bin/node\n')} ${b64(ENTRY.map(([r, s]) => `${r}\x01${s}\x01`).join(''))}\n`
+export const S = (pid: number, o: { ppid?: number, ticks?: string, comm?: string, argv?: string[], cwd?: string | null } = {}) =>
+  `S ${pid} ${o.ppid ?? 1} ${o.ticks ?? '12345'} 500.12 1767226100.123456789 ${b64(o.comm ?? 'node')} ${b64((o.argv ?? ['node', '/x/bin/cmd']).join('\0') + '\0')} ${o.cwd === null ? '' : b64((o.cwd ?? WORK) + '\n')} ${b64('/usr/bin/node\n')} ${b64(ENTRY.map(([r, s]) => `${r}\x01${s}\x01`).join(''))}\n`
 export const T = (n: number, r: number, o = 0, u = 0) => `T ${n} ${r} ${o} ${u}\n`
 export const retitled = (pid: number, o: { cwd?: string } = {}) => S(pid, { comm: 'command-code', argv: ['command-code'], cwd: o.cwd }) // launch argv lost -> argvExact false
 

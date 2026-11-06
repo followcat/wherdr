@@ -126,28 +126,54 @@ it('identifies only the script position; prompt arguments never prove identity',
   expect(pl.processes.map(p => p.pid)).toEqual([6])
 })
 
-it('marks unknown interpreter shapes incomplete instead of proving absence', () => {
-  const u = parseAgentCensus(H() + S(1, { argv: ['node', '--mystery', '/srv/server.js'], cwd: '/w/x', exe: '/usr/bin/node' }) + T())
-  expect(u.incomplete).toBe('metadata')
-  const stdin = parseAgentCensus(H() + S(1, { argv: ['node', '-'], cwd: '/w/x', exe: '/usr/bin/node' }) + T())
-  expect(stdin.incomplete).toBe('metadata')
-  const bare = parseAgentCensus(H() + S(1, { argv: ['node'], cwd: '/w/x', exe: '/usr/bin/node' }) + T())
-  expect(bare.incomplete).toBe('metadata')
-  // Dynamic eval code is never an executable path or identity — incomplete.
-  for (const argv of [['node', '-e', `require('${PKGD}/index.mjs')`], ['node', '-e', 'console.log("command-code")'], ['node', '--eval=x'], ['node', '-p', '1']]) {
-    const e = parseAgentCensus(H() + S(1, { argv, cwd: '/w/x', exe: '/usr/bin/node' }) + T())
-    expect(e.incomplete).toBe('metadata')
-    expect(e.processes).toEqual([])
-  }
-  // Non-Node interpreters are outside the supported subset: unclassifiable.
-  for (const [comm, argv] of [['deno', ['deno', 'run', '/x.ts']], ['bun', ['bun', '/x.js']]] as const) {
-    expect(parseAgentCensus(H() + S(1, { comm, argv, cwd: '/w/x' }) + T()).incomplete).toBe('metadata')
-  }
+it('keeps unclassifiable shapes as bounded uncertain evidence, never a proven other', () => {
+  // Emitted records the supported subset cannot classify stay in the census
+  // scoped by their own evidence — the lookup decides relevance; they are
+  // never dropped and never converted into a proven other.
+  const c = parseAgentCensus(H()
+    + S(1, { argv: ['node', '--mystery', '/srv/server.js'], cwd: '/w/x', exe: '/usr/bin/node' })
+    + S(2, { argv: ['node', '-'], cwd: '/w/x', exe: '/usr/bin/node' })
+    + S(3, { argv: ['node'], cwd: '/w/x', exe: '/usr/bin/node' })
+    + S(4, { argv: ['node', '-e', `require('${PKGD}/index.mjs')`], cwd: '/w/x', exe: '/usr/bin/node' })
+    + S(5, { argv: ['node', '--eval=x'], cwd: '/w/x', exe: '/usr/bin/node' })
+    + S(6, { argv: ['node', '-p', '1'], cwd: '/w/x', exe: '/usr/bin/node' })
+    + S(7, { argv: ['/opt/tools/node_repl'], cwd: '/w/x', exe: '/usr/bin/node' }) // bare REPL: argv0 only
+    + S(8, { comm: 'deno', argv: ['deno', 'run', '/x.ts'], cwd: '/w/x', exe: '/usr/bin/deno' })
+    + S(9, { comm: 'bun', argv: ['bun', '/x.js'], cwd: '/w/x', exe: '/usr/bin/bun' })
+    + T(9, 9))
+  expect(c.complete).toBe(true)
+  expect(c.processes).toEqual([])
+  expect(c.uncertain.map(p => p.pid)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
+  expect(c.uncertain[0]).toMatchObject({ pid: 1, cwd: '/w/x' }) // bounded evidence incl. cwd
+  // Mixed: the proven peer still resolves; the unknown stays scoped evidence.
   const mix = parseAgentCensus(H()
     + S(1, { argv: ['node', '/x/bin/cmdc'], cwd: '/w/x', exe: '/usr/bin/node' })
     + S(2, { argv: ['node', '--weird', 'x.js'], cwd: '/w/x', exe: '/usr/bin/node' }) + T(2, 2))
-  expect(mix.incomplete).toBe('metadata')
+  expect(mix.complete).toBe(true)
   expect(mix.processes.map(p => p.pid)).toEqual([1])
+  expect(mix.uncertain.map(p => p.pid)).toEqual([2])
+  // An unknown whose cwd is unreadable is still kept — relevance decides.
+  const noCwd = parseAgentCensus(H() + `S 9 1 12345 500.12 1767226100.1 ${b64('node')} ${arg64(['/opt/tools/node_repl'])}  ${link64('/usr/bin/node')} \n` + T())
+  expect(noCwd.complete).toBe(true)
+  expect(noCwd.uncertain[0]?.pid).toBe(9)
+  expect(noCwd.uncertain[0]?.cwd).toBeUndefined()
+})
+
+it('keeps an argv-less suspicious comm unknown, never a proven other', () => {
+  // The producer emits live empty/unreadable-cmdline processes whose comm
+  // could hide a peer. Without argv only an affirmative comm could prove
+  // 'peer' (kept under peer rules); a bare cmd/cmd.exe name or an unreadable
+  // comm can never prove exclusion — unknown, never a dropped other.
+  for (const comm of ['cmd', 'cmd.exe', '']) {
+    const r = parseAgentCensus(H() + `S 11 1 12345 500.12 1767226100.1 ${b64(comm)}  ${link64('/w/x')} ${link64('/x/cmd')} \n` + T())
+    expect(r.complete).toBe(true)
+    expect(r.processes).toEqual([])
+    expect(r.uncertain.map(p => p.pid)).toEqual([11])
+  }
+  // A proven non-suspicious comm is still a legitimate other — dropped.
+  const plain = parseAgentCensus(H() + `S 11 1 12345 500.12 1767226100.1 ${b64('sshd')}  ${link64('/w/x')} ${link64('/usr/sbin/sshd')} \n` + T())
+  expect(plain.complete).toBe(true)
+  expect(plain.uncertain).toEqual([])
 })
 
 it('caps record count and total bytes before trusting the scan', () => {

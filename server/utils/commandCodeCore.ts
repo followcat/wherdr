@@ -31,7 +31,7 @@ import { agentCensus } from './agentProcesses'
 import type { ShellExec } from './fsx'
 import { cmdFiles } from './commandCodeFiles'
 import { type CmdHeadersResult, createCmdHeaders } from './commandCodeHeaders'
-import { type CmdSelection, type CmdUnavailable, cmdProjectsRoot, cmdResumeSeed, cmdSelect } from './commandCodeSessions'
+import { type CmdSelection, type CmdUnavailable, absPath, cmdProjectsRoot, cmdResumeSeed, cmdSelect } from './commandCodeSessions'
 
 // The terminal.get fields this resolver trusts. state is core's terminal
 // state — only an exact 'live' resolves. argv is the RECORDED root launch
@@ -49,7 +49,7 @@ export interface CmdCore {
   locate(detail: CmdTerminalDetail | null | undefined): Promise<CmdLocate>
 }
 
-const BAD_CENSUS: AgentCensus = { complete: false, incomplete: 'unavailable', processes: [], scanned: 0, unknown: 0 }
+const BAD_CENSUS: AgentCensus = { complete: false, incomplete: 'unavailable', processes: [], uncertain: [], scanned: 0, unknown: 0 }
 const safePid = (p: unknown): p is number => Number.isSafeInteger(p) && (p as number) > 0
 
 export function createCmdCore(exec: ShellExec, home: string, opts: { root?: string, timeoutMs?: number, ttlMs?: number, now?: () => number } = {}): CmdCore {
@@ -133,6 +133,10 @@ export function createCmdCore(exec: ShellExec, home: string, opts: { root?: stri
       // Two live same-cwd cmd peers — nested, external, anywhere — make the
       // unique-conversation premise unproven: refuse before any file IO.
       if (census.processes.filter(p => p.cwd === proc.cwd).length !== 1) return un('peers')
+      // Same for an unclassifiable process in the target's cwd or with an
+      // unreadable one: a possible hidden peer refuses before file IO. The
+      // selector re-checks against eligible candidate header cwds.
+      if (census.uncertain.some(u => !u.cwd || !absPath(u.cwd) || u.cwd === proc.cwd)) return un('peers')
 
       const hdr = await headerEvidence(s)
       if (!hdr?.complete) return un('incomplete')

@@ -19,7 +19,7 @@ const proc = (pid: number, cwd: string | undefined = CWD, extra: Partial<AgentPr
   pid, startTicks: TICKS, cwd, startedAt: BORN, ...extra
 })
 const census = (processes: AgentProcess[], extra: Partial<AgentCensus> = {}): AgentCensus => ({
-  complete: true, processes, scanned: processes.length, unknown: 0, ...extra
+  complete: true, processes, uncertain: [], scanned: processes.length, unknown: 0, ...extra
 })
 const cand = (id: string, cwd: string, mtimeMs: number, dir = 'proj'): CmdCandidate =>
   ({ file: `${ROOT}/${dir}/${id}.jsonl`, id, cwd, mtimeMs })
@@ -52,6 +52,27 @@ describe('commandCodeSessions', () => {
     expect(why(select({ census: census([proc(9001), proc(9002)]), candidates: items }))).toBe('peers')
     // A nested agent (child pid) is still a peer: never deduplicated by ancestry.
     expect(why(select({ census: census([proc(9001), proc(9002, CWD, { ppid: 9001 })]), candidates: items }))).toBe('peers')
+  })
+
+  it('scopes unclassifiable processes to the cwds a lookup could touch', () => {
+    const items = { complete: true, items: [cand(U1, CWD, BORN + 10)] }
+    // An unknown elsewhere cannot affect this lookup: the correct file wins.
+    expect(ok(select({ census: census([proc(9001)], { uncertain: [proc(7001, OTHER)] }), candidates: items }))?.session).toBe(U1)
+    // Same cwd: a possible hidden peer — unavailable.
+    expect(why(select({ census: census([proc(9001)], { uncertain: [proc(7001)] }), candidates: items }))).toBe('peers')
+    // Unreadable cwd: irrelevance can never be proven — unavailable anywhere.
+    expect(why(select({ census: census([proc(9001)], { uncertain: [proc(7001, OTHER, { cwd: undefined })] }), candidates: items }))).toBe('peers')
+    // A relative or NUL cwd is no proof of irrelevance either.
+    expect(why(select({ census: census([proc(9001)], { uncertain: [proc(7001, 'rel/dir')] }), candidates: items }))).toBe('peers')
+    expect(why(select({ census: census([proc(9001)], { uncertain: [proc(7001, '/w/x\0tail')] }), candidates: items }))).toBe('peers')
+    // An eligible candidate's header cwd is relevant even cross-cwd: the
+    // launch target's file may be the unknown's write.
+    const x = { complete: true, items: [cand(U1, CWD, BORN + 10), cand(U3, OTHER, BORN + 900)] }
+    const seed = { argv: ['cmd', '--session', U3], argvExact: true }
+    expect(why(select({ argv: seed, census: census([proc(9001)], { uncertain: [proc(7001, OTHER)] }), candidates: x }))).toBe('peers')
+    // Without the seed that file is never eligible: the same unknown is
+    // irrelevant again and the legitimate target file wins.
+    expect(ok(select({ census: census([proc(9001)], { uncertain: [proc(7001, OTHER)] }), candidates: x }))?.session).toBe(U1)
   })
 
   it('is unavailable when the target row is missing or the generation changed', () => {

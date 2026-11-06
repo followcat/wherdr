@@ -4,7 +4,9 @@ import path from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { AGENT_CENSUS_SCRIPT, agentCensus, localShell } from '../server/utils/agentProcesses'
 import { parseAgentCensus } from '../server/utils/agentCensus'
-import { shq } from '../server/utils/fsx'
+import { createCmdCore } from '../server/utils/commandCodeCore'
+import { type ShellExec, shq } from '../server/utils/fsx'
+import { CMD_FILES_SCRIPT, CMD_HEADERS_SCRIPT, F, filesWire, hdrs, HOME, live, POST, sess, st, U1 } from './cmdCoreFixture'
 
 const linux = it.runIf(process.platform === 'linux')
 const roots: string[] = []
@@ -64,7 +66,7 @@ linux('census over a synthetic /proc: bin-symlink, retitled, wrapper and nested 
   expect(rt.cwd).toBe('/work/other\n') // real trailing newline survives
 })
 
-linux('an unclassifiable live interpreter peer makes the census incomplete', async () => {
+linux('an unclassifiable live interpreter stays emitted bounded evidence', async () => {
   const root = fakeRoot()
   fakeProc(root, 201, { argv: ['node', '/x/bin/cmdc'], cwd: '/w/x', exe: '/usr/bin/node' })
   fakeProc(root, 202, { comm: 'node', argv: null, cwd: '/w/x', exe: '/usr/bin/node', unreadable: false })
@@ -73,9 +75,15 @@ linux('an unclassifiable live interpreter peer makes the census incomplete', asy
   fs.chmodSync(`${root}/203/cmdline`, 0)
   fakeProc(root, 204, { comm: 'command-code', argv: null, state: 'Z' }) // proven zombie: not a peer
   const c = await agentCensus(inPath(root), { procRoot: root })
-  expect(c.incomplete).toBe('metadata')
-  expect(c.unknown).toBe(1) // only 202 is unclassifiable-potentially-relevant
+  // 202's stat/generation and cwd read fine: emit it as scoped evidence
+  // rather than a recordless footer unknown. Its argv stays empty — never
+  // a proven other, and the lookup decides relevance by cwd.
+  expect(c.complete).toBe(true)
+  expect(c.unknown).toBe(0)
   expect(c.processes.map(p => p.pid)).toEqual([201])
+  expect(c.uncertain.map(p => p.pid)).toEqual([202])
+  expect(c.uncertain[0]).toMatchObject({ pid: 202, comm: 'node', cwd: '/w/x' })
+  expect(c.uncertain[0]?.argv).toBeUndefined()
 })
 
 linux('unreadable or vanished potential peers keep the census honest', async () => {
@@ -100,7 +108,7 @@ linux('relative entrypoint resolves through the process cwd link', async () => {
   expect(c.processes.map(p => p.pid)).toEqual([401])
 })
 
-linux('producer finds the entrypoint behind node options; unknown shapes stay honest', async () => {
+linux('producer finds the entrypoint behind node options; unknown shapes stay scoped', async () => {
   const root = fakeRoot()
   const pkg = `${root}/pkg/command-code/dist`
   fs.mkdirSync(pkg, { recursive: true })
@@ -111,8 +119,44 @@ linux('producer finds the entrypoint behind node options; unknown shapes stay ho
   fakeProc(root, 604, { argv: ['node', '-e', `require('${pkg}/index.mjs')`], cwd: '/w/x', exe: '/usr/bin/node' }) // eval: unclassifiable
   fakeProc(root, 605, { argv: ['node', '--conditions', 'command-code', '/srv/server.js'], cwd: '/w/x', exe: '/usr/bin/node' }) // value operand: not identity
   const c = await agentCensus(inPath(root), { procRoot: root })
-  expect(c.incomplete).toBe('metadata')
-  expect(c.processes.map(p => p.pid).sort()).toEqual([601])
+  expect(c.complete).toBe(true)
+  expect(c.processes.map(p => p.pid)).toEqual([601])
+  // Emitted unclassifiable records keep their cwd: scoped evidence, not a
+  // global failure and never a proven other.
+  expect(c.uncertain.map(p => p.pid).sort()).toEqual([603, 604])
+  expect(c.uncertain.every(p => p.cwd === '/w/x')).toBe(true)
+})
+
+linux('real emitted unknowns reach the locator scoped by cwd', async () => {
+  // The real census script against a synthetic /proc, then the real locator:
+  // unknowns in other cwds cannot void the lookup; in the target cwd they do.
+  // 306's cmdline is unreadable: its stat/generation and cwd still emit it as
+  // scoped evidence rather than a recordless footer unknown.
+  const mkProc = (cwds: (string | undefined)[]) => {
+    const root = fakeRoot()
+    fakeProc(root, 301, { argv: ['node', '/x/bin/cmdc'], cwd: '/w/proj', exe: '/usr/bin/node' })
+    fakeProc(root, 302, { comm: 'node', argv: ['/opt/tools/node_repl'], cwd: cwds[0], exe: '/usr/bin/node' })
+    fakeProc(root, 303, { argv: ['node', '-e', 'tick()'], cwd: cwds[1], exe: '/usr/bin/node' })
+    fakeProc(root, 304, { comm: 'bun', argv: ['bun', '/srv/app.js'], cwd: cwds[2], exe: '/usr/bin/bun' })
+    fakeProc(root, 305, { comm: 'deno', argv: ['deno', 'run', '/srv/x.ts'], cwd: cwds[3], exe: '/usr/bin/deno' })
+    fakeProc(root, 306, { comm: 'node', argv: null, cwd: cwds[4], exe: '/usr/bin/node' })
+    fs.chmodSync(`${root}/306/cmdline`, 0) // unreadable cmdline, readable stat/cwd
+    return root
+  }
+  const wire = (root: string): ShellExec => async (s, a, o) => {
+    if (s === AGENT_CENSUS_SCRIPT) return inPath(root)(s, [root], o)
+    if (s === CMD_FILES_SCRIPT) return { code: 0, stdout: Buffer.from(filesWire([[F('a', U1), st(POST)]])), stderr: '' }
+    if (s === CMD_HEADERS_SCRIPT) return { code: 0, stdout: Buffer.from(hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) } })(a ?? [])), stderr: '' }
+    return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+  }
+  const detail = live({ pid: 9000, foreground: { pid: 301 } })
+  expect(await createCmdCore(wire(mkProc(['/w/repl', '/w/eval', '/w/bun', '/w/deno', '/w/empty'])), HOME).locate(detail))
+    .toEqual({ file: F('a', U1), session: U1 })
+  expect(await createCmdCore(wire(mkProc(['/w/proj', '/w/proj', '/w/proj', '/w/proj', '/w/proj'])), HOME).locate(detail))
+    .toEqual({ unavailable: 'peers' })
+  // An emitted unknown with no readable cwd can never prove irrelevance.
+  expect(await createCmdCore(wire(mkProc(['/w/repl', '/w/eval', '/w/bun', '/w/deno', undefined])), HOME).locate(detail))
+    .toEqual({ unavailable: 'peers' })
 })
 
 linux('producer stdout is capped before the exec reply', async () => {

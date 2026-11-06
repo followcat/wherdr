@@ -98,6 +98,59 @@ describe('createCmdCore', () => {
     expect(await createCmdCore(e2, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ file: F('a', U1), session: U1 })
   })
 
+  it('scopes unclassifiable processes: an unrelated cwd never voids the lookup', async () => {
+    const { exec } = stub({
+      census: H + S(4242)
+        + S(7701, { argv: ['/opt/tools/node_repl'], cwd: OTHER }) // bare REPL: argv0 only
+        + S(7702, { argv: ['node', '-e', 'tick()'], cwd: '/w/eval' }) // eval code
+        + S(7703, { comm: 'bun', argv: ['bun', '/srv/app.js'], cwd: '/w/bun' })
+        + S(7704, { comm: 'deno', argv: ['deno', 'run', '/srv/x.ts'], cwd: '/w/deno' })
+        + S(7705, { argv: ['node', '-'], cwd: '/w/stdin' }) // script on stdin
+        + T(6, 6),
+      files: filesWire([[F('a', U1), st(POST)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) } })
+    })
+    expect(await createCmdCore(exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ file: F('a', U1), session: U1 })
+  })
+
+  it('refuses before file IO when an unclassifiable process shares the target cwd', async () => {
+    for (const u of [
+      S(7701, { argv: ['/opt/tools/node_repl'] }),
+      S(7702, { argv: ['node', '-e', 'tick()'] }),
+      S(7703, { comm: 'bun', argv: ['bun', '/srv/app.js'] }),
+      S(7704, { comm: 'deno', argv: ['deno', 'run', '/srv/x.ts'] }),
+      S(7705, { argv: ['node', '-'] }),
+    ]) {
+      const { exec, calls } = stub({ census: H + S(4242) + u + T(2, 2) })
+      expect(await createCmdCore(exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ unavailable: 'peers' })
+      expect(calls).toEqual({ census: 1, files: 0, headers: 0 })
+    }
+  })
+
+  it('refuses an unclassifiable process whose cwd is unreadable, whatever the target', async () => {
+    const { exec } = stub({ census: H + S(4242) + S(7701, { argv: ['/opt/tools/node_repl'], cwd: null }) + T(2, 2) })
+    expect(await createCmdCore(exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ unavailable: 'peers' })
+  })
+
+  it('scopes the unclassifiable check to an eligible launch-target header cwd too', async () => {
+    const seeded = (u: string) => stub({
+      census: H + S(4242, { argv: ['node', '/x/bin/cmd', '--session', U2] }) + u + T(2, 2),
+      files: filesWire([[F('a', U1), st(POST)], [F('r', U2), st(POST2)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) }, [F('r', U2)]: { st: st(POST2), body: sess(U2, OTHER) } })
+    })
+    // The resume target's header cwd is OTHER: an unknown there could own it.
+    expect(await createCmdCore(seeded(S(7701, { argv: ['/opt/tools/node_repl'], cwd: OTHER })).exec, HOME)
+      .locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ unavailable: 'peers' })
+    // An unrelated unknown cannot: the legitimate launch target still wins.
+    expect(await createCmdCore(seeded(S(7701, { argv: ['/opt/tools/node_repl'], cwd: '/w/three' })).exec, HOME)
+      .locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ file: F('r', U2), session: U2 })
+  })
+
+  it('keeps recordless producer unknowns a global failure', async () => {
+    const { exec } = stub({ census: H + S(4242) + T(2, 1, 0, 3) })
+    expect(await createCmdCore(exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ unavailable: 'incomplete' })
+  })
+
   it('enforces the strict post-birth write boundary', async () => {
     const { exec } = stub({
       census: H + S(4242) + T(1, 1),

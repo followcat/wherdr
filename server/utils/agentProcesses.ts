@@ -46,27 +46,28 @@ for d in "$P"/[0-9]*; do
   args=$(head -c ${MAX_CMDLINE + 1} "$d/cmdline" 2>/dev/null | tr '\\000' '\\001')
   comm=$(head -c 64 "$d/comm" 2>/dev/null | tr -d '\\n')
   if [ -z "$st1$args$comm" ]; then [ -e "$d/stat" ] && u=$((u+1)); continue; fi
-  if [ -z "$args" ]; then
-    # Empty cmdline proves nothing: a zombie/dead state excludes it, but an
-    # interpreter- or agent-shaped comm (or an unreadable one) may hide a peer.
-    case $(printf %s "$st1" | awk '{ print $1 }') in
-      Z|X|x) ;;
-      *) case $comm in ''|node*|nodejs*|bun*|deno*|cmd|cmd.exe|cmdc|command-code*|command_code*|commandcode*) u=$((u+1)) ;; esac ;;
-    esac
-    continue
-  fi
   a0=\${args%%$i1*}
   a0b=\${a0##*/}
   em=0; res=
-  case $comm in command-code|command_code|commandcode|cmdc) em=1 ;; esac
-  case $a0b in cmd|cmdc|command-code|commandcode|command_code) em=1 ;; esac
-  # The real binary (comm) decides the option language; argv0 may be
-  # rewritten. Only Node's CLI subset is supported — other interpreters are
-  # emitted as unclassifiable rather than silently dropped.
-  iname=
-  case $comm in node|nodejs|node[0-9]*|bun|bunx|bun[0-9]*|deno|deno[0-9]*) iname=$comm ;; esac
-  [ -n "$iname" ] || case $a0b in node*|nodejs*|bun*|bunx*|deno*) iname=$a0b ;; esac
-  if [ -n "$iname" ]; then
+  if [ -z "$args" ]; then
+    # Empty cmdline proves nothing: a zombie/dead state is excluded, but a
+    # live interpreter- or agent-shaped comm (or an unreadable one) may hide
+    # a peer — emit it as bounded uncertain evidence so its own cwd and
+    # generation can scope it, instead of a recordless footer unknown.
+    case $(printf %s "$st1" | awk '{ print $1 }') in
+      Z|X|x) continue ;;
+    esac
+    case $comm in ''|node*|nodejs*|bun*|deno*|cmd|cmd.exe|cmdc|command-code*|command_code*|commandcode*) em=1 ;; esac
+  else
+    case $comm in command-code|command_code|commandcode|cmdc) em=1 ;; esac
+    case $a0b in cmd|cmdc|command-code|commandcode|command_code) em=1 ;; esac
+    # The real binary (comm) decides the option language; argv0 may be
+    # rewritten. Only Node's CLI subset is supported — other interpreters are
+    # emitted as unclassifiable rather than silently dropped.
+    iname=
+    case $comm in node|nodejs|node[0-9]*|bun|bunx|bun[0-9]*|deno|deno[0-9]*) iname=$comm ;; esac
+    [ -n "$iname" ] || case $a0b in node*|nodejs*|bun*|bunx*|deno*) iname=$a0b ;; esac
+    if [ -n "$iname" ]; then
     case $iname in
       bun*|deno*) em=1 ;; # unsupported interpreter CLI: emit for the parser
       *) # Structural script-position scan; keep the option subset in sync
@@ -110,7 +111,8 @@ for d in "$P"/[0-9]*; do
         esac ;;
     esac
   fi
-  [ "$em" = 0 ] && { chk "$(readlink "$d/exe" 2>/dev/null)" && em=1; }
+    [ "$em" = 0 ] && { chk "$(readlink "$d/exe" 2>/dev/null)" && em=1; }
+  fi
   [ "$em" = 1 ] || continue
   [ $((r + rr)) -lt "$maxr" ] || { o=$((o|2)); continue; }
   up=$(cut -d ' ' -f 1 "$P/uptime" 2>/dev/null); [ -n "$up" ] || up=-
@@ -134,7 +136,7 @@ printf 'T %s %s %s %s\\n' "$n" "$r" "$o" "$u"`
 // a failed exec reports the same, never a usable empty census.
 export async function agentCensus(exec: ShellExec, opts: { procRoot?: string, timeoutMs?: number } = {}): Promise<AgentCensus> {
   const r = await exec(AGENT_CENSUS_SCRIPT, [opts.procRoot || '/proc'], { timeoutMs: opts.timeoutMs ?? 10000, maxBytes: 3 * 1024 * 1024 })
-  if (r.code !== 0) return { complete: false, incomplete: 'unavailable', processes: [], scanned: 0, unknown: 0 }
+  if (r.code !== 0) return { complete: false, incomplete: 'unavailable', processes: [], uncertain: [], scanned: 0, unknown: 0 }
   return parseAgentCensus(r.stdout.toString('utf8'))
 }
 

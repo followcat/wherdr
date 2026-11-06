@@ -32,7 +32,7 @@ export const cmdProjectsRoot = (home: string) => path.join(home, '.commandcode',
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const HEADER_BYTES = 16384 // first-line cap; the collector reads a complete line within it
-const absPath = (s: string) => s.startsWith('/') && !s.includes('\0')
+export const absPath = (s: string) => s.startsWith('/') && !s.includes('\0')
 
 // The v3 session header (first line): {type:"session", version:3, id, cwd}.
 // Anything else — wrong type/version, non-UUID id, missing/relative/NUL cwd —
@@ -183,6 +183,18 @@ export function cmdSelect(input: {
         : c.file === seed.value))
       if (hits.length === 1 && post(hits[0]!)) eligible.set(hits[0]!.file, hits[0]!)
     }
+  }
+
+  // An unclassifiable process voids only the lookups it could affect: same
+  // cwd (a possible hidden peer), the header cwd of an ELIGIBLE candidate
+  // (that file may be the unknown's write — the cross-cwd launch target
+  // included), or an unreadable/non-absolute cwd (irrelevance can never be
+  // proven). An unknown elsewhere cannot change this answer and must not
+  // void it; it is never a proven other and never silently dropped.
+  const candCwd = new Set<string>()
+  for (const c of eligible.values()) candCwd.add(c.cwd)
+  for (const u of census.uncertain) {
+    if (!u.cwd || !absPath(u.cwd) || u.cwd === proc.cwd || candCwd.has(u.cwd)) return { unavailable: 'peers' }
   }
 
   if (!eligible.size) return { unavailable: 'empty' }
