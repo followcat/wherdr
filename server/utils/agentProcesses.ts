@@ -53,7 +53,10 @@ for d in "$P"/[0-9]*; do
     # Empty cmdline proves nothing: a zombie/dead state is excluded, but a
     # live interpreter- or agent-shaped comm (or an unreadable one) may hide
     # a peer — emit it as bounded uncertain evidence so its own cwd and
-    # generation can scope it, instead of a recordless footer unknown.
+    # generation can scope it, instead of a recordless footer unknown. The
+    # parser keeps every emitted shape uncertain unless affirmative evidence
+    # classifies a peer (EMPTY_ARGV_COMM in agentCensus.ts) — keep the set
+    # in sync.
     case $(printf %s "$st1" | awk '{ print $1 }') in
       Z|X|x) continue ;;
     esac

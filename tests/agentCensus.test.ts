@@ -168,21 +168,50 @@ it('keeps unclassifiable shapes as bounded uncertain evidence, never a proven ot
   expect(noCwd.uncertain[0]?.cwd).toBeUndefined()
 })
 
-it('keeps an argv-less suspicious comm unknown, never a proven other', () => {
+it('keeps every producer-suspicious empty-argv comm uncertain, never a proven other', () => {
   // The producer emits live empty/unreadable-cmdline processes whose comm
-  // could hide a peer. Without argv only an affirmative comm could prove
-  // 'peer' (kept under peer rules); a bare cmd/cmd.exe name or an unreadable
-  // comm can never prove exclusion — unknown, never a dropped other.
-  for (const comm of ['cmd', 'cmd.exe', '']) {
-    const r = parseAgentCensus(H() + `S 11 1 12345 500.12 1767226100.1 ${b64(comm)}  ${link64('/w/x')} ${link64('/x/cmd')} \n` + T())
+  // could hide a peer — its complete suspicious set is ''|node*|nodejs*|bun*|
+  // deno*|cmd|cmd.exe|cmdc|command-code*|command_code*|commandcode* (the
+  // `-z "$args"` case arm in AGENT_CENSUS_SCRIPT). Every emitted shape stays
+  // scoped-uncertain: only affirmative evidence above it (exact alias comm,
+  // package exe) may classify it — a suspicious prefix can never prove
+  // exclusion either.
+  for (const comm of ['node_repl', 'node-inspect', 'nodejs9x', 'bun_repl', 'deno_task',
+    'command-code2', 'command_code_x', 'commandcode-foo', 'cmd', 'cmd.exe', '']) {
+    const r = parseAgentCensus(H() + `S 11 1 12345 500.12 1767226100.1 ${b64(comm)}  ${link64('/w/x')} ${link64('/usr/bin/node')} \n` + T())
     expect(r.complete).toBe(true)
-    expect(r.processes).toEqual([])
-    expect(r.uncertain.map(p => p.pid)).toEqual([11])
+    expect(r.processes, comm).toEqual([])
+    expect(r.uncertain.map(p => p.pid), comm).toEqual([11])
   }
-  // A proven non-suspicious comm is still a legitimate other — dropped.
+  // Exact alias comms stay affirmative peers — the missing argv still fails
+  // the census honestly rather than downgrading the peer to other/uncertain.
+  for (const comm of ['cmdc', 'command-code', 'command_code', 'commandcode']) {
+    const r = parseAgentCensus(H() + `S 11 1 12345 500.12 1767226100.1 ${b64(comm)}  ${link64('/w/x')} ${link64('/usr/bin/node')} \n` + T())
+    expect(r.processes.map(p => p.pid), comm).toEqual([11])
+    expect(r.incomplete, comm).toBe('metadata')
+  }
+  // An empty DECODED argv is no usable argv either: NUL-only args keep the
+  // same suspicious rule for interpreter- and agent-shaped comms alike.
+  for (const [comm, argv] of [['node', '\0\0'], ['node_repl', '\0'], ['deno_task', '\0'], ['cmd', '\0\0']] as const) {
+    const r = parseAgentCensus(H() + `S 11 1 12345 500.12 1767226100.1 ${b64(comm)} ${b64(argv)} ${link64('/w/x')} ${link64('/usr/bin/node')} \n` + T())
+    expect(r.complete).toBe(true)
+    expect(r.uncertain.map(p => p.pid), comm).toEqual([11])
+  }
+  // Affirmative evidence above the guard still wins: a package exe proves a
+  // peer even under a suspicious comm, and bare cmd argv0 + interpreter exe
+  // stays a peer too.
+  const exe = parseAgentCensus(H() + `S 11 1 12345 500.12 1767226100.1 ${b64('node_repl')}  ${link64('/w/x')} ${link64(`${PKGD}/cli.mjs`)} \n` + T())
+  expect(exe.processes.map(p => p.pid)).toEqual([11])
+  const a0 = parseAgentCensus(H() + S(12, { comm: 'node_repl', argv: ['/x/bin/cmd'], cwd: '/w/x', exe: '/usr/bin/node' }) + T())
+  expect(a0.processes.map(p => p.pid)).toEqual([12])
+  // A proven non-suspicious comm is still a legitimate other — dropped; and a
+  // suspicious comm with real classifiable argv never reaches the guard.
   const plain = parseAgentCensus(H() + `S 11 1 12345 500.12 1767226100.1 ${b64('sshd')}  ${link64('/w/x')} ${link64('/usr/sbin/sshd')} \n` + T())
   expect(plain.complete).toBe(true)
   expect(plain.uncertain).toEqual([])
+  const real = parseAgentCensus(H() + S(13, { comm: 'node_repl', argv: ['/srv/x.js'], cwd: '/w/x', exe: '/usr/bin/node' }) + T())
+  expect(real.uncertain).toEqual([])
+  expect(real.processes).toEqual([])
 })
 
 it('caps record count and total bytes before trusting the scan', () => {

@@ -1,12 +1,12 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { AGENT_CENSUS_SCRIPT, agentCensus, localShell } from '../server/utils/agentProcesses'
 import { parseAgentCensus } from '../server/utils/agentCensus'
 import { createCmdCore } from '../server/utils/commandCodeCore'
 import { type ShellExec, shq } from '../server/utils/fsx'
-import { CMD_FILES_SCRIPT, CMD_HEADERS_SCRIPT, F, filesWire, hdrs, HOME, live, POST2, sess, st, U1 } from './cmdCoreFixture'
+import { CMD_FILES_SCRIPT, CMD_HEADERS_SCRIPT, F, filesWire, hdrs, HOME, live, OTHER, POST2, POSTOBS, sess, st, U1, U2 } from './cmdCoreFixture'
 
 const linux = it.runIf(process.platform === 'linux')
 const roots: string[] = []
@@ -84,6 +84,82 @@ linux('an unclassifiable live interpreter stays emitted bounded evidence', async
   expect(c.uncertain.map(p => p.pid)).toEqual([202])
   expect(c.uncertain[0]).toMatchObject({ pid: 202, comm: 'node', cwd: '/w/x' })
   expect(c.uncertain[0]?.argv).toBeUndefined()
+})
+
+linux('every producer-suspicious empty-argv comm reaches uncertain, never other', async () => {
+  const root = fakeRoot()
+  // Actual comm=node_repl with an EMPTY cmdline — the missing file models an
+  // unreadable read deterministically — plus one shape per broad producer
+  // prefix family. All carry valid generation/exe/cwd metadata; a missing
+  // cmdline file, an empty one and an empty comm all take the same arm.
+  fakeProc(root, 401, { comm: 'node_repl', noCmdline: true, cwd: '/w/repl', exe: '/usr/bin/node' })
+  fakeProc(root, 402, { comm: 'nodejs_foo', argv: null, cwd: '/w/nj', exe: '/usr/bin/node' })
+  fakeProc(root, 403, { comm: 'bun-repl', noCmdline: true, cwd: '/w/bun', exe: '/usr/bin/bun' })
+  fakeProc(root, 404, { comm: 'deno_task', noCmdline: true, cwd: '/w/deno', exe: '/usr/bin/deno' })
+  fakeProc(root, 405, { comm: 'command-code2', noCmdline: true, cwd: '/w/cc', exe: '/usr/bin/node' })
+  fakeProc(root, 406, { comm: 'command_code_x', argv: null, cwd: '/w/ccu', exe: '/usr/bin/node' })
+  fakeProc(root, 407, { comm: 'commandcode-x', noCmdline: true, cwd: '/w/ccn', exe: '/usr/bin/node' })
+  fakeProc(root, 408, { comm: 'cmd', argv: null, cwd: '/w/cmd', exe: '/x/cmd' })
+  fakeProc(root, 409, { comm: 'cmd.exe', argv: null, cwd: '/w/cmdx', exe: '/x/cmd.exe' })
+  fakeProc(root, 410, { comm: '', argv: null, cwd: '/w/nocomm', exe: '/usr/bin/node' }) // unreadable comm
+  fakeProc(root, 411, { comm: 'sshd', argv: null, cwd: '/w/x' }) // proven other: never emitted
+  fakeProc(root, 412, { comm: 'node', argv: null, state: 'Z', cwd: '/w/z', exe: '/usr/bin/node' }) // zombie: skipped
+  const c = await agentCensus(inPath(root), { procRoot: root })
+  expect(c.complete).toBe(true)
+  expect(c.unknown).toBe(0)
+  expect(c.processes).toEqual([])
+  expect(c.uncertain.map(p => p.pid)).toEqual([401, 402, 403, 404, 405, 406, 407, 408, 409, 410])
+  expect(c.uncertain[0]).toMatchObject({ pid: 401, comm: 'node_repl', cwd: '/w/repl', exe: '/usr/bin/node' })
+})
+
+describe('an emitted empty-argv suspicious row reaches the locator scoped by cwd', () => {
+  // The real census script against a synthetic /proc, then the real locator:
+  // a comm=node_repl process with a missing cmdline file (deterministically
+  // unreadable) but valid generation/exe metadata. The producer emits it; the
+  // lookup must keep it scoped-uncertain — refusing the target cwd, an
+  // eligible foreign header cwd and an unreadable cwd alike. Independent
+  // cases: each outcome must hold after the fix and resolve wrongly before it.
+  const mkProc = (cwd: string | undefined, seed?: boolean) => {
+    const root = fakeRoot()
+    fakeProc(root, 301, seed
+      ? { argv: ['node', '/x/bin/cmd', '--session', U2], cwd: '/w/proj', exe: '/usr/bin/node' } // exact seed launch
+      : { argv: ['node', '/x/bin/cmdc'], cwd: '/w/proj', exe: '/usr/bin/node' })
+    fakeProc(root, 302, { comm: 'node_repl', noCmdline: true, cwd, exe: '/usr/bin/node' })
+    return root
+  }
+  const wire = (root: string, seed?: boolean): ShellExec => async (s, a, o) => {
+    if (s === AGENT_CENSUS_SCRIPT) return inPath(root)(s, [root], o)
+    if (s === CMD_FILES_SCRIPT) return { code: 0, stdout: Buffer.from(seed
+      ? filesWire([[F('a', U1), st(POST2)], [F('r', U2), st(POSTOBS)]])
+      : filesWire([[F('a', U1), st(POST2)]])), stderr: '' }
+    if (s === CMD_HEADERS_SCRIPT) return { code: 0, stdout: Buffer.from(seed
+      ? hdrs({ [F('a', U1)]: { st: st(POST2), body: sess(U1) }, [F('r', U2)]: { st: st(POSTOBS), body: sess(U2, OTHER) } })(a ?? [])
+      : hdrs({ [F('a', U1)]: { st: st(POST2), body: sess(U1) } })(a ?? [])), stderr: '' }
+    return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+  }
+  const detail = live({ pid: 9000, foreground: { pid: 301 } })
+  const cases: [string, string | undefined, boolean | undefined, unknown][] = [
+    // Unrelated cwd: the lookup still resolves — never a global incomplete.
+    ['unrelated cwd resolves the exact file', '/w/repl', undefined, { file: F('a', U1), session: U1 }],
+    // Target cwd: unavailable.
+    ['target cwd refuses', '/w/proj', undefined, { unavailable: 'peers' }],
+    // Exact-seeded foreign header cwd: unavailable even though the own-cwd
+    // file exists and is newer.
+    ['seeded foreign header cwd refuses', OTHER, true, { unavailable: 'peers' }],
+    // An unreadable/missing cwd can never prove irrelevance.
+    ['unreadable cwd refuses', undefined, undefined, { unavailable: 'peers' }],
+  ]
+  for (const [name, cwd, seed, want] of cases) {
+    linux(name, async () => {
+      expect(await createCmdCore(wire(mkProc(cwd, seed), seed), HOME).locate(detail)).toEqual(want)
+    })
+  }
+  linux('the emitted row is real uncertain wire evidence, census complete', async () => {
+    const seen = mkProc('/w/repl')
+    const c = await agentCensus(inPath(seen), { procRoot: seen })
+    expect(c.complete).toBe(true)
+    expect(c.uncertain.map(p => p.pid)).toEqual([302])
+  })
 })
 
 linux('unreadable or vanished potential peers keep the census honest', async () => {

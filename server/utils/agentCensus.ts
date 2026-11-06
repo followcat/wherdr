@@ -45,6 +45,13 @@ export interface AgentCensus {
 const CMD_NAMES = new Set(['command-code', 'command_code', 'commandcode', 'cmdc'])
 const CMD_BIN = new Set([...CMD_NAMES, 'cmd'])
 const INTERPRETER = /^(node|nodejs|bunx?|deno)\d*$/
+// The producer's complete suspicious empty-cmdline comm set — keep in sync
+// with the `-z "$args"` case arm in AGENT_CENSUS_SCRIPT
+// (''|node*|nodejs*|bun*|deno*|cmd|cmd.exe|cmdc|command-code*|command_code*|
+// commandcode*): every emitted shape is bounded uncertain evidence, never a
+// proven other. Affirmative comm/argv0/exe rules still classify it first.
+const EMPTY_ARGV_COMM = /^(?:node|nodejs|bun|deno|command-code|command_code|commandcode)/
+const EMPTY_ARGV_COMM_EXACT = new Set(['cmd', 'cmd.exe', 'cmdc'])
 // Proven package entrypoints only: a directory merely NAMED command-code
 // (or any other file inside it) is not evidence. Keep in sync with chk() in
 // AGENT_CENSUS_SCRIPT.
@@ -109,6 +116,7 @@ function scriptPos(argv: string[], terminated: boolean): ScriptPos {
 
 function classify(p: { comm?: string, argv?: string[], exe?: string, terminated?: boolean, res?: { raw: string, res: string }[] }): 'peer' | 'other' | 'unknown' {
   const a0b = base(p.argv?.[0])
+  const noArgv = !p.argv?.length || p.argv.every(a => a === '')
   if (p.comm && CMD_NAMES.has(p.comm)) return 'peer' // retitled agent (affirmative)
   if (a0b && CMD_NAMES.has(a0b)) return 'peer' // bin symlink or argv0 claim; over-count is safe
   if (p.exe && ENTRY.test(p.exe)) return 'peer'
@@ -118,7 +126,7 @@ function classify(p: { comm?: string, argv?: string[], exe?: string, terminated?
   const iname = INTERPRETER.test(p.comm ?? '') ? base(p.comm) : a0b
   if (INTERPRETER.test(iname)) {
     if (!/^node/.test(iname)) return 'unknown'
-    if (!p.argv?.length) return 'unknown' // nothing to positionally classify
+    if (!p.argv?.length || p.argv.every(a => a === '')) return 'unknown' // nothing to positionally classify
     const sp = scriptPos(p.argv, p.terminated !== false)
     if (sp.kind !== 'script') return 'unknown'
     const res = new Map((p.res ?? []).map(c => [c.raw, c.res]))
@@ -126,10 +134,10 @@ function classify(p: { comm?: string, argv?: string[], exe?: string, terminated?
     return hit(sp.raw) || sp.preloads.some(hit) ? 'peer' : 'other'
   }
   // No usable argv: only affirmative comm/exe evidence above could have
-  // returned 'peer'. A bare cmd/cmd.exe name or an unreadable comm can never
-  // prove exclusion — unknown, never a silently dropped other.
-  const noArgv = !p.argv?.length || p.argv.every(a => a === '')
-  if (noArgv && (!p.comm || p.comm === 'cmd' || p.comm === 'cmd.exe')) return 'unknown'
+  // returned 'peer'. Every comm the producer marks suspicious on an empty
+  // cmdline — an unreadable one, interpreter- or agent-shaped prefixes, bare
+  // cmd names — can never prove exclusion: unknown, never a dropped other.
+  if (noArgv && (!p.comm || EMPTY_ARGV_COMM.test(p.comm) || EMPTY_ARGV_COMM_EXACT.has(p.comm))) return 'unknown'
   // A bare `cmd` name alone is never sufficient (Windows cmd.exe, scripts,
   // exec -a): require interpreter or package evidence.
   if (a0b === 'cmd' && (INTERPRETER.test(base(p.exe)) || ENTRY.test(p.exe ?? ''))) return 'peer'
