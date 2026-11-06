@@ -106,6 +106,74 @@ older pages that held the call, so reloaded history includes its result. Only
 inline image data is shown; image paths in ATIF are never opened. Model metadata comes from that checkpoint too; model
 pickers remain v2 only.
 
+Command Code (`cmd`) terminals open in the same conversation mode: wherdr reads its
+project transcripts under `~/.commandcode/projects`, matching the header version 3
+format inspected at 1.88.3 and, in one run, 1.88.4 — observed versions, not a live
+check. Which file a pane displays follows a process-anchored rule: a candidate's own
+header must record the process's exact cwd, or the exact launch arguments must name
+it. Cmd's flags accept more — `-r`/`--resume` also takes a session name, `--session`
+accepts a transcript path or a unique id prefix, `-c` continues the last session and
+`--fork-session` forks one started with `-r`/`-c` — but only a full session id or an
+absolute transcript path adds a candidate, and it never pins it.
+
+Exact arguments reach the reader two ways: recorded at a root launch, or sampled live
+from a non-root target while its argv still carries them — a retitled foreground
+command normally shows nothing but `command-code`, and an exec'd Cmd keeps its
+shell's pid and start time. The agent's own environment carries no session identity
+either — the `COMMANDCODE_SESSION_ID` it sets belongs to the hook and tool children
+it launches. Of the candidates the unique newest one persisted after a conservative
+bound on the process's birth is shown — a recorded root launch's birth, or for any
+other target the later of birth and its first observation as Cmd; that bound applies
+even when sampled argv is exact. A session file already saved when that first
+observation happens — or after a reader restart or eviction of the observed evidence —
+waits for the next persisted write, not just the first assistant flush. Linux process
+evidence backs the bound; without it, with a live Cmd peer in the process's own cwd,
+with a live peer or an unknown process at a cross-cwd launch candidate's header cwd,
+or with an ambiguous newest file, the conversation stays unavailable (the pane offers
+**View terminal**) rather than a guess. Unknown processes count only when they share
+the target's cwd or an eligible header cwd — and one whose own cwd cannot be read
+blocks conservatively, since nothing proves it irrelevant — while guessed launch
+arguments are never subtracted. Ownership is re-collected after the file and header
+pass, so a target lost, moved or reused between the two samples — or a failed refresh —
+answers unavailable too; that census judges live peers, not who wrote a disk file: an
+exited peer may still own the newest one.
+
+A new process shows no conversation until its first persisted assistant write lands
+(the project directory itself may exist from startup). An in-process `/clear` fixes
+the new session id, drops the pane back to its untitled `⌘ Command Code · <dir> ·
+<model>` and writes nothing to disk at once; checkpoint and metadata files can appear
+at the next user message, but the transcript itself lands with the first assistant
+flush — until then the prior eligible file is still shown. A resumed session writes
+nothing at startup either: it appends to its old file on the next exchange and keeps
+its title. A first reply also triggers auto-naming: the session's metadata file gains
+a title one to four seconds later (the transcript gains no `session_info` record),
+turning the pane's title into `⌘ <Title> · <model>` — display only, never selection
+evidence, and an in-process session picker is not covered. What the disk holds is
+what shows: a turn appears once Command Code has persisted it, and a reply still
+being written arrives with its next flush. Only inline image data is shown, and
+sending stays the normal Enter-key terminal send. For model or effort pickers, launch
+shortcuts and permission prompts, use the Command Code terminal itself.
+
+Reads are bounded: a 24 MiB logical window aligned to line starts and anchored on
+what was already read (overlapping reads can transfer more than the window), remote
+chunks of at most 4 MiB, watched-record prefixes of at most 64 KiB, a newest span of
+at most 4 MiB, and caps of 4096 watched records and 64 files.
+
+A whole-second timestamp's continuity is sampled, not proven byte-for-byte: instead
+of a whole-file checksum, Command Code fingerprints the claimed prefix's head and
+tail 64 KiB windows — one read of at most 128 KiB when they touch, two disjoint reads
+otherwise — at most two reads and 128 KiB per fingerprint, and at most four reads and
+256 KiB of fingerprint IO in a request that both captures and validates, on top of the
+ordinary bounded reads (other agents keep the whole-file checksum). A rewrite
+strictly between the sampled windows can evade the check, and opens are bound to the
+observed generation, not yet to the validated header's device and inode — a same-user
+rename or symlink swap after validation can still serve other bytes, so this is not
+a hostile-user guarantee. The projects root, each project directory and each
+transcript file itself may not be a symlink; an ordinary `~/.commandcode` ancestor
+link is fine. Once a token's state has settled, an unchanged poll re-reads no
+transcript body or fingerprint bytes; the lookup's own census, header and metadata
+checks still run.
+
 Text left unsent in Claude Code's own input box (a draft or paste never submitted, or the
 prompt Claude puts back after an interrupt) shows at the end of the conversation as
 **Not sent** once it has stayed unchanged for two seconds and the colored screen (the first

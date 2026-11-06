@@ -103,21 +103,38 @@ export function parseStatLine(line: string): FsStat | null {
   return st
 }
 
-export function createShellFs(exec: ShellExec, opts: { statTtlMs?: number } = {}): MachineFs {
+// The largest read a caller may request through a bounded transport: the
+// image budget (60 MiB), above the chat budget (24 MiB). Only enforced on
+// opted-in filesystems; the default single-exec path is untouched.
+export const READ_LIMIT = 60 * 1024 * 1024
+
+export function createShellFs(exec: ShellExec, opts: { statTtlMs?: number, chunkBytes?: number } = {}): MachineFs {
   const ttl = opts.statTtlMs ?? 700
+  // Opt-in read chunking: a transport whose reply ceiling is below the file
+  // window (core's 16 MiB) reads in `chunkBytes` slices instead of one exec.
+  // A provided value must be a safe positive integer — an Infinity or a
+  // fraction would silently defeat the per-reply bounds it exists for.
+  if (opts.chunkBytes !== undefined && (!Number.isSafeInteger(opts.chunkBytes) || opts.chunkBytes <= 0)) {
+    throw new FsError('remote', 'invalid chunkBytes')
+  }
+  const chunkBytes = opts.chunkBytes ?? 0
   // Small cache (and grouping of simultaneous requests): the previews, the
   // model and the open conversation each run their `stat` every second.
   const statCache = new Map<string, { at: number, v: Promise<FsStat | null> }>()
 
   // `ENOENT` for a missing file (as on the local disk), `unreachable` when the
   // session itself failed (ssh 255, timeout): the file's state is unknown.
-  async function run(script: string, args: string[], timeoutMs = 15000, input?: Buffer) {
-    const r = await exec(script, args, { timeoutMs, input })
+  // `maxBytes` bounds the exec's own stdout on the wire.
+  async function run(script: string, args: string[], timeoutMs = 15000, input?: Buffer, maxBytes?: number) {
+    const r = await exec(script, args, { timeoutMs, input, ...(maxBytes ? { maxBytes } : {}) })
     if (r.code !== 0) {
       const reason = (r.stderr || `code ${r.code}`).trim().split('\n').pop() || 'failed'
       const code = r.code === 255 || r.code === 124 ? 'unreachable' : r.code === MISSING_PATH_EXIT || /no such file/i.test(r.stderr) ? 'ENOENT' : 'remote'
       throw new FsError(code, reason)
     }
+    // The bound is enforced here too: a ShellExec that ignores maxBytes can
+    // never over-serve a caller.
+    if (maxBytes && r.stdout.length > maxBytes) throw new FsError('remote', 'reply exceeds requested chunk')
     return r.stdout
   }
 
@@ -168,11 +185,43 @@ done`
       return (await run(REQUIRE_PATH + 'cat "$1"', [p])).toString('utf8')
     },
     async read(p, start, len, timeoutMs) {
-      if (len <= 0) return Buffer.alloc(0)
       // tail -c +N jumps straight to byte N (regular file); head cuts.
       // Open before the pipeline so a failed open cannot be hidden by head's
       // successful exit (POSIX sh has no portable pipefail).
-      return run(REQUIRE_PATH + 'exec 3< "$1" || exit $?\ntail -c +"$2" <&3 | head -c "$3"', [p, String(start + 1), String(len)], timeoutMs || 60000)
+      const script = REQUIRE_PATH + 'exec 3< "$1" || exit $?\ntail -c +"$2" <&3 | head -c "$3"'
+      if (len <= 0) {
+        if (!Number.isSafeInteger(len)) throw new FsError('remote', 'invalid read length')
+        return Buffer.alloc(0)
+      }
+      if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(len) || !Number.isSafeInteger(start + len)) {
+        throw new FsError('remote', 'invalid read range')
+      }
+      if (!chunkBytes) {
+        return run(script, [p, String(start + 1), String(len)], timeoutMs || 60000)
+      }
+      // An opted-in read is bounded at both ends before anything allocates:
+      // the request by the logical ceiling, every reply by its exact slice.
+      if (len > READ_LIMIT) throw new FsError('remote', 'read too large')
+      if (len <= chunkBytes) {
+        return run(script, [p, String(start + 1), String(len)], timeoutMs || 60000, undefined, len)
+      }
+      // One deadline across all chunks, never a timeout per chunk that grows
+      // with the file. Each exec is bounded to its slice on the wire; a short
+      // slice is the genuine end of the file, an error means no read at all.
+      const out = Buffer.alloc(len)
+      const deadline = Date.now() + (timeoutMs || 60000)
+      let got = 0
+      while (got < len) {
+        const n = Math.min(chunkBytes, len - got)
+        const left = deadline - Date.now()
+        if (left <= 0) throw new FsError('unreachable', 'read timed out')
+        const b = await run(script, [p, String(start + got + 1), String(n)], left, undefined, n)
+        if (!b.length) break
+        b.copy(out, got)
+        got += b.length
+        if (b.length < n) break
+      }
+      return got < len ? out.subarray(0, got) : out
     },
     async digest(p, len) {
       const out = await run(REQUIRE_PATH + 'exec 3< "$1" || exit $?\nhead -c "$2" <&3 | cksum', [p, String(Math.max(0, len))], 60000)

@@ -33,7 +33,10 @@ export async function searchFile(fs: MachineFs, file: string, kind: string, home
     // previous window will pick it up from its start; a giant line is
     // ignored under the byte cap.
     const first = start ? buf.indexOf(10) + 1 : 0
-    if (start && first === 0) { end = start; continue }
+    // A window inside one giant line holds no complete line: none of its
+    // bytes is a newline, or only the last one is. Repeating it would
+    // leave `end` unchanged, so the walk jumps to its start instead.
+    if (start && (first === 0 || first === buf.length)) { end = start; continue }
     const body = buf.subarray(first).toString('utf8')
     const lines = body.split('\n')
     let offset = start + first

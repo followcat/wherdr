@@ -3,7 +3,7 @@
 // events.subscribe connection drives the polls (see startCoreEvents).
 import fs from 'node:fs'
 import path from 'node:path'
-import type { ChatItem, HerdrState, Pane } from '../../shared/types'
+import type { ChatItem, ChatResponse, HerdrState, Pane } from '../../shared/types'
 import type { NotificationEvent } from '../../shared/notificationRules'
 import { readCoreState, staleCoreDocs, useCoreSession } from './readCoreState'
 import { CoreSession } from './coreSession'
@@ -47,6 +47,8 @@ export const transcripts = {
   pendingAsk: (p: TranscriptPane) => coreTranscriptsOf().pendingAsk(p),
   pendingClaudeQuestions: (p: TranscriptPane) => coreTranscriptsOf().pendingClaudeQuestions(p),
   search: (p: TranscriptPane, query: string, deadline: number) => coreTranscriptsOf().search(p, query, deadline),
+  current: (p: TranscriptPane, r: ChatResponse) => coreTranscriptsOf().current(p, r),
+  live: (p: TranscriptPane, r: ChatResponse) => coreTranscriptsOf().live(p, r),
   forget: (id: string) => coreTranscriptsOf().forget(id),
 }
 

@@ -21,6 +21,17 @@ for pid; do
   printf '%s %s %s %s %s %s %s\\n' "$pid" "$ticks" "$hz" "$boot" "$up" "$wall" "$args"
 done`
 
+// Conservative birth upper bound in ms epoch (shared with agentProcesses.ts):
+// uptime sampled before wall time, one tick upward for quantization, btime as
+// sanity (reject when the precise bound is absurdly far from the coarse one).
+export function birthUpperBound(ticks: number, hz: number, boot: number, uptime: number, wall: number): number | undefined {
+  if (!Number.isSafeInteger(ticks) || ticks < 0 || !Number.isSafeInteger(hz) || hz <= 0
+    || !Number.isSafeInteger(boot) || boot <= 0 || !Number.isFinite(uptime) || uptime < 0 || !Number.isFinite(wall)) return undefined
+  const upper = Math.ceil(wall * 1000 - uptime * 1000 + (ticks + 1) * 1000 / hz)
+  const coarse = boot * 1000 + ticks * 1000 / hz
+  return upper >= coarse && upper - coarse < 2000 ? upper : undefined
+}
+
 export function devinProcesses(snapshot: string): Map<number, DevinProcess> {
   const out = new Map<number, DevinProcess>()
   for (const line of snapshot.split('\n')) {
@@ -31,12 +42,8 @@ export function devinProcesses(snapshot: string): Map<number, DevinProcess> {
     const bytes = Buffer.from(parts[6]!, 'base64')
     if (!bytes.length || bytes.length > 131072 || bytes.at(-1) !== 0) continue
     const proc: DevinProcess = { pid, argv: bytes.toString('utf8').split('\0').slice(0, -1), argvExact: true }
-    if (Number.isSafeInteger(ticks) && ticks! >= 0 && Number.isSafeInteger(hz) && hz! > 0
-      && Number.isSafeInteger(boot) && boot! > 0 && Number.isFinite(uptime) && uptime! >= 0 && Number.isFinite(wall)) {
-      const upper = Math.ceil(wall! * 1000 - uptime! * 1000 + (ticks! + 1) * 1000 / hz!)
-      const coarse = boot! * 1000 + ticks! * 1000 / hz!
-      if (upper >= coarse && upper - coarse < 2000) proc.startedAt = upper
-    }
+    const at = birthUpperBound(ticks!, hz!, boot!, uptime!, wall!)
+    if (at !== undefined) proc.startedAt = at
     out.set(pid!, proc)
   }
   return out

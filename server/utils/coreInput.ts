@@ -74,7 +74,8 @@ export async function coreSend(deps: CoreInputDeps, b: { pane_id?: unknown, text
     let started = r?.started ?? null
     // Claude takes a multi-line send (text + "\n@file") as a paste and leaves it in its
     // input: core reports no turn started. One more Enter submits it; on an empty input it is harmless.
-    if (started === false && text.includes('\n')) {
+    // Claude only: other agents (Command Code included) keep whatever they observed.
+    if (p.agent === 'claude' && started === false && text.includes('\n')) {
       await new Promise(res => setTimeout(res, deps.settleMs ?? 400))
       const t = await deps.call<{ status?: string | { state?: string } | null }>('terminal.get', { terminal: p.coreAddress }, 3000).catch(() => null)
       const state = typeof t?.status === 'string' ? t.status : t?.status?.state

@@ -47,6 +47,25 @@ describe('name of a pane in a space with several panes', () => {
   })
 })
 
+describe('Command Code pane titles', () => {
+  const cmd = (o: Partial<Pane> = {}) => pane({ agent: 'cmd', name: 'cmd', title: '', ...o })
+  it('labels it Command Code and drops its raw names', () => {
+    expect(paneTitle(cmd())).toBe('Command Code')
+    for (const title of ['cmd', 'cmdc', 'command-code', 'command_code', 'commandcode', 'Command Code'])
+      expect(paneTitle(cmd({ title })), title).toBe('Command Code')
+    expect(paneTitle(cmd({ displayAgent: 'Command Code' }))).toBe('Command Code')
+    for (const name of ['cmd', 'cmdc', 'command code', 'command-code', 'command_code', 'commandcode'])
+      expect(paneTitle(cmd({ name })), name).toBe('Command Code')
+  })
+  it('keeps a name or title the user set', () => {
+    expect(paneTitle(cmd({ label: 'Import fixer' }))).toBe('Import fixer')
+    expect(paneTitle(cmd({ name: 'Import fixer' }))).toBe('Import fixer')
+    expect(paneTitle(cmd({ title: 'Import regression sweep' }))).toBe('Import regression sweep')
+    expect(paneOwnTitle(cmd({ name: 'command-code' }))).toBe('cmd')
+    expect(paneOwnTitle(cmd())).toBe('cmd')
+  })
+})
+
 describe('own title of a pane, without an added capital', () => {
   it('keeps the agent id of an unnamed agent pane as typed', () => {
     const unnamed = pane({ agent: 'omp', name: '', title: '' })

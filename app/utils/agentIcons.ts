@@ -7,6 +7,7 @@ export const AGENT_ICON: Record<string, string> = {
   gemini: 'i-lucide-sparkles',
   opencode: 'i-lucide-code-xml',
   kimi: 'i-lucide-moon-star',
+  cmd: 'i-lucide-square-terminal',
 }
 
 export const agentIcon = (agent: string | null | undefined): string | null =>

@@ -7,6 +7,14 @@ describe('agentIcon', () => {
     expect(agentIcon('claude')).toBe('i-herdr-claude-code')
     expect(agentIcon('codex')).toBe('i-herdr-codex')
     expect(agentIcon('omp')).toBe('i-herdr-omp')
+    expect(agentIcon('cmd')).toBe('i-lucide-square-terminal')
+  })
+
+  it('names Command Code like its transcript capability does', async () => {
+    const { TRANSCRIPT_AGENTS, transcriptKind } = await import('../shared/agentKind')
+    expect(TRANSCRIPT_AGENTS).toContain('cmd')
+    expect(transcriptKind('/home/user/.commandcode/projects/a/s.jsonl')).toBe('cmd')
+    expect(agentIcon('cmd')).toBeTruthy()
   })
 
   it('has no logo for unknown agents, terminals or inherited keys', () => {

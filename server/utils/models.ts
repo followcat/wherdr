@@ -126,6 +126,19 @@ export const ompModelResult = (m: ModelInfo | null): ModelInfo | null => (m && m
 export function modelFromLine(line: string, kind: string | null): ModelInfo | null {
   if (!line) return null
   if (kind === 'omp') return ompModelFromLine(line)
+  if (kind === 'cmd') {
+    // Command Code: "model_change" records, else the model stamped on the
+    // latest assistant message. Malformed entries say nothing; the most
+    // recent valid one wins (see lastModel).
+    if (!line.includes('"model"')) return null
+    let cd: Json
+    try { cd = JSON.parse(line) }
+    catch { return null }
+    const cid = cd?.type === 'model_change' ? cd.model
+      : cd?.type === 'message' && cd.message?.role === 'assistant' ? cd.model : null
+    return typeof cid === 'string' && cid.trim()
+      ? { id: cid, label: cleanModelName(cid), at: typeof cd.timestamp === 'string' ? cd.timestamp : null } : null
+  }
   if (kind === 'codex') {
     if (!line.includes('"turn_context"')) return null
     let d: Json

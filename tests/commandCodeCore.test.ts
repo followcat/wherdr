@@ -1,0 +1,869 @@
+import { describe, expect, it } from 'vitest'
+import { createCmdCore } from '../server/utils/commandCodeCore'
+import type { ShellExec } from '../server/utils/fsx'
+import { AGENT_CENSUS_SCRIPT, CMD_FILES_SCRIPT, CMD_HEADERS_SCRIPT } from './cmdCoreFixture'
+import {
+  AT, clock, F, filesWire, GAP, H, hdrs, HOME, live, OTHER, PKG, POST3,
+  POST, POST2, POSTOBS, PRE, retitled, S, sess, st, stub, T, U1, U2, U3, WORK
+} from './cmdCoreFixture'
+
+describe('createCmdCore', () => {
+  it('requires a live detail with a valid root pid', async () => {
+    const { exec, calls } = stub({ census: H + S(4242) + T(1, 1) })
+    const c = createCmdCore(exec, HOME)
+    for (const d of [undefined, null, {}, { pid: 0 }, { pid: -3 }, { pid: Number.NaN }, { pid: '4242' }]) {
+      expect(await c.locate(d as never)).toEqual({ unavailable: 'detail' })
+    }
+    // Finished/missing state fails BEFORE any census — a reused pid in the
+    // current census can never resurrect a dead terminal's claim.
+    for (const d of [
+      { state: 'finished', pid: 4242, argv: ['cmd'] },
+      { state: 'exited', pid: 4242, argv: ['cmd'] },
+      { pid: 4242, argv: ['cmd'] }, // no state at all
+      { state: '', pid: 4242 }
+    ]) {
+      expect(await c.locate(d as never)).toEqual({ unavailable: 'detail' })
+    }
+    expect(calls).toEqual({ census: 0, files: 0, headers: 0 })
+  })
+
+  it('locates a proven foreground cmd to its newest post-birth file', async () => {
+    const { exec, calls } = stub({
+      census: H + S(4242) + T(1, 1),
+      // Both writes post-observation (POSTOBS/POST2 > obs wall): newest wins.
+      files: filesWire([[F('a', U1), st(POSTOBS)], [F('b', U2), st(POST2)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) }, [F('b', U2)]: { st: st(POST2), body: sess(U2) } })
+    })
+    const r = await createCmdCore(exec, HOME).locate(live({ pid: 9000, argv: ['bash', '-l'], foreground: { pid: 4242 } }))
+    expect(r).toEqual({ file: F('b', U2), session: U2 }) // newest write wins (/clear, /resume shape)
+    expect(calls).toEqual({ census: 2, files: 1, headers: 1 }) // ownership census + post-collection census
+  })
+
+  it('locates a root cmd pid only when recorded argv proves a cmd launch', async () => {
+    const { exec } = stub({
+      census: H + S(4242) + T(1, 1),
+      files: filesWire([[F('a', U1), st(POST)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) } })
+    })
+    const c = createCmdCore(exec, HOME)
+    for (const argv of [['cmd'], ['command-code'], ['cmdc'], ['node', '/x/bin/cmd'], ['node', PKG]]) {
+      expect(await c.locate(live({ pid: 4242, argv }))).toEqual({ file: F('a', U1), session: U1 })
+    }
+  })
+
+  it('rejects a root cmd pid whose recorded launch was a shell or unproven', async () => {
+    const { exec } = stub({ census: H + S(4242) + T(1, 1) })
+    const c = createCmdCore(exec, HOME)
+    // Old bash root that exec'd cmd: pid/ticks are the shell's, not the agent's.
+    for (const argv of [['bash', '-l'], ['sh', '-c', 'exec cmd'], ['node', '/srv/server.js'], [], undefined]) {
+      expect(await c.locate(live({ pid: 4242, argv: argv as string[] | undefined }))).toEqual({ unavailable: 'target' })
+    }
+    // Same unproven birth even when the foreground reports the root pid
+    // itself: the exec'd process IS the foreground, still shell-born.
+    expect(await c.locate(live({ pid: 4242, argv: ['bash', '-l'], foreground: { pid: 4242 } }))).toEqual({ unavailable: 'target' })
+  })
+
+  it('targets the single direct cmd child of a shell root', async () => {
+    const { exec } = stub({
+      census: H + S(4242, { ppid: 9000 }) + T(1, 1),
+      files: filesWire([[F('a', U1), st(POSTOBS)]]), // post-observation write
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+    })
+    // Foreground reports the shell itself; ppid makes the child's own
+    // generation the target — the shell's recorded argv is never consulted.
+    const r = await createCmdCore(exec, HOME).locate(live({ pid: 9000, argv: ['bash', '-l', '--session', U3], foreground: { pid: 9000 } }))
+    expect(r).toEqual({ file: F('a', U1), session: U1 })
+  })
+
+  it('refuses ambiguous or unproven wrapper shapes', async () => {
+    const { exec } = stub({ census: H + S(4242, { ppid: 9000 }) + S(4243, { ppid: 9000 }) + T(2, 2) })
+    expect(await createCmdCore(exec, HOME).locate(live({ pid: 9000, argv: ['bash', '-l'] }))).toEqual({ unavailable: 'target' })
+    // A deeper wrapper: the cmd's parent is not the root, so nothing is proven.
+    const { exec: e2 } = stub({ census: H + S(4242, { ppid: 9999 }) + T(1, 1) })
+    expect(await createCmdCore(e2, HOME).locate(live({ pid: 9000, argv: ['bash', '-l'] }))).toEqual({ unavailable: 'target' })
+    // Root pid absent from the census and no children at all.
+    const { exec: e3 } = stub({ census: H + S(4242) + T(1, 1) })
+    expect(await createCmdCore(e3, HOME).locate(live({ pid: 7777, argv: ['cmd'] }))).toEqual({ unavailable: 'target' })
+  })
+
+  it('refuses two same-cwd peers before any file IO but allows other-cwd peers', async () => {
+    const { exec, calls } = stub({ census: H + S(4242) + S(5555) + T(2, 2) })
+    expect(await createCmdCore(exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ unavailable: 'peers' })
+    expect(calls).toEqual({ census: 1, files: 0, headers: 0 }) // ambiguity rejects before expensive IO
+    // A second agent elsewhere does not collide.
+    const { exec: e2 } = stub({
+      census: H + S(4242) + S(5555, { cwd: '/w/elsewhere' }) + T(2, 2),
+      files: filesWire([[F('a', U1), st(POSTOBS)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+    })
+    expect(await createCmdCore(e2, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ file: F('a', U1), session: U1 })
+  })
+
+  it('scopes unclassifiable processes: an unrelated cwd never voids the lookup', async () => {
+    const { exec } = stub({
+      census: H + S(4242)
+        + S(7701, { argv: ['/opt/tools/node_repl'], cwd: OTHER }) // bare REPL: argv0 only
+        + S(7702, { argv: ['node', '-e', 'tick()'], cwd: '/w/eval' }) // eval code
+        + S(7703, { comm: 'bun', argv: ['bun', '/srv/app.js'], cwd: '/w/bun' })
+        + S(7704, { comm: 'deno', argv: ['deno', 'run', '/srv/x.ts'], cwd: '/w/deno' })
+        + S(7705, { argv: ['node', '-'], cwd: '/w/stdin' }) // script on stdin
+        + T(6, 6),
+      files: filesWire([[F('a', U1), st(POSTOBS)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+    })
+    expect(await createCmdCore(exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ file: F('a', U1), session: U1 })
+  })
+
+  it('refuses before file IO when an unclassifiable process shares the target cwd', async () => {
+    for (const u of [
+      S(7701, { argv: ['/opt/tools/node_repl'] }),
+      S(7702, { argv: ['node', '-e', 'tick()'] }),
+      S(7703, { comm: 'bun', argv: ['bun', '/srv/app.js'] }),
+      S(7704, { comm: 'deno', argv: ['deno', 'run', '/srv/x.ts'] }),
+      S(7705, { argv: ['node', '-'] }),
+    ]) {
+      const { exec, calls } = stub({ census: H + S(4242) + u + T(2, 2) })
+      expect(await createCmdCore(exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ unavailable: 'peers' })
+      expect(calls).toEqual({ census: 1, files: 0, headers: 0 })
+    }
+  })
+
+  it('refuses an unclassifiable process whose cwd is unreadable, whatever the target', async () => {
+    const { exec } = stub({ census: H + S(4242) + S(7701, { argv: ['/opt/tools/node_repl'], cwd: null }) + T(2, 2) })
+    expect(await createCmdCore(exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ unavailable: 'peers' })
+  })
+
+  it('scopes the unclassifiable check to an eligible launch-target header cwd too', async () => {
+    const seeded = (u: string) => stub({
+      census: H + S(4242, { argv: ['node', '/x/bin/cmd', '--session', U2] }) + u + T(2, 2),
+      files: filesWire([[F('a', U1), st(POST)], [F('r', U2), st(POST2)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) }, [F('r', U2)]: { st: st(POST2), body: sess(U2, OTHER) } })
+    })
+    // The resume target's header cwd is OTHER: an unknown there could own it.
+    expect(await createCmdCore(seeded(S(7701, { argv: ['/opt/tools/node_repl'], cwd: OTHER })).exec, HOME)
+      .locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ unavailable: 'peers' })
+    // An unrelated unknown cannot: the legitimate launch target still wins.
+    expect(await createCmdCore(seeded(S(7701, { argv: ['/opt/tools/node_repl'], cwd: '/w/three' })).exec, HOME)
+      .locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ file: F('r', U2), session: U2 })
+  })
+
+  it('keeps recordless producer unknowns a global failure', async () => {
+    const { exec } = stub({ census: H + S(4242) + T(2, 1, 0, 3) })
+    expect(await createCmdCore(exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ unavailable: 'incomplete' })
+  })
+
+  it('bounds non-root birth by first machine-wall observation, never the shell fork', async () => {
+    // ticks 12000 -> fork bound ~1767225720014; the GAP write lands between
+    // that fork and this census's wall (1767226100.1). An old subshell that
+    // exec'd cmd is indistinguishable from a fresh one — the gap file must
+    // never win; the session resolves only on a post-observation write.
+    const gap = (rows: string) => stub({
+      census: H + rows + T(1, 1),
+      files: filesWire([[F('a', U1), st(GAP)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(GAP), body: sess(U1) } })
+    })
+    const d = (fg = 4242) => live({ pid: 9000, argv: ['bash', '-l'], foreground: { pid: fg } })
+    // Foreground child.
+    expect(await createCmdCore(gap(S(4242, { ticks: '12000' })).exec, HOME).locate(d())).toEqual({ unavailable: 'empty' })
+    // Direct child (ppid links it; the shell root is the reported foreground).
+    expect(await createCmdCore(gap(S(4242, { ppid: 9000, ticks: '12000' })).exec, HOME).locate(d(9000))).toEqual({ unavailable: 'empty' })
+    // Retitled argv proves nothing either way — same bound.
+    expect(await createCmdCore(gap(retitled(4242, { cwd: WORK, ticks: '12000' })).exec, HOME).locate(d())).toEqual({ unavailable: 'empty' })
+    // Strict equality at the observation bound is still not after it.
+    const eq = stub({
+      census: H + S(4242, { ticks: '12000' }) + T(1, 1),
+      files: filesWire([[F('a', U1), st('1767226100.124')]]),
+      headers: hdrs({ [F('a', U1)]: { st: st('1767226100.124'), body: sess(U1) } })
+    })
+    expect(await createCmdCore(eq.exec, HOME).locate(d())).toEqual({ unavailable: 'empty' })
+  })
+
+  it('excludes a pre-observation seeded file even with a globally unique seed', async () => {
+    const { exec } = stub({
+      census: H + S(4242, { ticks: '12000', argv: ['node', '/x/bin/cmd', '--session', U2] }) + T(1, 1),
+      // The seeded file is strictly newer than the cwd one — today it would
+      // win outright — but BOTH writes predate the first observation.
+      files: filesWire([[F('a', U1), st(GAP)], [F('r', U2), st(POST)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(GAP), body: sess(U1) }, [F('r', U2)]: { st: st(POST), body: sess(U2, OTHER) } })
+    })
+    // The sampled argv seeds fine — but the exec-gap write is still pre-Cmd.
+    expect(await createCmdCore(exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ unavailable: 'empty' })
+  })
+
+  it('resolves a normal child on its first post-observation write, then updates', async () => {
+    const cl = clock()
+    const o = {
+      census: H + S(4242, { ppid: 9000 }) + T(1, 1),
+      files: filesWire([[F('a', U1), st(GAP)], [F('b', U2), st(POSTOBS)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(GAP), body: sess(U1) }, [F('b', U2)]: { st: st(POSTOBS), body: sess(U2) } })
+    }
+    const { exec } = stub(o)
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const d = live({ pid: 9000, argv: ['bash', '-l'], foreground: { pid: 9000 } })
+    // GAP is pre-observation; POSTOBS is the first write the witness proves.
+    expect(await c.locate(d)).toEqual({ file: F('b', U2), session: U2 })
+    // Machine wall/uptime advance coherently (same generation, unchanged
+    // startedAt) PAST the file's mtime: firstSeen must stay the ORIGINAL
+    // observation — if it moved to the latest wall, POSTOBS turns
+    // pre-bound and this resolves 'empty'. The file does not change.
+    cl.advance(1500)
+    o.census = H + S(4242, { ppid: 9000, up: '1300.12', wall: '1767226900.123' }) + T(1, 1)
+    expect(await c.locate(d)).toEqual({ file: F('b', U2), session: U2 })
+    // A newer persisted write still supersedes it in a later window.
+    cl.advance(1500)
+    o.files = filesWire([[F('a', U1), st(GAP)], [F('b', U2), st(POST2)]])
+    o.headers = hdrs({ [F('a', U1)]: { st: st(GAP), body: sess(U1) }, [F('b', U2)]: { st: st(POST2), body: sess(U2) } })
+    expect(await c.locate(d)).toEqual({ file: F('b', U2), session: U2 })
+  })
+
+  it('never carries an observation bound across generation reuse or prune', async () => {
+    const cl = clock()
+    const o = {
+      census: H + S(4242, { ticks: '12000' }) + T(1, 1),
+      files: filesWire([[F('a', U1), st(GAP)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(GAP), body: sess(U1) } })
+    }
+    const { exec } = stub(o)
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const d = live({ pid: 9000, foreground: { pid: 4242 } })
+    expect(await c.locate(d)).toEqual({ unavailable: 'empty' }) // gap file: pre-observation
+    // The pid is reborn as a NEW generation (new ticks, later wall): a file
+    // fine for the old generation predates THIS one's first observation.
+    cl.advance(1500)
+    o.census = H + S(4242, { ticks: '12100', up: '900.5', wall: '1767226500.5' }) + T(1, 1)
+    o.files = filesWire([[F('a', U1), st(POSTOBS)]])
+    o.headers = hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+    expect(await c.locate(d)).toEqual({ unavailable: 'empty' })
+    // A generation absent from a complete census is pruned; when the same
+    // pid+ticks reappears it re-arms from the NEW wall, never a stale bound.
+    cl.advance(1500)
+    o.census = H + T(0, 0) // a COMPLETE census with zero rows: gens all pruned
+    expect(await c.locate(d)).toEqual({ unavailable: 'target' })
+    cl.advance(1500)
+    o.census = H + S(4242, { ticks: '12000', up: '1400.5', wall: '1767227000.5' }) + T(1, 1)
+    // uptime/wall keep the old fork bound consistent; obs is now 1767227000.
+    expect(await c.locate(d)).toEqual({ unavailable: 'empty' })
+    // A fresh instance re-arms the same way — restart is always conservative.
+    expect(await createCmdCore(exec, HOME).locate(d)).toEqual({ unavailable: 'empty' })
+  })
+
+  it('never consults the coordinator clock for the observation bound', async () => {
+    const d = live({ pid: 9000, foreground: { pid: 4242 } })
+    // Behind + a GAP-ONLY catalog: a local-now bound near t=0 would admit the
+    // stale file — only the machine wall can reject it. Not masked by a
+    // newer candidate; this is what proves the bound is the remote one.
+    const { exec: gapOnly } = stub({
+      census: H + S(4242) + T(1, 1),
+      files: filesWire([[F('a', U1), st(GAP)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(GAP), body: sess(U1) } })
+    })
+    const behind = clock()
+    expect(await createCmdCore(gapOnly, HOME, { now: behind.now }).locate(d)).toEqual({ unavailable: 'empty' })
+    // The same skewed coordinator still resolves a genuinely post-observation
+    // write (and a far-ahead one never permanently rejects it either).
+    const { exec } = stub({
+      census: H + S(4242) + T(1, 1),
+      files: filesWire([[F('a', U1), st(GAP)], [F('b', U2), st(POSTOBS)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(GAP), body: sess(U1) }, [F('b', U2)]: { st: st(POSTOBS), body: sess(U2) } })
+    })
+    expect(await createCmdCore(exec, HOME, { now: behind.now }).locate(d)).toEqual({ file: F('b', U2), session: U2 })
+    const ahead = clock()
+    ahead.set(9e15)
+    expect(await createCmdCore(exec, HOME, { now: ahead.now }).locate(d)).toEqual({ file: F('b', U2), session: U2 })
+  })
+
+  it('uses max of two valid bounds when observation precedes the rounded birth upper', async () => {
+    // birthUpperBound adds one clock tick, so a VERY young process can carry
+    // an observedAt a few ms BEFORE its conservative process bound — both
+    // are valid upper bounds on agent start, not inconsistent evidence.
+    // ticks 50000 + up 500.001 + wall 1767226100.001: upper 1767226100010,
+    // observedAt 1767226100001.
+    const cl = clock()
+    const o = {
+      census: H + S(4242, { ppid: 9000, ticks: '50000', up: '500.001', wall: '1767226100.001' }) + T(1, 1),
+      files: filesWire([[F('a', U1), st('1767226100.005')]]),
+      headers: hdrs({ [F('a', U1)]: { st: st('1767226100.005'), body: sess(U1) } })
+    }
+    const { exec } = stub(o)
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const d = live({ pid: 9000, foreground: { pid: 4242 } })
+    // .005 is after observedAt but before the process upper — still in the
+    // exec gap under max(): ineligible. Kept alone so the positive below
+    // cannot mask this exclusion.
+    expect(await c.locate(d)).toEqual({ unavailable: 'empty' })
+    // .020 is after BOTH bounds: the same generation resolves.
+    cl.advance(1500)
+    o.files = filesWire([[F('a', U1), st('1767226100.020')]])
+    o.headers = hdrs({ [F('a', U1)]: { st: st('1767226100.020'), body: sess(U1) } })
+    expect(await c.locate(d)).toEqual({ file: F('a', U1), session: U1 })
+    // A later census advancing up/wall coherently keeps the same generation's
+    // remembered observation — still resolves.
+    cl.advance(1500)
+    o.census = H + S(4242, { ppid: 9000, ticks: '50000', up: '1300.001', wall: '1767226900.001' }) + T(1, 1)
+    expect(await c.locate(d)).toEqual({ file: F('a', U1), session: U1 })
+  })
+
+  it('never resurrects a foreign-cwd file a live peer may own', async () => {
+    // A seeded to S (header OTHER) from its own cwd, /clear to T, then a live
+    // retitled Cmd appears at OTHER and writes S: S's ownership is ambiguous
+    // forever — unavailable, never S and never silently T.
+    const cl = clock()
+    const o = {
+      census: H + S(9000) + T(1, 1), // the root cmd row itself, own cwd
+      files: filesWire([[F('b', U2), st(POSTOBS)]]),
+      headers: hdrs({ [F('b', U2)]: { st: st(POSTOBS), body: sess(U2, OTHER) } })
+    }
+    const { exec } = stub(o)
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const d = live({ pid: 9000, argv: ['cmd', '--session', U2], foreground: { pid: 9000 } })
+    // 1. The exact id seed admits foreign-cwd S: no live peer there yet.
+    expect(await c.locate(d)).toEqual({ file: F('b', U2), session: U2 })
+    // 2. /clear writes own-cwd T newest: the newer file wins.
+    cl.advance(1500)
+    o.files = filesWire([[F('b', U2), st(POSTOBS)], [F('a', U1), st(POST2)]])
+    o.headers = hdrs({ [F('b', U2)]: { st: st(POSTOBS), body: sess(U2, OTHER) }, [F('a', U1)]: { st: st(POST2), body: sess(U1) } })
+    expect(await c.locate(d)).toEqual({ file: F('a', U1), session: U1 })
+    // 3. A retitled live Cmd at OTHER writes S newest: contested — refuse,
+    //    argv-lost B is still a peer (no argv subtraction ever).
+    cl.advance(1500)
+    o.census = H + S(9000) + retitled(5151, { cwd: OTHER }) + T(2, 2)
+    o.files = filesWire([[F('b', U2), st(POST3)], [F('a', U1), st(POST2)]])
+    o.headers = hdrs({ [F('b', U2)]: { st: st(POST3), body: sess(U2, OTHER) }, [F('a', U1)]: { st: st(POST2), body: sess(U1) } })
+    expect(await c.locate(d)).toEqual({ unavailable: 'peers' })
+    // 4. B still live with T newest again: still unavailable — the contested
+    //    candidate is never dropped to silently pick the own-cwd file.
+    cl.advance(1500)
+    o.files = filesWire([[F('b', U2), st(POSTOBS)], [F('a', U1), st(POST2)]])
+    o.headers = hdrs({ [F('b', U2)]: { st: st(POSTOBS), body: sess(U2, OTHER) }, [F('a', U1)]: { st: st(POST2), body: sess(U1) } })
+    expect(await c.locate(d)).toEqual({ unavailable: 'peers' })
+    // The same ambiguity under a path-form seed: identical answer.
+    expect(await createCmdCore(exec, HOME).locate(live({ pid: 9000, argv: ['cmd', '--session', F('b', U2)], foreground: { pid: 9000 } })))
+      .toEqual({ unavailable: 'peers' })
+  })
+
+  it('re-samples the census after candidate collection before selecting', async () => {
+    // B can start and flush while the listing is in flight: the selection
+    // must be made on a census sampled AFTER collection — the pre-collection
+    // rows are never relabeled as the final sample.
+    const cl = clock()
+    const o = {
+      census: H + S(4242, { ppid: 9000 }) + T(1, 1), // c1: A only
+      files: filesWire([[F('a', U1), st(POSTOBS)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+    }
+    const seq: string[] = []
+    let active = 0, maxActive = 0
+    let filesBegan!: () => void, filesRelease!: () => void
+    const began = new Promise<void>(res => { filesBegan = res })
+    const gate = new Promise<void>(res => { filesRelease = res })
+    const exec: ShellExec = async (script, args = []) => {
+      const out = (s: string) => ({ code: 0, stdout: Buffer.from(s), stderr: '' })
+      if (script === AGENT_CENSUS_SCRIPT) {
+        seq.push('census')
+        active++; maxActive = Math.max(maxActive, active)
+        try { return out(o.census) } finally { active-- }
+      }
+      if (script === CMD_FILES_SCRIPT) { seq.push('files'); filesBegan(); await gate; return out(o.files) }
+      if (script === CMD_HEADERS_SCRIPT) { seq.push('headers'); return out(o.headers(args ?? [])) }
+      return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+    }
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const d = live({ pid: 9000, foreground: { pid: 4242 } })
+    const pending = c.locate(d)
+    await began // the listing is in-flight and held
+    // B starts between the samples (coherent later wall/up) and flushes a
+    // newer same-cwd file before the listing resolves.
+    o.census = H + S(4242, { ppid: 9000, up: '1300.12', wall: '1767226900.123' })
+      + S(5555, { ticks: '70000', up: '1300.12', wall: '1767226900.123' }) + T(2, 2)
+    o.files = filesWire([[F('a', U1), st(POSTOBS)], [F('c', U3), st(POST3)]])
+    o.headers = hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) }, [F('c', U3)]: { st: st(POST3), body: sess(U3) } })
+    filesRelease()
+    // A live same-cwd Cmd at the post-collection sample makes A's ownership
+    // unproven — never B's file.
+    expect(await pending).toEqual({ unavailable: 'peers' })
+    // The post-collection census is a real second call, begun only after the
+    // header pass: never concurrent, never an earlier queued promise.
+    expect(seq).toEqual(['census', 'files', 'headers', 'census'])
+    expect(maxActive).toBe(1)
+  })
+
+  it('begins the post-collection census only after the header pass resolves', async () => {
+    const cl = clock()
+    const o = {
+      census: H + S(4242, { ppid: 9000 }) + T(1, 1),
+      files: filesWire([[F('a', U1), st(POSTOBS)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+    }
+    const seq: string[] = []
+    let headersBegan!: () => void, headersRelease!: () => void
+    const began = new Promise<void>(res => { headersBegan = res })
+    const gate = new Promise<void>(res => { headersRelease = res })
+    const exec: ShellExec = async (script, args = []) => {
+      const out = (s: string) => ({ code: 0, stdout: Buffer.from(s), stderr: '' })
+      if (script === AGENT_CENSUS_SCRIPT) { seq.push('census'); return out(o.census) }
+      if (script === CMD_FILES_SCRIPT) { seq.push('files'); return out(o.files) }
+      if (script === CMD_HEADERS_SCRIPT) { seq.push('headers'); headersBegan(); await gate; return out(o.headers(args ?? [])) }
+      return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+    }
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const d = live({ pid: 9000, foreground: { pid: 4242 } })
+    const pending = c.locate(d)
+    await began // collection is in-flight inside the header pass
+    expect(seq).toEqual(['census', 'files', 'headers']) // postscan has not begun
+    headersRelease()
+    expect(await pending).toEqual({ file: F('a', U1), session: U1 })
+    expect(seq).toEqual(['census', 'files', 'headers', 'census'])
+  })
+
+  it('rejects when the target changed between the census samples', async () => {
+    // A generation lost, reused or moved between c1 and c2 can never be the
+    // proven target: unavailable, never the earlier rows' answer.
+    for (const c2 of [
+      H + T(0, 0), // pid gone at the second sample
+      H + S(4242, { ppid: 9000, ticks: '70000', up: '1300.12', wall: '1767226900.123' }) + T(1, 1), // reused: LATER generation ticks
+      H + S(4242, { ppid: 9000, cwd: OTHER, up: '1300.12', wall: '1767226900.123' }) + T(1, 1) // moved cwd
+    ]) {
+      const cl = clock()
+      const o = {
+        census: H + S(4242, { ppid: 9000 }) + T(1, 1),
+        files: filesWire([[F('a', U1), st(POSTOBS)]]),
+        headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+      }
+      let filesBegan!: () => void, release!: () => void
+      const began = new Promise<void>(res => { filesBegan = res })
+      const gate = new Promise<void>(res => { release = res })
+      const exec: ShellExec = async (script, args = []) => {
+        const out = (s: string) => ({ code: 0, stdout: Buffer.from(s), stderr: '' })
+        if (script === AGENT_CENSUS_SCRIPT) return out(o.census)
+        if (script === CMD_FILES_SCRIPT) { filesBegan(); await gate; return out(o.files) }
+        if (script === CMD_HEADERS_SCRIPT) return out(o.headers(args ?? []))
+        return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+      }
+      const c = createCmdCore(exec, HOME, { now: cl.now })
+      const pending = c.locate(live({ pid: 9000, foreground: { pid: 4242 } }))
+      await began // deterministic: the listing is in-flight and held
+      o.census = c2
+      release()
+      expect(await pending).toEqual({ unavailable: 'target' })
+    }
+  })
+
+  it('never falls back to the pre-collection census when the post sample fails', async () => {
+    // Whatever shape the post-collection failure takes — an incomplete wire,
+    // a nonzero exec, a thrown exec — the answer is unavailable, never the
+    // c1-based selection.
+    for (const fail of ['incomplete', 'code', 'throw'] as const) {
+      const cl = clock()
+      const o = {
+        census: H + S(4242, { ppid: 9000 }) + T(1, 1),
+        files: filesWire([[F('a', U1), st(POSTOBS)]]),
+        headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+      }
+      let censusN = 0
+      let filesBegan!: () => void, release!: () => void
+      const began = new Promise<void>(res => { filesBegan = res })
+      const gate = new Promise<void>(res => { release = res })
+      const exec: ShellExec = async (script, args = []) => {
+        const out = (s: string) => ({ code: 0, stdout: Buffer.from(s), stderr: '' })
+        if (script === AGENT_CENSUS_SCRIPT) {
+          if (++censusN === 2) {
+            if (fail === 'throw') throw new Error('gone')
+            if (fail === 'code') return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+            return out('H 100 1767225600 0\nT 0 0 0 0\n') // ok=0: incomplete
+          }
+          return out(o.census)
+        }
+        if (script === CMD_FILES_SCRIPT) { filesBegan(); await gate; return out(o.files) }
+        if (script === CMD_HEADERS_SCRIPT) return out(o.headers(args ?? []))
+        return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+      }
+      const c = createCmdCore(exec, HOME, { now: cl.now })
+      const pending = c.locate(live({ pid: 9000, foreground: { pid: 4242 } }))
+      await began // the listing is in-flight and held
+      release()
+      expect(await pending).toEqual({ unavailable: 'incomplete' })
+    }
+  })
+
+  it('scopes post-collection unknown and foreign peers to the final sample', async () => {
+    // An unknown in the target's cwd — or a live cmd at the seed's header
+    // cwd — must be judged on the post-collection census, not the stale one.
+    for (const [c2, want] of [
+      [H + S(4242, { ppid: 9000, up: '1300.12', wall: '1767226900.123' }) + S(7701, { argv: ['/opt/tools/node_repl'], up: '1300.12', wall: '1767226900.123' }) + T(2, 2), 'peers'],
+      [H + S(4242, { ppid: 9000, up: '1300.12', wall: '1767226900.123' }) + S(7701, { argv: ['/opt/tools/node_repl'], cwd: OTHER, up: '1300.12', wall: '1767226900.123' }) + T(2, 2), 'file']
+    ] as const) {
+      const cl = clock()
+      const o = {
+        census: H + S(4242, { ppid: 9000 }) + T(1, 1),
+        files: filesWire([[F('a', U1), st(POSTOBS)]]),
+        headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+      }
+      let filesBegan!: () => void, release!: () => void
+      const began = new Promise<void>(res => { filesBegan = res })
+      const gate = new Promise<void>(res => { release = res })
+      const exec: ShellExec = async (script, args = []) => {
+        const out = (s: string) => ({ code: 0, stdout: Buffer.from(s), stderr: '' })
+        if (script === AGENT_CENSUS_SCRIPT) return out(o.census)
+        if (script === CMD_FILES_SCRIPT) { filesBegan(); await gate; return out(o.files) }
+        if (script === CMD_HEADERS_SCRIPT) return out(o.headers(args ?? []))
+        return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+      }
+      const c = createCmdCore(exec, HOME, { now: cl.now })
+      const pending = c.locate(live({ pid: 9000, foreground: { pid: 4242 } }))
+      await began // the listing is in-flight and held
+      o.census = c2
+      release()
+      if (want === 'file') expect(await pending).toEqual({ file: F('a', U1), session: U1 })
+      else expect(await pending).toEqual({ unavailable: 'peers' })
+    }
+  })
+
+  it('judges the M2 foreign-seed peer on the post-collection census', async () => {
+    // A's exact seed admits the foreign S; c1 knows A alone. The retitled
+    // Cmd B at S's header cwd appears only at the post-collection sample —
+    // the contested candidate can never be resurrected under A's name.
+    const cl = clock()
+    const seed = ['node', '/x/bin/cmd', '--session', U3] // real interpreter+entry argv
+    const o = {
+      census: H + S(4242, { ppid: 9000, argv: seed }) + T(1, 1),
+      files: filesWire([[F('a', U1), st(POSTOBS)], [F('s', U3), st(POST3)]]),
+      headers: hdrs({
+        [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) },
+        [F('s', U3)]: { st: st(POST3), body: sess(U3, OTHER) }
+      })
+    }
+    let filesBegan!: () => void, release!: () => void
+    const began = new Promise<void>(res => { filesBegan = res })
+    const gate = new Promise<void>(res => { release = res })
+    const exec: ShellExec = async (script, args = []) => {
+      const out = (s: string) => ({ code: 0, stdout: Buffer.from(s), stderr: '' })
+      if (script === AGENT_CENSUS_SCRIPT) return out(o.census)
+      if (script === CMD_FILES_SCRIPT) { filesBegan(); await gate; return out(o.files) }
+      if (script === CMD_HEADERS_SCRIPT) return out(o.headers(args ?? []))
+      return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+    }
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const pending = c.locate(live({ pid: 9000, foreground: { pid: 4242 } }))
+    await began // the listing is in-flight and held
+    // Same generation, same launch argv — plus B, a retitled live cmd whose
+    // own launch argv is unknowable, sitting at the seeded file's cwd.
+    o.census = H + S(4242, { ppid: 9000, argv: seed, up: '1300.12', wall: '1767226900.123' })
+      + S(5555, { comm: 'command-code', argv: ['command-code'], cwd: OTHER, up: '1300.12', wall: '1767226900.123' }) + T(2, 2)
+    release()
+    expect(await pending).toEqual({ unavailable: 'peers' })
+  })
+
+  it('keeps a generation bound first witnessed by the post-collection census', async () => {
+    // B appears only at c2. A second lookup inside the same window must NOT
+    // replay the older c1 rows and prune B: next window B resolves by its
+    // first (c2) bound, not a bound re-armed from a later sample.
+    const cl = clock()
+    const o = {
+      census: H + S(4242, { ppid: 9000 }) + T(1, 1),
+      files: filesWire([[F('a', U1), st(POSTOBS)]]), // only A's own file exists yet
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+    }
+    let filesBegan!: () => void, release!: () => void
+    const began = new Promise<void>(res => { filesBegan = res })
+    const gate = new Promise<void>(res => { release = res })
+    const exec: ShellExec = async (script, args = []) => {
+      const out = (s: string) => ({ code: 0, stdout: Buffer.from(s), stderr: '' })
+      if (script === AGENT_CENSUS_SCRIPT) return out(o.census)
+      if (script === CMD_FILES_SCRIPT) { filesBegan(); await gate; return out(o.files) }
+      if (script === CMD_HEADERS_SCRIPT) return out(o.headers(args ?? []))
+      return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+    }
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const pA = c.locate(live({ pid: 9000, foreground: { pid: 4242 } }))
+    await began // the listing is in-flight and held
+    // c2: B's generation is first witnessed here — bound ~1767226900123.
+    o.census = H + S(4242, { ppid: 9000, up: '1300.12', wall: '1767226900.123' })
+      + S(5555, { cwd: '/w/two', up: '1300.12', wall: '1767226900.123' }) + T(2, 2)
+    release()
+    expect(await pA).toEqual({ file: F('a', U1), session: U1 }) // A renders its own file
+    // B's write is persisted only now — after the sample that witnessed B.
+    o.files = filesWire([[F('a', U1), st(POSTOBS)], [F('b', U2), st('1767226950.5')]])
+    o.headers = hdrs({
+      [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) },
+      [F('b', U2)]: { st: st('1767226950.5'), body: sess(U2, '/w/two') }
+    })
+    // A later lookup on the OLDER c1 rows honestly refuses B — and must not
+    // silently prune the bound c2 just recorded.
+    expect(await c.locate(live({ pid: 9001, foreground: { pid: 5555 } }))).toEqual({ unavailable: 'target' })
+    // Next window: B is live in BOTH phases again and the listing now sees
+    // its file. The write postdates the first c2 bound but predates this
+    // sample — a bound pruned and re-armed here would wrongly reject it.
+    cl.advance(1500)
+    o.census = H + S(4242, { ppid: 9000, up: '1600.12', wall: '1767227200.12' })
+      + S(5555, { cwd: '/w/two', up: '1600.12', wall: '1767227200.12' }) + T(2, 2)
+    expect(await c.locate(live({ pid: 9001, foreground: { pid: 5555 } }))).toEqual({ file: F('b', U2), session: U2 })
+  })
+
+  it('shares both census phases and the collection across concurrent lookups', async () => {
+    // Late callers join wherever the shared window actually is: locates
+    // started while the LISTING is held share c1+files+headers, and locates
+    // started while the post-collection census is held share c2 as well —
+    // never a second scan, never a stale answer, even past the nominal TTL.
+    const cl = clock()
+    const o = {
+      census: H + S(4242, { ppid: 9000 }) + S(5555, { cwd: '/w/two' }) + T(2, 2),
+      files: filesWire([[F('a', U1), st(POSTOBS)], [F('b', U2), st(POST2)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) }, [F('b', U2)]: { st: st(POST2), body: sess(U2, '/w/two') } })
+    }
+    const calls = { census: 0, files: 0, headers: 0 }
+    let filesBegan!: () => void, filesRelease!: () => void
+    const filesBeganP = new Promise<void>(res => { filesBegan = res })
+    const filesGate = new Promise<void>(res => { filesRelease = res })
+    let c2Began!: () => void, c2Release!: () => void
+    const c2BeganP = new Promise<void>(res => { c2Began = res })
+    const c2Gate = new Promise<void>(res => { c2Release = res })
+    let censusN = 0, active = 0, maxActive = 0
+    const exec: ShellExec = async (script, args = []) => {
+      const out = (s: string) => ({ code: 0, stdout: Buffer.from(s), stderr: '' })
+      if (script === AGENT_CENSUS_SCRIPT) {
+        calls.census++
+        active++
+        maxActive = Math.max(maxActive, active)
+        try {
+          if (++censusN === 2) { c2Began(); await c2Gate } // the post-collection sample, genuinely held
+          return out(o.census)
+        } finally { active-- }
+      }
+      if (script === CMD_FILES_SCRIPT) { calls.files++; filesBegan(); await filesGate; return out(o.files) }
+      if (script === CMD_HEADERS_SCRIPT) { calls.headers++; return out(o.headers(args ?? [])) }
+      return { code: 1, stdout: Buffer.alloc(0), stderr: 'x' }
+    }
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const p1 = c.locate(live({ pid: 9000, foreground: { pid: 4242 } }))
+    const p2 = c.locate(live({ pid: 9001, foreground: { pid: 5555 } }))
+    await filesBeganP // the listing is in-flight and held — not merely c1 shared
+    cl.advance(3000) // TTL expired mid-collection: still the SAME window's work
+    const p3 = c.locate(live({ pid: 9000, foreground: { pid: 4242 } }))
+    const p4 = c.locate(live({ pid: 9001, foreground: { pid: 5555 } }))
+    filesRelease()
+    // Race the held post-collection sample against early-settled lookups:
+    // under a stale-census implementation the locates resolve instead, so
+    // the failure is observable at the asserts, not a deadlock.
+    const phase = await Promise.race([
+      c2BeganP.then(() => 'held' as const),
+      Promise.all([p1, p2, p3, p4]).then(() => 'settled' as const)
+    ])
+    const p5 = c.locate(live({ pid: 9000, foreground: { pid: 4242 } })) // late caller during held c2
+    if (phase === 'held') c2Release()
+    expect(phase).toBe('held')
+    expect(await Promise.all([p1, p2, p3, p4, p5])).toEqual([
+      { file: F('a', U1), session: U1 },
+      { file: F('b', U2), session: U2 },
+      { file: F('a', U1), session: U1 },
+      { file: F('b', U2), session: U2 },
+      { file: F('a', U1), session: U1 }
+    ])
+    expect(calls).toEqual({ census: 2, files: 1, headers: 1 })
+    expect(maxActive).toBe(1) // real awaited bound: c2 never overlaps c1 or a second scan
+  })
+
+  it('fails closed when the record carries no usable machine wall', async () => {
+    const { exec } = stub({ census: H + S(4242, { wall: '-' }) + T(1, 1) })
+    // NaN wall => no startedAt either: the row is incomplete metadata.
+    expect(await createCmdCore(exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ unavailable: 'incomplete' })
+  })
+
+  it('enforces the strict post-birth write boundary', async () => {
+    const { exec } = stub({
+      census: H + S(4242) + T(1, 1),
+      files: filesWire([[F('a', U1), st(AT)], [F('b', U2), st(PRE)]]),
+      headers: hdrs({})
+    })
+    // The at-bound file is not after it, the other is pre-birth: nothing
+    // eligible — explicit empty, never a last-file fallback.
+    expect(await createCmdCore(exec, HOME).locate(live({ pid: 4242, argv: ['cmd'] }))).toEqual({ unavailable: 'empty' })
+  })
+
+  it('seeds a cross-cwd resume only from proven exact argv and only when globally unique', async () => {
+    const seeded = (extra: [string, string][] = [], argv: string[] = ['node', '/x/bin/cmd', '--session', U2]) => stub({
+      census: H + S(4242, { argv }) + T(1, 1),
+      // Both candidate writes are post-observation.
+      files: filesWire([[F('a', U1), st(POSTOBS)], [F('r', U2), st(POST2)], ...extra]),
+      headers: hdrs({
+        [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) },
+        [F('r', U2)]: { st: st(POST2), body: sess(U2, OTHER) } // old header cwd: only the seed admits it
+      })
+    })
+    // Exact sampled argv: the seed adds the resumed file, and its newer write wins.
+    expect(await createCmdCore(seeded().exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ file: F('r', U2), session: U2 })
+    // A pre-birth duplicate of the SAME uuid in another project dir makes the
+    // seed non-unique across the full catalog: omitted, cwd rule applies.
+    const dup = seeded([[F('s', U2), st(PRE)]])
+    expect(await createCmdCore(dup.exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ file: F('a', U1), session: U1 })
+    // Retitled argv is not launch-exact: an argv array alone never seeds.
+    const rt = stub({
+      census: H + retitled(4242) + T(1, 1),
+      files: filesWire([[F('a', U1), st(POSTOBS)], [F('r', U2), st(POST2)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) }, [F('r', U2)]: { st: st(POST2), body: sess(U2, OTHER) } })
+    })
+    expect(await createCmdCore(rt.exec, HOME).locate(live({ pid: 9000, foreground: { pid: 4242 } }))).toEqual({ file: F('a', U1), session: U1 })
+    // Recorded root argv seeds a root-equal target the same way.
+    const { exec: e4 } = stub({
+      census: H + S(4242) + T(1, 1),
+      files: filesWire([[F('a', U1), st(POST)], [F('r', U2), st(POST2)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POST), body: sess(U1) }, [F('r', U2)]: { st: st(POST2), body: sess(U2, OTHER) } })
+    })
+    expect(await createCmdCore(e4, HOME).locate(live({ pid: 4242, argv: ['cmd', '--session', U2] }))).toEqual({ file: F('r', U2), session: U2 })
+  })
+
+  it('coalesces census and header evidence across simultaneous lookups', async () => {
+    const { exec, calls } = stub({
+      census: H + S(4242) + S(5555, { cwd: '/w/two' }) + T(2, 2),
+      files: filesWire([[F('a', U1), st(POSTOBS)], [F('b', U2), st(POST2)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) }, [F('b', U2)]: { st: st(POST2), body: sess(U2, '/w/two') } })
+    })
+    const c = createCmdCore(exec, HOME)
+    const [r1, r2, r3] = await Promise.all([
+      c.locate(live({ pid: 9000, foreground: { pid: 4242 } })),
+      c.locate(live({ pid: 9001, foreground: { pid: 5555 } })),
+      c.locate(live({ pid: 9999, argv: ['bash'] })) // target-rejected: shares census, never needs files
+    ])
+    expect(r1).toEqual({ file: F('a', U1), session: U1 })
+    expect(r2).toEqual({ file: F('b', U2), session: U2 })
+    expect(r3).toEqual({ unavailable: 'target' })
+    expect(calls).toEqual({ census: 2, files: 1, headers: 1 }) // ONE machine snapshot across panes: c1 + collection + c2
+  })
+
+  it('refreshes after the TTL and clears location on failure without storms', async () => {
+    const o = {
+      census: H + S(4242) + T(1, 1),
+      files: filesWire([[F('a', U1), st(POSTOBS)], [F('b', U2), st(POST2)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) }, [F('b', U2)]: { st: st(POST2), body: sess(U2, OTHER) } })
+    }
+    const { exec, calls } = stub(o)
+    const cl = clock()
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const d = live({ pid: 9000, foreground: { pid: 4242 } })
+    expect(await c.locate(d)).toEqual({ file: F('a', U1), session: U1 })
+    cl.advance(500)
+    expect(await c.locate(d)).toEqual({ file: F('a', U1), session: U1 }) // same window: no refetch
+    expect(calls.census).toBe(2) // c1 + c2 inside one window
+    cl.advance(1000) // past the ~1s TTL
+    // The pid was reused: a NEW generation in another cwd claims it — the
+    // fresh census, never a cached by-pid answer, decides.
+    o.census = H + S(4242, { ticks: '12400', cwd: OTHER }) + T(1, 1)
+    expect(await c.locate(d)).toEqual({ file: F('b', U2), session: U2 })
+    expect(calls.census).toBe(4)
+    cl.advance(1500)
+    o.census = 'H 100 1767225600 0\nT 0 0 0 0\n' // machine evidence unavailable
+    expect(await c.locate(d)).toEqual({ unavailable: 'incomplete' }) // never the previous file
+    expect(await c.locate(d)).toEqual({ unavailable: 'incomplete' })
+    expect(calls.census).toBe(5) // the failed window is shared too: no RPC storm
+    cl.advance(1500)
+    o.census = H + S(4242) + T(1, 1)
+    expect(await c.locate(d)).toEqual({ file: F('a', U1), session: U1 }) // recovery refetches
+    expect(calls.census).toBe(7)
+  })
+
+  it('scopes all evidence to its own machine instance', async () => {
+    const mk = (cwd: string, dir: string, id: string) => stub({
+      census: H + S(4242, { cwd }) + T(1, 1),
+      files: filesWire([[F(dir, id), st(POST)]]),
+      headers: hdrs({ [F(dir, id)]: { st: st(POST), body: sess(id, cwd) } })
+    })
+    const a = mk('/w/a', 'pa', U1)
+    const b = mk('/w/b', 'pb', U2)
+    const d = live({ pid: 4242, argv: ['cmd'] }) // same pids on both machines
+    expect(await createCmdCore(a.exec, HOME).locate(d)).toEqual({ file: F('pa', U1), session: U1 })
+    expect(await createCmdCore(b.exec, HOME).locate(d)).toEqual({ file: F('pb', U2), session: U2 })
+  })
+
+  it('shares in-flight evidence across TTL expiry, settled or not', async () => {
+    const cl = clock()
+    let release: () => void = () => {}
+    const gate = new Promise<void>(res => { release = res })
+    // A gated census: the second locate inside the SAME still-pending window
+    // must join it even after the TTL would have expired.
+    const { exec: base } = stub({
+      census: H + S(4242) + T(1, 1),
+      files: filesWire([[F('a', U1), st(POSTOBS)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+    })
+    let censusCalls = 0
+    const exec: ShellExec = (s, a, o) => s === AGENT_CENSUS_SCRIPT ? (censusCalls++, gate.then(() => base(s, a, o))) : base(s, a, o)
+    const c = createCmdCore(exec, HOME, { now: cl.now })
+    const d = live({ pid: 9000, foreground: { pid: 4242 } })
+    const l1 = c.locate(d)
+    cl.advance(2000) // far past the ~1s TTL while census still runs
+    const l2 = c.locate(d)
+    expect(censusCalls).toBe(1) // pending work is shared, not re-issued
+    release()
+    const [r1, r2] = await Promise.all([l1, l2])
+    expect(r1).toEqual(r2)
+    expect(r1).toEqual({ file: F('a', U1), session: U1 })
+    // Same for a gated metadata/header phase: files+headers pending joins too.
+    const cl2 = clock()
+    let release2: () => void = () => {}
+    const gate2 = new Promise<void>(res => { release2 = res })
+    const { exec: b2, calls: c2 } = stub({
+      census: H + S(4242) + T(1, 1),
+      files: filesWire([[F('a', U1), st(POSTOBS)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+    })
+    let headerCalls = 0
+    const exec2: ShellExec = (s, a, o) => s === CMD_HEADERS_SCRIPT ? (headerCalls++, gate2.then(() => b2(s, a, o))) : b2(s, a, o)
+    const cc2 = createCmdCore(exec2, HOME, { now: cl2.now })
+    const m1 = cc2.locate(d)
+    cl2.advance(2000)
+    const m2 = cc2.locate(d)
+    await new Promise(r => setImmediate(r)) // let both chains reach the gate
+    expect(c2).toEqual({ census: 1, files: 1, headers: 0 }) // one slot: files done once, headers gated
+    expect(headerCalls).toBe(1) // the second call joins the pending header pass
+    release2()
+    const [m1r, m2r] = await Promise.all([m1, m2])
+    expect(m1r).toEqual(m2r)
+    expect(m1r).toEqual({ file: F('a', U1), session: U1 })
+  })
+
+  it('expires ttl=0 only after pending work settles, and never serves negative-age hits', async () => {
+    const cl = clock()
+    let release: () => void = () => {}
+    const gate = new Promise<void>(res => { release = res })
+    const { exec: base } = stub({
+      census: H + S(4242) + T(1, 1),
+      files: filesWire([[F('a', U1), st(POSTOBS)]]),
+      headers: hdrs({ [F('a', U1)]: { st: st(POSTOBS), body: sess(U1) } })
+    })
+    let gating = true
+    let censusCalls = 0
+    const exec: ShellExec = (s, a, o) => s === AGENT_CENSUS_SCRIPT ? (censusCalls++, gating ? gate.then(() => base(s, a, o)) : base(s, a, o)) : base(s, a, o)
+    const c = createCmdCore(exec, HOME, { now: cl.now, ttlMs: 0 })
+    const d = live({ pid: 9000, foreground: { pid: 4242 } })
+    const l1 = c.locate(d)
+    cl.advance(10)
+    const l2 = c.locate(d) // pending: still shares even at ttl 0
+    expect(censusCalls).toBe(1)
+    release()
+    const [r1] = await Promise.all([l1, l2])
+    expect(r1).toEqual({ file: F('a', U1), session: U1 })
+    gating = false
+    cl.advance(1) // settled + ttl 0 => every new call refreshes
+    expect(await c.locate(d)).toEqual({ file: F('a', U1), session: U1 })
+    expect(censusCalls).toBe(4) // window 1: c1+c2; refreshed window: c1+c2
+    // A backwards injected clock can never produce a negative-age cache hit.
+    const { exec: e2, calls: c3 } = stub({ census: H + S(4242) + T(1, 1) })
+    const cl3 = clock()
+    const c3i = createCmdCore(e2, HOME, { now: cl3.now })
+    cl3.set(1000)
+    expect(await c3i.locate(d)).toEqual({ unavailable: 'empty' }) // complete census, empty files
+    cl3.set(500) // clock moved backwards: previous evidence must not count
+    await c3i.locate(d)
+    expect(c3.census).toBe(4)
+  })
+
+  it('clamps the TTL to the ~1s bound', async () => {
+    const cl = clock()
+    const { exec, calls } = stub({ census: H + S(4242) + T(1, 1) })
+    const c = createCmdCore(exec, HOME, { now: cl.now, ttlMs: 60000 })
+    const d = live({ pid: 9000, foreground: { pid: 4242 } })
+    await c.locate(d)
+    cl.advance(1500) // beyond 1s: a 60s override must not keep it warm
+    await c.locate(d)
+    expect(calls.census).toBe(4)
+  })
+})

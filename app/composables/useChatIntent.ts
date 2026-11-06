@@ -7,8 +7,11 @@ const cache = createChatIntentCache((pane, signal) => api<ChatResponse>(
   `/api/chat?${tailQuery(pane, { token: '', tailStart: null, tail: [] })}`, undefined, signal,
 ))
 let watching = false
+// Command Code is never guessed: a speculative tail cannot prove it came
+// from the live process the pane now shows (its selection is only bound by
+// the identity server on a real read).
 const allowed = (pane: Pane) => !locked.value && !netDown.value && !offlineView.value
-  && eventsOpen.value && !paneStale(pane) && Boolean(pane.agent)
+  && eventsOpen.value && !paneStale(pane) && Boolean(pane.agent) && pane.agent !== 'cmd'
 const key = (pane: Pane) => chatIntentKey(pane, herdrState.value.session)
 
 export function useChatIntent() {

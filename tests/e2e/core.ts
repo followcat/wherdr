@@ -4,9 +4,9 @@
 import { expect, type Page } from '@playwright/test'
 import { spawn } from 'node:child_process'
 import { createServer, type Socket } from 'node:net'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { pdfAuthDb, pdfSession } from './pdfAuth.mjs'
 import fixture from '../fixtures/core-0.1.16.json' with { type: 'json' }
 
@@ -50,12 +50,34 @@ async function freePort() {
 export async function startCore(answer: Answer = () => undefined, seed?: (data: string) => Promise<void>, feed: { firstPaint?: string | Uint8Array | ((attach: Call) => string | Uint8Array), terminal?: Record<string, unknown>, terminals?: Record<string, unknown>[] } = {}) {
   const data = await mkdtemp(join(tmpdir(), 'core-e2e-'))
   const socketPath = join(data, 'core.sock')
+  // Every path the server can derive (HOME fallbacks, XDG, its own dir
+  // variables) is anchored inside the owned root, so nothing the child reads,
+  // writes or cleans up can reach the host's files.
+  const dirs = ['home', 'config', 'xdg', 'wherdr', 'uploads', 'attach']
+  await Promise.all(dirs.map(d => mkdir(join(data, d), { recursive: true })))
   await writeFile(join(data, 'auth.json'), JSON.stringify(pdfAuthDb))
   await writeFile(join(data, 'push.json'), '{"subs":[]}')
   await seed?.(data)
   const port = await freePort()
+  // Allowlist environment, never process.env: no HERDR_*/HC_* beside the fake
+  // socket, no agent config or provider key, no real APP_URL.
   const server = spawn(process.execPath, ['.output/server/index.mjs'], {
-    env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: data, HC_SOCKET: socketPath, HERDR_WEB_MACHINES: 'off' },
+    env: {
+      PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
+      HOME: join(data, 'home'),
+      TMPDIR: data,
+      XDG_CONFIG_HOME: join(data, 'config'),
+      XDG_DATA_HOME: join(data, 'xdg'),
+      WHERDR_DIR: join(data, 'wherdr'),
+      UPLOAD_DIR: join(data, 'uploads'),
+      ATTACH_DIR: join(data, 'attach'),
+      DATA_DIR: data,
+      HC_SOCKET: socketPath,
+      HERDR_WEB_MACHINES: 'off',
+      HOST_LABEL: 'e2e',
+      PORT: String(port),
+      HOST: '127.0.0.1',
+    },
     stdio: 'ignore',
   })
   // One-shot JSON-RPC calls, then the calls of the framed (event and terminal) connection.
@@ -107,8 +129,9 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
           if (channel) { inbound.push({ channel, kind, data: Buffer.from(payload) }); continue }
           const c = JSON.parse(payload.toString()) as Call
           framed.push(c)
-          const result = c.method === 'events.subscribe'
-            ? { channel: 2, seq: 1, terminals: terminals.map(t => ({ cols: 80, rows: 24, ...t })) } : { channel: 3 }
+          const own = answer(c)
+          const result = own !== undefined ? own
+            : c.method === 'events.subscribe' ? { channel: 2, seq: 1, terminals: terminals.map(t => ({ cols: 80, rows: 24, ...t })) } : { channel: 3 }
           served.push({ method: c.method, result })
           socket.write(frame(0, Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: c.id, result }))))
           if (c.method === 'terminal.attach') {

@@ -3,20 +3,22 @@
 // core supplies those (terminal.get) and, for a remote core machine, the machine's disk
 // (machine.exec through createShellFs), so the same reader, parsers, search and queue apply.
 import { createShellFs, localFs, type ExecResult, type MachineFs, type ShellExec } from './fsx'
-import { createTranscripts, type TranscriptPane, type Transcripts } from './transcripts'
+import { createTranscripts, type Loc, type TranscriptPane, type Transcripts } from './transcripts'
 import { CoreError } from './core'
-import type { Pane } from '../../shared/types'
+import type { ChatResponse, Pane } from '../../shared/types'
 import { DEVIN_PROCESS_SCRIPT, devinProcesses } from './devinProcesses'
+import { createCmdCore } from './commandCodeCore'
 
 type Call = <T>(method: string, params: object, timeout: number) => Promise<T>
 export interface CoreTranscriptDeps {
   call: Call
   pane: (id: string) => Pane | undefined
   localHome: string
+  now?: () => number // injected clock for the Command Code evidence TTL (tests)
 }
 
 interface CoreProcess { pid?: number, name?: string, argv?: string[], cwd?: string, startedAt?: number, argvExact?: boolean }
-interface CoreDetail { pid?: number, argv?: string[], created_ms?: number, foreground?: CoreProcess | null }
+interface CoreDetail { state?: string, pid?: number, argv?: string[], created_ms?: number, foreground?: CoreProcess | null }
 
 // The machine part of a core address (`mac/t7` -> `mac`; local ones have none).
 export const machineOfAddress = (address: string | undefined) => (address && address.includes('/') ? address.split('/')[0]! : '')
@@ -57,18 +59,43 @@ export function coreShell(call: Call, on: string): ShellExec {
     const seconds = Math.max(1, Math.ceil((opts.timeoutMs ?? 15000) / 1000))
     try {
       const r = await call<{ code: number | null, stdout?: string, stderr?: string, timed_out?: boolean, truncated?: boolean }>('machine.exec', {
-        argv: ['sh', '-c', script, 'sh', ...args], on, timeout: seconds,
+        // An empty machine name is never sent: omitting `on` runs on this core.
+        argv: ['sh', '-c', script, 'sh', ...args], ...(on ? { on } : {}), timeout: seconds,
         ...(opts.input ? { input: opts.input.toString('base64') } : {}),
       }, seconds * 1000 + 5000)
-      const stdout = Buffer.from(r.stdout || '', 'base64')
-      if (r.timed_out) return { code: 124, stdout, stderr: 'timed out' }
-      if (opts.maxBytes && (r.truncated || stdout.length > opts.maxBytes)) return { code: 125, stdout: Buffer.alloc(0), stderr: 'output too large' }
+      // A timed-out reply is a failure: its partial stdout is discarded,
+      // never decoded into a buffer.
+      if (r.timed_out) return { code: 124, stdout: Buffer.alloc(0), stderr: 'timed out' }
+      // base64 emits exactly 4*ceil(n/3) chars for n bytes: more than that for
+      // the bound means over-budget or cut output — reject before decoding.
+      const enc = r.stdout || ''
+      if (r.truncated || (opts.maxBytes && enc.length > Math.ceil(opts.maxBytes / 3) * 4)) {
+        return { code: 125, stdout: Buffer.alloc(0), stderr: 'output too large' }
+      }
+      const stdout = Buffer.from(enc, 'base64')
+      if (opts.maxBytes && stdout.length > opts.maxBytes) return { code: 125, stdout: Buffer.alloc(0), stderr: 'output too large' }
       return { code: r.code, stdout, stderr: Buffer.from(r.stderr || '', 'base64').toString('utf8') }
     } catch (e) {
       // An unreachable machine reads as the SSH failure code (the file's state is unknown).
       return { code: 255, stdout: Buffer.alloc(0), stderr: e instanceof CoreError ? e.message : 'unreachable' }
     }
   }
+}
+
+// $HOME over the wire: `printf %s` writes no newline. Only a successful
+// bounded reply is an absolute home — a timeout, nonzero code or truncated
+// answer cannot give a partial trusted path, and the bytes are never
+// trimmed: a path's own trailing whitespace is part of it, not a route
+// into another directory.
+async function machineHome(shell: ShellExec): Promise<string> {
+  const r = await shell('printf %s "$HOME"', [], { maxBytes: 4096 })
+  const s = r.code === 0 && r.stdout.length <= 4096 ? r.stdout.toString('utf8') : ''
+  // Roundtrip: bytes that are not valid UTF-8 would silently decode into
+  // another directory, so they are refused like any other failed lookup.
+  if (!s.startsWith('/') || /[\r\n\0]/.test(s) || !Buffer.from(s, 'utf8').equals(r.stdout)) {
+    throw new CoreError('unreachable', 'machine home unknown')
+  }
+  return s
 }
 
 export function createCoreTranscripts(deps: CoreTranscriptDeps) {
@@ -107,20 +134,43 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
   }
 
   const machines = new Map<string, Promise<Transcripts>>()
+  // Warm instances by machine name: the synchronous final predicate
+  // (live below) reaches the reader that produced a reply without a new
+  // dispatch. A superseded entry is still the owning reader for replies
+  // it bound; a new instance overwrites it when its promise resolves.
+  const resolved = new Map<string, Transcripts>()
   function forMachine(name: string): Promise<Transcripts> {
     let t = machines.get(name)
     if (!t) {
       t = (async () => {
-        if (!name) return createTranscripts({ home: deps.localHome, herdr, fs: localFs })
+        // Census/discovery/header work goes through machine.exec on the core
+        // itself — locally too (an omitted `on` runs on this machine); only
+        // transcript file reads use localFs directly.
         const shell = coreShell(deps.call, name)
-        const home = (await shell('printf %s "$HOME"')).stdout.toString('utf8').trim()
-        if (!home.startsWith('/')) throw new CoreError('unreachable', 'machine home unknown')
-        const fs: MachineFs = createShellFs(shell)
-        return createTranscripts({ home, herdr, fs })
+        const home = name ? await machineHome(shell) : deps.localHome
+        if (!home.startsWith('/') || home.includes('\0')) throw new CoreError('unreachable', 'machine home unknown')
+        // Transcript reads ride core's reply ceiling in 4 MiB decoded chunks.
+        const fs: MachineFs = name ? createShellFs(shell, { chunkBytes: 4 * 1024 * 1024 }) : localFs
+        // Command Code: the census-backed locator decides what this pane's
+        // terminal really shows. Only THIS machine's terminal.get detail of
+        // the pane's exact coreAddress feeds it — state is passed unchanged
+        // (only an exact 'live' resolves), never defaulted.
+        const cmd = createCmdCore(shell, home, deps.now ? { now: deps.now } : {})
+        const locateCommandCode = async (p: TranscriptPane): Promise<Loc | null> => {
+          const address = deps.pane(p.id)?.coreAddress
+          if (!address || machineOfAddress(address) !== name) return null
+          const d = await detail(address).catch(() => null)
+          if (!d) return null
+          const r = await cmd.locate({ state: d.state, pid: d.pid, argv: d.argv, foreground: d.foreground ? { pid: d.foreground.pid } : null })
+          return 'file' in r ? { file: r.file, session: r.session, guessed: true } : null
+        }
+        return createTranscripts({ home, herdr, fs, locateCommandCode })
       })()
       machines.set(name, t)
-      // Not remembered when it fails: the machine may come back.
-      t.catch(() => { if (machines.get(name) === t) machines.delete(name) })
+      // One derived promise, both branches handled — a failed build is
+      // not remembered (the machine may come back) and never unhandled.
+      void t.then(x => { if (machines.get(name) === t) resolved.set(name, x) },
+        () => { if (machines.get(name) === t) machines.delete(name) })
     }
     return t
   }
@@ -140,12 +190,25 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
   }
 
   const of = (p: { id: string }) => forMachine(machineOfAddress(deps.pane(p.id)?.coreAddress))
+  // A failed machine entry (home lookup, core error) resolves as each
+  // method's own typed unavailable for Command Code panes — the value the
+  // method answers when nothing can be read. Other agents keep throwing.
+  const unavailable: Record<string, unknown> = {
+    chat: { available: false, reason: 'not_found' },
+    search: { hits: [], limited: false, kind: null },
+    pendingAsk: [],
+    pendingClaudeQuestions: []
+  }
+  const machineOf = (p: TranscriptPane) => of(p).catch(e => {
+    if (p.agent === 'cmd') return null
+    throw e
+  })
   type Fn<K extends keyof Transcripts> = Transcripts[K] extends (p: TranscriptPane, ...a: infer A) => infer R ? (p: TranscriptPane, ...a: A) => R : never
   const viaPane = <K extends 'chat' | 'preview' | 'latestReply' | 'locate' | 'model' | 'pendingTool' | 'pendingAsk' | 'pendingClaudeQuestions' | 'search'>(k: K) =>
     (async (p: TranscriptPane, ...a: unknown[]) => {
-      const t = await of(p)
+      const t = await machineOf(p)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return (t[k] as any)(await withBirth(p), ...a)
+      return t ? (t[k] as any)(await withBirth(p), ...a) : unavailable[k] ?? null
     }) as unknown as Fn<K>
 
   return {
@@ -158,7 +221,25 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
     pendingAsk: viaPane('pendingAsk'),
     pendingClaudeQuestions: viaPane('pendingClaudeQuestions'),
     search: viaPane('search'),
-    image: async (p: TranscriptPane, file: string | null, ref: string | null, i: number) => (await of(p)).image(await withBirth(p), file, ref, i),
+    // The reply-context revalidation exists for Command Code replies only:
+    // gated before any machine/birth resolution so other agents gain no
+    // extra failure path — they answer null (nothing to check) without
+    // ever dispatching.
+    current: async (p: TranscriptPane, r: ChatResponse) => {
+      if (p.agent !== 'cmd') return null
+      const t = await machineOf(p)
+      return t ? t.current(await withBirth(p), r) : 'gone'
+    },
+    // The synchronous final predicate for a reply's bound context — the
+    // already-warm machine's own reader answers it; a cold machine or a
+    // reply no reader bound answers null for other agents, false for a
+    // Command Code available reply (it must have been bound somewhere).
+    live: (p: TranscriptPane, r: ChatResponse) =>
+      resolved.get(machineOfAddress(deps.pane(p.id)?.coreAddress))?.live(p, r) ?? (p.agent === 'cmd' && r.available ? false : null),
+    image: async (p: TranscriptPane, file: string | null, ref: string | null, i: number) => {
+      const t = await machineOf(p)
+      return t ? t.image(await withBirth(p), file, ref, i) : null
+    },
     forget: (id: string) => { for (const t of machines.values()) void t.then(x => x.forget(id)).catch(() => {}) },
     // Called with every inventory: the Codex claims need each peer's start time.
     async observe(panes: Pane[]) {

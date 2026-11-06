@@ -56,3 +56,36 @@ it('lists three agents of one folder as three rows counted 1/1/1', async () => {
 it('recognizes a Devin command when core supplies no agent field', () => {
   expect(coreState([terminal('t1', { argv: ['/opt/bin/devin', '-r', 'session-a'] })], []).panes[0]?.agent).toBe('devin')
 })
+
+describe('Command Code agent kind', () => {
+  const agentOf = (extra = {}) => coreState([terminal('t1', extra)], []).panes[0]?.agent
+  it('canonicalizes trusted Command Code aliases to cmd', () => {
+    for (const extra of [
+      { agent: 'command-code' }, { agent: 'command_code' }, { agent: 'commandcode' }, { agent: 'cmd' }, { agent: 'cmdc' },
+      { template: 'command-code' }, { template: 'command_code' }, { template: 'commandcode' }, { template: 'cmdc' },
+      { status: { state: 'idle', app: 'command-code' } }, { status: { state: 'idle', app: 'commandcode' } },
+    ]) expect(agentOf(extra), JSON.stringify(extra)).toBe('cmd')
+  })
+  it('names Command Code by its launched program, never by an operand', () => {
+    for (const argv of [['cmdc', '--resume', 's-1'], ['/usr/local/bin/commandcode'], ['/opt/bin/command-code'], ['npx', 'cmdc'], ['bunx', 'command_code']])
+      expect(agentOf({ argv }), argv.join(' ')).toBe('cmd')
+    expect(agentOf({ foreground: { argv: ['cmdc'] }, argv: ['bash'] })).toBe('cmd')
+    for (const argv of [['bash', '-c', 'cmdc --resume s-1'], ['git', 'commit', '-m', 'mention commandcode'], ['vim', 'cmdc.txt'], ['ssh', 'host-a', 'commandcode']])
+      expect(agentOf({ argv }), argv.join(' ')).toBeNull()
+  })
+  it('never takes Windows cmd or a bare cmd name for Command Code', () => {
+    for (const argv of [['cmd'], ['cmd.exe', '/c', 'dir'], ['C:\\Windows\\system32\\cmd.exe', '/k']])
+      expect(agentOf({ argv }), argv.join(' ')).toBeNull()
+    expect(agentOf({ argv: ['/bin/sh', '-c', 'cmd /c dir'] })).toBeNull()
+  })
+  it('keeps an opaque declared agent kind exactly as core reported it', () => {
+    for (const agent of ['acme/tool', 'vendor/command-code', 'delta-worker'])
+      expect(agentOf({ agent }), agent).toBe(agent)
+    expect(agentOf({ agent: 'command-code' })).toBe('cmd')
+  })
+  it('lets a declared kind win over an argv operand, and stays a transcript agent', async () => {
+    expect(agentOf({ template: 'command-code', argv: ['tool', 'claude'] })).toBe('cmd')
+    const { TRANSCRIPT_AGENTS } = await import('../shared/agentKind')
+    expect(TRANSCRIPT_AGENTS).toContain('cmd')
+  })
+})
