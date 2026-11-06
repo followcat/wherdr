@@ -7,6 +7,9 @@ import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, expect, it } from 'vitest'
 import { OPENCODE_META } from '../server/utils/opencodeTransport'
+import { opencodeReadMeta } from '../server/utils/opencodeReadMeta'
+import { localShell } from '../server/utils/agentProcesses'
+import type { ExecResult, ShellExec } from '../server/utils/fsx'
 
 // Same owned-fixture contract as opencodeTransport.test.ts: the helper runs
 // for real against an owned loopback peer and fixture HOME; every home gets
@@ -180,4 +183,61 @@ it('keeps absence, server errors, malformed bodies and transport failures distin
   const down = gone.url
   await gone.close()
   expect((await meta(mkhome(down), REQ)).out).toEqual({ error: 'unreachable' })
+})
+
+it('opencodeReadMeta runs the fixed read on the owning machine through ShellExec', async () => {
+  const p = await peer()
+  const home = mkhome(p.url)
+  const r = await opencodeReadMeta(localShell, home, REQ)
+  expect(r).toEqual({ ok: true, server: expect.stringMatching(/^[a-f0-9]{32}$/),
+    fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/), size: expect.any(Number), unchanged: false })
+  expect(p.hits.map(h => h.url)).toEqual(['/api/info', '/api/session/ses_example'])
+})
+
+it('opencodeReadMeta refuses invalid requests and homes before exec', async () => {
+  const calls: string[][] = []
+  const fake: ShellExec = async (_script, args = []) => {
+    calls.push(args)
+    return { code: 0, stdout: Buffer.from('{"status":200,"server":"' + 'a'.repeat(32) + '","fingerprint":"' + 'b'.repeat(64) + '","size":4,"unchanged":false}\n'), stderr: '' }
+  }
+  for (const bad of [{ op: 'delete', session: 's' }, { op: 'session', session: '../x' },
+    { op: 'session', session: 's', extra: 1 }, { op: 'page', session: 's', cursor: 'a b' },
+    { op: 'session', session: 's', expect: 'zz' }, 'session', 7]) {
+    expect(await opencodeReadMeta(fake, '/home/user', bad as never)).toEqual({ ok: false, error: 'invalid_request' })
+  }
+  for (const home of ['relative', '/home/user\0x']) {
+    expect(await opencodeReadMeta(fake, home, REQ)).toEqual({ ok: false, error: 'unavailable' })
+  }
+  expect(calls).toHaveLength(0)
+})
+
+it('opencodeReadMeta validates the reply envelope byte bound and exact fields', async () => {
+  const hex32 = 'a'.repeat(32)
+  const hex64 = 'b'.repeat(64)
+  const fake = (result: ExecResult): ShellExec => async () => result
+  const good = { code: 0, stdout: Buffer.from(`{"status":200,"server":"${hex32}","fingerprint":"${hex64}","size":12,"unchanged":true}\n`), stderr: '' }
+  expect(await opencodeReadMeta(fake(good), '/home/user', { ...REQ, expect: hex64 }))
+    .toEqual({ ok: true, server: hex32, fingerprint: hex64, size: 12, unchanged: true })
+  const missing = { code: 0, stdout: Buffer.from(`{"status":404,"server":"${hex32}"}\n`), stderr: '' }
+  expect(await opencodeReadMeta(fake(missing), '/home/user', REQ)).toEqual({ ok: false, status: 404, server: hex32 })
+  const denied = { code: 1, stdout: Buffer.from('{"error":"auth"}\n'), stderr: '' }
+  expect(await opencodeReadMeta(fake(denied), '/home/user', REQ)).toEqual({ ok: false, error: 'auth' })
+  const invalid = { code: 1, stdout: Buffer.from('{"error":"invalid_request"}\n'), stderr: '' }
+  expect(await opencodeReadMeta(fake(invalid), '/home/user', REQ)).toEqual({ ok: false, error: 'invalid_request' })
+  for (const body of ['not json', `{"status":200,"server":"${hex32}","fingerprint":"${hex64}","size":12,"unchanged":false,"x":1}`,
+    `{"status":200,"server":"${hex32}","fingerprint":"xyz","size":12,"unchanged":false}`,
+    `{"status":200,"server":"${hex32}","fingerprint":"${hex64}","size":-1,"unchanged":false}`,
+    `{"status":200,"server":"${hex32}","fingerprint":"${hex64}","size":99999999,"unchanged":false}`,
+    `{"status":99,"server":"${hex32}"}`, `{"status":600,"server":"${hex32}"}`,
+    `{"status":200,"server":"${hex32}"}`,
+    `{"status":404}`, `{"status":404,"server":"xyz"}`,
+    `{"status":200,"server":"${hex32}","fingerprint":"${hex64}","size":12,"unchanged":false}\n{"error":"auth"}`,
+    `{"status":404,"server":"${hex32}"}${' '.repeat(8193)}`]) {
+    const r = { code: 0, stdout: Buffer.from(body + '\n'), stderr: '' }
+    expect(await opencodeReadMeta(fake(r), '/home/user', REQ), body.slice(0, 60)).toEqual({ ok: false, error: 'unavailable' })
+  }
+  const lost = { code: 255, stdout: Buffer.alloc(0), stderr: 'unreachable' }
+  expect(await opencodeReadMeta(fake(lost), '/home/user', REQ)).toEqual({ ok: false, error: 'unreachable' })
+  const dead = { code: 127, stdout: Buffer.alloc(0), stderr: 'python3: not found' }
+  expect(await opencodeReadMeta(fake(dead), '/home/user', REQ)).toEqual({ ok: false, error: 'unavailable' })
 })

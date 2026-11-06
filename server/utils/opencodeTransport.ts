@@ -10,7 +10,7 @@
 // it with a single-purpose main; nothing below is duplicated per op.
 // Keep the -c payload ASCII for service/SSH launchers that decode argv before
 // applying Python's UTF-8 setting.
-import type { ShellExec } from './fsx'
+import type { ExecResult, ShellExec } from './fsx'
 
 const PY_COMMON = String.raw`
 import base64, hashlib, json, math, os, pathlib, re, select, shutil, signal, subprocess, sys, time
@@ -336,41 +336,48 @@ export type OpencodeDiscovery =
   | { ok: true, server: string, version: string }
   | { ok: false, error: string }
 
-// Every failure the helper may report, and only those. Anything else on its
-// stdout is not a reply: it is treated as no reply at all.
-const HELPER_ERRORS = new Set(['not_running', 'state_invalid', 'url_unsafe', 'unsupported',
+// Every failure a helper may report, and only those. Anything else on its
+// stdout is not a reply: it is treated as no reply at all. Home, timeout,
+// reply-envelope and transport-failure validation are the shared boundary
+// every fixed helper runs through.
+export const HELPER_ERRORS = new Set(['not_running', 'state_invalid', 'url_unsafe', 'unsupported',
   'credentials', 'unreachable', 'auth', 'reply_invalid', 'helper_error'])
-const REPLY_LIMIT = 8192
+export const REPLY_LIMIT = 8192
 const VERSION_OK = /^2\.\d+(\.\d+)?$/
+export const SERVER_OK = /^[a-f0-9]{32}$/
+
+export const validHome = (home: string) => home.startsWith('/') && !home.includes('\0') && Buffer.byteLength(home, 'utf8') <= 1024
+export const helperTimeout = (v?: number) => v === undefined ? 15000 : Number.isFinite(v) ? Math.min(Math.max(v, 1), 30000) : 15000
+
+// The bound is on the bytes received, before any decode or parse; a reply
+// must be one complete JSON envelope carrying exactly its allowed fields.
+export function replyObject(r: ExecResult): Record<string, unknown> | null {
+  if (r.stdout.length > REPLY_LIMIT) return null
+  let out: unknown
+  try { out = JSON.parse(r.stdout.toString('utf8').trim()) } catch { return null }
+  return out && typeof out === 'object' && !Array.isArray(out) ? out as Record<string, unknown> : null
+}
+export const failure = (r: ExecResult): 'unreachable' | 'unavailable' => r.code === 255 || r.code === 124 ? 'unreachable' : 'unavailable'
 
 // Discover and authenticate the machine's running OpenCode 2.x service.
 // Missing Python, a missing service and any helper failure read as
 // unavailable/unreachable; never a fallback to unsafe behavior.
 export async function opencodeDiscover(exec: ShellExec, home: string, opts: { timeoutMs?: number } = {}): Promise<OpencodeDiscovery> {
   // No exec at all for a home that cannot name an account's directory.
-  if (!home.startsWith('/') || home.includes('\0') || Buffer.byteLength(home, 'utf8') > 1024) {
+  if (!validHome(home)) {
     return { ok: false, error: 'unavailable' }
   }
-  const timeoutMs = opts.timeoutMs === undefined ? 15000
-    : Number.isFinite(opts.timeoutMs) ? Math.min(Math.max(opts.timeoutMs, 1), 30000) : 15000
   let r
   try {
-    r = await exec('exec python3 -X utf8 -c "$1" "$2"', [OPENCODE_DISCOVER, home], { timeoutMs, maxBytes: REPLY_LIMIT })
+    r = await exec('exec python3 -X utf8 -c "$1" "$2"', [OPENCODE_DISCOVER, home], { timeoutMs: helperTimeout(opts.timeoutMs), maxBytes: REPLY_LIMIT })
   } catch {
     return { ok: false, error: 'unavailable' }
   }
-  // The bound is on the bytes received, before any decode or parse; a reply
-  // must be one complete JSON envelope carrying exactly its allowed fields.
-  if (r.stdout.length > REPLY_LIMIT) {
-    return r.code === 255 || r.code === 124 ? { ok: false, error: 'unreachable' } : { ok: false, error: 'unavailable' }
-  }
-  let out: unknown
-  try { out = JSON.parse(r.stdout.toString('utf8').trim()) } catch { out = null }
-  if (out && typeof out === 'object' && !Array.isArray(out)) {
-    const reply = out as Record<string, unknown>
+  const reply = replyObject(r)
+  if (reply) {
     const keys = Object.keys(reply).sort()
     if (r.code === 0 && reply.ok === true && keys.join() === 'ok,server,version'
-      && typeof reply.server === 'string' && /^[a-f0-9]{32}$/.test(reply.server)
+      && typeof reply.server === 'string' && SERVER_OK.test(reply.server)
       && typeof reply.version === 'string' && reply.version.length <= 40 && VERSION_OK.test(reply.version)) {
       return { ok: true, server: reply.server, version: reply.version }
     }
@@ -378,6 +385,5 @@ export async function opencodeDiscover(exec: ShellExec, home: string, opts: { ti
       return { ok: false, error: reply.error }
     }
   }
-  if (r.code === 255 || r.code === 124) return { ok: false, error: 'unreachable' }
-  return { ok: false, error: 'unavailable' }
+  return { ok: false, error: failure(r) }
 }
