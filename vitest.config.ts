@@ -21,6 +21,9 @@ export default defineConfig({
           name: 'unit',
           include: ['tests/*.test.ts'],
           environment: 'node',
+          // Several tests exec real helper processes (python3 + a local
+          // peer); the 5 s default flakes under full-suite load.
+          testTimeout: 30000,
         },
       },
       await defineVitestProject({
