@@ -41,8 +41,11 @@ describe('terminal fallback after native recognition', () => {
     expect(confirmedInput(text)).toBe(true)
     expect(classifyScreen({ text, agent })).toBe('input')
   })
-  it.each(['pi', 'gemini', 'opencode', 'kimi', null])('does not infer a menu from an unsupported agent %s', agent => {
+  it.each(['pi', 'gemini', 'kimi', null])('does not infer a menu from an unsupported agent %s', agent => {
     expect(classifyScreen({ text: 'A normal reply without a known input marker', agent })).toBe('unknown')
+  })
+  it('reads an unrecognized opencode screen as a plain terminal like other transcript agents', () => {
+    expect(classifyScreen({ text: 'A normal reply without a known input marker', agent: 'opencode' })).toBe('terminal')
   })
   it('never reads normal working output as an interactive fallback', () => {
     expect(classifyScreen({ text: 'Thinking…', agent: 'codex', status: 'working' })).toBe('working')

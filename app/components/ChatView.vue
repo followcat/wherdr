@@ -61,6 +61,9 @@ watch(() => items.value.length, (n) => { if (n) forgetFirstPrompt(props.pane.id)
 const olderBusy = ref(false)
 const savedAt = ref<number | null>(null)
 const readOnly = computed(() => offlineView.value || paneStale(props.pane))
+// OpenCode's conversation is read-only by design for now: no reply, quote,
+// ask, queue or draft affordance — ever, not just when offline.
+const noInput = computed(() => readOnly.value || props.pane.agent === 'opencode')
 // The end kept on this device, still not read again after 600 ms: "Read at" over the list.
 const cachedTag = useDelayedFlag(computed(() => savedAt.value !== null && !readOnly.value && !netDown.value), 600, 0)
 // Nothing kept and the end still loading: its shapes, after 300 ms (ChatSkeleton).
@@ -113,9 +116,10 @@ const canRun = computed(() => canRunIn(props.pane))
 // shown only if it comes first.
 async function restoreChat() {
   if (!mayReadOffline(readOfflineAccess())) return
-  // Online, a kept tail cannot prove it came from the live Command Code
-  // process. The explicit offline / stale-pane read-only policy still applies.
-  if (props.pane.agent === 'cmd' && !readOnly.value) return
+  // Online, a kept tail cannot prove it came from the live Command Code or
+  // OpenCode process. The explicit offline / stale-pane read-only policy
+  // still applies.
+  if ((props.pane.agent === 'cmd' || props.pane.agent === 'opencode') && !readOnly.value) return
   const id = props.pane.id
   const gen = resetGen
   const saved = await readChat(id)
@@ -123,13 +127,13 @@ async function restoreChat() {
   if (!mayReadOffline(readOfflineAccess())) return
   if (!saved || synced || rendered.value || unavailable.value || staleGen(gen) || id !== props.pane.id) return
   // Offline when the read began is not enough: it must still be read-only.
-  if (props.pane.agent === 'cmd' && !readOnly.value) return
+  if ((props.pane.agent === 'cmd' || props.pane.agent === 'opencode') && !readOnly.value) return
   await apply(() => {
     chat.value = { ...fresh(), tail: saved.items }
     savedAt.value = saved.at
   })
   if (!mayReadOffline(readOfflineAccess()) || staleGen(gen) || id !== props.pane.id
-    || (props.pane.agent === 'cmd' && !readOnly.value)) return
+    || ((props.pane.agent === 'cmd' || props.pane.agent === 'opencode') && !readOnly.value)) return
   touchChat(props.pane.id)
 }
 
@@ -401,7 +405,7 @@ watch(() => identityOf(props.pane), () => {
 // live conversation — drop it and read the identity fresh before showing
 // anything as current. The authorized snapshot itself is never deleted.
 watch(readOnly, (ro, was) => {
-  if (ro || !was || props.pane.agent !== 'cmd' || savedAt.value === null) return
+  if (ro || !was || (props.pane.agent !== 'cmd' && props.pane.agent !== 'opencode') || savedAt.value === null) return
   resetChat()
   tailLoader.invalidate()
   loadChat()
@@ -421,20 +425,21 @@ async function loadOlder() {
   try {
     const r = await api<ChatResponse>(`/api/chat?pane=${encodeURIComponent(pane)}&before=${before}${since}`)
     if (staleGen(gen)) return
-    // Command Code: an unavailable reply is authoritative on any request —
-    // the selected conversation is gone, the shown one is cleared at once.
+    // Command Code and OpenCode: an unavailable reply is authoritative on
+    // any request — the selected conversation is gone, the shown one is
+    // cleared at once.
     if (!r.available) {
-      if (props.pane.agent === 'cmd') {
+      if (props.pane.agent === 'cmd' || props.pane.agent === 'opencode') {
         resetChat(r.reason || 'unsupported')
         integration.value = r.reason === 'no_integration' ? r.integration || null : null
         synced = true
       }
       return
     }
-    // A fresh bottom is not an older page. For Command Code it means the
-    // generation moved under the request: reset and load it, never prepend
-    // that bottom as history.
-    if (!r.older && props.pane.agent === 'cmd') {
+    // A fresh bottom is not an older page. For Command Code or OpenCode it
+    // means the selection moved under the request: reset and load it, never
+    // prepend that bottom as history.
+    if (!r.older && (props.pane.agent === 'cmd' || props.pane.agent === 'opencode')) {
       resetChat()
       tailLoader.invalidate()
       loadChat()
@@ -895,7 +900,7 @@ function currentSelection() {
   const start = range ? (range.startContainer.nodeType === 1 ? range.startContainer as Element : range.startContainer.parentElement) : null
   // Message at the start of the selection; the range is trimmed to its content (see clampRange).
   const host = start?.closest<HTMLElement>('.msg-ai[data-hit-key]')
-  if (!range || !host || readOnly.value || !listEl.value?.contains(host)) return null
+  if (!range || !host || noInput.value || !listEl.value?.contains(host)) return null
   const clamped = clampRange(range, host.querySelector('.md') || host)
   const text = clamped?.toString().trim() || ''
   if (!clamped || !text) return null
@@ -967,7 +972,7 @@ function onListClick(e: MouseEvent) {
   const question = target.closest?.('.q-reply, .q-point, .q-tquote') as HTMLElement | null
   if (question) { e.preventDefault(); arm(null); pickKey.value = null; quote(refOf(question)); return }
   // "Tap the text" style: the words of a question are its button.
-  const asked = replyStyle.value === 'text' && !readOnly.value ? target.closest?.('.q-text') as HTMLElement | null : null
+  const asked = replyStyle.value === 'text' && !noInput.value ? target.closest?.('.q-text') as HTMLElement | null : null
   const askedBtn = asked && window.getSelection()?.isCollapsed !== false ? buttonOf(asked) : null
   if (askedBtn) { e.preventDefault(); arm(null); quote(refOf(askedBtn)); return }
   const pathEl = target.closest?.('.md-body .md-path') as HTMLElement | null
@@ -977,7 +982,7 @@ function onListClick(e: MouseEvent) {
   // Image in an agent reply (markdown): large preview, like ours.
   const img = target.closest?.('.md-body img') as HTMLImageElement | null
   if (img && img.src) { e.preventDefault(); openImage(img.src); return }
-  if (!readOnly.value && !target.closest?.('.code-block')) onPointClick(e, target)
+  if (!noInput.value && !target.closest?.('.code-block')) onPointClick(e, target)
   const run = target.closest?.('.can-run .code-run') as HTMLElement | null
   const runCmd = run?.closest<HTMLElement>('.code-block')?.dataset.cmd
   if (runCmd) { void runCommand(runCmd); return }
@@ -1094,7 +1099,7 @@ function liveScreen(): ClaudeScreen | null {
 const liveShell = computed(() => (screen.value && screen.value.shell) || null)
 const queuedList = computed<ReturnType<typeof queuedNow>>(old => keepIfSame(old, queuedNow()))
 function queuedNow() {
-  const mine = withOutbox([], readOnly.value ? [] : props.localQueued)
+  const mine = withOutbox([], noInput.value ? [] : props.localQueued)
   const memory = rememberSent(paneId.value, mine)
   const replies = blocks.value.filter(b => b.k === 'assistant')
   // Agent idle, nothing holding it: Claude's own queue is empty by now.
@@ -1360,7 +1365,7 @@ function focusSearch() {
 // `asked`: that message, whatever the draft says (the list keeps room for the
 // reminder as long as it may show, so answering moves nothing).
 const asked = computed(() => {
-  if (readOnly.value || working.value || blocked.value || queuedList.value.length || liveShell.value) return null
+  if (noInput.value || working.value || blocked.value || queuedList.value.length || liveShell.value) return null
   const last = blocks.value.findLast(b => b.k === 'assistant' || b.k === 'user' || b.k === 'shell' || b.k === 'ompRun')
   if (!last || last.k !== 'assistant' || typingAt(last.id) !== null) return null
   const targets = replyTargets(last.html)
@@ -1419,7 +1424,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
         auto-scroll-icon="i-lucide-arrow-down"
         :ui="MSGS_UI"
       >
-        <div ref="listEl" class="chat-list" :class="[readOnly ? 'no-reply' : `rs-${replyStyle}`, { asking: asked, skeleton }]" @click="onListClick" @keydown="onListKey">
+        <div ref="listEl" class="chat-list" :class="[noInput ? 'no-reply' : `rs-${replyStyle}`, { asking: asked, skeleton }]" @click="onListClick" @keydown="onListKey">
           <div v-if="unavailable === 'not_found' && firstPrompt" class="msg-user-wrap" data-testid="first-prompt">
             <UChatMessage
               id="first-prompt" role="user" side="right" variant="soft" :parts="firstParts(firstPrompt)"
@@ -1504,12 +1509,12 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                   </template>
                 </UChatMessage>
                 <ChatQuestionBar
-                  v-if="replyStyle === 'list' && !readOnly && typingAt(b.id) === null && (replyTargets(b.html).questions.length || replyTargets(b.html).pick)"
+                  v-if="replyStyle === 'list' && !noInput && typingAt(b.id) === null && (replyTargets(b.html).questions.length || replyTargets(b.html).pick)"
                   :pane-id="paneId" :targets="replyTargets(b.html)" :time="b.time" :rid="b.rid" :picking="pickKey === b.key"
                   @quote="quote" @answer="answer" @hot="(n, on) => hotQuestion(b.key, n, on)" @pick="pickKey = pickKey === b.key ? null : b.key"
                 />
-                <div v-if="!b.endsTurn && (!readOnly || readAloudEngine !== 'off')" class="msg-actions">
-                  <button v-if="!readOnly" type="button" class="msg-reply" @click="replyTo(b.key)">
+                <div v-if="!b.endsTurn && (!noInput || readAloudEngine !== 'off')" class="msg-actions">
+                  <button v-if="!noInput" type="button" class="msg-reply" @click="replyTo(b.key)">
                     <UIcon name="i-lucide-reply" /><span>{{ t('Reply') }}</span>
                   </button>
                   <ReadAloudButton :id="`${paneId}:${b.key}`" :text="b.text" />
@@ -1588,7 +1593,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                 <UTooltip v-if="b.copy" :text="t('Copy reply')" :disabled="!desk">
                   <UButton icon="i-lucide-copy" color="neutral" variant="ghost" size="xs" class="turn-copy" :aria-label="t('Copy reply')" @click="copyText(b.copy)" />
                 </UTooltip>
-                <button v-if="b.reply && !readOnly" type="button" class="msg-reply" @click="replyTo(b.reply)">
+                <button v-if="b.reply && !noInput" type="button" class="msg-reply" @click="replyTo(b.reply)">
                   <UIcon name="i-lucide-reply" /><span>{{ t('Reply') }}</span>
                 </button>
                 <ReadAloudButton v-if="b.copy && b.reply" :id="`${paneId}:${b.reply}`" :text="b.copy" />
@@ -1661,7 +1666,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
             <UIcon name="i-lucide-reply" /><span>{{ t('Reply') }}</span>
           </button>
         </Teleport>
-        <div v-if="queuedList.length || liveShell || (!readOnly && hasDraft)" class="queued-list">
+        <div v-if="queuedList.length || liveShell || (!noInput && hasDraft)" class="queued-list">
           <!-- Already sent (visible as sent on screen), not yet in the transcript. -->
           <div v-for="q in queuedList.filter(x => x.phase === 'sent')" :key="q.id" class="msg-user-wrap">
             <button v-if="q.reply" type="button" class="msg-quote" :aria-label="t('Show original message')" @click="gotoOrigin(q.origin)">
@@ -1726,7 +1731,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
             </div>
           </div>
           <!-- herdr-core: text left unsent in Claude's own input box, Claude's queue. -->
-          <UnsentInput v-if="!readOnly && hasDraft" :pane="unsentPane" />
+          <UnsentInput v-if="!noInput && hasDraft" :pane="unsentPane" />
         </div>
 
         <ChatStatusLine :get="readStatus" />

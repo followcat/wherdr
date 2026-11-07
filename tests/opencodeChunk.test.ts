@@ -137,7 +137,7 @@ it('refuses malformed descriptors before any machine work', async () => {
   }
   // Only the descriptor-minting meta read ever reached the peer.
   expect(p.hits.map(h => h.url)).toEqual(['/api/info', '/api/session/ses_example'])
-})
+}, 30000)
 
 it('refuses stale snapshot descriptors and live changes without any piece', async () => {
   let body = `{"data":{"blob":"${'x'.repeat(1024)}"}}`

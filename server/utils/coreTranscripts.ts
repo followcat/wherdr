@@ -8,6 +8,8 @@ import { CoreError } from './core'
 import type { ChatResponse, Pane } from '../../shared/types'
 import { DEVIN_PROCESS_SCRIPT, devinProcesses } from './devinProcesses'
 import { createCmdCore } from './commandCodeCore'
+import { createOpencodeCore } from './opencodeCore'
+import { ocFile } from './opencodeTranscripts'
 
 type Call = <T>(method: string, params: object, timeout: number) => Promise<T>
 export interface CoreTranscriptDeps {
@@ -164,7 +166,22 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
           const r = await cmd.locate({ state: d.state, pid: d.pid, argv: d.argv, foreground: d.foreground ? { pid: d.foreground.pid } : null })
           return 'file' in r ? { file: r.file, session: r.session, guessed: true } : null
         }
-        return createTranscripts({ home, herdr, fs, locateCommandCode })
+        // OpenCode: the scan/catalog-backed locator decides which session
+        // this pane's foreground opencode process really has — the same
+        // fail-closed contract: no session, no peers proof, no guess.
+        const oc = createOpencodeCore(shell, home)
+        const locateOpencode = async (p: TranscriptPane): Promise<Loc | null> => {
+          const address = deps.pane(p.id)?.coreAddress
+          if (!address || machineOfAddress(address) !== name) return null
+          const d = await detail(address).catch(() => null)
+          if (!d) return null
+          const r = await oc.locate({
+            state: d.state, pid: d.pid, argv: d.argv, created_ms: d.created_ms,
+            foreground: d.foreground ? { pid: d.foreground.pid, name: d.foreground.name, argv: d.foreground.argv, cwd: d.foreground.cwd } : null,
+          })
+          return 'session' in r ? { file: ocFile(r.server, r.session), session: r.session, guessed: true } : null
+        }
+        return createTranscripts({ home, herdr, fs, locateCommandCode, locateOpencode, ocExec: shell })
       })()
       machines.set(name, t)
       // One derived promise, both branches handled — a failed build is
@@ -200,7 +217,7 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
     pendingClaudeQuestions: []
   }
   const machineOf = (p: TranscriptPane) => of(p).catch(e => {
-    if (p.agent === 'cmd') return null
+    if (p.agent === 'cmd' || p.agent === 'opencode') return null
     throw e
   })
   type Fn<K extends keyof Transcripts> = Transcripts[K] extends (p: TranscriptPane, ...a: infer A) => infer R ? (p: TranscriptPane, ...a: A) => R : never
@@ -226,16 +243,17 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
     // extra failure path — they answer null (nothing to check) without
     // ever dispatching.
     current: async (p: TranscriptPane, r: ChatResponse) => {
-      if (p.agent !== 'cmd') return null
+      if (p.agent !== 'cmd' && p.agent !== 'opencode') return null
       const t = await machineOf(p)
       return t ? t.current(await withBirth(p), r) : 'gone'
     },
     // The synchronous final predicate for a reply's bound context — the
     // already-warm machine's own reader answers it; a cold machine or a
     // reply no reader bound answers null for other agents, false for a
-    // Command Code available reply (it must have been bound somewhere).
+    // Command Code or OpenCode available reply (it must have been bound
+    // somewhere).
     live: (p: TranscriptPane, r: ChatResponse) =>
-      resolved.get(machineOfAddress(deps.pane(p.id)?.coreAddress))?.live(p, r) ?? (p.agent === 'cmd' && r.available ? false : null),
+      resolved.get(machineOfAddress(deps.pane(p.id)?.coreAddress))?.live(p, r) ?? ((p.agent === 'cmd' || p.agent === 'opencode') && r.available ? false : null),
     image: async (p: TranscriptPane, file: string | null, ref: string | null, i: number) => {
       const t = await machineOf(p)
       return t ? t.image(await withBirth(p), file, ref, i) : null

@@ -69,7 +69,7 @@ it('walks a fixed bounded catalog end to end with opaque cursors', async () => {
     const c = new URL(req.url!, 'http://x').searchParams.get('cursor')
     if (c === null) res.end(page(rows, 'cur/1+"x"'))
     else if (c === 'cur/1+"x"') res.end(page([row('ses_old', { time: { created: 10, updated: 20, idle: 30 } })], 'next,2'))
-    else if (c === 'next,2') res.end(page([]))
+    else if (c === 'next,2') res.end(JSON.stringify({ data: [], cursor: { next: null, previous: null } }))
     else { res.statusCode = 500; res.end() }
   })
   const r = await read(mkhome(p.url))
@@ -218,8 +218,9 @@ it('aborts a blocked revalidation read at the aggregate deadline, before the bod
 // Representative fixed-bug refusals; the broad envelope matrix is a later
 // bounded test unit on the committed helper.
 const malformed: [string, string][] = [
-  // Only the absent key is proven exhaustion; explicit null is malformed.
-  ['next explicit null', JSON.stringify({ data: [], cursor: { next: null } })],
+  // Absent or explicit null next is proven exhaustion; a non-string
+  // non-null value is malformed.
+  ['next non-string', JSON.stringify({ data: [], cursor: { next: 5 } })],
   // Producer semantics: an empty page never carries a continuation.
   ['empty page with next', JSON.stringify({ data: [], cursor: { next: 'x' } })],
 ]

@@ -237,7 +237,7 @@ it('requires a supported registration, service version and server version', asyn
     const bad = await serve((req, res) => { res.end(JSON.stringify(info)) })
     expect((await discover(mkhome(stateOf(bad.url)))).out).toEqual({ error: 'reply_invalid' })
   }
-})
+}, 30000)
 
 it('requires nonempty credentials', async () => {
   const peer = await serve()

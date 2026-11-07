@@ -108,14 +108,12 @@ try:
             raise Fail('reply_invalid')
         items = data['data']
         cur = data['cursor']
-        # Absence of the next key is the only proven exhaustion shape; an
-        # explicit null or any other non-opaque value is a malformed reply.
-        if 'next' not in cur:
-            nxt = None
-        else:
-            nxt = cur['next']
-            if not isinstance(nxt, str) or not re.fullmatch(r'[\x21-\x7e]{1,256}', nxt):
-                raise Fail('reply_invalid')
+        # Exhaustion is the next key absent or explicitly null: the real
+        # producer emits "next": null on the last page. Any other
+        # non-opaque value is a malformed reply.
+        nxt = cur.get('next')
+        if nxt is not None and (not isinstance(nxt, str) or not re.fullmatch(r'[\x21-\x7e]{1,256}', nxt)):
+            raise Fail('reply_invalid')
         ctx.append({'use': cursor if cursor is not None else '',
             'n': len(items), 'next': nxt if nxt is not None else ''})
         for item in items:
