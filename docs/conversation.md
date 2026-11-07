@@ -2,11 +2,11 @@
 
 [Documentation](README.md) · [Project](../README.md)
 
-Claude Code, Codex, Devin and Command Code terminals open in conversation mode; any other terminal shows only its
+Claude Code, Codex, Devin, Command Code and OpenCode terminals open in conversation mode; any other terminal shows only its
 [terminal](terminal.md). How wherdr finds the conversation file on herdr-core is described in
 [herdr-core › Conversations](core.md#conversations).
 
-- **Conversation view**: the agent's real transcript (Claude Code, Codex, Devin and Command Code), rendered as
+- **Conversation view**: the agent's real transcript (Claude Code, Codex, Devin, Command Code and OpenCode), rendered as
   Markdown, with grouped tool calls, images (full-screen viewer with pinch / wheel zoom and pan),
   timestamps, search and scrolling through older messages (Command Code follows the bounded
   reads described under [herdr-core › Conversations](core.md#conversations)). Reading a conversation never
@@ -26,7 +26,9 @@ Claude Code, Codex, Devin and Command Code terminals open in conversation mode; 
   inside the field on its right, on a phone. A long pasted text (log, output) becomes a
   "Pasted text · N lines" card, sent to the agent as it is and shown the same way in the
   conversation, where it opens in full with Copy; long typed messages fold with Show more. The
-  draft (text, quotes, attachments) is kept per agent, across reloads.
+  draft (text, quotes, attachments) is kept per agent, across reloads. OpenCode's conversation is
+  **read-only for now**: no composer, reply, quote or question affordances — use its terminal to
+  talk to it.
 - **Composer and terminal together** on a computer: under an agent's terminal, the composer stays
   available; typing in it takes control of the terminal's size ([Terminal](terminal.md)).
 - The model and effort pickers, the slash-command list and Codex update cards are v2 only.

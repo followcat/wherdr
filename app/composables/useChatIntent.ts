@@ -9,9 +9,11 @@ const cache = createChatIntentCache((pane, signal) => api<ChatResponse>(
 let watching = false
 // Command Code is never guessed: a speculative tail cannot prove it came
 // from the live process the pane now shows (its selection is only bound by
-// the identity server on a real read).
+// the identity server on a real read). OpenCode is the same: its session
+// is selected only by the foreground process's own cwd and start, not by
+// a speculative tail.
 const allowed = (pane: Pane) => !locked.value && !netDown.value && !offlineView.value
-  && eventsOpen.value && !paneStale(pane) && Boolean(pane.agent) && pane.agent !== 'cmd'
+  && eventsOpen.value && !paneStale(pane) && Boolean(pane.agent) && pane.agent !== 'cmd' && pane.agent !== 'opencode'
 const key = (pane: Pane) => chatIntentKey(pane, herdrState.value.session)
 
 export function useChatIntent() {

@@ -293,7 +293,8 @@ function reopenInteraction() {
 const interactionShown = computed(() => interactionOpen.value && interactionAvailable.value && live.value && !locked.value)
 // herdr-core on a computer: the composer stays under the terminal of an agent.
 const coreDeskComposer = computed(() => core && desk.value && live.value && !props.cell && Boolean(pane.value?.agent))
-const composerShown = computed(() => (coreDeskComposer.value || showComposer({ desk: desk.value, live: live.value, mode: mode.value, cell: Boolean(props.cell) })) && !(mode.value === 'chat' && interactionOpen.value))
+// OpenCode's conversation is read-only for now: no composer over it.
+const composerShown = computed(() => (coreDeskComposer.value || showComposer({ desk: desk.value, live: live.value, mode: mode.value, cell: Boolean(props.cell) })) && !(mode.value === 'chat' && interactionOpen.value) && !(mode.value === 'chat' && pane.value?.agent === 'opencode'))
 const canAttachTerminal = computed(() => terminalAttachment({
   desk: desk.value, live: live.value, mode: mode.value,
   available: Boolean(pane.value && eventsOpen.value && !offlineView.value && !machineDown.value && !paneStale(pane.value)),

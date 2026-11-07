@@ -6,7 +6,7 @@ import { ompToolCall, ompToolResult, ompUserRun } from './ompTools'
 import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDetail'
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
 import { cleanModelName, lastModel, mergeOmpModel, ompLastModel, ompModelComplete, ompModelLabel, ompModelResult } from './models'
-import { type FsStat, type MachineFs, localFs } from './fsx'
+import { type FsStat, type MachineFs, type ShellExec, localFs } from './fsx'
 import { fingerprintRefs, type CommandCodeResultRef } from './commandCodeWatch'
 import { createCommandCodeState, type CommandCodeFileHandle, type CommandCodeObservation } from './commandCodeState'
 import { searchFile } from './conversationSearch'
@@ -17,6 +17,7 @@ import { pastedBlocks } from '../../shared/pastedText'
 import { createActivity } from '../../shared/integrations'
 import { createDevinTranscripts } from './devinTranscripts'
 import { devinSession } from './devinSessions'
+import { createOpencodeTranscripts } from './opencodeTranscripts'
 
 // Backward reading by windows until there are enough messages: Claude's
 // transcripts embed images in base64, a few screenshots
@@ -1419,12 +1420,16 @@ export function isMissing(e: unknown): boolean {
   return err.code === 'remote' && /no such file|not a directory|introuvable/i.test(err.message || '')
 }
 
-export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, locateCommandCode }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number, locateCommandCode?: (pane: TranscriptPane) => Promise<Loc | null> }) {
+export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, locateCommandCode, locateOpencode, ocExec }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number, locateCommandCode?: (pane: TranscriptPane) => Promise<Loc | null>, locateOpencode?: (pane: TranscriptPane) => Promise<Loc | null>, ocExec?: ShellExec }) {
   const devin = createDevinTranscripts({ home, fs, now })
   // Command Code file generations of this machine (see commandCodeState):
   // cross-page outcomes, result-record watches, the trusted stat, the
   // invalidation stamps and the reader nonce client tokens carry.
   const cmd = createCommandCodeState({ fs })
+  // OpenCode reads through the machine's verified snapshot transport —
+  // read-only, fingerprint-bound to the server generation (see
+  // opencodeTranscripts.ts). Without an exec there is no reader.
+  const oc = ocExec ? createOpencodeTranscripts({ exec: ocExec, home, fs }) : null
   // File -> state (size, generation) and when this server first saw it, for
   // whole-second mtimes (see SETTLE_MS); `file|size|gen` -> checksum of the
   // file at first sight (null: could not be taken).
@@ -1712,6 +1717,19 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       const ticket = {}
       selSeq.set(pane.id, ticket)
       const l = locateCommandCode ? await locateCommandCode(pane).catch(() => null) : null
+      if (selSeq.get(pane.id) === ticket) selections.set(pane.id, { ticket, file: l?.file ?? null })
+      return l
+    }
+    // OpenCode resolves through the machine's scan/catalog-backed helper —
+    // the same fail-closed publication contract as Command Code: never the
+    // pane-id/session caches, never agentSession, and a lookup that finds
+    // nothing is "no conversation" (the pane stays on the terminal view).
+    if (pane.agent === 'opencode') {
+      locCache.delete(pane.id)
+      lastLoc.delete(pane.id)
+      const ticket = {}
+      selSeq.set(pane.id, ticket)
+      const l = locateOpencode ? await locateOpencode(pane).catch(() => null) : null
       if (selSeq.get(pane.id) === ticket) selections.set(pane.id, { ticket, file: l?.file ?? null })
       return l
     }
@@ -2110,6 +2128,13 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     const loc = await locate(pane)
     if (!loc || Date.now() >= deadline) return { hits: [], limited: Date.now() >= deadline, kind: null }
     if (pane.agent === 'devin') return devin.search({ ...pane, agentSession: loc.session }, query, deadline)
+    if (pane.agent === 'opencode') {
+      const r = oc ? await oc.search(pane, loc, query, deadline) : { hits: [], limited: false, kind: 'opencode' }
+      // The known-selection veto: hits of a selection observed moving or
+      // lost while its pages awaited are another conversation's — none.
+      if (selections.get(pane.id)?.file !== loc.file) return { hits: [], limited: false, kind: null }
+      return r
+    }
     // The transcript path tells the real kind (closed agent mislabeled).
     const kind = transcriptKind(loc.file) || pane.agent
     if (kind === 'cmd') {
@@ -2167,6 +2192,20 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     if (pane.agent === 'devin') {
       const r = await devin.chat({ ...pane, agentSession: loc.session }, opts)
       for (const item of r.items || []) if (item.role === 'assistant' && item.ref) replyKeys.set(item, `devin:${r.session}:${item.ref}`)
+      return r
+    }
+    // OpenCode answers from its fingerprint-verified reader; the reply is
+    // bound to the selection identity (server generation + session) so the
+    // route's current/live checks veto it the moment the pane's selection
+    // moves or is lost — the same contract as Command Code.
+    if (pane.agent === 'opencode') {
+      if (!oc) return { available: false, reason: 'not_found' }
+      const r = await oc.chat(pane, loc, opts)
+      if (r.available) {
+        const file = loc.file
+        contexts.set(r, { file, live: () => true })
+      }
+      for (const item of r.items || []) if (item.role === 'assistant' && item.ref) replyKeys.set(item, `opencode:${r.session}:${item.ref}`)
       return r
     }
     // The transcript path tells the real kind: a pane whose agent changed while
@@ -2287,7 +2326,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   // nothing to check. One awaited locate, nothing else.
   async function current(pane: TranscriptPane, r: ChatResponse): Promise<'ok' | 'stale' | 'gone' | null> {
     const ctx = contexts.get(r)
-    if (!ctx) return pane.agent === 'cmd' && r.available ? 'gone' : null
+    if (!ctx) return (pane.agent === 'cmd' || pane.agent === 'opencode') && r.available ? 'gone' : null
     const loc = await locate(pane)
     if (!loc || loc.file !== ctx.file) return 'gone'
     return ctx.live() ? 'ok' : 'stale'
@@ -2302,7 +2341,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   // fail-closed miss rule as current().
   function live(pane: TranscriptPane, r: ChatResponse): boolean | null {
     const ctx = contexts.get(r)
-    if (!ctx) return pane.agent === 'cmd' && r.available ? false : null
+    if (!ctx) return (pane.agent === 'cmd' || pane.agent === 'opencode') && r.available ? false : null
     const sel = selections.get(pane.id)
     if (!sel || sel.file !== ctx.file) return false
     return ctx.live()
@@ -2323,7 +2362,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       // The reply carries its origin-bound context: `live` is the same
       // publication guard the route applies — a selection observed moving
       // or lost while the guarded read awaited vetoes it here too.
-      if (pane.agent === 'cmd' && live(pane, r) !== true) return null
+      if ((pane.agent === 'cmd' || pane.agent === 'opencode') && live(pane, r) !== true) return null
       return lastReplyOf(r.items)
     } catch { /* no preview */ }
     return null
@@ -2331,8 +2370,9 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   async function tailReply(pane: TranscriptPane): Promise<{ key: string, text: string } | null> {
     if (pane.agent === 'devin') return null // ATIF is a single JSON document, not JSONL.
     // Command Code previews come from the guarded chat itself until the
-    // short-preview path carries generation evidence (4d-3).
-    if (pane.agent === 'cmd') return null
+    // short-preview path carries generation evidence (4d-3). OpenCode has
+    // no file tail: previews come from the same verified chat.
+    if (pane.agent === 'cmd' || pane.agent === 'opencode') return null
     if (!hasTranscript(pane.agent)) return null
     const loc = await locate(pane)
     if (!loc) return null
@@ -2371,6 +2411,14 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   // Image no. `index` of the message at `ref` ("start:length"): we re-read
   // that single line and decode the image it contains (base64).
   async function image(pane: TranscriptPane, fileId: string | null, ref: string | null, index: number) {
+    if (pane.agent === 'opencode') {
+      const loc = await locate(pane)
+      if (!loc || !oc) return null
+      const img = await oc.image(pane, loc, fileId, ref, index)
+      // Same known-selection veto as chat: a moved/lost selection while the
+      // pages awaited serves nothing.
+      return img && selections.get(pane.id)?.file === loc.file ? img : null
+    }
     const loc = await locate(pane)
     if (!loc || path.basename(loc.file) !== fileId) return null
     if (pane.agent === 'devin') return devin.image({ ...pane, agentSession: loc.session }, fileId, ref, index)
@@ -2438,6 +2486,14 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     if (pane.agent === 'devin') {
       const loc = await locate(pane)
       return loc ? devin.model({ ...pane, agentSession: loc.session }) : null
+    }
+    if (pane.agent === 'opencode') {
+      const loc = await locate(pane)
+      if (!loc || !oc) return null
+      const m = await oc.model(pane, loc)
+      // A selection observed moving while the session record awaited is
+      // another conversation's model — none.
+      return m && selections.get(pane.id)?.file === loc.file ? m : null
     }
     if (!pane.agent || !['claude', 'codex', 'omp', 'cmd'].includes(pane.agent)) return null
     const loc = await locate(pane)
@@ -2605,6 +2661,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   }
 
   function forget(paneId: string) {
+    oc?.forget(paneId)
     locCache.delete(paneId)
     lastLoc.delete(paneId)
     selections.delete(paneId)

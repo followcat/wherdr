@@ -174,6 +174,25 @@ link is fine. Once a token's state has settled, an unchanged poll re-reads no
 transcript body or fingerprint bytes; the lookup's own census, header and metadata
 checks still run.
 
+OpenCode terminals open in the same conversation mode, **read-only**: the pane's
+session comes from the service the foreground `opencode` process really has, not
+from a label or the newest session. A bounded `/proc` census over `machine.exec`
+reports every live opencode-shaped process with its generation, cwd and a
+conservative birth bound; the target is the reported foreground pid, or the
+terminal's root pid when its recorded launch argv proves an opencode launch — a
+child opencode (run inside a shell pane) qualifies only once the census has
+observed its generation as opencode. The machine's OpenCode service (its
+`service.json` discovery) is then asked, through the same bounded helpers the
+snapshot reads use, for the sessions of exactly that working directory: the
+unique most recently updated row whose update stamp is at or after the birth
+bound answers. No session, an incomplete scan, a live opencode peer in the same
+cwd (or one whose cwd cannot be read), a tie, or a failed discovery or catalog
+all stay unavailable — the pane keeps its terminal view rather than guess. The
+session read itself is fingerprint-verified end to end (server generation, page
+and metadata), a transport failure keeps the shown view instead of clearing it,
+and a proven-absent session clears it at once. Sends, queued messages,
+permissions, model pickers and shell actions stay with the OpenCode terminal.
+
 Text left unsent in Claude Code's own input box (a draft or paste never submitted, or the
 prompt Claude puts back after an interrupt) shows at the end of the conversation as
 **Not sent** once it has stayed unchanged for two seconds and the colored screen (the first
