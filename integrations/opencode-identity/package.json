@@ -1,1 +1,0 @@
-{"name":"wherdr-opencode-identity","private":true,"type":"module","exports":{"./tui":"./tui.ts"},"peerDependencies":{"@opencode/plugin":"2.2.5"}}
