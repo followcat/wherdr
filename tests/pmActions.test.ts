@@ -3,10 +3,12 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { guardAction, isTransient, leaks, prReady, taskGuards, type Receipt } from '../shared/pm/actions'
+import { SCRIPT, guardAction, isTransient, leaks, prReady, taskGuards, type Receipt } from '../shared/pm/actions'
 import { runAction, type ActionDeps, type ActionJob } from '../server/utils/pmActions'
 import { WORKTREE_SCRIPT } from '../server/utils/pmLaunch'
-import { initialState, onEvent, planSteps } from '../shared/pm/steps'
+import { initialState, onEvent, planSteps, reviewedCommit } from '../shared/pm/steps'
+import { dueText } from '../shared/pm/advance'
+import { github } from '../shared/pm/examples'
 import type { Template } from '../shared/pm/workflow'
 
 const t: Template = {
@@ -39,6 +41,9 @@ describe('guards', () => {
     expect(prReady(pr([{ status: 'IN_PROGRESS' }]), 'abc')).toMatchObject({ ok: false, later: true })
     expect(prReady(pr([{ status: 'COMPLETED', conclusion: 'FAILURE' }]), 'abc')).toMatchObject({ ok: false, why: '1 check(s) failed' })
     expect(prReady(pr([{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { state: 'SUCCESS' }]), 'abc')).toEqual({ ok: true })
+    // A required check not reported yet (CI not started): later, never merged on no checks.
+    expect(prReady(pr([]), 'abc', ['smoke'])).toEqual({ ok: false, later: true, why: 'waiting for check smoke' })
+    expect(prReady(pr([{ name: 'smoke', status: 'COMPLETED', conclusion: 'SUCCESS' }]), 'abc', ['smoke'])).toEqual({ ok: true })
     expect(isTransient(1, 'remote: fatal error in commit_refs')).toBe(true)
     expect(isTransient(1, 'base branch policy prohibits the merge')).toBe(true)
     expect(isTransient(1, 'HTTP 502: Bad Gateway')).toBe(true)
@@ -90,14 +95,18 @@ describe('runAction', () => {
 
   it('merges once checks are green, with the task\'s commit, and alerts on a protected branch', async () => {
     const info = (state: string, base = 'dev') => ({ code: 0, out: `abc\n${JSON.stringify([{ url: 'https://pr/1', baseRefName: base, headRefOid: 'abc', statusCheckRollup: [{ status: state, conclusion: 'SUCCESS' }] }])}` })
-    const f = fakeDeps([info('QUEUED'), info('COMPLETED'), { code: 0, out: 'https://pr/1' }, { code: 0, out: 'origin/dev\norigin/main' }])
+    const f = fakeDeps([info('QUEUED'), { code: 0, out: 'same' }, info('COMPLETED'), { code: 0, out: 'same' }, { code: 0, out: 'https://pr/1' }, { code: 0, out: 'origin/dev\norigin/main' }])
     const r = await runAction(f.deps, job({ step: 'merge', action: { kind: 'github.merge' } }))
     expect(r).toEqual({ ok: true, link: 'https://pr/1', commit: 'abc', alert: 'A-1\'s commit abc is on main without a step of yours' })
     expect(f.sleeps).toEqual([60_000])
-    expect(f.calls[2]).toEqual(['/w', 'https://pr/1', 'abc'])
+    expect(f.calls[4]).toEqual(['/w', 'https://pr/1', 'abc', '']) // no method: the first the repo allows
     const p = fakeDeps([info('COMPLETED', 'main')])
     expect(await runAction(p.deps, job({ step: 'merge', action: { kind: 'github.merge' } }))).toMatchObject({ error: expect.stringMatching(/only you/) })
     expect(p.calls.length).toBe(1)
+    // Stopped while its checks ran: never merged.
+    const h = fakeDeps([info('QUEUED'), { code: 0, out: 'same' }, info('COMPLETED'), { code: 0, out: 'same' }])
+    expect(await runAction(h.deps, job({ step: 'merge', action: { kind: 'github.merge' }, halted: async () => true }))).toEqual({ ok: false, error: 'merge: the task was stopped' })
+    expect(h.calls.length).toBe(4)
   })
 })
 
@@ -201,6 +210,16 @@ describe('verify-merged', () => {
     git(repo, 'add', '.'); git(repo, 'commit', '-qm', 'init'); git(repo, 'push', '-q', 'origin', 'main:dev')
     git(repo, 'fetch', '-q')
     expect((await localSh(WORKTREE_SCRIPT, [repo, wt, 'task/A-1', 'origin/dev'])).code).toBe(0)
+    // A base the clone has only on origin: the task's branch, never a new local base branch,
+    // from origin's base as it is now (a task merged meanwhile is in it).
+    git(repo, 'checkout', '-q', '-b', 'tmp'); fs.writeFileSync(path.join(repo, 'm.txt'), 'merged\n')
+    git(repo, 'add', '.'); git(repo, 'commit', '-qm', 'merged'); git(repo, 'push', '-q', 'origin', 'HEAD:dev'); git(repo, 'checkout', '-q', 'main'); git(repo, 'branch', '-qD', 'tmp')
+    git(repo, 'update-ref', 'refs/remotes/origin/dev', 'HEAD') // the clone's view of dev is stale
+    expect((await localSh(WORKTREE_SCRIPT, [repo, `${wt}2`, 'task/A-2', 'dev'])).code).toBe(0)
+    expect(fs.existsSync(path.join(`${wt}2`, 'm.txt'))).toBe(true)
+    expect(git(`${wt}2`, 'branch', '--show-current')).toBe('task/A-2')
+    expect(git(repo, 'branch', '--list', 'dev')).toBe('')
+    expect(spawnSync('git', ['-C', `${wt}2`, 'rev-parse', '--abbrev-ref', '@{upstream}']).status).not.toBe(0)
     const sh: ActionDeps['sh'] = (script, args, input) => localSh(`PATH="${bin}:$PATH"\n${script}`, args, input)
     const verify = (by: 'user' | 'engine' = 'user') =>
       runAction({ ...fakeDeps([]).deps, sh }, job({ worktree: wt, step: 'check', by, action: { kind: 'git.verify-merged', target: 'dev' } }))
@@ -272,5 +291,132 @@ describe('verify-merged', () => {
     s.theirs(); git(s.wt, 'fetch', '-q', 'origin'); git(s.wt, 'rebase', '-q', 'origin/dev')
     expect(git(s.wt, 'rev-parse', 'HEAD')).toBe(git(s.wt, 'rev-parse', 'origin/dev'))
     expect(await s.verify()).toMatchObject({ ok: false, error: expect.stringMatching(/no commit of its own/) })
+  })
+})
+
+// A PR of the branch merged on GitHub before the engine's merge step (by hand,
+// or a merge that answered 502): never a second PR. As Shepherdr #706 (MIT).
+describe('a PR already merged on GitHub', () => {
+  // A gh with no open PR, the merged PRs ("<head> <url>") in its file, and
+  // `pr create` printing a new PR's link.
+  function setup(name: string) {
+    const dir = path.join(tmp, name), repo = path.join(dir, 'repo'), bin = path.join(dir, 'bin'), merged = path.join(dir, 'merged')
+    fs.mkdirSync(bin, { recursive: true })
+    fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh
+case "$*" in
+  *"--state merged"*) while read -r h u b; do case "$*" in *tojson*) echo "$h {\\"url\\":\\"$u\\",\\"baseRefName\\":\\"\${b:-dev}\\",\\"headRefOid\\":\\"$h\\",\\"merged\\":true}";; *) echo "$h $u";; esac; done < "${merged}";;
+  *"--state open"*" -q "*) ;;
+  *"--state open"*) echo '[]';;
+  "pr create"*) echo "https://pr/new";;
+  *) echo "unexpected gh $*" >&2; exit 1;;
+esac
+`, { mode: 0o755 })
+    git(tmp, 'init', '-q', '--bare', path.join(dir, 'origin.git'))
+    git(tmp, 'init', '-q', '-b', 'task/A-1', repo); git(repo, 'remote', 'add', 'origin', path.join(dir, 'origin.git'))
+    git(repo, 'commit', '-q', '--allow-empty', '-m', 'task')
+    fs.writeFileSync(merged, `${git(repo, 'rev-parse', 'HEAD')} https://pr/1\n`)
+    const sh: ActionDeps['sh'] = (script, args, input) => localSh(`PATH="${bin}:$PATH"\n${script}`, args, input)
+    const f = fakeDeps([])
+    const go = (step: string, action: ActionJob['action'], attempt = 1, by: ActionJob['by'] = 'engine') => runAction({ ...f.deps, sh }, job({ worktree: repo, step, attempt, action, by }))
+    return { repo, merged, go }
+  }
+
+  it('counts as done at the merge step', async () => {
+    const s = setup('merged-merge'), head = git(s.repo, 'rev-parse', 'HEAD')
+    expect(await s.go('merge', { kind: 'github.merge' })).toEqual({ ok: true, link: 'https://pr/1', commit: head, note: 'already merged on GitHub' })
+    // Merged by hand at a head without the task's commit (a later local commit):
+    // the step ends merged, recording what GitHub merged, and says what it left out.
+    const at = 'f'.repeat(40)
+    fs.writeFileSync(s.merged, `${at} https://pr/1\n`)
+    expect(await s.go('merge', { kind: 'github.merge' }, 2)).toEqual({ ok: true, link: 'https://pr/1', commit: at, note: `already merged on GitHub at fffffff, without the task's commit ${head.slice(0, 7)}`,
+      alert: `A-1's commit ${head.slice(0, 7)} was not merged: its PR was merged on GitHub at fffffff without it. Its later commits need a new branch` })
+    // Merged into protected main outside your gesture: recorded, with the alert.
+    fs.writeFileSync(s.merged, `${head} https://pr/1 main\n`)
+    git(s.repo, 'push', '-q', 'origin', 'HEAD:refs/heads/main')
+    expect(await s.go('merge', { kind: 'github.merge' }, 3)).toMatchObject({ ok: true, alert: 'A-1\'s commit ' + head.slice(0, 7) + ' is on main without a step of yours' })
+    // Your gesture: main is yours to merge, no alert.
+    expect(await s.go('merge', { kind: 'github.merge' }, 4, 'user')).toEqual({ ok: true, link: 'https://pr/1', commit: head, note: 'already merged on GitHub' })
+    // The PR's head pushed from elsewhere, not fetched here yet: found all the same.
+    const other = path.join(tmp, 'merged-merge', 'other')
+    git(s.repo, 'push', '-q', 'origin', 'HEAD:refs/heads/task/A-1'); git(tmp, 'clone', '-q', '-b', 'task/A-1', path.join(tmp, 'merged-merge', 'origin.git'), other)
+    git(other, 'commit', '-q', '--allow-empty', '-m', 'elsewhere'); git(other, 'push', '-q', 'origin', 'HEAD:task/A-1')
+    fs.writeFileSync(s.merged, `${git(other, 'rev-parse', 'HEAD')} https://pr/2\n`)
+    expect(await s.go('merge', { kind: 'github.merge' }, 5)).toMatchObject({ ok: true, link: 'https://pr/2', commit: head, note: 'already merged on GitHub' })
+  })
+
+  it('is the PR step\'s PR at its head, and refuses new commits after it', async () => {
+    const s = setup('merged-pr')
+    const pr = (attempt: number) => s.go('pr', { kind: 'github.pr', base: 'dev' }, attempt)
+    expect(await pr(1)).toEqual({ ok: true, link: 'https://pr/1' })
+    git(s.repo, 'commit', '-q', '--allow-empty', '-m', 'after review')
+    expect(await pr(2)).toEqual({ ok: false, error: 'pr: task/A-1 already had PR https://pr/1 merged: new commits need a new branch' })
+    // No merged PR: a new one, as before.
+    fs.writeFileSync(s.merged, '')
+    expect(await pr(3)).toEqual({ ok: true, link: 'https://pr/new' })
+  })
+})
+
+// The PR head moved after the review. A gh whose open PR's head is the
+// remote branch's real tip; `pr merge` only answers.
+describe('a PR head that moved after the review', () => {
+  function setup(name: string) {
+    const dir = path.join(tmp, name), origin = path.join(dir, 'origin.git'), repo = path.join(dir, 'repo'), bin = path.join(dir, 'bin')
+    fs.mkdirSync(bin, { recursive: true })
+    fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh
+case "$*" in
+  *"--state open"*) echo "[{\\"url\\":\\"https://pr/1\\",\\"baseRefName\\":\\"dev\\",\\"headRefOid\\":\\"$(git --git-dir "${origin}" rev-parse task/A-1)\\"}]";;
+  "pr merge"*) ;;
+  *) echo "unexpected gh $*" >&2; exit 1;;
+esac
+`, { mode: 0o755 })
+    git(tmp, 'init', '-q', '--bare', '-b', 'dev', origin)
+    git(tmp, 'clone', '-q', origin, repo); git(repo, 'commit', '-q', '--allow-empty', '-m', 'base'); git(repo, 'push', '-q', 'origin', 'HEAD:dev')
+    git(repo, 'checkout', '-q', '-b', 'task/A-1'); git(repo, 'commit', '-q', '--allow-empty', '-m', 'task'); git(repo, 'push', '-q', 'origin', 'HEAD:task/A-1')
+    const sh: ActionDeps['sh'] = (script, args, input) => localSh(`PATH="${bin}:$PATH"\n${script}`, args, input)
+    const f = fakeDeps([])
+    const merge = (attempt: number, reviewed: string) => runAction({ ...f.deps, sh }, job({ worktree: repo, step: 'merge', attempt, reviewed, action: { kind: 'github.merge', method: 'merge' } }))
+    const elsewhere = (msg: string, ref: string) => {
+      const other = path.join(dir, `other-${msg}`)
+      git(tmp, 'clone', '-q', origin, other); git(other, 'checkout', '-q', ref)
+      git(other, 'commit', '-q', '--allow-empty', '-m', msg); git(other, 'push', '-q', 'origin', `HEAD:${ref}`)
+    }
+    return { repo, origin, sh, merge, elsewhere, head: () => git(repo, 'rev-parse', 'HEAD') }
+  }
+
+  it('after a catch-up push, goes back to review for the new head, then merges it', async () => {
+    const s = setup('moved-catchup'), reviewed = s.head()
+    s.elsewhere('theirs', 'dev')
+    expect((await s.sh(SCRIPT.catchUp, [s.repo, 'dev', 'task/A-1'])).code).toBe(0)
+    const caught = s.head()
+    expect(await s.merge(1, reviewed)).toEqual({ ok: false, error: `merge: new commits since the review (${reviewed.slice(0, 7)}..${caught.slice(0, 7)})`, review: { since: reviewed, head: caught }, commit: caught })
+    expect(await s.merge(2, caught)).toEqual({ ok: true, link: 'https://pr/1', commit: caught })
+  })
+
+  it('after a CI fix committed but not pushed, has it reviewed, pushes it, then merges', async () => {
+    const s = setup('moved-cifix'), reviewed = s.head()
+    git(s.repo, 'commit', '-q', '--allow-empty', '-m', 'fix CI')
+    const fix = s.head()
+    expect(await s.merge(1, reviewed)).toMatchObject({ ok: false, review: { since: reviewed, head: fix }, commit: fix })
+    expect(await s.merge(2, fix)).toEqual({ ok: true, link: 'https://pr/1', commit: fix })
+    expect(git(s.repo, '--git-dir', s.origin, 'rev-parse', 'task/A-1')).toBe(fix)
+  })
+
+  it('refuses a head pushed from outside the task\'s worktree', async () => {
+    const s = setup('moved-foreign'), reviewed = s.head()
+    s.elsewhere('foreign', 'task/A-1')
+    expect(await s.merge(1, reviewed)).toEqual({ ok: false, error: expect.stringMatching(/^merge: the PR head [0-9a-f]{7} has commits the task's worktree never had/) })
+  })
+
+  it('sends the task back to its review for the new commits only, then on to merge', () => {
+    const plan = planSteps(github, { type: 'simple' })
+    const at = (id: string) => plan.findIndex(p => p.id === id)
+    let s = onEvent(plan, { ...initialState(), started: true, at: at('review') }, { kind: 'verdict', from: 'reviewer', findings: [], head: 'r1' }, 0).state
+    expect(plan[s.at]!.id).toBe('merge')
+    expect(reviewedCommit(plan, s)).toBe('r1')
+    s = onEvent(plan, s, { kind: 'action-result', ok: false, error: 'merge: new commits since the review', review: { since: 'r1', head: 'h2' }, evidence: { commit: 'h2' } }, 1).state
+    expect(plan[s.at]!.id).toBe('review')
+    expect(dueText(plan, s)?.text).toMatch(/^Short re-review: .*r1 → h2.*git log --oneline r1\.\.h2.*--remerge-diff/s)
+    s = onEvent(plan, s, { kind: 'verdict', from: 'reviewer', findings: [], head: 'h2' }, 2).state
+    expect([plan[s.at]!.id, s.acting, s.rereview, reviewedCommit(plan, s), s.rounds.review]).toEqual(['merge', true, undefined, 'h2', undefined])
   })
 })

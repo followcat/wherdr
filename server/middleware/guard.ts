@@ -6,7 +6,7 @@
 // An authenticated request upgrades a cookie from an earlier version (auth.renew).
 import type { H3Event } from 'h3'
 import { crossSiteRequest, hostAllowed, hostRefusalIsHtml, hostRefusedPage, networkRefusedPage } from '../utils/hosts'
-import { checkRequestClient, ensureRecent, gateDecision, networkReady } from '../utils/network'
+import { checkRequestClient, cliTokenCall, ensureRecent, gateDecision, networkReady } from '../utils/network'
 import { coreRouteAllowed } from '../../shared/coreRoutes'
 import { SHOT_TOKEN_HEADER } from '../../shared/pm/shots'
 import { adoptServed } from '../utils/phone'
@@ -36,8 +36,7 @@ export default defineEventHandler(async (event) => {
   const req = reqOf(event)
   const verdict = gateDecision({
     check, path,
-    // A coordinator's `wherdr pm` call carries its token, checked by the route.
-    unlocked: auth.isUnlocked(req) || (path === '/api/pm/cli' && /^Bearer [0-9a-f]{64}$/.test(String(headers.authorization || ''))),
+    unlocked: auth.isUnlocked(req) || cliTokenCall(path, check, headers.authorization),
     hostOk: hostAllowed(headers.host),
     crossSite: crossSiteRequest(headers),
     agentKey: event.method === 'POST' && typeof headers[SHOT_TOKEN_HEADER] === 'string',

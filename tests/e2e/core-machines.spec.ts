@@ -18,7 +18,7 @@ test('machines can be renamed and forgotten, and the core line shows', async ({ 
   })
   const rpc = core.calls
   try {
-    await core.open(page, '/#/settings?section=agents')
+    await core.open(page, '/#/settings?section=machines')
     await expect(page.getByTestId('core-machine').first()).toContainText('host-a')
     await expect(page.getByTestId('core-line')).toContainText('Core 0.1.17 · running for 3 h')
     await mkdir('.shots', { recursive: true })

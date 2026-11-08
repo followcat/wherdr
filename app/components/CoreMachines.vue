@@ -93,7 +93,6 @@ async function reconnect(key: string) {
 
 <template>
   <div class="settings-group core-machines">
-    <h3>{{ t('Machines') }}</h3>
     <p class="muted settings-hint">{{ t('Other machines running herdr-core, reached over SSH. Terminals and agents can be started on them from New.') }}</p>
     <div class="settings-card">
       <div class="machine-row"><b>{{ hostLabel || t('This machine') }}</b><span class="mono-label">{{ t('this machine') }}</span></div>
@@ -112,6 +111,7 @@ async function reconnect(key: string) {
         </template>
       </div>
     </div>
+    <MachineMemorySettings edit />
     <p v-if="coreLine" class="mono-label core-line" data-testid="core-line">{{ coreLine }}</p>
     <form class="sheet-form" @submit.prevent="add">
       <label class="field-label" for="machineTarget">{{ t('SSH target') }}</label>

@@ -1,9 +1,12 @@
 // wherdr (herdr-web) — PWA to drive, from your phone, the coding agents running in Herdr.
 // Client-only app (no SSR) served by Nitro, which also hosts the whole
 // Herdr gateway (API, WebSockets, Web Push): see server/.
-import { CSP_BASE, CSP_DICTATION_WORKER, DICTATION_WORKER_PATH } from './server/utils/csp'
+import { CSP_BASE, CSP_DICTATION_WORKER, CSP_WEBGPU_WORKER, DICTATION_WORKER_PATH, WEBGPU_WORKER_PATH } from './server/utils/csp'
 import { ICON_SCAN_GLOBS } from './shared/iconScan'
 import { lazyChunks, PRECACHE_GLOBS, RUNTIME_ONLY_GLOBS } from './shared/precache'
+import { execFileSync } from 'node:child_process'
+import { v3Version } from './shared/v3Version'
+import { BOOT_THEME_KEY } from './shared/bootTheme'
 
 // Demo build (`VITE_WHERDR_DEMO=1 nuxt generate`, served at wherdr.dev/demo/):
 // the same app, static, with no server at all — app/demo/ answers the API in
@@ -11,11 +14,16 @@ import { lazyChunks, PRECACHE_GLOBS, RUNTIME_ONLY_GLOBS } from './shared/precach
 const demo = process.env.VITE_WHERDR_DEMO === '1'
 // Chunks left out of the service worker precache (shared/precache.ts).
 const lazy = lazyChunks()
+// v3's own version (shared/v3Version.ts), from the commit being built.
+const buildCommit = (() => {
+  if (process.env.WHERDR_COMMIT) return process.env.WHERDR_COMMIT
+  try { return execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }) } catch { return process.env.GITHUB_SHA }
+})()
 
 export default defineNuxtConfig({
   ssr: false,
   // Server and app run on herdr-core only (the demo answers the API itself).
-  runtimeConfig: { public: { core: !demo } },
+  runtimeConfig: { public: { core: !demo, version: v3Version(buildCommit) } },
   modules: demo ? ['@nuxt/ui'] : ['@nuxt/ui', '@vite-pwa/nuxt'],
   plugins: demo ? ['~/demo/plugin.client'] : [],
   // No server code in the demo build (nothing to prerender against, nothing that
@@ -78,6 +86,11 @@ export default defineNuxtConfig({
         { name: 'apple-mobile-web-app-title', content: 'wherdr' },
         { name: 'robots', content: 'noindex, nofollow' },
       ],
+      // Startup background, painted before the styles and the app load (no
+      // white frame on a reload): Titanium, or the theme last shown on this
+      // device (useTheme.ts keeps its colour; the theme's own styles replace it).
+      style: [{ innerHTML: 'html{background:var(--bg,#12151b)}' }],
+      script: [{ innerHTML: `try{var t=JSON.parse(localStorage.getItem('${BOOT_THEME_KEY}')||'null'),d=document.documentElement;if(t&&/^#[0-9a-f]{3,8}$/i.test(t.bg)){d.style.setProperty('--bg',t.bg);d.className=t.light?'light':'dark'}}catch(e){}` }],
       // The manifest (FR or EN depending on the chosen language) is added by app.vue.
       link: demo
         // Demo: the icons of the site that serves it (wherdr.dev).
@@ -130,6 +143,14 @@ export default defineNuxtConfig({
         serverAssets: [{ baseName: 'scripts', dir: '../scripts', pattern: 'install-claude-statusline.sh' }],
       },
 
+  // A /_nuxt file the current build lacks goes on to the previous builds'
+  // copies (server/routes/_nuxt/[...path].get.ts) instead of Nitro's 404.
+  hooks: {
+    'nitro:config'(config) {
+      for (const dir of config.publicAssets || []) if (dir?.baseURL === '/_nuxt/') dir.fallthrough = true
+    },
+  },
+
   // App code always revalidated (otherwise an iPhone keeps the old version
   // after an update); only fingerprinted files (/_nuxt/) and
   // icons are kept.
@@ -140,8 +161,9 @@ export default defineNuxtConfig({
       'referrer-policy': 'no-referrer',
       'x-content-type-options': 'nosniff',
     } },
-    // The only script allowed to compile WebAssembly (server/utils/csp.ts).
+    // Only these worker responses allow compiling WebAssembly (server/utils/csp.ts).
     [DICTATION_WORKER_PATH]: { headers: { 'content-security-policy': CSP_DICTATION_WORKER } },
+    [WEBGPU_WORKER_PATH]: { headers: { 'content-security-policy': CSP_WEBGPU_WORKER } },
     '/icons/**': { headers: { 'cache-control': 'public, max-age=86400' } },
     '/_nuxt/**': { headers: { 'cache-control': 'public, max-age=31536000, immutable' } },
   },

@@ -11,6 +11,35 @@ export function nextTail(tail: ChatItem[], r: Pick<ChatResponse, 'items' | 'keep
   return r.keep === tail.length && !items.length ? tail : tail.slice(0, r.keep).concat(items)
 }
 
+// The list that replaces the one shown after a restart (see restartsTail),
+// swapped in one step: an item equal to one already shown is that same object,
+// so Vue has nothing to redo for it; the others are the new ones.
+export function swapTail(shown: ChatItem[], next: ChatItem[]): ChatItem[] {
+  if (!shown.length) return next
+  const pool = new Map<string, ChatItem[]>()
+  for (const it of shown) {
+    const k = JSON.stringify(it)
+    const same = pool.get(k)
+    if (same) same.push(it)
+    else pool.set(k, [it])
+  }
+  return next.map(it => pool.get(JSON.stringify(it))?.shift() ?? it)
+}
+
+// Key of each item's block, the same whatever sits above it: role and time,
+// numbered among the items that share both. A re-read whose list starts at
+// another message (the kept end shown first, older pages added above) leaves
+// the other blocks' keys as they were, so Vue keeps their elements.
+export function itemKeys(list: readonly Pick<ChatItem, 'role' | 'ts'>[]): string[] {
+  const seen = new Map<string, number>()
+  return list.map((it) => {
+    const base = `${it.role}:${it.ts}`
+    const n = seen.get(base) || 0
+    seen.set(base, n + 1)
+    return `${base}#${n}`
+  })
+}
+
 // Command Code late outcomes (ChatResponse.toolUpdates): a tool result
 // appended after its call was shown arrives as an update matched by toolId.
 // `at` is the absolute byte offset of the result it comes from — its
@@ -129,6 +158,12 @@ export function tailQuery(pane: string, c: { token: string, tailStart: number | 
   q.set('n', String(c.token ? c.tail.length : 0))
   return q
 }
+
+// A bottom read unanswered past this is dead (a black-holed fetch after the
+// server went away mid-request): aborting frees the one-at-a-time lock below
+// so the next poll can ask again, instead of every refresh waiting forever
+// behind a read that will never settle.
+export const CHAT_READ_MS = 8000
 
 // One re-read of the bottom at a time, for its whole life. `step` returns
 // true to run again at once (session changed, delta did not fit), up to `max`

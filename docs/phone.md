@@ -24,3 +24,15 @@ in its own window, without the browser's bars.
   open the address in Safari or Chrome for that, or keep wherdr as an Arc favorite.
 
 Then Settings → Security → **Enable passkey lock** on each device.
+
+## App start
+
+Settings › Phone › **App start** sets how this device opens the app:
+
+- **Up to date** (default): the server's current version, or the saved copy when the server
+  has not answered within 3 seconds.
+- **Instant**: the saved copy at once, for a weak network. When the server has a newer version,
+  a **Reload** banner offers it.
+
+After an update the server keeps serving the files of the two previous versions (in
+`<data dir>/builds/`), so a page opened before the update keeps working.

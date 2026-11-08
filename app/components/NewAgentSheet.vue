@@ -1,11 +1,13 @@
 <script setup lang="ts">
 // New agent (Claude, Codex) or terminal: folder (browser + recent ones),
-// conversation resume, first message.
+// conversation resume, first message. With project management on, also a
+// project: open or start its coordinator, or add one (NewProjectForm), not in a new tab.
 // Several machines: choice of the machine, its folders and recent ones.
 // "New tab" (`newTabSpace`): a new terminal labelled for that space, on its
 // machine.
 // On the phone it opens full screen, Launch pinned at the bottom.
 import type { MachineConfig } from '#shared/types'
+import type { ProjectDraft } from '#shared/pm/newProject'
 import { machineOf } from '#shared/ids'
 import { selectedAgentKind, visibleAgentKinds } from '~/utils/agentChoices'
 
@@ -20,8 +22,15 @@ const name = ref('')
 const error = ref<string | null>(null)
 const launching = ref(false)
 const browsing = ref(false)
+const coordinator = ref(false)
+const coordProject = ref('')
+const coordAgent = ref('')
+const draft = ref<ProjectDraft | null>(null)
+const canCoordinate = computed(() => !newTabSpace.value && coordinators.value.length > 0)
+watch(canCoordinate, (can) => { if (!can && !newProjectOpen.value) coordinator.value = false })
 
-const kinds = computed(() => visibleAgentKinds(machineCfg.value?.kinds || appConfig.value.kinds || [], hiddenAgents.value))
+// Settings › Agents: the offered agents of this machine, in the user's order (the first is the default).
+const kinds = computed(() => visibleAgentKinds(machineCfg.value?.kinds || appConfig.value.kinds || [], hiddenAgents.value, agentOrder.value))
 const shell = computed(() => kind.value === 'shell')
 const canResume = computed(() => kind.value === 'claude' || kind.value === 'codex')
 
@@ -32,7 +41,7 @@ const fixedMachine = computed(() => newTabSpace.value)
 // Folder suggested for the new tab: that of a pane of its space.
 const spaceCwd = (ws: string) => herdrState.value.panes.find(p => p.workspace === ws && p.cwd)?.cwd || null
 watch(newAgentOpen, (o) => {
-  if (!o) newTabSpace.value = null
+  if (!o) { newTabSpace.value = null; newAgentMachine.value = null; newProjectOpen.value = false }
 })
 
 // ------------------------------------------------------------ machine
@@ -51,7 +60,7 @@ function syncKind() {
     const last = list.find(m => m.key === lastMachine.value && online(m))
     setMachine(last ? last.key : '')
   } else if (!list && machine.value) setMachine('')
-  kind.value = selectedAgentKind(kind.value, kinds.value, lastKind.value)
+  kind.value = selectedAgentKind(kind.value, kinds.value)
   if (!dir.value) dir.value = recents.value[0] || home.value || '~'
 }
 function setMachine(k: string) {
@@ -75,8 +84,16 @@ watch(newAgentOpen, async (open) => {
   error.value = null
   browsing.value = false
   launching.value = false
+  draft.value = null
+  // Each opening starts on the user's first agent, or on a new project.
+  kind.value = ''
+  if (newProjectOpen.value) coordinator.value = true
+  if (!newTabSpace.value) loadCoordinators()
   syncKind()
   await loadConfig()
+  // Opened from a machine's "…" menu: that machine, once its config (home) is in.
+  const want = newAgentMachine.value
+  if (!fixedMachine.value && want !== null && machineList.value?.some(m => m.key === want && online(m))) setMachine(want)
   syncKind()
 })
 // A machine (re)connects while the sheet is open: its home folder.
@@ -86,14 +103,20 @@ watch(() => machines.value.map(m => `${m.key}:${m.status}`).join(','), async () 
   syncKind()
 })
 watch(kinds, syncKind)
+function pickCoordinator() {
+  coordinator.value = true
+  draft.value = null
+  if (!projectCoordinators.value.some(c => c.project === coordProject.value)) coordProject.value = projectCoordinators.value[0]?.project ?? ''
+}
 function pickKind(k: string) {
+  coordinator.value = false
   kind.value = k
-  lastKind.value = k
 }
 
 // ------------------------------------------------------------ navigateur de dossiers
 function chooseDir(d: string) {
-  dir.value = d
+  if (coordinator.value && draft.value) draft.value.path = d
+  else dir.value = d
   browsing.value = false
 }
 
@@ -146,7 +169,7 @@ async function launch() {
 </script>
 
 <template>
-  <AppSheet v-model:open="open" :title="newTabSpace ? t('Start in a new tab') : t(shell ? 'New terminal' : 'New agent')" tall screen>
+  <AppSheet v-model:open="open" :title="newTabSpace ? t('Start in a new tab') : coordinator ? tl('Project', 'Projet') : t(shell ? 'New terminal' : 'New agent')" tall screen>
     <div v-if="!browsing" class="sheet-form">
       <div v-if="newTabSpace" class="into-pane">
         <span class="tabmap" aria-hidden="true"><i class="cur" style="inset: 0" /></span>
@@ -155,45 +178,58 @@ async function launch() {
           <small>{{ [targetWs?.label, machineList ? machineName(machine) : null].filter(Boolean).join(' · ') }}</small>
         </span>
       </div>
-      <template v-else-if="machineList">
+      <template v-else-if="machineList && !coordinator">
         <label class="field-label">{{ t('Machine') }}</label>
         <MachineChoice :machines="machineList" :model-value="machine" @pick="pickMachine" />
       </template>
 
       <label class="field-label">{{ t('Type') }}</label>
-      <div class="segmented agent-kinds" :style="{ '--segment-count': kinds.length }">
-        <button v-for="k in kinds" :key="k" type="button" :class="{ on: k === kind }" :data-kind="k" @click="pickKind(k)">
+      <div class="segmented agent-kinds" :style="{ '--segment-count': kinds.length + (canCoordinate ? 1 : 0) }">
+        <button v-for="k in kinds" :key="k" type="button" :class="{ on: !coordinator && k === kind }" :data-kind="k" @click="pickKind(k)">
           <AgentAvatar :agent="k === 'shell' ? null : k" /><span>{{ k === 'shell' ? 'Terminal' : kindLabel(k) }}</span>
+        </button>
+        <button v-if="canCoordinate" type="button" :class="{ on: coordinator }" data-kind="project" @click="pickCoordinator">
+          <span class="avatar"><UIcon name="i-lucide-folder-git-2" /></span><span>{{ tl('Project', 'Projet') }}</span>
         </button>
       </div>
 
-      <label class="field-label">{{ t('Folder') }}</label>
-      <DirField :key="machine" v-model="dir" :recents="recents" @browse="browsing = true" />
-
-      <label v-if="canResume" class="toggle-row">
-        <span><b>{{ t('Resume the last conversation') }}</b><small>{{ t('for this agent in this folder') }}</small></span>
-        <USwitch v-model="resume" color="success" size="xl" />
-      </label>
-
-      <label class="field-label" for="newPrompt">{{ t(shell ? 'Command to run' : 'First message') }} <span class="muted">{{ t('(optional)') }}</span></label>
-      <UTextarea
-        id="newPrompt" v-model="prompt" :rows="2" autoresize size="xl" class="w-full" :class="{ mono: shell }"
-        :placeholder="t(shell ? 'E.g. npm run dev' : 'E.g. Summarize the project TODOs')"
+      <NewProjectForm
+        v-if="coordinator" v-model:project="coordProject" v-model:agent="coordAgent" v-model:draft="draft" :machine="machine" :machines="machineList"
+        @settings="open = false" @browse="browsing = true" @machine="pickMachine"
       />
+      <template v-else>
+        <label class="field-label">{{ t('Folder') }}</label>
+        <DirField :key="machine" v-model="dir" :recents="recents" @browse="browsing = true" />
 
-      <template v-if="!shell">
-        <label class="field-label" for="newName">{{ t('Name') }} <span class="muted">{{ t('(optional)') }}</span></label>
-        <UInput
-          id="newName" v-model="name" size="xl" class="w-full" autocapitalize="none" autocorrect="off"
-          :spellcheck="false" placeholder="reviewer" maxlength="60"
+        <label v-if="canResume" class="toggle-row">
+          <span><b>{{ t('Resume the last conversation') }}</b><small>{{ t('for this agent in this folder') }}</small></span>
+          <USwitch v-model="resume" color="success" size="xl" />
+        </label>
+
+        <label class="field-label" for="newPrompt">{{ t(shell ? 'Command to run' : 'First message') }} <span class="muted">{{ t('(optional)') }}</span></label>
+        <UTextarea
+          id="newPrompt" v-model="prompt" :rows="2" autoresize size="xl" class="w-full" :class="{ mono: shell }"
+          :placeholder="t(shell ? 'E.g. npm run dev' : 'E.g. Summarize the project TODOs')"
         />
+
+        <template v-if="!shell">
+          <label class="field-label" for="newName">{{ t('Name') }} <span class="muted">{{ t('(optional)') }}</span></label>
+          <UInput
+            id="newName" v-model="name" size="xl" class="w-full" autocapitalize="none" autocorrect="off"
+            :spellcheck="false" placeholder="reviewer" maxlength="60"
+          />
+        </template>
       </template>
     </div>
 
-    <DirBrowser v-else :start="dir" :machine="machine" @choose="chooseDir" @cancel="browsing = false" />
+    <DirBrowser v-else :start="coordinator && draft ? (draft.probe?.exists ? draft.probe.path : null) : dir" :machine="machine" @choose="chooseDir" @cancel="browsing = false" />
 
     <template #footer>
-      <div v-if="!browsing" class="sheet-form">
+      <NewProjectActions
+        v-if="coordinator && !browsing" :project="coordProject" :agent="coordAgent" :draft="draft"
+        @done="open = false" @added="k => { draft = null; coordProject = k }"
+      />
+      <div v-else-if="!browsing" class="sheet-form">
         <p v-if="error" class="form-error">{{ t(error) }}</p>
         <UButton block size="xl" color="primary" variant="solid" class="launch-btn hw-cta" icon="i-lucide-play" :loading="launching" :disabled="!kind" @click="launch">
           {{ launching ? t('Starting…') : t('Launch') }}

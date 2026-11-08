@@ -25,6 +25,8 @@ const SEND_NOW = /^ctrl\+enter to send now$/i
 const RUNNING = /^Running…(?:\s*\(([^)]*)\))?$/
 const MORE = /^\+(\d+) lines?(?:\s*\(([^)]*)\))?$/
 const BACKGROUND = /^\(ctrl\+b to run in background\)$/i
+// Claude's activity line while it works ("✻ Fermenting… (17s · ↓ 230 tokens)").
+const ACTIVITY = /^[*✢✳✶✻✽·] \S/
 
 // "1m 14s" → ms.
 export function elapsedMs(s: string | null | undefined): number | null {
@@ -52,15 +54,33 @@ export function parseClaudeScreen(text: string | null | undefined, now = Date.no
   // Input field frame: we only read what is above it.
   const rules: number[] = []
   for (let i = lines.length - 1; i >= 0 && rules.length < 2; i--) if (RULE_RE.test(lines[i]!)) rules.push(i)
-  const end = rules.length === 2 ? rules[1]! : lines.length
+  let end = rules.length === 2 ? rules[1]! : lines.length
 
   // Queue: block of "❯" lines (and their continuations, the "ctrl+enter" hint) right against the frame.
-  let top = end
-  for (let i = end - 1; i >= 0; i--) {
-    const l = lines[i]!
-    if (!l.trim() || /^ {2}\S/.test(l)) continue
-    if (!l.startsWith('❯ ')) break
-    top = i
+  const queueAbove = (from: number) => {
+    let at = from
+    for (let i = from - 1; i >= 0; i--) {
+      const l = lines[i]!
+      if (/^ {2}⎿/.test(l)) break
+      if (!l.trim() || /^ {2}\S/.test(l)) continue
+      if (!l.startsWith('❯ ')) break
+      at = i
+    }
+    return at
+  }
+  let top = queueAbove(end)
+  // Claude Code 2.1.3xx draws it above its activity line instead, ending with the hint:
+  //   ❯ a queued message
+  //     ctrl+enter to send now
+  //   ✻ Fermenting… (17s · ↓ 230 tokens)
+  //     ⎿  Tip: …
+  if (top === end) {
+    let i = end - 1
+    while (i >= 0 && (!lines[i]!.trim() || /^ {2}\S/.test(lines[i]!) || ACTIVITY.test(lines[i]!)) && !SEND_NOW.test(lines[i]!.trim())) i--
+    if (i >= 0 && SEND_NOW.test(lines[i]!.trim())) {
+      const at = queueAbove(i + 1)
+      if (at <= i && lines[at]!.startsWith('❯ ')) { top = at; end = i + 1 }
+    }
   }
   const queued: string[] = []
   for (let i = top; i < end;) {

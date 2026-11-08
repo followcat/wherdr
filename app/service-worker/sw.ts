@@ -1,10 +1,12 @@
 // wherdr service worker: installable + notifications.
-// Network first (the app only makes sense connected to the server): the cache
-// only serves to show the shell if the network is down or silent. Fingerprinted
-// build files, which never change under their name, come from the cache once there.
+// Navigations and other requests prefer the network, with the cached copy past
+// a short wait (navigations: the cached shell at once when this device chose
+// Instant start, shared/appStart.ts); fingerprinted build files, which never
+// change under their name, come from the cache once there.
 // Never any cache for /api/, /ws/ or /uploads/.
 
 import { networkFirst } from './networkFirst'
+import { APP_START_CACHE, readAppStart } from '../../shared/appStart'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 interface SwGlobal {
@@ -51,8 +53,9 @@ sw.addEventListener('message', (e) => {
 sw.addEventListener('activate', (e) => {
   e.waitUntil((async () => {
     // wherdr-asr-* holds the on-device dictation models and runtimes (100 MB
-    // to 1 GB): clearing them on each update would download them again.
-    for (const k of await caches.keys()) if (k !== CACHE && !k.startsWith('wherdr-asr-')) await caches.delete(k)
+    // to 1 GB): clearing them on each update would download them again. The
+    // device's app start choice stays too.
+    for (const k of await caches.keys()) if (k !== CACHE && k !== APP_START_CACHE && !k.startsWith('wherdr-asr-')) await caches.delete(k)
     await sw.clients.claim()
   })())
 })
@@ -86,7 +89,22 @@ sw.addEventListener('fetch', (e) => {
   const network = fetch(req, { cache: 'no-cache' })
   // Also kept when the answer comes after the cached copy was served.
   e.waitUntil(network.then(res => keep(req, res)).catch(() => {}))
+  // Navigations too (as before #418), so a reachable server always serves the
+  // current build: a cached shell from before a deployment names /_nuxt chunks
+  // the new deployment removed, and the first lazy one would fail and reload
+  // the page by itself. Past the wait, the cached shell: its /_nuxt files are
+  // immutable, so the cached pair stays consistent, and the update banner
+  // announces a newer build.
+  // Instant start (#418, chosen per device): the cached shell at once, the
+  // network answer still refreshing the cache; the server keeps the previous
+  // builds' /_nuxt files (server/utils/previousBuilds.ts) for its lazy chunks.
   const fromCache = async () => (await caches.match(req)) || (req.mode === 'navigate' ? caches.match('/') : undefined)
+  if (req.mode === 'navigate') {
+    e.respondWith(readAppStart(caches).then(start => (start === 'cache'
+      ? caches.match('/').catch(() => undefined).then(hit => hit || network)
+      : networkFirst(network, fromCache, NETWORK_WAIT_MS))))
+    return
+  }
   e.respondWith(networkFirst(network, fromCache, NETWORK_WAIT_MS))
 })
 

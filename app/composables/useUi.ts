@@ -31,6 +31,10 @@ export function settingsMenuItems(): MenuItem[] {
 }
 
 export const newAgentOpen = ref(false)
+// Opened by Settings › Projects › Add project: on a new project, then cleared.
+export const newProjectOpen = ref(false)
+// Machine to preselect when the sheet opens (a machine's "…" menu), then cleared.
+export const newAgentMachine = ref<string | null>(null)
 export const renameTarget = ref<string | null>(null)
 
 export const lightboxSrc = ref<string | null>(null)

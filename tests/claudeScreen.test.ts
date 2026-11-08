@@ -62,6 +62,19 @@ describe('Claude Code screen', () => {
     expect(parseClaudeScreen('  ctrl+enter to send now\n\n' + fx('claude-idle.txt'))?.sendNow).toBeUndefined()
   })
 
+  it('Claude Code 2.1.3xx: queue drawn above the activity line, not against the field', () => {
+    const screen = fx('claude-queued-above-activity.txt')
+    const s = parseClaudeScreen(screen, NOW)!
+    expect(s.queued).toEqual(['first queued note, please answer with ONE', 'second queued note, please answer with TWO'])
+    expect(s.sendNow).toBe(true)
+    expect(s.sent).toBe('Run ./work.sh with the Bash tool, then reply done.')
+    expect(queuedPhase('second queued note, please answer with TWO', s)).toBe('queued')
+    // Same screen once the queue is taken: no hint, so the message above the activity line is the one sent.
+    const taken = parseClaudeScreen(screen.replace(/❯ (first|second) queued.*\n/g, '').replace('  ctrl+enter to send now\n', ''), NOW)!
+    expect(taken.queued).toEqual([])
+    expect(taken.sent).toBe('Run ./work.sh with the Bash tool, then reply done.')
+  })
+
   it('existing screen without command or queue', () => {
     const s = parseClaudeScreen(fx('claude-working.txt'), NOW)!
     expect(s.shell).toBeNull()

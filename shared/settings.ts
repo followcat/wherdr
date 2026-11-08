@@ -15,7 +15,7 @@ export const SYNCED_SETTINGS = [
   // 1.x `compactList` is no longer read)
   'compactListV2', 'homeGrouping', 'individualAgentList', 'collapsedMachines', 'collapsedRepos',
   'showShells', 'showCounters', 'showQuotas', 'quotaDisplay',
-  'autoReorderReady', 'readySort', 'hiddenAgents',
+  'autoReorderReady', 'readySort', 'hiddenAgents', 'agentOrder',
   // Conversation
   'typewriterSpeed', 'encryptedText', 'replyStyle', 'defaultViewMode',
   // Board

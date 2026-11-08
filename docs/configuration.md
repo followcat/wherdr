@@ -17,6 +17,7 @@ unit: see [Installation](installation.md#keep-it-running)), read at each start.
 | `WHERDR_TRUSTED_NETWORKS` | *(empty)* | Other private networks wherdr accepts besides this computer and the tailnet, as comma-separated CIDR ranges or addresses (e.g. `10.147.17.0/24` for ZeroTier). `any` accepts every network, with a warning at startup and in the app: not recommended. See [Network access](security.md#network-access). |
 | `HOST_LABEL` | server hostname | Name of this machine in the app. |
 | `APP_URL` | *(empty)* | App address and allowed host; a valid HTTPS URL enables Web Push. HTTP, empty or invalid values disable Web Push with a warning. With Tailscale, leave it empty: wherdr adopts the address `tailscale serve` publishes. |
+| `HERDR_WEB_ALLOWED_HOSTS` | *(empty)* | Other private hostnames or IP addresses wherdr answers under, comma-separated, besides `APP_URL`, this machine's addresses and what `tailscale serve` publishes. Restart wherdr after a change. See [Security](security.md#security). |
 | `TAILNET_REFRESH_MS` | `30000` | How often wherdr reads again what `tailscale serve` publishes for its port. |
 | `PASSKEY_USER` | `wherdr` | User name stored with the passkeys. |
 | `DATA_DIR` | `./data` | VAPID keys, push subscriptions, passkeys, recent folders, and `settings.json`: the display settings that follow you across devices (theme, machine bar and groups, home list, file browser preferences). Screen-dependent ones (content width, sidebar width, terminal size and rendering), the last tab or filter and drafts stay in each browser. |
@@ -38,16 +39,8 @@ unit: see [Installation](installation.md#keep-it-running)), read at each start.
 | `HERDR_WEB_HERDR_NOTIFICATIONS` | `off` to stop relaying `herdr notification show` as push. |
 
 In the app, **Settings** has these sections: Appearance, Conversation, Terminal, Agents
-(Machines, Claude quotas), Notifications, Plugins, Phone, Security, Shortcuts (computer),
-Advanced and About. **Settings** holds display preferences such as theme, typing effect and what the
+(Machines, Claude quotas), Notifications, Plugins (only once a plugin is installed), Phone, Security, Shortcuts (computer)
+and About. **Settings** holds display preferences such as theme, typing effect and what the
 home screen shows; these follow you across devices through `settings.json`. Notifications, terminal text size and renderer remain device-specific. The passkey lock is
 managed under Settings › Security.
 
-## Paste diagnostics
-
-Enable **Settings → Advanced → Paste journal** on the device used for dictation.
-Paste into an agent's message field, then return to Advanced to inspect the last
-50 events: event kind, clipboard types, text length, default prevention, focus
-and whether the field or its attachments changed. Text content is never recorded.
-The journal stays in memory until reload; disabling the switch clears it.
-The switch is off by default and stays local to this browser.

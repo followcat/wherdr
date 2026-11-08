@@ -98,6 +98,21 @@ describe('openCoreTerm', () => {
     expect(credits.map(f => f.payload.readUInt32LE(0))).toEqual([5])
   })
 
+  it('keeps the relay reset separate from an ANSI-only attach paint of an idle screen', async () => {
+    const t = setup()
+    await tick()
+    const frames = () => t.out.filter(m => m.type === 'terminal.frame')
+    expect(frames()).toEqual([{ type: 'terminal.frame', encoding: 'ansi', full: true, width: 40, height: 20, bytes: '' }])
+    expect(t.out.at(-1)).toEqual({ type: 'terminal.control', on: true })
+    // Core's first_paint always includes a parser reset and input-mode state,
+    // even if the program has printed nothing and the screen is blank.
+    const paint = Buffer.from('\x18\x1b[H\x1b[2J\x1b[?9001l')
+    t.streams.get(3)!(FRAME.DATA, paint)
+    expect(frames()).toHaveLength(2)
+    expect(frames()[1]).toEqual({ type: 'terminal.frame', encoding: 'ansi', width: 40, height: 20, bytes: paint.toString('base64'), credit: paint.length })
+    t.sess.onClose()
+  })
+
   it('sends named keys through terminal.keys and rejects malformed ones', async () => {
     const t = setup()
     await tick()

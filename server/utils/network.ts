@@ -218,6 +218,14 @@ export function checkClient(peer: string | undefined, h: Headers, ctx: NetContex
 export type GateVerdict = 'ok' | 'network' | 'host' | 'origin' | 'locked'
 const needsUnlock = (p: string) => (p.startsWith('/api/') && !p.startsWith('/api/auth/') && p !== '/api/health') || p.startsWith('/uploads/') || p.startsWith('/models/')
 
+// A coordinator's `wherdr pm` call, or Alfred's `wherdr alfred` call from
+// this machine only, carries its token instead of the passkey session; the
+// route checks the token.
+export function cliTokenCall(path: string, check: NetCheck, authorization: unknown): boolean {
+  const local = check.ok && check.zone === 'local'
+  return (path === '/api/pm/cli' || (path === '/api/alfred/cli' && local)) && /^Bearer [0-9a-f]{64}$/.test(String(authorization || ''))
+}
+
 // The whole guard decision for one request (server/middleware/guard.ts) or one
 // WebSocket upgrade (server/utils/ws.ts), in order:
 // 1. network: the provenance above (the passkey never stands in for it, and

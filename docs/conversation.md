@@ -12,6 +12,14 @@ Claude Code, Codex, Devin, Command Code and OpenCode terminals open in conversat
   reads described under [herdr-core › Conversations](core.md#conversations)). Reading a conversation never
   touches the terminal, so it never resizes it. A command the agent proposes (shell code block,
   or inline `! command`) can be copied without its prompt.
+- **SVG diagrams**: complete code fences labelled `svg` render as isolated, theme-aware images.
+  **Source / Preview**, beside **Copy** in the card header, switches the same card between the
+  diagram and its original markup; **Copy** always copies that markup. Click or use Enter/Space
+  on the image for the full-screen viewer. Static shapes, text and local definitions are
+  supported, up to 150,000 source characters, 2,000 source elements and 10,000 expanded
+  reference instances. Incomplete, unsupported or unsafe diagrams stay readable code. Scripts,
+  foreign HTML, animation and external resources are rejected; raw inline SVG is not inserted
+  into the page. Other fence languages and file-explorer document fences remain code.
 - **Questions and permissions**: native questions, approvals and menus show their options; a tap
   answers. wherdr reads the screen again right before answering and refuses the answer if the
   question changed meanwhile. A free answer selects its option, waits for the field, then types
@@ -29,6 +37,12 @@ Claude Code, Codex, Devin, Command Code and OpenCode terminals open in conversat
   draft (text, quotes, attachments) is kept per agent, across reloads. OpenCode's conversation is
   **read-only for now**: no composer, reply, quote or question affordances — use its terminal to
   talk to it.
+- **omp context**: in the header, after the state, a small gauge with the percentage of omp's
+  context window and the estimated tokens (`68% · 136K`); select it for the window, the exact
+  percentage and omp's status line (on a phone, the percentage alone, under the title, in place of the agent kind). The
+  estimate comes from omp's rounded percentage, not a token count. Unknown readings stay
+  hidden; a reading taken while omp rests, or before its panel hid the gauge, is marked as
+  the last one.
 - **Composer and terminal together** on a computer: under an agent's terminal, the composer stays
   available; typing in it takes control of the terminal's size ([Terminal](terminal.md)).
 - The model and effort pickers, the slash-command list and Codex update cards are v2 only.

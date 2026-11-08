@@ -11,11 +11,18 @@ export interface OutboxItem extends Omit<QueuedMessage, 'state'> {
   local?: boolean
   // When the server answered (a slow send must not shorten its stay).
   settledAt?: number
+  // When a state first no longer listed this record (the agent took it).
+  goneAt?: number
 }
 
-// How long a record the server returned stays shown without the server
-// listing it (it lands in the transcript in the meantime).
+// A record the server no longer lists (the agent took the message) stays
+// until a transcript read that started this long after it left: the message
+// is in the conversation by then (shown there, see pendingQueue.ts) or it will
+// never be (typed into a menu…). Until such a read, it stays: a slow or failing
+// read of the conversation must not make a sent message vanish.
 export const SETTLED_MS = 10000
+// Never re-read (conversation not open, reads failing for that long): it goes anyway.
+export const GONE_MAX_MS = 5 * 60_000
 
 let seq = 0
 export const newOutboxId = () => `w-${Date.now().toString(36)}${(seq++ % 1296).toString(36).padStart(2, '0')}${Math.random().toString(36).slice(2, 6)}`
@@ -25,11 +32,12 @@ export function addSending(list: OutboxItem[], id: string, text: string, at: num
 }
 
 // The server answered: its record replaces the bubble (same id; the time of
-// the tap is kept, so messages typed in a row stay in order). No record (typed
-// as an answer, agent not ready yet…): the bubble goes.
+// the tap is kept, so messages typed in a row stay in order). No record
+// (herdr-core keeps no queue: the message was typed into the agent): the
+// bubble stays as a sent message, unlisted, until the transcript has been read
+// again (see prune) — it shows there once in it (see pendingQueue.ts).
 export function settle(list: OutboxItem[], id: string, server: QueuedMessage | null, now: number): OutboxItem[] {
-  if (!server) return list.filter(q => q.id !== id)
-  return list.map(q => (q.id === id ? { ...server, id, at: q.at ?? server.at, settledAt: now } : q))
+  return list.map(q => (q.id !== id ? q : server ? { ...server, id, at: q.at ?? server.at, settledAt: now } : { id, text: q.text, at: q.at, settledAt: now }))
 }
 
 // The request failed: the bubble stays, "Not sent", with Retry / Cancel.
@@ -43,14 +51,27 @@ export function resend(list: OutboxItem[], id: string): OutboxItem[] {
 }
 
 // A new server state: the records it lists win (shown from its state from now
-// on); records it returned but no longer lists go after a while. A bubble
+// on); records it returned but no longer lists go after a read of the
+// conversation made long enough after they left (`readAt`: when the last
+// successful read of this conversation started, see SETTLED_MS). A bubble
 // still sending only goes on its own outcome. A bubble whose request failed
 // stays "Not sent", unless the server lists it: then it got the message after
 // all (the answer was lost on the way), and its record decides from now on,
 // so that once the message lands the old "Not sent" does not come back.
-export function prune(list: OutboxItem[], server: QueuedMessage[], now: number): OutboxItem[] {
+export function prune(list: OutboxItem[], server: QueuedMessage[], now: number, readAt = 0): OutboxItem[] {
   const known = new Set(server.map(q => q.id))
-  return list.filter(q => q.state === 'sending' || (q.local ? !known.has(q.id) : !known.has(q.id) && now - (q.settledAt ?? q.at ?? 0) < SETTLED_MS))
+  const out: OutboxItem[] = []
+  for (const q of list) {
+    if (q.state === 'sending') out.push(q)
+    else if (known.has(q.id)) continue
+    else if (q.local) out.push(q)
+    else {
+      const gone = q.goneAt ?? Math.max(now, q.settledAt ?? q.at ?? 0)
+      if (readAt - gone >= SETTLED_MS || now - gone >= GONE_MAX_MS) continue
+      out.push(q.goneAt === gone ? q : { ...q, goneAt: gone })
+    }
+  }
+  return out
 }
 
 // What the conversation shows: the server's records (its state wins), then the

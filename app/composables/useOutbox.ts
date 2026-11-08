@@ -11,6 +11,13 @@ import { sendMessage } from './useActions'
 const boxes = reactive(new Map<string, OutboxItem[]>())
 const chains = new Map<string, Promise<unknown>>()
 const recent = new Map<string, RecentSend[]>()
+// When the last successful read of each conversation started (see utils/outbox.ts prune).
+const reads = new Map<string, number>()
+
+// ChatView: a read of this conversation's transcript, started at `at`, answered.
+export function outboxRead(paneId: string, at: number) {
+  if (at > (reads.get(paneId) ?? 0)) reads.set(paneId, at)
+}
 
 // The composer's submit, before it sends: false when the same text went to
 // this conversation a moment ago (utils/outbox.ts isRepeat), true otherwise,
@@ -83,5 +90,5 @@ export function outboxAdd(paneId: string, q: QueuedMessage) {
 }
 
 export function outboxPrune(paneId: string, server: QueuedMessage[]) {
-  if (boxes.has(paneId)) update(paneId, l => prune(l, server, Date.now()))
+  if (boxes.has(paneId)) update(paneId, l => prune(l, server, Date.now(), reads.get(paneId) ?? 0))
 }

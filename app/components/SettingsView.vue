@@ -1,20 +1,22 @@
 <script setup lang="ts">
-// Settings, in sections: appearance, conversation, terminal, agents,
+// Settings, in sections: appearance, conversation, terminal, agents (with pace), machines,
 // notifications, security (passkey), shortcuts, about.
 import type { ThemeDef, ThemeGroup } from '~/utils/themes'
 import type { TypingSpeed } from '~/utils/typewriter'
-import { pasteJournalEnabled, pasteJournal, setPasteJournal } from '~/utils/pasteJournal'
-import { SETTINGS_SECTIONS, settingsBack } from '~/utils/settingsNav'
+import { SETTINGS_ALIASES, SETTINGS_SECTIONS, settingsBack } from '~/utils/settingsNav'
 import type { SettingsSection } from '~/utils/settingsNav'
 import { type QuietDuration, type QuietScope, quietUntil } from '#shared/quiet'
 import { quietPeriodEnd } from '~/utils/quietPeriodEnd'
 import { ENGINES } from '~/utils/dictation/registry'
 import { DEFAULT_MAX_SESSION_DAYS, MAX_SESSION_DAYS, type MaxSessionDays } from '#shared/sessionLimit'
+import { APP_START_DEFAULT, readAppStart, writeAppStart, type AppStart } from '#shared/appStart'
 
 const router = useRouter()
+// v3's own version (shared/v3Version.ts), also in /api/health.
+const appVersion = useRuntimeConfig().public.version
 // Sections: sidebar on a computer (one section shown), iOS Settings-style
 // list on the phone (a tap opens the section, Back returns to the list).
-// The section lives in the URL (`?section=plugins`):
+// The section lives in the URL (`?section=terminal`):
 // on the phone, opening it adds a history entry, which the system Back button
 // pops like the header's; on a computer, it replaces the entry.
 const route = useRoute()
@@ -23,17 +25,21 @@ watch(() => [route.path, route.query.section], () => {
     router.replace({ path: '/settings', query: { ...route.query, section: 'conversation' } })
   }
 }, { immediate: true })
-const section = computed<SettingsSection | null>(() => (SETTINGS_SECTIONS as readonly string[]).includes(String(route.query.section)) ? route.query.section as SettingsSection : null)
+const alias = computed(() => SETTINGS_ALIASES[String(route.query.section)] ?? null)
+const section = computed<SettingsSection | null>(() => alias.value?.section ?? ((SETTINGS_SECTIONS as readonly string[]).includes(String(route.query.section)) ? route.query.section as SettingsSection : null))
 const sectionIcons: Record<SettingsSection, string> = {
   appearance: 'i-lucide-palette', conversation: 'i-lucide-message-square', terminal: 'i-lucide-square-terminal',
-  agents: 'i-lucide-bot', projects: 'i-lucide-kanban', plugins: 'i-lucide-puzzle', phone: 'i-lucide-smartphone', notifications: 'i-lucide-bell', security: 'i-lucide-lock', shortcuts: 'i-lucide-keyboard', advanced: 'i-lucide-bug', about: 'i-lucide-info',
+  agents: 'i-lucide-bot', machines: 'i-lucide-server', projects: 'i-lucide-kanban', plugins: 'i-lucide-puzzle', phone: 'i-lucide-smartphone', notifications: 'i-lucide-bell', security: 'i-lucide-lock', shortcuts: 'i-lucide-keyboard', about: 'i-lucide-info',
 }
 const sectionLabels: Record<SettingsSection, string> = {
-  appearance: 'Appearance', conversation: 'Conversation', terminal: 'Terminal', agents: 'Agents', projects: 'Projects',
-  plugins: 'Plugins', phone: 'Phone', notifications: 'Notifications', security: 'Security', shortcuts: 'Shortcuts', advanced: 'Advanced', about: 'About',
+  appearance: 'Appearance', conversation: 'Conversation', terminal: 'Terminal', agents: 'Agents', machines: 'Machines', projects: 'Projects',
+  plugins: 'Plugins', phone: 'Phone', notifications: 'Notifications', security: 'Security', shortcuts: 'Shortcuts', about: 'About',
 }
 const sections = computed(() => SETTINGS_SECTIONS
   .filter(id => id !== 'shortcuts' || (desk.value && !coarse.value))
+  // Plugins are on hold: the section shows only once a plugin is installed
+  // (DATA_DIR/plugins). Drop this line to always show it again.
+  .filter(id => id !== 'plugins' || clientPlugins.value.length > 0)
   .map(id => ({ id, label: t(sectionLabels[id]), icon: sectionIcons[id] })))
 const activeSection = computed<SettingsSection | null>(() => {
   if (section.value && sections.value.some(s => s.id === section.value)) return section.value
@@ -41,7 +47,31 @@ const activeSection = computed<SettingsSection | null>(() => {
 })
 const activeLabel = computed(() => sections.value.find(s => s.id === activeSection.value)?.label || t('Settings'))
 const body = ref<HTMLElement | null>(null)
-watch(section, () => nextTick(() => { if (body.value) body.value.scrollTop = 0 }))
+// A new section starts at the top; an alias (?section=pacing) scrolls to its
+// group, and keeps it in place while the groups above finish loading, until
+// the user scrolls or for 3 s.
+let stopFollow = () => {}
+watch(() => route.query.section, () => nextTick(() => {
+  stopFollow()
+  const b = body.value
+  if (!b) return
+  b.scrollTop = 0
+  const el = alias.value && document.getElementById(alias.value.anchor)
+  if (!el || typeof ResizeObserver === 'undefined') return
+  const place = () => { b.scrollTop += el.getBoundingClientRect().top - b.getBoundingClientRect().top }
+  place()
+  const ro = new ResizeObserver(place)
+  ro.observe(b.firstElementChild!)
+  const timer = setTimeout(() => stopFollow(), 3000)
+  stopFollow = () => {
+    ro.disconnect()
+    clearTimeout(timer)
+    for (const ev of ['wheel', 'touchstart', 'keydown']) b.removeEventListener(ev, stopFollow)
+    stopFollow = () => {}
+  }
+  for (const ev of ['wheel', 'touchstart', 'keydown']) b.addEventListener(ev, stopFollow, { passive: true })
+}), { immediate: true })
+onBeforeUnmount(() => stopFollow())
 function openSection(id: SettingsSection) {
   if (id === section.value) return
   const to = { path: '/settings', query: { section: id } }
@@ -67,8 +97,6 @@ onMounted(async () => {
 const shellsOn = showShells
 const countersOn = showCounters
 const quotasOn = showQuotas
-const homeGroup = homeGrouping
-const homeGroupItems = computed(() => [{ value: 'machine', label: t('Machine') }, { value: 'state', label: t('State') }])
 const compactOn = compactList
 const autoReorderOn = autoReorderReady
 const encryptedOn = encryptedText
@@ -151,25 +179,6 @@ const backdropItems = computed(() => [
   { label: 'wherdr grid', description: t('Dotted grid with light packets, like wherdr.dev.'), value: 'wherdr' },
   { label: 'herdr grid', description: t('Flat line grid, like herdr.dev.'), value: 'herdr' },
 ])
-
-// Inventory of the reachable machines; the preferences follow the user across devices.
-const agentMachines = computed(() => {
-  const configured = appConfig.value.machines
-  return configured?.filter(m => m.local || (Boolean(m.home) && (machineInfo(m.key)?.status === 'online' || (!machineInfo(m.key) && m.online))))
-    || [{ key: '', label: hostLabel.value || t('This machine'), kinds: appConfig.value.kinds }]
-})
-const installedAgents = computed(() => [...new Set(agentMachines.value.flatMap(m => m.kinds || []))])
-function agentChecked(kind: string) { return !hiddenAgents.value.includes(kind) }
-function setAgentChecked(kind: string, checked: boolean) {
-  hiddenAgents.value = checked
-    ? hiddenAgents.value.filter(k => k !== kind)
-    : [...hiddenAgents.value, kind]
-}
-function agentMachineHint(kind: string) {
-  const available = agentMachines.value.filter(m => m.kinds.includes(kind))
-  if (available.length === agentMachines.value.length) return ''
-  return available.map(m => m.label || t('This machine')).join(', ')
-}
 
 // ------------------------------------------------------------ notifications
 const subscribed = pushOn
@@ -277,7 +286,23 @@ const deadlineText = computed(() => {
   return tl(`This device asks for the passkey again at the first opening after ${when}.`, `Cet appareil redemandera la clé d’accès à la première ouverture après le ${when}.`)
 })
 
+// How this device opens the app (shared/appStart.ts): kept where the service
+// worker reads it, nothing on the server.
+const appStartItems = [
+  { label: t('Up to date'), description: t('Network first: always the current version, the saved copy only past 3 s without an answer. Default.'), value: 'network' },
+  { label: t('Instant'), description: t('Saved copy first: opens at once, even on a weak network; a Reload banner announces a newer version.'), value: 'cache' },
+]
+const appStartChoice = ref<AppStart>(APP_START_DEFAULT)
+const appStart = computed({
+  get: () => appStartChoice.value,
+  set: (value: AppStart) => {
+    appStartChoice.value = value
+    writeAppStart(caches, value).catch(() => toast(t('Could not save this choice on this device.'), true))
+  },
+})
+
 onMounted(() => {
+  if (typeof caches !== 'undefined') readAppStart(caches).then((v) => { appStartChoice.value = v })
   refreshTerminalRenderStatus()
   loadConfig()
   refreshPush().then(refreshQuiet)
@@ -302,6 +327,7 @@ onMounted(() => {
         </button>
       </nav>
       <div v-show="activeSection" ref="body" class="settings-body">
+        <div class="settings-column">
         <h2 class="settings-section-title">{{ activeLabel }}</h2>
 
         <div v-show="activeSection === 'appearance'" class="settings-section">
@@ -339,9 +365,6 @@ onMounted(() => {
 
           <div class="settings-group">
             <h3>{{ t('Home screen') }}</h3>
-            <h4 id="home-group-label">{{ t('Group by') }}</h4>
-            <URadioGroup v-model="homeGroup" :items="homeGroupItems" aria-labelledby="home-group-label" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
-
             <label class="settings-toggle">
               <span><b>{{ t('Compact list') }}</b><small>{{ t('Cards: one line in Compact, two in Normal with current activity. Follows you on every device.') }}</small></span>
               <USwitch v-model="compactOn" color="success" size="xl" />
@@ -484,23 +507,16 @@ onMounted(() => {
         </div>
 
         <div v-show="activeSection === 'agents'" class="settings-section">
-          <CoreMachines />
-          <div class="settings-group">
-            <h3>{{ t('Offered agents') }}</h3>
-            <p class="muted agent-pref-intro">{{ t('Agents offered wherever an agent is chosen. Terminal is always available.') }}</p>
-            <div v-if="installedAgents.length" class="agent-pref-list">
-              <label v-for="agent in installedAgents" :key="agent" class="settings-toggle">
-                <span><b>{{ kindLabel(agent) }}</b><small v-if="agentMachineHint(agent)">{{ agentMachineHint(agent) }}</small></span>
-                <input class="agent-pref-check" type="checkbox" :checked="agentChecked(agent)" @change="setAgentChecked(agent, ($event.target as HTMLInputElement).checked)">
-              </label>
-            </div>
-            <p v-else class="muted agent-pref-intro">{{ t('No agents installed on online machines.') }}</p>
-            <p class="muted agent-pref-note">{{ t('Choices follow you on every device.') }}</p>
-          </div>
+          <OfferedAgentsSettings />
           <div id="claude-quotas" class="settings-group">
             <h3>{{ tl('Claude quotas', 'Quotas Claude') }}</h3>
             <ClaudeQuotaSetup v-if="activeSection === 'agents'" />
           </div>
+          <PacingSettings id="settings-pace" :active="activeSection === 'agents'" />
+        </div>
+
+        <div v-show="activeSection === 'machines'" class="settings-section" data-testid="settings-machines">
+          <CoreMachines />
         </div>
 
         <div v-show="activeSection === 'notifications'" class="settings-section">
@@ -534,6 +550,11 @@ onMounted(() => {
 
         <div v-show="activeSection === 'phone'" class="settings-section">
           <PhoneSetup :active="activeSection === 'phone'" />
+          <div class="settings-group">
+            <h3>{{ t('App start') }}</h3>
+            <URadioGroup v-model="appStart" :items="appStartItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
+            <p class="muted settings-hint">{{ t('On this device only.') }}</p>
+          </div>
         </div>
 
         <div v-show="activeSection === 'security'" class="settings-section">
@@ -559,24 +580,13 @@ onMounted(() => {
           <ShortcutsReference />
         </div>
 
-        <div v-show="activeSection === 'advanced'" class="settings-section">
-          <div class="settings-group">
-            <h3>{{ t('Paste journal') }}</h3>
-            <label class="settings-toggle">
-              <span>{{ t('Paste journal') }}</span>
-              <USwitch :model-value="pasteJournalEnabled" @update:model-value="setPasteJournal" />
-            </label>
-            <p class="muted settings-hint">{{ t('Records the last 50 paste events on this device, without text content. Turning it off clears the journal.') }}</p>
-            <pre class="mono paste-journal" style="white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px">{{ JSON.stringify(pasteJournal, null, 2) }}</pre>
-          </div>
-        </div>
-
         <div v-show="activeSection === 'about'" class="settings-section">
           <div class="settings-group">
             <h3>{{ t('Application') }}</h3>
-            <p class="settings-version">wherdr · v3 · herdr-core</p>
+            <p class="settings-version">wherdr {{ appVersion }} · herdr-core</p>
             <button type="button" class="settings-action solo" @click="reloadApp"><UIcon name="i-lucide-refresh-cw" />{{ t('Reload app') }}</button>
           </div>
+        </div>
         </div>
       </div>
     </div>

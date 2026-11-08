@@ -30,6 +30,9 @@ export interface PendingMessage {
   missing: number
   // Long pasted texts of `raw`, as the server lists them (QueuedMessage.pasted).
   pasted?: string[]
+  // Delivered, but held in the agent's own queue (Claude's transcript lists it as
+  // enqueued and not yet taken): it reads it at its next step or when the turn ends.
+  inAgentQueue?: boolean
 }
 
 const normText = (s: string) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase()
@@ -97,16 +100,57 @@ export function pendingQueue(o: {
     list.push({ id: `cc-${q.ts}`, text: known || q.text, missing: known ? 0 : images })
   }
   const phases = queuedPhases(list.map(q => q.text), o.screen)
-  return list.map((q, i) => ({
-    id: q.id,
-    raw: q.text,
-    mine: !q.id.startsWith('cc-'),
-    // Held or failed on the server: never typed yet, so never "sent".
-    phase: q.state ? 'queued' : phases[i]!,
-    state: q.state || null,
-    ...(q.local ? { local: true } : {}),
-    photos: uploadNames(q.text),
-    missing: q.missing || 0,
-    ...(q.pasted ? { pasted: q.pasted } : {}),
-  }))
+  // Claude's transcript queue is the truth on what it has not taken yet: its
+  // screen may show a queued message where a sent one stands (Claude Code
+  // 2.1.3xx draws its queue above the spinner).
+  const queued = o.idle ? [] : o.claude
+  // Photos alone: an entry with as many images, each taken once.
+  const queuedPhotos = queued.filter(c => !c.text && (c.images || 0) > 0).map(c => c.images)
+  const held = (q: OutboxItem) => {
+    if (q.id.startsWith('cc-')) return true
+    if (q.state) return false
+    if (!photosOnly(q.text)) return queued.some(c => Boolean(c.text) && holds(q.text, c.text))
+    const i = queuedPhotos.indexOf(uploadNames(q.text).length)
+    return i >= 0 && queuedPhotos.splice(i, 1).length > 0
+  }
+  return list.map((q, i) => {
+    const inAgentQueue = held(q)
+    return {
+      id: q.id,
+      raw: q.text,
+      mine: !q.id.startsWith('cc-'),
+      // Held or failed on the server: never typed yet, so never "sent". Answered
+      // with no record (herdr-core types it at once, see outbox.ts settle) while
+      // the agent is idle: the agent has it, it is just not in the transcript yet.
+      phase: q.state || inAgentQueue ? 'queued' : q.settledAt && o.idle && !o.screen && !q.id.startsWith('cc-') ? 'sent' : phases[i]!,
+      state: q.state || null,
+      ...(q.local ? { local: true } : {}),
+      photos: uploadNames(q.text),
+      missing: q.missing || 0,
+      ...(q.pasted ? { pasted: q.pasted } : {}),
+      ...(inAgentQueue ? { inAgentQueue } : {}),
+    }
+  })
+}
+
+// What a waiting message is waiting on (see waitingOn in ChatView.vue).
+export type WaitingOn = 'stopped' | 'question' | 'working' | 'sending'
+export type PendingLabel =
+  | { kind: 'read' }
+  | { kind: 'sending' }
+  | { kind: 'stopped' }
+  | { kind: 'question' }
+  | { kind: 'agent-queue', agent: string }
+  | { kind: 'queued' }
+
+// The tag under a waiting message. "Read" only once the agent took it: a
+// message the agent holds in its own queue says so (it is sent when the turn
+// ends, or at its next step).
+export function pendingLabel(q: Pick<PendingMessage, 'phase' | 'state' | 'inAgentQueue'>, waitFor: WaitingOn, agent: string | null | undefined): PendingLabel {
+  if (q.state === 'sending') return { kind: 'sending' }
+  if (q.phase === 'sent' && !q.inAgentQueue) return { kind: 'read' }
+  if (waitFor === 'stopped') return { kind: 'stopped' }
+  if (waitFor === 'question') return { kind: 'question' }
+  if (q.inAgentQueue) return { kind: 'agent-queue', agent: agent || '' }
+  return waitFor === 'working' ? { kind: 'queued' } : { kind: 'sending' }
 }

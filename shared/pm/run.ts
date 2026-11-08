@@ -2,8 +2,14 @@
 // wherdr.* labels on herdr-core, so the engine finds it again after a restart.
 import type { Project } from './project'
 import type { Prefs, Step, Template } from './workflow'
-import type { StepState } from './steps'
+import { fillBase, planSteps, type StepState } from './steps'
 import { needsShots, shotMode } from './shots'
+import type { Stopped } from './stop'
+import { isPublic, publicWorkerSection } from './visibility'
+
+// Who made a task: the user (the board, their turn), the coordinator in a
+// wake, an automation, a mission.
+export type TaskOrigin = 'user' | 'coordinator' | 'automation' | 'mission'
 
 export interface Task {
   id: string // <project key>-<n>
@@ -17,11 +23,19 @@ export interface Task {
   mech?: Record<string, number> // the engine's mechanical moves made (key → when): never twice
   run?: string // the current run
   step?: StepState // where the step engine has it
+  base?: string // the project's working branch when it started ('' none): a later change leaves it alone
   prefs?: Prefs
   tags?: string[] // short texts, shown on the card
   links?: { label: string, url: string }[] // the PR, the ticket…
   shotToken?: string // the agent's key for POST /api/pm/shot (never sent to the browser)
   log?: TaskLogEntry[] // who changed what, newest last
+  after?: string // tasks of the same project, comma-separated: this one starts once they are done
+  stopped?: Stopped // who stopped it and why (stop.ts): it waits for the user
+  autopilot?: true // started or added by the coordinator in a wake: its autopilot's own
+  auto?: string // the automation that added it
+  origin?: TaskOrigin // who made it: only automatic work is held by the pace (pace.ts)
+  held?: string // an automatic start waits for memory on its machine (memory.ts): the engine starts it once memory is back
+  cleanup?: { done?: true, skipped?: string } // its worktree removed, or why it stays (cleanup.ts)
   createdAt: number
 }
 
@@ -43,7 +57,7 @@ export interface Run {
   terminal?: string // herdr-core address, once started
   attempt: number // 1, or 2 after an agent that exited at once
   state: 'starting' | 'running' | 'ended'
-  endedBy?: 'exit' | 'lost'
+  endedBy?: 'exit' | 'lost' | 'stopped'
   startedAt: number
 }
 
@@ -58,10 +72,16 @@ export function waitOf(t: { labels?: Record<string, string>, status?: string | {
   const s = typeof t?.status === 'string' ? t.status : t?.status?.state
   if (s === 'blocked') return 'permission'
 }
+// Claude's "Do you trust this folder?" dialog on the worktree the engine made
+// for the task from the user's own project: the engine answers it, once.
+export const trustPrompt = (screen: string, worktree: string) =>
+  /Yes, I trust this folder/.test(screen) && screen.includes(worktree)
 // An agent that stopped because it is not logged in.
 export const isAuthFailure = (text: string) => /not logged in|log ?in again|please (run )?\/?login|authenticat|unauthori[sz]ed|invalid api key|\b401\b/i.test(text)
 // Agents the engine knows how to start with a pinned model and a first message.
 export const PROGRAMS = ['claude', 'codex'] as const
+// reviewModel: the worker's own model, in a new session.
+export const SAME_MODEL = 'same'
 const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:[\]/-]{0,63}$/
 
 export const runLabels = (install: string, run: Run) =>
@@ -80,6 +100,14 @@ export function agentLine(program: string, model: string, instructions: string) 
   return ['exec', program, '--model', model, `Read ${instructions} and follow it.`].map((s, i) => (i < 2 ? s : quote(s))).join(' ')
 }
 
+// A task's working branch: the one it started with, else its project's now.
+export const taskBase = (task: Pick<Task, 'base'>, p?: Pick<Project, 'base'>) =>
+  (task.base !== undefined ? task.base : p?.base) || undefined
+
+// A task's planned steps, with its working branch.
+export const taskPlan = (t: Template, task: Pick<Task, 'type' | 'prefs' | 'base'>, p?: Pick<Project, 'base'>) =>
+  planSteps(t, { type: task.type, ...(task.prefs ? { prefs: task.prefs } : {}) }, taskBase(task, p))
+
 const typeSteps = (t: Template, type: string): Step[] =>
   (t.taskTypes[type]?.steps ?? []).map(s => (typeof s === 'string' ? t.steps?.[s] : s)).filter((s): s is Step => !!s)
 
@@ -97,17 +125,20 @@ export function workerPlan(t: Template, task: Task): { program: string, model: s
 }
 
 // Program and model of the reviewer: reviewAgent and reviewModel, nearest
-// level first. The reviewer is always of another model than the worker.
+// level first. The reviewer is of another model than the worker, unless the
+// template says reviewModel "same": a fresh session of the worker's model.
 export function reviewerPlan(t: Template, task: Task): { program: string, model: string } | { reason: string } {
   const worker = workerPlan(t, task)
   if ('reason' in worker) return worker
   if (!typeSteps(t, task.type).some(s => s.holder === 'reviewer')) return { reason: `Task type "${task.type}" has no reviewer step` }
   const tt = t.taskTypes[task.type]
   const pick = (k: 'reviewAgent' | 'reviewModel') => task.prefs?.[k] || tt?.prefs?.[k] || t.prefs?.[k] || ''
-  const program = pick('reviewAgent') || worker.program, model = pick('reviewModel')
+  const program = pick('reviewAgent') || worker.program, asked = pick('reviewModel')
+  const same = asked === SAME_MODEL, model = same ? worker.model : asked
   if (!(PROGRAMS as readonly string[]).includes(program)) return { reason: `The engine cannot start "${program}": claude or codex` }
+  if (same && program !== worker.program) return { reason: `reviewModel "${SAME_MODEL}" needs the worker's agent (${worker.program})` }
   if (!MODEL_RE.test(model)) return { reason: model ? `Invalid review model "${model}"` : 'No review model set: add prefs.reviewModel to the template' }
-  if (model === worker.model) return { reason: `The reviewer must use another model than the worker (${model})` }
+  if (!same && model === worker.model) return { reason: `The reviewer must use another model than the worker (${model}), or set reviewModel to "${SAME_MODEL}"` }
   return { program, model }
 }
 
@@ -131,15 +162,17 @@ export function shotsSection(step: Step, task: Pick<Task, 'id'>, shots: { base: 
 }
 
 // The instructions file: the task, then every level's instructions, broadest
-// first, then how to upload screenshots when a worker step asks for them.
-export function instructionsText(p: Project, t: Template, task: Task, run: Pick<Run, 'worktree' | 'branch'>, shots?: { base: string, token: string }) {
+// first, then how to upload screenshots when a worker step asks for them, then
+// a public repository's rule (leakCheck: its own check, see ownLeakCheck).
+export function instructionsText(p: Project, t: Template, task: Task, run: Pick<Run, 'worktree' | 'branch'>, shots?: { base: string, token: string }, leakCheck?: string) {
   const step = typeSteps(t, task.type).find(s => s.holder === 'worker')
-  const parts = [t.instructions, t.taskTypes[task.type]?.instructions, step?.instructions].map(s => s?.trim()).filter(Boolean)
+  const parts = [t.instructions, t.taskTypes[task.type]?.instructions, step?.instructions].map(s => s?.trim()).filter(Boolean).map(s => fillBase(s!, taskBase(task, p)))
   const visual = shotStep(t, task.type)
   return [
     `# ${task.id}: ${task.title}`, '', task.description.trim() || '(no description)', '',
     '## Instructions', '', ...(parts.length ? parts : ['(none)']), '',
     ...(visual && shots ? shotsSection(visual, task, shots) : []),
+    ...(isPublic(p) ? publicWorkerSection(leakCheck) : []),
     `You work in ${run.worktree} on branch ${run.branch} of project ${p.name}.`, '',
   ].join('\n')
 }

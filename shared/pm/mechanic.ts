@@ -17,7 +17,7 @@ export interface MechFacts {
   branch: string
   agentBusy: boolean // the worker's terminal is working: its worktree is not touched
   head?: string // the task's commit
-  pr?: PrState // its open PR
+  pr?: PrState // its open PR, else its merged one (merged: true)
   loggedIn?: boolean // the agent's program answers its login status again
 }
 
@@ -54,7 +54,21 @@ export function nextMove(f: MechFacts): { move: Move, key: string } | undefined 
   // The rest needs the task's open PR, at its commit, opened by an earlier step.
   const prStep = plan.slice(0, s.at).findLast(p => p.action?.kind === 'github.pr')
   const base = prStep?.action?.base
-  if (!pr || !head || pr.headRefOid !== head || !base) return
+  if (!pr || !head || !base) return
+  const engineMerges = step.action?.kind === 'github.merge' && step.ends === 'action' && !step.guarded && !isProtected(guards, pr.baseRefName)
+    && mayMerge(guards, pr.baseRefName, 'engine')
+  // One per commit and merge attempt: a head reviewed again is merged on the step's next attempt.
+  const n = s.tries?.[step.id] ?? 0
+  const mergeKey = `merge:${head}${n > 1 ? `:${n}` : ''}`
+  const mergeMove = () => (engineMerges && (pr.merged || prReady(pr, head, step.action!.checks).ok)
+    ? pick(mergeKey, { kind: 'merge', url: pr.url, base: pr.baseRefName })
+    : undefined)
+  // Merged on GitHub already, whatever its head: nothing to fix on it, the merge
+  // step records it, even after an attempt of its own that was refused.
+  if (pr.merged) return engineMerges ? pick(`merged:${pr.url}`, { kind: 'merge', url: pr.url, base: pr.baseRefName }) : undefined
+  // The PR head is not the task's commit (a CI fix not pushed, a push from
+  // elsewhere): the merge step pushes it and has it reviewed again, or says why not.
+  if (pr.headRefOid !== head) return engineMerges && !f.agentBusy ? pick(mergeKey, { kind: 'merge', url: pr.url, base: pr.baseRefName }) : undefined
   if (pr.baseRefName !== base) return pick(`base:${head}`, { kind: 'fix-base', base })
   if (f.agentBusy) return
   if (['BEHIND', 'DIRTY'].includes(pr.mergeStateStatus ?? '') && !isProtected(guards, f.branch)) return pick(`catch-up:${head}`, { kind: 'catch-up', base })
@@ -69,9 +83,7 @@ export function nextMove(f: MechFacts): { move: Move, key: string } | undefined 
   }
   // A merge step the branch rule gives the engine. A protected branch is never
   // merged without the user's gesture, whatever the rule or the autopilot.
-  if (step.action?.kind === 'github.merge' && step.ends === 'action' && !step.guarded && !isProtected(guards, pr.baseRefName)
-    && mayMerge(guards, pr.baseRefName, 'engine') && prReady(pr, head).ok)
-    return pick(`merge:${head}`, { kind: 'merge', url: pr.url, base: pr.baseRefName })
+  return mergeMove()
 }
 
 // What the agent is told when its CI is red.

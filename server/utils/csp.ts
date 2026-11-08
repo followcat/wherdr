@@ -2,13 +2,15 @@ import crypto from 'node:crypto'
 
 export const CSP_BASE = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; manifest-src 'self'"
 
-// The on-device dictation worker's own policy (a worker follows the policy of
+// The on-device dictation workers' own policy (a worker follows the policy of
 // its script's response, not the page's): 'wasm-unsafe-eval' lets it compile
 // its WebAssembly runtime (sherpa-onnx, onnxruntime-web, served by
 // /models/runtime/). It allows compiling WebAssembly, never eval() of
 // JavaScript ('unsafe-eval' stays out); the page itself cannot compile any.
 export const DICTATION_WORKER_PATH = '/workers/dictation-worker.js'
 export const CSP_DICTATION_WORKER = CSP_BASE.replace("script-src 'self'", "script-src 'self' 'wasm-unsafe-eval'")
+export const WEBGPU_WORKER_PATH = '/workers/dictation-webgpu-worker.js'
+export const CSP_WEBGPU_WORKER = CSP_DICTATION_WORKER
 
 const LABEL = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?'
 // A machine of a tailnet: <machine>.<tailnet>.ts.net (MagicDNS), and nothing else.

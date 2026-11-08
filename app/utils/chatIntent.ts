@@ -25,7 +25,12 @@ export function createChatIntentCache(read: (pane: string, signal: AbortSignal) 
     const controller = new AbortController()
     const entry: Entry = { at: Date.now(), controller, result: Promise.resolve(undefined) }
     entries.set(key, entry)
-    entry.result = read(pane, controller.signal).then(r => {
+    // A card's pointerdown calls this before its long press starts: a reader
+    // that throws at once fails like a rejected read, never into the card.
+    let started: Promise<ChatResponse>
+    try { started = read(pane, controller.signal) }
+    catch (e) { started = Promise.reject(e) }
+    entry.result = started.then(r => {
       if (entries.get(key) !== entry || !r.available || r.unchanged || JSON.stringify(r).length > 500_000) {
         if (entries.get(key) === entry) drop(key)
         return undefined
@@ -34,6 +39,10 @@ export function createChatIntentCache(read: (pane: string, signal: AbortSignal) 
     }).catch(() => {
       if (entries.get(key) === entry) drop(key)
       return undefined
+    }).finally(() => {
+      // The result stays cached, but a settled read no longer needs its abort
+      // listener or deadline timer (including the older Safari fallback).
+      controller.abort()
     })
   }
   async function take(key: string) {
@@ -46,6 +55,20 @@ export function createChatIntentCache(read: (pane: string, signal: AbortSignal) 
     return response
   }
   return { preload, take, clear: () => { for (const key of entries.keys()) drop(key) } }
+}
+
+// The caller's signal, also aborted past `ms`. AbortSignal.any needs Safari
+// 17.4 while wherdr supports iOS 16.4 (docs/phone.md): built by hand there.
+export function withDeadline(signal: AbortSignal, ms: number): AbortSignal {
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([signal, AbortSignal.timeout(ms)])
+  const c = new AbortController()
+  if (signal.aborted) {
+    c.abort(signal.reason)
+    return c.signal
+  }
+  const timer = setTimeout(() => c.abort(new DOMException('The operation timed out.', 'TimeoutError')), ms)
+  signal.addEventListener('abort', () => { clearTimeout(timer); c.abort(signal.reason) }, { once: true })
+  return c.signal
 }
 
 export function chatHoverIntent(run: () => void) {

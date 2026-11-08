@@ -6,6 +6,22 @@ import type { Pane } from '../shared/types'
 const pane = (id: string, extra: Partial<Pane> = {}) => ({ id, workspace: 'w', coreAddress: `m/${id}`, agent: null, status: 'idle', ...extra }) as Pane
 const settle = () => new Promise(r => setTimeout(r, 5))
 
+describe('omp preview', () => {
+  it('never shows omp\'s status line and context gauge as the card preview', async () => {
+    const screen = 'Tests pass.\n ⠸ 4s > ⬢ Model > 🗑 ~/demo > ⑂ main ▶────100%──────╎───┃─────1M─\n╰─'
+    const p = createCorePreviews({ reply: async () => null, read: async () => screen })
+    p.apply([pane('o', { agent: 'omp', stateSeq: 1 })])
+    await settle()
+    const list = [pane('o', { agent: 'omp', stateSeq: 1 }), pane('s', { stateSeq: 1 })]
+    p.apply(list)
+    await settle()
+    p.apply(list)
+    expect(list[0]!.preview).toBe('Tests pass.')
+    // Another terminal is read as before.
+    expect(list[1]!.preview).toContain('100%')
+  })
+})
+
 describe('lastLine', () => {
   it('skips Claude\'s duration line and shows the last answer', () => {
     const screen = readFileSync(new URL('./fixtures/claude-done-time.txt', import.meta.url), 'utf8')

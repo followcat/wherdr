@@ -1,0 +1,17 @@
+❯ Run ./work.sh with the Bash tool, then reply done.
+
+  Running work.sh script in project directory · 16s
+  ⎿  $ ./work.sh (15s · 16 lines)
+     (ctrl+b to run in background)
+
+❯ first queued note, please answer with ONE
+❯ second queued note, please answer with TWO
+  ctrl+enter to send now
+
+✻ Fermenting… (17s · ↓ 230 tokens)
+  ⎿  Tip: Hit shift+tab to cycle between modes
+
+────────────────────────────────────────────────────────────
+❯ Press up to edit queued messages
+────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)

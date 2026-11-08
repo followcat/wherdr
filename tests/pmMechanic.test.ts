@@ -40,6 +40,17 @@ describe('mechanical moves', () => {
     expect(nextMove(facts({ pr: pr({ baseRefName: 'main' }) }))).toEqual({ key: 'base:abc1234', move: { kind: 'fix-base', base: 'v3' } })
     // Not the task's commit, or before the PR step: nothing.
     expect(nextMove(facts({ pr: pr({ baseRefName: 'main', headRefOid: 'other' }) }))).toBeUndefined()
+    // At the merge step, a PR head that is not the task's commit (a CI fix not pushed): the merge step sorts it out, once per attempt.
+    expect(nextMove(facts({ pr: pr({ headRefOid: 'other' }) }))).toEqual({ key: 'merge:abc1234', move: { kind: 'merge', url: 'https://gh/pr/7', base: 'v3' } })
+    expect(nextMove(facts({ pr: pr({ headRefOid: 'other' }), agentBusy: true }))).toBeUndefined()
+    expect(nextMove(facts({ task: task({ step: step(3, { acting: true, tries: { merge: 2 } }) }) }))?.key).toBe('merge:abc1234:2')
+    // Merged on GitHub already: never edited, the merge step records it.
+    const merged = pr({ baseRefName: 'main', headRefOid: 'later', merged: true, statusCheckRollup: [] })
+    expect(nextMove(facts({ pr: merged, task: task({ step: step(2) }) }))).toBeUndefined()
+    const mergedMove = { key: 'merged:https://gh/pr/7', move: { kind: 'merge', url: 'https://gh/pr/7', base: 'v3' } }
+    expect(nextMove(facts({ pr: { ...merged, baseRefName: 'v3' } }))).toEqual(mergedMove)
+    // Merged by hand after the step's own attempt was refused at this head: recorded all the same.
+    expect(nextMove(facts({ pr: { ...merged, baseRefName: 'v3' }, task: task({ mech: { 'merge:abc1234': 1 } }) }))).toEqual(mergedMove)
     expect(nextMove(facts({ task: task({ step: step(1) }), pr: pr({ baseRefName: 'main' }) }))).toBeUndefined()
   })
 
@@ -116,6 +127,44 @@ describe('what a task waits for', () => {
       term = { address: 'host/t3', labels: { 'wherdr.report': 'blocked:question' }, status: { state: 'idle' } }
       await syncWaits(deps)
       expect(await store.task(t.id)).toMatchObject({ state: 'waiting', waitKind: 'question', waiting: 'The agent asks a question' })
+      // A permission says what is asked, as herdr-core reads it.
+      await store.saveTask({ ...(await store.task(t.id))!, state: 'working', waitKind: undefined, waiting: undefined })
+      term = { address: 'host/t3', status: { state: 'blocked', msg: 'approve Bash: npm test' } }
+      await syncWaits(deps)
+      expect(await store.task(t.id)).toMatchObject({ waitKind: 'permission', waiting: 'approve Bash: npm test' })
+    } finally { await fs.rm(dir, { recursive: true, force: true }) }
+  })
+
+  it('syncWaits answers the trust dialog of the task\'s own worktree once, and no other dialog', async () => {
+    const fs = await import('node:fs/promises'), os = await import('node:os'), path = await import('node:path')
+    const { createPmStore } = await import('../server/utils/pmStore')
+    const { syncWaits } = await import('../server/utils/pmMechanic')
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-mech-'))
+    try {
+      const store = createPmStore(dir)
+      await store.setEnabled(true)
+      await fs.writeFile(store.files.projects, JSON.stringify({ v: 1, projects: [{ key: 'CO', name: 'CO', machine: '', path: '/src', addedAt: 1 }] }))
+      const t = await store.addTask({ project: 'CO', title: 'Fix', type: 'feature' })
+      const run = (id: string, terminal: string, worktree: string) => ({ id, task: t.id, role: 'worker' as const, program: 'claude', model: 'opus', machine: '', worktree, branch: 'b', instructions: '', terminal, attempt: 1, state: 'running' as const, startedAt: Date.now() })
+      await store.saveRun(run('r2', 'h/t4', '/home/u/.wherdr/pm/worktrees/CO-1'))
+      await store.saveRun(run('r3', 'h/t5', '/home/u/.wherdr/pm/worktrees/CO-9'))
+      await store.saveTask({ ...t, state: 'working', run: 'r2' })
+      const screen: Record<string, string> = {
+        'h/t4': 'Accessing workspace:\n /home/u/.wherdr/pm/worktrees/CO-1\n ❯ No, exit\n   Yes, I trust this folder',
+        'h/t5': 'Accessing workspace:\n /home/u/elsewhere\n ❯ No, exit\n   Yes, I trust this folder',
+      }
+      const keys: unknown[] = []
+      const call = async (method: string, p: { terminal: string, keys?: string[] }) => {
+        if (method === 'terminal.list') return { terminals: [{ address: 'h/t4', status: null }, { address: 'h/t5', status: null }] }
+        if (method === 'terminal.read') return { text: screen[p.terminal] }
+        if (method === 'terminal.keys') keys.push([p.terminal, p.keys])
+        return {}
+      }
+      const deps = { store, call } as unknown as Parameters<typeof syncWaits>[0]
+      await syncWaits(deps)
+      await syncWaits(deps)
+      expect(keys).toEqual([['h/t4', ['down', 'enter']]])
+      expect((await store.task(t.id))!.log?.at(-1)?.text).toBe('trusted the task\'s worktree for the worker (/home/u/.wherdr/pm/worktrees/CO-1)')
     } finally { await fs.rm(dir, { recursive: true, force: true }) }
   })
 })

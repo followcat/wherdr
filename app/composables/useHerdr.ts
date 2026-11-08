@@ -4,7 +4,7 @@ import { createSocketProbe } from '~/utils/socketProbe'
 import { DESK_QUERY, SLIM_QUERY, TABLET_QUERY } from '~/utils/layoutMode'
 import type { AppConfig, AuthStatus, HerdrState, MachineConfig, MachineInfo, Pane, Quotas } from '#shared/types'
 import { LOCAL, splitId } from '#shared/ids'
-import { clearOffline, readHome, saveHome } from '~/utils/offlineCache'
+import { clearOffline, readHome, saveHome, type SavedHome } from '~/utils/offlineCache'
 import { coreRouteAllowed } from '#shared/coreRoutes'
 import { leaseFromStatus, mayReadOffline, readOfflineAccess, setOfflineAccess, type OfflineAccess } from '~/utils/offlineAccess'
 import { activeTerminalRenderer, parseTerminalRenderer } from '~/utils/terminalRenderer'
@@ -13,7 +13,7 @@ import { settleState } from '#shared/stateReady'
 import { READY_SORTS, type ReadySort } from '#shared/spaces'
 import { DEADLINE_WARNING_MS } from '#shared/sessionLimit'
 import { effectiveTypingSpeed, encryptedTextActive, parseTypingSettings } from '~/utils/typewriter'
-import { readHiddenAgents } from '~/utils/agentChoices'
+import { readAgentOrder, readHiddenAgents } from '~/utils/agentChoices'
 import { checkNewVersionOnWake } from './useAppVersion'
 import { onceEvery } from '~/utils/onceEvery'
 import { keepIfSame } from '~/utils/keepIfSame'
@@ -21,7 +21,6 @@ import { migrateContentWidth } from '~/utils/contentWidth'
 import { readUiScale, type UiScale } from '~/utils/uiScale'
 import { readQuotaDisplay } from '~/utils/quotas'
 import { readShowShells } from '~/utils/terminalVisibility'
-import { readHomeGrouping } from '~/utils/homeGrouping'
 import { COMPACT_LIST_KEY, LEGACY_COMPACT_LIST_KEY, readCompactList } from '~/utils/compactCard'
 import { paneFallback } from '~/utils/viewMode'
 import { menuAsSheet } from '~/utils/menuRoute'
@@ -76,8 +75,6 @@ export const socketWake = ref(0)
 export const showShells = syncedRef('showShells', readShowShells, flag.write)
 export const showCounters = syncedRef('showCounters', flag.read(true), flag.write)
 export const showQuotas = syncedRef('showQuotas', flag.read(true), flag.write)
-// Existing devices keep Machine.
-export const homeGrouping = syncedRef('homeGrouping', readHomeGrouping, v => v)
 
 // Compact list: one line per card (sidebar on a computer, home list on the phone).
 // Read before the first render, so the list never changes density after it.
@@ -85,12 +82,16 @@ export const homeGrouping = syncedRef('homeGrouping', readHomeGrouping, v => v)
 export const compactList = syncedRef(COMPACT_LIST_KEY, readCompactList, flag.write)
 if (import.meta.client) {
   try { localStorage.removeItem(LEGACY_COMPACT_LIST_KEY) } catch { /* storage unavailable */ }
+  // Leftover of the removed paste journal.
+  try { localStorage.removeItem('pasteJournalEnabled') } catch { /* storage unavailable */ }
 }
 export const autoReorderReady = syncedRef('autoReorderReady', flag.read(true), flag.write)
 // Sorting of Ready (see shared/spaces.ts sortReady).
 export const readySort = syncedRef<ReadySort>('readySort', raw => ((READY_SORTS as readonly string[]).includes(raw || '') ? raw as ReadySort : 'herdr'), v => v)
 export const quotaDisplay = syncedRef<QuotaDisplay>('quotaDisplay', readQuotaDisplay, v => v)
 export const hiddenAgents = syncedRef<string[]>('hiddenAgents', readHiddenAgents, v => JSON.stringify(v), { deep: true })
+// Settings › Agents order: the first offered agent is the default everywhere.
+export const agentOrder = syncedRef<string[]>('agentOrder', readAgentOrder, v => JSON.stringify(v), { deep: true })
 // Content width on a computer; migration of the old preference.
 export const contentWidth = ref<ContentWidth>(migrateContentWidth(ls.get('contentWidth'), ls.get('chatWidth')))
 watch(contentWidth, (v) => {
@@ -230,8 +231,6 @@ function pruneViewModes(s: HerdrState) {
   if (changed) ls.set('viewModes', JSON.stringify(viewModes))
 }
 watch(herdrState, pruneViewModes)
-export const lastKind = ref(ls.get('lastKind') || '')
-watch(lastKind, v => ls.set('lastKind', v))
 
 // Computer (≥ 900 px, or a tablet in portrait): list as a sidebar, agent on
 // the right. Slim: narrower than 1024 px, the list slides over the agent
@@ -306,8 +305,6 @@ function readList(raw: string | null): string[] {
     return Array.isArray(v) ? v.map(String) : []
   } catch { return [] }
 }
-// Collapsed machine sections (kept on the server, like the other home settings).
-export const collapsedMachines = syncedRef<string[]>('collapsedMachines', readList, v => JSON.stringify(v), { deep: true })
 // Collapsed repo groups of the home list, `<machine>|<group id>`.
 export const collapsedRepos = syncedRef<string[]>('collapsedRepos', readList, v => JSON.stringify(v.slice(-200)), { deep: true })
 // Last machine chosen in "New".
@@ -489,6 +486,11 @@ const pushResync = onceEvery(10 * 60000)
 
 const eventProbe = createSocketProbe(() => evWs)
 let evHandshake: ReturnType<typeof setTimeout> | undefined
+// OPEN but silent: the upgrade succeeded and no real packet followed. An
+// open pipe proves nothing (the first state goes out on connect); past this
+// window the socket is dead rather than slow, so it is closed for onclose's
+// retry path.
+let evFirst: ReturnType<typeof setTimeout> | undefined
 export function recoverEvents() {
   connectEvents()
   return eventProbe.recover(() => { if (!document.hidden && !locked.value) reconnectEvents() })
@@ -496,6 +498,7 @@ export function recoverEvents() {
 export function reconnectEvents() {
   eventProbe.cancel()
   clearTimeout(evHandshake)
+  clearTimeout(evFirst)
   clearTimeout(evTimer)
   if (evWs) { try { evWs.onclose = null; evWs.close() } catch { /* ignore */ } evWs = null }
   evRetry = 0
@@ -507,6 +510,7 @@ export function connectEvents() {
   if (locked.value) return
   if (evWs && evWs.readyState <= 1) return
   clearTimeout(evHandshake)
+  clearTimeout(evFirst)
   eventProbe.cancel()
   const ws = new WebSocket(`${wsBase()}/ws/events`)
   evWs = ws
@@ -521,6 +525,9 @@ export function connectEvents() {
     clearTimeout(evHandshake)
     evRetry = 0
     eventsOpen.value = true
+    evFirst = setTimeout(() => {
+      if (evWs === ws) { try { ws.close() } catch { /* ignore */ } }
+    }, 8000)
     if (everOpen) {
       settleUntil = Date.now() + SETTLE_MS
       // Reconnection = often a redeployment: we check right away whether
@@ -542,7 +549,8 @@ export function connectEvents() {
       if (evWs !== ws) return
       const data = JSON.parse(e.data)
       if (data?.type === 'pong') { eventProbe.pong(ws); return }
-      // Settings changed on another device (or another tab).
+      // Real traffic (state or settings): the socket proved itself live.
+      clearTimeout(evFirst)
       if (data?.type === 'settings') { settingsSync.receive(data.settings || {}); return }
       // Lock turned off: the server dropped every push subscription, this device posts its own again.
       if (data?.type === 'push-resubscribe') { syncPushLanguage().catch(() => {}); return }
@@ -564,6 +572,7 @@ export function connectEvents() {
   ws.onclose = () => {
     if (evWs !== ws) return
     clearTimeout(evHandshake)
+    clearTimeout(evFirst)
     evWs = null
     eventsOpen.value = false
     eventProbe.cancel()
@@ -607,13 +616,21 @@ watch(herdrState, (s) => {
   } catch { /* not supported */ }
 })
 
+// A status read that never answers (phone on a tailnet whose wherdr host is
+// gone) counts as unreachable past this delay; see `start` for the unlock path.
+const STATUS_WAIT_MS = 3000
+// Explicit unlock, registration and Settings checks need room for a slow link
+// to deliver the fresh offline lease before a later suspend.
+const AUTH_STATUS_WAIT_MS = 10000
+
 // Shows the lock screen only when the server itself says the session is
 // invalid; a network error or an odd answer leaves the app as it is.
 // resume: the app opens, reloads or comes back to the foreground. Only then does
 // the server end a session past its maximum duration (never in the middle of use).
 export async function confirmLock({ resume = false } = {}) {
   try {
-    const st = await api<AuthStatus>(resume ? '/api/auth/status?resume=1' : '/api/auth/status')
+    const st = await api<AuthStatus>(resume ? '/api/auth/status?resume=1' : '/api/auth/status', undefined,
+      AbortSignal.timeout(resume ? STATUS_WAIT_MS : AUTH_STATUS_WAIT_MS))
     if (st.enabled && !st.unlocked) return showLock()
     const access = leaseFromStatus(st)
     setOfflineAccess(access)
@@ -652,6 +669,7 @@ export function showLock() {
   // Nothing must talk to the server any more until it is unlocked.
   eventProbe.cancel()
   clearTimeout(evHandshake)
+  clearTimeout(evFirst)
   const ws = evWs
   evWs = null
   if (ws) {
@@ -666,21 +684,24 @@ export function showLock() {
 }
 
 // App opening or back in the foreground: a server that accepts the connection
-// but never answers (phone on a tailnet whose wherdr host is gone) counts as
-// unreachable past this delay, so the last known state shows and the live
-// connection keeps retrying. Unlock and Settings wait for the answer.
-const STATUS_WAIT_MS = 3000
+// but never answers counts as unreachable past STATUS_WAIT_MS, so the last
+// known state shows and the live connection keeps retrying. Explicit unlock,
+// registration and Settings checks allow AUTH_STATUS_WAIT_MS for the answer.
 
 // resume: see confirmLock.
 export async function start({ resume = false } = {}) {
   let access = readOfflineAccess()
-  // The last known state is read while the server is asked (it shows only once
-  // the answer allows it): one round trip less before the home list.
+  // The last known state is read while the server is asked, and shown as soon
+  // as it is read when this device's lease allows it (the rule of offline
+  // reading): no empty frame on reload while the answer comes. A server that
+  // says the session is locked hides it again (showLock).
   const early = mayReadOffline(access) ? readHome() : null
+  early?.then((saved) => {
+    if (saved && !locked.value && !eventsOpen.value && !herdrState.value.ok) showSaved(saved)
+  })
   try {
-    const st = resume
-      ? await api<AuthStatus>('/api/auth/status?resume=1', undefined, AbortSignal.timeout(STATUS_WAIT_MS))
-      : await api<AuthStatus>('/api/auth/status')
+    const st = await api<AuthStatus>(resume ? '/api/auth/status?resume=1' : '/api/auth/status', undefined,
+      AbortSignal.timeout(resume ? STATUS_WAIT_MS : AUTH_STATUS_WAIT_MS))
     if (st.hostLabel !== undefined) hostLabel.value = st.hostLabel
     if (st.enabled && !st.unlocked) return showLock()
     access = leaseFromStatus(st)
@@ -693,12 +714,13 @@ export async function start({ resume = false } = {}) {
   }
   if (mayReadOffline(access)) {
     const saved = await (early || readHome())
-    if (saved && !eventsOpen.value) {
-      fullState = saved.state
-      allSessionsState.value = fullState
-      herdrState.value = fullState
-      cachedAt.value = saved.at
-    }
+    if (saved && !eventsOpen.value) showSaved(saved)
   }
   boot()
+}
+function showSaved(saved: SavedHome) {
+  fullState = saved.state
+  allSessionsState.value = fullState
+  herdrState.value = fullState
+  cachedAt.value = saved.at
 }

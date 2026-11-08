@@ -68,8 +68,9 @@ function buildPrompt(config, contextIds, nAudio, language) {
   const audioStart = ids.length
   for (let i = 0; i < nAudio; i++) ids.push(p.audio_pad_id)
   ids.push(...p.suffix_ids)
-  const lang = (config.language_prefix_ids || {})[language]
-  if (lang) ids.push(...lang)
+  if (config.language_prefix_ids && Object.hasOwn(config.language_prefix_ids, language)) {
+    ids.push(...config.language_prefix_ids[language])
+  }
   return { ids, audioStart, maxNewTokens: p.max_new_tokens }
 }
 

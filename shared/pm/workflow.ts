@@ -19,7 +19,16 @@ export type ActionKind = typeof ACTIONS[number]
 export const MERGE_BY = ['engine', 'user'] as const
 export type MergeBy = typeof MERGE_BY[number]
 
-export interface StepAction { kind: ActionKind, target?: string, base?: string }
+export const MERGE_METHODS = ['merge', 'squash', 'rebase'] as const
+export type MergeMethod = typeof MERGE_METHODS[number]
+// github.merge: method (default: the first the repo allows) and checks, the
+// names that must be there and green (a PR whose CI has not started yet has none).
+export interface StepAction { kind: ActionKind, target?: string, base?: string, method?: MergeMethod, checks?: string[] }
+
+// What the action's branch field holds: a branch to merge into, or the PR's
+// base. Left out, the project's working branch fills it (withBase in steps.ts).
+export const actionField = (k: ActionKind): 'target' | 'base' | undefined =>
+  k === 'github.pr' ? 'base' : k === 'git.land' || k === 'git.verify-merged' ? 'target' : undefined
 
 export interface Step {
   id: string
@@ -38,9 +47,14 @@ export interface Step {
   action?: StepAction
 }
 
+// contributorPrs (the project's guards only; off when absent): the coordinator
+// may merge an outside contributor's PR after the user's yes, into the
+// branches not reserved for the user ('others') or into any ('all').
+export const CONTRIBUTOR_PRS = ['others', 'all'] as const
 export interface Guards {
   protected?: string[]
   merge?: { protected?: MergeBy, others?: MergeBy }
+  contributorPrs?: typeof CONTRIBUTOR_PRS[number]
 }
 
 export interface Prefs { agent?: string, model?: string, reviewAgent?: string, reviewModel?: string }
@@ -84,10 +98,12 @@ function checkKeys(obj: Record<string, unknown>, allowed: readonly string[], pat
   for (const k of Object.keys(obj)) if (!allowed.includes(k)) errs.push({ path: path ? `${path}.${k}` : k, message: 'unknown field' })
 }
 
-function checkGuards(g: unknown, path: string, errs: WorkflowError[]) {
+function checkGuards(g: unknown, path: string, errs: WorkflowError[], project = false) {
   if (g === undefined) return
   if (!isObj(g)) return void errs.push({ path, message: 'must be an object' })
-  checkKeys(g, ['protected', 'merge'], path, errs)
+  checkKeys(g, ['protected', 'merge', ...(project ? ['contributorPrs'] : [])], path, errs)
+  if (g.contributorPrs !== undefined && !CONTRIBUTOR_PRS.includes(g.contributorPrs as 'all'))
+    errs.push({ path: `${path}.contributorPrs`, message: `must be one of ${CONTRIBUTOR_PRS.join(', ')}` })
   if (g.protected !== undefined && !(Array.isArray(g.protected) && g.protected.every(isStr)))
     errs.push({ path: `${path}.protected`, message: 'must be a list of branch names' })
   if (g.merge === undefined) return
@@ -135,10 +151,21 @@ function checkStep(s: unknown, path: string, earlier: string[], errs: WorkflowEr
   if (s.ends === 'action' && s.action === undefined) err('action', 'is required for a step that ends with action')
   if (s.action === undefined) return
   if (!isObj(s.action) || !ACTIONS.includes(s.action.kind as ActionKind)) return err('action.kind', `must be one of ${ACTIONS.join(', ')}`)
-  checkKeys(s.action, ['kind', 'target', 'base'], `${path}.action`, errs)
-  const need = s.action.kind === 'github.pr' ? 'base' : ['git.land', 'git.verify-merged'].includes(s.action.kind as string) ? 'target' : null
-  if (need && !isStr(s.action[need])) err(`action.${need}`, 'is required')
+  checkKeys(s.action, ['kind', 'target', 'base', 'method', 'checks'], `${path}.action`, errs)
+  if (s.action.kind !== 'github.merge') for (const k of ['method', 'checks']) if (s.action[k] !== undefined) err(`action.${k}`, 'only for github.merge')
+  if (s.action.method !== undefined && !MERGE_METHODS.includes(s.action.method as MergeMethod)) err('action.method', `must be one of ${MERGE_METHODS.join(', ')}`)
+  if (s.action.checks !== undefined && !(Array.isArray(s.action.checks) && s.action.checks.every(isStr))) err('action.checks', 'must be a list of check names')
+  const field = actionField(s.action.kind as ActionKind)
+  if (field && s.action[field] !== undefined && !isStr(s.action[field])) err(`action.${field}`, 'must be a branch name')
   if (s.ends !== 'action' && s.ends !== 'user') err('action', 'only for a step that ends with action or user')
+}
+
+// Start over: template `source` copied as a project's workflow. The project's
+// own guards stay when it already has a workflow (`own`).
+export function startOverFrom(source: Template, own: Template | null): Template {
+  if (!own) return source
+  const { guards: _guards, ...copy } = source
+  return own.guards ? { ...copy, guards: own.guards } : copy
 }
 
 // Every problem in a template, each with the path of the field at fault.
@@ -149,7 +176,7 @@ export function validateTemplate(t: unknown): WorkflowError[] {
   if (!isStr(t.id)) errs.push({ path: 'id', message: 'is required' })
   if (t.version !== undefined && !Number.isInteger(t.version)) errs.push({ path: 'version', message: 'must be a whole number' })
   if (t.instructions !== undefined && typeof t.instructions !== 'string') errs.push({ path: 'instructions', message: 'must be text' })
-  checkGuards(t.guards, 'guards', errs)
+  checkGuards(t.guards, 'guards', errs, true)
   checkPrefs(t.prefs, 'prefs', errs)
   const shared = isObj(t.steps) ? t.steps : {}
   if (t.steps !== undefined && !isObj(t.steps)) errs.push({ path: 'steps', message: 'must be an object' })

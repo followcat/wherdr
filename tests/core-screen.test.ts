@@ -73,6 +73,44 @@ describe('enrich', () => {
     expect(shell.interaction).toBeUndefined()
     expect(busy.status).toBe('working')
   })
+  it('reads omp\'s context gauge while it works, without its question reading, and keeps the last one', async () => {
+    const screen = (gauge: string) => `answer\n ⠸ 4s > ⬢ Model > 🗑 ~/demo ${gauge}\n╰─`
+    const texts: Record<string, string> = { 'm/o': screen('▶────6%──────╎───┃─────128K─') }
+    const { screens, tick } = setup(texts, () => false)
+    const working = pane('o', { agent: 'omp', status: 'working' })
+    await screens.enrich([working])
+    expect(working.ompStatus).toEqual({ line: '⠸ 4s > ⬢ Model > 🗑 ~/demo', meters: '▶────6%──────╎───┃─────128K─◀', metersFresh: true })
+    expect(working.interaction).toBeUndefined()
+    // A full-screen panel hides the gauge: the last one stays, not live.
+    texts['m/o'] = 'Usage\nEsc to close'
+    tick(5000)
+    const panel = pane('o', { agent: 'omp', status: 'working' })
+    await screens.enrich([panel])
+    expect(panel.ompStatus).toMatchObject({ meters: '▶────6%──────╎───┃─────128K─◀', metersFresh: false })
+    // At rest, the reading is the last known one; another agent in the pane drops it.
+    const idle = pane('o', { agent: 'omp', status: 'idle' })
+    await screens.enrich([idle])
+    expect(idle.ompStatus?.metersFresh).toBe(false)
+    await screens.enrich([pane('o', { agent: 'claude', status: 'idle' })])
+    tick(5000)
+    const back = pane('o', { agent: 'omp', status: 'working' })
+    await screens.enrich([back])
+    expect(back.ompStatus).toBeUndefined()
+  })
+  it('reads omp again at once when its turn ends, so a question is not hidden behind a gauge read', async () => {
+    const texts: Record<string, string> = { 'm/o': input }
+    const { screens, reads, tick } = setup(texts, () => false)
+    await screens.enrich([pane('o', { agent: 'omp', status: 'idle' })])
+    tick(40_000)
+    await screens.enrich([pane('o', { agent: 'omp', status: 'working' })])
+    texts['m/o'] = fx('omp-approve-1814-bash.txt')
+    tick(2000)
+    const q = pane('o', { agent: 'omp', status: 'blocked' })
+    await screens.enrich([q])
+    expect(reads.length).toBe(3)
+    expect(q.interaction).toBe('native')
+    expect(q.prompt).toBeDefined()
+  })
   it('reads a working Claude only while its conversation is open (queue "send now")', async () => {
     const open = setup({ 'm/w': input })
     await open.screens.enrich([pane('w', { status: 'working' })])

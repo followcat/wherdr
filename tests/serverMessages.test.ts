@@ -28,8 +28,9 @@ const FRENCH = /[àâçéèêëîïôûùœ]|\b(introuvable|injoignable|invalide
 const BILINGUAL = /\blang\b|\bfr\b|Fr\b|\bfr:|introuvable\/i/
 
 // Bilingual by design: the coordinator rules and TASKS.md template written in the
-// project's language, and reply markers and task labels recognized in both languages.
-const BILINGUAL_FILES = new Set(['shared/projectBoard.ts', 'shared/replyQuote.ts', 'shared/reference.ts', 'shared/threadLimits.ts'])
+// project's language, reply markers and task labels recognized in both languages,
+// and the step descriptions (tl pairs passed in by the app).
+const BILINGUAL_FILES = new Set(['shared/pm/describe.ts', 'shared/projectBoard.ts', 'shared/replyQuote.ts', 'shared/reference.ts', 'shared/threadLimits.ts'])
 
 const SERVER = [
   ...files('server', /\.ts$/).map(f => ({ f, src: code(readFileSync(f, 'utf8'), false) })),

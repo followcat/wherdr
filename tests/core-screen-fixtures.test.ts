@@ -7,6 +7,7 @@ import { createCoreScreens, readCoreScreen } from '../server/utils/coreScreen'
 import { createCorePreviews } from '../server/utils/corePreview'
 import { coreChoose } from '../server/utils/coreChoose'
 import type { Pane } from '../shared/types'
+import { createInteractionWindow } from '../app/utils/interactionWindow'
 
 const screen = (name: string) => readFileSync(new URL(`./fixtures/core-screens/${name}.txt`, import.meta.url), 'utf8')
 const settle = () => new Promise(r => setTimeout(r, 5))
@@ -112,6 +113,20 @@ describe('readCoreScreen on recorded screens (no core status)', () => {
 })
 
 describe('enrich + card preview on recorded screens', () => {
+  it('keeps an idle Devin at its input without opening the terminal window', async () => {
+    const text = screen('devin-idle')
+    const screens = createCoreScreens({ call: async () => ({ text }), viewed: () => true })
+    const p = { id: 'devin-idle', agent: 'devin', status: 'idle', coreAddress: 'host-a/t8' } as Pane
+    await screens.enrich([p])
+    const window = createInteractionWindow()
+    window.update(p.interaction!, 0)
+    expect(window.update(p.interaction!, 500)).toBe(false)
+    expect(p.interaction).toBe('input')
+    expect(readCoreScreen(text, 'devin', 'unknown').status).toBe('idle')
+    expect(readCoreScreen(text, 'codex', 'idle').interaction).toBe('terminal')
+    expect(readCoreScreen(text.replace('Context:', 'Status:'), 'devin', 'idle').interaction).toBe('terminal')
+  })
+
   it.each(CASES)('$name', async (c) => {
     const text = screen(c.name)
     const screens = createCoreScreens({ call: async () => ({ text }), viewed: () => true })

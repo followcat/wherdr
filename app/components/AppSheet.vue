@@ -20,13 +20,19 @@ const ui = computed(() => ({
   content: `hw-sheet${props.tall ? ' tall' : ''}${props.wide ? ' wide' : ''}${props.full ? ' full' : ''}${props.screen ? ' screen' : ''}${props.top ? ' top' : ''}`,
 }))
 
+// The content, or a part of it that scrolls on its own (a task sheet's tab),
+// is scrolled down: the swipe scrolls it back up, it does not close the sheet.
+function scrolled(from: EventTarget | null, body: HTMLElement) {
+  for (let n = from as HTMLElement | null; n; n = n === body ? null : n.parentElement) if (n.scrollTop > 0) return true
+  return false
+}
 // Swipe down: the sheet follows the finger, then closes or springs back.
 let drag: { sheet: HTMLElement, fromHandle: boolean, y0: number, y: number, t: number, v: number, dragging: boolean } | null = null
 function dragStart(e: TouchEvent, fromHandle: boolean) {
   if (props.screen || e.touches.length !== 1 || !matchMedia(PHONE_QUERY).matches) return
   const el = e.currentTarget as HTMLElement
   const sheet = el.closest<HTMLElement>('.hw-sheet')
-  if (!sheet || (!fromHandle && el.scrollTop > 0)) return
+  if (!sheet || (!fromHandle && scrolled(e.target, el))) return
   const y = e.touches[0]!.clientY
   drag = { sheet, fromHandle, y0: y, y, t: e.timeStamp, v: 0, dragging: false }
 }

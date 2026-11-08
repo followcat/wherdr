@@ -27,7 +27,7 @@ it('starts a new tab in its space, in the folder of that space, then opens it', 
   newAgentOpen.value = true
   await flushPromises()
   expect(w.text()).toContain('New tab')
-  expect(w.find('[data-kind="coordinator"]').exists()).toBe(false)
+  expect(w.find('[data-kind="project"]').exists()).toBe(false)
   await w.get('.launch-btn').trigger('click')
   await vi.waitFor(() => expect(created).toHaveLength(1))
   expect(created[0]).toMatchObject({ kind: 'claude', cwd: '/repos/api', workspace: 'w1' })

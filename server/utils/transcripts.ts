@@ -1734,7 +1734,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       return l
     }
     const hit = locCache.get(pane.id)
-    if (hit && (hit.loc || !fresh) && Date.now() - hit.at < (pane.agent === 'devin' ? 1500 : 8000) && hit.session === pane.agentSession) return hit.loc
+    if (hit && (hit.loc || !fresh) && Date.now() - hit.at < 8000 && hit.session === pane.agentSession) return hit.loc
     let loc: Loc | null = null
     let failed = false
     try {

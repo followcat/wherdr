@@ -1,7 +1,7 @@
 // WHR-48 regression: after #89, machines whose Claude quotas were read showed
 // "Claude quotas not set up" right under their gauges (legacy status line
 // reported `missing`). The home list never shows an install block now: at
-// most two items in the machine's "…" menu.
+// most two items in the machine's menu (the header "…" for a single machine).
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import HomeView from '~/components/HomeView.vue'
@@ -21,8 +21,6 @@ const quotas: Quotas = {
 }
 let served: Quotas = quotas
 registerEndpoint('/api/quotas', () => served)
-registerEndpoint('/api/machine/order', () => ({ order: [] }))
-registerEndpoint('/api/machine/awake', () => ({ supported: false }))
 
 const machine = (key: string, label: string): MachineInfo => ({ key, label, local: key === '', status: 'online', error: null, session: 'default' })
 const pane = (id: string, m: string): Pane => ({
@@ -43,9 +41,21 @@ describe('home list: Claude quota setup', () => {
     homeQuotas.value = quotas
     const w = await mountSuspended(HomeView, { global: { stubs: { UContextMenu: pass, UTooltip: pass } } })
     await new Promise(r => setTimeout(r, 0))
-    expect(w.findAll('section.machine .machine-quotas').length).toBe(2)
+    expect(w.findAll('.state-machine-quotas .machine-quotas').length).toBe(2)
     expect(w.text()).not.toMatch(/not set up|non configurés/i)
     expect(w.find('.claude-setup').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('a single machine without a bar: its suggestion goes in the header "…"', async () => {
+    homeQuotas.value = { ...quotas, claudeAccounts: [], claudeSetup: [{ key: '', state: 'outdated', installable: true }] }
+    herdrState.value = { ok: true, panes: panes.slice(0, 1), workspaces: [{ id: 'w1', number: 1, label: 's0', focused: false, machine: '' }] } as never
+    const w = await mountSuspended(HomeView, { global: { stubs: { UContextMenu: pass, UTooltip: pass } } })
+    expect(w.find('.machine-bar').exists()).toBe(false)
+    expect(w.find('.home-actions .space-menu').exists()).toBe(true)
+    homeQuotas.value = { ...quotas, claudeAccounts: [], claudeSetup: [] }
+    await nextTick()
+    expect(w.find('.home-actions .space-menu').exists()).toBe(false)
     w.unmount()
   })
 

@@ -81,3 +81,14 @@ it('takes Enter from the empty message field, never a key a focused field handle
     herdrState.value = { ok: false, workspaces: [], panes: [] }
   }
 })
+
+// Dismiss: one tap sends Esc, as the keyboard's Escape.
+it('sends Esc when Dismiss is clicked', async () => {
+  eventsOpen.value = true
+  nav.mockClear()
+  const prompt = screenChoices(readFileSync('tests/fixtures/codex-approve-edits.txt', 'utf8').replace(/\x1b\[[0-9;]*m|\r/g, ''), 'codex')!
+  const w = await mountSuspended(ChoicesPanel, { props: { paneId: 'w1:p1', prompt } })
+  await w.find('.choices-dismiss').trigger('click')
+  expect(nav).toHaveBeenCalledExactlyOnceWith('w1:p1', 'esc', prompt.identity)
+  w.unmount()
+})

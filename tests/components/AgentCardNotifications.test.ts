@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { mountSuspended } from '@nuxt/test-utils/runtime'
 import AgentCard from '~/components/AgentCard.vue'
@@ -34,9 +34,14 @@ for (const desktop of [false, true]) {
             menuState.items = [{ label: first.label, run: first.onSelect }]
             menuState.open = true
           } else {
-            await w.find('.card').trigger('pointerdown', { pointerType: 'touch', button: 0, clientX: 0, clientY: 0 })
-            await new Promise(resolve => setTimeout(resolve, 720))
-            await w.find('.card').trigger('pointerup')
+            // The 700 ms long press on fake timers: real ones cost 2 s per run.
+            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+            try {
+              await w.find('.card').trigger('pointerdown', { pointerType: 'touch', button: 0, clientX: 0, clientY: 0 })
+              vi.advanceTimersByTime(720)
+              await w.find('.card').trigger('pointerup')
+              vi.runOnlyPendingTimers()
+            } finally { vi.useRealTimers() }
           }
         }
         await open()

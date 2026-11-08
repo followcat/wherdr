@@ -181,7 +181,7 @@ export interface Pane {
   // Codex resting, conversation shown: first line of the text left in its
   // input field.
   codexField?: string
-  // omp shown: its status line (model, folder, branch) and its gauges (context, quotas).
+  // omp: its status line (model, folder, branch) and its gauges (context, quotas), on cards too.
   ompStatus?: OmpStatus
   // omp working, conversation shown: the running step ("Finding Fixed section",
   // null before the first tool) and when the turn started (ms, null if unknown).
@@ -189,7 +189,8 @@ export interface Pane {
   // omp shown: the "!" / "$" command the user is running (omp stays idle meanwhile).
   ompShell?: ShellRun
 }
-export interface OmpStatus { line: string, meters: string | null }
+// metersFresh: the latest screen read, taken while omp works, showed these gauges (not a kept reading).
+export interface OmpStatus { line: string, meters: string | null, metersFresh?: boolean }
 export interface OmpActivity { step: string | null, since: number | null }
 
 // Model of an agent: readable label ("Opus 5.5", "GPT-6-Sol") and raw
@@ -401,7 +402,11 @@ export interface QuotaWindow {
 // both windows are null and `resetsAt` (ms) is the reset time if known.
 export interface Quota { five: QuotaWindow | null, week: QuotaWindow | null, at: number, limited?: { resetsAt: number | null } }
 // Quotas of an account and machines using it (key '' = local, displayed name).
-export interface AccountQuota extends Quota { machines: { key: string, label: string }[] }
+// `key`: stable account key (shared/quotaAccount.ts), `name`: the user's name for it.
+export interface AccountQuota extends Quota { machines: { key: string, label: string }[], key: string, name?: string }
+// One account read on the machines (machine keys, '' = local), whether or not
+// it gets its own block: the (machine, program) -> account table.
+export interface QuotaAccount { key: string, program: 'claude' | 'codex', name?: string, machines: string[] }
 export interface Quotas {
   // Most recent reading, across all machines.
   claude: Quota | null
@@ -415,6 +420,8 @@ export interface Quotas {
   // Online machines where wherdr's status line is not set up
   // (missing: all configured).
   claudeSetup?: ClaudeSetup[]
+  // Every account read, Claude then Codex (missing: none).
+  accounts?: QuotaAccount[]
 }
 // Claude quota status line of each machine read: `ok` = set up, `pending` =
 // installed, waiting for the next exchange with a Claude, `outdated` = quotas

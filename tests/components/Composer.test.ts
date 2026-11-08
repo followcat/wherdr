@@ -20,6 +20,8 @@ const release = () => pending.shift()?.()
 // The next send once it reached the server (sends of a conversation go one after the other).
 const releaseNext = async () => { await vi.waitFor(() => expect(pending.length).toBeGreaterThan(0)); release() }
 const prompts: string[] = []
+// Bubbles of a conversation the server has not answered yet.
+const sendingIn = (paneId: string) => outboxFor(paneId).filter(q => q.state === 'sending')
 registerEndpoint('/api/prompt', {
   method: 'POST',
   handler: async (event) => {
@@ -103,7 +105,9 @@ describe('Composer send', () => {
     expect(outboxFor('w1:p1')).toMatchObject([{ text: 'Fix the cache', state: 'sending' }])
     release()
     await flushPromises()
-    await vi.waitFor(() => expect(outboxFor('w1:p1')).toHaveLength(0))
+    await vi.waitFor(() => expect(sendingIn('w1:p1')).toHaveLength(0))
+    // herdr-core keeps no record of it: the bubble stays, sent, until the transcript has it (utils/outbox.ts).
+    expect(outboxFor('w1:p1')).toMatchObject([{ text: 'Fix the cache' }])
     w.unmount()
   })
 
@@ -131,7 +135,7 @@ describe('Composer send', () => {
     expect(outboxFor('w1:p3')).toMatchObject([{ text, state: 'sending' }])
     release()
     await flushPromises()
-    await vi.waitFor(() => expect(outboxFor('w1:p3')).toHaveLength(0))
+    await vi.waitFor(() => expect(sendingIn('w1:p3')).toHaveLength(0))
     w.unmount()
   })
 
@@ -164,7 +168,7 @@ describe('Composer: no duplicate sends', () => {
     expect(outboxFor('w1:d1')).toHaveLength(1)
     release()
     await flushPromises()
-    await vi.waitFor(() => expect(outboxFor('w1:d1')).toHaveLength(0))
+    await vi.waitFor(() => expect(sendingIn('w1:d1')).toHaveLength(0))
     expect(prompts).toEqual(['Fix the cache'])
     w.unmount()
   })
@@ -177,7 +181,7 @@ describe('Composer: no duplicate sends', () => {
     expect(outboxFor('w1:d2').map(q => q.text)).toEqual(['Fix the cache', 'Fix the cache too'])
     await releaseNext()
     await releaseNext()
-    await vi.waitFor(() => expect(outboxFor('w1:d2')).toHaveLength(0))
+    await vi.waitFor(() => expect(sendingIn('w1:d2')).toHaveLength(0))
     w.unmount()
   })
 
@@ -187,11 +191,11 @@ describe('Composer: no duplicate sends', () => {
       const { w, field } = await mount('w1:d3')
       await enter(field)
       await releaseNext()
-      await vi.waitFor(() => expect(outboxFor('w1:d3')).toHaveLength(0))
+      await vi.waitFor(() => expect(sendingIn('w1:d3')).toHaveLength(0))
       vi.setSystemTime(Date.now() + 3500)
       await field.setValue('Fix the cache')
       await enter(field)
-      expect(outboxFor('w1:d3')).toHaveLength(1)
+      expect(sendingIn('w1:d3')).toHaveLength(1)
       await releaseNext()
       await vi.waitFor(() => expect(prompts).toEqual(['Fix the cache', 'Fix the cache']))
       w.unmount()

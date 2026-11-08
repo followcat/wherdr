@@ -1,2 +1,2 @@
 // Core-mode routes added by v3 project management (lot 2). See shared/coreRoutes.ts.
-export default ['GET pm/overview', 'pm/enabled', 'pm/project', 'pm/project-template', 'pm/project-remove', 'pm/template'] as string[]
+export default ['GET pm/overview', 'pm/enabled', 'pm/project', 'pm/project-template', 'pm/project-visibility', 'pm/project-base', 'pm/project-update', 'pm/project-workflow', 'pm/project-guards', 'pm/project-apply', 'pm/project-remove', 'pm/template', 'pm/template-from-project', 'GET pm/folder', 'GET pm/repos', 'GET pm/branches'] as string[]

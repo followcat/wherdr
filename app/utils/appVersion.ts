@@ -20,10 +20,10 @@ export function isNewBuild(current: string | undefined, latest: unknown): boolea
 
 // What to do when a new service worker finishes installing.
 // - No controller: first installation on this origin, nothing to announce.
-// - Startup (before our first explicit update check): the page was just
-//   loaded from the network, so it already runs the new build; activate the
-//   SW silently. This covers a reinstall over a previous wherdr on the same
-//   origin, whose old SW was still registered.
+// - Startup (before our first explicit update check): activate the SW silently
+//   for future navigations, without reloading the current page. A cache-first
+//   navigation may still run an older shell; the startup build check offers
+//   the Reload banner separately. This also covers a reinstall over an old SW.
 // - Otherwise the update arrived while the app is in use: banner, so that a
 //   message being typed is never lost to a reload.
 export type InstalledSwAction = 'none' | 'activate' | 'banner'

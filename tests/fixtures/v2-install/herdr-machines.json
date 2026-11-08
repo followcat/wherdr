@@ -1,0 +1,1 @@
+[{"id": "23108ee8-5a1c-4d2e-9f00-000000000001", "label": "Laptop", "target": "user@laptop", "session": "default"}, {"id": "f27df2ea-7b3d-4e4f-8a11-000000000002", "label": "Build VPS", "target": "vps", "session": "work"}, {"id": "0ff0ff00-0000-4000-8000-000000000003", "label": "Off", "target": "off", "enabled": false}]

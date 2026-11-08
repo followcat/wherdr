@@ -8,6 +8,7 @@ import { codeKind } from './codeKind'
 import { highlightCode } from './codeHighlight'
 import { createRenderCache, createSupersedeTracker } from './renderCache'
 import { blockCommand, inlineCommand } from './shellCommand'
+import { svgPreview } from './svgPreview'
 
 let hooked = false
 // Budget of the cache, in characters of text + HTML: about 4 MB of strings
@@ -57,6 +58,18 @@ export function md(text: string, options: MdOptions = {}): string {
       renderer: {
         code({ text, lang }) {
           const l = escHtml((lang || '').split(/\s/)[0] || '')
+          // A language fence is an explicit preview request. A normal HTML/XML
+          // fence (including examples containing SVG) remains ordinary code.
+          if (!docNow && l.toLowerCase() === 'svg') {
+            const src = svgPreview(text)
+            const source = `<pre class="svg-source"${src ? ' hidden' : ''}><code class="language-svg">${escHtml(text)}</code></pre>`
+            const head = `<div class="code-head"><span>svg</span><span class="code-tools">${src ? `<button type="button" class="svg-toggle" aria-pressed="false">${escHtml(t('Source'))}</button>` : ''}<button type="button" class="code-copy">${escHtml(t('Copy'))}</button></span></div>`
+            return `<div class="code-block svg-block">${head}`
+              + (src
+                ? `<img class="svg-preview" src="${escHtml(src)}" alt="${escHtml(t('SVG preview'))}" role="button" tabindex="0" aria-label="${escHtml(t('Enlarge SVG preview'))}">${source}`
+                : `<p class="svg-note">${escHtml(t('SVG preview unavailable. Source shown below.'))}</p>${source}`)
+              + '</div>'
+          }
           if (docNow) {
             return `<div class="code-block"><div class="code-head"><span>${l || 'code'}</span>`
               + `<span class="code-tools"><button type="button" class="code-copy">${escHtml(t('Copy'))}</button></span></div>`
@@ -87,6 +100,10 @@ export function md(text: string, options: MdOptions = {}): string {
       },
     })
     DOMPurify.addHook('uponSanitizeElement', (n, data) => {
+      if (data.tagName === 'svg') {
+        n.parentNode?.removeChild(n)
+        return
+      }
       if (!plainNow || data.tagName !== 'input') return
       const el = n as Element
       if (!(el.getAttribute('type') === 'checkbox' && el.hasAttribute('disabled'))) el.parentNode?.removeChild(el)
@@ -110,7 +127,10 @@ export function md(text: string, options: MdOptions = {}): string {
   docNow = Boolean(options.doc)
   try {
     const parsed = marked.parse(text, { breaks: !docNow, gfm: true, async: false }) as string
-    html = plainNow ? DOMPurify.sanitize(parsed, PLAIN) : DOMPurify.sanitize(parsed)
+    // Raw inline SVG is not a preview request and must not enter the parent
+    // DOM. The explicit fenced subset above renders only as an inert image.
+    const config = { ...(plainNow ? PLAIN : {}), FORBID_TAGS: [...(plainNow ? PLAIN.FORBID_TAGS : []), 'svg'] }
+    html = DOMPurify.sanitize(parsed, config)
   } catch { html = `<p>${escHtml(text)}</p>` }
   finally { plainNow = false; docNow = false }
   for (const old of superseded(key)) {

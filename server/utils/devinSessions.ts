@@ -23,24 +23,18 @@ export function devinResume(argv: string[]): string | null {
 export async function devinSession(fs: MachineFs, home: string, proc: DevinProcess, honorEnv: boolean): Promise<string | null> {
   if (!Number.isSafeInteger(proc.pid) || proc.pid! <= 0) return null
   const dir = path.join(cliDir(home, honorEnv), 'session_locks')
-  let names: string[]
-  try { names = await fs.readdir(dir) }
-  catch (e) {
-    if (!['ENOENT', 'ENOTDIR'].includes(String((e as { code?: string }).code))) throw e
-    names = []
-  }
-  const locks = names.filter(n => n.endsWith('.lock') && transcriptPath(home, n.slice(0, -5), honorEnv))
-  // Never select an identity from a truncated or ambiguous scan.
-  if (locks.length > 4096) return null
   if (proc.startedAt != null) {
-    if (locks.length && !fs.readSmallMany) return null
-    const entries = await fs.readSmallMany?.(locks.map(n => path.join(dir, n)), 32) || []
+    if (!fs.readPidLocks) return null
+    const entries = await fs.readPidLocks(dir).catch(e => {
+      if (!['ENOENT', 'ENOTDIR'].includes(String((e as { code?: string }).code))) throw e
+      return []
+    })
+    // Never select an identity from a truncated or ambiguous scan.
+    if (!entries) return null
     const matches: string[] = []
-    for (let i = 0; i < locks.length; i++) {
-      const { stat: st, body } = entries[i] || {}
-      if (!st?.isFile || st.size > 32 || st.mtimeMs <= proc.startedAt || !body || body.length > 32) continue
-      const pid = body.toString('utf8').trim()
-      if (/^\d+$/.test(pid) && Number(pid) === proc.pid) matches.push(locks[i]!.slice(0, -5))
+    for (const { name, stat: st, pid } of entries) {
+      if (!st.isFile || st.size > 32 || st.mtimeMs <= proc.startedAt || !Number.isSafeInteger(pid) || pid !== proc.pid) continue
+      if (name.endsWith('.lock') && transcriptPath(home, name.slice(0, -5), honorEnv)) matches.push(name.slice(0, -5))
     }
     if (matches.length) return matches.length === 1 ? matches[0]! : null
   }

@@ -9,6 +9,8 @@ import { toast } from './useHerdr'
 export type ReadAloudEngine = 'off' | 'device'
 export const READ_ALOUD_KEY = 'readAloud'
 export const READ_ALOUD_VOICE_KEY = 'readAloudVoice'
+export const READ_ALOUD_LANG_KEY = 'readAloudVoiceLang'
+export const READ_ALOUD_HIDE_LOW_KEY = 'readAloudHideLow'
 
 const store = {
   get: (k: string) => { try { return localStorage.getItem(k) } catch { return null } },
@@ -23,6 +25,12 @@ watch(readAloudEngine, v => store.set(READ_ALOUD_KEY, v))
 // voiceURI of the chosen voice; '' = the system's default voice.
 export const readAloudVoice = ref(store.get(READ_ALOUD_VOICE_KEY) || '')
 watch(readAloudVoice, v => store.set(READ_ALOUD_VOICE_KEY, v))
+// Voice list filters (utils/speech/voicePicker.ts): 'mine' (the user's
+// languages), 'all' or a language code; low-quality voices hidden by default.
+export const readAloudVoiceLang = ref(store.get(READ_ALOUD_LANG_KEY) || 'mine')
+watch(readAloudVoiceLang, v => store.set(READ_ALOUD_LANG_KEY, v))
+export const readAloudHideLow = ref(store.get(READ_ALOUD_HIDE_LOW_KEY) !== 'off')
+watch(readAloudHideLow, v => store.set(READ_ALOUD_HIDE_LOW_KEY, v ? 'on' : 'off'))
 
 // The device's voices: often empty at first, filled on `voiceschanged`.
 export const deviceVoices = shallowRef<SpeechSynthesisVoice[]>([])

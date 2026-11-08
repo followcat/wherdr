@@ -16,6 +16,10 @@
   A space with several terminals follows its most urgent one. Three counters at the top (your
   turn, working, ready) count the same rows as the headings. When core does not answer, the last
   list stays visible, marked offline, and the home says **herdr-core is not responding**.
+  An omp card also shows its context usage as a thin line along its bottom edge (green, ochre
+  from 60 %, rose from 85 %; paler when it is the last reading); the figures are in the
+  conversation header. omp's own status line, gauge and welcome screen never stand as the card's
+  preview.
 - **Quick answers**: a waiting agent's card shows its question and options; **answer in one tap**
   without opening it. The question is read again before the answer is sent; if it changed, the
   answer is refused.
@@ -24,6 +28,33 @@
   Every agent terminal is its own row, with its pane or tab label.
 - **Group by**: Settings › Appearance › Home screen › **Group by** chooses **Machine** or
   **State** (Your turn, Working, Ready across online machines).
+
+### Alfred
+
+Alfred, wherdr's assistant, is always the first row of the agent list, even
+with no agent and projects off. It helps you get started and, with projects
+on, coordinates all of them. The first *Start* asks which agent (Claude,
+Codex, OMP…, those offered in Settings › Agents) runs it; the choice is kept. It runs with that agent's default
+model: change the model inside Alfred. Its ••• menu, *Restart with…*, moves it
+to another agent (when an account runs out of tokens, for instance): the old session
+stops and the new one carries on from the same home folder, `alfred/` in
+wherdr's data folder. There, `AGENTS.md` (and `CLAUDE.md`, `GEMINI.md`,
+`QWEN.md`, which point to it) is wherdr's and rewritten at each start; `identity.md` (its name and tone) and `memory.md` (what it learns about
+you, cleaned up at each start) are its own. Give it another name and the row
+shows it. Alfred reads and changes projects, coordinators and settings with
+[`wherdr alfred`](alfred.md): it shows you each
+change first and makes it only after your yes.
+
+### Offered agents
+
+Settings › Agents › **Offered agents** is the one list behind every agent choice: the New
+sheet, a project coordinator's agent, Alfred's. Uncheck a program to hide it everywhere; drag
+a row by its ⠿ handle (or use its arrows) to reorder: the first is the default and comes first
+in every picker. Programs only: each starts with its own default model, changed inside the
+agent. Alfred runs with any of Claude, Codex, OMP, Pi, OpenCode, Kimi, Gemini CLI, Qwen Code,
+Copilot, Amp and Droid (other programs are left out of its picker: wherdr knows no instructions
+file they read). A project's coordinator runs with Claude or Codex only: they are the ones wherdr
+can keep out of the project's repository (a deny rule for Claude, the sandbox for Codex). Choices and order follow you on every device.
 
 ### Machines as tabs
 
@@ -36,7 +67,8 @@ devices. Machines themselves are managed in [Settings › Agents › Machines](m
 
 ### New agents and tabs
 
-- **New** opens a sheet: an agent (Claude Code, Codex…, only those installed on that machine) or
+- **New** opens a sheet: an agent (Claude Code, Codex…, those installed on that machine and offered
+  in Settings › Agents, in the order set there: the first is preselected) or
   a plain terminal, the machine, a folder (recent folders, a folder browser, Git detection), a
   name, **resume** the last conversation, and an optional first message. The terminal is started
   by core in that folder; it joins the space whose folder holds it, else a new space.

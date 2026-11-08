@@ -299,13 +299,13 @@ body.short-bottom { --safe-bottom: 0px; }
    Agent list
    ================================================================ */
 .home-top {
-  display: flex; flex-direction: column; gap: 10px; flex: none;
-  padding: calc(var(--safe-top) + 18px) 16px 16px;
+  display: flex; flex-direction: column; flex: none;
+  padding: calc(var(--safe-top) + 12px) 16px 12px;
 }
-.home-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; container-type: inline-size; }
-/* The title gives way first (smaller, then truncated); the buttons never overflow
-   (secondary ones fold into "…", see utils/headerFold.ts). */
-.home-title-row .display { font-size: 40px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-bottom: .06em; }
+/* One row: logo and version on the left, which give way first (truncated);
+   the buttons never overflow (secondary ones fold into "…", see utils/headerFold.ts). */
+.home-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+.home-title-row .eyebrow { flex: 1; }
 /* Logo = connection light: text color if connected, pink if Herdr is unreachable. */
 .home-logo { width: 32px; height: 14px; color: var(--dim); flex: none; margin-right: 2px; }
 .home-logo.ok { color: var(--text); }
@@ -470,51 +470,14 @@ body.short-bottom { --safe-bottom: 0px; }
 }
 .card.compact .card-more { order: 11; }
 
-/* Several machines: one section per machine, like Herdr's
-   sidebar. Header = name (Archivo), connection state, number of agents;
-   collapsible. Unreachable machine: its last state, grayed out. */
-.machine { margin: 0 0 8px; }
-.machine + .machine { margin-top: 4px; }
-.machine-row { display: flex; align-items: center; border-top: 1px solid var(--line); margin-bottom: 6px; }
-.machine-head {
-  flex: 1; min-width: 0; display: flex; align-items: center; gap: 5px; text-align: left; cursor: pointer;
-  padding: 13px 2px 13px 0;
-  color: var(--text);
-}
-.machine.collapsed .machine-row { margin-bottom: 0; }
-.machine-head:focus-visible { outline: 1px solid var(--mauve); outline-offset: -1px; }
-.machine-options { flex: none; }
-.machine-chev { width: 15px; height: 15px; color: var(--dim); transition: transform .15s ease; }
-.machine.collapsed .machine-chev { transform: rotate(-90deg); }
-.machine-icon { width: 16px; height: 16px; color: var(--muted); }
-.machine-ident { display: inline-flex; align-items: center; gap: 5px; min-width: 0; flex: 1; }
-.machine-name {
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font: 800 16px/1.1 var(--display); letter-spacing: -.02em;
-}
+/* ••• buttons: a 1 px ring inside the button, like the rows, not Nuxt UI's 3 px
+   outer ring that touches a bordered row's edge. */
+.space-menu.icon-btn:focus-visible { outline: 1px solid var(--mauve); outline-offset: -1px; }
 .machine-local-badge {
   display: inline-flex; align-items: center; flex: none; padding: 2px 4px;
   border: 1px solid var(--line-strong); color: var(--text-3);
   font: 600 9px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; white-space: nowrap;
 }
-@media (min-width: 900px), (min-width: 700px) and (min-height: 700px), (min-width: 700px) and (min-device-width: 700px) and (min-device-height: 700px) and (pointer: coarse) {
-  .machine-head { display: grid; grid-template-columns: 15px 16px minmax(0, 1fr) auto; grid-template-rows: auto auto; row-gap: 4px; }
-  .machine-chev { grid-column: 1; grid-row: 1 / 3; }
-  .machine-icon { grid-column: 2; grid-row: 1 / 3; }
-  .machine-ident { grid-column: 3; grid-row: 1; }
-  .machine-head .machine-state { grid-column: 3; grid-row: 2; }
-  .machine-head .machine-count { grid-column: 4; grid-row: 2; }
-}
-.machine-session { display: block; margin-top: 4px; color: var(--mauve); font: 500 10px/1 var(--mono); letter-spacing: .1em; }
-.machine-state {
-  display: inline-flex; align-items: center; gap: 6px; flex: none;
-  font: 500 9.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
-}
-.machine-state i { width: 6px; height: 6px; background: var(--green); }
-.machine.connecting .machine-state { color: var(--ochre); }
-.machine.connecting .machine-state i { background: var(--ochre); animation: pulse 1.2s ease-in-out infinite; }
-.machine.offline .machine-state { color: var(--rose); }
-.machine.offline .machine-state i { background: var(--rose); }
 /* Machine bar (several machines): a square band of cells split by 1 px rules,
    "All" then each machine with its state square and count; the chosen cell
    takes the accent with a line under it. Scrolls sideways when it overflows. */
@@ -545,12 +508,6 @@ body.short-bottom { --safe-bottom: 0px; }
 .machine-bar-item.offline .machine-bar-state { background: var(--rose); }
 .machine-bar-count { font: 700 11px/1 var(--mono); letter-spacing: 0; color: var(--text); }
 .machine-bar-item.on .machine-bar-count { color: var(--accent); }
-.machine-count {
-  margin-left: auto; display: inline-flex; align-items: center; gap: 8px; flex: none;
-  font: 500 11px/1 var(--mono); color: var(--dim);
-}
-/* Quotas of the Claude account specific to the machine (different accounts), under its header. */
-.machine-body .quotas.machine-quotas { margin: 2px 0 18px; }
 /* Claude quotas not configured on a machine that has Claude agents. */
 /* Claude quota status line per machine (ClaudeQuotaSetup.vue): Settings › Agents, setup guide. */
 .claude-quotas .settings-lead { margin-bottom: 12px; }
@@ -589,32 +546,9 @@ body.short-bottom { --safe-bottom: 0px; }
 .update-banner-actions .iconify { width: 14px; height: 14px; }
 /* One-tap update: the Updating screen reuses the lock screen's frame. */
 .lock-screen.self-update { z-index: 61; }
-.machine-waiting { padding: 3px 5px; background: color-mix(in srgb, var(--rose) 16%, transparent); color: var(--rose); font-weight: 600; }
-.machine-error {
-  margin: -6px 0 14px 24px; font: 400 11px/1.45 var(--mono); color: var(--text-3);
-  overflow-wrap: anywhere;
-}
-.machine.collapsed .machine-error { margin-top: 8px; }
-/* A machine bar tab showing one machine: no header; an unreachable machine
-   says so at the top of the list, its session and keep-awake on one line. */
-.machine-tab-info { margin: 0 0 16px; }
-.machine-tab-offline { display: flex; align-items: flex-start; gap: 10px; margin: 0; padding: 12px; border: 1px solid var(--line-strong); background: var(--surface); }
-.machine-tab-offline > i { flex: none; width: 8px; height: 8px; margin-top: 2px; background: var(--rose); }
-.machine-tab-offline.connecting > i { background: var(--ochre); }
-.machine-tab-offline span { display: grid; gap: 5px; min-width: 0; }
-.machine-tab-offline b { color: var(--text); font: 600 11px/1.3 var(--mono); letter-spacing: .1em; text-transform: uppercase; overflow-wrap: anywhere; }
-.machine-tab-offline small { color: var(--text-3); font: 400 11px/1.45 var(--mono); overflow-wrap: anywhere; }
-.machine-tab-meta { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0; }
-.machine-tab-offline + .machine-tab-meta { margin-top: 10px; }
-.machine-tab-session { display: inline-flex; align-items: center; gap: 4px; color: var(--mauve); font: 500 10px/1 var(--mono); letter-spacing: .1em; }
-.machine-tab-session svg { width: 13px; height: 13px; }
-.machine:not(.online) .machine-icon, .machine:not(.online) .machine-name { color: var(--muted); }
-.machine:not(.online) .machine-body { opacity: .5; filter: grayscale(.7); }
-.machine-body .agent-group { margin-bottom: 20px; }
-.machine-body .agent-group:last-child { margin-bottom: 18px; }
 .machine-empty { margin: -2px 0 20px 24px; font: 400 12px/1.4 var(--mono); color: var(--dim); }
-/* State mode: online machines as a row of square chips at the top (each opens
-   the machine's menu), their own quotas under it, and offline or reconnecting
+/* Machine chips (no machine bar, several machines), each opening the machine's
+   menu; machine quotas under the shared ones; offline or reconnecting
    machines on one compact line at the bottom of the list. */
 .state-machines { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 18px; padding: 0; list-style: none; }
 .state-machine { min-width: 0; max-width: 100%; }
@@ -1573,6 +1507,9 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
 .choices-keys button:hover { background: var(--surface-2); }
 .choices-keys button:active { background: var(--surface-3); }
 .choices-keys button:disabled { opacity: .5; }
+/* Dismiss (Esc): a quiet ghost button, the options stay the main actions. */
+.choices-keys .choices-dismiss { background: transparent; border-color: transparent; color: var(--muted); padding-left: 2px; padding-right: 8px; }
+.choices-keys .choices-dismiss:hover { color: var(--text); background: transparent; border-bottom-color: var(--line); }
 /* Keyboard keys captured by the card (computer): discreet, at the end of the line. */
 .choices-keys .card-kbd { display: inline-flex; align-items: center; gap: 4px; align-self: center; margin-left: auto; }
 .choices-keys .card-kbd kbd { margin-left: 0; color: var(--muted); }
@@ -1598,10 +1535,6 @@ body.kb .composer { padding-bottom: 8px; }
   font: 400 11px/1.3 var(--mono); color: var(--blue);
   text-align: right; padding: 0 2px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-/* omp status line below the field: one line, cut, gauges on the right. */
-.composer-status { display: flex; gap: 12px; padding: 5px 2px 0; min-width: 0; font: 400 11px/1.3 var(--mono); color: var(--muted); white-space: nowrap; }
-.composer-status-line { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.composer-status-meters { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
 /* Clickable line ("Restart to update") and restart progress. */
 .composer-notice:has(.notice-btn), .composer-notice.restart {
   display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0;
@@ -2261,10 +2194,6 @@ body.kb .composer { padding-bottom: 8px; }
 .notify-hint.quiet-end { font: 500 11.5px/1.4 var(--mono); letter-spacing: .04em; text-transform: uppercase; color: var(--ochre); }
 /* Home: one discreet line while quiet mode is active, outside the header (which keeps
    its shape); a tap opens Settings › Notifications. */
-.home-quiet { display: flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; margin: 0 0 16px; color: var(--ochre); font: 600 10px/1.3 var(--mono); letter-spacing: .1em; text-transform: uppercase; text-decoration: none; }
-.home-quiet span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.home-quiet svg { width: 13px; height: 13px; flex: none; }
-.home-quiet:hover, .home-quiet:focus-visible { color: var(--text); }
 /* Themes: color swatches, selection marked by the accent. */
 .theme-list { display: flex; flex-direction: column; gap: 18px; padding-top: 18px; }
 .theme-grid { display: grid; grid-template-columns: 1fr; border: 1px solid var(--line); }
@@ -2643,7 +2572,9 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
   .settings-nav-item { font: 500 11px/1.3 var(--mono); letter-spacing: .03em; min-height: 46px; padding: 0 10px; }
   .settings-nav-item .iconify { width: 16px; height: 16px; }
   .settings-nav-arrow { display: none; }
-  .settings-body { max-width: var(--read); margin: 0 auto; padding: 28px 24px 52px; }
+  /* The whole area right of the nav scrolls; only the inner column is centered. */
+  .settings-body { padding: 0; }
+  .settings-column { max-width: var(--read); margin: 0 auto; padding: 28px 24px 52px; }
   .settings-section-title { display: block; margin: 0 0 26px; font: 850 30px/1 var(--display); letter-spacing: -.04em; color: var(--text-strong); }
 
   #home { right: auto; width: var(--side); border-right: 1px solid var(--line-soft); background: var(--bg-2); }
@@ -2677,10 +2608,7 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
   .tab-back { display: none; }
   #btnBack { display: none; }
 
-  .home-top { padding: 22px 16px 18px; }
-  .home-title-row .display { font-size: 34px; }
-  /* Narrow sidebar: smaller title so the buttons keep their room. */
-  @container (max-width: 300px) { .home-top .home-title-row .display { font-size: 28px; } }
+  .home-top { padding: 14px 16px 12px; }
   .scroll { padding: 0 12px 96px; }
   .machine-bar { margin: 0 12px 14px; }
   .stats { margin-bottom: 22px; }
@@ -2800,6 +2728,8 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
   }
   .hw-sheet.wide { width: 680px; }
   .hw-sheet.tall { height: auto; max-height: 86vh; }
+  /* A task's sheet: wider, and one height whatever its open tab (TaskSheet.vue). */
+  .hw-sheet:has(.task-sheet) { width: min(780px, 92vw); height: min(820px, 86vh); }
   .hw-sheet.full { width: min(1100px, 92vw); height: 86vh; max-height: 86vh; padding-top: 20px; }
   :root[data-content-width="full"] .hw-sheet.full { width: calc(100vw - 48px); }
   /* On-screen keyboard (iPad): the window is centered in the visible area
@@ -3326,12 +3256,6 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
 .list-compact .agent-group { margin-bottom: 14px; }
 .list-compact .group-title { margin-bottom: 6px; font-size: 9.5px; }
 
-.list-compact .machine-head { padding-top: 7px; padding-bottom: 7px; }
-.list-compact .machine-row { margin-bottom: 4px; }
-@media (min-width: 900px), (min-width: 700px) and (min-height: 700px), (min-width: 700px) and (min-device-width: 700px) and (min-device-height: 700px) and (pointer: coarse) {
-  .list-compact .machine-head { display: flex; }
-  .list-compact .machine-head .machine-state { margin-left: auto; }
-}
 /* Counters on one strip: "3 YOUR TURN" per cell. */
 .list-compact .stats { margin-bottom: 12px; }
 .list-compact .stat { display: flex; align-items: center; gap: 7px; padding: 6px 9px; }

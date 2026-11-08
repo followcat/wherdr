@@ -1,7 +1,7 @@
 // A message shows in the conversation from the tap on Send: one bubble, from
 // "sending" to the server's record to the transcript, never two, never lost.
 import { describe, expect, it } from 'vitest'
-import { type OutboxItem, REPEAT_MS, SETTLED_MS, SendTimeout, addSending, chainSend, failLocal, isRepeat, newOutboxId, prune, recentSends, resend, settle, withOutbox } from '../app/utils/outbox'
+import { GONE_MAX_MS, type OutboxItem, REPEAT_MS, SETTLED_MS, SendTimeout, addSending, chainSend, failLocal, isRepeat, newOutboxId, prune, recentSends, resend, settle, withOutbox } from '../app/utils/outbox'
 import { pendingQueue } from '../app/utils/pendingQueue'
 import type { ChatItem, QueuedMessage } from '../shared/types'
 
@@ -37,8 +37,18 @@ describe('outbox: one bubble from the tap to the transcript', () => {
     expect(shown([], box, items)).toEqual([])
   })
 
-  it('removes the bubble when the server keeps no record (typed as an answer)', () => {
-    expect(settle(addSending([], 'w-a', 'yes', T0), 'w-a', null, T0 + 300)).toEqual([])
+  // herdr-core answers {ok, started}, never a record: the message was typed
+  // into the agent. The bubble stayed "sending" a moment, then vanished.
+  it('keeps the bubble as a sent message when the server keeps no record', () => {
+    const box = settle(addSending([], 'w-a', 'Fix the build', T0), 'w-a', null, T0 + 300)
+    expect(box).toEqual([{ id: 'w-a', text: 'Fix the build', at: T0, settledAt: T0 + 300 }])
+    expect(shown([], box)).toEqual([expect.objectContaining({ id: 'w-a', state: null })])
+    // Typed into an idle agent: shown as sent, not as still sending.
+    expect(pendingQueue({ mine: box, claude: [], items: [], screen: null, idle: true })).toEqual([expect.objectContaining({ id: 'w-a', phase: 'sent' })])
+    // Until a read made long enough after the send (see prune).
+    const gone = prune(box, [], T0 + 1000, T0 + 900)
+    expect(gone).toHaveLength(1)
+    expect(prune(gone, [], T0 + 12_000, T0 + 11_000)).toEqual([])
   })
 
   it('keeps messages typed in a row in the order of the taps', () => {
@@ -70,9 +80,29 @@ describe('outbox: prune on a new server state', () => {
     expect(prune(settled, [{ id: 'w-a', text: 'hi' }], T0 + 8100)).toEqual([])
   })
 
-  it('keeps an answered record a while after a slow send, then forgets it', () => {
-    expect(prune(settled, [], T0 + 9000)).toHaveLength(1)
-    expect(prune(settled, [], T0 + 8000 + SETTLED_MS)).toEqual([])
+  it('keeps a taken record until a read made well after it left, then forgets it', () => {
+    const gone = prune(settled, [], T0 + 9000)
+    expect(gone).toEqual([expect.objectContaining({ id: 'w-a', goneAt: T0 + 9000 })])
+    // A read that started too soon may predate the message in the transcript.
+    expect(prune(gone, [], T0 + 9000 + SETTLED_MS, T0 + 9500)).toHaveLength(1)
+    expect(prune(gone, [], T0 + 9000 + SETTLED_MS, T0 + 9000 + SETTLED_MS)).toEqual([])
+  })
+
+  // The agent took the message, then every read of the transcript failed
+  // (reconnecting): the bubble stayed 10 s, then vanished.
+  it('keeps a sent message shown while the transcript cannot be read', () => {
+    expect(GONE_MAX_MS).toBe(5 * 60_000)
+    let box = prune(settled, [], T0 + 9000, T0 + 7000)
+    for (let t = T0 + 10_000; t < T0 + 9000 + GONE_MAX_MS; t += 1500) box = prune(box, [], t, T0 + 7000)
+    expect(shown([], box)).toEqual([expect.objectContaining({ id: 'w-a', raw: 'hi' })])
+    // Never read again for that long: it goes anyway.
+    expect(prune(box, [], T0 + 9000 + GONE_MAX_MS, T0 + 7000)).toEqual([])
+  })
+
+  it('counts the wait from when the agent took a message held for a long time', () => {
+    // Listed (held) for minutes after the send's answer, then taken just now.
+    const taken = T0 + 300_000
+    expect(prune(settled, [], taken, taken - 500)).toHaveLength(1)
   })
 
   it('never forgets a bubble still sending or never delivered', () => {

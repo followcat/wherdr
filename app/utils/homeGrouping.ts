@@ -1,9 +1,3 @@
-export type HomeGrouping = 'machine' | 'state'
-
-export function readHomeGrouping(value: unknown): HomeGrouping {
-  return value === 'state' ? 'state' : 'machine'
-}
-
 interface MachineLike { key: string, baseKey?: string, status: 'online' | 'connecting' | 'offline' }
 
 // Machines of State mode, filtered by the machine bar (its keys are base keys,

@@ -10,8 +10,10 @@ npm and Homebrew packages, the one-tap update and Docker belong to wherdr v2: se
 
 - **An hc session** (herdr-core) running on the server, with protocol generation 1 and the
   methods listed in [herdr-core › Setup](core.md#setup). Know its socket path: wherdr needs it in
-  `HC_SOCKET`.
+  `HC_SOCKET`. To install hc: `curl -fsSL https://releases.herdr.dev/core/install.sh | sh` (into `~/.local/bin`).
 - **Linux or macOS** with **Node.js 22** or newer and Git. wherdr runs as the user who runs hc.
+  The build needs about 1.5 GB of memory: on a small machine (a Raspberry Pi), build with
+  `NODE_OPTIONS=--max-old-space-size=1536`.
 - The agents you use (Claude Code, Codex) installed on each machine, in a folder of the usual
   user `PATH` (`~/.local/bin`, `~/.bun/bin`, `~/.cargo/bin`, `~/.npm-global/bin`, Homebrew…):
   agents are started through the machine's shell with those folders added.
@@ -23,7 +25,19 @@ npm and Homebrew packages, the one-tap update and Docker belong to wherdr v2: se
 
 ## Installation
 
-Build and start from source, as in [First launch](quick-start.md#quick-start):
+**With an agent (recommended).** Give the prompt of [Install with an agent](install-with-an-agent.md)
+to a coding agent running on the server: a new install, v3 beside an existing v2 (with import of
+its projects, machines and settings), or an update. The agent looks at the machine first, runs the
+installer script for the standard steps, handles what differs on your machine, never touches v2,
+asks before any `sudo`, and ends with a summary of what it checked and what is left for you.
+
+**With the script.** On Linux with `systemd --user`,
+[`scripts/install-v3-beside-v2.sh`](../scripts/install-v3-beside-v2.sh) starts hc and v3 as user
+services, adds a `tailscale serve` address and writes an update script; `--skip-import` when there
+is no v2 to import from. Without `--yes` it only prints its plan. See
+[Migrate from v2](migrate-from-v2.md#by-hand).
+
+**By hand.** Build and start from source, as in [First launch](quick-start.md#quick-start):
 
 ```sh
 git clone -b v3 https://github.com/afloury/wherdr.git
@@ -77,8 +91,9 @@ You can start with the second one and move to the first later
 ### On-device dictation files
 
 Dictation that runs on the phone itself needs a speech model and a WebAssembly runtime: large
-files that are not in the repository, the build or the app's offline cache. Download them once
-into `DATA_DIR/models`, in the checkout, with the same `DATA_DIR` as wherdr:
+files that are not in the repository, the build or the app's offline cache. The server fetches
+the missing ones into `DATA_DIR/models` by itself when you press Install. To fetch them ahead,
+run, with the same `DATA_DIR` as wherdr:
 
 ```sh
 DATA_DIR=/path/to/data node scripts/fetch-dictation-files.mjs
@@ -118,4 +133,4 @@ integrations of the agents you use (`herdr integration install claude|codex|omp`
 with `curl -fsSL https://wherdr.dev/install | sh`, the Herdr plugin, npm or Homebrew: see the
 [v2 installation guide](https://github.com/afloury/wherdr/blob/main/docs/installation.md). A
 wherdr 1.x Docker container moves to the native v2 service with the
-[Docker migration guide](migrate-from-1.x-docker.md). None of this applies to v3.
+[Docker migration guide](migrate-from-1.x-docker.md). None of this applies to v3. To move from v2 to v3, see [Migrate from v2](migrate-from-v2.md).

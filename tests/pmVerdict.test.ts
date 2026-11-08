@@ -157,7 +157,10 @@ describe('reviewer plan', () => {
   it('uses another model than the worker', () => {
     expect(reviewerPlan(company, task())).toEqual({ program: 'claude', model: 'opus' })
     expect(reviewerPlan(company, task({ reviewAgent: 'codex', reviewModel: 'gpt-5.5' }))).toEqual({ program: 'codex', model: 'gpt-5.5' })
-    expect(reviewerPlan(company, task({ reviewModel: 'sonnet' }))).toEqual({ reason: 'The reviewer must use another model than the worker (sonnet)' })
+    expect(reviewerPlan(company, task({ reviewModel: 'sonnet' }))).toEqual({ reason: 'The reviewer must use another model than the worker (sonnet), or set reviewModel to "same"' })
+    // "same": a fresh session of the worker's own model, asked for by the template.
+    expect(reviewerPlan(company, task({ reviewModel: 'same' }))).toEqual({ program: 'claude', model: 'sonnet' })
+    expect(reviewerPlan(company, task({ reviewModel: 'same', reviewAgent: 'codex' }))).toEqual({ reason: 'reviewModel "same" needs the worker\'s agent (claude)' })
     expect(reviewerPlan({ ...company, prefs: { agent: 'claude', model: 'sonnet' } }, task())).toEqual({ reason: 'No review model set: add prefs.reviewModel to the template' })
   })
 })

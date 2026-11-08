@@ -15,8 +15,7 @@ vi.mock('@xterm/xterm', () => ({ Terminal: class {
     return m
   }
   write(_data: unknown, done?: () => void) { done?.() }
-  resize() {} reset() {}
-  loadAddon() {} open() {} dispose() {} refresh() {} attachCustomWheelEventHandler() {}
+  loadAddon() {} open() {} dispose() {} refresh() {} reset() {} resize() {} attachCustomWheelEventHandler() {}
   attachCustomKeyEventHandler() {} onData() {} onBinary() {} onScroll() {}
   constructor() { terms.push(this) }
 } }))
@@ -132,6 +131,103 @@ it.each([false, true])('shares wake probes while preserving touch beta=%s frame 
     ctl.dispose()
     smoothTouchScrolling.value = false
     wrapper.unmount()
+    vi.unstubAllGlobals()
+  }
+})
+
+it.each([
+  { name: 'relay reset and control only', paint: null },
+  { name: 'normal core output', paint: 'hello from core' },
+  // Core always sends an attach snapshot, even without new program output.
+  { name: 'idle shell snapshot', paint: '\x18\x1b[H\x1b[2J\x1b[?9001l' },
+  { name: 'cleared screen snapshot', paint: '\x1b[2J\x1b[H' },
+])('waits for core paint: $name', async ({ paint }) => {
+  vi.useFakeTimers()
+  const sockets: Socket[] = []
+  class Socket {
+    readyState = 0
+    send = vi.fn()
+    close = vi.fn(() => { this.readyState = 3; this.onclose?.() })
+    onopen?: () => void
+    onmessage?: (e: { data: string }) => void
+    onclose?: (() => void) | null
+    constructor() { sockets.push(this) }
+  }
+  vi.stubGlobal('WebSocket', Socket)
+  pageVisible.value = true
+  terminalRenderer.value = 'html'
+  const setBanner = vi.fn()
+  let ctl!: ReturnType<typeof createTerminal>
+  const wrapper = mount(defineComponent({
+    setup() {
+      ctl = createTerminal('w1:p1', { setBanner, hasBanner: () => false })
+      return () => h('div')
+    },
+  }))
+  try {
+    await ctl.mount(wrapper.element as HTMLElement)
+    ctl.connect(false)
+    const ws = sockets[0]!
+    const receive = (packet: object) => ws.onmessage!({ data: JSON.stringify(packet) })
+    ws.readyState = 1
+    ws.onopen!()
+    // events.subscribe precedes attach: another viewer's size event can send
+    // an empty frame and control state before capabilities announce core.
+    receive({ type: 'terminal.frame', width: 80, height: 24, bytes: '' })
+    receive({ type: 'terminal.control', on: false })
+    const loadingBeforeCapabilities = ctl.loading.value
+    // The relay sends these before core's attach DATA arrives. Neither proves
+    // that core painted, and pongs/resize frames must not reset the deadline.
+    receive({ type: 'web.capabilities', mouse: false, core: true })
+    receive({ type: 'terminal.frame', full: true, width: 80, height: 24, bytes: '' })
+    receive({ type: 'terminal.control', on: true })
+    const loadingBeforePaint = ctl.loading.value
+    if (paint !== null) {
+      const bytes = new TextEncoder().encode(paint)
+      receive({ type: 'terminal.frame', width: 80, height: 24, bytes: btoa(paint), credit: bytes.length })
+      expect(ctl.loading.value).toBe(false)
+      expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ type: 'credit', bytes: bytes.length }))
+    }
+    await vi.advanceTimersByTimeAsync(6000)
+    receive({ type: 'terminal.frame', width: 80, height: 24, bytes: '' })
+    receive({ type: 'terminal.control', on: false })
+    receive({ type: 'pong' })
+    await vi.advanceTimersByTimeAsync(5999)
+    expect(ws.close).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(ws.close).toHaveBeenCalledTimes(paint === null ? 1 : 0)
+    if (paint === null) {
+      expect(loadingBeforeCapabilities).toBe(true)
+      expect(loadingBeforePaint).toBe(true)
+      await vi.advanceTimersByTimeAsync(399)
+      expect(sockets).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(sockets).toHaveLength(2)
+      expect(ctl.loading.value).toBe(true)
+      // After four silent attaches, the user gets a plain Retry banner.
+      for (let attempt = 1; attempt < 4; attempt++) {
+        const retry = sockets[attempt]!
+        retry.readyState = 1
+        retry.onopen!()
+        await vi.advanceTimersByTimeAsync(12000)
+        if (attempt < 3) await vi.advanceTimersByTimeAsync(400 * 2 ** attempt)
+      }
+      expect(sockets).toHaveLength(4)
+      expect(setBanner).toHaveBeenLastCalledWith(expect.objectContaining({
+        text: 'Terminal unavailable: the machine sent nothing in time', btn: 'Retry',
+      }))
+    } else {
+      // This is an initial-paint deadline, not a timer for subsequent output.
+      await vi.advanceTimersByTimeAsync(24000)
+      expect(ws.close).not.toHaveBeenCalled()
+      expect(sockets).toHaveLength(1)
+      expect(ctl.loading.value).toBe(false)
+    }
+  } finally {
+    ctl.dispose()
+    wrapper.unmount()
+    vi.clearAllTimers()
+    vi.useRealTimers()
     vi.unstubAllGlobals()
   }
 })

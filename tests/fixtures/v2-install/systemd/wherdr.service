@@ -1,0 +1,11 @@
+# wherdr at login (wherdr service install). Remove with: wherdr service uninstall
+[Unit]
+Description=wherdr: your Herdr agents from your phone and browser
+
+[Service]
+Type=simple
+ExecStart="/usr/bin/node" "/home/user/.npm-global/lib/node_modules/wherdr/bin/wherdr.mjs" "run"
+Environment="PORT=7683"
+Environment="DATA_DIR=/home/user/wherdr/data" "HERDR_WEB_SESSION=main"
+Environment="NOTE=100%% sure"
+Restart=on-failure

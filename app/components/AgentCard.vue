@@ -203,6 +203,7 @@ onUnmounted(list.unmount)
       <span v-else-if="compact.panes" class="card-panes" :title="counts">{{ compact.panes }}</span>
       <span class="card-state" :class="statusKey(statePane)" :title="stateTitle" role="img" :aria-label="stateTitle"><i /></span>
       <span v-if="activityLine" class="home-task-line" :title="activityLine">{{ activityLine }}</span>
+      <OmpContext v-if="statePane.agent === 'omp'" :pane="statePane" variant="bar" />
       <Transition name="card-more" :appear="appear">
         <div v-if="more" class="card-more">
           <div class="card-more-in">

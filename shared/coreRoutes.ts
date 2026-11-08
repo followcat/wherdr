@@ -23,6 +23,15 @@ import m from './coreRoutes/m'
 import n from './coreRoutes/n'
 import o from './coreRoutes/o'
 import p from './coreRoutes/p'
+import q from './coreRoutes/q'
+import r from './coreRoutes/r'
+import s from './coreRoutes/s'
+import t from './coreRoutes/t'
+import u from './coreRoutes/u'
+import v from './coreRoutes/v'
+import w from './coreRoutes/w'
+import x from './coreRoutes/x'
+import y from './coreRoutes/y'
 
 const BASE = [
   'auth/status', 'auth/lock', 'auth/lock-all', 'auth/disable', 'auth/max-session',
@@ -37,7 +46,7 @@ const BASE = [
   'dictation/rewrite', 'GET dictation/text-models',
 ]
 
-export const CORE_ROUTES = [...BASE, ...a, ...b, ...c, ...d, ...e, ...f, ...g, ...h, ...i, ...j, ...k, ...l, ...m, ...n, ...o, ...p]
+export const CORE_ROUTES = [...BASE, ...a, ...b, ...c, ...d, ...e, ...f, ...g, ...h, ...i, ...j, ...k, ...l, ...m, ...n, ...o, ...p, ...q, ...r, ...s, ...t, ...u, ...v, ...w, ...x, ...y]
 const readOnly = CORE_ROUTES.filter(r => r.startsWith('GET ')).map(r => r.slice(4))
 const open = CORE_ROUTES.filter(r => !r.startsWith('GET '))
 const exact = new Set(open.filter(r => !r.includes(':')))

@@ -28,8 +28,9 @@ function watchInstalling(sw: ServiceWorker | null, atStartup: boolean) {
 
 // Service worker: a new SW found during use stays "waiting" until Reload is
 // clicked. One found at startup (waiting since the last visit, or installing
-// because of this page load) is activated silently: the page was loaded from
-// the network and already runs the new build, nothing is reloaded.
+// because of this page load) is activated silently for future navigations.
+// The current page may still be a cached shell: startupBuildCheck offers the
+// banner when it is older than the served build, without reloading it.
 export function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return
   navigator.serviceWorker.register('/sw.js').then((reg) => {
@@ -42,12 +43,17 @@ export function registerServiceWorker() {
   }).catch(() => {})
 }
 
-// The shell may have come from the SW cache (slow network) and be older than
-// the served build: reload once, right away, before anything is typed.
-function startupBuildCheck() { void reloadIfNewBuild() }
+// Cache-first startup may serve an older shell after a redeployment. Offer
+// the same banner as an update found during use; only the user reloads it.
+async function startupBuildCheck() {
+  try {
+    const res = await fetch(`/_nuxt/builds/latest.json?${Date.now()}`, { cache: 'no-store' })
+    if (res.ok && isNewBuild(useRuntimeConfig().app.buildId, await res.json())) markNew()
+  } catch { /* offline: the periodic check will catch up */ }
+}
 
-// Is a newer build served? Then reload to it once (guard against loops),
-// otherwise the banner. Also used when a file of the running build is missing:
+// A file of the running build is missing: reload to a newer build once (guard
+// against loops), otherwise the banner. Used only for missing-chunk recovery:
 // a deployment removed it (terminal opened for the first time after a deploy).
 // Offline or same build: nothing. True if a newer build is served.
 export async function reloadIfNewBuild(): Promise<boolean> {

@@ -6,9 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- **Conversations open on their last read.** After a reload, an update or a network cut, the conversation kept on the device shows at once (the home state no longer waits for the server's first answer), then the server's answer merges in without moving what is on screen; replies that arrived meanwhile come in at the bottom like live ones. The startup background is the theme last shown on the device, so a reload no longer flashes another colour.
 - **Devin conversations on herdr-core.** Read saved ATIF transcripts from the running process, locally or on a core machine, with tools, inline images, search and previews. Updates arrive when Devin saves a turn; only history retained after compaction is available.
 
+- **App start, per device.** Settings › Phone › App start: **Up to date** (default, the current version, the saved copy past 3 seconds) or **Instant** (the saved copy at once, with the Reload banner for a newer version). After an update, the server keeps the previous two versions' files, so a page opened before it no longer reloads itself on a missing file.
+- **Qwen3-ASR WebGPU groundwork.** Added the ORT WebGPU worker and its scoped CSP route. Qwen is not selectable yet.
+- **omp context at a glance.** omp agent cards show their context usage as a thin line along their bottom edge, and the conversation header shows the percentage and estimated tokens, with omp's status line on demand. Read from omp's own gauge on screen (current and older layouts, every symbol preset); unknown readings stay hidden, old ones are marked. Thanks to [@guileen](https://github.com/guileen) (ported from 2.x).
 - **herdr-core 0.1.17: machines with an SSH port.** Settings › Agents › Machines › Add machine takes `user@host:port` when the core accepts one (read from its `rpc.discover`, not its version); on herdr-core 0.1.16 the form says so before sending.
+- **SVG diagrams in conversations.** Static `svg` code fences now show an isolated theme-aware preview with source, Copy and enlargement; incomplete or unsafe content stays readable code without executing or loading external resources (port of [#416](https://github.com/afloury/wherdr/pull/416) by [@guileen](https://github.com/guileen)).
+
+- **Clearer recovery messages.** A first conversation read that times out asks you to retry. A silent terminal reports that the machine sent nothing in time and offers Retry after four failed attaches.
+
+- **Faster Tailscale checks (#324).** Status and Serve reads run together with 4.5-second CLI deadlines, inside the socket handshake window; unreadable results remain unknown.
+
+- **Startup updates (#324).** The app opens the server's current build when the server answers within 3 seconds, so a deployment no longer shows the Reload banner followed by an unexpected reload. Past that, or offline, the cached page opens and shows the existing Reload banner when a newer build is served, preserving the current view until the user reloads.
+
+- **Conversation reads recover (#324).** Bottom, older-page and speculative reads stop after 8 seconds so the next refresh can proceed. Speculative reads also work on iOS 16.4 and contain synchronous reader errors.
+
+- **Recovery after suspend (#324).** Unlock and Settings checks allow 10 seconds to save the offline lease; resume checks keep their 3-second deadline. Events sockets with no real packet after 8 seconds and terminal sockets with no core paint after 12 seconds close through the existing retry paths. Relay reset/resize messages do not count as paint; core's attach snapshot does, even for an idle or blank terminal.
 
 ## [2.5.0] — 2026-11-02
 

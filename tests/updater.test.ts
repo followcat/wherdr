@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { driverFor, healthUrl, runUpdate, shortReason } from '../bin/lib/updater.mjs'
+import { driverFor, healthReports, healthUrl, runUpdate, shortReason } from '../bin/lib/updater.mjs'
 
 const base = {
   from: '1.3.0', to: '1.3.1', dir: '/home/test/wherdr', runtime: '/usr/local/bin/node',
@@ -123,6 +123,13 @@ describe('one-tap update: commands of each installation', () => {
   it('checks health on loopback when the server listens everywhere', () => {
     expect(healthUrl({ port: '7683', host: '0.0.0.0' })).toBe('http://127.0.0.1:7683/api/health')
     expect(healthUrl({ port: '7683', host: '::1' })).toBe('http://[::1]:7683/api/health')
+  })
+
+  it('accepts the package version from v2 (version) and v3 (release)', () => {
+    expect(healthReports({ version: '2.5.0' }, '2.5.0')).toBe(true)
+    expect(healthReports({ version: '3.0.0-dev+fc3550e', release: '2.5.0' }, '2.5.0')).toBe(true)
+    expect(healthReports({ version: '3.0.0-dev+fc3550e', release: '2.5.0' }, '2.6.0')).toBe(false)
+    expect(healthReports(null, '2.5.0')).toBe(false)
   })
 })
 

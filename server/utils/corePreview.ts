@@ -2,6 +2,7 @@
 // it can be found) else the last meaningful line of the terminal. Read in the background and
 // only when the terminal's state changed, so the one-second inventory poll stays cheap.
 import type { Pane } from '../../shared/types'
+import { ompPreviewText } from '../../shared/ompStatus'
 
 const MAX = 200
 const MAX_BUSY = 4
@@ -71,7 +72,8 @@ export function createCorePreviews(deps: CorePreviewDeps) {
       const reply = await deps.reply(p).catch(() => null)
       if (reply?.text) return reply.text.length > MAX ? `${reply.text.slice(0, MAX - 1)}…` : reply.text
     }
-    return lastLine(await deps.read(p.coreAddress!))
+    const screen = await deps.read(p.coreAddress!)
+    return lastLine(p.agent === 'omp' ? ompPreviewText(screen) : screen)
   }
   return {
     /** Sets `preview` on the panes from what is known; starts the readings that are due. */

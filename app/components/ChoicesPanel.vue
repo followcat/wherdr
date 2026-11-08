@@ -35,6 +35,12 @@ async function next() {
   busy.value = true
   if (!(await navKey(props.paneId, 'enter', props.prompt?.identity))) busy.value = false
 }
+// Dismiss: Esc to the agent, as the keyboard's Escape (closes the question
+// or refuses the permission; the agent then waits for a message).
+async function dismiss() {
+  busy.value = true
+  if (!(await navKey(props.paneId, 'esc', props.prompt?.identity))) busy.value = false
+}
 // Claude's checkboxes come with their own Submit (an option without a box):
 // no Continue button then.
 const ownSubmit = computed(() => Boolean(props.prompt && props.prompt.options.some(o => o.checked === undefined)))
@@ -154,8 +160,9 @@ useCardKeys(() => keyboard.value, () => ({ digits: Math.min(9, props.prompt?.opt
         {{ t('Continue') }}<kbd>{{ screenKeyName('enter') }}</kbd>
       </button>
     </div>
-    <div v-if="keyboard" class="choices-keys">
-      <span v-if="keyboard" class="card-kbd" aria-hidden="true"><kbd v-if="tabs">←→</kbd><kbd>↑↓</kbd><kbd>{{ screenKeyName('enter') }}</kbd><kbd>1–{{ Math.min(9, prompt!.options.length) }}</kbd></span>
+    <div v-if="prompt && !prompt.kind" class="choices-keys">
+      <button type="button" class="choices-dismiss" :disabled="disabled" @click="dismiss">{{ t('Dismiss') }}</button>
+      <span v-if="keyboard" class="card-kbd" aria-hidden="true"><kbd v-if="tabs">←→</kbd><kbd>↑↓</kbd><kbd>{{ screenKeyName('enter') }}</kbd><kbd>1–{{ Math.min(9, prompt.options.length) }}</kbd><kbd>{{ screenKeyName('esc') }}</kbd></span>
     </div>
   </div>
 </template>

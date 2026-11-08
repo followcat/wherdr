@@ -10,6 +10,7 @@ const fsp = fs.promises
 // `ino`: inode number when known (a file replaced by another, even at the same
 // size and second, gets another one).
 export interface FsStat { size: number, mtimeMs: number, isFile: boolean, isDir: boolean, ino?: number }
+export interface PidLock { name: string, pid: number, stat: FsStat }
 
 export interface MachineFs {
   stat: (p: string) => Promise<FsStat> // rejette si absent
@@ -21,8 +22,8 @@ export interface MachineFs {
   // Checksum of the first `len` bytes, computed where the file is (a remote
   // machine sends back a few bytes, not the file).
   digest?: (p: string, len: number) => Promise<string>
-  // Bounded small files and their stats in one remote round trip (PID locks).
-  readSmallMany?: (ps: string[], maxBytes: number) => Promise<{ stat: FsStat | null, body: Buffer | null }[]>
+  // All PID locks in one remote round trip; null means an incomplete scan.
+  readPidLocks?: (dir: string) => Promise<PidLock[] | null>
 }
 
 // ---------------------------------------------------------------- disque local
@@ -33,13 +34,20 @@ export const localFs: MachineFs = {
   statMany: ps => Promise.all(ps.map(p => fsp.stat(p).then(toStat, () => null))),
   readdir: p => fsp.readdir(p),
   readFile: p => fsp.readFile(p, 'utf8'),
-  async readSmallMany(ps, maxBytes) {
-    const out: { stat: FsStat | null, body: Buffer | null }[] = []
-    for (let i = 0; i < ps.length; i += 32) out.push(...await Promise.all(ps.slice(i, i + 32).map(async p => {
-      const stat = await localFs.stat(p).catch(() => null)
-      const body = stat?.isFile && stat.size <= maxBytes ? await localFs.read(p, 0, maxBytes + 1).catch(() => null) : null
-      return { stat, body }
-    })))
+  async readPidLocks(dir) {
+    const names = (await fsp.readdir(dir)).filter(n => n.endsWith('.lock'))
+    if (names.length > 4096) return null
+    const out: PidLock[] = []
+    for (let i = 0; i < names.length; i += 32) {
+      const batch = await Promise.all(names.slice(i, i + 32).map(async name => {
+        const p = `${dir}/${name}`
+        const stat = await localFs.stat(p).catch(() => null)
+        const body = stat?.isFile && stat.size <= 32 ? await localFs.read(p, 0, 33).catch(() => null) : null
+        const pid = body && body.length <= 32 ? body.toString('utf8').trim() : ''
+        return stat && /^\d+$/.test(pid) && Number.isSafeInteger(Number(pid)) && Number(pid) > 0 ? { name, pid: Number(pid), stat } : null
+      }))
+      out.push(...batch.filter((v): v is PidLock => v !== null))
+    }
     return out
   },
   async read(p, start, len) {
@@ -90,6 +98,39 @@ done`
 // (dash's failed `cd`, for example, never says "No such file").
 const MISSING_PATH_EXIT = 44
 const REQUIRE_PATH = `[ -e "$1" ] || exit ${MISSING_PATH_EXIT}\n`
+
+// One stat process for the entire glob. Filename/PID fields are NUL-delimited;
+// each bounded lock is read by the shell, without per-file utility processes.
+const PID_LOCKS_SCRIPT = REQUIRE_PATH + `cd "$1" || exit $?
+set --
+for f in ./*.lock ./.[!.]*.lock ./..?*.lock; do
+  [ -e "$f" ] || continue
+  set -- "$@" "$f"
+  [ "$#" -le 4096 ] || { printf '!'; exit 0; }
+done
+[ "$#" -gt 0 ] || exit 0
+if [ "$(uname -s)" = Darwin ]; then
+  stats=$(stat -f '%z %Fm %i %HT' "$@") || exit $?
+else
+  stats=$(stat -c '%s %.9Y %i %F' -- "$@") || exit $?
+fi
+newline='
+'
+for f; do
+  line=\${stats%%"$newline"*}
+  stats=\${stats#*"$newline"}
+  size=\${line%% *}
+  case "$size" in ''|*[!0-9]*) continue ;; esac
+  [ "$size" -le 32 ] || continue
+  case "$line" in *regular*|*Regular*) ;; *) continue ;; esac
+  exec 3< "$f" || continue
+  pid=; read -r pid <&3
+  extra=; read -r extra <&3; more=$?
+  exec 3<&-
+  [ "$more" -ne 0 ] && [ -z "$extra" ] || continue
+  case "$pid" in ''|*[!0-9]*) continue ;; esac
+  printf '%s\\0%s\\0%s\\0' "\${f#./}" "$line" "$pid"
+done`
 
 export function parseStatLine(line: string): FsStat | null {
   // The inode is optional: "size mtime type" from an older script still parses.
@@ -167,15 +208,19 @@ export function createShellFs(exec: ShellExec, opts: { statTtlMs?: number, chunk
       return s
     },
     statMany,
-    async readSmallMany(ps, maxBytes) {
-      if (!ps.length) return []
-      const script = 'limit=$1; shift\n' + STAT_SCRIPT + `
-for f; do
-  if [ -f "$f" ]; then head -c "$limit" < "$f" 2>/dev/null | base64 | tr -d '\\n'; fi
-  printf '\\n'
-done`
-      const lines = (await run(script, [String(maxBytes + 1), ...ps])).toString('utf8').split('\n')
-      return ps.map((_, i) => ({ stat: parseStatLine(lines[i] || ''), body: Buffer.from(lines[ps.length + i] || '', 'base64') }))
+    async readPidLocks(dir) {
+      const raw = (await run(PID_LOCKS_SCRIPT, [dir])).toString('utf8')
+      if (raw === '!') return null
+      const fields = raw.split('\0')
+      const out: PidLock[] = []
+      for (let i = 0; i + 2 < fields.length; i += 3) {
+        const name = fields[i]!
+        const pid = fields[i + 2]!
+        const stat = parseStatLine(fields[i + 1]!)
+        if (!name.endsWith('.lock') || /[/\\]/.test(name) || !/^\d+$/.test(pid) || !Number.isSafeInteger(Number(pid)) || Number(pid) <= 0 || !stat?.isFile || stat.size > 32) continue
+        out.push({ name, pid: Number(pid), stat })
+      }
+      return out.length <= 4096 ? out : null
     },
     async readdir(p) {
       const b = await run(REQUIRE_PATH + 'cd "$1" && ls -1A', [p])
@@ -257,4 +302,3 @@ export const dirDeniedFromCode = (code: number | null): DirDenied | null => code
 export function parseDirList(out: string): DirEntryRaw[] {
   return String(out || '').split('\n').filter(l => /^[gd] ./.test(l)).map(l => ({ name: l.slice(2), git: l[0] === 'g' }))
 }
-

@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { EXAMPLES, common, company, github, vibe } from '../shared/pm/examples'
-import { currentStep, initialState, onEvent, planSteps, type Effect, type StepEvent, type StepState } from '../shared/pm/steps'
+import { EXAMPLES, common, company, github, vibe, wherdr } from '../shared/pm/examples'
+import { currentStep, initialState, onEvent, planSteps, withBase, type Effect, type StepEvent, type StepState } from '../shared/pm/steps'
 import { validateTemplate, type Template } from '../shared/pm/workflow'
 import type { Finding } from '../shared/pm/verdict'
+import { taskBase } from '../shared/pm/run'
+import { guardAction } from '../shared/pm/actions'
+import { combineGuards } from '../shared/pm/guards'
 
 const MIN = 60_000
 const bug: Finding = { id: 'bug', severity: 'major', title: 'Crashes on empty input', proof: 'npm test: 1 failed' }
@@ -27,6 +30,35 @@ const kinds = (effects: Effect[]) => effects.map(e => e.kind === 'done' ? 'done'
 describe('example templates', () => {
   it('are valid templates', () => {
     for (const t of EXAMPLES) expect(validateTemplate(t), t.id).toEqual([])
+  })
+
+  it('wherdr: the engine squash-merges into v3 after review; a visual change waits for the user; a study opens no PR', () => {
+    const plan = (type: string) => planSteps(wherdr, { type })
+    expect(plan('simple').map(s => s.id)).toEqual(['todo', 'work', 'pr', 'review', 'merge', 'done'])
+    expect(plan('simple')[4]).toMatchObject({ action: { kind: 'github.merge', method: 'squash', checks: ['smoke'] } })
+    expect(plan('simple')[4].guarded).toBeUndefined()
+    expect(plan('simple')[3]).toMatchObject({ rounds: 3, sendBack: 'work' })
+    expect(plan('visual')[4]).toMatchObject({ ends: 'user', userLabel: 'Merge' })
+    expect(plan('visual')[1].evidence).toEqual(['screenshots'])
+    expect(plan('study').some(s => s.action)).toBe(false)
+    // develop and main stay the user's, whatever the template's merge step.
+    const toDevelop = { ...wherdr, steps: { ...wherdr.steps, pr: { ...wherdr.steps!.pr!, action: { kind: 'github.pr' as const, base: 'develop' } } } }
+    expect(planSteps(toDevelop, { type: 'simple' })[4].guarded).toBe(true)
+  })
+})
+
+describe('the user sends a visual merge back', () => {
+  it('goes back to the work step with the note as what to fix; refused with no note or off a user step', () => {
+    const plan = planSteps(wherdr, { type: 'visual' })
+    const merge: StepState = { ...initialState(), started: true, at: 4, yourTurn: { reason: 'user', badge: 'Look at the screenshots, then merge' }, shots: { work: [{ file: 'aaaaaaaaaaaa.png', phase: 'after', at: 1 }] } }
+    const r = onEvent(plan, merge, { kind: 'back', note: 'The button is cut on the phone' }, 0)
+    expect(r.state).toMatchObject({ at: 1, yourTurn: undefined, fix: expect.stringContaining('The button is cut on the phone') })
+    // The screens sent back are dropped: the work step needs new ones before it can report.
+    expect(r.state.shots?.work).toBeUndefined()
+    expect(onEvent(plan, r.state, { kind: 'report', from: 'worker' }, 1).refused).toMatch(/screenshot/i)
+    expect(r.effects).toMatchObject([{ kind: 'instruct', step: 'work', holder: 'worker' }, { kind: 'log' }])
+    expect(onEvent(plan, merge, { kind: 'back', note: ' ' }, 0).refused).toBe('Say what to change')
+    expect(onEvent(plan, { ...merge, at: 3 }, { kind: 'back', note: 'x' }, 0).refused).toContain('does not wait for you')
   })
 })
 
@@ -54,7 +86,7 @@ describe('step engine, vibe', () => {
       [0, { kind: 'start' }], [5, { kind: 'report', from: 'worker' }],
       [6, { kind: 'action-result', ok: false, error: 'conflict in app.vue' }],
     ])
-    expect(r.state.yourTurn).toEqual({ reason: 'action', badge: 'land: conflict in app.vue' })
+    expect(r.state.yourTurn).toEqual({ reason: 'action', badge: 'land: conflict in app.vue', error: 'conflict in app.vue' })
     const again = onEvent(r.plan, r.state, { kind: 'user' }, 7 * MIN)
     expect(again.effects).toEqual([{ kind: 'action', step: 'land', action: { kind: 'git.land', target: 'dev' }, attempt: 2 }])
     expect(again.state.yourTurn).toBeUndefined()
@@ -90,7 +122,7 @@ describe('step engine, company flow', () => {
     ])
     expect(r.effects.at(-1)).toEqual({ kind: 'action', step: 'merge', action: { kind: 'git.verify-merged', target: 'develop' }, attempt: 1 })
     expect(currentStep(r.plan, r.state)!.id).toBe('merge')
-    expect(r.state.yourTurn).toEqual({ reason: 'action', badge: 'Merge the PR: commit not in develop' })
+    expect(r.state.yourTurn).toEqual({ reason: 'action', badge: 'Merge the PR: commit not in develop', error: 'commit not in develop' })
   })
 
   it('the coordinator watches the deploy, is told again on recheck, and the timeout goes to Your turn', () => {
@@ -137,6 +169,32 @@ describe('step engine, GitHub flow', () => {
     expect(kinds(r.effects)).toEqual(['instruct:work', 'action:pr', 'instruct:review', 'action:merge', 'done'])
     expect(r.state.done).toBe(true)
     expect(onEvent(r.plan, r.state, { kind: 'tick' }, 5 * MIN).refused).toBe('The task is done')
+  })
+})
+
+describe('working branch', () => {
+  it('fills the branch a step leaves out: its own first, then the project\'s, else none', () => {
+    expect(withBase({ kind: 'github.pr', base: 'next' }, 'v3')).toEqual({ kind: 'github.pr', base: 'next' })
+    expect(withBase({ kind: 'github.pr' }, 'v3')).toEqual({ kind: 'github.pr', base: 'v3' })
+    expect(withBase({ kind: 'git.land' }, 'v3')).toEqual({ kind: 'git.land', target: 'v3' })
+    expect(withBase({ kind: 'git.push' }, 'v3')).toEqual({ kind: 'git.push' })
+    expect(withBase({ kind: 'github.pr' })).toEqual({ kind: 'github.pr' })
+    expect(guardAction(combineGuards([]), { kind: 'github.pr' }, { branch: 'task/X-1', by: 'engine' })).toMatch(/has no branch/)
+  })
+
+  it('reaches the plan, the merge guard and {base} in the instructions', () => {
+    const t: Template = { ...github, instructions: 'Merge origin/{base} first.', taskTypes: { simple: { steps: github.taskTypes.simple!.steps.map(s => (typeof s !== 'string' && s.id === 'pr' ? { ...s, action: { kind: 'github.pr' as const } } : s)) } } }
+    const plan = planSteps(t, { type: 'simple' }, 'main')
+    expect(plan.find(s => s.id === 'pr')?.action).toEqual({ kind: 'github.pr', base: 'main' })
+    expect(plan.find(s => s.id === 'merge')?.guarded).toBe(true) // main is protected
+    expect(plan.find(s => s.id === 'work')?.text).toMatch(/^Merge origin\/main first\./)
+    expect(planSteps(t, { type: 'simple' }).find(s => s.id === 'work')?.text).toMatch(/^Merge origin\/the base branch first\./)
+  })
+
+  it('stays the one a task started with', () => {
+    expect(taskBase({}, { base: 'v3' })).toBe('v3')
+    expect(taskBase({ base: 'main' }, { base: 'v3' })).toBe('main')
+    expect(taskBase({ base: '' }, { base: 'v3' })).toBeUndefined()
   })
 })
 

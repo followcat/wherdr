@@ -1,12 +1,12 @@
 // Agent list header: how many secondary icon buttons go into the "…" menu so
-// the row never overflows. The title shrinks first (down to `HEADER_TITLE_MIN`),
-// then the foldable buttons are replaced, one by one, by a single "…" button.
+// the row never overflows. The logo and version shrink first (down to
+// `HEADER_TITLE_MIN`), then the foldable buttons are replaced, one by one, by a single "…" button.
 export const HEADER_BTN = 40
 export const HEADER_GAP = 4
-// Row gap between the title and the buttons, and the buttons' negative right margin.
+// Row gap between the logo and version and the buttons, and the buttons' negative right margin.
 export const HEADER_ROW_GAP = 12
 export const HEADER_EDGE = 6
-// Width of "Agents" in the narrow-sidebar title size (28 px Archivo).
+// Room kept for the logo and the start of the version.
 export const HEADER_TITLE_MIN = 104
 
 function buttonsWidth(n: number): number {

@@ -32,6 +32,7 @@ describe('service worker precache', () => {
       '_nuxt/pdf.min.t82Z80JU.mjs',
       // The dictation workers come at first use, with the model.
       'workers/dictation-worker.js',
+      'workers/dictation-webgpu-worker.js',
       'workers/model-files.js',
     ]) expect(precached(f), f).toBe(false)
   })

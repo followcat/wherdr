@@ -7,6 +7,9 @@ import { reconcileRuns, startTask, wherdrBase, type PmLaunchDeps } from '../serv
 import { uploadShot } from '../server/utils/pmBoard'
 import { agentLine, publicTask, reconcile, workerPlan, type Run, type Task } from '../shared/pm/run'
 import type { Template } from '../shared/pm/workflow'
+import { wherdr } from '../shared/pm/examples'
+import { planSteps } from '../shared/pm/steps'
+import { dueText } from '../shared/pm/advance'
 
 const template: Template = {
   id: 'vibe', instructions: 'Small commits.', prefs: { agent: 'claude', model: 'opus' },
@@ -104,6 +107,17 @@ describe('startTask', () => {
     expect(files['/home/u/.wherdr/pm/tasks/WEB-1/instructions.md']).toMatch(/# WEB-1: Fix it[\s\S]*Small commits\.\nRun the tests\./)
     expect((await store.runs())[0]).toMatchObject({ id: t.run, state: 'running', terminal: expect.stringMatching(/\/t1$/) })
     await expect(startTask(deps, 'WEB-1')).rejects.toMatchObject({ code: 'busy' })
+  })
+
+  it('a task stopped at its review starts no new worker: the review is told again by the next advance pass', async () => {
+    const { store, deps, runs } = await setup({ template: { ...wherdr, id: 'vibe' } })
+    const stopped = { ...(await store.task('WEB-1'))!, state: 'waiting' as const, waiting: 'The reviewer (claude) stopped right after starting', step: { at: 3, started: true, since: 5, told: 5, proofs: {}, rounds: {} } }
+    await store.saveTask(stopped)
+    const t = await startTask(deps, 'WEB-1')
+    expect(runs).toHaveLength(0)
+    expect(t).toMatchObject({ state: 'working', waiting: undefined, step: { at: 3 } })
+    expect(t.step!.told).toBeUndefined()
+    expect(dueText(planSteps(wherdr, { type: 'simple' }), t.step)).toMatchObject({ holder: 'reviewer' })
   })
 
   it('a visual task: the instructions file says how to upload the screenshots, with the task\'s key, and that upload passes', async () => {

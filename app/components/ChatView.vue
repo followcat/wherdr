@@ -10,10 +10,10 @@ import { readChat, saveChat, touchChat } from '~/utils/offlineCache'
 import { mayReadOffline, readOfflineAccess } from '~/utils/offlineAccess'
 import { restoreDraft } from '~/utils/queuedCancel'
 import { isUploadLine, uploadSrc } from '#shared/queuedMatch'
-import { pendingQueue, rememberSent } from '~/utils/pendingQueue'
+import { type PendingMessage, pendingLabel, pendingQueue, rememberSent } from '~/utils/pendingQueue'
 import { clampRange, createSelectionSettler, lastLineRect, selectionReplyPos } from '~/utils/selectionReply'
 import { addAnswer, addQuote, answerEnd, answerOf, forgetReply, isQuoted, replyTargets, rowOf, rowRef, rowSettled, tableRank, tableRef, tappedAnswer, toggleOkAll, unansweredCount, withQuestions, type Answer } from '~/utils/questionReply'
-import { applyToolUpdates, createTailLoader, mergeToolUpdates, nextTail, restartsTail, retainToolUpdates, tailQuery } from '~/utils/chatTail'
+import { CHAT_READ_MS, applyToolUpdates, createTailLoader, itemKeys, mergeToolUpdates, nextTail, restartsTail, retainToolUpdates, swapTail, tailQuery } from '~/utils/chatTail'
 import { pickTyping, replyId } from '~/utils/typewriter'
 import { newestThought } from '~/utils/reasoningReveal'
 import { restoredScrollTop, saveReadingPosition } from '~/utils/readingPosition'
@@ -45,6 +45,9 @@ interface ChatData {
   olderCursor: number
   tail: ChatItem[]
   queue: ClaudeQueueEntry[]
+  // Items of a previous read kept on screen until the full re-read replaces
+  // them in one step (no empty list in between, see swapTail).
+  held?: boolean
 }
 const fresh = (): ChatData => ({ file: null, token: '', tailStart: null, older: [], olderCursor: 0, tail: [], queue: [] })
 const chat = shallowRef<ChatData>(fresh())
@@ -128,8 +131,15 @@ async function restoreChat() {
   if (!saved || synced || rendered.value || unavailable.value || staleGen(gen) || id !== props.pane.id) return
   // Offline when the read began is not enough: it must still be read-only.
   if ((props.pane.agent === 'cmd' || props.pane.agent === 'opencode') && !readOnly.value) return
+  // Its replies are known: one that arrives with the server's answer is new,
+  // and comes in as it would live (noteReplies).
+  for (const it of saved.items) {
+    if (it.role === 'assistant') knownReplies.add(replyId(it))
+    else if (it.role === 'thinking') knownThoughts.add(replyId(it))
+  }
+  synced = true
   await apply(() => {
-    chat.value = { ...fresh(), tail: saved.items }
+    chat.value = { ...fresh(), file: saved.file || null, tail: saved.items, held: true }
     savedAt.value = saved.at
   })
   if (!mayReadOffline(readOfflineAccess()) || staleGen(gen) || id !== props.pane.id
@@ -148,6 +158,8 @@ function scrollToEnd(force: boolean) {
   if (force || (!held && (stick || nearEnd(160)))) {
     stick = true
     held = false
+    // At once (no frame of a conversation opened at its top), and again once laid out.
+    b.scrollTop = b.scrollHeight
     requestAnimationFrame(() => { b.scrollTop = b.scrollHeight })
   }
 }
@@ -274,18 +286,21 @@ function interruptThought() { activeThought.value = null }
 // ------------------------------------------------------------ typewriter
 // Only a reply that arrives while following the conversation is revealed
 // (ChatMarkdown): never on first load, on return to the app or after
-// being offline, nor for older slices.
+// being offline, nor for older slices. Opened on the end kept on this device,
+// what the server's answer adds to it is new (restoreChat).
 const knownReplies = new Set<string>()
 const knownThoughts = new Set<string>()
 const activeThought = ref<{ id: string, at: number } | null>(null)
 const typing = ref<{ id: string, at: number } | null>(null)
-let synced = false // first load from the server done
+let synced = false // replies known: first load from the server, or the end kept on this device
 let away = false // app in the background or offline since the last re-read
 watch(pageVisible, (v) => { if (!v) { away = true; interruptThought() } })
 watch(offlineView, (v) => { if (v) { away = true; interruptThought() } })
 function noteReplies(list: ChatItem[]) {
-  const live = synced && !away && typewriterActive.value && !searchOpen.value && !readOnly.value
-  const revealThinking = synced && !away && !searchOpen.value && !readOnly.value
+  // A server answer means the app is online, even while the home state shown
+  // is still the one kept on this device (offlineView, at startup).
+  const live = synced && !away && typewriterActive.value && !searchOpen.value && !paneStale(props.pane)
+  const revealThinking = synced && !away && !searchOpen.value && !paneStale(props.pane)
   const thought = newestThought(knownThoughts, list.filter(i => i.role === 'thinking').map(replyId), revealThinking)
   if (thought) activeThought.value = { id: thought, at: Date.now() }
   away = false
@@ -319,7 +334,8 @@ async function loadStep(current: () => boolean): Promise<boolean> {
   try {
     const ready = chat.value.tailStart === null ? await chatIntent.take(props.pane) : undefined
     if (stale()) return false
-    const r = ready || await api<ChatResponse>(`/api/chat?${tailQuery(pane, chat.value)}`)
+    const startedAt = Date.now()
+    const r = ready || await api<ChatResponse>(`/api/chat?${tailQuery(pane, chat.value)}`, undefined, AbortSignal.timeout(CHAT_READ_MS))
     if (stale()) return false
     if (!r.available) {
       // Command Code: the selection server is authoritative — there is no
@@ -339,15 +355,23 @@ async function loadStep(current: () => boolean): Promise<boolean> {
     unavailable.value = null
     integration.value = null
     loadError.value = null
+    // The transcript as it was at `startedAt`: sent messages it lacks may go (see utils/outbox.ts).
+    if (!ready) outboxRead(pane, startedAt)
     if (misses.value.misses || misses.value.errors) misses.value = noMisses()
     if (r.unchanged) return false
     savedAt.value = null
     // New session (/clear, new agent), or a bottom read from another byte:
-    // we start again from the bottom (utils/chatTail.ts). A full reset: the
-    // older request still in flight belongs to the old generation — its
-    // finally will not free our busy flag, so it has to be released here.
+    // we start again from the bottom (utils/chatTail.ts), keeping what is
+    // shown until that read replaces it. A full reset: the older request
+    // still in flight belongs to the old generation — its finally will not
+    // free our busy flag, so resetChat releases it.
     if (restartsTail(chat.value, r)) {
+      const kept = items.value
+      const queue = chat.value.queue
+      const wasRendered = rendered.value
       resetChat()
+      chat.value = { ...fresh(), tail: kept, queue, held: true }
+      rendered.value = wasRendered
       return true
     }
     // Incremental reply that does not fit our list: ask for it in full.
@@ -368,7 +392,8 @@ async function loadStep(current: () => boolean): Promise<boolean> {
       }
       c.file = r.file || null
       c.token = r.token || ''
-      c.tail = applyToolUpdates(tail, updates)
+      c.tail = applyToolUpdates(c.held ? swapTail(c.tail, tail) : tail, updates)
+      c.held = false
       c.older = applyToolUpdates(c.older, updates)
       c.queue = r.queue || []
       chat.value = c
@@ -378,12 +403,13 @@ async function loadStep(current: () => boolean): Promise<boolean> {
     // belong to the new conversation and must not be saved under `pane`.
     if (stale()) return false
     retainToolUpdates(pendingUpdates, [chat.value.tail, chat.value.older], updates)
-    saveChat(pane, items.value)
+    saveChat(pane, items.value, chat.value.file)
     // Paint the prepared tail first, then revalidate using its token and cursor.
     if (ready) return true
   } catch (err) {
     if (stale()) return false
-    if (!items.value.length) loadError.value = (err as Error).message
+    if (!items.value.length) loadError.value = (err as Error).name === 'TimeoutError'
+      ? t('The conversation took too long to load. Retry.') : (err as Error).message
     else misses.value = onError(misses.value)
   }
   return false
@@ -423,7 +449,7 @@ async function loadOlder() {
   // proof this page request belongs to the generation the server selected.
   const since = props.pane.agent === 'cmd' ? `&since=${encodeURIComponent(chat.value.token)}` : ''
   try {
-    const r = await api<ChatResponse>(`/api/chat?pane=${encodeURIComponent(pane)}&before=${before}${since}`)
+    const r = await api<ChatResponse>(`/api/chat?pane=${encodeURIComponent(pane)}&before=${before}${since}`, undefined, AbortSignal.timeout(CHAT_READ_MS))
     if (staleGen(gen)) return
     // Command Code and OpenCode: an unavailable reply is authoritative on
     // any request — the selected conversation is gone, the shown one is
@@ -464,7 +490,7 @@ async function loadOlder() {
     }, true)
     if (staleGen(gen)) return
     retainToolUpdates(pendingUpdates, [chat.value.tail, chat.value.older], updates)
-    saveChat(pane, items.value)
+    saveChat(pane, items.value, chat.value.file)
     if (b) b.scrollTop = b.scrollHeight - fromBottom
   } catch (err) {
     if (!staleGen(gen)) toast((err as Error).message, true)
@@ -643,7 +669,7 @@ const blocks = computed<Block[]>(() => {
   }
   // A "turn" = a user message and everything the agent does
   // afterwards. At its end: "✓ 2 min 5 s · 7 actions", like "Worked for…".
-  let turn: { start: string | null, end: string | null, tools: number, replies: number } | null = null
+  let turn: { key: string, start: string | null, end: string | null, tools: number, replies: number } | null = null
   let lastDay = ''
   // Agent name at the top of each of its replies (once per turn).
   let needWho = true
@@ -657,12 +683,13 @@ const blocks = computed<Block[]>(() => {
       const acts = turn.tools ? ` · ${turn.tools} ${t(turn.tools > 1 ? 'actions' : 'action')}` : ''
       // "Reply" of the last reply: next to "Copy", on the end-of-turn line.
       if (lastReplyBlock) lastReplyBlock.endsTurn = true
-      out.push({ k: 'turn', key: `e:${out.length}`, text: `✓ ${fmtDuration(s)}${acts}`, copy: lastReply, reply: lastReplyBlock?.key || null })
+      out.push({ k: 'turn', key: `e:${turn.key}`, text: `✓ ${fmtDuration(s)}${acts}`, copy: lastReply, reply: lastReplyBlock?.key || null })
     }
     turn = null
     lastReply = null
     lastReplyBlock = null
   }
+  const keys = itemKeys(list)
   list.forEach((it, i) => {
     if (it.ts) {
       const day = new Date(it.ts).toDateString()
@@ -680,7 +707,7 @@ const blocks = computed<Block[]>(() => {
       closeTurn()
       needWho = true
       // The output of a "!" command also goes to the agent, which may reply to it.
-      if (it.role !== 'cmd') turn = { start: it.ts, end: null, tools: 0, replies: 0 }
+      if (it.role !== 'cmd') turn = { key: keys[i]!, start: it.ts, end: null, tools: 0, replies: 0 }
     } else if (turn && it.ts && it.role !== 'notice' && it.role !== 'job') {
       // A note (background task finished afterwards…) does not extend the turn.
       turn.end = it.ts
@@ -689,14 +716,14 @@ const blocks = computed<Block[]>(() => {
     }
     if ((it.role === 'tool' || it.role === 'assistant' || it.role === 'thinking') && needWho) {
       needWho = false
-      out.push({ k: 'who', key: `w:${it.ts}:${i}` })
+      out.push({ k: 'who', key: `w:${keys[i]}` })
     }
     if (it.role === 'tool') {
       tools.push(it)
       return
     }
     flush()
-    const key = `${it.role}:${it.ts}:${i}`
+    const key = keys[i]!
     if (it.role === 'user') {
       const uploads = it.text.match(UPLOAD_RE) || []
       // Attached files (PDF, text…): a chip each, their line leaves the text.
@@ -1141,12 +1168,17 @@ async function retryQueued(q: { id: string }) {
     retrying.value = null
   }
 }
-function queuedLabel(q: { state: string | null }) {
-  if (q.state === 'sending') return t('Queued · ') + t('sending…')
-  switch (waitFor.value) {
+function queuedLabel(q: Pick<PendingMessage, 'phase' | 'state' | 'inAgentQueue'>) {
+  const l = pendingLabel(q, waitFor.value, props.pane.agent)
+  switch (l.kind) {
+    case 'read': return t('Read by the agent')
     case 'stopped': return t('Queued · ') + t('agent stopped')
     case 'question': return t('Queued · ') + t('after you answer the question')
-    case 'working': return t('Queued')
+    case 'agent-queue':
+      if (l.agent === 'claude') return t('Queued by Claude · sent when it finishes')
+      if (l.agent === 'codex') return t('Queued by Codex · sent when it finishes')
+      return t('Queued by the agent · sent when it finishes')
+    case 'queued': return t('Queued')
     default: return t('Queued · ') + t('sending…')
   }
 }
@@ -1315,7 +1347,7 @@ async function jumpToResult() {
     const ts = String(route.query.ts || '')
     const prefix = String(route.query.prefix || '')
     const index = items.value.findIndex(i => i.role === role && i.ts === ts && i.text.startsWith(prefix))
-    const key = index < 0 ? '' : `${role}:${ts}:${index}`
+    const key = index < 0 ? '' : itemKeys(items.value)[index]
     const target = [...(listEl.value?.querySelectorAll<HTMLElement>('[data-hit-key]') || [])].find(el => el.dataset.hitKey === key)
     applySearchMarks(false, target)
     if (target && !search.hits.length) target.scrollIntoView({ block: 'center' })
@@ -1683,7 +1715,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                 </span><UserText :text="q.body" :pasted="q.pasted" />
               </template>
             </UChatMessage>
-            <div class="queued-tag sent"><UIcon name="i-lucide-check" /><span>{{ t('Sent · read by the agent') }}</span></div>
+            <div class="queued-tag sent"><UIcon name="i-lucide-check" /><span>{{ queuedLabel(q) }}</span></div>
           </div>
           <!-- "!" command running: live output read from the screen. -->
           <div v-if="liveShell" class="msg-user-wrap">

@@ -1,12 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readHomeGrouping, stateMachines } from '../app/utils/homeGrouping'
-
-describe('home grouping', () => {
-  it('preserves Machine as the default for missing and invalid stored values', () => {
-    for (const v of [null, undefined, '', 'unknown', 'machine', 1]) expect(readHomeGrouping(v)).toBe('machine')
-    expect(readHomeGrouping('state')).toBe('state')
-  })
-})
+import { stateMachines } from '../app/utils/homeGrouping'
 
 describe('stateMachines', () => {
   const list = [

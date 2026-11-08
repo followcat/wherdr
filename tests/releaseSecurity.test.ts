@@ -4,7 +4,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createAuth } from '../server/utils/auth'
 import { allowedHosts, crossSiteRequest, tailnetDomainHosts, hostAllowed, hostRefusalIsHtml, hostRefusedPage, networkRefusedPage, phoneFixCommand, tailnetName } from '../server/utils/hosts'
-import { CSP_DICTATION_WORKER, cspForHtml, tailnetImageSources } from '../server/utils/csp'
+import { CSP_DICTATION_WORKER, CSP_WEBGPU_WORKER, cspForHtml, tailnetImageSources } from '../server/utils/csp'
 
 const req = (cookie = '') => ({ headers: { origin: 'http://localhost:7683', cookie } })
 const auth = (log = () => {}) => createAuth({ dataDir: mkdtempSync(path.join(tmpdir(), 'hw-release-')), log })
@@ -117,6 +117,7 @@ it('only allows the exact inline scripts of the Nuxt HTML', () => {
   // WebAssembly only in the dictation worker's own policy, never eval().
   expect(policy).not.toContain('wasm-unsafe-eval')
   expect(CSP_DICTATION_WORKER.match(/script-src ([^;]+)/)?.[1]).toBe("'self' 'wasm-unsafe-eval'")
+  expect(CSP_WEBGPU_WORKER.match(/script-src ([^;]+)/)?.[1]).toBe("'self' 'wasm-unsafe-eval'")
   expect(policy.match(/'sha256-/g)).toHaveLength(2)
   expect(policy.match(/script-src ([^;]+)/)?.[1]).not.toContain('unsafe-inline')
   expect(policy).toContain("frame-ancestors 'none'")

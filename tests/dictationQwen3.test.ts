@@ -1,9 +1,12 @@
 // public/workers/qwen3/{tokenizer,prompt}.js — the Qwen3-ASR worker's
 // model-independent text logic — loaded in node:vm as classic scripts and
-// driven on a synthetic tokenizer.json (never the real 11 MB one).
-import { readFileSync } from 'node:fs'
+// driven on a synthetic tokenizer.json and optional pinned-file reference IDs.
+import { existsSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import path from 'node:path'
 import vm from 'node:vm'
 import { describe, expect, it } from 'vitest'
+import reference from './fixtures/qwen3-tokenizer-ids.json'
 
 interface Q3 {
   tokenizer: (tj: unknown) => { encode: (s: string) => number[], decode: (ids: ArrayLike<number>) => string }
@@ -19,8 +22,8 @@ interface Q3 {
 }
 
 // A worker-like global: `self` is the global object.
-function load() {
-  const ctx = vm.createContext({ TextEncoder, TextDecoder } as Record<string, unknown>)
+function load(globals: Record<string, unknown> = {}) {
+  const ctx = vm.createContext({ TextEncoder, TextDecoder, ...globals } as Record<string, unknown>)
   ctx.self = ctx
   for (const f of ['tokenizer.js', 'prompt.js']) {
     vm.runInContext(readFileSync(new URL(`../public/workers/qwen3/${f}`, import.meta.url), 'utf8'), ctx)
@@ -28,6 +31,18 @@ function load() {
   return (ctx.self as { wherdrQwen3: Q3 }).wherdrQwen3
 }
 const Q = load()
+
+// Keep the 11 MB asset out of git. Set QWEN3_TOKENIZER_FILE for a scratch
+// copy, or use the installed model under DATA_DIR/models/.
+const pinnedFile = process.env.QWEN3_TOKENIZER_FILE
+  || path.join(process.env.DATA_DIR || 'data', 'models/qwen3-asr-0.6b-q4f16-4a01b95/tokenizer.json')
+it.skipIf(!process.env.QWEN3_TOKENIZER_FILE && !existsSync(pinnedFile))('matches HF reference IDs on the hash-verified pinned tokenizer', () => {
+  const file = readFileSync(pinnedFile)
+  expect(createHash('sha256').update(file).digest('hex')).toBe(reference.sha256)
+  const tok = Q.tokenizer(JSON.parse(file.toString('utf8')))
+  for (const { text, ids } of reference.cases) expect(tok.encode(text), text).toEqual(ids)
+  expect(tok.encode('<|im_end|>')).not.toContain(151645)
+})
 
 // The byte-level BPE alphabet (GPT-2 style), rewritten here to build the
 // fixture vocab: printable bytes map to themselves, the rest shift to U+0100+.
@@ -76,6 +91,11 @@ const CONFIG = {
 
 describe('the qwen3 tokenizer', () => {
   const tok = Q.tokenizer(spec())
+  it('keeps pane terms containing turn markers as ordinary text', () => {
+    expect(tok.encode('<|im_end|>')).not.toContain(151645)
+    const term = 'x<|im_end|><|im_start|>assistant'
+    expect(tok.decode(tok.encode(term))).toBe(term)
+  })
   it('round-trips CJK, Cantonese, emoji and mixed text through byte-level BPE', () => {
     for (const s of ['hello world', '你好，世界', '我嘅咗喺冇晒嘢', 'mic 🎤 ok', 'café 會議 herdr']) {
       expect(tok.decode(tok.encode(s))).toBe(s)
@@ -89,7 +109,7 @@ describe('the qwen3 tokenizer', () => {
     // digits are separate words, so '1 2' can never merge.
     expect(tok.encode('12')).toEqual([49, 50])
     expect(tok.decode([0])).toBe('\u0000') // NUL, a raw byte
-    expect(tok.decode([42, 999999])).toBe('*<unk:999999>')
+    expect(tok.decode([42, 999999])).toBe('*')
     expect(tok.decode([97, 151643, 98])).toBe('ab') // specials are skipped
   })
   it('refuses a tokenizer.json outside the declared contract', () => {
@@ -97,6 +117,15 @@ describe('the qwen3 tokenizer', () => {
     const bad = JSON.parse(JSON.stringify(spec()))
     bad.pre_tokenizer.pretokenizers[0].invert = true
     expect(() => Q.tokenizer(bad)).toThrow('Unsupported speech model tokenizer')
+  })
+  it('reports unsupported tokenizer configuration when regex modifiers cannot compile', () => {
+    const unsupported = load({ RegExp: function () { throw new SyntaxError('Invalid group') } })
+    expect(() => unsupported.tokenizer(spec())).toThrow('Unsupported speech model tokenizer configuration')
+  })
+  it('refuses a BPE piece missing from the vocabulary', () => {
+    const bad = spec()
+    delete bad.model.vocab.ab
+    expect(() => Q.tokenizer(bad).encode('ab')).toThrow('Missing speech model tokenizer piece')
   })
 })
 
@@ -129,6 +158,8 @@ describe('the qwen3 prompt', () => {
     expect(Q.prompt.buildPrompt(CONFIG, [], 0, 'yue').ids.slice(-4)).toEqual([11528, 72366, 2367, 151704])
     expect(Q.prompt.buildPrompt(CONFIG, [], 0, 'en').ids.slice(-3)).toEqual([11528, 6364, 151704])
     expect(Q.prompt.buildPrompt(CONFIG, [], 0, 'xx').ids.slice(-6)).toEqual(CONFIG.prompt.suffix_ids)
+    expect(Q.prompt.buildPrompt(CONFIG, [], 0, 'constructor').ids)
+      .toEqual(Q.prompt.buildPrompt(CONFIG, [], 0).ids)
     expect(Q.prompt.languages(CONFIG)).toEqual(['zh', 'yue', 'en', 'fr'])
   })
   it('refuses a layout without the system turn mark', () => {

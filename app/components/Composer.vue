@@ -22,7 +22,6 @@ import { enterSends as enterSendsFor } from '~/utils/layoutMode'
 import { kbOpen } from '~/composables/useViewport'
 import { PromptHistory, historyDirection } from '~/utils/promptHistory'
 import { createTouchTap } from '~/utils/touchTap'
-import { tracePaste } from '~/utils/pasteJournal'
 import { ESC_CONFIRM_MS, type EscapeArm, pressEscape } from '~/utils/escapeStop'
 import { pasteHtmlText } from '~/utils/pasteHtml'
 
@@ -513,7 +512,6 @@ function handlePaste(e: Event, data: DataTransfer | null, fallback = '') {
   // Never read the system clipboard here: it may already have been restored.
   const raw = data?.getData('text/plain') || fallback
     || pasteHtmlText(data?.getData('text/html') || '')
-  tracePaste(e, data, raw.length, el, () => attachments.value.length)
   // Some IME beforeinput events cannot be cancelled; let their native edit run.
   if (!e.cancelable) return
   const files = [...(data?.items || [])]
@@ -765,10 +763,5 @@ defineExpose({
         />
       </template>
     </UChatPrompt>
-    <!-- omp: its status line, as at the bottom of the terminal. -->
-    <div v-if="pane?.ompStatus" class="composer-status" :title="[pane.ompStatus.line, pane.ompStatus.meters].filter(Boolean).join('\n')">
-      <span class="composer-status-line">{{ pane.ompStatus.line }}</span>
-      <span v-if="pane.ompStatus.meters" class="composer-status-meters">{{ pane.ompStatus.meters }}</span>
-    </div>
   </div>
 </template>

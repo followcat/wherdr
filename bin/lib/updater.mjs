@@ -29,6 +29,8 @@ import { pathToFileURL } from 'node:url'
 export const HEALTH_MS = 60_000
 
 const healthHost = host => !host || host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host.includes(':') ? `[${host}]` : host
+// v3 reports its own version (3.0.0-dev+<commit>) and the package one in `release`.
+export const healthReports = (body, version) => body?.version === version || body?.release === version
 export const healthUrl = plan => `http://${healthHost(plan.host)}:${plan.port}/api/health`
 
 // --------------------------------------------------------------- drivers
@@ -291,7 +293,7 @@ export function realIo(plan, now = Date.now) {
       while (now() < until) {
         try {
           const health = await get(healthUrl(plan))
-          if (health.body?.version === version) return true
+          if (healthReports(health.body, version)) return true
           // Versions up to 1.3.1 have no /api/health: their version is in
           // /api/update (unless the app is locked).
           if (health.body?.version === undefined && (await get(healthUrl(plan).replace(/health$/, 'update'))).body?.current === version) return true

@@ -55,6 +55,8 @@ insertion are shared; only the engine behind the interface changes.
 | `scripts/dictation-files.mjs`, `scripts/fetch-dictation-files.mjs` | Pinned downloads into `DATA_DIR/models`, checked by sha256 (the code, and its CLI) |
 | `server/utils/dictationServerFiles.ts`, `server/api/dictation/prepare.post.ts` | The server fetching a model's missing files when Install asks |
 | `public/workers/dictation-worker.js` | The sherpa-onnx worker: WASM runtime, recognizer, decode |
+| `public/workers/dictation-webgpu-worker.js` | The Qwen3-ASR ORT WebGPU worker; not selectable yet |
+| `public/workers/qwen3/*.js` | Qwen tokenizer, prompt, log-mel (real FFT) and fp16 helpers |
 | `public/workers/model-files.js` | Model-file access shared by the dictation workers (cached slices, Range-slice streaming) |
 
 ## The engine interface
@@ -361,16 +363,55 @@ mark, since a page can also be lost for another reason.
    Record the heap and peak in `memory` (see [Memory budget](#memory-budget)).
 6. Document the set in [On-device dictation files](installation.md#on-device-dictation-files).
 
+### Qwen WebGPU worker
+
+`dictation-webgpu-worker.js` loads the pinned Qwen3-ASR q4f16 export through the shared
+model-file loader and ORT WebGPU 1.23.2. It requires WebGPU and `shader-f16`, and uses the
+checked adapter and the same runtime-created device on all three sessions. It has no catalog entry or engine
+wiring yet: it cannot be selected in Settings or by a saved model ID.
+
+The load/decode protocol matches the CPU worker. A load checks for device loss before
+publishing `ready`; a failed load reports an error and releases its resources.
+A decode also accepts `terms` and `language`;
+its final message includes detected `language` and `truncated`. All operations are serialized.
+`{ t: 'cancel', id }` cancels only that request, including queued work, suppresses its result,
+and stops before the next ORT call; a running GPU call must finish first. A replacement load or
+`{ t: 'dispose' }` cancels pending takes and releases sessions after the current call ends.
+
+CPU tensors, logits, encoder outputs and GPU KV tensors are disposed on success, cancellation
+and failure. Partial loads release their successful sessions too. A failed run or lost device
+releases the model; the next decode reloads the last configuration on a fresh device. External
+weights leave the worker's own references after session creation; the embedding table remains
+for decoding. ORT heap/peak memory and full Qwen fp16 inference have not been measured here;
+there is no synthetic `heap` figure in worker messages. Activation and Android measurements
+remain F4's next part. A parent can terminate the worker to stop a stalled runtime or download.
+
+ORT 1.23.2's custom-device path fails GPU-to-CPU downloads
+([ORT #32257](https://github.com/microsoft/onnxruntime/issues/32257)). The worker therefore
+lets ORT create its native default device, temporarily binding adapter/device acquisition
+inside this worker to the checked adapter and requiring `shader-f16`. It captures the device
+for cleanup and verifies all sessions share it. Those methods are restored on cleanup.
+Reloading re-executes the classic ORT bundle to get fresh backend/WASM state after device
+loss or a cached initialization failure; old runtime references are dropped for collection.
+
 ### Content Security Policy
 
-Only the worker's own response (`/workers/dictation-worker.js`, a route rule in
-`nuxt.config.ts`) carries `'wasm-unsafe-eval'` in `script-src` (`CSP_DICTATION_WORKER` in
-`server/utils/csp.ts`): a worker follows its script's policy, not the page's. It lets the worker
+Only the dictation workers' own responses (`/workers/dictation-worker.js` and
+`/workers/dictation-webgpu-worker.js`, separate route rules in `nuxt.config.ts`) carry
+`'wasm-unsafe-eval'` in `script-src` (`CSP_DICTATION_WORKER` and `CSP_WEBGPU_WORKER` in
+`server/utils/csp.ts`): a worker follows its script's policy, not the page's. It lets each worker
 compile its WebAssembly runtime (sherpa-onnx, onnxruntime-web) served from `/models/runtime/`.
 The page itself cannot compile WebAssembly, and `eval()` of JavaScript is never allowed:
 `'unsafe-eval'` stays out.
 Runtimes and workers load from `'self'` only (`worker-src 'self' blob:`, `connect-src 'self'`):
 no CDN at run time. A runtime that needs anything more must say why in its pull request.
+
+The pinned ORT WebGPU 1.23.2 asyncify build contains a `new Function` path. A Chromium
+probe with same-origin runtime files, external weights and GPU-resident inputs/outputs
+initialized and ran inference under the worker policy above with no CSP violations.
+The page policy blocked WASM compilation as expected. JavaScript `'unsafe-eval'` is
+unnecessary for that path and remains forbidden. The probe used float32 on a software
+adapter; Qwen fp16 inference still requires validation on a device with `shader-f16`.
 
 ## Task split
 
@@ -420,7 +461,9 @@ browser has `speechSynthesis`).
 | --- | --- |
 | `app/utils/speech/plainText.ts` | `speakableText()`: the words of a reply, "Code block." for code; `speechChunks()`: pieces of at most 220 characters (Chrome cuts long utterances) |
 | `app/composables/useReadAloud.ts` | Engine and voice choice, the voice list (`voiceschanged`), one reply at a time for the app |
-| `app/components/ReadAloudButton.vue`, `ReadAloudSettings.vue` | Play / Stop under a reply; the settings (voice search, Test) |
+| `app/utils/speech/voicePicker.ts` | Voice quality (Premium, Enhanced, Standard, Online, Low quality, from the name or Apple's voiceURI) and the language and quality filters of the voice list |
+| `app/utils/speech/lowQualityVoices.ts` | Names of Apple's novelty, MacinTalk and Eloquence voices, hidden by default |
+| `app/components/ReadAloudButton.vue`, `ReadAloudSettings.vue` | Play / Stop under a reply; the settings (language filter, hide low-quality voices, voice search in sections, Test) |
 
 Every piece is queued in the tap itself: iOS only speaks from a user gesture. iOS may stop
 speech when the screen locks or the app goes to the background, without an `end` event; a check

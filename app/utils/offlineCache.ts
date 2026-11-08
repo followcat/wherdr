@@ -15,7 +15,8 @@ export const MAX_BYTES = 4 * 1024 * 1024
 export const CHAT_BYTES = 220 * 1024
 export const WRITE_MS = 2000
 
-export interface SavedChat { id: string, items: ChatItem[], at: number }
+// `file`: the transcript the items come from (a re-read from another one starts again).
+export interface SavedChat { id: string, items: ChatItem[], at: number, file?: string | null }
 export interface SavedHome { state: HerdrState, quotas: Quotas | null, at: number }
 // One kept conversation: when it was last opened (`used`) and its size in bytes.
 export interface ChatEntry { id: string, used: number, bytes: number }
@@ -208,8 +209,8 @@ export function saveQuotas(quotas: Quotas) {
   pending.quotas = quotas
   schedule()
 }
-export function saveChat(id: string, items: ChatItem[]) {
-  pending.chats.set(id, { id, items, at: Date.now() })
+export function saveChat(id: string, items: ChatItem[], file: string | null = null) {
+  pending.chats.set(id, { id, items, at: Date.now(), file })
   pending.used.set(id, Date.now())
   schedule()
 }

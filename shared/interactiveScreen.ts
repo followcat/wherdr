@@ -36,14 +36,17 @@ export function usesTerminalException(o: { text: string, agent?: string | null, 
 
 // Search the full field, including long drafts and wrapped status bars. Native
 // recognition runs first, so a recognized menu cursor never becomes a field.
-export function confirmedInput(text: string): boolean {
+export function confirmedInput(text: string, agent?: string | null): boolean {
   const lines = text.trimEnd().split('\n')
-  const at = lines.findLastIndex(l => /^\s*[❯›](?:\s|$)/.test(l) || /^!(?:\s|$)/.test(l) || /^╰─(?:\s|$)/.test(l))
+  const at = lines.findLastIndex(l => /^\s*[❯›](?:\s|$)/.test(l) || /^!(?:\s|$)/.test(l) || /^╰─(?:\s|$)/.test(l)
+    || (agent === 'devin' && /^\s*❭(?:\s|$)/.test(l)))
   if (at < 0) return false
   const line = lines[at]!
   const below = lines.slice(at + 1).join('\n')
   if (/\b(?:enter|esc|escape)\s+(?:to\s+)?(?:select|open|back|cancel|confirm|close)\b/i.test(below)) return false
-  if (/^\s*[❯›]\s+\d{1,2}\.\s/.test(line)) return false
+  if (/^\s*[❯›❭]\s+\d{1,2}\.\s/.test(line)) return false
+  if (/^\s*❭(?:\s|$)/.test(line)) return /^\s*─{3,}/.test(lines[at - 1] || '')
+    && /^\s*─{3,}/m.test(below) && /\bContext:\s*[\d,.]+[km]?\s*\/\s*[\d,.]+[km]?\s+tokens\b/i.test(below)
   if (/^╰─(?:\s|$)/.test(line)) return true
   if (/^\s*›(?:\s|$)/.test(line)) return /for shortcuts|context left|\b(?:gpt-[\w.-]+|o[1-9](?:-[\w.-]+)?)\b.*·/i.test(below)
   return /^\s*─{3,}/.test(lines[at - 1] || '')
@@ -63,6 +66,6 @@ export function classifyScreen(o: {
   // Unsupported agents already have their permanent Terminal view. An absent
   // transcript/input recognizer is not evidence of an interactive screen.
   if (o.status === 'unknown' || !hasTranscript(o.agent) || !o.text.trim()) return 'unknown'
-  if (confirmedInput(o.text)) return 'input'
+  if (confirmedInput(o.text, o.agent)) return 'input'
   return 'terminal'
 }

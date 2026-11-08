@@ -7,6 +7,7 @@ import { desk, herdrState } from '~/composables/useHerdr'
 import { notificationClock, notificationRules } from '~/composables/useNotificationRules'
 import { LEVEL_EVENTS, defaultNotifications, type NotificationException, type NotificationSettings } from '#shared/notificationRules'
 import type { Pane } from '#shared/types'
+import { pick, selectValue } from '../helpers/select'
 
 const pane = (id: string, p: Partial<Pane> = {}): Pane => ({ id, workspace: id.split(':')[0]!, tab: `${id.split(':')[0]}:t1`, tabLabel: null, agent: 'claude', name: null, label: null, status: 'idle', title: null, cwd: '/tmp/demo', agentSession: null, ...p })
 const MAIN = 'default/top/'
@@ -35,9 +36,9 @@ afterEach(() => {
 describe('notification settings: a default and exceptions', () => {
   it('sets the default level, with no Sub-agents switch', async () => {
     const w = await mount(policy([]))
-    const level = w.find('[data-testid="notification-default"] select')
-    expect((level.element as HTMLSelectElement).value).toBe('muted')
-    await level.setValue('all')
+    const level = w.find('[data-testid="notification-default"]')
+    expect(selectValue(level, 'notification-level')).toBe('muted')
+    await pick(level, 'notification-level', 'all')
     expect(notificationRules.value.default.events).toEqual(LEVEL_EVENTS.all)
     expect(w.find('[data-testid="notification-default"] [role="switch"]').exists()).toBe(false)
     w.unmount()
@@ -94,12 +95,12 @@ describe('notification settings: a default and exceptions', () => {
   it('an exception has its own level and Customize', async () => {
     const w = await mount(policy([], exception(MAIN)))
     const card = w.find('[data-testid="notification-exception"]')
-    await card.find('select').setValue('needs-you')
+    await pick(card, 'notification-level', 'needs-you')
     expect(notificationRules.value.exceptions[0]!.events).toEqual(['needs-you'])
     const message = card.findAll('input[type="checkbox"]').find(i => i.element.parentElement!.textContent!.includes('New message'))!
     await message.setValue(true)
     expect(notificationRules.value.exceptions[0]!.events).toEqual(['needs-you', 'message'])
-    expect((card.find('select').element as HTMLSelectElement).value).toBe('custom')
+    expect(selectValue(card, 'notification-level')).toBe('custom')
     w.unmount()
   })
 })

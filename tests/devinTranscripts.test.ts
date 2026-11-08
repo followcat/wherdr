@@ -131,21 +131,6 @@ it('invalidates old pages when the active chain rewinds above their anchor', asy
   expect(await reader.chat(pane, { before: old.start, anchor: old.token })).toMatchObject({ rewritten: true, items: [] })
 })
 
-it('falls back to a rewritten bottom when a from-cursor page is too large', async () => {
-  const { home } = fixture()
-  writeDevinFixture(home, { rows: Array.from({ length: 130 }, (_, id) => ({
-    id, parent: id ? id - 1 : null, message: devinMessage('assistant', `Blob ${id} ${'x'.repeat(80)}`),
-  })) })
-  const reader = createDevinTranscripts({ home, maxPageBytes: 800 })
-  const tail = await reader.chat(pane)
-  expect(tail.start).toBe(11)
-  const next = await reader.chat(pane, { from: 1 })
-  expect(next.rewritten).toBe(true)
-  expect(next.start).toBe(tail.start)
-  expect(next.items).toHaveLength(120)
-  expect(next.items?.at(-1)?.text).toContain('Blob 129')
-})
-
 it('filters injected user records and never exposes reasoning signatures or system context', async () => {
   const { home, reader } = fixture()
   writeDevinFixture(home, { rows: [
@@ -282,6 +267,22 @@ it('answers unchanged polls from a cheap file signature without rereading the tr
   expect(counts.stat).toBeGreaterThanOrEqual(2)
 })
 
+it('bounds retained conversation documents across sessions', async () => {
+  const { home } = fixture()
+  const { fs, counts } = countingFs()
+  const reader = createDevinTranscripts({ home, fs })
+  for (let i = 0; i < 5; i++) {
+    const session = `session-${i}`
+    writeDevinFixture(home, { session, rows: [{ id: 0, message: devinMessage('assistant', session) }] })
+    await reader.chat({ ...pane, agentSession: session })
+  }
+  expect(counts.read).toBe(5)
+  expect((await reader.chat({ ...pane, agentSession: 'session-4' })).items?.[0]?.text).toBe('session-4')
+  expect(counts.read).toBe(5)
+  expect((await reader.chat({ ...pane, agentSession: 'session-0' })).items?.[0]?.text).toBe('session-0')
+  expect(counts.read).toBe(6)
+})
+
 it('reports malformed transcripts instead of erasing the conversation', async () => {
   const { home } = fixture()
   const file = writeDevinFixture(home, { rows: [{ id: 0, message: devinMessage('assistant', 'ok') }] })
@@ -393,18 +394,32 @@ it('preserves image hashes when paging into older history', async () => {
   expect(older.items?.find(i => i.images)).toMatchObject({ hashes: [expect.any(String)] })
 })
 
-it('loads image bytes on demand instead of retaining payloads in the polling cache', async () => {
+it('reuses one recent image document, expiring it and invalidating changed files', async () => {
   const { home } = fixture()
   const image = { type: 'image', data: Buffer.from('on-demand-shot').toString('base64'), mimeType: 'image/png' }
-  writeDevinFixture(home, { rows: [{ id: 0, message: devinMessage('assistant', [image]) }] })
+  const file = writeDevinFixture(home, { rows: [{ id: 0, message: devinMessage('assistant', [image, image]) }] })
   const { fs, counts } = countingFs()
-  const reader = createDevinTranscripts({ home, fs })
+  let clock = 1000
+  const reader = createDevinTranscripts({ home, fs, now: () => clock })
   const page = await reader.chat(pane)
   expect(counts.read).toBe(1)
   expect((await reader.image(pane, page.file!, page.items![0]!.ref!, 0))?.body.toString()).toBe('on-demand-shot')
+  expect((await reader.image(pane, page.file!, page.items![0]!.ref!, 1))?.body.toString()).toBe('on-demand-shot')
   expect(counts.read).toBe(2)
   expect(await reader.chat(pane, { since: page.token })).toMatchObject({ unchanged: true })
   expect(counts.read).toBe(2)
+  clock += 2001
+  await reader.image(pane, page.file!, page.items![0]!.ref!, 0)
+  expect(counts.read).toBe(3)
+  const doc = JSON.parse(readFileSync(file, 'utf8'))
+  doc.steps[0].message[0].data = Buffer.from('updated-shot').toString('base64')
+  writeFileSync(file, JSON.stringify(doc))
+  expect((await reader.image(pane, page.file!, page.items![0]!.ref!, 0))?.body.toString()).toBe('updated-shot')
+  expect(counts.read).toBe(4)
+  writeDevinFixture(home, { session: 'other', rows: [{ id: 0, message: devinMessage('assistant', [image]) }] })
+  await reader.image({ ...pane, agentSession: 'other' }, 'other.json', '1:a', 0)
+  await reader.image(pane, page.file!, page.items![0]!.ref!, 0)
+  expect(counts.read).toBe(6)
 })
 
 it('keeps images from different tool results in the same step separate', async () => {
@@ -446,14 +461,6 @@ it('retries after the original failure deadline even when quiet polls keep arriv
   writeFileSync(file, JSON.stringify(doc))
   clock = 1101
   expect((await reader.chat(pane, { since: first.token })).items?.[0]?.text).toBe('After reconnect with another reply')
-})
-
-it('replaces a cursor page from the former SQLite reader instead of mixing protocols', async () => {
-  const { home } = fixture()
-  writeDevinFixture(home, { rows: [{ id: 0, message: devinMessage('assistant', 'ATIF history') }] })
-  const reader = createDevinTranscripts({ home })
-  const previous = 'devin:devin-' + '1'.repeat(24) + ':0:' + 'a'.repeat(24) + ':' + 'b'.repeat(24)
-  expect(await reader.chat(pane, { from: 0, since: previous, anchor: previous })).toMatchObject({ rewritten: true, items: [{ text: 'ATIF history' }] })
 })
 
 it('refuses mismatched session identities and unsupported schemas', async () => {
@@ -608,4 +615,29 @@ it('paginates by the call step when its image result is in a later step', async 
   expect(next.rewritten).toBeUndefined()
   expect(next.items?.slice(0, -1)).toEqual(tail.items)
   expect(next.items?.at(-1)?.text).toBe('New reply')
+})
+
+it('yields during a large cached search and stops when its deadline expires', async () => {
+  const raw = Buffer.from(JSON.stringify({ schema_version: 'ATIF-v1.7', session_id: pane.agentSession,
+    steps: Array.from({ length: 8000 }, (_, i) => ({ step_id: i + 1, source: 'agent', message: i ? 'Unrelated text '.repeat(60) : 'Oldest needle' })),
+  }))
+  const reader = createDevinTranscripts({ home: '/home/user', fs: { ...localFs,
+    stat: async () => ({ size: raw.length, mtimeMs: 1.5, isFile: true, isDir: false }),
+    read: async (_p, start, len) => raw.subarray(start, start + len),
+  } })
+  await reader.chat(pane) // Exclude filesystem I/O and the initial JSON parse from the yield check.
+  let clock = 0
+  let yielded = false
+  const time = vi.spyOn(Date, 'now').mockImplementation(() => clock)
+  try {
+    const pending = reader.search(pane, 'needle', 1)
+    setImmediate(() => { yielded = true; clock = 1 })
+    const result = await pending
+    expect(yielded).toBe(true)
+    expect(result).toMatchObject({ hits: [], limited: true })
+    clock = 0
+    const capped = await reader.search(pane, 'Unrelated', 1000)
+    expect(capped.hits.map(h => h.offset)).toEqual([8000, 7999, 7998, 7997, 7996, 7995, 7994, 7993])
+    expect(capped.limited).toBe(true)
+  } finally { time.mockRestore() }
 })

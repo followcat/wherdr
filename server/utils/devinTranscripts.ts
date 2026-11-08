@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import path from 'node:path'
+import { clearTimeout, setTimeout } from 'node:timers'
 import type { ChatItem, ChatResponse, ModelInfo } from '../../shared/types'
 import type { TranscriptPane } from './transcripts'
 import { excerpt, matchAt } from '../../shared/searchText'
@@ -28,6 +29,9 @@ const MAX_READ_BYTES = 24 * 1024 * 1024
 const READ_CHUNK_BYTES = 4 * 1024 * 1024
 const MAX_TEXT = 20000
 const FAIL_QUIET_MS = 1500
+const IMAGE_CACHE_MS = 2000
+// A host may be a Raspberry Pi; do not retain dozens of parsed transcripts.
+const DOCUMENT_CACHE_ENTRIES = 4
 const IMAGE_TYPES = /^image\/(?:png|jpeg|gif|webp|avif)$/
 const hash12 = (s: string) => createHash('sha1').update(s).digest('hex').slice(0, 12)
 const clip = (s: unknown) => typeof s === 'string' ? s.slice(0, MAX_TEXT) : ''
@@ -239,15 +243,6 @@ function normalize(raw: Json, file: string): AtifDoc {
   return { file, model, steps, images: collectImages(original, found), fingerprints, results }
 }
 
-function pageTooLarge(steps: Step[], maxPageBytes: number): boolean {
-  let used = 0
-  for (const step of steps) {
-    used += Buffer.byteLength(JSON.stringify(step))
-    if (used > maxPageBytes) return true
-  }
-  return false
-}
-
 function takeVisible(steps: Step[], doc: AtifDoc, limit: number): { steps: Step[], start: number, items: ChatItem[] } {
   const kept: Step[] = []
   let visible = 0
@@ -303,12 +298,11 @@ function hasStep(steps: Step[], id: number): boolean {
 }
 
 export function createDevinTranscripts({
-  home, fs = localFs, now = Date.now, maxPageBytes = MAX_READ_BYTES, failQuietMs = FAIL_QUIET_MS,
+  home, fs = localFs, now = Date.now, failQuietMs = FAIL_QUIET_MS,
 }: {
   home: string
   fs?: MachineFs
   now?: () => number
-  maxPageBytes?: number
   failQuietMs?: number
 }) {
   const honorEnv = fs === localFs
@@ -317,6 +311,14 @@ export function createDevinTranscripts({
   const lastModel = new Map<string, ModelInfo | null>()
   const failAt = new Map<string, number>()
   const inflight = new Map<string, Promise<AtifDoc>>()
+  let imageDoc: { key: string, at: number, doc: AtifDoc } | undefined
+  let imageExpiry: ReturnType<typeof setTimeout> | undefined
+
+  function remember<T>(cache: Map<string, T>, key: string, value: T, limit = 32) {
+    cache.delete(key)
+    cache.set(key, value)
+    if (cache.size > limit) cache.delete(cache.keys().next().value!)
+  }
 
   function pathOf(session: string): string | null {
     return transcriptPath(home, session, honorEnv)
@@ -334,6 +336,12 @@ export function createDevinTranscripts({
   }
 
   async function readDoc(file: string, size: number, gen: string, withImages = false): Promise<AtifDoc> {
+    const imageKey = `${file}|${gen}|${size}`
+    if (imageDoc && now() - imageDoc.at >= IMAGE_CACHE_MS) {
+      clearTimeout(imageExpiry)
+      imageDoc = undefined
+    }
+    if (withImages && imageDoc?.key === imageKey) return imageDoc.doc
     const hit = withImages ? null : loaded.get(file)
     if (hit && hit.gen === gen && hit.size === size) return hit.doc
     const key = `${file}|${gen}|${size}|${withImages}`
@@ -355,14 +363,18 @@ export function createDevinTranscripts({
       if (!raw || typeof raw !== 'object' || Array.isArray(raw) || raw.schema_version !== 'ATIF-v1.7' || !Array.isArray(raw.steps) || raw.session_id !== path.basename(file, '.json')) throw new Error('Unsupported Devin transcript format')
       const doc = normalize(raw, path.basename(file))
       if (!withImages) {
-        // Polling retains only metadata and hashes; image views re-read the
-        // bounded source on demand rather than pinning base64 across sessions.
+        // Polling retains only metadata and hashes. Image payloads have their
+        // own single-entry cache, shared by pictures opened together.
         doc.images = new Map([...doc.images].map(([ref, list]) => [ref, list.map((img, n) => ({
           mimeType: img.mimeType,
           hash: hash12(img.data || `${ref}:${n}`),
         }))]))
-        loaded.set(file, { gen, size, doc })
-        if (loaded.size > 32) loaded.delete(loaded.keys().next().value!)
+        remember(loaded, file, { gen, size, doc }, DOCUMENT_CACHE_ENTRIES)
+      } else {
+        imageDoc = { key: imageKey, at: now(), doc }
+        clearTimeout(imageExpiry)
+        imageExpiry = setTimeout(() => { imageDoc = undefined; imageExpiry = undefined }, IMAGE_CACHE_MS)
+        imageExpiry.unref()
       }
       return doc
     })()
@@ -380,7 +392,7 @@ export function createDevinTranscripts({
     }
     const good = lastGood.get(session)
     const first = !failAt.has(session)
-    failAt.set(session, now())
+    remember(failAt, session, now())
     if (good && opts.since === good.token && opts.before == null) return { available: true, file: good.file, session, token: good.token, unchanged: true }
     if (first) throw e
     throw new HerdrError('internal', 'Unable to read Devin conversation')
@@ -442,16 +454,8 @@ export function createDevinTranscripts({
       } else if (from != null && !rewritten) {
         const lo = from === 0 ? 0 : doc.steps.findIndex(s => Number(s.step_id) >= from)
         selected = lo < 0 ? doc.steps : doc.steps.slice(lo)
-        if (pageTooLarge(selected, maxPageBytes)) {
-          rewritten = true
-          const page = takeVisible(doc.steps, doc, PAGE_ITEMS)
-          selected = page.steps
-          start = page.start
-          items = page.items
-        } else {
-          items = parseDevin(selected, doc.steps, doc.images, doc.results)
-          start = selected[0] && selected.length < doc.steps.length ? Number(selected[0].step_id) || 0 : 0
-        }
+        items = parseDevin(selected, doc.steps, doc.images, doc.results)
+        start = selected[0] && selected.length < doc.steps.length ? Number(selected[0].step_id) || 0 : 0
       } else {
         const page = takeVisible(doc.steps, doc, PAGE_ITEMS)
         selected = page.steps
@@ -465,11 +469,10 @@ export function createDevinTranscripts({
         : { ...base, file: fileId, token, items, start, queue: [], ...(rewritten ? { rewritten: true } : {}) }
       if (before == null) {
         // The HTTP layer adds marks/delta fingerprints to its response object.
-        lastGood.set(session, { file: reply.file, token: reply.token })
-        if (lastGood.size > 32) lastGood.delete(lastGood.keys().next().value!)
+        remember(lastGood, session, { file: reply.file, token: reply.token })
       }
       const model = latestModel(doc)
-      lastModel.set(session, model ? { id: model, label: ompModelLabel(model) } : null)
+      remember(lastModel, session, model ? { id: model, label: ompModelLabel(model) } : null)
       return reply
     } catch (e) {
       return failOpen(session, e, opts)
@@ -485,10 +488,9 @@ export function createDevinTranscripts({
     if (!img) return null
     let body: Buffer | null = null
     if (img.data) {
-      if (img.data.length > 80 * 1024 * 1024) return null
       body = Buffer.from(img.data, 'base64')
     }
-    if (!body || body.length > 60 * 1024 * 1024) return null
+    if (!body) return null
     const mime = img.mimeType.toLowerCase()
     return { type: IMAGE_TYPES.test(mime) ? mime : 'application/octet-stream', body }
   }
@@ -497,11 +499,25 @@ export function createDevinTranscripts({
     if (!pane.agentSession || Date.now() >= deadline) return { hits: [], limited: Date.now() >= deadline, kind: 'devin' }
     const got = await load(pane.agentSession).catch(e => { if (isMissing(e)) return null; throw e })
     if (!got) return { hits: [], limited: false, kind: 'devin' }
-    const hits = parseDevin(got.doc.steps, got.doc.steps, got.doc.images, got.doc.results).filter(i => i.role === 'user' || i.role === 'assistant').reverse().flatMap(i => {
-      const at = matchAt(i.text, text)
-      return at < 0 ? [] : [{ role: i.role, text: i.text.slice(0, 180), excerpt: excerpt(i.text, at, 120, text), ts: i.ts, offset: Number(i.ref!.split(':')[0]) }]
-    }).slice(0, 8)
-    return { hits, limited: Date.now() >= deadline, kind: 'devin' }
+    const hits: { role: 'user' | 'assistant', text: string, excerpt: string, ts: string | null, offset: number }[] = []
+    const steps = got.doc.steps
+    for (let i = steps.length - 1, scanned = 0; i >= 0; i--, scanned++) {
+      if (scanned && scanned % 256 === 0) await new Promise<void>(resolve => setImmediate(resolve))
+      if (Date.now() >= deadline) return { hits, limited: true, kind: 'devin' }
+      const step = steps[i]!
+      const id = Number(step.step_id)
+      if (step.is_copied_context === true || step.source === 'system' || !Number.isSafeInteger(id) || id < 1) continue
+      const user = isUserStep(step)
+      if (!user && step.source !== 'agent' && step.source !== undefined) continue
+      const message = clip(contentText(step.message) || (user ? contentText(extraBlocks(step)) : ''))
+      const at = matchAt(message, text)
+      if (at < 0) continue
+      const ts = typeof step.timestamp === 'string' ? step.timestamp
+        : typeof step.metadata?.created_at === 'string' ? step.metadata.created_at : null
+      hits.push({ role: user ? 'user' : 'assistant', text: message.slice(0, 180), excerpt: excerpt(message, at, 120, text), ts, offset: id })
+      if (hits.length === 8) return { hits, limited: i > 0, kind: 'devin' }
+    }
+    return { hits, limited: false, kind: 'devin' }
   }
 
   async function model(pane: TranscriptPane): Promise<ModelInfo | null> {
@@ -517,7 +533,7 @@ export function createDevinTranscripts({
       failAt.delete(session)
       const name = latestModel(got.doc)
       const info = name ? { id: name, label: ompModelLabel(name) } : null
-      lastModel.set(session, info)
+      remember(lastModel, session, info)
       return info
     } catch (e) {
       if (isMissing(e)) {

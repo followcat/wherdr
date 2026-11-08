@@ -37,7 +37,7 @@ describe('validateTemplate', () => {
     const t = template() as any
     const steps = t.taskTypes.simple.steps
     steps[1].holder = 'robot'
-    steps[2].action = { kind: 'github.pr' }
+    steps[2].action = { kind: 'github.pr', base: 7 }
     steps[5].recheck = 'soon'
     steps.push({ id: 'again', holder: 'reviewer', ends: 'verdict', sendBack: 'later', rounds: 0 })
     steps.push({ id: 'todo' })
@@ -52,6 +52,20 @@ describe('validateTemplate', () => {
       'taskTypes.simple.steps[7].rounds',
       'taskTypes.simple.steps[8].id',
       'taskTypes.split.childType',
+    ])
+  })
+
+  it('takes a merge method and required checks on github.merge only', () => {
+    const t = template() as any
+    const steps = t.taskTypes.simple.steps
+    steps.splice(4, 1, { id: 'merge', ends: 'action', action: { kind: 'github.merge', method: 'squash', checks: ['smoke'] } })
+    expect(validateTemplate(t)).toEqual([])
+    steps[4].action = { kind: 'github.merge', method: 'fast', checks: [''] }
+    steps[2].action.method = 'squash'
+    expect(validateTemplate(t)).toEqual([
+      { path: 'taskTypes.simple.steps[2].action.method', message: 'only for github.merge' },
+      { path: 'taskTypes.simple.steps[4].action.method', message: 'must be one of merge, squash, rebase' },
+      { path: 'taskTypes.simple.steps[4].action.checks', message: 'must be a list of check names' },
     ])
   })
 

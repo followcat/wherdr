@@ -102,7 +102,7 @@ describe('app: queued bubbles', () => {
   it('record gone (server restarted): Claude\'s entry gets the photos remembered by the page', () => {
     const memory = rememberSent('w1:p9', [mine()])
     const r = pendingQueue({ ...base, mine: [], claude: [{ text: '', ts: iso(T0 + 500), images: 2 }], memory })
-    expect(r).toEqual([{ id: `cc-${iso(T0 + 500)}`, raw: photos, mine: false, phase: 'queued', state: null, photos: uploadNames(photos), missing: 0 }])
+    expect(r).toEqual([{ id: `cc-${iso(T0 + 500)}`, raw: photos, mine: false, phase: 'queued', state: null, photos: uploadNames(photos), missing: 0, inAgentQueue: true }])
     const withText = rememberSent('w1:p8', [mine({ text: `Look at this\n${A}` })])
     const t = pendingQueue({ ...base, mine: [], claude: [{ text: 'Look at this', ts: iso(T0 + 500), images: 1 }], memory: withText })
     expect(t[0]).toMatchObject({ raw: `Look at this\n${A}`, photos: uploadNames(A), missing: 0 })
@@ -118,10 +118,19 @@ describe('app: queued bubbles', () => {
   })
   it('photos never seen by wherdr (typed on the computer): placeholders, no Cancel text', () => {
     const r = pendingQueue({ ...base, mine: [], claude: [{ text: '', ts: iso(T0), images: 1 }] })
-    expect(r).toEqual([{ id: `cc-${iso(T0)}`, raw: '', mine: false, phase: 'queued', state: null, photos: [], missing: 1 }])
+    expect(r).toEqual([{ id: `cc-${iso(T0)}`, raw: '', mine: false, phase: 'queued', state: null, photos: [], missing: 1, inAgentQueue: true }])
   })
   it('Claude\'s entry already sent from wherdr and landed: not shown again', () => {
     const r = pendingQueue({ ...base, mine: [mine({ text: `Look at this\n${A}` })], items: [{ role: 'user', text: 'Look at this', images: 1, ts: iso(T0 + 2000) }], claude: [{ text: 'Look at this', ts: iso(T0 + 500), images: 1 }] })
     expect(r).toEqual([])
+  })
+  // herdr-core: the photo goes where `terminal.put` writes it, outside the uploads folder.
+  it('herdr-core photo path: a photo, and the bubble goes once the message lands', () => {
+    const core = '/home/user/.local/state/herdr-core/default/files/t1/2026-01-01T10-00-00-000Z-0a1b2c.jpg'
+    expect(uploadNames(`Look at this\n${core}`)).toEqual(['2026-01-01T10-00-00-000Z-0a1b2c.jpg'])
+    expect(uploadNames('/home/user/notes/2026-01-01T10-00-00-000Z-0a1b2c.txt')).toEqual([])
+    const sent = mine({ text: `Look at this\n${core}` })
+    expect(pendingQueue({ ...base, mine: [sent] })[0]).toMatchObject({ photos: ['2026-01-01T10-00-00-000Z-0a1b2c.jpg'] })
+    expect(pendingQueue({ ...base, mine: [sent], items: [{ role: 'user', text: 'Look at this', images: 1, ts: iso(T0 + 2000) }] })).toEqual([])
   })
 })

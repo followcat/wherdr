@@ -60,7 +60,7 @@ it('uses explicit resume when locks are absent, and refuses truncated scans', as
   const { home } = fixture()
   const proc = { pid: 100, startedAt: birth, argvExact: true, argv: ['devin', '-r', 'session-a'] }
   expect(await devinSession(localFs, home, proc, false)).toBe('session-a')
-  expect(await devinSession({ ...localFs, readdir: async () => Array.from({ length: 4097 }, (_, i) => `${i}.lock`) }, home, proc, false)).toBeNull()
+  expect(await devinSession({ ...localFs, readPidLocks: async () => null }, home, proc, false)).toBeNull()
 })
 
 it('refreshes identity after in-process resume and stops serving an ambiguous session', async () => {
@@ -74,9 +74,11 @@ it('refreshes identity after in-process resume and stops serving an ambiguous se
   expect((await reader.chat(pane)).session).toBe('old')
   lock('current', 100)
   clock += 1600
+  expect((await reader.chat(pane)).session).toBe('old')
+  clock += 6401
   expect((await reader.chat(pane)).session).toBe('current')
   lock('other', 100)
-  clock += 1600
+  clock += 8001
   expect(await reader.chat(pane)).toMatchObject({ available: false, reason: 'not_found' })
 })
 
@@ -95,15 +97,25 @@ it('does not use resume flags whose argv boundaries were reconstructed by ps', a
 
 
 it('resolves hundreds of remote locks with a constant number of shell calls', async () => {
+  const entries = Array.from({ length: 200 }, (_, i) => `unrelated-${i}.lock\0` + `4 1767225601.000000000 1 regular file\0${200 + i}\0`)
+  entries.push('current.lock\0' + '4 1767225601.000000000 1 regular file\0' + '100\0')
+  entries.push('invalid.lock\0' + '4 1767225601.000000000 1 regular file\0' + '100;exit 9\0')
+  const exec = vi.fn(async () => ({ code: 0, stdout: Buffer.from(entries.join('')), stderr: '' }))
+  const remote = createShellFs(exec)
+  for (let i = 0; i < 2; i++) expect(await devinSession(remote, '/home/user', { pid: 100, startedAt: birth }, false)).toBe('current')
+  expect(exec).toHaveBeenCalledTimes(2)
+})
+
+it('reads remote PID locks safely with one glob and one stat batch', async () => {
   const { home, lock } = fixture()
-  for (let i = 0; i < 100; i++) lock(`unrelated-${i}`, 200 + i)
-  lock("current ' spaced", 100)
+  lock('unrelated', 200)
+  lock("current ' $ spaced", 100)
   const exec = vi.fn(async (script: string, args: string[] = []) => await new Promise<any>((resolve) => {
     execFile('sh', ['-c', script, 'sh', ...args], { encoding: 'buffer' }, (err, stdout, stderr) => {
       resolve({ code: err ? 1 : 0, stdout, stderr: stderr.toString() })
     })
   }))
   const remote = createShellFs(exec, { statTtlMs: 0 })
-  for (let i = 0; i < 2; i++) expect(await devinSession(remote, home, { pid: 100, startedAt: birth }, false)).toBe("current ' spaced")
-  expect(exec.mock.calls.length).toBeLessThanOrEqual(4)
+  expect(await devinSession(remote, home, { pid: 100, startedAt: birth }, false)).toBe("current ' $ spaced")
+  expect(exec).toHaveBeenCalledTimes(1)
 })

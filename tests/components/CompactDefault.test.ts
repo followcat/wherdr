@@ -5,8 +5,6 @@ import type { VueWrapper } from '@vue/test-utils'
 import type { Pane } from '#shared/types'
 
 registerEndpoint('/api/quotas', () => ({ claude: null, codex: null }))
-registerEndpoint('/api/machine/order', () => ({ order: [] }))
-registerEndpoint('/api/machine/awake', () => ({ supported: false }))
 const pane: Pane = { id: 'w1:p1', workspace: 'w1', tab: 'w1:t1', tabLabel: null, agent: 'claude', name: null, label: null, status: 'idle', title: 'Sample agent', cwd: '/tmp/demo', agentSession: null }
 const pass = { template: '<div><slot /></div>' }
 
@@ -44,23 +42,17 @@ const compactToggle = (settings: VueWrapper) =>
   settings.findAll('.settings-toggle').find(w => w.text().includes('Compact list'))!.find('[role="switch"]')
 afterEach(() => { localStorage.removeItem('compactList'); localStorage.removeItem('compactListV2') })
 
-it('empty storage: the list is normal from its first card without saving a preference', async () => {
-  const { state, Home } = await freshApp()
-  const { w, seen } = await mountHome(Home)
-  try {
-    expect(seen.every(c => !c)).toBe(true)
-    expect(w.classes()).not.toContain('list-compact')
-    expect(localStorage.getItem('compactListV2')).toBeNull()
-  } finally { w.unmount(); state.eventsOpen.value = false }
-})
-
-it('a 1.x compact list goes back to normal, and its old value is removed', async () => {
+// A 1.x compact list (key `compactList`) goes back to normal: the list is
+// normal from its first card, the old value is removed and nothing is saved.
+it('the list is normal from its first card, and a 1.x compact value is removed', async () => {
   localStorage.setItem('compactList', '1')
   const { state, Home } = await freshApp()
   const { w, seen } = await mountHome(Home)
   try {
     expect(seen.every(c => !c)).toBe(true)
+    expect(w.classes()).not.toContain('list-compact')
     expect(localStorage.getItem('compactList')).toBeNull()
+    expect(localStorage.getItem('compactListV2')).toBeNull()
   } finally { w.unmount(); state.eventsOpen.value = false }
 })
 

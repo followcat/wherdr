@@ -4,6 +4,7 @@
 // iOS bar (theme-color) and the terminal palette.
 
 import { syncedRef } from './useSyncedSettings'
+import { BOOT_THEME_KEY } from '#shared/bootTheme'
 
 export const themeChoice = syncedRef<string>('theme', storedThemeChoice, v => v)
 
@@ -22,7 +23,12 @@ export const activeTheme = computed(() => themeById(themeChoice.value) || themeB
 export const themeColor = computed(() => activeTheme.value.c.bg)
 
 function apply() {
-  document.documentElement.dataset.theme = activeTheme.value.id
+  const root = document.documentElement
+  root.dataset.theme = activeTheme.value.id
+  // The startup background (nuxt.config.ts) gives way to the theme's styles,
+  // and is this theme's next time.
+  root.style.removeProperty('--bg')
+  try { localStorage.setItem(BOOT_THEME_KEY, JSON.stringify({ bg: themeColor.value, light: Boolean(activeTheme.value.light) })) } catch { /* storage off: Titanium at startup */ }
   for (const m of document.querySelectorAll('meta[name="theme-color"]')) m.setAttribute('content', themeColor.value)
 }
 

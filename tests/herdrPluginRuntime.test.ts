@@ -121,16 +121,6 @@ describe.skipIf(process.platform === 'win32' || !which('curl'))('herdr plugin, n
     expect(run('start').stdout).toContain('wherdr started')
   })
 
-  it('restarts the wherdr it runs on the new copy when installed again', () => {
-    expect(run('build', rt).status).toBe(0)
-    const first = pidOf()
-    const again = run('build', rt)
-    expect(again.status, again.stderr).toBe(0)
-    expect(again.stdout).toContain('✓ wherdr is running')
-    expect(pidOf()).not.toBe(first)
-    expect(() => process.kill(Number(first), 0)).toThrow()
-  })
-
   it('keeps the install when wherdr cannot start, and says why', () => {
     writeFileSync(path.join(root, '.output', 'server', 'index.mjs'), 'console.error("cannot open the Herdr socket"); process.exit(3)\n')
     const build = run('build', rt)
@@ -230,14 +220,17 @@ describe.skipIf(process.platform === 'win32' || !which('curl'))('herdr plugin, n
     }
     // Linux unless a test says otherwise (the suite also runs on a Mac).
     writeFileSync(path.join(fake, 'uname'), '#!/bin/sh\necho Linux\n'); chmodSync(path.join(fake, 'uname'), 0o755)
-    const opened = () => existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n') : []
+    // The log can exist before its line is written: an empty read is no call yet.
+    const opened = () => existsSync(calls) ? readFileSync(calls, 'utf8').split('\n').filter(Boolean) : []
     return { fake, opened }
   }
 
-  it('opens the setup guide in the browser once, at the first install only', () => {
+  // The second install also restarts the wherdr it runs, on the new copy.
+  it('opens the setup guide in the browser once, at the first install only, and restarts wherdr when installed again', () => {
     const { fake, opened } = fakeOpeners()
     const first = run('build', `${rt}:${fake}`, { DISPLAY: ':0' })
     expect(first.status, first.stderr).toBe(0)
+    const pid = pidOf()
     // xdg-open runs in the background.
     for (let i = 0; i < 50 && !opened().length; i++) spawnSync('sleep', ['0.1'])
     expect(opened()).toEqual([`xdg-open http://localhost:${port}/#/setup`])
@@ -245,6 +238,9 @@ describe.skipIf(process.platform === 'win32' || !which('curl'))('herdr plugin, n
     // An update (plugin.env kept) opens nothing.
     const update = run('build', `${rt}:${fake}`, { DISPLAY: ':0' })
     expect(update.status, update.stderr).toBe(0)
+    expect(update.stdout).toContain('✓ wherdr is running')
+    expect(pidOf()).not.toBe(pid)
+    expect(() => process.kill(Number(pid), 0)).toThrow()
     spawnSync('sleep', ['0.3'])
     expect(opened()).toHaveLength(1)
   })

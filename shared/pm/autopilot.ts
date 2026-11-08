@@ -2,6 +2,10 @@
 // limits, stored with the coordinator. Only the user changes it (Settings, the
 // passkey session); the coordinator reads it with `wherdr pm autopilot show`.
 import type { Run, Task } from './run'
+import { chainState } from './advance'
+import { parseSchedule } from './schedule'
+import type { PaceVerdict } from './pacing'
+import { pacedStart, paceRefusal } from './pace'
 
 export const AUTOPILOT_EVENTS = ['added', 'done', 'stuck', 'ready'] as const
 export type AutopilotEvent = typeof AUTOPILOT_EVENTS[number]
@@ -10,11 +14,16 @@ export interface Autopilot {
   on: boolean
   goal: string
   every?: string // duration (30m, 2h): a wake with the goal, in hours
+  at?: string // fixed times (daily 08:00, mon,thu 09:00, a cron): a wake with the goal, too
   events: AutopilotEvent[]
   perDay: number // tasks started per day
   atOnce: number // tasks working at once (waiting and ready ones take no slot)
   hours?: { from: number, to: number } // local hours, to excluded; from > to spans midnight
+  lookForWork?: true // keep the scheduled wakes when there is nothing to do (goals that add their own tasks)
+  lookPerDay?: number // with lookForWork: tasks those wakes may add a day (LOOK_PER_DAY when unset)
 }
+
+export const LOOK_PER_DAY = 3
 
 export const DEFAULT_AUTOPILOT: Autopilot = { on: false, goal: '', events: ['done', 'stuck'], perDay: 10, atOnce: 2 }
 
@@ -25,18 +34,28 @@ export function cleanAutopilot(raw: unknown): { autopilot: Autopilot } | { error
   const goal = typeof o.goal === 'string' ? o.goal.trim() : ''
   if (goal.length > 2000) return { error: 'goal: 2000 characters at most' }
   if (o.every !== undefined && o.every !== '' && !(typeof o.every === 'string' && /^\d{1,4}[mh]$/.test(o.every) && Number.parseInt(o.every) > 0)) return { error: 'every: a duration like 30m or 2h' }
+  const at = typeof o.at === 'string' ? o.at.trim() : ''
+  const s = at ? parseSchedule(at) : null
+  if (s && ('error' in s || 'every' in s)) return { error: 'at: fixed times like daily 08:00, mon,thu 09:00 or a cron' }
   const events = Array.isArray(o.events) ? o.events : []
   if (!events.every(e => (AUTOPILOT_EVENTS as readonly unknown[]).includes(e))) return { error: `events: ${AUTOPILOT_EVENTS.join(', ')}` }
   const perDay = int(o.perDay, 100), atOnce = int(o.atOnce, 20)
   if (perDay === null || atOnce === null) return { error: 'perDay (0-100) and atOnce (0-20) are whole numbers' }
+  const lookPerDay = o.lookPerDay === undefined ? undefined : int(o.lookPerDay, 20)
+  if (lookPerDay === null) return { error: 'lookPerDay: a whole number, 0-20' }
   const h = o.hours as { from?: unknown, to?: unknown } | undefined
   if (h !== undefined && h !== null && (int(h.from, 23) === null || int(h.to, 24) === null || h.from === h.to)) return { error: 'hours: from 0-23, to 0-24, not equal' }
   return { autopilot: {
     on: o.on === true, goal, events: [...new Set(events as AutopilotEvent[])], perDay, atOnce,
     ...(typeof o.every === 'string' && o.every ? { every: o.every } : {}),
+    ...(at ? { at } : {}),
     ...(h ? { hours: { from: h.from as number, to: h.to as number } } : {}),
+    ...(o.lookForWork === true ? { lookForWork: true as const, lookPerDay: lookPerDay ?? LOOK_PER_DAY } : {}),
   } }
 }
+
+// The goal as a sentence in a wake's text: one final period, never two.
+export const sentence = (s: string) => (/[.!?…]$/.test(s.trim()) ? s.trim() : `${s.trim()}.`)
 
 export function inHours(hours: Autopilot['hours'], d: Date) {
   if (!hours) return true
@@ -61,21 +80,88 @@ export function limitsLeft(ap: Autopilot, tasks: Task[], runs: Run[], now: numbe
   return { started, perDay: ap.perDay, startLeft: Math.max(0, Math.min(ap.perDay - started, ap.atOnce - working)), working, atOnce: ap.atOnce }
 }
 
-// Why the autopilot may not start one more task now, or undefined.
-export function startRefusal(ap: Autopilot, tasks: Task[], runs: Run[], now: number): string | undefined {
+// Why the autopilot may not start one more task now, or undefined. `pace`:
+// the verdict of the worker's account, given only for automatic work.
+export function startRefusal(ap: Autopilot, tasks: Task[], runs: Run[], now: number, pace?: PaceVerdict): string | undefined {
   const l = limitsLeft(ap, tasks, runs, now)
   if (l.started >= l.perDay) return `Today's limit is reached (${l.perDay} tasks started)`
   if (l.working >= l.atOnce) return `${l.working} tasks already work at once (limit ${l.atOnce})`
   if (!inHours(ap.hours, new Date(now))) return 'Outside the autopilot\'s hours'
+  return paceRefusal(pace)
+}
+
+// Starts a stopped task may have had for a wake to start it again.
+export const WAKE_RETRIES = 2
+
+// Why the coordinator (or the engine, for a chained task) may not start
+// `task` now, or undefined. In a wake, only with the autopilot on; its limits
+// and hours hold whatever the turn. A task stopped on a failure starts again
+// too, from its step; in a wake only while it has had few worker runs.
+// `pace`: the worker's account verdict, held to only for automatic work
+// (pacedStart); `engine`: the engine starts it, after its chain.
+export function coordinatorStartRefusal(ap: Autopilot | undefined, task: Task, tasks: Task[], runs: Run[], now: number, wake: boolean, { pace, engine }: { pace?: PaceVerdict, engine?: boolean } = {}): string | undefined {
+  const stopped = task.state === 'waiting' && !task.waitKind && !task.step?.done
+  if (task.state !== 'todo' && !stopped) return `${task.id} is not to do (${taskStatus(task)})`
+  // Starts, not attempts: an agent that exits at once gets a second run in the same start.
+  const tries = runs.filter(r => r.task === task.id && r.role === 'worker' && r.attempt === 1).length
+  if (stopped && wake && tries >= WAKE_RETRIES) return `${task.id} already ran ${tries} times: starting it again is the user's call`
+  const chain = task.after ? chainState(task, tasks) : 'go'
+  if (chain !== 'go') return chain?.wait ?? `${task.id} starts after ${task.after}, which is not done`
+  if (wake && !ap?.on) return 'In a wake, a task starts only with the autopilot on'
+  const paced = pacedStart(task, engine ? 'engine' : wake ? 'wake' : 'user')
+  return startRefusal(ap ?? DEFAULT_AUTOPILOT, tasks, runs, now, paced ? pace : undefined)
+}
+
+// The coordinator's last wake: when, and where its tasks stood then.
+export interface LastWake { at?: number, seen?: Record<string, TaskStatus> }
+
+// Nothing for a scheduled wake to do: every task done (none under way, to do,
+// waiting for the user or ready for them) and nothing changed since the
+// coordinator's last wake (no task added, removed or moved, no message of the
+// user). Never known before a first wake.
+export function nothingToDo(tasks: Task[], last: LastWake, userAt?: number) {
+  if (!last.seen || (userAt ?? 0) > (last.at ?? 0)) return false
+  const ids = Object.keys(last.seen)
+  return tasks.length === ids.length && tasks.every(t => taskStatus(t) === 'done' && last.seen![t.id] === 'done')
+}
+
+// A scheduled wake with nothing to do: skipped ('idle'), unless the user asked
+// it to look for new work ('look'), within the tasks those wakes may add a
+// day ('limit' once reached: asleep until tomorrow). 'send': there is work.
+// 'paced': there is work, but the worker's account is ahead of its pace (a
+// scheduled wake is automatic work): skipped too.
+export type ScheduledWake = 'send' | 'look' | 'idle' | 'limit' | 'paced'
+export function scheduledWake(ap: Autopilot, tasks: Task[], last: LastWake, userAt: number | undefined, lookAdded: number, pace?: PaceVerdict): ScheduledWake {
+  const kind = !nothingToDo(tasks, last, userAt) ? 'send' : !ap.lookForWork ? 'idle' : lookAdded >= (ap.lookPerDay ?? LOOK_PER_DAY) ? 'limit' : 'look'
+  return (kind === 'send' || kind === 'look') && pace && !pace.go ? 'paced' : kind
+}
+
+// Skipped: the slot counts as run, the paid turn is saved.
+export const skippedWake = (k: ScheduledWake | null) => k === 'idle' || k === 'limit' || k === 'paced'
+
+// The reason a look-for-new-work wake starts with: its turn counts the tasks it adds.
+export const LOOK_REASON = 'Nothing is under way: look for new work toward your goal.'
+
+// A count of the day (local): scheduled wakes skipped, tasks added by look wakes.
+export interface DayCount { day: string, n: number }
+export const dayKey = (now: number) => new Date(now).toDateString()
+export const today = (s: DayCount | undefined, now: number) => (s?.day === dayKey(now) ? s.n : 0)
+export const bump = (s: DayCount | undefined, now: number): DayCount => ({ day: dayKey(now), n: today(s, now) + 1 })
+
+// `task add` in a look wake's turn: within the tasks those wakes may add today.
+export const lookAddRefusal = (ap: Autopilot | undefined, added: number) => {
+  const max = ap?.lookPerDay ?? LOOK_PER_DAY
+  return added >= max ? `Today's limit of new work is reached (${max} tasks added by look-for-new-work wakes): back to sleep until tomorrow` : undefined
 }
 
 // The events since the last tick: tasks added, done, stuck (waiting) or
 // ready, among those the autopilot wakes for. `seen`: each task's last status.
+// A stopped task is not stuck: someone chose to stop it.
 export function autopilotEvents(ap: Autopilot, tasks: Task[], seen: Record<string, TaskStatus>) {
   const now: Record<string, TaskStatus> = {}, reasons: string[] = []
   for (const t of tasks) {
     const s = now[t.id] = taskStatus(t)
-    const ev: AutopilotEvent | undefined = !(t.id in seen) ? 'added' : seen[t.id] === s ? undefined : s === 'waiting' ? 'stuck' : s === 'done' || s === 'ready' ? s : undefined
+    const ev: AutopilotEvent | undefined = !(t.id in seen) ? 'added' : seen[t.id] === s ? undefined : s === 'waiting' ? (t.stopped ? undefined : 'stuck') : s === 'done' || s === 'ready' ? s : undefined
     if (ev && ap.events.includes(ev)) reasons.push(`${t.id} (${t.title}): ${ev}${ev === 'stuck' && t.waiting ? `: ${t.waiting.split('\n')[0]}` : ''}`)
   }
   return { seen: now, reasons }
@@ -88,7 +174,13 @@ export const USER_ONLY: Record<string, string> = {
   merge: 'Merging is the user\'s gesture, or the engine\'s where the branch rule allows it',
   settings: 'Settings change only in wherdr, by the user',
   'autopilot set': 'The autopilot\'s goal and limits change only in wherdr, by the user',
+  pacing: 'The pace of each quota account changes only in wherdr, by the user',
+  ...Object.fromEntries(['add', 'set', 'edit', 'remove', 'on', 'off', 'run'].map(v => [`automation ${v}`, 'Automations are added, changed and run only in wherdr, by the user'])),
 }
+
+// `task add`: in a wake, only with the autopilot on (the user's own turn may always).
+export const addRefusal = (ap: Autopilot | undefined, wake: boolean) =>
+  wake && !ap?.on ? 'In a wake, a task is added only with the autopilot on' : undefined
 
 // `tell <task>`: in a wake, only to answer an agent's question; a permission
 // request always stays the user's.

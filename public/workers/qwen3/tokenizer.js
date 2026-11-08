@@ -53,7 +53,12 @@ function tokenizer(tj) {
     const e = tj.model.merges[i]
     merges.set(typeof e === 'string' ? e : e.join(' '), i)
   }
-  const PRE = new RegExp(split.pattern.Regex, 'gu')
+  let PRE
+  try { PRE = new RegExp(split.pattern.Regex, 'gu') } catch {
+    throw new Error('Unsupported speech model tokenizer configuration')
+  }
+  // Never match added/special tokens in pane terms: even <|im_end|> must
+  // stay ordinary bytes, so terminal-controlled text cannot close the system turn.
   function encode(str) {
     const out = []
     const text = form ? String(str).normalize(form) : String(str)
@@ -70,7 +75,11 @@ function tokenizer(tj) {
         if (bi < 0) break
         parts.splice(bi, 2, parts[bi] + parts[bi + 1])
       }
-      for (const p of parts) { const id = vocab.get(p); if (id !== undefined) out.push(id) }
+      for (const p of parts) {
+        const id = vocab.get(p)
+        if (id === undefined) throw new Error('Missing speech model tokenizer piece')
+        out.push(id)
+      }
     }
     return out
   }
@@ -83,7 +92,7 @@ function tokenizer(tj) {
       for (const id of ids) {
         if (sp.has(id)) { flush(); continue }
         const tok = idTo[id]
-        if (tok === undefined) { flush(); out += '<unk:' + id + '>'; continue }
+        if (tok === undefined) { flush(); continue }
         for (const ch of tok) {
           const b = c2b.get(ch)
           if (b === undefined) { flush(); out += ch } else bytes.push(b)

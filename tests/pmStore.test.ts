@@ -37,7 +37,7 @@ describe('pm store', () => {
     expect((await store.templateLog('vibe')).map(e => [e.version, e.changes])).toEqual([[1, []], [2, ['instructions']]])
     await store.saveTemplate({ ...template, version: 9 }, { replace: true }) // back to the first content: version 3, whatever the client said
     const added = await store.addProject(input, okFolder)
-    expect(added).toMatchObject({ key: 'WEB', name: 'Web app', machine: '', path: '/home/u/src/web', template: 'vibe' })
+    expect(added).toMatchObject({ key: 'WEB', name: 'Web app', machine: '', path: '/home/u/src/web', from: { template: 'vibe', version: 3 } })
 
     const restarted = createPmStore(dir)
     expect(await restarted.overview()).toEqual({ enabled: true, projects: [added], templates: [{ id: 'vibe', version: 3 }], tasks: [] })
@@ -61,10 +61,42 @@ describe('pm store', () => {
       .rejects.toMatchObject({ code: 'bad_input' })
     await expect(store.saveTemplate({ ...template, id: '../evil' })).rejects.toMatchObject({ code: 'bad_input' })
 
-    expect(await store.setTemplate('WEB', '')).not.toHaveProperty('template')
+    expect(await store.setTemplate('WEB', '')).not.toHaveProperty('from')
+    expect(await store.workflow('WEB')).toBeNull()
     await expect(store.setTemplate('WEB', 'company')).rejects.toMatchObject({ code: 'not_found' })
+    await store.setTemplate('WEB', 'vibe')
     await store.removeProject('WEB')
     expect((await store.overview()).projects).toEqual([])
+    // Added again under the same key: none of the removed project's workflow or log.
+    await store.addProject({ ...input, template: '' }, okFolder)
+    expect(await store.workflow('WEB')).toBeNull()
+    expect(await store.workflowLog('WEB')).toEqual([])
+  })
+})
+
+describe('workflows migration', () => {
+  it('copies each project\'s template and log into its own workflow, once, leaving the library as is', async () => {
+    const store = createPmStore(dir)
+    await store.setEnabled(true)
+    await store.saveTemplate(template)
+    await store.saveTemplate({ ...template, instructions: 'Small commits.' }, { replace: true })
+    const library = await fs.readFile(path.join(store.files.templates, 'vibe.json'), 'utf8')
+    await fs.writeFile(store.files.projects, JSON.stringify({ v: 1, projects: [
+      { key: 'WEB', name: 'Web', machine: '', path: '/w', template: 'vibe', addedAt: 1 },
+      { key: 'API', name: 'Api', machine: '', path: '/a', addedAt: 1 },
+    ] }))
+    expect(await store.projects()).toEqual([
+      { key: 'WEB', name: 'Web', machine: '', path: '/w', from: { template: 'vibe', version: 2 }, addedAt: 1, color: 'violet' },
+      { key: 'API', name: 'Api', machine: '', path: '/a', addedAt: 1, color: 'blue' },
+    ])
+    expect(await store.workflow('WEB')).toMatchObject({ id: 'web', version: 2, instructions: 'Small commits.' })
+    expect((await store.workflowLog('WEB')).map(e => [e.version, e.changes])).toEqual([[1, []], [2, ['instructions']], [2, ['copied from template vibe v2']]])
+    expect(await store.workflow('API')).toBeNull()
+    expect(await fs.readFile(path.join(store.files.templates, 'vibe.json'), 'utf8')).toBe(library)
+    // A restart changes nothing more.
+    const again = createPmStore(dir)
+    expect(await again.projects()).toEqual(await store.projects())
+    expect(await again.workflowLog('WEB')).toHaveLength(3)
   })
 })
 

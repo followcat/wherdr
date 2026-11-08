@@ -4,14 +4,13 @@
 // is only written there at the end), the screen right away.
 import type { ClaudeScreen } from './types'
 import { sameSent } from './reference'
-import { imageTagCount, onlyImageTags, photosOnly, uploadNames } from './queuedMatch'
+import { imageTagCount, isUploadLine, onlyImageTags, photosOnly, uploadNames } from './queuedMatch'
 
 export type QueuedPhase = 'queued' | 'sent' | 'running'
 
-const UPLOAD = '/.cache/herdr-web/uploads/'
 // The screen replaces photos with "[Image #1]" and cuts long lines.
 const norm = (t: string) => String(t || '').replace(/\[Image #\d+\]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
-const msgNorm = (t: string) => norm(String(t || '').split('\n').filter(l => !l.includes(UPLOAD)).join('\n'))
+const msgNorm = (t: string) => norm(String(t || '').split('\n').filter(l => !isUploadLine(l)).join('\n'))
 
 // Same message (first 80 characters); or one starts with the other, long
 // enough not to confuse "ok" with "ok, go ahead" (cut screen). Whitespace is

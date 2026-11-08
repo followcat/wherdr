@@ -1,0 +1,11 @@
+
+ ❭ Review the example project
+
+ ✓ npm test -- --run tests/unit
+
+ 21 passed, 2 skipped
+
+────────────────────────────────────────────────────────────────────────────────
+❭ Guide Devin while it works
+────────────────────────────────────────────────────────────────────────────────
+gpt-5 · standard · 2 shells ↓            Context: 12k / 262k tokens (4%)

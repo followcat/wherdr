@@ -1,0 +1,1 @@
+{"repos":{"app":{"repo":{"key":"APP"},"workspace":{"from":"develop"},"merge":{"by":"itself"},"reviewer":{"agent":"codex"}},"site":{"repo":{"key":"x"}}},"limit":{"time":"2h"}}

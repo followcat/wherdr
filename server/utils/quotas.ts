@@ -22,7 +22,11 @@ import { spawn } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { AccountQuota, ClaudeSetup, ClaudeSetupState, Quota, QuotaWindow, Quotas } from '../../shared/types'
+import type { AccountQuota, ClaudeSetup, ClaudeSetupState, Quota, QuotaAccount, QuotaWindow, Quotas } from '../../shared/types'
+import { type QuotaProgram, accountKey, uniqueKey } from '../../shared/quotaAccount'
+import { type PacingEntry, pacingEntry } from '../../shared/pacingLog'
+import { readAccountNames } from './accountNames'
+import { recordReadings } from './pacingLog'
 import { readDismissed } from './claudeSetup'
 import type { ExecResult, MachineFs } from './fsx'
 import { HerdrError } from './herdr'
@@ -234,8 +238,9 @@ export function sameAccount(a: ClaudeReading, b: ClaudeReading): boolean {
 
 // Groups the readings by account: the most recent of each account, with its
 // machines in the order received. The group is compared with its first reading that has
-// a fingerprint (failing that, its first reading).
-export function groupAccounts(list: { key: string, label: string, q: ClaudeReading }[], same = sameAccount): AccountQuota[] {
+// a fingerprint (failing that, its first reading). Each group gets its stable
+// key (shared/quotaAccount.ts); the fingerprint itself never leaves.
+export function groupAccounts(list: { key: string, label: string, q: ClaudeReading }[], same = sameAccount, program: QuotaProgram = 'claude'): AccountQuota[] {
   const groups: { rep: ClaudeReading, best: ClaudeReading, machines: { key: string, label: string }[] }[] = []
   for (const { key, label, q } of list) {
     const g = groups.find(g => same(g.rep, q))
@@ -244,7 +249,10 @@ export function groupAccounts(list: { key: string, label: string, q: ClaudeReadi
     if (q.at > g.best.at) g.best = q
     if (!g.rep.account && q.account) g.rep = q
   }
-  return groups.map(({ best: { account: _, ...q }, machines }) => ({ ...q, machines }))
+  const taken = new Set<string>()
+  return groups.map(({ rep, best: { account: _, ...q }, machines }) => ({
+    ...q, machines, key: uniqueKey(accountKey(program, rep.account, rep.week ?? q.week, machines[0]!.key), taken),
+  }))
 }
 
 // Several Codex conversations write the limits of the same account: an old
@@ -418,17 +426,19 @@ export function sameCodexAccount(a: ClaudeReading, b: ClaudeReading): boolean {
 // Assembles the readings of the online machines (in machine order).
 // `codexSeen: false`: the machine has no recent Codex conversation (missing:
 // unknown, as after a failed read).
-export function mergeQuotas(readings: { key: string, label: string, claude: ClaudeReading | null, codex: (Quota & { account?: string | null }) | null, codexSeen?: boolean, setup?: ClaudeSetup | null }[]): Quotas {
+// `names`: the user's account names, by key (accountNames.ts).
+export function mergeQuotas(readings: { key: string, label: string, claude: ClaudeReading | null, codex: (Quota & { account?: string | null }) | null, codexSeen?: boolean, setup?: ClaudeSetup | null }[], names: Record<string, string> = {}): Quotas {
   let codex: Quota | null = null
   for (const r of readings) {
     if (!r.codex) continue
     const { account: _, ...q } = r.codex
     codex = fresher(codex, q)
   }
-  const codexAccounts = groupAccounts(readings.flatMap(r => (r.codex ? [{ key: r.key, label: r.label, q: { ...r.codex, account: r.codex.account ?? null } }] : [])), sameCodexAccount)
-  const accounts = groupAccounts(readings.flatMap(r => (r.claude ? [{ key: r.key, label: r.label, q: r.claude }] : [])))
+  const named = (a: AccountQuota): AccountQuota => (names[a.key] ? { ...a, name: names[a.key] } : a)
+  const codexAccounts = groupAccounts(readings.flatMap(r => (r.codex ? [{ key: r.key, label: r.label, q: { ...r.codex, account: r.codex.account ?? null } }] : [])), sameCodexAccount, 'codex').map(named)
+  const accounts = groupAccounts(readings.flatMap(r => (r.claude ? [{ key: r.key, label: r.label, q: r.claude }] : []))).map(named)
   let claude: Quota | null = null
-  for (const { machines: _, ...a } of accounts) claude = fresher(claude, a)
+  for (const { machines: _, key: _k, name: _n, ...a } of accounts) claude = fresher(claude, a)
   // A machine on API billing has no quota block: the subscription account(s)
   // then go under their own machines, so they are listed with them.
   const api = readings.some(r => r.setup?.state === 'api')
@@ -444,6 +454,23 @@ export function mergeQuotas(readings: { key: string, label: string, claude: Clau
   if (codexAccounts.length && !shared) out.codexAccounts = codexAccounts
   const setup = readings.flatMap(r => (r.setup ? [r.setup] : []))
   if (setup.length) out.claudeSetup = setup
+  const table = (program: QuotaProgram) => (a: AccountQuota): QuotaAccount => ({ key: a.key, program, ...(a.name ? { name: a.name } : {}), machines: a.machines.map(m => m.key) })
+  if (accounts.length || codexAccounts.length) out.accounts = [...accounts.map(table('claude')), ...codexAccounts.map(table('codex'))]
+  return out
+}
+
+// Pacing log lines of a merge: each account's newest reading.
+export function pacingEntries(q: Quotas, readings: Parameters<typeof mergeQuotas>[0]): PacingEntry[] {
+  const out: PacingEntry[] = []
+  for (const a of q.accounts ?? []) {
+    const own = readings.flatMap((r) => {
+      const x = a.program === 'claude' ? r.claude : r.codex
+      return x && a.machines.includes(r.key) ? [x] : []
+    })
+    const best = own.reduce<Quota | null>(fresher, null)
+    const e = best && pacingEntry(a.key, best)
+    if (e) out.push(e)
+  }
   return out
 }
 
@@ -501,9 +528,14 @@ export async function readQuotas(force = false): Promise<Quotas> {
       : null
     return { key: m.key, label: m.label, claude: claude?.q || null, codex, codexSeen, setup }
   }))
-  const q = mergeQuotas(readings)
+  const q = mergeQuotas(readings, await readAccountNames())
   // A slow older poll must not replace a newer completed snapshot.
-  if (version === readVersion) cache = { at: Date.now(), q }
+  if (version === readVersion) {
+    cache = { at: Date.now(), q }
+    await recordReadings(pacingEntries(q, readings)).catch((e: NodeJS.ErrnoException) => {
+      console.warn(new Date().toISOString(), 'Pacing log write failed', { code: typeof e?.code === 'string' ? e.code : 'unknown' })
+    })
+  }
   return q
 }
 

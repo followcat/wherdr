@@ -21,6 +21,7 @@ import { agentNotificationTitle, pushSend } from './push'
 import { machineOfPane } from './machines'
 import { createCodexStatus, dirWritable } from './codexStatus'
 import { runLocal, setCodexKnownWeek } from './quotas'
+import { pmStore } from './pmStore'
 
 const fsp = fs.promises
 const hcCall = <T>(method: string, params: object, timeout: number) => coreCall<T>(process.env.HC_SOCKET || '', method, params, timeout)
@@ -228,9 +229,16 @@ const AGENT_LABEL: Record<string, string> = { claude: 'Claude', codex: 'Codex', 
 const agentLabel = (k: string | null) => (k && AGENT_LABEL[k]) || (k ? k[0]!.toUpperCase() + k.slice(1) : 'Agent')
 const notificationTitle = (title: string | null) => (title || '').replace(/^[^\p{L}\p{N}]+/u, '').trim()
 
+const isTaskAgent = async (address: string) => {
+  try { const pm = pmStore(); return (await pm.enabled()) && (await pm.runs()).some(r => r.terminal === address && r.state !== 'ended') }
+  catch { return false }
+}
+
 async function notifyCorePane(address: string, kind: CoreAlertKind) {
   const p = state.panes.find(x => x.coreAddress === address)
   if (!p || isViewed(p.id)) return
+  // A project task's agent waiting for the user goes into the grouped Decisions push.
+  if (kind === 'needs-you' && await isTaskAgent(address)) return
   const event: NotificationEvent = kind === 'needs-you' ? 'needs-you' : 'finished'
   if (!await notificationAllowed(event, state, p, { machine: p.machine ?? '' })) return
   const ws = state.workspaces.find(w => w.id === p.workspace)

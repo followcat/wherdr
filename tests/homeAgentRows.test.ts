@@ -33,3 +33,16 @@ describe('individual standalone-agent rows', () => {
     expect(individualAgentRows(spaceRows(remote, 'remote'))).toHaveLength(4)
   })
 })
+
+describe('coordinator panes', () => {
+  const addressed = { ...state, panes: state.panes.map(p => ({ ...p, coreAddress: `core:${p.id}` })) }
+
+  it('leaves coordinator panes out and keeps every other row', () => {
+    const rows = individualAgentRows(spaceRows(addressed), new Set(['core:w1:p2']))
+    expect(rows.map(r => r.key)).toEqual(['w1:p1', 'w1:p3', 'w2:p1'])
+  })
+
+  it('drops a space whose only pane is a coordinator', () => {
+    expect(individualAgentRows(spaceRows(addressed), new Set(['core:w2:p1'])).map(r => r.key)).toEqual(['w1:p1', 'w1:p2', 'w1:p3'])
+  })
+})

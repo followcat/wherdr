@@ -97,6 +97,7 @@ locks after an in-process `/resume`, or no session can be identified, use Termin
 the conversation reader cannot resolve that case. Local `DEVIN_SESSIONS_DIR` and
 `XDG_DATA_HOME` overrides are honored; remote machines use their home and the
 default path. No database, hook or agent configuration is modified.
+If a transcript exceeds 24 MiB, use Terminal; Conversation cannot read that checkpoint.
 
 ATIF updates once per turn: while Devin works, Conversation retains the last
 saved checkpoint. The current prompt, tools and reply appear after the next save.

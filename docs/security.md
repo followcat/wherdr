@@ -76,8 +76,9 @@ only the routes listed in `shared/coreRoutes.ts` answer.
   path under `/api/` gets 503 (`Unavailable with herdr-core`).
 - A strict Content Security Policy limits scripts to the app's own origin and hashed inline
   scripts, and connections to that origin and its WebSockets. It also blocks embedded objects
-  and framing. The page cannot compile WebAssembly: only the on-device dictation worker
-  (`/workers/dictation-worker.js`) gets `'wasm-unsafe-eval'`, in its own policy. `eval()` of
+  and framing. The page cannot compile WebAssembly: only the on-device dictation workers
+  (`/workers/dictation-worker.js` and `/workers/dictation-webgpu-worker.js`) get
+  `'wasm-unsafe-eval'`, each in its own response policy. `eval()` of
   JavaScript is never allowed.
 - Images in agent replies load from the app's own origin (`data:` and `blob:` included) and,
   over HTTPS only, from any machine and port of the tailnet wherdr is reached on

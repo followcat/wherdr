@@ -40,8 +40,14 @@ for (const device of ['desktop', 'phone', 'tablet']) {
       // Exercise a direct entry: Settings inserts Home underneath on mount.
       history.replaceState({ ...history.state, back: null }, '')
     }
-    const w = await mountSuspended(SettingsView, { route: '/settings?section=conversation', global })
+    // Desktop enters through the former Desktop query, which redirects to Conversation.
+    const w = await mountSuspended(SettingsView, { route: `/settings?section=${device === 'desktop' ? 'desktop' : 'conversation'}`, global })
     try {
+      if (device === 'desktop') {
+        // The desktop layout can render a fallback before the redirect finishes.
+        await vi.waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/settings?section=conversation'))
+        await vi.waitFor(() => expect(w.findAll('.settings-group').find(g => g.text().includes('Default pane view'))!.isVisible()).toBe(true))
+      }
       if (device === 'phone') {
         // mountSuspended does not await async onMounted hooks. Wait for both
         // replace('/') and push(here) before assertions or tearing down the DOM.
@@ -188,5 +194,27 @@ it('Conversation: replays the encrypted preview from glyphs to the complete plai
     expect(preview.findAll('.tw-trail [data-g]')).toHaveLength(0)
     expect(preview.text()).toContain('Found the cause: the cache was never invalidated after an update.')
     expect(preview.text()).toContain('All tests pass.')
+  } finally { w.unmount() }
+})
+
+it('Machines has its own section; Agents holds Pace, which ?section=pacing still opens', async () => {
+  desk.value = true
+  coarse.value = false
+  const w = await mountSuspended(SettingsView, { route: '/settings?section=pacing', global })
+  try {
+    const nav = w.get('.settings-nav').findAll('.settings-nav-item').map(b => b.text())
+    expect(nav.slice(nav.indexOf('Agents'), nav.indexOf('Agents') + 2)).toEqual(['Agents', 'Machines'])
+    expect(nav).not.toContain('Pace')
+    const agents = w.findAll('.settings-section').find(s => s.find('[data-testid="offered-agents"]').exists())!
+    const shown = (el: { element: Element }) => (el.element as HTMLElement).style.display !== 'none'
+    expect(shown(agents)).toBe(true)
+    expect(agents.get('#settings-pace').text()).toContain('Pace')
+    expect(agents.find('.core-machines').exists()).toBe(false)
+    const machines = w.get('[data-testid="settings-machines"]')
+    expect(shown(machines)).toBe(false)
+    await useRouter().replace('/settings?section=machines')
+    await vi.waitFor(() => expect(shown(machines)).toBe(true))
+    expect(machines.find('.core-machines').exists()).toBe(true)
+    expect(shown(agents)).toBe(false)
   } finally { w.unmount() }
 })
