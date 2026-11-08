@@ -45,11 +45,11 @@ function sysPath(h: string, ...extra: string[]) {
 }
 
 // The probe as machine.exec runs it, in a systemd-like environment.
-function probe(h: string, envPath: string, ...commands: string[]) {
-  return execFileSync('sh', ['-c', KIND_PROBE_SCRIPT, 'sh', ...commands], { env: { HOME: h, PATH: envPath }, encoding: 'utf8' }).split('\n').filter(Boolean)
+function probe(h: string, envPath: string, env: Record<string, string>, ...commands: string[]) {
+  return execFileSync('sh', ['-c', KIND_PROBE_SCRIPT, 'sh', ...commands], { env: { HOME: h, PATH: envPath, ...env }, encoding: 'utf8' }).split('\n').filter(Boolean)
 }
-const found = (h: string, envPath: string, command: string) =>
-  execFileSync('sh', ['-c', `${USER_PATH_SETUP}; command -v "$1"`, 'sh', command], { env: { HOME: h, PATH: envPath }, encoding: 'utf8' }).trim()
+const found = (h: string, envPath: string, command: string, env: Record<string, string> = {}) =>
+  execFileSync('sh', ['-c', `${USER_PATH_SETUP}; command -v "$1"`, 'sh', command], { env: { HOME: h, PATH: envPath, ...env }, encoding: 'utf8' }).trim()
 
 describe('the agent PATH on a machine', () => {
   it('finds an agent installed under the nvm default alias', () => {
@@ -57,7 +57,7 @@ describe('the agent PATH on a machine', () => {
     bin(h, '.nvm/versions/node/v24.19.0/bin', 'claude')
     for (const target of ['v24.19.0', '24.19.0']) {
       alias(h, target)
-      expect(probe(h, sysPath(h), 'claude', 'codex')).toEqual(['claude'])
+      expect(probe(h, sysPath(h), {}, 'claude', 'codex')).toEqual(['claude'])
       expect(found(h, sysPath(h), 'claude')).toBe(path.join(h, '.nvm/versions/node/v24.19.0/bin/claude'))
     }
   })
@@ -66,8 +66,18 @@ describe('the agent PATH on a machine', () => {
     const h = home('v8.0.0', 'v18.20.8', 'v24.19.0', 'v24.6.0')
     bin(h, '.nvm/versions/node/v24.19.0/bin', 'codex')
     for (const v of ['v8.0.0', 'v18.20.8', 'v24.19.0', 'v24.6.0']) bin(h, `.nvm/versions/node/${v}/bin`, 'marker')
-    expect(probe(h, sysPath(h), 'codex', 'gemini')).toEqual(['codex'])
+    expect(probe(h, sysPath(h), {}, 'codex', 'gemini')).toEqual(['codex'])
     expect(found(h, sysPath(h), 'marker')).toBe(path.join(h, '.nvm/versions/node/v24.19.0/bin/marker'))
+  })
+
+  it('honours NVM_DIR over ~/.nvm', () => {
+    const h = home('v18.20.8')
+    const nvmDir = path.join(h, 'nvm-elsewhere')
+    bin(nvmDir, 'versions/node/v24.19.0/bin', 'claude')
+    expect(probe(h, sysPath(h), { NVM_DIR: nvmDir }, 'claude', 'codex')).toEqual(['claude'])
+    expect(found(h, sysPath(h), 'claude', { NVM_DIR: nvmDir })).toBe(path.join(nvmDir, 'versions/node/v24.19.0/bin/claude'))
+    // Without NVM_DIR, ~/.nvm is used and its older version has no claude.
+    expect(probe(h, sysPath(h), {}, 'claude')).toEqual([])
   })
 
   it('falls back to the newest version when the alias names none', () => {
@@ -83,7 +93,7 @@ describe('the agent PATH on a machine', () => {
     const h = home()
     bin(h, '.local/bin', 'codex')
     bin(h, '.opencode/bin', 'opencode')
-    expect(probe(h, sysPath(h), 'claude', 'codex', 'opencode')).toEqual(['codex', 'opencode'])
+    expect(probe(h, sysPath(h), {}, 'claude', 'codex', 'opencode')).toEqual(['codex', 'opencode'])
     expect(found(h, sysPath(h), 'codex')).toBe(path.join(h, '.local/bin/codex'))
     expect(found(h, sysPath(h), 'opencode')).toBe(path.join(h, '.opencode/bin/opencode'))
   })
