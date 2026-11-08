@@ -114,7 +114,7 @@ export async function startTask(deps: PmLaunchDeps, id: unknown, { handover }: {
     try {
       address = (await deps.call<{ address: string }>('terminal.run', {
         cwd: paths.worktree, ...(on ? { on } : {}), no_parent: true, wait: false,
-        env: { DISABLE_AUTOUPDATER: '1' }, labels: runLabels(install, run),
+        env: { DISABLE_AUTOUPDATER: '1', ...await deps.proxyEnv?.(p.machine) }, labels: runLabels(install, run),
         line: `${PATH_SETUP}; ${agentLine(plan.program, plan.model, paths.instructions)}`,
       }, 30000)).address
     } catch (e) {
