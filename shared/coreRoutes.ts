@@ -39,7 +39,7 @@ const BASE = [
   'core', 'core/terminals', 'client-plugins', 'client-plugins/:id/:file',
   'state', 'config', 'settings', 'health', 'search',
   'chat', 'chat/image', 'prompt', 'input', 'interrupt', 'close', 'agents',
-  'dirs', 'isgit', 'quotas', 'claude-statusline', 'claude-setup',
+  'dirs', 'isgit', 'quotas', 'claude-statusline', 'claude-setup', 'proxies',
   'machine/add', 'machine/connect', 'machine/core', 'machine/core-rename', 'machine/core-forget',
   'upload', 'attach', 'file', 'keep',
   'dictation/status', 'dictation/key', 'dictation/transcribe', 'dictation/prepare', 'GET dictation/models',
