@@ -30,6 +30,11 @@ export interface CoreAdminDeps {
   onQueued?: (watch: Promise<unknown>) => void // test hook: the background wait of a queued first message
   readyWatchMs?: number // how long the first message waits for the program to be ready (default 15 s)
   pollMs?: number // readiness polling step (default 500 ms)
+  // The saved proxies (server/utils/proxies.ts): env of a launch on a machine
+  // (choice = the picked id, '' = none, undefined = the machine's remembered
+  // choice); rememberProxy records a choice the picker sent. Absent: no proxy.
+  proxyEnv?: (machineKey: string, choice?: unknown) => Promise<Record<string, string>>
+  rememberProxy?: (machineKey: string, choice: string) => Promise<unknown>
 }
 
 const REQUEST_LABEL = 'wherdr-request'
@@ -179,7 +184,7 @@ export async function sendAfterDialog(deps: CoreAdminDeps, address: string, text
   return 'skipped'
 }
 
-export interface CreateBody { kind?: unknown, machine?: unknown, cwd?: unknown, name?: unknown, workspace?: unknown, prompt?: unknown, resume?: unknown }
+export interface CreateBody { kind?: unknown, machine?: unknown, cwd?: unknown, name?: unknown, workspace?: unknown, prompt?: unknown, resume?: unknown, proxy?: unknown }
 
 const newId = (prefix: string) => prefix + crypto.randomBytes(16).toString('hex')
 // herdr-app placement: a new tab of the given space, else of the space holding the
@@ -210,8 +215,12 @@ export async function coreCreate(deps: CoreAdminDeps, body: CreateBody) {
   const name = toAgentName(typed)
   if (name && !NAME_RE.test(name)) throw new HerdrError('bad_name', 'Invalid name')
   const request = crypto.randomBytes(8).toString('hex')
+  // The proxy goes as env (HTTP(S)_PROXY…), never in the line: it stays out of
+  // titles and argv, credentials included.
+  const env = (await deps.proxyEnv?.(m.key, body.proxy)) || {}
   const params = {
     cwd, ...(on ? { on } : {}), ...(name ? { name } : {}), no_parent: true, wait: false,
+    ...(Object.keys(env).length ? { env } : {}),
     labels: { [REQUEST_LABEL]: request, ...creationLabels(deps, m, cwd, body.workspace) }, ...(kind === 'shell' ? {} : { line: `${PATH_SETUP}; exec ${[kind, ...(body.resume === true ? RESUME_ARGS[kind] || [] : [])].join(' ')}` }),
   }
   let address: string
@@ -227,6 +236,9 @@ export async function coreCreate(deps: CoreAdminDeps, body: CreateBody) {
     address = found
   }
   await deps.remember(cwd, m).catch(() => {})
+  // A proxy the picker sent (id, or '' for None) becomes the machine's choice;
+  // a path without one (quick tab, restarts) leaves the remembered one.
+  if (body.proxy !== undefined) deps.rememberProxy?.(m.key, String(body.proxy || '')).catch(() => {})
   const [failed] = await Promise.all([kind === 'shell' ? null : launchFailure(deps, address, deps.launchWatchMs ?? 2000), deps.settle()])
   if (failed) throw new HerdrError('launch_failed', fmt('{kind} stopped right after starting (exit code {code}). Last output:\n{lines}', { kind, code: failed.code, lines: failed.lines || '(none)' }))
   const pane = deps.panes().find(p => p.coreAddress === address)

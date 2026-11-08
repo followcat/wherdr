@@ -131,7 +131,8 @@ async function reviewer(deps: PmLaunchDeps, { task, p, t, on }: Ctx, text: strin
   await store.saveRun(run)
   await store.logTask({ ...task, step: told, run: run.id }, 'engine', `review: started the reviewer (${plan.program} ${plan.model})`)
   const { address } = await deps.call<{ address: string }>('terminal.run', {
-    cwd: worker.worktree, ...(on ? { on } : {}), no_parent: true, wait: false, env: { DISABLE_AUTOUPDATER: '1' },
+    cwd: worker.worktree, ...(on ? { on } : {}), no_parent: true, wait: false,
+    env: { DISABLE_AUTOUPDATER: '1', ...await deps.proxyEnv?.(worker.machine) },
     labels: runLabels(await store.install(), run), line: `${PATH_SETUP}; ${agentLine(plan.program, plan.model, files.review)}`,
   }, 30000)
   run = { ...run, terminal: address, state: 'running', startedAt: Date.now() }

@@ -457,7 +457,7 @@ export async function prepareCoordinator(deps: Deps, key: string, program: Coord
   if (key === MAIN) await issueAlfredToken(deps.store, folder!)
   // Alfred starts with its greeting (startPrompt).
   const prompt = key === MAIN ? [startPrompt(first, await readAlfredName(deps))] : []
-  return { on, folder, argv: coordinatorArgs(program, folder, p?.path, p?.git === false), prompt, env: { WHERDR_PM_TOKEN: token, WHERDR_URL: url, DISABLE_AUTOUPDATER: '1' } }
+  return { on, folder, argv: coordinatorArgs(program, folder, p?.path, p?.git === false), prompt, machine: p?.machine || '', env: { WHERDR_PM_TOKEN: token, WHERDR_URL: url, DISABLE_AUTOUPDATER: '1' } }
 }
 
 // Starts the coordinator in its folder, its harness's default model, token in its environment,
@@ -475,7 +475,7 @@ export async function startCoordinator(deps: Deps, key: unknown, agent: { progra
   const argv = [...c.argv, ...(promptAsArg(program) ? c.prompt : [])]
   const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
   const { address } = await deps.call<{ address: string }>('terminal.run', {
-    cwd: c.folder, ...(c.on ? { on: c.on } : {}), no_parent: true, wait: false, env: c.env,
+    cwd: c.folder, ...(c.on ? { on: c.on } : {}), no_parent: true, wait: false, env: { ...c.env, ...await deps.proxyEnv?.(c.machine) },
     labels: { 'wherdr.install': await deps.store.install(), 'wherdr.coordinator': key },
     line: `${PATH_SETUP}; export PATH=${quote(`${c.folder}/bin`)}:"$PATH"; exec ${argv.map(quote).join(' ')}`,
   }, 30000)

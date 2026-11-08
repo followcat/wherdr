@@ -56,6 +56,20 @@ Copilot, Amp and Droid (other programs are left out of its picker: wherdr knows 
 file they read). A project's coordinator runs with Claude or Codex only: they are the ones wherdr
 can keep out of the project's repository (a deny rule for Claude, the sandbox for Codex). Choices and order follow you on every device.
 
+### Proxies
+
+Settings › Agents › **Proxies** keeps named proxies on the server (every device shares the list):
+a name, a URL (`http://`, `https://` or `socks5://`, optionally `user:pass@`), an optional
+comma-separated bypass list, and the machines it is offered on (all by default). Entries can be
+added, edited, deleted and reordered. A password never comes back: the list shows
+`user:•••@host:port`, and an edit that leaves `•••` keeps the stored password.
+
+A proxy is **machine-relative**: `127.0.0.1:7890` names that machine's own proxy. The one picked
+in the New sheet — or the machine's remembered choice for paths without a picker (a new tab like
+the current one, a task's worker, reviewer or coordinator) — reaches the program as environment
+(`HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`/`NO_PROXY`, upper- and lowercase), never in its command
+line, so it stays out of titles and argv.
+
 ### Machines as tabs
 
 The **machine bar** at the top of the list has **All**, then one tab per machine (this core and
@@ -72,6 +86,8 @@ devices. Machines themselves are managed in [Settings › Agents › Machines](m
   a plain terminal, the machine, a folder (recent folders, a folder browser, Git detection), a
   name, **resume** the last conversation, and an optional first message. The terminal is started
   by core in that folder; it joins the space whose folder holds it, else a new space.
+  With saved proxies (below), a **Proxy** picker offers **None** plus the entries of the chosen
+  machine; the last choice on that machine is preselected, and remembered on the server at launch.
 - **+** in a space's tab row starts at once a terminal like the space's current one (same kind,
   same folder) in a new tab of that space; **New tab…** in the tab menu opens the sheet. The new
   terminal carries the space's labels, so it also appears in herdr-app.

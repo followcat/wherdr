@@ -508,6 +508,7 @@ onMounted(() => {
 
         <div v-show="activeSection === 'agents'" class="settings-section">
           <OfferedAgentsSettings />
+          <ProxiesSettings />
           <div id="claude-quotas" class="settings-group">
             <h3>{{ tl('Claude quotas', 'Quotas Claude') }}</h3>
             <ClaudeQuotaSetup v-if="activeSection === 'agents'" />

@@ -19,6 +19,7 @@ const prompt = ref('')
 // Typed as the user wants it (spaces too): the new space's name, or the
 // pane's in an existing space. The server derives Herdr's agent id from it.
 const name = ref('')
+const proxy = ref('')
 const error = ref<string | null>(null)
 const launching = ref(false)
 const browsing = ref(false)
@@ -53,6 +54,12 @@ const online = machineOnline
 const home = computed(() => (machineCfg.value ? machineCfg.value.home : appConfig.value.home))
 const recents = computed(() => (machineCfg.value ? machineCfg.value.dirs : appConfig.value.dirs) || [])
 
+// The saved proxies offered on the chosen machine, "None" first; the
+// machine's remembered choice is preselected (server: DATA_DIR/proxies.json).
+// 'none' is the picker's None: USelect takes no empty-string value.
+const proxyItems = computed(() => proxiesOn(machine.value).map(p => ({ value: p.id, label: p.name })))
+function syncProxy() { proxy.value = rememberedProxy(machine.value) || 'none' }
+
 function syncKind() {
   const list = machineList.value
   if (fixedMachine.value) machine.value = machineOf(fixedMachine.value)
@@ -70,6 +77,7 @@ function setMachine(k: string) {
   browsing.value = false
   kind.value = ''
   syncKind()
+  syncProxy()
 }
 function pickMachine(m: MachineConfig) {
   setMachine(m.key)
@@ -90,7 +98,8 @@ watch(newAgentOpen, async (open) => {
   if (newProjectOpen.value) coordinator.value = true
   if (!newTabSpace.value) loadCoordinators()
   syncKind()
-  await loadConfig()
+  await Promise.all([loadConfig(), loadProxies()])
+  syncProxy()
   // Opened from a machine's "…" menu: that machine, once its config (home) is in.
   const want = newAgentMachine.value
   if (!fixedMachine.value && want !== null && machineList.value?.some(m => m.key === want && online(m))) setMachine(want)
@@ -153,6 +162,7 @@ async function launch() {
       ...(newTabSpace.value ? { workspace: newTabSpace.value } : {}),
       prompt: prompt.value,
       resume: resume.value && canResume.value,
+      ...(proxyItems.value.length ? { proxy: proxy.value === 'none' ? '' : proxy.value } : {}),
     })
     afterFirstMessage(r, sent)
     resetForm()
@@ -200,6 +210,14 @@ async function launch() {
       <template v-else>
         <label class="field-label">{{ t('Folder') }}</label>
         <DirField :key="machine" v-model="dir" :recents="recents" @browse="browsing = true" />
+
+        <template v-if="proxyItems.length">
+          <label class="field-label" for="newProxy">{{ t('Proxy') }}</label>
+          <USelect
+            id="newProxy" v-model="proxy" size="xl" class="w-full" data-testid="new-proxy"
+            :items="[{ value: 'none', label: t('None') }, ...proxyItems]" :aria-label="t('Proxy')"
+          />
+        </template>
 
         <label v-if="canResume" class="toggle-row">
           <span><b>{{ t('Resume the last conversation') }}</b><small>{{ t('for this agent in this folder') }}</small></span>
