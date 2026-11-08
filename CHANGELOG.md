@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- **Agents installed under nvm are found.** The installed-agents probe and the launch line now look in the nvm version the default alias names (or the newest installed version) and in `~/.opencode/bin`. wherdr started as a service has a short system PATH, so an agent only installed there was neither offered nor started.
+
 - **Conversations open on their last read.** After a reload, an update or a network cut, the conversation kept on the device shows at once (the home state no longer waits for the server's first answer), then the server's answer merges in without moving what is on screen; replies that arrived meanwhile come in at the bottom like live ones. The startup background is the theme last shown on the device, so a reload no longer flashes another colour.
 - **Devin conversations on herdr-core.** Read saved ATIF transcripts from the running process, locally or on a core machine, with tools, inline images, search and previews. Updates arrive when Devin saves a turn; only history retained after compaction is available.
 

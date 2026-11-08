@@ -8,7 +8,7 @@ import { HerdrError } from './herdr'
 import { failure } from './coreInput'
 import { AGENT_KINDS, RESUME_ARGS } from './env'
 import { HERDR_AGENT_KINDS, availableAgentKinds } from '../../shared/launchableAgents'
-import { KIND_PROBE_SCRIPT } from './agentAvailability'
+import { KIND_PROBE_SCRIPT, USER_PATH_SETUP } from './agentAvailability'
 import { LIST_DIRS_SCRIPT, dirDeniedFromCode, parseDirList } from './fsx'
 import { toAgentName } from '../../shared/ids'
 import { cleanLabel } from '../../shared/spaceActions'
@@ -33,7 +33,9 @@ export interface CoreAdminDeps {
 }
 
 const REQUEST_LABEL = 'wherdr-request'
-export const PATH_SETUP = 'export PATH="$HOME/.local/bin:$HOME/.kimi-code/bin:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"'
+// The launch line's PATH is the probe's (agentAvailability.ts): a program the
+// "New" sheet lists can always be started, nvm installs included.
+export const PATH_SETUP = USER_PATH_SETUP
 const TARGET_RE = /^[A-Za-z0-9_][A-Za-z0-9_.@:%[\]-]{0,199}$/
 const NAME_RE = /^[a-z0-9_][a-z0-9_.-]{0,31}$/
 
