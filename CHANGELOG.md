@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- **The terminal keeps its size when reopened.** Going back to the conversation and returning to the terminal attached at the default 80×24 instead of the screen's size, which also resized the program for everyone. The "Fit to this screen" offer comes back too.
 - **Agents installed under nvm are found.** The installed-agents probe and the launch line now look in the nvm version the default alias names (or the newest installed version) and in `~/.opencode/bin`. herdr-core started as a service has a short system PATH, so an agent only installed there was neither offered nor started.
 - **Saved proxies for new sessions.** Settings › Agents › Proxies keeps named `http(s)`/`socks5` proxies on the server (passwords never leave it: the list shows `user:•••@host:port` and an edit that leaves the mask keeps the stored one). The New sheet offers them on the chosen machine — each entry may name its machines — preselects the machine's last choice, and the launch gets it as `*_PROXY` environment, never in the command line.
 - **Conversations open on their last read.** After a reload, an update or a network cut, the conversation kept on the device shows at once (the home state no longer waits for the server's first answer), then the server's answer merges in without moving what is on screen; replies that arrived meanwhile come in at the bottom like live ones. The startup background is the theme last shown on the device, so a reload no longer flashes another colour.

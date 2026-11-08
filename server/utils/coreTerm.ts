@@ -163,6 +163,8 @@ export function openCoreTerm(ws: WsLike, url: URL, deps: CoreTermDeps): TermSess
           end(closedText(why), 4000, 'terminal ended')
         }
       })
+      // A fit that arrived during the attach had no channel to resize yet.
+      if (control && (want.cols !== size?.cols || want.rows !== size?.rows)) resize(want)
       announce()
       for (const go of early.splice(0)) go()
     } catch (e) {

@@ -5,7 +5,7 @@ import { openCoreTerm } from '../server/utils/coreTerm'
 
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
 
-function setup(opts: { terminal?: object | null, attachError?: CoreError, watch?: boolean } = {}) {
+function setup(opts: { terminal?: object | null, attachError?: CoreError, watch?: boolean, attachGate?: Promise<void> } = {}) {
   const sent: { channel: number, kind: number, payload: Buffer }[] = []
   const calls: { method: string, params: any }[] = []
   const streams = new Map<number, StreamHandler>()
@@ -15,7 +15,7 @@ function setup(opts: { terminal?: object | null, attachError?: CoreError, watch?
     async call<T>(method: string, params: any = {}) {
       calls.push({ method, params })
       if (method === 'events.subscribe') return { channel: 2, terminals: opts.terminal === null ? [] : [{ address: 'm/t7', state: 'live', cols: 200, rows: 50, ...opts.terminal }] } as T
-      if (method === 'terminal.attach') { if (opts.attachError) throw opts.attachError; return { channel: 3 } as T }
+      if (method === 'terminal.attach') { await opts.attachGate; if (opts.attachError) throw opts.attachError; return { channel: 3 } as T }
       return {} as T
     },
     send: (channel, kind, payload = Buffer.alloc(0)) => { sent.push({ channel, kind, payload }) },
@@ -66,6 +66,20 @@ describe('openCoreTerm', () => {
     expect(resizes(t.sent)).toEqual([])
     t.sess.onMessage(JSON.stringify({ type: 'take.control' }))
     expect(resizes(t.sent).at(-1)).toEqual([50, 20])
+  })
+
+  it('applies a fit that arrived while the attach was on its way', async () => {
+    let release!: () => void
+    const t = setup({ attachGate: new Promise<void>((resolve) => { release = resolve }) })
+    await tick()
+    expect(t.calls[1]!.params).toMatchObject({ cols: 40, rows: 20 })
+    t.sess.onMessage(JSON.stringify({ type: 'terminal.resize', cols: 47, rows: 30 }))
+    expect(resizes(t.sent)).toEqual([])
+    release()
+    await tick()
+    expect(resizes(t.sent)).toEqual([[47, 30]])
+    t.streams.get(3)!(FRAME.DATA, Buffer.from('x'))
+    expect(t.out.at(-1)).toMatchObject({ type: 'terminal.frame', width: 47, height: 30 })
   })
 
   it('fits on open, follows resizes, and yields to another viewer without a fight', async () => {

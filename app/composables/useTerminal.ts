@@ -83,6 +83,15 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     if (coreStream && sendTerm({ type: 'take.control' })) controlPending = false
     else controlPending = true
   }
+  // What a socket reported holds for that socket only. The controller outlives
+  // the view (Conversation/Terminal toggle) and sockets get replaced: a stale
+  // coreStream would skip the next fit and attach at xterm's default 80×24.
+  function forgetStream() {
+    mouseSupported = false
+    coreStream = false
+    coreControl = true
+    if (sizeBanner) { sizeBanner = null; opts.setBanner(null) }
+  }
   // Watching a terminal taller than this screen: the visible window's top is
   // a scalar buffer-row position. Positions inside scrollback ride xterm's
   // own viewport (view === viewportY); the clipped bottom of the grid is
@@ -581,10 +590,12 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       try { tws.close(1000) }
       catch { /* already closed */ }
     }
+    forgetStream()
     fitNow(false)
-    const q = new URLSearchParams({ pane: paneId, cols: String(term.cols), rows: String(term.rows) })
+    // The size this attach asks for: the server's, until a resize says otherwise.
+    const asked = { cols: term.cols, rows: term.rows }
+    const q = new URLSearchParams({ pane: paneId, cols: String(asked.cols), rows: String(asked.rows) })
     if (takeover) q.set('takeover', '1')
-    mouseSupported = false
     loading.value = true
     twsIntent = true
     let closedReason: string | null = null
@@ -607,8 +618,10 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
         lastErr = lastErr || t('the machine sent nothing in time')
         try { ws.close() } catch { /* already closed */ }
       }, 12000)
-      if (term) lastSize = { cols: term.cols, rows: term.rows }
+      lastSize = asked
       ws.send(JSON.stringify({ type: 'visibility', visible: !document.hidden }))
+      // A fit measured while the socket connected had nowhere to go.
+      fitNow(true)
     }
     ws.onmessage = (e) => {
       if (tws !== ws) return
@@ -671,11 +684,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       clearTimeout(handshake)
       clearTimeout(frameWait)
       tws = null
-      mouseSupported = false
-      coreStream = false
-      coreControl = true
+      forgetStream()
       followCursor()
-      if (sizeBanner) { sizeBanner = null; opts.setBanner(null) }
       loading.value = false
       probe.cancel()
       if (!twsIntent || disposed) return
@@ -704,7 +714,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   function disconnect() {
     clearVirtualModifiers()
     scrollInputVersion.value++
-    mouseSupported = false
+    forgetStream()
     twsIntent = false
     clearTimeout(twsTimer)
     clearTimeout(handshake)
@@ -779,14 +789,16 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     followCursor()
     return true
   }
-  const stopSmoothWatch = watch(smoothTouchScrolling, () => {
+  // These two end with the owning component, not with dispose(): the view can
+  // be mounted again on this controller.
+  watch(smoothTouchScrolling, () => {
     scrollInputVersion.value++
   }, { flush: 'sync' })
   // Android Back can hide the IME while the textarea keeps its focus; the
   // next touch would reopen the keyboard instantly. On a coarse pointer the
   // IME closing releases the terminal focus it was held for — never while a
   // composition or a deferred commit is still in flight.
-  const stopKeyboardWatch = watch(kbOpen, (open, wasOpen) => {
+  watch(kbOpen, (open, wasOpen) => {
     if (wasOpen && !open && matchMedia('(hover: none) and (pointer: coarse)').matches && hasFocus() && !imeBusy()) blur()
   })
 
@@ -804,8 +816,6 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     mounting = false
     takeoverQueued = false
     focusQueued = false
-    stopSmoothWatch()
-    stopKeyboardWatch()
     disconnect()
     unbindSelection?.()
     unbindPaste?.()
