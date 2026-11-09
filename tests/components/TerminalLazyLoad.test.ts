@@ -16,6 +16,7 @@ vi.mock('~/utils/xtermLoader', () => {
     loadAddon(a: { kind: string }) { this.state.addons.push(a.kind) }
     focus() { this.state.focused = true }
     dispose() { this.state.disposed = true }
+    parser = { registerCsiHandler: () => ({ dispose() {} }) }
     write() {} open() {} refresh() {} reset() {} scrollToLine() {} attachCustomWheelEventHandler() {}
     attachCustomKeyEventHandler() {} onData() {} onBinary() {} onScroll() {}
   }

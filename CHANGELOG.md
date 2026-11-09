@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- **Touch and wheel scrolling reach full-screen apps.** An app on the alternate screen keeps its history to itself, so dragging the terminal did nothing. When the app takes the mouse, as Claude Code's full-screen mode does, a scroll now reaches it as mouse wheel events.
 - **The terminal keeps its size when reopened.** Going back to the conversation and returning to the terminal attached at the default 80×24 instead of the screen's size, which also resized the program for everyone. The "Fit to this screen" offer comes back too.
 - **Agents installed under nvm are found.** The installed-agents probe and the launch line now look in the nvm version the default alias names (or the newest installed version) and in `~/.opencode/bin`. herdr-core started as a service has a short system PATH, so an agent only installed there was neither offered nor started.
 - **Saved proxies for new sessions.** Settings › Agents › Proxies keeps named `http(s)`/`socks5` proxies on the server (passwords never leave it: the list shows `user:•••@host:port` and an edit that leaves the mask keeps the stored one). The New sheet offers them on the chosen machine — each entry may name its machines — preselects the machine's last choice, and the launch gets it as `*_PROXY` environment, never in the command line.

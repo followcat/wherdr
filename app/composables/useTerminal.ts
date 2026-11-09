@@ -30,6 +30,7 @@ import { createCompositionTracker, toggleVirtualModifier, virtualChord, virtualI
 import { captureTerminalScreen, type TerminalCopySnapshot } from '~/utils/terminalCopy'
 
 const CORE_SCROLLBACK = 5000
+const MAX_WHEEL_NOTCHES = 40
 
 export interface Banner { text: string, btn: string, fn: () => void }
 
@@ -73,6 +74,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   let links: TerminalLinks | null = null
   let mouse: ReturnType<typeof bindTerminalMouse> | null = null
   let mouseSupported = false
+  // The app asked for SGR mouse reports (DECSET 1006), the only form a wheel
+  // report is sent in. A new socket's first paint replays the mode.
+  let sgrMouse = false
   let coreStream = false
   // herdr-core: whether this viewer's size is the terminal's (see coreTerm.ts).
   let coreControl = true
@@ -88,6 +92,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   // coreStream would skip the next fit and attach at xterm's default 80×24.
   function forgetStream() {
     mouseSupported = false
+    sgrMouse = false
     coreStream = false
     coreControl = true
     if (sizeBanner) { sizeBanner = null; opts.setBanner(null) }
@@ -304,6 +309,14 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     term.loadAddon(fit)
     term.open(host)
     mouse = bindTerminalMouse(term, () => mouseSupported && opts.input?.() !== false, event => sendTerm(event))
+    // xterm doesn't expose the mouse encoding. Returning false leaves the
+    // sequence to xterm, which still applies it.
+    const watchSgrMouse = (on: boolean) => (params: (number | number[])[]) => {
+      if (params.includes(1006)) sgrMouse = on
+      return false
+    }
+    term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, watchSgrMouse(true))
+    term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, watchSgrMouse(false))
     // Selection of the visible text, copied on release or with ⌘C.
     unbindSelection = bindTerminalSelection(term, () => toast(t('Copied')))
     // OSC 8 hyperlinks and http(s) URLs, opened in a new tab.
@@ -778,12 +791,27 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     const buffer = term.buffer.active
     return cell.row + buffer.viewportY === buffer.cursorY + buffer.baseY
   }
-  // Scrolling is local: the attach delivered the scrollback and xterm owns
+  // A full-screen app keeps its history to itself: the alternate screen has no
+  // rows for xterm to move, so a scroll has to reach the app as its wheel.
+  function appTakesWheel() {
+    return coreStream && sgrMouse && term?.buffer.active.type === 'alternate'
+      && ['vt200', 'drag', 'any'].includes(term.modes.mouseTrackingMode)
+  }
+  function sendWheel(lines: number): boolean {
+    if (!term || !tws || tws.readyState !== 1 || opts.input?.() === false) return false
+    const report = `\x1b[<${lines > 0 ? 64 : 65};${(term.cols >> 1) + 1};${(term.rows >> 1) + 1}M`
+    // Not through sendTerm: it counts terminal.input as typing, which would
+    // cancel the very gesture sending these.
+    tws.send(JSON.stringify({ type: 'terminal.input', text: report.repeat(Math.min(Math.abs(lines), MAX_WHEEL_NOTCHES)) }))
+    return true
+  }
+  // Otherwise scrolling is local: the attach delivered the scrollback and xterm owns
   // the viewport — plus, for a watched grid taller than the host, the lifted
   // part below it. Positive lines look back: one line moves the window one
   // row, inside history and the clipped grid alike.
   function scroll(lines: number): boolean {
     if (!term) return false
+    if (appTakesWheel()) return sendWheel(lines)
     view -= lines
     atTail = false
     followCursor()

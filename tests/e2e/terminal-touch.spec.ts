@@ -267,6 +267,34 @@ test('an attach to an already-alternate screen requests history and gets none', 
   }
 })
 
+test('a full-screen app that takes the mouse gets a drag as its wheel', async ({ page, browserName }) => {
+  // Same alternate screen as above, but the app asked for SGR mouse reports:
+  // its history is its own, so the drag has to reach it.
+  const core = await startCore(() => undefined, undefined, {
+    firstPaint: (attach: Call) => {
+      const rows = Number(attach.params?.rows) || 24
+      const screen = Array.from({ length: rows - 1 }, (_, i) => `alt screen row ${String(i + 1).padStart(2, '0')}`).join('\r\n') + '\r\nalt app ready'
+      return '\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h' + screen
+    },
+  })
+  try {
+    await page.clock.install()
+    await openTerminal(page, core, /alt screen row/)
+    const d0 = dataIn(core).length
+    const f = await finger(page, browserName)
+    const box = (await page.locator('#touch').boundingBox())!
+    const x = box.x + box.width / 2
+    await f.down()
+    for (let i = 1; i <= 4; i++) { await f.move(x, box.y + box.height / 2 + i * 60); await tick(page, 40) }
+    await f.up()
+    await tick(page, 300)
+    // A finger moving down looks back: wheel up, and nothing else on the wire.
+    await expect.poll(() => dataIn(core).slice(d0).join('')).toMatch(/^(\x1b\[<64;\d+;\d+M)+$/)
+  } finally {
+    await core.stop()
+  }
+})
+
 test('a watching viewer pans a wide grid horizontally without giving up the follow transform or the size lease', async ({ page, browserName }, testInfo) => {
   // Another viewer owns this terminal's size: the size event flips this
   // client into watching mode (terminal.control off), followCursor's
