@@ -1,0 +1,33 @@
+
+ ▐▛███▛█   Claude Code v2.1.282
+▝▜██████▀  Opus 5.5 · Claude Max
+ ▝▝   ▝▝   ~/hwtest-sandbox
+
+❯ /model
+  ⎿  Set model to Opus 5.5 for this session only
+
+❯ /model
+  ⎿  Kept model as Opus 5.5
+
+❯ Réponds juste: pong
+
+● pong
+
+✻ Worked for 1s · done 1:55 AM
+
+❯ /model
+  ⎿  Kept model as Opus 5.5
+
+❯ /model
+  ⎿  Kept model as Opus 5.5
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Switch model?
+   Your next response will be slower and use more tokens
+
+   This conversation is cached for the current model. Switching to Sonnet 4.6 means the full history gets re-read on
+   your next message.
+
+   ❯ 1. Yes, switch to Sonnet 4.6
+     2. No, go back
+
