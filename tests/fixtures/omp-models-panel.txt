@@ -1,0 +1,48 @@
+╭─ Models ───────────────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   ✦ Roles            10/16 │  All available models                                                                                                      │
+│ ❯ ⬢ All models        1173 │  Kind: ◀ all ▶  chat ┆ tiny ┆ image ┆ tts ┆ stt ┆ search ┆ judge ┆ embedding ┆ rerank ┆ video  ⌥←/⌥→                       │
+│ ────────────────────────── │  🔍 >                                                                                                                      │
+│   ● anthropic           27 │                                                                                                                            │
+│   ● apple                0 │   anthropic/claude-opus-5-5                                                         🧠 58   3.7s 78t/s    1m ◫      $4/20█ │
+│   ● commandcode         85 │   anthropic/claude-haiku-4-5                                                                1.3s 89t/s  200k ◫       $1/5│ │
+│   ● freebuff             0 │   local/qwen3-1.7b                                                                                                   free│ │
+│   ● google              67 │   anthropic/claude-sonnet-5-5                                                       🧠 56  1.7s 122t/s    1m ◫      $2/10│ │
+│   ● local               13 │   openrouter/google/gemini-3-pro-image-preview                                                          131k ◫       free│ │
+│   ● nvidia             176 │   web/exa                                                                                                            free│ │
+│   ● ollama               0 │   local/kokoro                                                                                                       free│ │
+│   ● omlx                 2 │   local/parakeet-tdt-0.6b-v3                                                                                         free│ │
+│   ● opencode-zen        81 │   openrouter/~typesafe/jev-latest                                                                        32k ◫    $0.04/0│ │
+│   ● openrouter         702 │   anthropic/claude-sonnet-5                                                         🧠 38   1.9s 87t/s    1m ◫      $2/10│ │
+│   ● web                 20 │   openrouter/z-ai/glm-5.3-flash                                                     🧠 58    13s 21t/s    1m ◫  $0.15/0.5│ │
+│ ────────────────────────── │   anthropic/claude-opus-5                                                           🧠 51   2.0s 70t/s    1m ◫      $5/25│ │
+│   ○ abliteration           │   omlx/Qwen3.8-27B-8bit                                                                     29s 7.5t/s  262k ◫       free│ │
+│   ○ aiand                  │   opencode-zen/nemotron-3.5-lightning-free                                                              262k ◫       free│ │
+│   ○ aimlapi                │   nvidia/moonshotai/kimi-k3                                                         🧠 44    37s 11t/s    1m ◫       free│ │
+│   ○ alibaba-coding-plan    │   anthropic/claude-fable-5-1                                                        🧠 53   5.7s 55t/s    1m ◫     $10/50│ │
+│   ○ alibaba-token-plan     │   opencode-zen/kimi-k3                                                              🧠 44       ~34t/s    1m ◫      $3/15│ │
+│   ○ amazon-bedrock         │   opencode-zen/claude-opus-5                                                        🧠 51       ~60t/s    1m ◫      $5/25│ │
+│   ○ azure                  │   anthropic/claude-opus-4-8                                                         🧠 42   4.7s 68t/s    1m ◫      $5/25│ │
+│   ○ baseten                │   anthropic/claude-sonnet-4-6                                                       🧠 25   5.7s 44t/s    1m ◫      $3/15│ │
+│   ○ bedrock-mantle         │   ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │ │
+│   ○ cerebras               │   anthropic/claude-mythos-5-1                                                                             1m ◫     $10/50│ │
+│   ○ charm-hyper            │   anthropic/claude-fable-5                                                          🧠 50       ~64t/s    1m ◫     $10/50│ │
+│   ○ cline-pass             │   anthropic/claude-mythos-5                                                                               1m ◫     $10/50│ │
+│   ○ cloudflare-ai-gateway  │   anthropic/claude-opus-4-7                                                         🧠 41       ~52t/s    1m ◫      $5/25│ │
+│   ○ coreweave              │   anthropic/claude-opus-4-6                                                         🧠 26       ~38t/s    1m ◫      $5/25│ │
+│   ○ cursor                 │   anthropic/claude-opus-4-5-20251101                                                🧠 24       ~45t/s  200k ◫      $5/25│ │
+│   ○ deepinfra              │   anthropic/claude-haiku-4-5-20251001                                                                   200k ◫       $1/5│ │
+│   ○ deepseek               │   anthropic/claude-sonnet-4-5-20250929                                                                    1m ◫      $3/15│ │
+│   ○ devin                  │   anthropic/claude-opus-4-5                                                         🧠 24       ~46t/s  200k ◫      $5/25│ │
+│   ○ firepass               │   anthropic/claude-sonnet-4-5                                                                             1m ◫      $3/15│ │
+│   ○ fireworks              │   anthropic/claude-opus-4-1-20250805                                                                    200k ◫     $15/75│ │
+│   ○ github-copilot         │   anthropic/claude-opus-4-1                                                                             200k ◫     $15/75│ │
+│   ○ gitlab-duo             │   anthropic/claude-opus-4-20250514                                                                      200k ◫     $15/75│ │
+│   ○ gitlab-duo-agent       │   anthropic/claude-sonnet-4-20250514                                                                    200k ◫      $3/15│ │
+│   ○ gmi-cloud              │   anthropic/claude-opus-4-0                                                                             200k ◫     $15/75│ │
+│   ○ google-antigravity     │   anthropic/claude-sonnet-4-0                                                                           200k ◫      $3/15│ │
+│   ○ google-gemini-cli      │                                                                                                                            │
+│   ○ google-vertex          │   Claude Opus 5.5 · 1m ctx · 128k out · $4/20 per M · reasoning · vision · 🧠 58 · ~78t/s · 3.7s ttft                      │
+│   ○ groq                   │   ● default ◕ · ● slow ◒ · ● plan ◒ · ● designer ◒                                                                         │
+├────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ⏎/→ models · ↑/↓ providers · type to search · ⌥←/⌥→ kind · ⎋ close                                                                                      │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
