@@ -3,8 +3,9 @@
 // events.subscribe connection drives the polls (see startCoreEvents).
 import fs from 'node:fs'
 import path from 'node:path'
-import type { ChatItem, ChatResponse, HerdrState, Pane } from '../../shared/types'
+import type { ChatItem, ChatResponse, HerdrState, ModelInfo, Pane } from '../../shared/types'
 import type { NotificationEvent } from '../../shared/notificationRules'
+import { hasTranscript } from '../../shared/agentKind'
 import { readCoreState, staleCoreDocs, useCoreSession } from './readCoreState'
 import { CoreSession } from './coreSession'
 import { type CoreAlertKind, createCoreAlerts } from './coreAlerts'
@@ -22,6 +23,9 @@ import { machineOfPane } from './machines'
 import { createCodexStatus, dirWritable } from './codexStatus'
 import { runLocal, setCodexKnownWeek } from './quotas'
 import { pmStore } from './pmStore'
+import { createModelCtl } from './modelctl'
+import { coreFilesMachine } from './coreFilesMachine'
+import { createShellFs } from './fsx'
 
 const fsp = fs.promises
 const hcCall = <T>(method: string, params: object, timeout: number) => coreCall<T>(process.env.HC_SOCKET || '', method, params, timeout)
@@ -51,6 +55,43 @@ export const transcripts = {
   current: (p: TranscriptPane, r: ChatResponse) => coreTranscriptsOf().current(p, r),
   live: (p: TranscriptPane, r: ChatResponse) => coreTranscriptsOf().live(p, r),
   forget: (id: string) => coreTranscriptsOf().forget(id),
+}
+
+// ---------------------------------------------------------------- model pill
+// The model shown next to the status (StatusPill): the transcript's, or the
+// screen's when it is newer — merge in modelctl.ts, screen reads fed by
+// coreScreen's `noted`. The poll below refreshes it; a change re-broadcasts.
+let modelCtlInstance: ReturnType<typeof createModelCtl> | null = null
+export function modelCtl() {
+  return modelCtlInstance ||= createModelCtl({
+    transcript: p => transcripts.model(p),
+    // ~/.codex/config.toml on the agent's machine (remote: machine.exec fs).
+    codexConfig: async (p) => {
+      try {
+        const m = await coreFilesMachine(p.machine || '')
+        const f = m.local || !m.exec ? m.fs : createShellFs(m.exec)
+        return await f.readFile(path.posix.join(m.home, '.codex/config.toml'))
+      } catch { return null }
+    },
+    machineKey: p => p.machine || '',
+  })
+}
+export const currentModel = (p: Pane) => modelCtl().currentModel(p)
+
+const models = new Map<string, { info: ModelInfo | null, status: string | null, at: number }>()
+const modelBusy = new Set<string>()
+export function refreshModel(p: Pane) {
+  if (modelBusy.has(p.id)) return
+  modelBusy.add(p.id)
+  currentModel(p)
+    .then((info) => {
+      const old = models.get(p.id)
+      models.set(p.id, { info, status: p.status || null, at: Date.now() })
+      // Change seen outside a poll (choice from the phone): broadcast again.
+      if (JSON.stringify(old && old.info) !== JSON.stringify(info)) setTimeout(poll, 0)
+    })
+    .catch(() => {})
+    .finally(() => modelBusy.delete(p.id))
 }
 
 // ---------------------------------------------------------------- clients
@@ -148,6 +189,14 @@ export async function poll() {
   await coreScreens().enrich(state.panes).catch(() => {})
   void coreTranscriptsOf().observe(state.panes)
   corePreviews().apply(state.panes)
+  const alive = new Set(state.panes.map(p => p.id))
+  for (const id of models.keys()) if (!alive.has(id)) { models.delete(id); modelCtl().forgetModel(id) }
+  for (const p of state.panes) {
+    if (!hasTranscript(p.agent)) continue
+    const md = models.get(p.id)
+    if (!md || md.status !== p.status || Date.now() - md.at > 5000) refreshModel(p)
+    if (md && md.info) p.model = md.info
+  }
   const json = JSON.stringify(state)
   if (json !== stateJson) { stateJson = json; broadcastState() }
 }

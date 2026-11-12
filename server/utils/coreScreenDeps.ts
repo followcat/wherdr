@@ -12,6 +12,7 @@ export function coreScreens() {
     viewed: id => isViewed(id),
     asked: p => transcripts.pendingClaudeQuestions(p),
     colors: p => corePaint(process.env.HC_SOCKET || '', p.coreAddress || ''),
+    noted: (p, text) => modelCtl().noteScreen(p.id, p.agent, text),
   })
 }
 
