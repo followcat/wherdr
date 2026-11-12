@@ -18,9 +18,73 @@
 // "Recommended", "More Models", "Adaptive"… are section labels. The cursor
 // "❭" row wraps its quota bar in ← → (the effort slider). ↵ would set the
 // global default — only alt+↵ is session-scoped, so that is the ONLY key
-// wherdr may send to confirm. The menu parsers themselves land in T2.
+// wherdr may send to confirm.
+import type { ModelOption } from '../../shared/types'
 
+export interface DevinModelMenu { search: string, options: (ModelOption & { n: number, here?: boolean })[], cursor: number }
+
+const LEGEND = /↑↓ select · .*↵ confirm · alt\+↵ this session only · esc cancel/
+const SEARCH = /^\/ ?(.*)$/
 export const RULE = /^─{5,}/
+const SECTION = /^(?:Recently Used|Recommended|More Models|↑ more above|↓ more below)$/
+// Adaptive is a bare selectable row (no quota bar/effort) in the live menu.
+const BARE = /^(?:Adaptive)$/
+const SKIP = /^(?:FREE\b|✱\s|Input\s+Cached|●━|━*●|\$\d)/
+
+// "  SWE-2               ✱   ← ◼◼◼    → Max           Fast Mode Off"
+// "❭ GPT-6 Luna          ✱   ← ◼◼◼◼◼◼ → Medium        Fast Mode Off"
+// "  Claude Opus 4.6                                  Thinking On      1M Context Off"
+const OPTION = /^(❭|  ) *(\S(?:.*?\S)?)(?:\s{2,}((?:✱\s*)?(?:←\s*)?[◼·\s]*(?:→\s*)?(?:Low|Medium|High|Max)?)\s*(.*?))?$/
+
+// The picker is open whenever its key legend is on screen — even when a
+// search leaves zero options, so close detection must not rely on parsing.
+export const devinMenuOpen = (text: string | null | undefined) => Boolean(text && LEGEND.test(text))
+
+export function parseDevinModelMenu(text: string | null | undefined): DevinModelMenu | null {
+  if (!text) return null
+  const lines = String(text).split('\n').map(l => l.replace(/\s+$/, ''))
+  const legend = lines.findLastIndex(l => LEGEND.test(l))
+  if (legend < 0) return null
+  const options: DevinModelMenu['options'] = []
+  let cursor = -1
+  let search = ''
+  for (let i = legend - 1; i >= 0; i--) {
+    const l = lines[i]!
+    const t = l.trim()
+    if (!t || RULE.test(l)) {
+      if (!options.length) continue
+      // A rule ends the option rows; the "/…" search field sits just above it.
+      for (let j = i - 1; j >= 0; j--) {
+        const sj = lines[j]!.trim()
+        if (!sj || RULE.test(lines[j]!)) continue
+        const s = SEARCH.exec(sj)
+        if (s) search = s[1]!
+        break
+      }
+      break
+    }
+    // Reached without a rule first (search field directly above options).
+    const s = SEARCH.exec(t)
+    if (s) { search = s[1]!; break }
+    if (SECTION.test(t) || SKIP.test(t)) continue
+    const m = OPTION.exec(l)
+    if (!m || !m[2]) continue
+    // The quota bar or an effort word must follow the name — plain prose is
+    // not an option row.
+    const rest = [m[3], m[4]].filter(Boolean).join(' ')
+    if (!rest && !BARE.test(m[2]!)) continue
+    if (rest && !/[◼←→]/.test(rest) && !/\b(Low|Medium|High|Max|Thinking On|Thinking|Off|FREE)\b/.test(rest) && !/✱/.test(rest)) continue
+    const hint = [m[3]?.replace(/[◼·←→\s]+/g, ' ').trim(), m[4]?.trim()].filter(Boolean).join(' · ') || null
+    const opt = { label: m[2].slice(0, 80), hint, n: 0, here: m[1] === '❭' }
+    options.unshift(opt)
+  }
+  cursor = options.findIndex(o => o.here)
+  for (const o of options) delete (o as { here?: boolean }).here
+  options.forEach((o, i) => { o.n = i + 1 })
+  if (!options.length) return null
+  // cursor stays -1 when no ❭ marker parsed — callers must not guess it.
+  return { search, options, cursor }
+}
 
 // The confirmation Devin echoes after alt+↵:
 //   ✓ Model set to Grok 4.7 for this session
@@ -83,4 +147,82 @@ export function devinStatusPair(text: string | null | undefined): { lead: string
     return { lead: pair[0], sidekick: pair[1] }
   }
   return null
+}
+
+// ── Fusion row: Lead ▾ / Sidekick ▾ dropdowns ───────────────────────────
+// tab on the Fusion row cycles effort → Lead → Sidekick → Fast Mode. The
+// open dropdown's legend reads "esc collapse" and "tab <next>" names what
+// the next tab reaches ("tab sidekick" while Lead is open…). ↑↓ inside a
+// dropdown retargets the row field live; "▸" is the pick cursor, "*" the
+// default. Live capture:
+//   ❭ Fusion  ◼◼◼◼◼  Max   Lead GPT-6.1 Sol   ▾   Sidekick SWE-2 High    ▾   Fast Mode Off
+//                             Claude Opus 5.5
+//                           ▸ GPT-6.1 Sol
+//   ↑↓ select · tab sidekick · shift+←/→ move cursor · ↵ confirm · alt+↵ this session only · esc collapse
+export interface DevinFusionState {
+  lead: string | null, sidekick: string | null // the row's fields (may end in "…")
+  focus: 'effort' | 'lead' | 'sidekick' | 'fast' | null
+  dropdown: { which: 'lead' | 'sidekick', options: { label: string, here: boolean, def: boolean }[], cursor: number } | null
+}
+
+const FUSION_ROW = /^(?:❭|  ) *Fusion\s/
+const FUSION_PAIR = /Lead\s+(.+?)\s+▾\s+Sidekick\s+(.+?)\s+▾/
+const DROPDOWN_SCROLL = /^[↑↓]/
+
+export function parseDevinFusion(text: string | null | undefined): DevinFusionState | null {
+  if (!text) return null
+  const lines = String(text).split('\n').map(l => l.replace(/\s+$/, ''))
+  const legend = lines.find(l => /↑↓ select/.test(l) && /↵ confirm/.test(l))
+  if (!legend) return null
+  const rowAt = lines.findIndex(l => FUSION_ROW.test(l))
+  if (rowAt < 0) return null
+  const pair = FUSION_PAIR.exec(lines[rowAt]!)
+  // "esc collapse" = a dropdown is open; "tab <next>" names the next control,
+  // so the open one is the control before it in the cycle.
+  const collapsed = /esc collapse/.test(legend)
+  const next = /tab ([a-z ]+?)(?: ·|$)/.exec(legend)?.[1] || ''
+  const arrows = /←→ ([a-z ]+?)(?: ·|$)/.exec(legend)?.[1] || ''
+  // "tab sidekick" while Lead is open — the open control is the one before
+  // the tab target. A legend we cannot place means no dropdown claim.
+  const which: 'lead' | 'sidekick' | null = collapsed
+    ? (next === 'sidekick' ? 'lead' : next === 'fast mode' ? 'sidekick' : null)
+    : null
+  const focus: DevinFusionState['focus'] = which || (arrows === 'fast mode' ? 'fast' : 'effort')
+  let dropdown: DevinFusionState['dropdown'] = null
+  if (which) {
+    // The dropdown is an overlay box drawn over the rows below: the covered
+    // menu rows bleed through to the left ("…Max   Fa ▸ GPT-6.1 Sol"), so an
+    // entry is only the text at/right of the box's edge — never the row. The
+    // "▸" pick marks that edge exactly; entry names sit two cells right of it.
+    let boxCol = -1
+    for (let i = rowAt + 1; i < lines.length; i++) {
+      const l = lines[i]!
+      if (/↑↓ select/.test(l) || RULE.test(l.trimStart())) break
+      const c = l.indexOf('▸')
+      if (c >= 0) { boxCol = c; break }
+    }
+    const options: NonNullable<DevinFusionState['dropdown']>['options'] = []
+    if (boxCol >= 0) {
+      for (let i = rowAt + 1; i < lines.length; i++) {
+        const l = lines[i]!
+        if (/↑↓ select/.test(l) || RULE.test(l.trimStart())) break
+        const e = /^\s*(▸\s+)?(\S.*?)\s*(\*)?\s*$/.exec(l.slice(boxCol))
+        if (!e || !e[2] || DROPDOWN_SCROLL.test(e[2])) {
+          if (options.length) break
+          continue
+        }
+        options.push({ label: e[2].trim(), here: Boolean(e[1]), def: Boolean(e[3]) })
+      }
+    }
+    if (options.length) {
+      const cursor = Math.max(0, options.findIndex(o => o.here))
+      dropdown = { which, options, cursor }
+    }
+  }
+  return {
+    lead: pair?.[1]?.trim() || null,
+    sidekick: pair?.[2]?.trim() || null,
+    focus,
+    dropdown,
+  }
 }
