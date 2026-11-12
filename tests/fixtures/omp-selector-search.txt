@@ -1,0 +1,26 @@
+ ※ recap: I've rebuilt the demo landing page to the design you approved, and it passes every check. Next, I can commit it, splitting the earlier palette
+ change and the landing page into separate commits.
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────── ◫ 49.5%/1M ⟲ · ⏱ 5h 9% (3h 38m) · 7d 100% (2d 6h) ─
+❯
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ◒ Opus 5.5 🙈 · 📁 acme-shop · ⑂ feature/redesign *25 ?1
+╭─ Switch Model ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  Session-only switch — role models stay unchanged                                                                                                       │
+│  🔍 > glm                                                                                                                                               │
+│                                                                                                                                                         │
+│ ❯ openrouter/z-ai/glm-5.3-flash                                                                                   🧠 58  13s 21t/s    1m ◫   $0.15/0.5█ │
+│   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  █ │
+│   openrouter/z-ai/glm-5.3                                                                                         🧠 60     ~69t/s    1m ◫    $1.4/4.4│ │
+│   openrouter/z-ai/glm-5.3-flash:batch                                                                                                 1m ◫   $0.06/0.2│ │
+│   openrouter/z-ai/glm-5.3-flashx                                                                                                      1m ◫  $0.37/1.25│ │
+│   openrouter/z-ai/glm-5.3-prime                                                                                                       1m ◫    $2.8/8.8│ │
+│   openrouter/z-ai/glm-5.3:batch                                                                                                       1m ◫     $0.45/2│ │
+│   openrouter/z-ai/glm-5.2                                                                                         🧠 53     ~69t/s    1m ◫  $0.41/3.99│ │
+│   openrouter/z-ai/glm-5.2:batch                                                                                                       1m ◫    $0.7/2.2│ │
+│   openrouter/z-ai/glm-5.2:free ⦸ context>256k                                                                     🧠 34     ~86t/s  256k ◫        free│ │
+│                                                                                                                                                         │
+│   GLM 5.3 Flash · 1m ctx · 944k out · $0.15/0.5 per M · reasoning · vision · 🧠 58 · ~21t/s · 13s ttft                                                  │
+│                                                                                                                                                         │
+│ ↑/↓ models · ⏎ use for this session · type to search · @ quick roles · ⎋ close · ⌥P task model                                                          │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
