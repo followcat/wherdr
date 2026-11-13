@@ -856,3 +856,49 @@ describe('setModel — opencode', () => {
     expect(patches).toEqual([{ id: 'm1', providerID: 'acme', variant: 'high' }])
   })
 })
+
+// `menuMarks` → `menuLeftOpen`: a poll that classifies our own /model menu as a
+// native prompt must not poison the pane — a fresh clean read repairs the
+// flags instead of refusing, and a real prompt still refuses.
+describe('menuLeftOpen', () => {
+  it('marks the pane while a withPane op drives, cleared when the poll reads input', async () => {
+    const { ctl, pane } = make({ screens: [idle, idle, idle, idle, menu1, menu1, menu2, menu2, menu2, menu2, idle] })
+    expect(ctl.menuLeftOpen('h1')).toBe(false)
+    await ctl.listModels('h1')
+    // The op ended but no read has seen the input again: still marked.
+    expect(ctl.menuLeftOpen('h1')).toBe(true)
+    ctl.noteRead(pane, menu1)
+    expect(ctl.menuLeftOpen('h1')).toBe(true) // still our menu, not clean
+    ctl.noteRead(pane, idle)
+    expect(ctl.menuLeftOpen('h1')).toBe(false)
+  })
+  it('stale prompt/blocked from the menu echo are repaired on a clean read, not refused', async () => {
+    const { ctl, pane } = make({ screens: [idle, idle, idle, idle, menu1, menu1, menu2, menu2, menu2, menu2, idle, idle, idle, idle, idle, menu1, menu2, idle] })
+    await ctl.listModels('h1')
+    // What enrich writes while our menu is the screen (native choices + blocked).
+    pane.status = 'blocked'
+    pane.interaction = 'native'
+    pane.prompt = { options: [] } as Pane['prompt']
+    await ctl.listModels('h1') // gate repairs, the whole flow runs
+    expect(pane.prompt).toBeUndefined()
+    expect(pane.interaction).toBe('input')
+    expect(pane.status).toBe('idle')
+  })
+  it('a real prompt on a marked pane still refuses and keeps the mark', async () => {
+    const { ctl, pane, ops } = make({ screens: [idle, idle, idle, idle, menu1, menu1, menu2, menu2, menu2, menu2, idle, ask, ask] })
+    await ctl.listModels('h1')
+    pane.prompt = { options: [] } as Pane['prompt']
+    await expect(ctl.listModels('h1')).rejects.toThrow(/waiting for an answer/)
+    expect(sends(ops).filter(o => o.params.text === '/model')).toHaveLength(1)
+    expect(ctl.menuLeftOpen('h1')).toBe(true)
+    expect(pane.prompt).not.toBeUndefined() // a real prompt is not ours to clear
+  })
+  it('a poll that lands mid-op does not kill the in-flight send gate', async () => {
+    // The cleanup read marks the pane like a poll would (our menu echoed as a
+    // native prompt) — openMenu's sendInput gate must still fire /model.
+    const polluted = () => { pane.status = 'blocked'; pane.prompt = { options: [] } as Pane['prompt']; return idle }
+    const { ctl, ops, pane } = make({ screens: [idle, polluted, idle, idle, menu1, menu1, menu2, menu2, menu2, menu2, idle] })
+    await ctl.listModels('h1')
+    expect(sends(ops).map(o => o.params.text)).toContain('/model')
+  })
+})
