@@ -1,6 +1,7 @@
 // Change the model of an idle agent, for this session only (never the
-// account default: see server/utils/coreModelctl.ts). Claude/Codex only —
-// Devin parts, omp, OpenCode and cmd land with their own tasks.
+// account default: see server/utils/coreModelctl.ts). Claude/Codex menus,
+// omp's selector, Devin incl. Fusion parts and OpenCode's session PATCH —
+// cmd stays unsupported.
 export default defineApi(async (_event, b) => {
   const paneId = typeof b.pane_id === 'string' ? b.pane_id : ''
   if (!PANE_RE.test(paneId)) throw new HerdrError('bad_pane', 'Invalid pane')
