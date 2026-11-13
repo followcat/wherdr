@@ -55,6 +55,12 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
   const sleep = deps.sleep ?? defaultSleep
   const now = deps.now ?? Date.now
   const busy = new Set<string>()
+  // Panes whose screen our own menu IO may still be covering: marked while a
+  // withPane op runs, until any read — the gate's below or the poll's
+  // `noteRead` — sees the input field again. The poll parses our /model menu
+  // as a native "blocked" prompt; the mark is broadcast as `menuLeftOpen` so
+  // the phone knows the covered input is the picker's own doing.
+  const menuMarks = new Set<string>()
 
   const pane = (id: unknown): Pane => {
     const p = typeof id === 'string' ? deps.pane(id) : undefined
@@ -69,8 +75,25 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
   // terminal.send and before every non-menu terminal.keys. `r.status` is the
   // fresh read's proof ('blocked' when a prompt sits on an idle pane); it is
   // null on a clean input, where the pane's polled status carries READY.
+  // A marked pane's stale 'blocked' is our menu's echo: classify its fresh
+  // screen as 'idle' — under 'blocked' the loose prompt parse flags even a
+  // clean input as choices.
+  const markedRead = (p: Pane, text: string) =>
+    readCoreScreen(text, p.agent, menuMarks.has(p.id) && p.status === 'blocked' ? 'idle' : p.status)
+
   async function gate(p: Pane) {
-    const r = readCoreScreen(await screen(p), p.agent, p.status)
+    const r = markedRead(p, await screen(p))
+    // A marked pane read clean: the prompt/blocked flags the poll derived were
+    // our menu's echo — repair them instead of refusing on stale state. The
+    // mark itself stays while this op still runs (busy): every later read in
+    // the same call may show our menu again. It lifts on the first clean read
+    // seen without an op — here, or the poll's `noteRead`.
+    if (menuMarks.has(p.id) && r.interaction === 'input' && !r.choices) {
+      if (!busy.has(p.id)) menuMarks.delete(p.id)
+      delete p.prompt
+      p.interaction = 'input'
+      if (p.status === 'blocked') p.status = 'idle'
+    }
     if (r.interaction !== 'input' || r.choices || !READY.has(r.status || p.status || '') || p.prompt || p.draft || p.codexField)
       throw new HerdrError('blocked', 'The agent is waiting for an answer: reply in the terminal')
   }
@@ -99,7 +122,7 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
     // second call could slip through busy.has while the first is still reading.
     if (busy.has(p.id)) throw new HerdrError('busy', 'A model operation is already running on this pane')
     busy.add(p.id)
-    try { await gate(p); return await fn(p) } finally { busy.delete(p.id); deps.refresh?.() }
+    try { await gate(p); menuMarks.add(p.id); return await fn(p) } finally { busy.delete(p.id); deps.refresh?.() }
   }
   // Zero-IO operations (opencode service read, cmd machine.exec): busy only,
   // no terminal gate — nothing reaches the terminal.
@@ -967,6 +990,15 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
     setEffort,
     pick,
     modelControlBusy: (paneId: string) => busy.has(paneId),
+    // `menuLeftOpen` on the broadcast pane: our menu may still be the screen.
+    menuLeftOpen: (paneId: string) => menuMarks.has(paneId),
+    // The poll's own read saw the input field again: the mark is done.
+    noteRead: (p: Pane, text: string) => {
+      if (!menuMarks.has(p.id)) return
+      const r = markedRead(p, text)
+      if (r.interaction === 'input' && !r.choices) menuMarks.delete(p.id)
+    },
+    prunePanes: (alive: Set<string>) => { for (const id of menuMarks) if (!alive.has(id)) menuMarks.delete(id) },
   }
 }
 export type CoreModelCtl = ReturnType<typeof createCoreModelCtl>

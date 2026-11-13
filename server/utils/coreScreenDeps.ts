@@ -4,6 +4,7 @@ import { createCoreScreens } from './coreScreen'
 import { coreInputDeps } from './coreInput'
 import type { CoreChooseDeps } from './coreChoose'
 import { corePaint, type CoreDraftDeps } from './coreDraft'
+import { coreModelCtlInstance } from './state'
 
 let screens: ReturnType<typeof createCoreScreens> | null = null
 export function coreScreens() {
@@ -12,7 +13,7 @@ export function coreScreens() {
     viewed: id => isViewed(id),
     asked: p => transcripts.pendingClaudeQuestions(p),
     colors: p => corePaint(process.env.HC_SOCKET || '', p.coreAddress || ''),
-    noted: (p, text) => modelCtl().noteScreen(p.id, p.agent, text),
+    noted: (p, text) => { modelCtl().noteScreen(p.id, p.agent, text); coreModelCtlInstance?.noteRead(p, text) },
   })
 }
 
