@@ -1,0 +1,9 @@
+──────────────────────────────────────────
+/ Fusion
+──────────────────────────────────────────
+❭ Fusion                  ← ◼◼◼◼◼  → Max           Lead GPT-6.1 Sol   ▾   Sidekick SWE-2 High    ▾   Fast Mode Off
+
+  ━━━━━━━━━━━━●━━━━━━━━━━━━━━━━━━━━━━━
+  Input        Cached input   Output       Sidekick  Free
+  $2 / 1M      $0.1 / 1M      $10 / 1M
+↑↓ select · tab lead · ←→ effort · shift+←/→ move cursor · ↵ confirm · alt+↵ this session only · esc cancel

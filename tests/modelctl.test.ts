@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createModelCtl, type ModelCtlDeps } from '../server/utils/modelctl'
+import { createModelCtl, createModelRefresh, type ModelCtlDeps } from '../server/utils/modelctl'
 import type { ModelInfo, ModelList, Pane } from '../shared/types'
 
 const pane = (agent: string | null, machine = '') => ({ id: 'w1:p1', agent, machine } as Pane)
@@ -112,5 +112,71 @@ describe('currentModel merge', () => {
     expect(await c.currentModel(pane('claude'))).toMatchObject({ effort: 'high' })
     const other = await ctl({}, { id: 'x', label: 'Different' }).currentModel(pane('claude'))
     expect(other?.effort ?? null).toBeNull()
+  })
+})
+
+describe('createModelRefresh (poll-side p.model)', () => {
+  const mpane = (status: string | null = 'idle') => ({ ...pane('claude'), status } as Pane)
+  const tick = () => new Promise<void>(r => setTimeout(r, 0))
+
+  it('dedups an in-flight read and puts the answer on p.model', async () => {
+    let calls = 0
+    const r = createModelRefresh({ currentModel: async () => (calls++, { id: 'm1', label: 'Sonnet 5', at: null }), now: () => 1000 })
+    const p = mpane()
+    r.apply(p)
+    r.apply(p) // busy: no second read
+    await tick()
+    expect(calls).toBe(1)
+    r.apply(p) // resolved entry → assigned
+    expect(p.model).toMatchObject({ label: 'Sonnet 5' })
+    await tick()
+    expect(calls).toBe(1) // fresh entry: no new read
+  })
+
+  it('refreshes on a status flip and on staleness, and forget prunes', async () => {
+    let t = 1000
+    let calls = 0
+    const r = createModelRefresh({ currentModel: async () => (calls++, null), now: () => t, staleMs: 5000 })
+    const p = mpane()
+    r.apply(p)
+    await tick()
+    expect(calls).toBe(1)
+    r.apply(p)
+    expect(calls).toBe(1)
+    p.status = 'working'
+    r.apply(p) // status flip → read again
+    await tick()
+    expect(calls).toBe(2)
+    t += 6000
+    r.apply(p) // stale → read again
+    await tick()
+    expect(calls).toBe(3)
+    r.forget(p.id)
+    r.apply(p) // pruned → read again
+    await tick()
+    expect(calls).toBe(4)
+    expect([...r.ids()]).toEqual([p.id])
+  })
+
+  it('calls changed only when the answer actually differs', async () => {
+    let t = 1000
+    let next: ModelInfo | null = { id: 'a', label: 'A', at: null }
+    let changes = 0
+    const r = createModelRefresh({ currentModel: async () => next, changed: () => { changes++ }, now: () => t })
+    const p = mpane()
+    r.apply(p)
+    await tick()
+    expect(changes).toBe(1) // nothing → A
+    t += 6000
+    r.apply(p)
+    await tick()
+    expect(changes).toBe(1) // A → A again: silent
+    next = { id: 'b', label: 'B', at: null }
+    t += 6000
+    r.apply(p)
+    await tick()
+    expect(changes).toBe(2) // A → B
+    r.apply(p)
+    expect(p.model).toMatchObject({ label: 'B' })
   })
 })

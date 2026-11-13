@@ -3,7 +3,7 @@
 // events.subscribe connection drives the polls (see startCoreEvents).
 import fs from 'node:fs'
 import path from 'node:path'
-import type { ChatItem, ChatResponse, HerdrState, ModelInfo, Pane } from '../../shared/types'
+import type { ChatItem, ChatResponse, HerdrState, Pane } from '../../shared/types'
 import type { NotificationEvent } from '../../shared/notificationRules'
 import { hasTranscript } from '../../shared/agentKind'
 import { readCoreState, staleCoreDocs, useCoreSession } from './readCoreState'
@@ -23,7 +23,7 @@ import { machineOfPane } from './machines'
 import { createCodexStatus, dirWritable } from './codexStatus'
 import { runLocal, setCodexKnownWeek } from './quotas'
 import { pmStore } from './pmStore'
-import { createModelCtl } from './modelctl'
+import { createModelCtl, createModelRefresh } from './modelctl'
 import { coreFilesMachine } from './coreFilesMachine'
 import { createShellFs } from './fsx'
 
@@ -78,21 +78,15 @@ export function modelCtl() {
 }
 export const currentModel = (p: Pane) => modelCtl().currentModel(p)
 
-const models = new Map<string, { info: ModelInfo | null, status: string | null, at: number }>()
-const modelBusy = new Set<string>()
-export function refreshModel(p: Pane) {
-  if (modelBusy.has(p.id)) return
-  modelBusy.add(p.id)
-  currentModel(p)
-    .then((info) => {
-      const old = models.get(p.id)
-      models.set(p.id, { info, status: p.status || null, at: Date.now() })
-      // Change seen outside a poll (choice from the phone): broadcast again.
-      if (JSON.stringify(old && old.info) !== JSON.stringify(info)) setTimeout(poll, 0)
-    })
-    .catch(() => {})
-    .finally(() => modelBusy.delete(p.id))
-}
+// The poll-side cache of currentModel's answers (dedup, staleness, p.model
+// assignment): createModelRefresh in modelctl.ts.
+let modelRefreshInstance: ReturnType<typeof createModelRefresh> | null = null
+const modelRefresh = () => modelRefreshInstance ||= createModelRefresh({
+  currentModel: p => currentModel(p),
+  // Change seen outside a poll (choice from the phone): broadcast again.
+  changed: () => setTimeout(poll, 0),
+})
+export function refreshModel(p: Pane) { modelRefresh().refresh(p) }
 
 // ---------------------------------------------------------------- clients
 // What each device is looking at (no notification for the agent shown on screen).
@@ -190,12 +184,10 @@ export async function poll() {
   void coreTranscriptsOf().observe(state.panes)
   corePreviews().apply(state.panes)
   const alive = new Set(state.panes.map(p => p.id))
-  for (const id of models.keys()) if (!alive.has(id)) { models.delete(id); modelCtl().forgetModel(id) }
+  for (const id of modelRefresh().ids()) if (!alive.has(id)) { modelRefresh().forget(id); modelCtl().forgetModel(id) }
   for (const p of state.panes) {
     if (!hasTranscript(p.agent)) continue
-    const md = models.get(p.id)
-    if (!md || md.status !== p.status || Date.now() - md.at > 5000) refreshModel(p)
-    if (md && md.info) p.model = md.info
+    modelRefresh().apply(p)
   }
   const json = JSON.stringify(state)
   if (json !== stateJson) { stateJson = json; broadcastState() }

@@ -1,0 +1,5 @@
+ ⏺ ~/work
+─────────────────────────────────────────────────────────────────────────
+❭ Ask Devin to build features, fix bugs, or work on your code
+─────────────────────────────────────────────────────────────────────────
+Fusion · GPT-6.1 Sol ◆ SWE-2 High · bypass                      See usage and cost: /session-stats
