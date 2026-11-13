@@ -51,7 +51,7 @@ it('takes Enter from the empty message field, never a key a focused field handle
   const pane = { id: 'w1:p1', workspace: 'w1', tab: 'w1:t1', tabLabel: null, agent: 'claude', name: null, label: null, status: 'blocked', title: null, cwd: '/tmp/demo', agentSession: null, prompt } as Pane
   herdrState.value = { ok: true, workspaces: [], panes: [pane] }
   const card = await mountSuspended(ChoicesPanel, { props: { paneId: 'w1:p1', prompt, keys: true }, attachTo: document.body })
-  const composer = await mountSuspended(Composer, { props: { pane, paneId: 'w1:p1', sendKeys: async () => {} }, attachTo: document.body })
+  const composer = await mountSuspended(Composer, { props: { pane, paneId: 'w1:p1', sendKeys: async () => {} }, attachTo: document.body, global: { stubs: { UTooltip: { template: '<span><slot /></span>' } } } })
   const search = document.createElement('input')
   search.addEventListener('keydown', (e) => { if (e.key === 'Escape' || e.key === 'Enter') e.preventDefault() })
   document.body.append(search)
