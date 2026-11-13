@@ -24,6 +24,7 @@ import { createCodexStatus, dirWritable } from './codexStatus'
 import { runLocal, setCodexKnownWeek } from './quotas'
 import { pmStore } from './pmStore'
 import { createModelCtl, createModelRefresh } from './modelctl'
+import { createCoreModelCtl } from './coreModelctl'
 import { coreFilesMachine } from './coreFilesMachine'
 import { createShellFs } from './fsx'
 
@@ -77,6 +78,23 @@ export function modelCtl() {
   })
 }
 export const currentModel = (p: Pane) => modelCtl().currentModel(p)
+
+// The drive side of the picker (coreModelctl): terminal.* through coreCall,
+// lists cached through modelCtl().noteList (`${machine}|${agent}`).
+let coreModelCtlInstance: ReturnType<typeof createCoreModelCtl> | null = null
+export function coreModelCtl() {
+  return coreModelCtlInstance ||= createCoreModelCtl({
+    call: (method, params, timeout) => coreCall(process.env.HC_SOCKET || '', method, params, timeout),
+    pane: id => findPane(id),
+    machine: p => coreFilesMachine(p.machine || ''),
+    execLocal: (script, home, timeoutMs) => runLocal(script, home, timeoutMs),
+    transcript: p => transcripts.model(p),
+    currentModel: p => modelCtl().currentModel(p),
+    noteList: (p, agent, list) => modelCtl().noteList(p, agent, list),
+    refresh: () => { setTimeout(() => { void poll() }, 100) },
+  })
+}
+export const modelControlBusy = (paneId: string) => coreModelCtlInstance?.modelControlBusy(paneId) ?? false
 
 // The poll-side cache of currentModel's answers (dedup, staleness, p.model
 // assignment): createModelRefresh in modelctl.ts.
