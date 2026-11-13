@@ -48,6 +48,7 @@ export const transcripts = {
   preview: (p: TranscriptPane) => coreTranscriptsOf().preview(p),
   image: (p: TranscriptPane, file: string | null, ref: string | null, i: number) => coreTranscriptsOf().image(p, file, ref, i),
   model: (p: TranscriptPane) => coreTranscriptsOf().model(p),
+  opencodeModels: (p: TranscriptPane) => coreTranscriptsOf().opencodeModels(p),
   locate: (p: TranscriptPane) => coreTranscriptsOf().locate(p),
   pendingTool: (p: TranscriptPane, tool?: string | null) => coreTranscriptsOf().pendingTool(p, tool),
   pendingAsk: (p: TranscriptPane) => coreTranscriptsOf().pendingAsk(p),
@@ -90,6 +91,7 @@ export function coreModelCtl() {
     execLocal: (script, home, timeoutMs) => runLocal(script, home, timeoutMs),
     transcript: p => transcripts.model(p),
     currentModel: p => modelCtl().currentModel(p),
+    opencodeModels: p => transcripts.opencodeModels(p),
     noteList: (p, agent, list) => modelCtl().noteList(p, agent, list),
     refresh: () => { setTimeout(() => { void poll() }, 100) },
   })

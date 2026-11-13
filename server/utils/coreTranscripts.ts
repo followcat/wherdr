@@ -221,7 +221,7 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
     throw e
   })
   type Fn<K extends keyof Transcripts> = Transcripts[K] extends (p: TranscriptPane, ...a: infer A) => infer R ? (p: TranscriptPane, ...a: A) => R : never
-  const viaPane = <K extends 'chat' | 'preview' | 'latestReply' | 'locate' | 'model' | 'pendingTool' | 'pendingAsk' | 'pendingClaudeQuestions' | 'search'>(k: K) =>
+  const viaPane = <K extends 'chat' | 'preview' | 'latestReply' | 'locate' | 'model' | 'pendingTool' | 'pendingAsk' | 'pendingClaudeQuestions' | 'search' | 'opencodeModels'>(k: K) =>
     (async (p: TranscriptPane, ...a: unknown[]) => {
       const t = await machineOf(p)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -234,6 +234,7 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
     latestReply: viaPane('latestReply'),
     locate: viaPane('locate'),
     model: viaPane('model'),
+    opencodeModels: viaPane('opencodeModels'),
     pendingTool: viaPane('pendingTool'),
     pendingAsk: viaPane('pendingAsk'),
     pendingClaudeQuestions: viaPane('pendingClaudeQuestions'),

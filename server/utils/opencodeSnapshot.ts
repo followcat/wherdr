@@ -64,7 +64,9 @@ async function bounded<T>(deadline: number, pending: Promise<unknown>[], call: (
 // One attempt: fresh metadata, ordered pieces into a bounded buffer, then
 // the full assembled fingerprint. 'retry' marks a retryable snapshot change.
 async function attempt(exec: ShellExec, ctx: Ctx, deadline: number, pending: Promise<unknown>[]): Promise<OpencodeSnapshot | 'retry'> {
-  const metaReq: Record<string, unknown> = { op: ctx.op, session: ctx.session }
+  // 'models' is a server-wide read: the request carries no session field.
+  const metaReq: Record<string, unknown> = { op: ctx.op }
+  if (ctx.session) metaReq.session = ctx.session
   if (ctx.cursor) metaReq.cursor = ctx.cursor
   if (ctx.expect) metaReq.expect = ctx.expect
   const m = await bounded(deadline, pending, r => opencodeReadMeta(exec, ctx.home, metaReq, { timeoutMs: r }))
@@ -83,7 +85,8 @@ async function attempt(exec: ShellExec, ctx: Ctx, deadline: number, pending: Pro
   // At most six pieces: the wrapper's exact-length contract makes every
   // iteration advance min(4 MiB, remaining) inside the 24 MiB total.
   while (got < m.size) {
-    const desc: Record<string, unknown> = { op: ctx.op, session: ctx.session, server: m.server, fingerprint: m.fingerprint, size: m.size, offset: got }
+    const desc: Record<string, unknown> = { op: ctx.op, server: m.server, fingerprint: m.fingerprint, size: m.size, offset: got }
+    if (ctx.session) desc.session = ctx.session
     if (ctx.cursor) desc.cursor = ctx.cursor
     const c = await bounded(deadline, pending, r => opencodeReadChunk(exec, ctx.home, desc, { timeoutMs: r }))
     if (c === LATE) return { ok: false, error: 'unreachable' }
@@ -128,9 +131,10 @@ export function opencodeSnapshots(exec: ShellExec) {
       return Promise.resolve({ ok: false, error: 'invalid_request' })
     }
     // The request is snapshotted into owned primitives before any await:
-    // retries and coalescing never observe a mutated caller object.
+    // retries and coalescing never observe a mutated caller object. A
+    // 'models' target legitimately carries no session.
     const op = request.op as string
-    const session = request.session as string
+    const session = typeof request.session === 'string' ? request.session : ''
     const cursor = typeof request.cursor === 'string' ? request.cursor : ''
     const expect = typeof request.expect === 'string' ? request.expect : ''
     const budget = opts.timeoutMs === undefined ? DEFAULT_BUDGET_MS

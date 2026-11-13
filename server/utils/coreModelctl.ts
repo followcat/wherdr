@@ -36,7 +36,7 @@ export interface CoreModelCtlDeps {
   execLocal: (script: string, home: string, timeoutMs: number) => Promise<ExecResult> // runLocal
   transcript: (p: Pane) => Promise<ModelInfo | null> // transcripts.model
   currentModel: (p: Pane) => Promise<ModelInfo | null> // modelCtl().currentModel
-  opencodeModels?: (p: Pane) => Promise<Record<string, any>[]> // transcripts.opencodeModels (service read)
+  opencodeModels?: (p: Pane) => Promise<Record<string, any>[] | null> // transcripts.opencodeModels (service read)
   noteList: (p: Pane, agent: string, list: ModelList) => void // modelCtl().noteList
   refresh?: () => void
   sleep?: (ms: number) => Promise<void>
@@ -302,7 +302,7 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
       if (!deps.opencodeModels) throw new HerdrError('unavailable', 'The model catalog cannot be read on this pane')
       // An option label must identify one catalog entry: providers can offer
       // the same display name, so duplicates carry their provider.
-      const entries = ((await deps.opencodeModels(p)) as OpenCodeEntry[])
+      const entries = (((await deps.opencodeModels(p)) || []) as OpenCodeEntry[])
         .filter(e => e && e.enabled !== false && typeof e.id === 'string' && typeof e.providerID === 'string')
       const names = new Map<string, number>()
       for (const e of entries) names.set(String(e.name || e.id), (names.get(String(e.name || e.id)) || 0) + 1)

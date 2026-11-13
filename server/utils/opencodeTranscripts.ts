@@ -336,5 +336,14 @@ export function createOpencodeTranscripts({ exec, home, fs, snap }: { exec: Shel
     pages.delete(paneId)
   }
 
-  return { chat, model, image, search, forget, sessionInfo, pageFp }
+  // The model catalog (GET /api/model) — display names, ids, providers,
+  // variants. A server-wide read: no session is attached to the request.
+  async function models(): Promise<Record<string, any>[]> {
+    const r = await read(home, { op: 'models' })
+    if (!r.ok || !('body' in r)) return []
+    const d = parse(r.body)
+    return Array.isArray(d?.data) ? d.data : []
+  }
+
+  return { chat, model, image, search, forget, sessionInfo, pageFp, models }
 }
