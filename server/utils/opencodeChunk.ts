@@ -33,7 +33,7 @@ try:
     expected_fp = request.get('fingerprint')
     total = request.get('size')
     offset = request.get('offset')
-    if op not in ('session', 'page', 'models') \
+    if op not in ('session', 'page', 'models', 'patch') \
             or op != 'models' and (not isinstance(session, str) or not re.fullmatch(r'[0-9A-Za-z_-]{1,128}', session)) \
             or op == 'models' and session is not None \
             or 'cursor' in request and (op != 'page' or not isinstance(cursor, str) or not re.fullmatch(r'[\x21-\x7e]{1,256}', cursor)) \

@@ -26,6 +26,9 @@ const READY = new Set(['done', 'idle'])
 
 // One /api/model catalog entry (the fields wherdr reads).
 type OpenCodeEntry = { id: string, providerID: string, name?: string, modelID?: string, enabled?: boolean, variants?: string[] }
+// An option label must identify one catalog entry: providers can offer the
+// same display name, so duplicates carry their provider.
+const opencodeEntryLabel = (e: OpenCodeEntry, dup: boolean) => dup ? `${e.name || e.id} (${e.providerID})` : String(e.name || e.id)
 
 const moveKeys = (from: number, to: number) => Array.from({ length: Math.abs(to - from) }, () => (to > from ? 'down' : 'up'))
 
@@ -38,6 +41,7 @@ export interface CoreModelCtlDeps {
   transcript: (p: Pane) => Promise<ModelInfo | null> // transcripts.model
   currentModel: (p: Pane) => Promise<ModelInfo | null> // modelCtl().currentModel
   opencodeModels?: (p: Pane) => Promise<Record<string, any>[] | null> // transcripts.opencodeModels (service read)
+  opencodePatchModel?: (p: Pane, model: { id: string, providerID: string, variant?: string }) => Promise<Record<string, any> | null> // transcripts.opencodePatchModel (whitelisted PATCH + re-GET)
   noteList: (p: Pane, agent: string, list: ModelList) => void // modelCtl().noteList
   noteOverride: (paneId: string, info: ModelInfo) => void // modelCtl().noteOverride — pill update before the next poll
   noteObservedEffort: (paneId: string, label: string, effort: string) => void // modelCtl().noteObservedEffort
@@ -224,7 +228,8 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
     const p0 = pane(paneId)
     if (p0.agent === 'omp') return ompSetModel(p0, wanted)
     if (p0.agent === 'devin') return devinSetModel(p0, wanted, parts)
-    if (p0.agent === 'opencode' || p0.agent === 'cmd')
+    if (p0.agent === 'opencode') return opencodeSetModel(p0, wanted, parts)
+    if (p0.agent === 'cmd')
       throw new HerdrError('unsupported', 'Switching this agent’s model is not supported yet')
     if (parts && typeof parts === 'object' && Object.keys(parts as object).length)
       throw new HerdrError('unsupported', 'This model has no selectable parts')
@@ -871,13 +876,55 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
       for (const e of entries) names.set(String(e.name || e.id), (names.get(String(e.name || e.id)) || 0) + 1)
       const cur = await deps.transcript(p).catch(() => null)
       const options: ModelOption[] = entries.map(e => ({
-        label: names.get(String(e.name || e.id))! > 1 ? `${e.name || e.id} (${e.providerID})` : String(e.name || e.id),
+        label: opencodeEntryLabel(e, names.get(String(e.name || e.id))! > 1),
         hint: `${e.providerID}/${e.modelID || e.id}`,
         current: e.id === cur?.id || undefined,
       }))
       const list: ModelList = { agent: 'opencode', options, at: now() }
       deps.noteList(p, 'opencode', list)
       return list
+    })
+  }
+
+  // The port's first write helper — a session-scoped PATCH through the
+  // OpenCode service API, not the terminal. Zero terminal IO → no fresh-read
+  // gate, but the busy lock and the pane's READY status still apply: the
+  // request names one catalog entry exactly (label / id / providerID/modelID
+  // / unique name), the variant keeps the current effort when the same model
+  // stays selected else the entry's first, and the PATCH's own re-GET must
+  // prove id/providerID/variant — a mismatch is stale, never success.
+  async function opencodeSetModel(p: Pane, wanted: unknown, parts?: unknown): Promise<ModelInfo> {
+    const wantedStr = String(wanted || '').trim()
+    if (!wantedStr) throw new HerdrError('bad_model', 'Missing model')
+    const keys = parts && typeof parts === 'object' && !Array.isArray(parts) ? Object.keys(parts) : []
+    if (keys.length) throw new HerdrError('bad_model', 'Unknown model part')
+    if (!READY.has(p.status || ''))
+      throw new HerdrError('busy', p.status === 'blocked'
+        ? 'The agent is waiting for an answer — reply first.'
+        : 'The agent is working — change the model once it’s done.')
+    if (!deps.opencodeModels || !deps.opencodePatchModel)
+      throw new HerdrError('unavailable', 'The model catalog cannot be read on this pane')
+    return withBusy(p.id, async () => {
+      const entries = (((await deps.opencodeModels!(p)) || []) as OpenCodeEntry[])
+        .filter(e => e && e.enabled !== false && typeof e.id === 'string' && typeof e.providerID === 'string')
+      const names = new Map<string, number>()
+      for (const e of entries) names.set(String(e.name || e.id), (names.get(String(e.name || e.id)) || 0) + 1)
+      const wantedL = wantedStr.toLowerCase()
+      const matches = (e: OpenCodeEntry) => opencodeEntryLabel(e, (names.get(String(e.name || e.id)) || 0) > 1) === wantedStr
+        || e.id === wantedStr || `${e.providerID}/${e.modelID || e.id}` === wantedStr
+        || (names.get(String(e.name || e.id)) === 1 && String(e.name || '').toLowerCase() === wantedL)
+      const hits = entries.filter(matches)
+      const e = hits[0]
+      if (!e || hits.length > 1) throw new HerdrError('bad_model', fmt('Model not found in /models: {model}', { model: wantedStr }))
+      const cur = await deps.transcript(p).catch(() => null)
+      const variant = cur?.id === e.id && cur.effort ? cur.effort : (Array.isArray(e.variants) ? String(e.variants[0] || '') : '') || undefined
+      const patched = await deps.opencodePatchModel!(p, { id: e.id, providerID: e.providerID, ...(variant ? { variant } : {}) })
+      const patchedModel = patched?.model as { id?: string, providerID?: string, variant?: string } | undefined
+      if (!patched || patchedModel?.id !== e.id || patchedModel?.providerID !== e.providerID || (variant && patchedModel?.variant !== variant))
+        throw new HerdrError('stale', 'The model did not change — try again.')
+      const info: ModelInfo = { id: String(patchedModel.id), label: String(e.name || patchedModel.id), effort: patchedModel.variant ?? null, at: new Date(now()).toISOString() }
+      deps.refresh?.()
+      return info
     })
   }
 

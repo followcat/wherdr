@@ -191,8 +191,11 @@ cwd (or one whose cwd cannot be read), a tie, or a failed discovery or catalog
 all stay unavailable — the pane keeps its terminal view rather than guess. The
 session read itself is fingerprint-verified end to end (server generation, page
 and metadata), a transport failure keeps the shown view instead of clearing it,
-and a proven-absent session clears it at once. Sends, queued messages,
-permissions, model pickers and shell actions stay with the OpenCode terminal.
+and a proven-absent session clears it at once. The one whitelisted write is
+a session-scoped model switch: `PATCH /api/session/<id>` with a fixed
+`{model:{id,providerID,variant}}` body, re-read for verification. Sends,
+queued messages, permissions and shell actions stay with the OpenCode
+terminal.
 
 Text left unsent in Claude Code's own input box (a draft or paste never submitted, or the
 prompt Claude puts back after an interrupt) shows at the end of the conversation as
