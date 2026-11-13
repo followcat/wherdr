@@ -737,6 +737,9 @@ defineExpose({
         />
         <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onFiles">
         <input ref="anyFileInput" type="file" multiple hidden data-testid="attach-any" @change="onFiles">
+        <div v-if="pane && (pane.agent === 'claude' || pane.agent === 'codex' || pane.agent === 'omp' || pane.agent === 'devin' || pane.agent === 'opencode' || pane.agent === 'cmd')" class="prompt-models">
+          <ModelPicker :pane="pane" />
+        </div>
         <button
           v-if="mic.engine.value" type="button" class="prompt-mic" :class="{ on: mic.shown.value }" data-testid="dictation-mic"
           :disabled="readOnly || mic.status.value === 'busy'" :aria-pressed="mic.live.value"

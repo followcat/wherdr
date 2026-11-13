@@ -1677,6 +1677,31 @@ body.kb .composer { padding-bottom: 8px; }
 .prompt-hint .sep { margin: 0 4px; }
 .prompt-hint [data-slot], .prompt-hint kbd { border-radius: 0; font-family: var(--mono); }
 /* Model selector (footer of the input bar): neutral button, mono, no background. */
+.prompt-models { display: flex; align-items: center; min-width: 0; }
+.prompt-models .model-pick-wrap { flex: 0 1 auto; }
+.prompt-models .effort-pick-wrap { flex-shrink: 0; max-width: 130px; }
+.prompt-models .model-pick { max-width: 100%; }
+.model-pick-wrap { display: inline-flex; min-width: 0; flex: none; }
+.model-pick {
+  height: 32px; padding: 0 8px; gap: 6px; min-width: 0; max-width: 40vw;
+  font: 500 11.5px/1 var(--mono); color: var(--text-2); border-radius: 0;
+}
+.model-pick:hover { background: var(--surface-2); color: var(--text); }
+.model-pick[data-state="open"] { background: var(--surface-2); color: var(--text); }
+.model-pick.off { opacity: .45; cursor: not-allowed; }
+.model-pick.off:hover { background: transparent; color: var(--text-2); }
+.model-pick .model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-pick .model-effort { color: var(--dim); font-weight: 400; }
+.effort-pick { color: var(--dim); max-width: 130px; }
+.effort-pick:hover { color: var(--text); }
+.model-pick .model-caret { width: 13px; height: 13px; color: var(--dim); }
+.model-menu { min-width: 280px; max-height: min(60vh, 460px); }
+.effort-menu { min-width: 180px; max-height: min(60vh, 400px); }
+.model-menu [data-slot="item"] { font-size: 13.5px; }
+.model-menu [data-slot="item"][data-state="checked"] [data-slot="itemLabel"] { color: var(--mauve); }
+.model-menu .model-hint { font-size: 11.5px; color: var(--dim); }
+.model-menu .model-menu-label { font: 500 10.5px/1.2 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.model-menu .model-loading .iconify { animation: spin 1s linear infinite; }
 .prompt-send { flex: none; width: 32px; height: 32px; justify-content: center; margin-left: auto; position: relative; touch-action: manipulation; }
 /* 48 px touch area (Apple: 44 minimum) without enlarging the button. The button does not
    take the focus (mousedown.prevent): the keyboard stays open, the bar does not move
@@ -1725,9 +1750,11 @@ body.kb .composer { padding-bottom: 8px; }
   .prompt.has-mic .prompt-mic { grid-column: 2; grid-row: 1; }
   .prompt.has-mic .prompt-body { grid-column: 3; }
   .prompt.has-mic .prompt-send { grid-column: 4; }
-  .prompt .prompt-hint { display: none; }
+  .prompt .prompt-hint, .prompt .prompt-models { display: none; }
   .prompt.expanded { display: flex; align-items: stretch; }
   .prompt.expanded .prompt-foot { display: flex; }
+  .prompt.expanded .prompt-models { display: flex; }
+  .prompt .model-pick { height: 44px; }
   .prompt.expanded .prompt-send { margin-left: auto; }
   .prompt .prompt-input {
     min-height: 40px; padding: 8px 6px;
