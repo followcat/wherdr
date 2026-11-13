@@ -10,14 +10,14 @@ import { readCoreScreen } from './coreScreen'
 import { HerdrError } from './herdr'
 import { log } from './env'
 import { sleep as defaultSleep } from './herdr'
-import { cleanModelName, sameModel, effortMatches } from './models'
-import { parseModelMenu, parseOmpSelector, switchConfirmKeys, switchDeclineKeys, type ModelMenu } from './modelMenus'
+import { cleanModelName, sameModel, effortMatches, effortValue, claudeEffortCommand, claudeEffortLevels, codexCachedEfforts, learnOmpCycle, ompEffortLevels, ompModelLabel, ompScreenEffort, parseClaudeEffortScreen, OMP_EFFORT_ORDER, type ClaudeEffortSlider, type OmpCycleKnowledge } from './models'
+import { parseModelMenu, parseOmpSelector, switchConfirmKeys, switchDeclineKeys, ompSelectorCaption, panelOpen, type ModelMenu, type OmpSelector } from './modelMenus'
 import { devinMenuOpen, parseDevinModelMenu, parseDevinFusion, type DevinModelMenu } from './devinMenu'
 import { ompSelectorOnScreen } from '../../shared/ompSelector'
 import { fmt } from '../../shared/message'
 import type { Machine } from './machines'
 import type { ExecResult } from './fsx'
-import type { ModelInfo, ModelList, ModelOption, ModelPart, Pane } from '../../shared/types'
+import type { EffortList, ModelInfo, ModelList, ModelOption, ModelPart, Pane } from '../../shared/types'
 
 // Agents whose picker a pane may drive. `cmd` is list-only (its /model rewrites
 // the account default — docs/security.md) but listing needs the same gate.
@@ -41,6 +41,7 @@ export interface CoreModelCtlDeps {
   noteList: (p: Pane, agent: string, list: ModelList) => void // modelCtl().noteList
   noteOverride: (paneId: string, info: ModelInfo) => void // modelCtl().noteOverride — pill update before the next poll
   noteObservedEffort: (paneId: string, label: string, effort: string) => void // modelCtl().noteObservedEffort
+  noteScreenEffort: (paneId: string, effort: string) => void // modelCtl().noteScreenEffort
   refresh?: () => void
   sleep?: (ms: number) => Promise<void>
   now?: () => number
@@ -123,7 +124,30 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
 
   // -------------------------------------------------------- claude/codex menu
   const modelMenu = (p: Pane) => waitScreen(p, t => parseModelMenu(t)?.kind === 'model' ? parseModelMenu(t) : null, 6000)
+  // A full-screen panel (claude/codex) swallowing the input is esc'd before
+  // typing — the recovery nicety, not a gate: each esc re-checks panelOpen on
+  // a fresh screen, so a real prompt is never touched.
+  async function closePanel(p: Pane) {
+    if (p.agent !== 'claude' && p.agent !== 'codex') return false
+    let sent = false
+    for (let i = 0; i < 2; i++) {
+      if (!panelOpen(await screen(p), p.agent)) return sent
+      await deps.call('terminal.keys', { terminal: p.coreAddress, keys: ['esc'] }, 10000)
+      sent = true
+      await sleep(400)
+    }
+    return sent
+  }
   async function openMenu(p: Pane): Promise<ModelMenu> {
+    // A leftover /model menu is closed first — esc only while the model menu
+    // itself still parses; a foreign prompt on screen makes the send gate
+    // below refuse instead of being answered.
+    for (let i = 0; i < 3; i++) {
+      if (!parseModelMenu(await screen(p))) break
+      await deps.call('terminal.keys', { terminal: p.coreAddress, keys: ['esc'] }, 10000)
+      await sleep(400)
+    }
+    await closePanel(p)
     await sendInput(p, '/model')
     const m = await modelMenu(p)
     if (!m) { await closeMenu(p); throw new HerdrError('no_menu', 'The /model menu did not show up') }
@@ -198,7 +222,8 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
   // the requested model.
   async function setModel(paneId: unknown, wanted: unknown, parts?: unknown): Promise<ModelInfo> {
     const p0 = pane(paneId)
-    if (p0.agent === 'devin' || p0.agent === 'omp' || p0.agent === 'opencode' || p0.agent === 'cmd')
+    if (p0.agent === 'omp') return ompSetModel(p0, wanted)
+    if (p0.agent === 'devin' || p0.agent === 'opencode' || p0.agent === 'cmd')
       throw new HerdrError('unsupported', 'Switching this agent’s model is not supported yet')
     if (parts && typeof parts === 'object' && Object.keys(parts as object).length)
       throw new HerdrError('unsupported', 'This model has no selectable parts')
@@ -278,12 +303,30 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
 
   // ------------------------------------------------------------------- omp
   const ompSel = (text: string) => { const s = parseOmpSelector(text); return s && !s.task ? s : null }
+  async function ompClose(p: Pane) {
+    for (let i = 0; i < 4; i++) {
+      if (!ompSelectorOnScreen(await screen(p))) return
+      await deps.call('terminal.keys', { terminal: p.coreAddress, keys: ['esc'] }, 10000)
+      await sleep(400)
+    }
+  }
+  // Selector open and readable. omp 18.6: alt+p toggles between the session
+  // and the Task subagent selectors; only the session one may be driven.
+  async function openOmpSelector(p: Pane): Promise<OmpSelector> {
+    await ompClose(p)
+    await sendKeys(p, ['alt+p'])
+    let s = await waitScreen(p, parseOmpSelector, 4000)
+    if (s?.task) {
+      await menuKeys(p, ['alt+p'], parseOmpSelector)
+      s = await waitScreen(p, ompSel, 4000)
+    }
+    if (!s) { await ompClose(p); throw new HerdrError('no_menu', 'The model selector did not show up') }
+    if (s.truncated) { await ompClose(p); throw new HerdrError('narrow', 'The selector is too narrow to read model ids — widen the pane.') }
+    return s
+  }
   async function ompListModels(p: Pane): Promise<ModelList> {
     return withPane(p.id, async () => {
-      await sendKeys(p, ['alt+p'])
-      const s = await waitScreen(p, ompSel, 4000)
-      if (!s) { await ompClose(p); throw new HerdrError('no_menu', 'The model selector did not show up') }
-      if (s.truncated) { await ompClose(p); throw new HerdrError('narrow', 'The selector is too narrow to read model ids — widen the pane.') }
+      const s = await openOmpSelector(p)
       try {
         const options: ModelOption[] = s.options.map(o => ({ label: o.label, hint: o.hint, current: o.current }))
         const list: ModelList = { agent: 'omp', options, at: now() }
@@ -292,12 +335,304 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
       } finally { await ompClose(p) }
     })
   }
-  async function ompClose(p: Pane) {
-    for (let i = 0; i < 4; i++) {
-      if (!ompSelectorOnScreen(await screen(p))) return
-      await deps.call('terminal.keys', { terminal: p.coreAddress, keys: ['esc'] }, 10000)
+
+  // omp's own transcript writes the change ("model_change" …, "role":
+  // "temporary"); wait for it so currentModel() is right away.
+  async function waitOmpModel(p: Pane, id: string, since: number): Promise<boolean> {
+    const until = now() + 4000
+    for (;;) {
+      const info = await deps.transcript(p).catch(() => null)
+      if (info && info.id === id && info.at && Date.parse(info.at) >= since - 1500) return true
+      if (now() > until) return false
+      await sleep(300)
+    }
+  }
+
+  // The selector's Enter applies to this session only ("use for this
+  // session") — never a global default. Rows have no numbers: the cursor
+  // moves one down/up per model, re-reading the screen between steps; search
+  // narrows the list when the id isn't visible.
+  async function ompSetModel(p: Pane, wanted: unknown): Promise<ModelInfo> {
+    const id = String(wanted || '').trim()
+    if (!id) throw new HerdrError('bad_model', 'Missing model')
+    return withPane(p.id, async (p) => {
+      const started = now()
+      let s = await openOmpSelector(p)
+      try {
+        const rank = (sel: OmpSelector) => sel.options.findIndex(o => o.label === id)
+        let at = rank(s)
+        // Search narrows the list ("glm" → …): type enough of the id's last
+        // segment to make it visible, one key at a time (the field takes them).
+        if (at < 0) {
+          const tail = id.split('/').pop()!.toLowerCase()
+          const heads = s.options.map(o => o.label.split('/').pop()!.toLowerCase())
+          let typed = ''
+          for (const ch of tail) {
+            typed += ch
+            if (heads.some(h => h === typed)) break
+          }
+          for (const ch of typed) {
+            await menuKeys(p, [ch === ' ' ? 'space' : ch], ompSel)
+            await sleep(80)
+          }
+          s = (await waitScreen(p, x => { const o = ompSel(x); return o && o.search.length > 0 ? o : null }, 3000)) || s
+          at = rank(s)
+        }
+        if (at < 0) throw new HerdrError('bad_model', fmt('Model not found in omp’s selector: {model}', { model: id }))
+        // One "down"/"up" per row; the list can change under the cursor
+        // (search, scrollbar), so each step re-reads and recomputes.
+        for (let n = 0; n < 80; n++) {
+          s = (await waitScreen(p, ompSel, 1500)) || s
+          const delta = at - s.cursor
+          if (delta === 0) break
+          await menuKeys(p, [delta > 0 ? 'down' : 'up'], ompSel)
+          await sleep(120)
+          if (n === 79) throw new HerdrError('stale', 'The model selector did not follow — nothing was changed.')
+        }
+        s = (await waitScreen(p, x => { const o = ompSel(x); return o && o.cursor === at && o.options[at]?.label === id ? o : null }, 3000))
+          ?? (await waitScreen(p, ompSel, 1000)) ?? s
+        if (s.cursor !== at || s.options[at]!.label !== id) throw new HerdrError('stale', 'The model selector changed — try again.')
+        await menuKeys(p, ['enter'], ompSel)
+        await waitOmpModel(p, id, started)
+      } catch (e) {
+        await ompClose(p).catch(() => {})
+        throw e
+      }
+      const text = await screen(p).catch(() => '')
+      const caption = ompSelectorCaption(text, id)
+      // The level stays on the status line (no transcript before the first message).
+      const effort = ompScreenEffort(text, ompModelLabel(id))
+      const info: ModelInfo = { id, label: caption?.name || ompModelLabel(id), effort, at: new Date(started).toISOString() }
+      deps.noteOverride(p.id, info)
+      log(`model ${p.id} (omp) -> ${id} (this session)`)
+      return (await deps.currentModel(p).catch(() => null)) || info
+    })
+  }
+
+  // ------------------------------------------------------------ omp ⇧⇥ cycle
+  // Per machine and model: what the ⇧⇥ presses showed of its cycle.
+  const ompCycles = new Map<string, OmpCycleKnowledge>()
+  const ompCycleKey = (p: Pane, model: ModelInfo) => `${p.machine || ''}|${cleanModelName(model.label).toLowerCase()}`
+
+  // Level after one ⇧⇥ press from `prev`. With a transcript, its new
+  // "thinking_level_change" entry (newer than `sinceAt`) gives the configured
+  // level. Without one, only the status line — and after a turn "auto" shows
+  // the glyph of the level it resolved to, so the glyph alone cannot tell
+  // "auto" from that level. The cycle can: a press from "off" always lands on
+  // "auto", and a press from a resolved "auto" may keep the glyph (it lands
+  // on the level auto had picked), taken once the line has redrawn.
+  const OMP_REDRAW_MS = 1000
+  async function waitOmpEffort(p: Pane, model: string, prev: string, shown: string, sinceAt: string | null, hasTranscript: boolean) {
+    const pressed = now()
+    for (;;) {
+      const tr = await deps.transcript(p).catch(() => null)
+      if (tr && tr.effort && tr.at && (!sinceAt || tr.at > sinceAt)) {
+        return { level: tr.effort, at: tr.at, shown: ompScreenEffort(await screen(p).catch(() => ''), model) || shown }
+      }
+      if (!hasTranscript) {
+        const cur = ompScreenEffort(await screen(p).catch(() => ''), model)
+        if (cur && cur !== shown) return { level: prev === 'off' ? 'auto' : cur, at: sinceAt, shown: cur }
+        if (cur && prev === 'auto' && shown !== 'auto' && now() - pressed > OMP_REDRAW_MS) return { level: cur, at: sinceAt, shown: cur }
+      }
+      if (now() - pressed > 3000) return null
+      await sleep(200)
+    }
+  }
+
+  // Presses ⇧⇥ until omp is on `level`, re-reading after each press. A full
+  // turn back to the starting level means the model does not offer it.
+  async function ompCycleTo(p: Pane, before: ModelInfo, level: string) {
+    if (!OMP_EFFORT_ORDER.includes(level)) throw new HerdrError('bad_effort', 'Effort level unavailable for this model')
+    let shown = ompScreenEffort(await screen(p), before.label)
+    const tr = await deps.transcript(p).catch(() => null)
+    // The transcript's level, else the status line: wherdr's own record
+    // (`before`, possibly older than a change made in the terminal) only for
+    // "auto", which the glyph no longer shows after a turn.
+    const start = tr && tr.effort ? tr.effort
+      : shown && before.effort === 'auto' && shown !== 'off' ? 'auto' : shown
+    if (!shown || !start) throw new HerdrError('unsafe', 'omp’s thinking level is not on screen — nothing was changed.')
+    if (start === level) return
+    const key = ompCycleKey(p, before)
+    const presses = [start]
+    let at = tr ? tr.at || null : null
+    try {
+      for (let n = 0; n < OMP_EFFORT_ORDER.length; n++) {
+        await sendKeys(p, ['shift+tab'])
+        const next = await waitOmpEffort(p, before.label, presses[presses.length - 1]!, shown, at, Boolean(tr))
+        if (!next) {
+          throw new HerdrError('stale', presses.length === 1
+            ? 'omp did not change its thinking level — nothing was changed.'
+            : 'omp’s thinking level stopped following — check it in the terminal.')
+        }
+        presses.push(next.level)
+        shown = next.shown
+        at = next.at
+        if (next.level === level) return
+        if (next.level === start) throw new HerdrError('bad_effort', 'Effort level unavailable for this model')
+      }
+      throw new HerdrError('stale', 'omp’s thinking level stopped following — check it in the terminal.')
+    } finally {
+      ompCycles.set(key, learnOmpCycle(ompCycles.get(key) || null, presses))
+      // Stopped on the way: the field shows where omp really is.
+      const reached = presses[presses.length - 1]!
+      if (presses.length > 1 && reached !== level) {
+        deps.noteOverride(p.id, { ...before, effort: reached, at: new Date(now()).toISOString() })
+        deps.noteObservedEffort(p.id, before.label, reached)
+      }
+    }
+  }
+
+  // ------------------------------------------------------ claude effort slider
+  const sliderOn = (text: string) => parseClaudeEffortScreen(text)
+  const waitSlider = (p: Pane, ok: (s: ClaudeEffortSlider) => boolean, timeoutMs: number) =>
+    waitScreen(p, x => { const s = sliderOn(x); return s && ok(s) ? s : null }, timeoutMs)
+  async function sliderGone(p: Pane, timeoutMs = 3000) {
+    const until = now() + timeoutMs
+    let clear = 0
+    while (clear < 2 && now() < until) {
+      clear = sliderOn(await screen(p).catch(() => '')) ? 0 : clear + 1
+      if (clear < 2) await sleep(250)
+    }
+    return clear >= 2
+  }
+  // Escape while the slider is on screen: it must never stay open.
+  async function closeEffortSlider(p: Pane) {
+    for (let i = 0; i < 3; i++) {
+      if (!sliderOn(await screen(p).catch(() => ''))) return
+      await deps.call('terminal.keys', { terminal: p.coreAddress, keys: ['esc'] }, 10000).catch(() => {})
       await sleep(400)
     }
+  }
+  async function openEffortSlider(p: Pane): Promise<ClaudeEffortSlider> {
+    await closeEffortSlider(p)
+    await closePanel(p)
+    await sendInput(p, '/effort')
+    const s = await waitSlider(p, () => true, 4000)
+    if (!s) {
+      // Unknown screen: one Escape unless it is a native prompt — a prompt
+      // must never be answered by accident (the slider may just be unreadable).
+      const text = await screen(p).catch(() => '')
+      if (!readCoreScreen(text, p.agent, p.status).choices) {
+        await deps.call('terminal.keys', { terminal: p.coreAddress, keys: ['esc'] }, 10000).catch(() => {})
+      }
+      throw new HerdrError('no_menu', 'Claude’s effort slider could not be read — closed, nothing was changed.')
+    }
+    return s
+  }
+
+  // ------------------------------------------------------- codex effort menu
+  async function codexEffortMenu(p: Pane, model: ModelInfo): Promise<ModelMenu> {
+    const m = await openMenu(p)
+    if (!m.enterSelects) throw new HerdrError('unsafe', 'Unexpected /model menu — nothing was changed.')
+    const current = m.options.find(o => o.current || sameModel(o.label, model.label))
+    if (!current) throw new HerdrError('stale', 'The /model menu changed — try again.')
+    await pick(p, m, current.n, current.label, 'model')
+    await menuKeys(p, ['enter'], menuCheck('model'))
+    const e = await waitScreen(p, menuCheck('effort'), 4000)
+    if (!e || !e.sessionKey) throw new HerdrError('unsafe', 'Unexpected effort menu — nothing was changed.')
+    return e
+  }
+
+  // Devin/OpenCode have a model picker but no wherdr effort control yet.
+  const EFFORT_AGENTS = new Set(['claude', 'codex', 'omp'])
+
+  async function listEfforts(paneId: unknown): Promise<EffortList> {
+    const p0 = pane(paneId)
+    return withPane(p0.id, async (p) => {
+      if (!EFFORT_AGENTS.has(p.agent!)) return { levels: [], current: null }
+      const model = await deps.currentModel(p).catch(() => null)
+      if (!model) return { levels: [], current: null }
+      // omp: levels of its ⇧⇥ cycle, as far as the presses have shown them.
+      if (p.agent === 'omp') {
+        const levels = model.effort ? ompEffortLevels(learnOmpCycle(ompCycles.get(ompCycleKey(p, model)) || null, [model.effort])) : []
+        return { levels, current: model.effort || null }
+      }
+      if (p.agent === 'claude') {
+        // Reading the list must not send /effort: Claude records even a
+        // cancelled opening in the transcript. The choice checks the levels
+        // actually offered by the slider before changing anything.
+        return { levels: claudeEffortLevels(model.label), current: model.effort || null }
+      }
+      const machine = await deps.machine(p).catch(() => null)
+      if (machine?.home) {
+        try {
+          const levels = codexCachedEfforts(await machine.fs.readFile(`${machine.home}/.codex/models_cache.json`), model.id || model.label)
+          if (levels.length) return { levels, current: model.effort || null }
+        } catch { /* live menu as a fallback */ }
+      }
+      try {
+        const menu = await codexEffortMenu(p, model)
+        const levels = menu.options.map(o => effortValue(o.label)).filter((e): e is string => Boolean(e))
+        return { levels, current: model.effort || null }
+      } finally { await closeMenu(p).catch(() => {}) }
+    })
+  }
+
+  async function setEffort(paneId: unknown, level: unknown): Promise<ModelInfo> {
+    const p0 = pane(paneId)
+    return withPane(p0.id, async (p) => {
+      if (!EFFORT_AGENTS.has(p.agent!)) throw new HerdrError('unsupported', 'This agent’s effort cannot be changed from wherdr')
+      const before = await deps.currentModel(p).catch(() => null)
+      if (!before) throw new HerdrError('bad_model', 'Unknown model')
+      const started = now()
+      if (p.agent === 'omp') {
+        await ompCycleTo(p, before, String(level || ''))
+      } else if (p.agent === 'claude') {
+        if (!claudeEffortCommand(String(level || ''), before.label)) throw new HerdrError('bad_effort', 'Effort level unavailable for this model')
+        const slider = await openEffortSlider(p)
+        try {
+          const levels = slider.levels.length ? slider.levels : claudeEffortLevels(before.label)
+          if (!levels.includes(slider.current)) throw new HerdrError('unsafe', 'Unexpected effort slider — nothing was changed.')
+          if (!levels.includes(String(level || ''))) throw new HerdrError('bad_effort', 'Effort level unavailable for this model')
+          const delta = levels.indexOf(String(level || '')) - levels.indexOf(slider.current)
+          if (delta) await menuKeys(p, Array.from({ length: Math.abs(delta) }, () => delta > 0 ? 'right' : 'left'), sliderOn)
+          const at = await waitSlider(p, x => x.current === level, 3000)
+          if (!at) throw new HerdrError('stale', 'The effort slider did not follow — nothing was changed.')
+          // "s" = this session only. Never Enter: it saves the default.
+          await menuKeys(p, ['s'], sliderOn)
+          if (!await sliderGone(p)) throw new HerdrError('stale', 'The effort slider stayed open — nothing was changed.')
+        } catch (e) {
+          await closeEffortSlider(p)
+          throw e
+        }
+        deps.noteScreenEffort(p.id, String(level))
+      } else {
+        try {
+          let menu = await codexEffortMenu(p, before)
+          let option = menu.options.find(o => effortMatches(o.label, String(level || '')))
+          if (!option) {
+            const more = menu.options.find(o => /more reasoning/i.test(o.label))
+            if (!more) throw new HerdrError('bad_effort', 'Effort level unavailable for this model')
+            await pick(p, menu, more.n, more.label, 'effort')
+            await menuKeys(p, ['enter'], menuCheck('effort'))
+            const next = await waitScreen(p, x => {
+              const m = parseModelMenu(x)
+              return m?.kind === 'effort' && m.options.some(o => effortMatches(o.label, String(level || ''))) ? m : null
+            }, 4000)
+            if (!next || !next.sessionKey) throw new HerdrError('bad_effort', 'Effort level unavailable for this model')
+            menu = next
+            option = menu.options.find(o => effortMatches(o.label, String(level || '')))
+          }
+          if (!option) throw new HerdrError('bad_effort', 'Effort level unavailable for this model')
+          await pick(p, menu, option.n, option.label, 'effort')
+          await menuKeys(p, ['s'], menuCheck('effort'))
+          const until = now() + 5000
+          let clear = 0
+          while (clear < 2 && now() < until) {
+            clear = parseModelMenu(await screen(p)) ? 0 : clear + 1
+            await sleep(250)
+          }
+          if (clear < 2) throw new HerdrError('stale', 'The /model menu changed — try again.')
+        } catch (e) {
+          await closeMenu(p).catch(() => {})
+          throw e
+        }
+      }
+      const info: ModelInfo = { ...before, effort: String(level || ''), at: new Date(started).toISOString() }
+      deps.noteOverride(p.id, info)
+      deps.noteObservedEffort(p.id, info.label, String(level || ''))
+      return info
+    })
   }
 
   // ----------------------------------------------------------------- devin
@@ -449,6 +784,8 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
   return {
     listModels,
     setModel,
+    listEfforts,
+    setEffort,
     pick,
     modelControlBusy: (paneId: string) => busy.has(paneId),
   }
