@@ -245,10 +245,8 @@ describe('setModel — claude', () => {
     expect(ops).toHaveLength(0)
   })
 
-  it('refuses devin/opencode/cmd panes for now', async () => {
-    const { ctl, pane } = make({ agent: 'devin' })
-    await expect(ctl.setModel('h1', 'x')).rejects.toMatchObject({ code: 'unsupported' })
-    pane.agent = 'opencode'
+  it('refuses opencode/cmd panes for now', async () => {
+    const { ctl, pane } = make({ agent: 'opencode' })
     await expect(ctl.setModel('h1', 'x')).rejects.toMatchObject({ code: 'unsupported' })
     pane.agent = 'cmd'
     await expect(ctl.setModel('h1', 'x')).rejects.toMatchObject({ code: 'unsupported' })
@@ -517,5 +515,240 @@ describe('efforts — refusal matrix', () => {
       pane.agent = agent
       await expect(ctl.setEffort('h1', 'high')).rejects.toMatchObject({ code: 'unsupported' })
     }
+  })
+})
+
+// T5: Devin's /model picker — search typing, cursor move, alt+enter only
+// (plain Enter writes the GLOBAL default), the Fusion Lead ▾/Sidekick ▾
+// pair, and the echo/status/transcript verify loop.
+describe('setModel — devin', () => {
+  const didle = fx('devin-idle.txt')
+  const dmenu = fx('devin-menu-grok.txt')
+  const dnocur = fx('devin-menu-nocursor-grok.txt')
+  const dconfirm = fx('devin-confirmed.txt')
+  const dswe = fx('devin-echo-swe.txt')
+  const dafter = fx('devin-after.txt')
+  const dfmenu = fx('devin-fusion-menu.txt')
+  const dflead = fx('devin-fusion-lead.txt')
+  const dfside = fx('devin-fusion-sidekick.txt')
+  const dfluna = fx('devin-fusion-side-luna.txt')
+  const dfopus = fx('devin-fusion-lead-opus.txt')
+  const dstatus = fx('devin-status-fusion.txt')
+  const dstluna = fx('devin-status-fusion-luna.txt')
+  const dstopus = fx('devin-status-fusion-opus.txt')
+  const dstswe = fx('devin-status-swe.txt')
+  const seq = (ops: Op[]) => keys(ops).map(o => o.params.keys.join(','))
+
+  it('searches, verifies the row, confirms with alt+enter only', async () => {
+    let cur = dmenu
+    const { ctl, ops, overrides } = make({
+      agent: 'devin',
+      screens: [didle, didle, didle, didle, () => cur],
+      onKeys: (k) => { if (k.includes('alt+enter')) cur = dconfirm },
+    })
+    const info = await ctl.setModel('h1', 'Grok 4.7')
+    expect(info.label).toBe('Grok 4.7')
+    expect(sends(ops).map(o => o.params.text)).toEqual(['/model'])
+    expect(seq(ops)).toEqual(['G', 'r', 'o', 'k', 'space', '4', '.', '7', 'alt+enter'])
+    expect(keys(ops).every(o => !o.params.keys.includes('enter') || o.params.keys.includes('alt+enter'))).toBe(true)
+    expect(overrides[0].info).toMatchObject({ id: 'Grok 4.7', label: 'Grok 4.7' })
+  })
+
+  it('a mismatched confirmation echo is stale, never success', async () => {
+    let cur = dmenu
+    const { ctl, overrides } = make({
+      agent: 'devin',
+      screens: [didle, didle, didle, didle, () => cur],
+      onKeys: (k) => { if (k.includes('alt+enter')) cur = dswe },
+    })
+    await expect(ctl.setModel('h1', 'Grok 4.7')).rejects.toMatchObject({ code: 'stale' })
+    expect(overrides).toHaveLength(0)
+  })
+
+  it('no confirmation at all is stale too', async () => {
+    let cur = dmenu
+    const { ctl } = make({
+      agent: 'devin',
+      screens: [didle, didle, didle, didle, () => cur],
+      onKeys: (k) => { if (k.includes('alt+enter')) cur = dafter },
+    })
+    await expect(ctl.setModel('h1', 'Grok 4.7')).rejects.toMatchObject({ code: 'stale' })
+  })
+
+  it('selects Fusion: the status line confirms when no echo is read', async () => {
+    let cur = dfmenu
+    const { ctl, ops } = make({
+      agent: 'devin',
+      screens: [didle, didle, didle, didle, () => cur],
+      onKeys: (k) => { if (k.includes('alt+enter')) cur = dstatus },
+    })
+    const info = await ctl.setModel('h1', 'Fusion')
+    expect(info.label).toBe('Fusion')
+    const all = keys(ops).flatMap(o => o.params.keys)
+    expect(all).toContain('alt+enter')
+    expect(all).not.toContain('enter')
+  })
+
+  it('a stale echo of a different model does not veto the status line', async () => {
+    let cur = dfmenu
+    const { ctl } = make({
+      agent: 'devin',
+      screens: [didle, didle, didle, didle, () => cur],
+      onKeys: (k) => { if (k.includes('alt+enter')) cur = dswe + dstatus },
+    })
+    const info = await ctl.setModel('h1', 'Fusion')
+    expect(info.label).toBe('Fusion')
+  })
+
+  it('a status line naming another model is stale, never success', async () => {
+    let cur = dfmenu
+    const { ctl } = make({
+      agent: 'devin',
+      screens: [didle, didle, didle, didle, () => cur],
+      onKeys: (k) => { if (k.includes('alt+enter')) cur = dstswe },
+    })
+    await expect(ctl.setModel('h1', 'Fusion')).rejects.toMatchObject({ code: 'stale' })
+  })
+
+  it('rechecks the selected row after a cursor move — a lost ❭ refuses', async () => {
+    let cur = dmenu
+    const { ctl, ops } = make({
+      agent: 'devin',
+      screens: [didle, didle, didle, didle, () => cur],
+      onKeys: (k) => { if (k.includes('up')) cur = dnocur },
+    })
+    await expect(ctl.setModel('h1', 'SWE-2')).rejects.toMatchObject({ code: 'stale' })
+    expect(keys(ops).every(o => !o.params.keys.includes('alt+enter'))).toBe(true)
+  })
+
+  it('a prompt appearing mid-search: stale, nothing else sent', async () => {
+    let cur = dmenu
+    const { ctl, ops } = make({
+      agent: 'devin',
+      screens: [didle, didle, didle, didle, () => cur],
+      onKeys: (k) => { if (k.includes('G')) cur = ask },
+    })
+    await expect(ctl.setModel('h1', 'Grok 4.7')).rejects.toMatchObject({ code: 'stale' })
+    expect(sends(ops).map(o => o.params.text)).toEqual(['/model'])
+    expect(keys(ops).every(o => !o.params.keys.includes('alt+enter'))).toBe(true)
+  })
+
+  // The picker's control cycle in the fake: tab steps menu → lead →
+  // sidekick, esc collapses to the menu, ↑↓ moves the ▸ pick. `moved`
+  // names the screen shown once a pick lands (e.g. sideLuna); `after`
+  // is the screen alt+enter leaves behind.
+  function drive(moved: Record<string, string>, next: (k: string, st: string) => string | undefined, after: () => string) {
+    let st = 'menu'
+    const screens: Record<string, string> = { menu: dfmenu, lead: dflead, side: dfside, ...moved }
+    return (k: string[], cur: { v: string }) => {
+      for (const key of k) {
+        if (key === 'alt+enter') { cur.v = after(); continue }
+        if (key === 'tab') st = st === 'menu' ? 'lead' : st === 'lead' ? 'side' : st
+        else if (key === 'esc') st = 'menu'
+        else st = next(key, st) || st
+      }
+      if (!k.includes('alt+enter')) cur.v = screens[st] || cur.v
+    }
+  }
+
+  it('drives tab → ↓ → esc → alt+↵ and verifies the status-line pair', async () => {
+    const cur = { v: dfmenu }
+    const on = drive({ sideLuna: dfluna }, (k, st) => k === 'down' && st === 'side' ? 'sideLuna' : undefined, () => dstluna)
+    const { ctl, ops } = make({
+      agent: 'devin',
+      screens: [didle, didle, didle, didle, () => cur.v],
+      onKeys: (k) => on(k, cur),
+    })
+    const info = await ctl.setModel('h1', 'Fusion', { sidekick: 'GPT-6 Luna High' })
+    expect(info.label).toBe('Fusion')
+    const s = seq(ops)
+    expect(s.slice(s.indexOf('F'))).toEqual(['F', 'u', 's', 'i', 'o', 'n', 'tab', 'tab', 'down', 'esc', 'alt+enter'])
+  })
+
+  it('picks the lead from its own dropdown (one tab)', async () => {
+    const cur = { v: dfmenu }
+    const on = drive({ leadOpus: dfopus }, (k, st) => k === 'up' && st === 'lead' ? 'leadOpus' : undefined, () => dstopus)
+    const { ctl, ops } = make({
+      agent: 'devin',
+      screens: [didle, didle, didle, didle, () => cur.v],
+      onKeys: (k) => on(k, cur),
+    })
+    const info = await ctl.setModel('h1', 'Fusion', { lead: 'Claude Opus 5.5' })
+    expect(info.label).toBe('Fusion')
+    const s = seq(ops)
+    expect(s.slice(-4)).toEqual(['tab', 'up', 'esc', 'alt+enter'])
+  })
+
+  it('a status-line pair that does not match the request never verifies', async () => {
+    const cur = { v: dfmenu }
+    const on = drive(
+      { sideLuna: dfluna, leadOpus: dfopus },
+      (k, st) => k === 'up' && st === 'lead' ? 'leadOpus' : k === 'down' && st === 'side' ? 'sideLuna' : undefined,
+      () => dstluna)
+    const { ctl } = make({
+      agent: 'devin',
+      screens: [didle, didle, didle, didle, () => cur.v],
+      onKeys: (k) => on(k, cur),
+    })
+    await expect(ctl.setModel('h1', 'Fusion', { lead: 'Claude Opus 5.5', sidekick: 'GPT-6 Luna High' }))
+      .rejects.toMatchObject({ code: 'stale' })
+  })
+
+  it('keeps polling when the status line lags the menu closing', async () => {
+    const lag = fx('devin-echo-fusion-lag.txt')
+    let cur = dfmenu
+    const { ctl } = make({
+      agent: 'devin',
+      screens: [didle, didle, didle, didle, () => { const s = cur; cur = s === lag ? dstluna : s; return s }],
+      onKeys: (k) => {
+        for (const key of k) {
+          if (key === 'alt+enter') { cur = lag; continue }
+          if (key === 'tab') cur = cur === dfmenu ? dflead : cur === dflead ? dfside : cur
+          else if (key === 'esc') cur = dfmenu
+          else if (key === 'down' && cur === dfside) cur = dfluna
+        }
+      },
+    })
+    const info = await ctl.setModel('h1', 'Fusion', { sidekick: 'GPT-6 Luna High' })
+    expect(info.label).toBe('Fusion')
+  })
+
+  it('a part name the dropdown does not offer is bad_model', async () => {
+    const cur = { v: dfmenu }
+    const on = drive({}, () => undefined, () => dstatus)
+    const { ctl } = make({
+      agent: 'devin',
+      screens: [didle, didle, didle, didle, () => cur.v],
+      onKeys: (k) => on(k, cur),
+    })
+    await expect(ctl.setModel('h1', 'Fusion', { sidekick: 'No Such Model' })).rejects.toMatchObject({ code: 'bad_model' })
+  })
+
+  it('parts on a model without selectable parts is bad_model', async () => {
+    const { ctl, ops } = make({
+      agent: 'devin',
+      screens: [didle, didle, didle, didle, () => dmenu],
+    })
+    await expect(ctl.setModel('h1', 'Grok 4.7', { lead: 'GPT-6.1 Sol' })).rejects.toMatchObject({ code: 'bad_model' })
+    expect(keys(ops).every(o => !o.params.keys.includes('alt+enter'))).toBe(true)
+  })
+
+  it('a parts object naming an unknown part is bad_model', async () => {
+    const { ctl } = make({
+      agent: 'devin',
+      screens: [didle, didle, didle, didle, () => dmenu],
+    })
+    await expect(ctl.setModel('h1', 'Grok 4.7', { extra: 'x' })).rejects.toMatchObject({ code: 'bad_model' })
+  })
+
+  it('refuses an unknown model and a missing label', async () => {
+    let cur = dmenu
+    const { ctl, ops } = make({
+      agent: 'devin',
+      screens: [didle, didle, didle, didle, () => cur],
+    })
+    await expect(ctl.setModel('h1', 'No Such Model')).rejects.toMatchObject({ code: 'bad_model' })
+    await expect(ctl.setModel('h1', '')).rejects.toMatchObject({ code: 'bad_model' })
+    expect(keys(ops).every(o => !o.params.keys.includes('alt+enter'))).toBe(true)
   })
 })
