@@ -4,9 +4,9 @@
 // The request is validated before anything is sent to the machine and the
 // helper's exact reply envelope before use; home, timeout, reply and
 // transport-failure validation are shared with discovery, never duplicated.
-import type { ShellExec } from './fsx'
+import type { ExecResult, ShellExec } from './fsx'
 import { FINGERPRINT_OK, HELPER_ERRORS, OPENCODE_META, READ_LIMIT, REPLY_LIMIT, SERVER_OK,
-  failure, helperTimeout, replyObject, validHome, validReadTarget } from './opencodeTransport'
+  SESSION_OK, failure, helperTimeout, replyObject, validHome, validPatchModel, validReadTarget } from './opencodeTransport'
 
 export type OpencodeReadMeta =
   | { ok: true, server: string, fingerprint: string, size: number, unchanged: boolean }
@@ -15,26 +15,9 @@ export type OpencodeReadMeta =
 
 const META_ERRORS = new Set([...Array.from(HELPER_ERRORS), 'invalid_request', 'too_large'])
 
-export async function opencodeReadMeta(exec: ShellExec, home: string, request: Record<string, unknown>, opts: { timeoutMs?: number } = {}): Promise<OpencodeReadMeta> {
-  if (!validHome(home)) {
-    return { ok: false, error: 'unavailable' }
-  }
-  // Fixed request shape only: unknown fields, ops, ids and cursors are
-  // refused before anything is sent to the machine.
-  const keys = request && typeof request === 'object' && !Array.isArray(request) ? Object.keys(request) : null
-  if (!keys || keys.some(k => !['op', 'session', 'cursor', 'expect'].includes(k))
-    || !validReadTarget(request)
-    || (request.expect !== undefined && (typeof request.expect !== 'string' || !FINGERPRINT_OK.test(request.expect)))) {
-    return { ok: false, error: 'invalid_request' }
-  }
-  const body = JSON.stringify(request)
-  if (Buffer.byteLength(body, 'utf8') > 4096) return { ok: false, error: 'invalid_request' }
-  let r
-  try {
-    r = await exec('exec python3 -X utf8 -c "$1" "$2" "$3"', [OPENCODE_META, home, body], { timeoutMs: helperTimeout(opts.timeoutMs), maxBytes: REPLY_LIMIT })
-  } catch {
-    return { ok: false, error: 'unavailable' }
-  }
+// The fixed reply envelope is identical for reads and the single write: a
+// proven snapshot descriptor, an HTTP absence, or a fixed error key.
+function metaReply(r: ExecResult): OpencodeReadMeta {
   const reply = replyObject(r)
   if (reply) {
     const fields = Object.keys(reply).sort()
@@ -59,4 +42,54 @@ export async function opencodeReadMeta(exec: ShellExec, home: string, request: R
     }
   }
   return { ok: false, error: failure(r) }
+}
+
+export async function opencodeReadMeta(exec: ShellExec, home: string, request: Record<string, unknown>, opts: { timeoutMs?: number } = {}): Promise<OpencodeReadMeta> {
+  if (!validHome(home)) {
+    return { ok: false, error: 'unavailable' }
+  }
+  // Fixed request shape only: unknown fields, ops, ids and cursors are
+  // refused before anything is sent to the machine. 'patch' is valid as a
+  // read target (post-write chunks flow through it) but a write never
+  // enters through the read wrapper — opencodePatchMeta is its only path.
+  const keys = request && typeof request === 'object' && !Array.isArray(request) ? Object.keys(request) : null
+  if (!keys || keys.some(k => !['op', 'session', 'cursor', 'expect'].includes(k))
+    || request.op === 'patch' || !validReadTarget(request)
+    || (request.expect !== undefined && (typeof request.expect !== 'string' || !FINGERPRINT_OK.test(request.expect)))) {
+    return { ok: false, error: 'invalid_request' }
+  }
+  const body = JSON.stringify(request)
+  if (Buffer.byteLength(body, 'utf8') > 4096) return { ok: false, error: 'invalid_request' }
+  let r
+  try {
+    r = await exec('exec python3 -X utf8 -c "$1" "$2" "$3"', [OPENCODE_META, home, body], { timeoutMs: helperTimeout(opts.timeoutMs), maxBytes: REPLY_LIMIT })
+  } catch {
+    return { ok: false, error: 'unavailable' }
+  }
+  return metaReply(r)
+}
+
+// The whitelisted write half of the same helper: a 'patch' request carries
+// only its session and the {id,providerID[,variant]} model body — the helper
+// PATCHes the session's fixed path and answers the re-read descriptor.
+export async function opencodePatchMeta(exec: ShellExec, home: string, request: Record<string, unknown>, opts: { timeoutMs?: number } = {}): Promise<OpencodeReadMeta> {
+  if (!validHome(home)) {
+    return { ok: false, error: 'unavailable' }
+  }
+  const keys = request && typeof request === 'object' && !Array.isArray(request) ? Object.keys(request) : null
+  if (!keys || keys.some(k => !['op', 'session', 'model'].includes(k))
+    || request.op !== 'patch'
+    || typeof request.session !== 'string' || !SESSION_OK.test(request.session)
+    || !validPatchModel(request.model)) {
+    return { ok: false, error: 'invalid_request' }
+  }
+  const body = JSON.stringify(request)
+  if (Buffer.byteLength(body, 'utf8') > 4096) return { ok: false, error: 'invalid_request' }
+  let r
+  try {
+    r = await exec('exec python3 -X utf8 -c "$1" "$2" "$3"', [OPENCODE_META, home, body], { timeoutMs: helperTimeout(opts.timeoutMs), maxBytes: REPLY_LIMIT })
+  } catch {
+    return { ok: false, error: 'unavailable' }
+  }
+  return metaReply(r)
 }
