@@ -1,0 +1,4 @@
+  Some transcript line
+  ✓ Model set to Grok 4.7 for this session
+  ❭
+─────────────────────────────────────────────────────────────────────────

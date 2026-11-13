@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { ompSelectorCaption, parseModelMenu, parseOmpSelector, switchConfirmKeys } from '../server/utils/modelMenus'
-import { effortValue } from '../server/utils/models'
+import { effortMatches, effortValue } from '../server/utils/models'
 
 const fx = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
 
@@ -42,6 +42,8 @@ describe('Claude/Codex /model menu', () => {
     expect(e.cursor).toBe(2)
     expect(e.sessionKey).toBe(true)
     expect(e.enterSelects).toBe(false)
+    expect(effortMatches('Extra high', 'xhigh')).toBe(true)
+    expect(effortMatches('Medium (default)', 'medium')).toBe(true)
   })
   it('no menu: idle screen, or menu closed', () => {
     expect(parseModelMenu(fx('claude-idle.txt'))).toBeNull()

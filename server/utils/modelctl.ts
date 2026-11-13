@@ -37,6 +37,8 @@ export function createModelCtl(deps: ModelCtlDeps) {
   const ompScreens = new Map<string, string>()
   // Last /model list read per machine + agent kind, keyed `${key}|${agent}`
   // (Claude's "Default (recommended)" fallback below, omp's name→id match).
+  // v2 keyed omp's entry the other way (`omp|${key}`, v2 modelctl.ts:144);
+  // v3 unifies on this order — T3a writes lists only through noteList below.
   const listCache = new Map<string, ModelList>()
   const listKey = (p: Pane, agent: string) => `${deps.machineKey(p)}|${agent}`
 
@@ -161,5 +163,46 @@ export function createModelCtl(deps: ModelCtlDeps) {
     // The /model lists the controller reads (T3+) — used by the fallbacks above.
     listFor: (p: Pane, agent: string) => listCache.get(listKey(p, agent)),
     noteList: (p: Pane, agent: string, list: ModelList) => { listCache.set(listKey(p, agent), list) },
+  }
+}
+
+// ---------------------------------------------------------------- poll cache
+// What currentModel last said per pane, refreshed when the pane has no entry,
+// its status flipped, or the entry is older than staleMs. One in-flight read
+// per pane; a *changed* answer asks for a re-broadcast via `changed` (a pick
+// from the phone must show right away). Dead panes are pruned with forget —
+// together with modelCtl().forgetModel in state.ts.
+export function createModelRefresh(deps: {
+  currentModel: (p: Pane) => Promise<ModelInfo | null>
+  changed?: () => void
+  now?: () => number
+  staleMs?: number
+}) {
+  const now = deps.now ?? Date.now
+  const staleMs = deps.staleMs ?? 5000
+  const models = new Map<string, { info: ModelInfo | null, status: string | null, at: number }>()
+  const busy = new Set<string>()
+  function refresh(p: Pane) {
+    if (busy.has(p.id)) return
+    busy.add(p.id)
+    deps.currentModel(p)
+      .then((info) => {
+        const old = models.get(p.id)
+        models.set(p.id, { info, status: p.status || null, at: now() })
+        if (JSON.stringify(old && old.info) !== JSON.stringify(info)) deps.changed?.()
+      })
+      .catch(() => {})
+      .finally(() => busy.delete(p.id))
+  }
+  return {
+    refresh,
+    forget: (id: string) => { models.delete(id) },
+    ids: () => models.keys(),
+    // Poll-side: kick a refresh when due, then put the last known model on the pane.
+    apply(p: Pane) {
+      const md = models.get(p.id)
+      if (!md || md.status !== p.status || now() - md.at > staleMs) refresh(p)
+      if (md && md.info) p.model = md.info
+    },
   }
 }

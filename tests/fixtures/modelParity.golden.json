@@ -1,0 +1,1944 @@
+{
+ "note": "Outputs of the v2 (mobile branch) parsers on these fixtures; tests/modelParity.test.ts replays them through the v3 port. Regenerate with scripts/gen-model-golden (v2 worktree, read-only).",
+ "cases": {
+  "claude-model-1.txt": {
+   "parseModelMenu": {
+    "kind": "model",
+    "options": [
+     {
+      "n": 1,
+      "label": "Default (recommended)",
+      "hint": "Sonnet 5 · Efficient for routine tasks",
+      "current": true,
+      "isDefault": false
+     },
+     {
+      "n": 2,
+      "label": "Opus 5.5",
+      "hint": "Most capable for ambitious work",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 3,
+      "label": "Fable 5.1",
+      "hint": "For your toughest challenges",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 4,
+      "label": "Sonnet 5",
+      "hint": "Most efficient for everyday tasks",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 5,
+      "label": "Haiku 4.5",
+      "hint": "Fastest for quick answers",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 6,
+      "label": "Opus 5",
+      "hint": "Best for everyday, complex tasks",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 7,
+      "label": "Fable 5",
+      "hint": "Most capable for your hardest and longest-running tasks",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 8,
+      "label": "Opus 4.8",
+      "hint": "Best for everyday, complex tasks",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 9,
+      "label": "Opus 4.7",
+      "hint": "Best for everyday, complex tasks",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 10,
+      "label": "Opus 4.6",
+      "hint": "Best for everyday, complex tasks",
+      "current": false,
+      "isDefault": false
+     }
+    ],
+    "cursor": 1,
+    "scrollDown": true,
+    "sessionKey": true,
+    "enterSelects": false,
+    "effort": "high"
+   },
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": {
+    "id": null,
+    "label": "Sonnet 5",
+    "effort": null,
+    "at": null
+   },
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": {
+    "current": "high",
+    "levels": []
+   },
+   "parseClaudeEffortSlider": "high",
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "claude-model-2.txt": {
+   "parseModelMenu": {
+    "kind": "model",
+    "options": [
+     {
+      "n": 2,
+      "label": "Opus 5.5",
+      "hint": "Most capable for ambitious work",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 3,
+      "label": "Fable 5.1",
+      "hint": "For your toughest challenges",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 4,
+      "label": "Sonnet 5",
+      "hint": "Most efficient for everyday tasks",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 5,
+      "label": "Haiku 4.5",
+      "hint": "Fastest for quick answers",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 6,
+      "label": "Opus 5",
+      "hint": "Best for everyday, complex tasks",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 7,
+      "label": "Fable 5",
+      "hint": "Most capable for your hardest and longest-running tasks",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 8,
+      "label": "Opus 4.8",
+      "hint": "Best for everyday, complex tasks",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 9,
+      "label": "Opus 4.7",
+      "hint": "Best for everyday, complex tasks",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 10,
+      "label": "Opus 4.6",
+      "hint": "Best for everyday, complex tasks",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 11,
+      "label": "Sonnet 4.6",
+      "hint": "Efficient for routine tasks",
+      "current": false,
+      "isDefault": false
+     }
+    ],
+    "cursor": 11,
+    "scrollDown": true,
+    "sessionKey": true,
+    "enterSelects": false,
+    "effort": "high"
+   },
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": {
+    "id": null,
+    "label": "Sonnet 5",
+    "effort": null,
+    "at": null
+   },
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": {
+    "current": "high",
+    "levels": []
+   },
+   "parseClaudeEffortSlider": "high",
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "claude-model-confirm.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": {
+    "id": null,
+    "label": "Opus 5.5",
+    "effort": null,
+    "at": null
+   },
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": [
+    "enter"
+   ],
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "claude-idle.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "claude-ask.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "claude-effort-low.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": {
+    "id": null,
+    "label": "Opus 5.5",
+    "effort": "medium",
+    "at": null
+   },
+   "claudeScreenEffort": "medium",
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": {
+    "current": "low",
+    "levels": [
+     "low",
+     "medium",
+     "high",
+     "xhigh",
+     "max",
+     "ultracode"
+    ]
+   },
+   "parseClaudeEffortSlider": "low",
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "claude-effort-medium.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": {
+    "id": null,
+    "label": "Opus 5.5",
+    "effort": "medium",
+    "at": null
+   },
+   "claudeScreenEffort": "medium",
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": {
+    "current": "medium",
+    "levels": [
+     "low",
+     "medium",
+     "high",
+     "xhigh",
+     "max",
+     "ultracode"
+    ]
+   },
+   "parseClaudeEffortSlider": "medium",
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "claude-effort-max.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": {
+    "id": null,
+    "label": "Opus 5.5",
+    "effort": "medium",
+    "at": null
+   },
+   "claudeScreenEffort": "medium",
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": {
+    "current": "max",
+    "levels": [
+     "low",
+     "medium",
+     "high",
+     "xhigh",
+     "max",
+     "ultracode"
+    ]
+   },
+   "parseClaudeEffortSlider": "max",
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "claude-effort-ultracode.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": {
+    "id": null,
+    "label": "Opus 5.5",
+    "effort": "medium",
+    "at": null
+   },
+   "claudeScreenEffort": "medium",
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": {
+    "current": "ultracode",
+    "levels": [
+     "low",
+     "medium",
+     "high",
+     "xhigh",
+     "max",
+     "ultracode"
+    ]
+   },
+   "parseClaudeEffortSlider": "ultracode",
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "claude-idle-effort.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": {
+    "id": null,
+    "label": "Sonnet 5.5",
+    "effort": null,
+    "at": null
+   },
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "codex-model-1.txt": {
+   "parseModelMenu": {
+    "kind": "model",
+    "options": [
+     {
+      "n": 1,
+      "label": "GPT-6-Astra",
+      "hint": "Frontier intelligence for the most demanding work.",
+      "current": false,
+      "isDefault": true
+     },
+     {
+      "n": 2,
+      "label": "GPT-6-Sol",
+      "hint": "Workhorse model for coding and everyday work.",
+      "current": true,
+      "isDefault": false
+     },
+     {
+      "n": 3,
+      "label": "GPT-6-Luna",
+      "hint": "Fast and affordable model for easier tasks.",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 4,
+      "label": "GPT-5.6-Sol",
+      "hint": "Older coding model for complex work.",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 5,
+      "label": "GPT-5.6-Terra",
+      "hint": "Older balanced model for straightforward work.",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 6,
+      "label": "GPT-5.6-Luna",
+      "hint": "Older fast and efficient model.",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 7,
+      "label": "GPT-5.5",
+      "hint": "Legacy coding model.",
+      "current": false,
+      "isDefault": false
+     }
+    ],
+    "cursor": 2,
+    "scrollDown": false,
+    "sessionKey": false,
+    "enterSelects": true,
+    "effort": null
+   },
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "codex-model-2.txt": {
+   "parseModelMenu": {
+    "kind": "effort",
+    "options": [
+     {
+      "n": 1,
+      "label": "Low",
+      "hint": "Fast responses with lighter reasoning",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 2,
+      "label": "Medium",
+      "hint": "Balances speed and reasoning depth for everyday tasks",
+      "current": false,
+      "isDefault": true
+     },
+     {
+      "n": 3,
+      "label": "High",
+      "hint": "Greater reasoning depth for complex problems",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 4,
+      "label": "Extra high",
+      "hint": "Extra high reasoning depth for complex problems",
+      "current": false,
+      "isDefault": false
+     },
+     {
+      "n": 5,
+      "label": "More reasoning…",
+      "hint": "Max consumes usage limits faster",
+      "current": false,
+      "isDefault": false
+     }
+    ],
+    "cursor": 2,
+    "scrollDown": false,
+    "sessionKey": true,
+    "enterSelects": false,
+    "effort": null
+   },
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "codex-idle.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": {
+    "id": null,
+    "label": "GPT-6-Sol",
+    "effort": "medium",
+    "at": null
+   },
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "devin-menu.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": {
+    "search": "SWE-2",
+    "options": [
+     {
+      "label": "Adaptive",
+      "hint": null,
+      "n": 1
+     },
+     {
+      "label": "Fusion",
+      "hint": "Max · Lead Claude Opus 5.5 ▾ Sidekick SWE-2 ▾",
+      "n": 2
+     },
+     {
+      "label": "SWE-2",
+      "hint": "✱ Max · Fast Mode Off",
+      "n": 3
+     },
+     {
+      "label": "Claude Opus 5.5",
+      "hint": "Medium · Fast Mode Off",
+      "n": 4
+     },
+     {
+      "label": "Claude Fable 5.1",
+      "hint": "Medium",
+      "n": 5
+     },
+     {
+      "label": "GPT-6",
+      "hint": "Low · Fast Mode Off",
+      "n": 6
+     }
+    ],
+    "cursor": 2
+   },
+   "devinMenuOpen": true,
+   "parseDevinFusion": {
+    "lead": "Claude Opus 5.5",
+    "sidekick": "SWE-2",
+    "focus": "effort",
+    "dropdown": null
+   },
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "devin-menu-mini.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": {
+    "search": "",
+    "options": [
+     {
+      "label": "SWE-2",
+      "hint": "Max · Fast Mode Off",
+      "n": 1
+     },
+     {
+      "label": "Grok 4.7",
+      "hint": "Medium · Fast Mode Off",
+      "n": 2
+     }
+    ],
+    "cursor": 1
+   },
+   "devinMenuOpen": true,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "devin-menu-empty.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": true,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "devin-menu-nocursor.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": {
+    "search": "",
+    "options": [
+     {
+      "label": "Claude Opus 4.6",
+      "hint": "Thinking On      1M Context Off",
+      "n": 1
+     },
+     {
+      "label": "Claude Opus 4.7",
+      "hint": "Medium",
+      "n": 2
+     }
+    ],
+    "cursor": -1
+   },
+   "devinMenuOpen": true,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "devin-confirmed.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": "Grok 4.7",
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "devin-composer.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "devin-idle.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "devin-status-fusion.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": "Fusion",
+   "devinStatusPair": {
+    "lead": "GPT-6.1 Sol",
+    "sidekick": "SWE-2 High"
+   },
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "devin-status-plain.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": "SWE-2 Max",
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "devin-fusion-effort.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": {
+    "search": "Fusion",
+    "options": [
+     {
+      "label": "Fusion",
+      "hint": "Max · Lead GPT-6.1 Sol   ▾   Sidekick SWE-2 High    ▾   Fast Mode Off",
+      "n": 1
+     }
+    ],
+    "cursor": 0
+   },
+   "devinMenuOpen": true,
+   "parseDevinFusion": {
+    "lead": "GPT-6.1 Sol",
+    "sidekick": "SWE-2 High",
+    "focus": "effort",
+    "dropdown": null
+   },
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "devin-fusion-lead.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": {
+    "lead": "GPT-6.1 Sol",
+    "sidekick": "SWE-2 High",
+    "focus": "lead",
+    "dropdown": {
+     "which": "lead",
+     "options": [
+      {
+       "label": "Claude Opus 5.5",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "GPT-6.1 Sol",
+       "here": true,
+       "def": false
+      },
+      {
+       "label": "Claude Fable 5.1",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "GPT-6 Astra",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "GPT-6 Sol",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "GPT-5.6 Sol",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "Claude Opus 5",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "Claude Sonnet 5.5",
+       "here": false,
+       "def": false
+      }
+     ],
+     "cursor": 1
+    }
+   },
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "devin-fusion-sidekick.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": {
+    "lead": "GPT-6.1 Sol",
+    "sidekick": "SWE-2 High",
+    "focus": "sidekick",
+    "dropdown": {
+     "which": "sidekick",
+     "options": [
+      {
+       "label": "SWE-2 Medium",
+       "here": false,
+       "def": true
+      },
+      {
+       "label": "SWE-2 High",
+       "here": true,
+       "def": false
+      },
+      {
+       "label": "GPT-6 Luna High",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "GPT-6.1 Terra High",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "GPT-5.6 Luna High",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "GPT-5.6 Sol High",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "GLM-5.2 High",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "Claude Sonnet 5.5 Medium",
+       "here": false,
+       "def": false
+      }
+     ],
+     "cursor": 1
+    }
+   },
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "devin-fusion-lead-overlay.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": {
+    "lead": "GPT-6.1 Sol",
+    "sidekick": "SWE-2 High",
+    "focus": "lead",
+    "dropdown": {
+     "which": "lead",
+     "options": [
+      {
+       "label": "Claude Opus 5.5",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "GPT-6.1 Sol",
+       "here": true,
+       "def": false
+      },
+      {
+       "label": "Claude Fable 5.1",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "GPT-6 Astra",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "GPT-6 Sol",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "GPT-5.6 Sol",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "Claude Opus 5",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "Claude Sonnet 5.5",
+       "here": false,
+       "def": false
+      }
+     ],
+     "cursor": 1
+    }
+   },
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "devin-fusion-sidekick-overlay.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": {
+    "lead": "GPT-6.1 Sol",
+    "sidekick": "SWE-2 High",
+    "focus": "sidekick",
+    "dropdown": {
+     "which": "sidekick",
+     "options": [
+      {
+       "label": "SWE-2 Medium",
+       "here": false,
+       "def": true
+      },
+      {
+       "label": "SWE-2 High",
+       "here": true,
+       "def": false
+      },
+      {
+       "label": "GPT-6 Luna High",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "GPT-6.1 Terra High",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "GPT-5.6 Luna High",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "GPT-5.6 Sol High",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "GLM-5.2 High",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "Claude Sonnet 5.5 Medium",
+       "here": false,
+       "def": false
+      },
+      {
+       "label": "Claude Haiku 5.5 Medium",
+       "here": false,
+       "def": false
+      }
+     ],
+     "cursor": 1
+    }
+   },
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "omp-selector.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": {
+    "options": [
+     {
+      "label": "anthropic/claude-opus-5-5",
+      "hint": null,
+      "current": true
+     },
+     {
+      "label": "anthropic/claude-haiku-4-5",
+      "hint": "context>200k"
+     },
+     {
+      "label": "anthropic/claude-sonnet-5-5",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-sonnet-5",
+      "hint": null
+     },
+     {
+      "label": "openrouter/z-ai/glm-5.3-flash",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-opus-5",
+      "hint": null
+     },
+     {
+      "label": "omlx/Qwen3.8-27B-8bit",
+      "hint": "context>262k"
+     },
+     {
+      "label": "opencode-zen/nemotron-3.5-lightning-free",
+      "hint": "context>262k"
+     },
+     {
+      "label": "nvidia/moonshotai/kimi-k3",
+      "hint": null
+     },
+     {
+      "label": "opencode-zen/nemotron-3-ultra-free",
+      "hint": null
+     }
+    ],
+    "cursor": 0,
+    "search": "",
+    "separator": null,
+    "task": false,
+    "truncated": false,
+    "width": 155
+   },
+   "ompSelectorOnScreen": true,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": {
+    "name": "Claude Opus 5.5",
+    "roles": [
+     "current",
+     "default",
+     "slow",
+     "plan",
+     "designer"
+    ]
+   },
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "omp-selector-nerd.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": {
+    "options": [
+     {
+      "label": "anthropic/claude-haiku-4-5",
+      "hint": null
+     },
+     {
+      "label": "openai-codex/gpt-5.6-sol",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-opus-5-5",
+      "hint": null,
+      "current": true
+     },
+     {
+      "label": "openai-codex/gpt-6.1-sol",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-sonnet-5-5",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-fable-5-1",
+      "hint": null
+     }
+    ],
+    "cursor": 2,
+    "search": "",
+    "separator": 4,
+    "task": false,
+    "truncated": false,
+    "width": 119
+   },
+   "ompSelectorOnScreen": true,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": {
+    "name": "Claude Opus 5.5",
+    "roles": [
+     "current"
+    ]
+   },
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "omp-selector-search.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": {
+    "options": [
+     {
+      "label": "openrouter/z-ai/glm-5.3-flash",
+      "hint": null,
+      "current": false
+     },
+     {
+      "label": "openrouter/z-ai/glm-5.3",
+      "hint": null
+     },
+     {
+      "label": "openrouter/z-ai/glm-5.3-flash",
+      "hint": null
+     },
+     {
+      "label": "openrouter/z-ai/glm-5.3-flashx",
+      "hint": null
+     },
+     {
+      "label": "openrouter/z-ai/glm-5.3-prime",
+      "hint": null
+     },
+     {
+      "label": "openrouter/z-ai/glm-5.3",
+      "hint": null
+     },
+     {
+      "label": "openrouter/z-ai/glm-5.2",
+      "hint": null
+     },
+     {
+      "label": "openrouter/z-ai/glm-5.2",
+      "hint": null
+     },
+     {
+      "label": "openrouter/z-ai/glm-5.2",
+      "hint": "context>256k"
+     }
+    ],
+    "cursor": 0,
+    "search": "glm",
+    "separator": 1,
+    "task": false,
+    "truncated": false,
+    "width": 155
+   },
+   "ompSelectorOnScreen": true,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": {
+    "name": "GLM 5.3 Flash",
+    "roles": []
+   }
+  },
+  "omp-selector-ascii.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": {
+    "options": [
+     {
+      "label": "anthropic/claude-sonnet-4-5",
+      "hint": null,
+      "current": true
+     },
+     {
+      "label": "anthropic/claude-fable-5-1",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-haiku-5-5",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-opus-5-5",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-sonnet-5-5",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-mythos-5-1",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-fable-5",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-mythos-5",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-opus-5",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-sonnet-5",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-opus-4-8",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-opus-4-7",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-opus-4-6",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-sonnet-4-6",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-opus-4-5-20251101",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-haiku-4-5-20251001",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-sonnet-4-5-20250929",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-haiku-4-5",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-opus-4-5",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-opus-4-1-20250805",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-opus-4-1",
+      "hint": null
+     }
+    ],
+    "cursor": 0,
+    "search": "",
+    "separator": 2,
+    "task": false,
+    "truncated": false,
+    "width": 173
+   },
+   "ompSelectorOnScreen": true,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": {
+    "name": "Claude Sonnet 4.5",
+    "roles": [
+     "current",
+     "default"
+    ]
+   },
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "omp-selector-narrow-nerd.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": {
+    "options": [
+     {
+      "label": "anthropic/cla",
+      "hint": null,
+      "current": false
+     },
+     {
+      "label": "anthropic/cla",
+      "hint": null
+     },
+     {
+      "label": "anthropic/cla",
+      "hint": null
+     },
+     {
+      "label": "anthropic/cla",
+      "hint": null
+     },
+     {
+      "label": "anthropic/cla",
+      "hint": null
+     },
+     {
+      "label": "anthropic/cla",
+      "hint": null
+     }
+    ],
+    "cursor": 0,
+    "search": "",
+    "separator": 2,
+    "task": false,
+    "truncated": true,
+    "width": 38
+   },
+   "ompSelectorOnScreen": true,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": {
+    "name": "Claude Sonnet 4.5",
+    "roles": [
+     "current",
+     "default 󰪣",
+     " smo…"
+    ]
+   },
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "omp-selector-wide-nerd.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": {
+    "options": [
+     {
+      "label": "anthropic/claude-sonnet-4-5",
+      "hint": null,
+      "current": true
+     },
+     {
+      "label": "anthropic/claude-fable-5-1",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-haiku-5-5",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-opus-5-5",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-sonnet-5-5",
+      "hint": null
+     },
+     {
+      "label": "anthropic/claude-mythos-5-1",
+      "hint": null
+     }
+    ],
+    "cursor": 0,
+    "search": "",
+    "separator": 2,
+    "task": false,
+    "truncated": false,
+    "width": 150
+   },
+   "ompSelectorOnScreen": true,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": {
+    "name": "Claude Sonnet 4.5",
+    "roles": [
+     "current",
+     "default 󰪣",
+     " smol",
+     " slow",
+     " tiny",
+     " memory"
+    ]
+   },
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "omp-models-panel.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": null,
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "omp-idle-footer.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": {
+    "id": null,
+    "label": "Opus 5.5",
+    "effort": "high",
+    "at": null
+   },
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "omp-ask-single.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": {
+    "id": null,
+    "label": "Opus 5.5",
+    "effort": "high",
+    "at": null
+   },
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "omp-done.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": {
+    "id": null,
+    "label": "Opus 5.5",
+    "effort": "low",
+    "at": null
+   },
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "omp-fresh-nerd.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": {
+    "id": null,
+    "label": "Opus 5.5",
+    "effort": "auto",
+    "at": null
+   },
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  },
+  "omp-idle-powerline.txt": {
+   "parseModelMenu": null,
+   "parseOmpSelector": null,
+   "ompSelectorOnScreen": false,
+   "parseDevinModelMenu": null,
+   "devinMenuOpen": false,
+   "parseDevinFusion": null,
+   "devinStatusModel": null,
+   "devinStatusPair": null,
+   "devinModelSetEcho": null,
+   "claudeScreenModel": null,
+   "claudeScreenEffort": null,
+   "codexFooterModel": null,
+   "parseClaudeEffortScreen": null,
+   "parseClaudeEffortSlider": null,
+   "ompScreenModel": {
+    "id": null,
+    "label": "Opus 5.5",
+    "effort": "low",
+    "at": null
+   },
+   "ompScreenEffort|null": null,
+   "ompScreenEffort|Claude Sonnet 4.5": null,
+   "switchConfirmKeys|Sonnet 4.6": null,
+   "switchConfirmKeys|Opus 5.5": null,
+   "ompSelectorCaption|anthropic/claude-opus-5-5": null,
+   "ompSelectorCaption|anthropic/claude-sonnet-4-5": null,
+   "ompSelectorCaption|openrouter/z-ai/glm-5.3-flash": null
+  }
+ }
+}
