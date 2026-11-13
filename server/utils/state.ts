@@ -83,7 +83,7 @@ export const currentModel = (p: Pane) => modelCtl().currentModel(p)
 
 // The drive side of the picker (coreModelctl): terminal.* through coreCall,
 // lists cached through modelCtl().noteList (`${machine}|${agent}`).
-let coreModelCtlInstance: ReturnType<typeof createCoreModelCtl> | null = null
+export let coreModelCtlInstance: ReturnType<typeof createCoreModelCtl> | null = null
 export function coreModelCtl() {
   return coreModelCtlInstance ||= createCoreModelCtl({
     call: (method, params, timeout) => coreCall(process.env.HC_SOCKET || '', method, params, timeout),
@@ -210,7 +210,11 @@ export async function poll() {
   corePreviews().apply(state.panes)
   const alive = new Set(state.panes.map(p => p.id))
   for (const id of modelRefresh().ids()) if (!alive.has(id)) { modelRefresh().forget(id); modelCtl().forgetModel(id) }
+  coreModelCtlInstance?.prunePanes(alive)
   for (const p of state.panes) {
+    // The model picker's own menu may still be the screen: that mark is not
+    // a foreign prompt (ModelPicker's why reads it).
+    p.menuLeftOpen = coreModelCtlInstance?.menuLeftOpen(p.id) || undefined
     if (!hasTranscript(p.agent)) continue
     modelRefresh().apply(p)
   }
