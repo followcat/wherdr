@@ -1,3 +1,4 @@
-// Core-mode routes added by the model pickers (A7: list reads only — the
-// switch routes land with T3b/T4). See shared/coreRoutes.ts.
-export default ['GET models'] as string[]
+// Core-mode routes added by the model pickers (A7: GET models is read-only;
+// POST model is the session-only switch for claude/codex — Devin/omp/OpenCode
+// switch routes land with T4/T5/T6). See shared/coreRoutes.ts.
+export default ['GET models', 'model'] as string[]

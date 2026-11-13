@@ -93,6 +93,8 @@ export function coreModelCtl() {
     currentModel: p => modelCtl().currentModel(p),
     opencodeModels: p => transcripts.opencodeModels(p),
     noteList: (p, agent, list) => modelCtl().noteList(p, agent, list),
+    noteOverride: (paneId, info) => modelCtl().noteOverride(paneId, info),
+    noteObservedEffort: (paneId, label, effort) => modelCtl().noteObservedEffort(paneId, label, effort),
     refresh: () => { setTimeout(() => { void poll() }, 100) },
   })
 }

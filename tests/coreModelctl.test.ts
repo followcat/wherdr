@@ -13,12 +13,18 @@ const menu2 = fx('claude-model-2.txt')
 const ask = fx('claude-ask.txt')
 
 type Op = { method: string, params: any }
-function make(over: Partial<CoreModelCtlDeps> & { screens?: (string | (() => string | Promise<string>))[] } = {}) {
+function make(over: Partial<CoreModelCtlDeps> & {
+  screens?: (string | (() => string | Promise<string>))[],
+  agent?: string,
+  onKeys?: (keys: string[]) => void,
+} = {}) {
   const ops: Op[] = []
   let i = 0
   const screens = over.screens ?? [idle]
-  const pane: Pane = { id: 'h1', agent: 'claude', status: 'idle', coreAddress: 't:1', machine: '' } as Pane
+  const pane: Pane = { id: 'h1', agent: over.agent ?? 'claude', status: 'idle', coreAddress: 't:1', machine: '' } as Pane
   const noted: { pane: string, agent: string, list: any }[] = []
+  const overrides: any[] = []
+  const efforts: any[] = []
   const deps: CoreModelCtlDeps = {
     call: async (method: string, params: object) => {
       ops.push({ method, params })
@@ -26,6 +32,7 @@ function make(over: Partial<CoreModelCtlDeps> & { screens?: (string | (() => str
         const s = screens[Math.min(i++, screens.length - 1)]
         return { text: typeof s === 'function' ? await s() : s }
       }
+      if (method === 'terminal.keys') over.onKeys?.((params as { keys: string[] }).keys)
       return {}
     },
     pane: id => (id === 'h1' ? pane : undefined),
@@ -40,11 +47,13 @@ function make(over: Partial<CoreModelCtlDeps> & { screens?: (string | (() => str
       { id: 'm4', providerID: 'acme', name: 'Off', enabled: false },
     ],
     noteList: (p, agent, list) => { noted.push({ pane: `${p.machine}|${agent}`, agent, list }) },
+    noteOverride: (paneId, info) => { overrides.push({ paneId, info }) },
+    noteObservedEffort: (paneId, label, effort) => { efforts.push({ paneId, label, effort }) },
     sleep: async () => {},
     now: () => 1000,
     ...over,
   }
-  return { ctl: createCoreModelCtl(deps), ops, noted, pane, deps }
+  return { ctl: createCoreModelCtl(deps), ops, noted, overrides, efforts, pane, deps }
 }
 const sends = (ops: Op[]) => ops.filter(o => o.method === 'terminal.send')
 const keys = (ops: Op[]) => ops.filter(o => o.method === 'terminal.keys')
@@ -160,5 +169,102 @@ describe('parseCmdModels', () => {
     expect(o.map(x => x.label)).toEqual(['acme/alpha', 'acme/beta'])
     expect(o[0]).toMatchObject({ current: true, isDefault: false })
     expect(o[1]).toMatchObject({ current: false, isDefault: true, hint: 'Beta two' })
+  })
+})
+
+// The switch drives the same screens the list reads: a fake `call` whose keys
+// move the fixture state (like the real TUI would).
+describe('setModel — claude', () => {
+  const cursor4 = fx('claude-model-cursor4.txt')
+  const confirm5 = fx('claude-model-confirm-sonnet5.txt')
+  const confirm46 = fx('claude-model-confirm.txt')
+
+  it('accepts the matching "Switch model?" and records the pick', async () => {
+    let cur = menu1
+    const { ctl, ops, overrides, efforts } = make({
+      screens: [idle, idle, () => cur],
+      onKeys: (k) => {
+        if (k.includes('s')) cur = confirm5
+        else if (k.includes('enter')) cur = idle
+        else if (k.includes('down')) cur = cursor4
+      },
+    })
+    const info = await ctl.setModel('h1', 'Sonnet 5')
+    expect(info).toMatchObject({ label: 'Sonnet 5', effort: 'high' })
+    expect(sends(ops).map(o => o.params.text)).toEqual(['/model'])
+    const seq = keys(ops).map(o => o.params.keys.join(','))
+    expect(seq).toContain('down,down,down')
+    expect(seq).toContain('s')
+    expect(seq).toContain('enter')
+    expect(overrides[0]).toMatchObject({ paneId: 'h1', info: { label: 'Sonnet 5', effort: 'high' } })
+    expect(efforts[0]).toMatchObject({ label: 'Sonnet 5', effort: 'high' })
+  })
+
+  it('declines a "Switch model?" naming another model — nothing recorded', async () => {
+    let cur = menu1
+    const { ctl, ops, overrides } = make({
+      screens: [idle, idle, () => cur],
+      onKeys: (k) => {
+        if (k.includes('s')) cur = confirm46
+        else if (k.includes('enter')) cur = idle
+      },
+    })
+    await expect(ctl.setModel('h1', 'Default (recommended)')).rejects.toMatchObject({ code: 'stale' })
+    const seq = keys(ops).map(o => o.params.keys.join(','))
+    expect(seq).toContain('down,enter') // "No, go back"
+    expect(overrides).toHaveLength(0)
+  })
+
+  it('a native prompt replacing the menu mid-switch: refusal, close attempted', async () => {
+    const { ctl, ops } = make({ screens: [idle, idle, menu1, menu1, cursor4, ask] })
+    await expect(ctl.setModel('h1', 'Sonnet 5')).rejects.toMatchObject({ code: 'stale' })
+    const seq = keys(ops).map(o => o.params.keys.join(','))
+    expect(seq).not.toContain('s')
+    expect(seq).not.toContain('enter')
+    expect(seq).toContain('esc')
+  })
+
+  it('refuses labels not in the freshly read list and closes the menu', async () => {
+    const { ctl, ops } = make({ screens: [idle, idle, menu1] })
+    await expect(ctl.setModel('h1', 'No Such Model')).rejects.toMatchObject({ code: 'bad_model' })
+    expect(sends(ops)).toHaveLength(1)
+    expect(keys(ops).some(o => o.params.keys.includes('esc'))).toBe(true)
+  })
+
+  it('refuses parts and a missing label before any terminal IO', async () => {
+    const { ctl, ops } = make()
+    await expect(ctl.setModel('h1', 'Sonnet 5', { lead: 'X' })).rejects.toMatchObject({ code: 'unsupported' })
+    await expect(ctl.setModel('h1', '')).rejects.toMatchObject({ code: 'bad_model' })
+    expect(ops).toHaveLength(0)
+  })
+
+  it('refuses omp/devin/opencode/cmd panes for now', async () => {
+    const { ctl, pane } = make({ agent: 'omp' })
+    await expect(ctl.setModel('h1', 'acme/alpha')).rejects.toMatchObject({ code: 'unsupported' })
+    pane.agent = 'devin'
+    await expect(ctl.setModel('h1', 'x')).rejects.toMatchObject({ code: 'unsupported' })
+  })
+})
+
+describe('setModel — codex', () => {
+  const cmodel1 = fx('codex-model-1.txt')
+  const cmodel2 = fx('codex-model-2.txt')
+  const cidle = fx('codex-idle.txt')
+
+  it('enter selects, effort page confirms with s', async () => {
+    let cur = cmodel1
+    const { ctl, ops, overrides } = make({
+      agent: 'codex',
+      screens: [cidle, cidle, () => cur],
+      onKeys: (k) => {
+        if (k.includes('enter')) cur = cmodel2
+        else if (k.includes('s')) cur = cidle
+      },
+    })
+    const info = await ctl.setModel('h1', 'GPT-6-Sol')
+    expect(info).toMatchObject({ label: 'GPT-6-Sol', effort: 'medium' })
+    const seq = keys(ops).map(o => o.params.keys.join(','))
+    expect(seq.indexOf('enter')).toBeLessThan(seq.indexOf('s'))
+    expect(overrides[0]).toMatchObject({ info: { label: 'GPT-6-Sol' } })
   })
 })
