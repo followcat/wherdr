@@ -1,0 +1,7 @@
+
+──────────────────────────────────────────
+/
+──────────────────────────────────────────
+  SWE-2                                                ← ◼◼◼    → Max            Fast Mode Off
+  Grok 4.7                                             ← ◼◼◼◼   → Medium          Fast Mode Off
+↑↓ select · ←→ effort · ↵ confirm · alt+↵ this session only · esc cancel
