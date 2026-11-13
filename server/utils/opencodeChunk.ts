@@ -33,18 +33,20 @@ try:
     expected_fp = request.get('fingerprint')
     total = request.get('size')
     offset = request.get('offset')
-    if op not in ('session', 'page') \
-            or not isinstance(session, str) or not re.fullmatch(r'[0-9A-Za-z_-]{1,128}', session) \
+    if op not in ('session', 'page', 'models') \
+            or op != 'models' and (not isinstance(session, str) or not re.fullmatch(r'[0-9A-Za-z_-]{1,128}', session)) \
+            or op == 'models' and session is not None \
             or 'cursor' in request and (op != 'page' or not isinstance(cursor, str) or not re.fullmatch(r'[\x21-\x7e]{1,256}', cursor)) \
             or not isinstance(expected_server, str) or not re.fullmatch(r'[a-f0-9]{32}', expected_server) \
             or not isinstance(expected_fp, str) or not re.fullmatch(r'[a-f0-9]{64}', expected_fp) \
             or not isinstance(total, int) or isinstance(total, bool) or not 0 <= total <= READ_LIMIT \
             or not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= total:
         raise Fail('invalid_request')
-    # Fixed paths only: a validated session id, and for a page the fixed
-    # descending page size with either its initial order or the opaque
-    # native cursor as an encoded query value. Never a numeric coercion.
-    path = '/api/session/' + urllib.parse.quote(session, safe='')
+    # Fixed paths only: a validated session id, the fixed catalog for models,
+    # and for a page the fixed descending page size with either its initial
+    # order or the opaque native cursor as an encoded query value. Never a
+    # numeric coercion.
+    path = '/api/model' if op == 'models' else '/api/session/' + urllib.parse.quote(session, safe='')
     if op == 'page':
         query = {'limit': '120'}
         if cursor is None:

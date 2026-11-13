@@ -2672,7 +2672,10 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     claudeAskCache.delete(paneId)
   }
 
-  return { chat, preview, latestReply, image, forget, locate, model, observe, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions, current, live }
+  return { chat, preview, latestReply, image, forget, locate, model, observe, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions, current, live,
+    // The service's /api/model catalog (opencode only): the drive side of
+    // the picker reads it; a switch via PATCH stays a T6 decision.
+    opencodeModels: (p: TranscriptPane) => oc ? oc.models() : Promise.resolve([]) }
 }
 
 export type Transcripts = ReturnType<typeof createTranscripts>

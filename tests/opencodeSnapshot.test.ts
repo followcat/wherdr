@@ -295,3 +295,32 @@ it('fails closed when the clock passes the deadline before a reply publishes', a
     expect(calls).toBe(3)
   } finally { spy.mockRestore() }
 })
+
+it('reads the server-wide models catalog with no session field', async () => {
+  const body = Buffer.from('{"data":[{"id":"m1","providerID":"acme","name":"Alpha"}]}')
+  const fp = snapFp(hex32, '', 'models', '', sha(body))
+  const requests: Record<string, unknown>[] = []
+  const fake: ShellExec = async (_s, args = []) => {
+    requests.push(JSON.parse(String(args?.[2] || '{}')))
+    if (args[0] === OPENCODE_META)
+      return env({ status: 200, server: hex32, fingerprint: fp, size: body.length, unchanged: false })
+    return env({ status: 200, server: hex32, fingerprint: fp, size: body.length, offset: 0, piece: body.toString('base64') })
+  }
+  const r = await opencodeSnapshots(fake).read('/home/user', { op: 'models' })
+  expect(r).toMatchObject({ ok: true, unchanged: false })
+  expect((r as { body?: Buffer }).body?.toString('utf8')).toBe(body.toString('utf8'))
+  // Both the metadata and the descriptor carry the fixed 'models' op and no
+  // session field at all — the catalog is a server-wide read.
+  expect(requests).toHaveLength(2)
+  for (const req of requests) {
+    expect(req.op).toBe('models')
+    expect(req.session).toBeUndefined()
+    expect(req.cursor).toBeUndefined()
+  }
+})
+
+it('refuses a models target carrying a session or cursor', async () => {
+  for (const req of [{ op: 'models', session: 'ses_example' }, { op: 'models', cursor: 'abc' }])
+    expect(await opencodeSnapshots(async () => env({})).read('/home/user', req), JSON.stringify(req))
+      .toEqual({ ok: false, error: 'invalid_request' })
+})
