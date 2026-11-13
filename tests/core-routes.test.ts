@@ -22,7 +22,7 @@ describe('coreRouteAllowed', () => {
   ])('allows %s', (p) => { expect(coreRouteAllowed(p)).toBe(true) })
 
   it.each([
-    '/api/model', '/api/effort', '/api/restart', '/api/codex-update', '/api/tasks/1',
+    '/api/effort', '/api/restart', '/api/codex-update', '/api/tasks/1',
     '/api/statex', '/api/authx', '/api/machine', '/api/machine/remove', '/api/chat/other', '/api/stat', '/state',
     '/api/auth', '/api/auth/login', '/api/core/session', '/api/dictation', '/api/dictation/other', '/api/files/write',
     '/api/push', '/api/push/other', '/api/client-plugins/x', '/api/client-plugins/x/y/z', '/api/client-plugins//main.js',
@@ -39,6 +39,11 @@ describe('coreRouteAllowed', () => {
     expect(coreRouteAllowed('/api/models')).toBe(true)
     expect(coreRouteAllowed('/api/models?pane=1')).toBe(true)
     expect(coreRouteAllowed('/api/models', 'POST')).toBe(false)
+  })
+  it('posts the session-only model switch', () => {
+    expect(coreRouteAllowed('/api/model', 'POST')).toBe(true)
+    expect(coreRouteAllowed('/api/model', 'GET')).toBe(true)
+    expect(coreRouteAllowed('/api/model/x', 'POST')).toBe(false)
   })
   it('answers the file browser routes', () => {
     for (const r of ['/api/files?pane=x', '/api/files/read?pane=x&path=a', '/api/files/download?pane=x']) expect(coreRouteAllowed(r)).toBe(true)

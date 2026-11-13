@@ -200,3 +200,14 @@ export function switchConfirmKeys(text: string | null | undefined, label: string
   })
   return i < 0 ? null : keysFor(c, i)
 }
+
+// A "Switch model?" that names a different model than the one just picked is
+// declined ("No, go back"), gated the same way — the picker's own move raised
+// that dialog, so leaving it unanswered would strand the agent on it.
+export function switchDeclineKeys(text: string | null | undefined): string[] | null {
+  if (!text || !/^\s*Switch model\?\s*$/m.test(text)) return null
+  const c = parseChoices(text, { strict: true })
+  if (!c) return null
+  const i = c.options.findIndex(o => /^(?:no|cancel|back)\b/i.test(o.label))
+  return i < 0 ? null : keysFor(c, i)
+}

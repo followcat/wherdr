@@ -8,9 +8,10 @@
 // cmd machine.exec) hold `busy` only — never both operations at once on a pane.
 import { readCoreScreen } from './coreScreen'
 import { HerdrError } from './herdr'
+import { log } from './env'
 import { sleep as defaultSleep } from './herdr'
-import { cleanModelName, sameModel } from './models'
-import { parseModelMenu, parseOmpSelector, type ModelMenu } from './modelMenus'
+import { cleanModelName, sameModel, effortMatches } from './models'
+import { parseModelMenu, parseOmpSelector, switchConfirmKeys, switchDeclineKeys, type ModelMenu } from './modelMenus'
 import { devinMenuOpen, parseDevinModelMenu, parseDevinFusion, type DevinModelMenu } from './devinMenu'
 import { ompSelectorOnScreen } from '../../shared/ompSelector'
 import { fmt } from '../../shared/message'
@@ -38,6 +39,8 @@ export interface CoreModelCtlDeps {
   currentModel: (p: Pane) => Promise<ModelInfo | null> // modelCtl().currentModel
   opencodeModels?: (p: Pane) => Promise<Record<string, any>[] | null> // transcripts.opencodeModels (service read)
   noteList: (p: Pane, agent: string, list: ModelList) => void // modelCtl().noteList
+  noteOverride: (paneId: string, info: ModelInfo) => void // modelCtl().noteOverride — pill update before the next poll
+  noteObservedEffort: (paneId: string, label: string, effort: string) => void // modelCtl().noteObservedEffort
   refresh?: () => void
   sleep?: (ms: number) => Promise<void>
   now?: () => number
@@ -111,6 +114,12 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
       await sleep(300)
     }
   }
+  // Claude/Codex numbered menus of one kind (model or effort) — the
+  // menu-internal key gate and the waits share this check.
+  const menuCheck = (kind: ModelMenu['kind']) => (t: string) => {
+    const x = parseModelMenu(t)
+    return x?.kind === kind ? x : null
+  }
 
   // -------------------------------------------------------- claude/codex menu
   const modelMenu = (p: Pane) => waitScreen(p, t => parseModelMenu(t)?.kind === 'model' ? parseModelMenu(t) : null, 6000)
@@ -129,10 +138,10 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
     }
   }
 
-  // All options: Claude only shows 10 (↑/↓ before the number), we go back to
-  // the top then down page by page (the list wraps to the top after the last
-  // one). "current" is not kept: the list is shared by all agents of the kind.
-  async function readAllOptions(p: Pane, first: ModelMenu): Promise<ModelOption[]> {
+  // All option rows (numbered): Claude only shows 10 (↑/↓ before the number),
+  // we go back to the top then down page by page (the list wraps to the top
+  // after the last one).
+  async function readAllOptionRows(p: Pane, first: ModelMenu): Promise<ModelMenu['options']> {
     const all = new Map(first.options.map(o => [o.n, o]))
     let m = first
     // Page opened further down (current model at the end of the list): go back up to no. 1 first.
@@ -154,18 +163,21 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
       if (all.size === before) break
       m = next
     }
-    return [...all.values()].sort((a, b) => a.n - b.n).map(o => ({ label: o.label, hint: o.hint, isDefault: Boolean(o.isDefault) }))
+    return [...all.values()].sort((a, b) => a.n - b.n)
   }
+  // "current" is not kept: the list is shared by all agents of the kind.
+  const readAllOptions = async (p: Pane, first: ModelMenu): Promise<ModelOption[]> =>
+    (await readAllOptionRows(p, first)).map(o => ({ label: o.label, hint: o.hint, isDefault: Boolean(o.isDefault) }))
 
-  // Cursor onto `label` — verified on screen. The menu is left open.
-  async function pick(p: Pane, m: ModelMenu, label: string) {
-    const o = m.options.find(o => o.label === label || o.hint === label)
-    if (!o) throw new HerdrError('bad_model', fmt('Model not offered: {name}', { name: label }))
-    if (o.n !== m.cursor) {
-      await menuKeys(p, moveKeys(m.cursor, o.n), t => parseModelMenu(t)?.kind === 'model' ? parseModelMenu(t) : null)
-      const at = await waitScreen(p, t => { const x = parseModelMenu(t); return x?.kind === 'model' ? x : null }, 3000)
-      if (!at || at.cursor !== o.n) throw new HerdrError('stale', 'The /model menu changed — try again.')
-    }
+  // Cursor onto option `n` — verified on screen (option still `label`, cursor
+  // really there). The menu is left open; the returned state is post-move.
+  async function pick(p: Pane, m: ModelMenu, n: number, label: string, kind: ModelMenu['kind']): Promise<ModelMenu> {
+    const keys = moveKeys(m.cursor, n)
+    if (keys.length) await menuKeys(p, keys, menuCheck(kind))
+    const at = await waitScreen(p, t => { const x = parseModelMenu(t); return x?.kind === kind && x.cursor === n ? x : null }, 3000)
+    const o = at && at.options.find(x => x.n === n)
+    if (!at || !o || o.label !== label) throw new HerdrError('stale', 'The /model menu changed — try again.')
+    return at
   }
 
   async function menuList(p: Pane): Promise<ModelList> {
@@ -177,6 +189,90 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
         deps.noteList(p, p.agent!, list)
         return list
       } finally { await closeMenu(p) }
+    })
+  }
+
+  // A session-only model switch: "s to use this session only" (Claude, or
+  // Codex's effort page), never a global default. A wrong-model "Switch
+  // model?" confirm is refused — its keys go out only when the screen names
+  // the requested model.
+  async function setModel(paneId: unknown, wanted: unknown, parts?: unknown): Promise<ModelInfo> {
+    const p0 = pane(paneId)
+    if (p0.agent === 'devin' || p0.agent === 'omp' || p0.agent === 'opencode' || p0.agent === 'cmd')
+      throw new HerdrError('unsupported', 'Switching this agent’s model is not supported yet')
+    if (parts && typeof parts === 'object' && Object.keys(parts as object).length)
+      throw new HerdrError('unsupported', 'This model has no selectable parts')
+    const label = cleanModelName(String(wanted || ''))
+    if (!label) throw new HerdrError('bad_model', 'Missing model')
+    return withPane(p0.id, async (p) => {
+      const before = await deps.currentModel(p).catch(() => null)
+      const started = now()
+      let m = await openMenu(p)
+      try {
+        // Option number: in the list read (the menu only shows one page).
+        let n = m.options.find(o => o.label === label)?.n
+        if (!n) {
+          n = (await readAllOptionRows(p, m)).find(o => o.label === label)?.n
+          m = (await waitScreen(p, menuCheck('model'), 2000)) || m // cursor moved
+        }
+        if (!n) throw new HerdrError('bad_model', fmt('Model not found in /model: {model}', { model: label }))
+        m = await pick(p, m, n, label, 'model')
+        // "Default (recommended)": Claude confirms with the default model's name.
+        const picked = m.options.find(o => o.n === n)
+        const confirmAs = /^default\b/i.test(label) && picked && picked.hint ? cleanModelName(picked.hint.split('·')[0]!) : label
+
+        let effort: string | null = null
+        if (p.agent === 'claude') {
+          if (!m.sessionKey) throw new HerdrError('unsafe', '“This session only” option not found — nothing was changed.')
+          effort = m.effort
+          await menuKeys(p, ['s'], menuCheck('model'))
+        } else {
+          // Codex: Enter only moves on to the effort choice ("enter select").
+          if (!m.enterSelects) throw new HerdrError('unsafe', 'Unexpected /model menu — nothing was changed.')
+          await menuKeys(p, ['enter'], menuCheck('model'))
+          const e = await waitScreen(p, menuCheck('effort'), 4000)
+          if (!e || !e.sessionKey) throw new HerdrError('unsafe', 'Unexpected effort menu — nothing was changed.')
+          // Keep the current effort if it exists for this model, otherwise the one offered.
+          const keep = e.options.find(o => effortMatches(o.label, before && before.effort))
+          const at = keep && keep.n !== e.cursor ? await pick(p, e, keep.n, keep.label, 'effort') : e
+          effort = (at.options.find(o => o.n === at.cursor)?.label || '').toLowerCase().replace(/\s+/g, '') || null
+          if (effort === 'extrahigh') effort = 'xhigh'
+          await menuKeys(p, ['s'], menuCheck('effort'))
+        }
+        // Menu closed = choice taken. Claude may first ask for confirmation
+        // (conversation cached for the old model): we confirm this model.
+        // Done when neither menu nor confirmation is seen twice in a row.
+        const until = now() + 5000
+        let clear = 0
+        while (clear < 2 && now() < until) {
+          const text = await screen(p)
+          const confirm = p.agent === 'claude' ? switchConfirmKeys(text, confirmAs) : null
+          if (confirm) {
+            await menuKeys(p, confirm, t => switchConfirmKeys(t, confirmAs))
+            clear = 0
+            await sleep(400)
+            continue
+          }
+          // A "Switch model?" for another model is declined — the alternative
+          // is an agent left stuck on a dialog our pick caused.
+          const decline = p.agent === 'claude' ? switchDeclineKeys(text) : null
+          if (decline) {
+            await menuKeys(p, decline, t => switchDeclineKeys(t))
+            throw new HerdrError('stale', 'The confirmation offered a different model — nothing was changed.')
+          }
+          clear = parseModelMenu(text) ? 0 : clear + 1
+          await sleep(250)
+        }
+        if (clear < 2) throw new HerdrError('stale', 'The /model menu changed — try again.')
+        const info: ModelInfo = { id: null, label: confirmAs, effort, at: new Date(started).toISOString() }
+        deps.noteOverride(p.id, info)
+        if (effort) deps.noteObservedEffort(p.id, confirmAs, effort)
+        log(`model ${p.id} (${p.agent}) -> ${confirmAs}${effort ? ' ' + effort : ''} (this session)`)
+        return (await deps.currentModel(p).catch(() => null)) || info
+      } catch (e) {
+        await closeMenu(p).catch(() => {})
+        throw e
+      }
     })
   }
 
@@ -352,6 +448,7 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
 
   return {
     listModels,
+    setModel,
     pick,
     modelControlBusy: (paneId: string) => busy.has(paneId),
   }
