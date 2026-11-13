@@ -12,7 +12,7 @@ import { log } from './env'
 import { sleep as defaultSleep } from './herdr'
 import { cleanModelName, sameModel, effortMatches, effortValue, claudeEffortCommand, claudeEffortLevels, codexCachedEfforts, learnOmpCycle, ompEffortLevels, ompModelLabel, ompScreenEffort, parseClaudeEffortScreen, OMP_EFFORT_ORDER, type ClaudeEffortSlider, type OmpCycleKnowledge } from './models'
 import { parseModelMenu, parseOmpSelector, switchConfirmKeys, switchDeclineKeys, ompSelectorCaption, panelOpen, type ModelMenu, type OmpSelector } from './modelMenus'
-import { devinMenuOpen, parseDevinModelMenu, parseDevinFusion, type DevinModelMenu } from './devinMenu'
+import { devinMenuOpen, parseDevinModelMenu, parseDevinFusion, devinModelSetEcho, devinStatusModel, devinStatusPair, type DevinModelMenu, type DevinFusionState } from './devinMenu'
 import { ompSelectorOnScreen } from '../../shared/ompSelector'
 import { fmt } from '../../shared/message'
 import type { Machine } from './machines'
@@ -223,7 +223,8 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
   async function setModel(paneId: unknown, wanted: unknown, parts?: unknown): Promise<ModelInfo> {
     const p0 = pane(paneId)
     if (p0.agent === 'omp') return ompSetModel(p0, wanted)
-    if (p0.agent === 'devin' || p0.agent === 'opencode' || p0.agent === 'cmd')
+    if (p0.agent === 'devin') return devinSetModel(p0, wanted, parts)
+    if (p0.agent === 'opencode' || p0.agent === 'cmd')
       throw new HerdrError('unsupported', 'Switching this agent’s model is not supported yet')
     if (parts && typeof parts === 'object' && Object.keys(parts as object).length)
       throw new HerdrError('unsupported', 'This model has no selectable parts')
@@ -723,6 +724,137 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
       await sleep(300)
     }
     return parts.length ? parts : null
+  }
+
+  async function devinOpenMenu(p: Pane): Promise<DevinModelMenu> {
+    await devinClose(p)
+    await closePanel(p)
+    await sendInput(p, '/model')
+    const m = await devinMenu(p)
+    if (!m) { await devinClose(p); throw new HerdrError('no_menu', 'The /model menu did not show up') }
+    return m
+  }
+
+  // The picker's own check for menu-internal keys: the full menu parses, an
+  // open Lead/Sidekick dropdown is a Fusion state, and a dead search still
+  // shows the legend (devinPickerOpen covers all three).
+  const devinMenuState = (t: string) => parseDevinModelMenu(t) ?? parseDevinFusion(t)
+
+  // Opens the Fusion row's `which` dropdown by tabbing the row's controls,
+  // then moves the "▸" pick to `name` — verified on screen: a name the
+  // dropdown does not offer is bad_model, a cursor that does not follow is
+  // stale. Returns once the pick is set (dropdown still open).
+  async function devinPickFusionPart(p: Pane, which: 'lead' | 'sidekick', name: string) {
+    let st: DevinFusionState | null = null
+    for (let t = 0; t < 5; t++) {
+      st = parseDevinFusion(await screen(p))
+      if (st?.dropdown?.which === which) break
+      if (!st) throw new HerdrError('stale', 'The /model menu changed — try again.')
+      await menuKeys(p, ['tab'], devinMenuState)
+      await sleep(250)
+    }
+    if (st?.dropdown?.which !== which) throw new HerdrError('stale', fmt('Fusion’s {which} picker did not open — try again.', { which }))
+    const i = st.dropdown.options.findIndex(o => o.label.toLowerCase() === name.toLowerCase())
+    if (i < 0) throw new HerdrError('bad_model', fmt('Fusion {part} not offered: {name}', { part: which, name }))
+    if (i !== st.dropdown.cursor) {
+      await menuKeys(p, moveKeys(st.dropdown.cursor, i), devinMenuState)
+      await sleep(300)
+      const at = parseDevinFusion(await screen(p))
+      if (at?.dropdown?.which !== which || at.dropdown.cursor !== i) throw new HerdrError('stale', 'The /model menu changed — try again.')
+    }
+  }
+
+  // Collapses an open Lead/Sidekick dropdown back onto the plain menu
+  // ("esc collapse"); the pending pick stays on the row.
+  async function devinCollapse(p: Pane) {
+    for (let i = 0; i < 3; i++) {
+      if (!parseDevinFusion(await screen(p))?.dropdown) return
+      await deps.call('terminal.keys', { terminal: p.coreAddress, keys: ['esc'] }, 10000)
+      await sleep(300)
+    }
+  }
+
+  // Devin's /model picker: search narrows the list, the matching row is
+  // reached by cursor keys, and only `alt+enter` confirms — plain Enter
+  // writes the GLOBAL default, it is never sent. Verify waits for the menu
+  // to close, then accepts the echo ("Model set to … for this session"),
+  // the status line, or the transcript; a requested Lead/Sidekick pair is
+  // only done when the status line names it.
+  async function devinSetModel(p: Pane, wanted: unknown, parts?: unknown): Promise<ModelInfo> {
+    const wantedStr = String(wanted || '').trim()
+    if (!wantedStr) throw new HerdrError('bad_model', 'Missing model')
+    const label = wantedStr.toLowerCase()
+    const wantedParts = parts && typeof parts === 'object' && !Array.isArray(parts) ? parts as Record<string, unknown> : {}
+    return withPane(p.id, async (p) => {
+      const started = now()
+      await devinOpenMenu(p)
+      try {
+        // Narrow with the search field, then alt+↵ on the matching row.
+        for (const ch of wantedStr.slice(0, 40)) {
+          await menuKeys(p, [ch === ' ' ? 'space' : ch], devinPickerOpen)
+          await sleep(60)
+        }
+        const m = await devinMenu(p, 3000)
+        const n = m?.options.findIndex(o => o.label.toLowerCase() === label) ?? -1
+        if (!m || n < 0) throw new HerdrError('bad_model', fmt('Model not found in /model: {model}', { model: wantedStr }))
+        const target = m.options[n]!.label
+        // Never guess the cursor: a missing ❭ makes any move land on a wrong row.
+        if (m.cursor < 0) throw new HerdrError('stale', 'The /model menu changed — try again.')
+        const keys = moveKeys(m.cursor, n)
+        if (keys.length) {
+          await menuKeys(p, keys, devinMenuState)
+          await sleep(300)
+        }
+        const selected = await devinMenu(p, 3000)
+        if (!selected || selected.cursor < 0 || selected.options[selected.cursor]?.label !== target) {
+          throw new HerdrError('stale', 'The /model menu changed — try again.')
+        }
+        // Composite picks (Fusion's Lead ▾ / Sidekick ▾): choose each
+        // requested part in its dropdown, collapse, then confirm the row
+        // with the pair on it.
+        const picks = (['lead', 'sidekick'] as const)
+          .filter(k => typeof wantedParts[k] === 'string' && String(wantedParts[k]).trim())
+        if (Object.keys(wantedParts).length && !picks.length) throw new HerdrError('bad_model', 'Unknown model part')
+        if (picks.length && !/^fusion$/i.test(target)) throw new HerdrError('bad_model', fmt('Model has no selectable parts: {model}', { model: target }))
+        for (const which of picks) await devinPickFusionPart(p, which, String(wantedParts[which]).trim())
+        if (picks.length) await devinCollapse(p)
+        await menuKeys(p, ['alt+enter'], devinPickerOpen)
+        const end = now() + 4000
+        let echo: string | null = null
+        let shown: string | null = null
+        let pair: { lead: string, sidekick: string } | null = null
+        const pairOk = () => Boolean(pair) && picks.every(k => sameModel(pair![k === 'lead' ? 'lead' : 'sidekick'], String(wantedParts[k])))
+        do {
+          const t = await screen(p)
+          if (devinPickerOpen(t)) { await sleep(300); continue }
+          echo = devinModelSetEcho(t) || echo
+          shown = devinStatusModel(t) || shown
+          pair = devinStatusPair(t) || pair
+          // The status line redraws a beat behind the menu closing — with
+          // parts requested, keep polling until it names the pair (or time
+          // runs out).
+          if (!picks.length || pairOk()) break
+          await sleep(300)
+        } while (now() < end)
+        const tr = await deps.transcript(p).catch(() => null)
+        if (!sameModel(echo || '', target) && !sameModel(shown || '', target) && !sameModel(tr?.label || '', target)) {
+          throw new HerdrError('stale', echo
+            ? fmt('Devin set a different model ({model}) — check the session.', { model: echo })
+            : 'The model did not change — try again.')
+        }
+        // A requested pair is only done when the status line shows it — the
+        // row's fields can be truncated, the status line's pair is not.
+        if (picks.length && !pairOk()) {
+          throw new HerdrError('stale', pair
+            ? `Fusion applied ${pair.lead} ◆ ${pair.sidekick} — not the requested pair.`
+            : 'Could not verify the Fusion pair — check the session.')
+        }
+        const info: ModelInfo = { id: target, label: target, effort: null, at: new Date(started).toISOString() }
+        deps.noteOverride(p.id, info)
+        log(`model ${p.id} (devin) -> ${target}${picks.length ? ` (${picks.map(k => String(wantedParts[k]).trim()).join(' ◆ ')})` : ''} (this session)`)
+        return (await deps.currentModel(p).catch(() => null)) || info
+      } finally { await devinClose(p) }
+    })
   }
 
   // -------------------------------------------------------------- opencode
