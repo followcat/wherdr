@@ -28,6 +28,7 @@ function make(over: Partial<CoreModelCtlDeps> & {
   const overrides: any[] = []
   const efforts: any[] = []
   const screenEff: any[] = []
+  const patches: any[] = []
   // now() advances: a wait whose screen never matches must time out like in
   // production — a frozen clock turns that into an infinite poll.
   let t = 1000
@@ -52,6 +53,10 @@ function make(over: Partial<CoreModelCtlDeps> & {
       { id: 'm3', providerID: 'globex', name: 'Beta', enabled: true },
       { id: 'm4', providerID: 'acme', name: 'Off', enabled: false },
     ],
+    opencodePatchModel: async (_p, model) => {
+      patches.push(model)
+      return { model: { id: model.id, providerID: model.providerID, variant: model.variant } }
+    },
     noteList: (p, agent, list) => { noted.push({ pane: `${p.machine}|${agent}`, agent, list }) },
     noteOverride: (paneId, info) => { overrides.push({ paneId, info }) },
     noteObservedEffort: (paneId, label, effort) => { efforts.push({ paneId, label, effort }) },
@@ -60,7 +65,7 @@ function make(over: Partial<CoreModelCtlDeps> & {
     now: () => (t += 50),
     ...over,
   }
-  return { ctl: createCoreModelCtl(deps), ops, noted, overrides, efforts, screenEff, pane, deps }
+  return { ctl: createCoreModelCtl(deps), ops, noted, overrides, efforts, screenEff, pane, deps, patches }
 }
 const sends = (ops: Op[]) => ops.filter(o => o.method === 'terminal.send')
 const keys = (ops: Op[]) => ops.filter(o => o.method === 'terminal.keys')
@@ -245,10 +250,8 @@ describe('setModel — claude', () => {
     expect(ops).toHaveLength(0)
   })
 
-  it('refuses opencode/cmd panes for now', async () => {
-    const { ctl, pane } = make({ agent: 'opencode' })
-    await expect(ctl.setModel('h1', 'x')).rejects.toMatchObject({ code: 'unsupported' })
-    pane.agent = 'cmd'
+  it('refuses cmd panes for now', async () => {
+    const { ctl } = make({ agent: 'cmd' })
     await expect(ctl.setModel('h1', 'x')).rejects.toMatchObject({ code: 'unsupported' })
   })
 })
@@ -750,5 +753,106 @@ describe('setModel — devin', () => {
     await expect(ctl.setModel('h1', 'No Such Model')).rejects.toMatchObject({ code: 'bad_model' })
     await expect(ctl.setModel('h1', '')).rejects.toMatchObject({ code: 'bad_model' })
     expect(keys(ops).every(o => !o.params.keys.includes('alt+enter'))).toBe(true)
+  })
+})
+
+describe('setModel — opencode', () => {
+  const catalog = [
+    { id: 'm1', providerID: 'acme', name: 'Alpha', enabled: true, variants: ['high', 'low'] },
+    { id: 'm2', providerID: 'acme', name: 'Beta', enabled: true },
+    { id: 'm3', providerID: 'globex', name: 'Beta', enabled: true, modelID: 'beta-pro' },
+    { id: 'm4', providerID: 'acme', name: 'Off', enabled: false },
+  ]
+
+  it('PATCHes the unique match with zero terminal IO and returns the re-read model', async () => {
+    const { ctl, ops, patches } = make({ agent: 'opencode', opencodeModels: async () => catalog })
+    const r = await ctl.setModel('h1', 'Beta (globex)')
+    expect(r).toMatchObject({ id: 'm3', label: 'Beta' })
+    // Exact whitelisted body: entry id + providerID; no variant — m3 offers
+    // none and the current session runs a different model.
+    expect(patches).toEqual([{ id: 'm3', providerID: 'globex' }])
+    // Zero terminal IO: the switch is a service PATCH, never a keystroke.
+    expect(ops.filter(o => o.method.startsWith('terminal.'))).toHaveLength(0)
+  })
+
+  it('matches by label, id, provider/model and a unique bare name only', async () => {
+    for (const [wanted, id, provider] of [['Alpha', 'm1', 'acme'], ['m2', 'm2', 'acme'], ['globex/beta-pro', 'm3', 'globex']] as const) {
+      const { ctl, patches } = make({ agent: 'opencode', opencodeModels: async () => catalog })
+      await ctl.setModel('h1', wanted)
+      expect(patches, wanted).toEqual([{ id, providerID: provider, variant: id === 'm1' ? 'high' : undefined }])
+    }
+    // 'Alpha' carries a variant: the current session runs another model, so
+    // the entry's first variant is requested.
+    for (const wanted of ['Beta', 'Nope', 'Off', 'acme/missing']) {
+      const { ctl, patches } = make({ agent: 'opencode', opencodeModels: async () => catalog })
+      await expect(ctl.setModel('h1', wanted), wanted).rejects.toMatchObject({ code: 'bad_model' })
+      expect(patches, wanted).toHaveLength(0)
+    }
+  })
+
+  it('keeps the current effort when the same model stays selected', async () => {
+    const { ctl, patches } = make({
+      agent: 'opencode',
+      opencodeModels: async () => catalog,
+      transcript: async () => ({ id: 'm1', label: 'Alpha', effort: 'low', at: null }),
+    })
+    await ctl.setModel('h1', 'Alpha')
+    expect(patches).toEqual([{ id: 'm1', providerID: 'acme', variant: 'low' }])
+  })
+
+  it('a re-read that names another model or never returns is stale, never success', async () => {
+    const { ctl, patches } = make({
+      agent: 'opencode',
+      opencodeModels: async () => catalog,
+      opencodePatchModel: async (_p, model) => { patches.push(model); return { model: { id: 'm9', providerID: 'acme' } } },
+    })
+    await expect(ctl.setModel('h1', 'Alpha')).rejects.toMatchObject({ code: 'stale' })
+    expect(patches).toEqual([{ id: 'm1', providerID: 'acme', variant: 'high' }])
+    const { ctl: c2, patches: p2 } = make({
+      agent: 'opencode',
+      opencodeModels: async () => catalog,
+      opencodePatchModel: async (_p, model) => { p2.push(model); return null },
+    })
+    await expect(c2.setModel('h1', 'Alpha')).rejects.toMatchObject({ code: 'stale' })
+    expect(p2).toHaveLength(1)
+    // A wrong-variant echo is stale too.
+    const { ctl: c3, patches: p3 } = make({
+      agent: 'opencode',
+      opencodeModels: async () => catalog,
+      transcript: async () => ({ id: 'm1', label: 'Alpha', effort: 'low', at: null }),
+      opencodePatchModel: async (_p, model) => { p3.push(model); return { model: { id: 'm1', providerID: 'acme', variant: 'high' } } },
+    })
+    await expect(c3.setModel('h1', 'Alpha')).rejects.toMatchObject({ code: 'stale' })
+    expect(p3).toHaveLength(1)
+  })
+
+  it('refuses parts, a missing model and a pane that is not idle', async () => {
+    const { ctl, patches, pane } = make({ agent: 'opencode', opencodeModels: async () => catalog })
+    await expect(ctl.setModel('h1', 'Alpha', { lead: 'x' })).rejects.toMatchObject({ code: 'bad_model' })
+    await expect(ctl.setModel('h1', '')).rejects.toMatchObject({ code: 'bad_model' })
+    pane.status = 'blocked'
+    await expect(ctl.setModel('h1', 'Alpha')).rejects.toMatchObject({ code: 'busy' })
+    pane.status = 'running'
+    await expect(ctl.setModel('h1', 'Alpha')).rejects.toMatchObject({ code: 'busy' })
+    expect(patches).toHaveLength(0)
+  })
+
+  it('a missing read or write seam is unavailable, not a terminal fallback', async () => {
+    const { ctl, ops } = make({ agent: 'opencode', opencodeModels: undefined, opencodePatchModel: undefined })
+    await expect(ctl.setModel('h1', 'Alpha')).rejects.toMatchObject({ code: 'unavailable' })
+    expect(ops.filter(o => o.method.startsWith('terminal.'))).toHaveLength(0)
+  })
+
+  it('the busy lock serializes concurrent switches on the pane', async () => {
+    let release: () => void = () => {}
+    const { ctl, patches } = make({
+      agent: 'opencode',
+      opencodeModels: async () => { await new Promise<void>(r => { release = r }); return catalog },
+    })
+    const p1 = ctl.setModel('h1', 'Alpha')
+    await expect(ctl.setModel('h1', 'Beta (acme)')).rejects.toMatchObject({ code: 'busy' })
+    release()
+    await p1
+    expect(patches).toEqual([{ id: 'm1', providerID: 'acme', variant: 'high' }])
   })
 })

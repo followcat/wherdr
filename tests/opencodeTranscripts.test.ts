@@ -160,3 +160,28 @@ it('a proven absent session reads unavailable; a transport unknown throws', asyn
   const oc2 = createOpencodeTranscripts({ exec, home: '/home/user', snap: s2.snap })
   await expect(oc2.chat(pane(), loc, {})).rejects.toThrow()
 })
+
+it('patchModel writes through the whitelisted helper and returns only the re-read data', async () => {
+  const seen: Record<string, unknown>[] = []
+  const write = async (_home: string, request: Record<string, unknown>): Promise<OpencodeSnapshot> => {
+    seen.push(request)
+    return ok({ data: { id: 'ses_1', model: { id: 'm-1', providerID: 'acme', variant: 'high' } } })
+  }
+  const oc = createOpencodeTranscripts({ exec, home: '/home/user', snap: async () => ({ ok: false, error: 'unreachable' }), write })
+  const model = { id: 'm-1', providerID: 'acme', variant: 'high' }
+  expect(await oc.patchModel(loc, model)).toEqual({ id: 'ses_1', model: { id: 'm-1', providerID: 'acme', variant: 'high' } })
+  expect(seen).toEqual([{ op: 'patch', session: 'ses_1', model }])
+})
+
+it('patchModel fails closed on a moved selection, a foreign generation or a failed write', async () => {
+  for (const r of [{ ok: false, error: 'unreachable' } as OpencodeSnapshot,
+    { ...ok({ data: { id: 'ses_1' } }), server: 'b'.repeat(32) } as OpencodeSnapshot, // a generation other than the selection's
+    ok({ data: 'not-an-object' })]) {
+    const write = async (): Promise<OpencodeSnapshot> => r
+    const oc = createOpencodeTranscripts({ exec, home: '/home/user', write })
+    expect(await oc.patchModel(loc, { id: 'm-1', providerID: 'acme' }), JSON.stringify(r)).toBeNull()
+  }
+  // A loc whose file never decoded its selection cannot name a session.
+  const oc = createOpencodeTranscripts({ exec, home: '/home/user', write: async () => ok({ data: { id: 'ses_1' } }) })
+  expect(await oc.patchModel({ file: 'not-an-oc-file', session: 'ses_1' }, { id: 'm-1', providerID: 'acme' })).toBeNull()
+})
