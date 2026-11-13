@@ -211,3 +211,17 @@ export function switchDeclineKeys(text: string | null | undefined): string[] | n
   const i = c.options.findIndex(o => /^(?:no|cancel|back)\b/i.test(o.label))
   return i < 0 ? null : keysFor(c, i)
 }
+
+// Claude's input field in bash mode (a "!" typed first): "!" prompt right
+// under the (pink) rule. Not a panel or a menu: Escape there would throw
+// away what the field holds.
+const bashInput = (line: string, above: string | undefined) => /^!(\s|$)/.test(line) && /^\s*─{3,}/.test(above || '')
+
+// A full-screen panel covers the composer (claude/codex only — other agents
+// have no panel recognizer): the last lines show no "❯" input and no bash
+// field, so an esc is a safe dismissal before typing. v2:choices.ts:855.
+export function panelOpen(text: string | null | undefined, agent: string | null | undefined): boolean {
+  if (agent !== 'claude' && agent !== 'codex') return false
+  const lines = String(text || '').replace(/\s+$/, '').split('\n').slice(-12)
+  return !lines.some((l, i) => /^\s*[❯›](\s|$)/.test(l) || bashInput(l, lines[i - 1]))
+}
