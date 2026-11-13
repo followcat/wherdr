@@ -7,7 +7,7 @@ import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, expect, it } from 'vitest'
 import { OPENCODE_META } from '../server/utils/opencodeTransport'
-import { opencodeReadMeta } from '../server/utils/opencodeReadMeta'
+import { opencodePatchMeta, opencodeReadMeta } from '../server/utils/opencodeReadMeta'
 import { localShell } from '../server/utils/agentProcesses'
 import type { ExecResult, ShellExec } from '../server/utils/fsx'
 
@@ -240,4 +240,91 @@ it('opencodeReadMeta validates the reply envelope byte bound and exact fields', 
   expect(await opencodeReadMeta(fake(lost), '/home/user', REQ)).toEqual({ ok: false, error: 'unreachable' })
   const dead = { code: 127, stdout: Buffer.alloc(0), stderr: 'python3: not found' }
   expect(await opencodeReadMeta(fake(dead), '/home/user', REQ)).toEqual({ ok: false, error: 'unavailable' })
+})
+
+// ------------------------------------------------------------------ patch
+const MODEL = { id: 'm-1', providerID: 'acme', variant: 'high' } as const
+
+it('PATCHes the session path with the exact whitelisted body, then re-GETs it', async () => {
+  const patches: { url?: string, method?: string, auth?: string, body: string }[] = []
+  const p = await serve((req, res) => {
+    if (req.url === '/api/info') { res.end(JSON.stringify({ version: '2.0.27', pid: 10 })); return }
+    if (req.method === 'PATCH') {
+      let body = ''
+      req.on('data', c => { body += c })
+      req.on('end', () => { patches.push({ url: req.url, method: req.method, auth: req.headers.authorization, body }); res.end('{"data":{"id":"ses_example","model":{"id":"m-1","providerID":"acme","variant":"high"}}}') })
+      return
+    }
+    res.end('{"data":{"id":"ses_example","model":{"id":"m-1","providerID":"acme","variant":"high"}}}')
+  })
+  const home = mkhome(p.url)
+  const { out, raw } = await meta(home, { op: 'patch', session: 'ses_example', model: MODEL })
+  expect(out).toEqual({ status: 200, server: expect.stringMatching(/^[a-f0-9]{32}$/),
+    fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/), size: expect.any(Number), unchanged: false })
+  // One write only: PATCH on the session's own fixed path, Basic auth, the
+  // exact {model:{id,providerID,variant}} body — then the re-GET that proves
+  // the post-patch descriptor.
+  expect(patches).toEqual([{ url: '/api/session/ses_example', method: 'PATCH', auth: basic(),
+    body: '{"model": {"id": "m-1", "providerID": "acme", "variant": "high"}}' }])
+  expect(p.hits.map(h => `${h.method} ${h.url}`)).toEqual(
+    ['GET /api/info', 'PATCH /api/session/ses_example', 'GET /api/session/ses_example'])
+  expect(raw).not.toMatch(/fixture-password|127\.0\.0\.1|service\.json/)
+})
+
+it('refuses malformed patch requests and keeps reads free of writes', async () => {
+  const p = await peer()
+  const home = mkhome(p.url)
+  for (const bad of [{ op: 'patch' }, { op: 'patch', session: 'ses_example' },
+    { op: 'patch', session: '../x', model: MODEL }, { op: 'patch', session: 'ses_example', model: MODEL, expect: 'a'.repeat(64) },
+    { op: 'patch', session: 'ses_example', model: MODEL, cursor: 'x' }, { op: 'patch', session: 'ses_example', model: MODEL, extra: 1 },
+    { op: 'patch', session: 'ses_example', model: 'm-1' }, { op: 'patch', session: 'ses_example', model: { id: 'm-1' } },
+    { op: 'patch', session: 'ses_example', model: { providerID: 'acme' } },
+    { op: 'patch', session: 'ses_example', model: { id: '', providerID: 'acme' } },
+    { op: 'patch', session: 'ses_example', model: { id: 'm-1', providerID: 'acme', variant: 3 } },
+    { op: 'patch', session: 'ses_example', model: { id: 'm-1', providerID: 'acme', path: '/api/config' } },
+    { op: 'patch', session: 'ses_example', model: { id: 'm-1', providerID: 'acme', variant: 'x'.repeat(300) } },
+    { op: 'patch', session: 'ses_example', model: { id: 'm-1', providerID: 'acme', variant: 'x\ny' } },
+    { op: 'session', session: 'ses_example', model: MODEL },
+    { op: 'models', model: MODEL }]) {
+    expect(await meta(home, bad as never), JSON.stringify(bad)).toEqual({ out: { error: 'invalid_request' }, raw: expect.any(String) })
+  }
+  expect(p.hits).toHaveLength(0)
+})
+
+it('maps PATCH absence, auth and server errors through the same fixed envelope', async () => {
+  for (const code of [401, 403, 404, 500]) {
+    const p = await serve((req, res) => {
+      if (req.url === '/api/info') { res.end(JSON.stringify({ version: '2.0.27', pid: 10 })); return }
+      res.writeHead(code).end()
+    })
+    const home = mkhome(p.url)
+    const { out } = await meta(home, { op: 'patch', session: 'ses_example', model: MODEL })
+    // 401/403 are auth on the machine; every other status is a fixed
+    // absence descriptor — the post-patch GET never runs on a failed write.
+    if (code === 401 || code === 403)
+      expect(out).toEqual({ error: 'auth' })
+    else
+      expect(out).toEqual({ status: code, server: expect.stringMatching(/^[a-f0-9]{32}$/) })
+    expect(p.hits.filter(h => h.method === 'GET' && h.url === '/api/session/ses_example')).toHaveLength(0)
+  }
+})
+
+it('opencodePatchMeta refuses read-shape and malformed requests before exec', async () => {
+  const calls: string[][] = []
+  const fake: ShellExec = async (_script, args = []) => {
+    calls.push(args)
+    return { code: 0, stdout: Buffer.from('{"status":200,"server":"' + 'a'.repeat(32) + '","fingerprint":"' + 'b'.repeat(64) + '","size":4,"unchanged":false}\n'), stderr: '' }
+  }
+  for (const bad of [REQ, { op: 'patch', session: 'ses_example' },
+    { op: 'patch', session: 'ses_example', model: { id: 'm', providerID: 'p', extra: 1 } },
+    { op: 'patch', session: 'ses_example', model: MODEL, expect: 'b'.repeat(64) },
+    'patch', 7, { op: 'patch', session: 'ses_example', model: MODEL, x: 1 }]) {
+    expect(await opencodePatchMeta(fake, '/home/user', bad as never)).toEqual({ ok: false, error: 'invalid_request' })
+  }
+  // A write never enters through the read wrapper.
+  expect(await opencodeReadMeta(fake, '/home/user', { op: 'patch', session: 'ses_example' })).toEqual({ ok: false, error: 'invalid_request' })
+  expect(await opencodeReadMeta(fake, '/home/user', { op: 'patch', session: 'ses_example', model: MODEL })).toEqual({ ok: false, error: 'invalid_request' })
+  const good = await opencodePatchMeta(fake, '/home/user', { op: 'patch', session: 'ses_example', model: MODEL })
+  expect(good).toMatchObject({ ok: true, server: 'a'.repeat(32) })
+  expect(calls).toHaveLength(1)
 })
