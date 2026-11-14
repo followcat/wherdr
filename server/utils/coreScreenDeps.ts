@@ -4,9 +4,11 @@ import { createCoreScreens } from './coreScreen'
 import { coreInputDeps } from './coreInput'
 import type { CoreChooseDeps } from './coreChoose'
 import { corePaint, type CoreDraftDeps } from './coreDraft'
-import { coreModelCtlInstance } from './state'
+import { coreModelCtlInstance, wakeCorePoll } from './state'
 
 let screens: ReturnType<typeof createCoreScreens> | null = null
+// One pending wake at a time: every unconfirmed screen is read by that poll.
+let wakeTimer: ReturnType<typeof setTimeout> | null = null
 export function coreScreens() {
   return screens ||= createCoreScreens({
     call: (method, params, timeout) => coreCall(process.env.HC_SOCKET || '', method, params, timeout),
@@ -14,6 +16,7 @@ export function coreScreens() {
     asked: p => transcripts.pendingClaudeQuestions(p),
     colors: p => corePaint(process.env.HC_SOCKET || '', p.coreAddress || ''),
     noted: (p, text) => { modelCtl().noteScreen(p.id, p.agent, text); coreModelCtlInstance?.noteRead(p, text) },
+    wake: (ms) => { wakeTimer ??= setTimeout(() => { wakeTimer = null; wakeCorePoll() }, ms) },
   })
 }
 

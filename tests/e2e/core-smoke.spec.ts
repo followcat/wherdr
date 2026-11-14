@@ -17,8 +17,10 @@ import { at, J, modelChange, user, assistant, results } from '../cmdParserFixtur
 // AppVersionStartup.test.ts and serviceWorkerNavigation.test.ts at cheaper levels.
 test('core smoke: home, conversation attach and key bar, terminal attach', async ({ page }, testInfo) => {
   const terminal = fixture.inventory.terminals[0]!
-  const devin = { ...terminal, address: 'host-a/t8', name: 'devin-idle-agent', template: 'devin', argv: ['devin', '-r', 'devin-idle'], status: 'idle' }
-  const idle = readFileSync(new URL('../fixtures/core-screens/devin-idle.txt', import.meta.url), 'utf8')
+  // Core's own idle report, and the footer a real Devin shows (model · mode, a
+  // ctrl+o hint, no quota line).
+  const devin = { ...terminal, address: 'host-a/t8', name: 'devin-idle-agent', template: 'devin', argv: ['devin', '-r', 'devin-idle'], status: { state: 'idle', app: 'devin' } }
+  const idle = readFileSync(new URL('../fixtures/devin-idle-edits.txt', import.meta.url), 'utf8')
   const transcript = Buffer.from(JSON.stringify({ schema_version: 'ATIF-v1.7', session_id: 'devin-idle', steps: [{ step_id: 1, source: 'agent', message: 'Saved Devin reply' }] }))
   const file = '/home/user/.local/share/devin/cli/transcripts/devin-idle.json'
   const core = await startCore(call =>
