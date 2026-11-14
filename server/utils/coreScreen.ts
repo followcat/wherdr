@@ -83,6 +83,11 @@ export function createCoreScreens(deps: CoreScreenDeps) {
   // omp's status line and context gauge, kept between reads (an unviewed resting omp
   // is read at the background pace).
   const omps = new Map<string, { at: number, status: OmpStatus | null }>()
+  // Consecutive 'terminal' readings per pane: a TUI mid-redraw (footer or rule
+  // not yet painted) classifies 'terminal' for one read, and the overlay that
+  // opens on it flaps. Only a reading seen twice in a row is published; every
+  // other interaction publishes at once.
+  const terms = new Map<string, number>()
   const isKeyed = (id: string) => (keyed.get(id) ?? -Infinity) > now()
   const read = async (p: Pane) => {
     try {
@@ -141,6 +146,7 @@ export function createCoreScreens(deps: CoreScreenDeps) {
       for (const id of born.keys()) if (!alive.has(id)) born.delete(id)
       for (const id of drafts.keys()) if (!alive.has(id)) drafts.delete(id)
       for (const id of keyed.keys()) if (!alive.has(id) || !isKeyed(id)) keyed.delete(id)
+      for (const id of terms.keys()) if (!alive.has(id)) terms.delete(id)
       for (const id of omps.keys()) if (!alive.has(id) || panes.find(p => p.id === id)?.agent !== 'omp') omps.delete(id)
       for (const p of panes) if (p.agent === 'omp') readOmpStatus(p)
       for (const p of agents) {
@@ -161,7 +167,10 @@ export function createCoreScreens(deps: CoreScreenDeps) {
         const error = parsed.error
         if (error) p.error = error
         else delete p.error
-        p.interaction = failed.has(p.id) ? 'unknown' : r.interaction
+        const raw = failed.has(p.id) ? 'unknown' : r.interaction
+        const streak = raw === 'terminal' ? (terms.get(p.id) ?? 0) + 1 : 0
+        terms.set(p.id, streak)
+        p.interaction = raw === 'terminal' && streak < 2 ? (p.interaction ?? 'unknown') : raw
         if (choices && r.interaction === 'native') p.prompt = choices
         if (parsed.sendNow) p.queueSendNow = true
         const draft = !failed.has(p.id) && r.interaction === 'input' && p.status !== 'working' ? (parsed.draft === undefined ? parsed.draft = readDraft(c.text, p.agent) : parsed.draft) : null
