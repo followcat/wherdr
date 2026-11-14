@@ -4,6 +4,7 @@
 // in POSIX sh + BSD (macOS) or GNU (Linux) stat.
 import fs from 'node:fs'
 import { createHash } from 'node:crypto'
+import { execFile } from 'node:child_process'
 
 const fsp = fs.promises
 
@@ -24,6 +25,9 @@ export interface MachineFs {
   digest?: (p: string, len: number) => Promise<string>
   // All PID locks in one remote round trip; null means an incomplete scan.
   readPidLocks?: (dir: string) => Promise<PidLock[] | null>
+  // Paths a process holds open (/proc/<pid>/fd targets, `lsof -Fn` output);
+  // null means the scan could not run, never "no files".
+  readProcessFiles?: (pid: number) => Promise<string[] | null>
 }
 
 // ---------------------------------------------------------------- disque local
@@ -57,6 +61,22 @@ export const localFs: MachineFs = {
       const { bytesRead } = await fh.read(buf, 0, len, start)
       return bytesRead < len ? buf.subarray(0, bytesRead) : buf
     } finally { await fh.close() }
+  },
+  async readProcessFiles(pid) {
+    if (process.platform === 'linux') {
+      const dir = `/proc/${pid}/fd`
+      const names = await fsp.readdir(dir).catch(() => null)
+      if (!names) return null
+      const out = await Promise.all(names.map(n => fsp.readlink(`${dir}/${n}`).catch(() => null)))
+      return out.filter((p): p is string => p !== null)
+    }
+    // macOS and other lsof systems: `n` lines hold the paths.
+    return await new Promise<string[] | null>(resolve => {
+      execFile('lsof', ['-Fn', '-p', String(pid)], { timeout: 10000 }, (e, stdout) => {
+        if (e && !stdout) return resolve(null)
+        resolve(stdout.split('\n').filter(l => l.startsWith('n/')).map(l => l.slice(1)))
+      })
+    })
   },
   async digest(p, len) {
     const h = createHash('sha1')
@@ -131,6 +151,17 @@ for f; do
   case "$pid" in ''|*[!0-9]*) continue ;; esac
   printf '%s\\0%s\\0%s\\0' "\${f#./}" "$line" "$pid"
 done`
+
+// Open files of a process: /proc/<pid>/fd targets on Linux, `lsof -Fn` on
+// macOS (its `n` lines hold the paths). Nothing on stdout when neither exists.
+const PROCESS_FILES_SCRIPT = `if [ -d "/proc/$1/fd" ]; then
+  for f in "/proc/$1/fd"/*; do
+    [ -e "$f" ] || continue
+    readlink "$f" 2>/dev/null || true
+  done
+elif command -v lsof >/dev/null 2>&1; then
+  lsof -Fn -p "$1" 2>/dev/null | sed -n 's/^n//p' | sed -n '/^\\//p'
+fi`
 
 export function parseStatLine(line: string): FsStat | null {
   // The inode is optional: "size mtime type" from an older script still parses.
@@ -208,6 +239,10 @@ export function createShellFs(exec: ShellExec, opts: { statTtlMs?: number } = {}
     async readdir(p) {
       const b = await run(REQUIRE_PATH + 'cd "$1" && ls -1A', [p])
       return b.toString('utf8').split('\n').filter(Boolean)
+    },
+    async readProcessFiles(pid) {
+      const b = await run(PROCESS_FILES_SCRIPT, [String(pid)], 10000)
+      return b.toString('utf8').split('\n').filter(l => l.startsWith('/'))
     },
     async readFile(p) {
       return (await run(REQUIRE_PATH + 'cat "$1"', [p])).toString('utf8')

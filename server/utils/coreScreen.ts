@@ -11,6 +11,10 @@ import { parseChoices, parseOmpPrompt, promptIdentity, completeClaudeAsk, type C
 import { queueSendNow, readDraft, sameText } from './coreDraft'
 
 const WORKING = /\besc(?:ape)? to interrupt\b/i
+// Antigravity's running turn offers "esc to cancel"; its pickers number their
+// options, so a visible option list rules the turn out.
+const AGY_WORKING = /\besc(?:ape)? to cancel\b/i
+const NUMBERED_OPTION = /^\s*[❯›>]?\s*\d{1,2}\.\s+\S/m
 // Claude's folder-trust box: unnumbered options, so it needs the non-strict reading
 // even while core reports no status.
 const TRUST_FOLDER = /Is this a project you created or one you trust\?[\s\S]*Yes, I trust this folder/
@@ -26,7 +30,9 @@ export interface CoreReading {
 // Pure: screen text of an agent -> what to show. `status`: core's own, if any.
 export function readCoreScreen(text: string, agent: string | null | undefined, status: string | null | undefined): CoreReading {
   const tail = text.trimEnd().split('\n').slice(-14).join('\n')
-  const working = WORKING.test(tail) || tail.split('\n').some(l => SPINNER.test(l))
+  const working = WORKING.test(tail)
+    || (agent === 'agy' && AGY_WORKING.test(tail) && !NUMBERED_OPTION.test(tail))
+    || tail.split('\n').some(l => SPINNER.test(l))
   let choices: Choices | null = null
   if (!working) {
     choices = agent === 'omp' ? parseOmpPrompt(text) : parseChoices(text, { strict: status !== 'blocked' && !(agent === 'claude' && TRUST_FOLDER.test(tail)) })

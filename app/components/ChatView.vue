@@ -452,6 +452,11 @@ const TOOL_LABEL: Record<string, string> = {
   Bash: TOOL_COMMAND, Read: tl('Read', 'Lecture'), Write: tl('Write', 'Écriture'), Edit: TOOL_EDIT, MultiEdit: TOOL_EDIT, Grep: tl('Search', 'Recherche'),
   Glob: tl('Files', 'Fichiers'), WebFetch: 'Web', WebSearch: tl('Web search', 'Recherche web'), Task: TOOL_SUBAGENT, Agent: TOOL_SUBAGENT,
   TodoWrite: tl('Tasks', 'Tâches'), exec: TOOL_COMMAND, shell: TOOL_COMMAND, apply_patch: TOOL_EDIT,
+  // Antigravity (`agy`) tool names.
+  run_command: TOOL_COMMAND, write_to_terminal: TOOL_COMMAND, read_file: tl('Read', 'Lecture'), view_file: tl('Read', 'Lecture'),
+  write_file: tl('Write', 'Écriture'), edit_file: TOOL_EDIT, multi_edit_file: TOOL_EDIT, replace_file_content: TOOL_EDIT,
+  grep_search: tl('Search', 'Recherche'), codebase_search: tl('Search', 'Recherche'), find_by_name: tl('Files', 'Fichiers'), list_dir: tl('Files', 'Fichiers'),
+  search_web: tl('Web search', 'Recherche web'), read_url_content: 'Web', invoke_subagent: TOOL_SUBAGENT, view_code_item: tl('Read', 'Lecture'),
 }
 const TOOL_ICON: Record<string, string> = {
   Bash: 'i-lucide-terminal', exec: 'i-lucide-terminal', shell: 'i-lucide-terminal',
@@ -459,6 +464,12 @@ const TOOL_ICON: Record<string, string> = {
   apply_patch: 'i-lucide-file-pen', NotebookEdit: 'i-lucide-file-pen', Grep: 'i-lucide-text-search', Glob: 'i-lucide-folder-search',
   WebFetch: 'i-lucide-globe', WebSearch: 'i-lucide-search', Task: 'i-lucide-bot', Agent: 'i-lucide-bot',
   TodoWrite: 'i-lucide-list-todo', AskUserQuestion: 'i-lucide-message-circle-question',
+  run_command: 'i-lucide-terminal', write_to_terminal: 'i-lucide-terminal',
+  read_file: 'i-lucide-file-text', view_file: 'i-lucide-file-text', view_code_item: 'i-lucide-file-text',
+  write_file: 'i-lucide-file-plus', edit_file: 'i-lucide-file-pen', multi_edit_file: 'i-lucide-file-pen', replace_file_content: 'i-lucide-file-pen',
+  grep_search: 'i-lucide-text-search', codebase_search: 'i-lucide-text-search', find_by_name: 'i-lucide-folder-search', list_dir: 'i-lucide-folder-search',
+  search_web: 'i-lucide-search', read_url_content: 'i-lucide-globe', invoke_subagent: 'i-lucide-bot',
+  send_message: 'i-lucide-message-square', ask_question: 'i-lucide-message-circle-question',
 }
 // Codex "exec" runs code: a shell command, or another tool (write_stdin…).
 // Tool summary: the task count comes from the server in English ("3 tasks").

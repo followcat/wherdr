@@ -30,7 +30,7 @@ export function processInfo(d: CoreDetail) {
   return { process_info: { foreground_processes: procs } }
 }
 
-const AGENT_PROGRAMS = new Set(['claude', 'codex', 'omp', 'devin'])
+const AGENT_PROGRAMS = new Set(['claude', 'codex', 'omp', 'devin', 'agy', 'antigravity', 'antigravity-cli'])
 const baseName = (s: string | undefined) => (s || '').split('/').pop() || ''
 // Programs under the terminal's process, from `ps -e -o pid=,ppid=,args=`: an agent started by a
 // shell, or hosted by a helper, is not the foreground process of the terminal.
@@ -92,7 +92,8 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
       const ps = await deps.call<{ stdout?: string }>('machine.exec', { argv: ['ps', '-e', '-o', 'pid=,ppid=,args='], ...(on ? { on } : {}), timeout: 5 }, 8000).catch(() => null)
       procs.unshift(...agentDescendants(Buffer.from(ps?.stdout || '', 'base64').toString('utf8'), d.pid))
     }
-    const devin = procs.filter(p => [baseName(p.name), ...(p.argv?.slice(0, 2).map(baseName) || [])].includes('devin') && Number.isSafeInteger(p.pid) && p.pid! > 0)
+    const snapshotNames = new Set(['devin', 'agy', 'antigravity', 'antigravity-cli'])
+    const devin = procs.filter(p => [baseName(p.name), ...(p.argv?.slice(0, 2).map(baseName) || [])].some(n => snapshotNames.has(n)) && Number.isSafeInteger(p.pid) && p.pid! > 0)
     if (devin.length) {
       // Exact argv and a conservative birth bound, read together on the agent's machine.
       const on = machineOfAddress(address)
@@ -165,7 +166,7 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
       const by = new Map<string, TranscriptPane[]>()
       for (const p of panes) {
         const m = machineOfAddress(p.coreAddress)
-        const tp = p.agent === 'codex' ? await withBirth({ id: p.id, agent: p.agent, cwd: p.cwd, status: p.status }).catch(() => p) : p
+        const tp = p.agent === 'codex' || p.agent === 'agy' ? await withBirth({ id: p.id, agent: p.agent, cwd: p.cwd, status: p.status }).catch(() => p) : p
         by.set(m, [...(by.get(m) || []), tp as TranscriptPane])
       }
       for (const [name, list] of by) void forMachine(name).then(t => t.observe(list)).catch(() => {})

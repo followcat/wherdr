@@ -47,3 +47,10 @@ it('recognizes Devin transcripts and enables the shared conversation view', asyn
   expect(hasTranscript('devin')).toBe(true)
   expect(transcriptKind('/home/user/.local/share/devin/cli/transcripts/session-a.json')).toBe('devin')
 })
+
+it('recognizes Antigravity conversation databases and enables the shared conversation view', async () => {
+  const { hasTranscript } = await import('../shared/agentKind')
+  expect(hasTranscript('agy')).toBe(true)
+  expect(transcriptKind('/home/user/.gemini/antigravity-cli/conversations/11111111-2222-4333-8444-555555555555.db')).toBe('agy')
+  expect(transcriptKind('/home/user/.gemini/antigravity-cli/presence/11111111-2222-4333-8444-555555555555.lock')).toBeNull()
+})

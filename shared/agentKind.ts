@@ -15,17 +15,18 @@ export function paneAgentKind(raw: Json, entry?: Json | null): string | null {
 }
 
 // Agents whose transcript wherdr reads ("Conversation" view, previews, search).
-export const TRANSCRIPT_AGENTS = ['claude', 'codex', 'omp', 'devin'] as const
+export const TRANSCRIPT_AGENTS = ['claude', 'codex', 'omp', 'devin', 'agy'] as const
 export type TranscriptAgent = typeof TRANSCRIPT_AGENTS[number]
 export const hasTranscript = (kind: string | null | undefined): kind is TranscriptAgent =>
   (TRANSCRIPT_AGENTS as readonly string[]).includes(kind || '')
 
 // Kind from the transcript path (~/.claude/projects, ~/.codex/sessions,
-// ~/.omp/agent/sessions).
+// ~/.omp/agent/sessions, ~/.gemini/antigravity-cli/conversations).
 export function transcriptKind(file: string): TranscriptAgent | null {
   if (/\/\.claude\/projects\//.test(file)) return 'claude'
   if (/\/\.codex\/(?:archived_)?sessions\//.test(file)) return 'codex'
   if (/\/\.omp\/agent\/sessions\//.test(file)) return 'omp'
   if (/\/devin\/cli\/transcripts\//.test(file)) return 'devin'
+  if (/\/\.gemini\/antigravity-cli\/conversations\//.test(file)) return 'agy'
   return null
 }

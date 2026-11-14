@@ -1,0 +1,9 @@
+ Allow Antigravity to run this command?
+
+   npm run build
+
+ > 1. Yes
+   2. Always allow
+   3. No
+
+ esc to cancel                                                    auto · Gemini 3 Pro

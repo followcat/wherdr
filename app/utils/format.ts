@@ -5,7 +5,7 @@ export { paneOwnTitle } from '#shared/paneTitle'
 import { hasTranscript } from '#shared/agentKind'
 export { spaceTitle, conversationSubtitle, desktopHeaderTitle, homeTitle } from '#shared/displayTitles'
 
-export const KIND_LABEL: Record<string, string> = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini CLI', opencode: 'OpenCode', kimi: 'Kimi', qodercli: 'Qoder CLI', mastracode: 'Mastra Code', copilot: 'Copilot', qwen: 'Qwen Code', pi: 'Pi', omp: 'OMP' }
+export const KIND_LABEL: Record<string, string> = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini CLI', opencode: 'OpenCode', kimi: 'Kimi', qodercli: 'Qoder CLI', mastracode: 'Mastra Code', copilot: 'Copilot', qwen: 'Qwen Code', pi: 'Pi', omp: 'OMP', agy: 'Antigravity' }
 export const kindLabel = (k: string | null | undefined) => (k && KIND_LABEL[k]) || (k ? k[0]!.toUpperCase() + k.slice(1) : 'Shell')
 export { cleanTitle }
 // Home folder -> ~ (Linux /home/<user>, macOS /Users/<user>).

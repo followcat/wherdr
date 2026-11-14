@@ -1,0 +1,4 @@
+ ● Ran npm test -- --run tests/unit (ctrl+o to expand)
+⠋ Working… (12s)
+
+esc to cancel                                                    auto · Gemini 3 Pro

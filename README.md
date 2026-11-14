@@ -20,7 +20,7 @@ copied and nothing runs in the cloud: wherdr talks to the hc session on your com
 - **Agents on herdr-core**: every hc terminal, on this machine and on the machines hc reaches,
   grouped into spaces and tabs the way herdr-app shows them, with their state (Your turn,
   Working, Ready; agents without a status count as Ready).
-- **Conversation** for Claude Code, Codex and Devin: the real transcript, one-tap answers, queued
+- **Conversation** for Claude Code, Codex, Devin and Antigravity: the real transcript, one-tap answers, queued
   messages, quoted replies, attachments.
 - **Terminal**: the real terminal, shared with other viewers (phone, computer, herdr-app).
 - **Search** across agents and conversations.
