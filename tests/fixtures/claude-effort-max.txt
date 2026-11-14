@@ -1,0 +1,14 @@
+ ▐▛███▜▌   Claude Code v2.1.283
+▝▜█████▛▘  Opus 5.5 with medium effort · Claude Pro
+  ▘▘ ▝▝    ~/dev/project
+
+❯ /effort
+──────────────────────────────────────────────────────────────────────────────────────────
+ Effort
+
+          Faster                                                 Smarter
+          ───────────────────────────────────────▲─────┊───────────────
+          low     medium     high     xhigh     max        ultracode
+                                                         xhigh + workflows
+
+ ←/→ to adjust · Enter to confirm · s for this session only · Esc to cancel

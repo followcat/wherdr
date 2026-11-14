@@ -1,10 +1,12 @@
-// Read-only OpenCode conversation reader for core panes (A5). The pane's
-// session was already selected fail-closed by opencodeCore.ts; this module
-// reads it through the verified snapshot assembly (opencodeSnapshot.ts):
-// every page body arrives fingerprint-bound to the server generation, and
-// an `expect` meta revalidates a cached page with zero body bytes. No
-// writes, no stream, no model/permission/inbox/shell endpoints — later
-// interaction features stay unwired by design.
+// OpenCode conversation reader for core panes (A5). The pane's session was
+// already selected fail-closed by opencodeCore.ts; this module reads it
+// through the verified snapshot assembly (opencodeSnapshot.ts): every page
+// body arrives fingerprint-bound to the server generation, and an `expect`
+// meta revalidates a cached page with zero body bytes. The single
+// whitelisted write is the session-scoped model PATCH (A7): the helper
+// PATCHes the session's own fixed path and the re-read snapshot verifies
+// the result — no stream, no permission/inbox/shell endpoints, everything
+// else stays unwired by design.
 //
 // Cursor model: the shared chat API speaks numeric start/from/before where
 // an older page's start must be BELOW the cursor it was asked with. Native
@@ -25,6 +27,7 @@ import { excerpt, matchAt } from './conversationSearch'
 
 type Json = Record<string, any>
 type Read = (home: string, request: Record<string, unknown>, opts?: { timeoutMs?: number }) => Promise<OpencodeSnapshot>
+type Write = Read
 
 const hash = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 24)
 const clip = (s: unknown) => typeof s === 'string' ? s.slice(0, 20000) : ''
@@ -114,8 +117,10 @@ const parse = (body: Buffer): Json | null => {
   catch { return null }
 }
 
-export function createOpencodeTranscripts({ exec, home, fs, snap }: { exec: ShellExec, home: string, fs?: MachineFs, snap?: Read }) {
-  const read: Read = snap ?? opencodeSnapshots(exec).read
+export function createOpencodeTranscripts({ exec, home, fs, snap, write }: { exec: ShellExec, home: string, fs?: MachineFs, snap?: Read, write?: Write }) {
+  const snaps = opencodeSnapshots(exec)
+  const read: Read = snap ?? snaps.read
+  const patch: Write = write ?? snaps.patch
   // Per-pane caches: the selected session's record (fingerprinted), its
   // native pages (fingerprinted) and every minted numeric cursor. A page's
   // `expect` meta revalidates with zero body bytes, so an unchanged poll
@@ -336,5 +341,27 @@ export function createOpencodeTranscripts({ exec, home, fs, snap }: { exec: Shel
     pages.delete(paneId)
   }
 
-  return { chat, model, image, search, forget, sessionInfo, pageFp }
+  // The model catalog (GET /api/model) — display names, ids, providers,
+  // variants. A server-wide read: no session is attached to the request.
+  async function models(): Promise<Record<string, any>[]> {
+    const r = await read(home, { op: 'models' })
+    if (!r.ok || !('body' in r)) return []
+    const d = parse(r.body)
+    return Array.isArray(d?.data) ? d.data : []
+  }
+
+  // The whitelisted write (A7): PATCH {model:{id,providerID[,variant]}} to
+  // the selected session's own fixed path, then the re-read session body is
+  // returned — the caller verifies id/providerID/variant itself. A server
+  // generation other than the selection's cannot stand in for it.
+  async function patchModel(loc: Loc, model: { id: string, providerID: string, variant?: string }): Promise<Json | null> {
+    const sel = locOf(loc.file)
+    if (!sel) return null
+    const r = await patch(home, { op: 'patch', session: sel.session, model })
+    if (!r.ok || r.server !== sel.server || !('body' in r)) return null
+    const d = parse(r.body)
+    return d?.data && typeof d.data === 'object' ? d.data : null
+  }
+
+  return { chat, model, image, search, forget, sessionInfo, pageFp, models, patchModel }
 }

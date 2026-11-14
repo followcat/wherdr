@@ -1,11 +1,15 @@
 // OpenCode transport runs on the agent's own machine: a local child process
 // here, machine.exec over the multiplexed connection on a remote core host.
-// Adapted from wherdr v2's OpenCode transport, reduced to read-only fixed
-// operations. Credentials and the loopback address never leave that machine:
-// replies are a fixed error key, an HTTP status, sanitized metadata, or, for
-// the fixed chunk helper in opencodeChunk.ts only, a validated bounded piece
-// of a snapshot the caller already fingerprinted. Never a password, URL or
-// diagnostic.
+// Adapted from wherdr v2's OpenCode transport, reduced to fixed operations.
+// Credentials and the loopback address never leave that machine: replies are
+// a fixed error key, an HTTP status, sanitized metadata, or, for the fixed
+// chunk helper in opencodeChunk.ts only, a validated bounded piece of a
+// snapshot the caller already fingerprinted. Never a password, URL or
+// diagnostic. The single whitelisted write is the 'patch' op: a fixed
+// {model:{id,providerID,variant}} PATCH to the session's own /api/session/<id>
+// path, immediately re-read so the emitted descriptor proves the post-patch
+// snapshot like any other read — the chunk path then fetches its body under
+// the same fingerprint.
 // PY_COMMON is the shared half of every fixed helper: discovery, the bounded
 // debug probe, URL/credential validation and the authenticated /api/info
 // handshake that yields the opaque server generation. Each helper composes
@@ -265,22 +269,30 @@ try:
         request = json.loads(raw_request)
     except ValueError:
         raise Fail('invalid_request')
-    if not isinstance(request, dict) or set(request) - {'op', 'session', 'cursor', 'expect'}:
+    if not isinstance(request, dict) or set(request) - {'op', 'session', 'cursor', 'expect', 'model'}:
         raise Fail('invalid_request')
     op = request.get('op')
     session = request.get('session')
     cursor = request.get('cursor')
     expect = request.get('expect')
-    if op not in ('session', 'page') \
-            or not isinstance(session, str) or not re.fullmatch(r'[0-9A-Za-z_-]{1,128}', session) \
+    model = request.get('model')
+    if op not in ('session', 'page', 'models', 'patch') \
+            or op != 'models' and (not isinstance(session, str) or not re.fullmatch(r'[0-9A-Za-z_-]{1,128}', session)) \
+            or op == 'models' and session is not None \
             or op != 'page' and cursor is not None \
             or cursor is not None and (not isinstance(cursor, str) or not re.fullmatch(r'[\x21-\x7e]{1,256}', cursor)) \
-            or expect is not None and (not isinstance(expect, str) or not re.fullmatch(r'[a-f0-9]{64}', expect)):
+            or expect is not None and (not isinstance(expect, str) or not re.fullmatch(r'[a-f0-9]{64}', expect)) \
+            or op == 'patch' and expect is not None \
+            or op != 'patch' and model is not None \
+            or op == 'patch' and (not isinstance(model, dict) or set(model) - {'id', 'providerID', 'variant'}
+                or not all(isinstance(v, str) and 0 < len(v) <= 256 and re.search(r'[\x00-\x1f\x7f]', v) is None for v in model.values())
+                or not model.get('id') or not model.get('providerID')):
         raise Fail('invalid_request')
-    # Fixed paths only: a validated session id, and for a page the fixed
-    # descending page size with either its initial order or the opaque
-    # native cursor as an encoded query value. Never a numeric coercion.
-    path = '/api/session/' + urllib.parse.quote(session, safe='')
+    # Fixed paths only: a validated session id, the fixed catalog for models,
+    # and for a page the fixed descending page size with either its initial
+    # order or the opaque native cursor as an encoded query value. Never a
+    # numeric coercion.
+    path = '/api/model' if op == 'models' else '/api/session/' + urllib.parse.quote(session, safe='')
     if op == 'page':
         query = {'limit': '120'}
         if cursor is None:
@@ -290,6 +302,26 @@ try:
         path += '/message?' + urllib.parse.urlencode(query)
     base, auth, registration, password = discover()
     opener, server, name = connect(base, auth, registration, password)
+    if op == 'patch':
+        # The single whitelisted write: {model:{id,providerID[,variant]}} to
+        # the session's own fixed path — nothing else is ever a write body.
+        # The GET below then re-reads the same session, so the emitted
+        # descriptor proves the post-patch snapshot like any other read.
+        try:
+            with opener.open(urllib.request.Request(base + path, method='PATCH',
+                    data=json.dumps({'model': model}, ensure_ascii=True).encode(),
+                    headers={'Authorization': auth, 'Accept': 'application/json',
+                        'Content-Type': 'application/json'}), timeout=8) as reply:
+                reply.read(READ_LIMIT + 1)
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise Fail('auth')
+            emit({'status': e.code, 'server': server})
+            sys.exit(0)
+        except Fail:
+            raise
+        except Exception:
+            raise Fail('unreachable')
     try:
         with opener.open(urllib.request.Request(base + path,
                 headers={'Authorization': auth, 'Accept': 'application/json'}), timeout=8) as reply:
@@ -361,9 +393,24 @@ export const READ_LIMIT = 24 * 1024 * 1024
 // a cursor on a session op, or a null/malformed one, is invalid. Callers keep
 // their own allowed fields and extra descriptor checks on top.
 export const validReadTarget = (request: Record<string, unknown>) =>
-  (request.op === 'session' || request.op === 'page')
+  ((request.op === 'session' || request.op === 'page')
   && typeof request.session === 'string' && SESSION_OK.test(request.session)
-  && (request.cursor === undefined || (request.op === 'page' && typeof request.cursor === 'string' && CURSOR_OK.test(request.cursor)))
+  && (request.cursor === undefined || (request.op === 'page' && typeof request.cursor === 'string' && CURSOR_OK.test(request.cursor))))
+  // 'models' is the server-wide /api/model catalog: no session, no cursor.
+  || (request.op === 'models' && request.session === undefined && request.cursor === undefined)
+  // A 'patch' descriptor is session-shaped too: chunk reads prove the
+  // post-write snapshot through the same fingerprinted session path.
+  || (request.op === 'patch' && typeof request.session === 'string' && SESSION_OK.test(request.session) && request.cursor === undefined)
+
+// The whitelisted model write body: {id,providerID[,variant]}, bounded
+// printable-ish strings, id and providerID required. Any other field or a
+// missing required one is refused before the request can leave this process.
+export const validPatchModel = (model: unknown): model is Record<string, string> =>
+  Boolean(model) && typeof model === 'object' && !Array.isArray(model)
+  && Object.keys(model as object).every(k => ['id', 'providerID', 'variant'].includes(k))
+  && Object.values(model as object).every(v => typeof v === 'string' && v.length > 0 && v.length <= 256 && !/[\x00-\x1f\x7f]/.test(v))
+  && Boolean((model as Record<string, unknown>).id)
+  && Boolean((model as Record<string, unknown>).providerID)
 
 export const validHome = (home: string) => home.startsWith('/') && !home.includes('\0') && Buffer.byteLength(home, 'utf8') <= 1024
 export const helperTimeout = (v?: number) => v === undefined ? 15000 : Number.isFinite(v) ? Math.min(Math.max(v, 1), 30000) : 15000

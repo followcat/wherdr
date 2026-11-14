@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { ChatItem, ChatResponse, HerdrState, Pane } from '../../shared/types'
 import { coordinatorTarget, type NotificationEvent } from '../../shared/notificationRules'
+import { hasTranscript } from '../../shared/agentKind'
 import { readCoreState, staleCoreDocs, useCoreSession } from './readCoreState'
 import { CoreSession } from './coreSession'
 import { type CoreAlertKind, createCoreAlerts } from './coreAlerts'
@@ -26,6 +27,10 @@ import { pmStore } from './pmStore'
 import { projectCoordinatorName } from '../../shared/pm/project'
 import { createHeld } from './coreHeld'
 import { coreInputDeps, coreSend } from './coreInput'
+import { createModelCtl, createModelRefresh } from './modelctl'
+import { createCoreModelCtl } from './coreModelctl'
+import { coreFilesMachine } from './coreFilesMachine'
+import { createShellFs } from './fsx'
 
 const fsp = fs.promises
 const hcCall = <T>(method: string, params: object, timeout: number) => coreCall<T>(process.env.HC_SOCKET || '', method, params, timeout)
@@ -47,6 +52,8 @@ export const transcripts = {
   preview: (p: TranscriptPane) => coreTranscriptsOf().preview(p),
   image: (p: TranscriptPane, file: string | null, ref: string | null, i: number) => coreTranscriptsOf().image(p, file, ref, i),
   model: (p: TranscriptPane) => coreTranscriptsOf().model(p),
+  opencodeModels: (p: TranscriptPane) => coreTranscriptsOf().opencodeModels(p),
+  opencodePatchModel: (p: TranscriptPane, model: { id: string, providerID: string, variant?: string }) => coreTranscriptsOf().opencodePatchModel(p, model),
   locate: (p: TranscriptPane) => coreTranscriptsOf().locate(p),
   pendingTool: (p: TranscriptPane, tool?: string | null) => coreTranscriptsOf().pendingTool(p, tool),
   pendingAsk: (p: TranscriptPane) => coreTranscriptsOf().pendingAsk(p),
@@ -56,6 +63,59 @@ export const transcripts = {
   live: (p: TranscriptPane, r: ChatResponse) => coreTranscriptsOf().live(p, r),
   forget: (id: string) => coreTranscriptsOf().forget(id),
 }
+
+// ---------------------------------------------------------------- model pill
+// The model shown next to the status (StatusPill): the transcript's, or the
+// screen's when it is newer — merge in modelctl.ts, screen reads fed by
+// coreScreen's `noted`. The poll below refreshes it; a change re-broadcasts.
+let modelCtlInstance: ReturnType<typeof createModelCtl> | null = null
+export function modelCtl() {
+  return modelCtlInstance ||= createModelCtl({
+    transcript: p => transcripts.model(p),
+    // ~/.codex/config.toml on the agent's machine (remote: machine.exec fs).
+    codexConfig: async (p) => {
+      try {
+        const m = await coreFilesMachine(p.machine || '')
+        const f = m.local || !m.exec ? m.fs : createShellFs(m.exec)
+        return await f.readFile(path.posix.join(m.home, '.codex/config.toml'))
+      } catch { return null }
+    },
+    machineKey: p => p.machine || '',
+  })
+}
+export const currentModel = (p: Pane) => modelCtl().currentModel(p)
+
+// The drive side of the picker (coreModelctl): terminal.* through coreCall,
+// lists cached through modelCtl().noteList (`${machine}|${agent}`).
+export let coreModelCtlInstance: ReturnType<typeof createCoreModelCtl> | null = null
+export function coreModelCtl() {
+  return coreModelCtlInstance ||= createCoreModelCtl({
+    call: (method, params, timeout) => coreCall(process.env.HC_SOCKET || '', method, params, timeout),
+    pane: id => findPane(id),
+    machine: p => coreFilesMachine(p.machine || ''),
+    execLocal: (script, home, timeoutMs) => runLocal(script, home, timeoutMs),
+    transcript: p => transcripts.model(p),
+    currentModel: p => modelCtl().currentModel(p),
+    opencodeModels: p => transcripts.opencodeModels(p),
+    opencodePatchModel: (p, model) => transcripts.opencodePatchModel(p, model),
+    noteList: (p, agent, list) => modelCtl().noteList(p, agent, list),
+    noteOverride: (paneId, info) => modelCtl().noteOverride(paneId, info),
+    noteObservedEffort: (paneId, label, effort) => modelCtl().noteObservedEffort(paneId, label, effort),
+    noteScreenEffort: (paneId, effort) => modelCtl().noteScreenEffort(paneId, effort),
+    refresh: () => { setTimeout(() => { void poll() }, 100) },
+  })
+}
+export const modelControlBusy = (paneId: string) => coreModelCtlInstance?.modelControlBusy(paneId) ?? false
+
+// The poll-side cache of currentModel's answers (dedup, staleness, p.model
+// assignment): createModelRefresh in modelctl.ts.
+let modelRefreshInstance: ReturnType<typeof createModelRefresh> | null = null
+const modelRefresh = () => modelRefreshInstance ||= createModelRefresh({
+  currentModel: p => currentModel(p),
+  // Change seen outside a poll (choice from the phone): broadcast again.
+  changed: () => setTimeout(poll, 0),
+})
+export function refreshModel(p: Pane) { modelRefresh().refresh(p) }
 
 // ---------------------------------------------------------------- clients
 // What each device is looking at (no notification for the agent shown on screen),
@@ -168,6 +228,16 @@ export async function poll() {
   await coreScreens().enrich(state.panes).catch(() => {})
   void coreTranscriptsOf().observe(state.panes)
   corePreviews().apply(state.panes)
+  const alive = new Set(state.panes.map(p => p.id))
+  for (const id of modelRefresh().ids()) if (!alive.has(id)) { modelRefresh().forget(id); modelCtl().forgetModel(id) }
+  coreModelCtlInstance?.prunePanes(alive)
+  for (const p of state.panes) {
+    // The model picker's own menu may still be the screen: that mark is not
+    // a foreign prompt (ModelPicker's why reads it).
+    p.menuLeftOpen = coreModelCtlInstance?.menuLeftOpen(p.id) || undefined
+    if (!hasTranscript(p.agent)) continue
+    modelRefresh().apply(p)
+  }
   const json = JSON.stringify(state)
   if (json !== stateJson) { stateJson = json; broadcastState() }
 }

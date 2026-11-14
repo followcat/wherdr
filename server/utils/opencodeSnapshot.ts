@@ -8,8 +8,8 @@
 // selection or UI here.
 import { createHash } from 'node:crypto'
 import type { ShellExec } from './fsx'
-import { FINGERPRINT_OK, READ_LIMIT, validHome, validReadTarget } from './opencodeTransport'
-import { opencodeReadMeta } from './opencodeReadMeta'
+import { FINGERPRINT_OK, READ_LIMIT, SESSION_OK, validHome, validPatchModel, validReadTarget } from './opencodeTransport'
+import { opencodePatchMeta, opencodeReadMeta } from './opencodeReadMeta'
 import { opencodeReadChunk } from './opencodeReadChunk'
 
 export type OpencodeSnapshot =
@@ -25,7 +25,7 @@ const MIN_CALL_MS = 5000
 const MAX_BUDGET_MS = 120000
 const DEFAULT_BUDGET_MS = 60000
 
-interface Ctx { home: string, op: string, session: string, cursor: string, expect: string }
+interface Ctx { home: string, op: string, session: string, cursor: string, expect: string, model?: Record<string, string> }
 
 // The helper fingerprints sha256 of a Python json.dumps list; its default
 // separators put ", " between elements. Rebuilt element by element so an
@@ -64,10 +64,18 @@ async function bounded<T>(deadline: number, pending: Promise<unknown>[], call: (
 // One attempt: fresh metadata, ordered pieces into a bounded buffer, then
 // the full assembled fingerprint. 'retry' marks a retryable snapshot change.
 async function attempt(exec: ShellExec, ctx: Ctx, deadline: number, pending: Promise<unknown>[]): Promise<OpencodeSnapshot | 'retry'> {
-  const metaReq: Record<string, unknown> = { op: ctx.op, session: ctx.session }
+  // 'models' is a server-wide read: the request carries no session field.
+  // 'patch' carries the whitelisted model body and its metadata call is the
+  // PATCH + re-GET — the descriptor it returns then proves itself through
+  // the same chunk reads as every other snapshot.
+  const metaReq: Record<string, unknown> = { op: ctx.op }
+  if (ctx.session) metaReq.session = ctx.session
   if (ctx.cursor) metaReq.cursor = ctx.cursor
   if (ctx.expect) metaReq.expect = ctx.expect
-  const m = await bounded(deadline, pending, r => opencodeReadMeta(exec, ctx.home, metaReq, { timeoutMs: r }))
+  if (ctx.model) metaReq.model = ctx.model
+  const m = await bounded(deadline, pending, r => ctx.op === 'patch'
+    ? opencodePatchMeta(exec, ctx.home, metaReq, { timeoutMs: r })
+    : opencodeReadMeta(exec, ctx.home, metaReq, { timeoutMs: r }))
   if (m === LATE) return { ok: false, error: 'unreachable' }
   if (!m.ok) return m
   if (m.unchanged) {
@@ -83,7 +91,8 @@ async function attempt(exec: ShellExec, ctx: Ctx, deadline: number, pending: Pro
   // At most six pieces: the wrapper's exact-length contract makes every
   // iteration advance min(4 MiB, remaining) inside the 24 MiB total.
   while (got < m.size) {
-    const desc: Record<string, unknown> = { op: ctx.op, session: ctx.session, server: m.server, fingerprint: m.fingerprint, size: m.size, offset: got }
+    const desc: Record<string, unknown> = { op: ctx.op, server: m.server, fingerprint: m.fingerprint, size: m.size, offset: got }
+    if (ctx.session) desc.session = ctx.session
     if (ctx.cursor) desc.cursor = ctx.cursor
     const c = await bounded(deadline, pending, r => opencodeReadChunk(exec, ctx.home, desc, { timeoutMs: r }))
     if (c === LATE) return { ok: false, error: 'unreachable' }
@@ -111,41 +120,67 @@ async function run(exec: ShellExec, ctx: Ctx, deadline: number, pending: Promise
   return { ok: false, error: 'snapshot_changed' }
 }
 
-// A machine-owned reader: concurrent work is bound to this exec; identical
-// requests (home, read target, expected fingerprint and budget) coalesce,
-// different ones never mix. The map entry outlives settlement until every
-// spawned call has drained, so a string of caller timeouts cannot spawn
-// unbounded machine work underneath a stuck call.
+// A machine-owned reader/writer: concurrent work is bound to this exec;
+// identical requests (home, target, expected fingerprint, model body and
+// budget) coalesce, different ones never mix. The map entry outlives
+// settlement until every spawned call has drained, so a string of caller
+// timeouts cannot spawn unbounded machine work underneath a stuck call.
 export function opencodeSnapshots(exec: ShellExec) {
   const inflight = new Map<string, Promise<OpencodeSnapshot>>()
 
-  function read(home: string, request: Record<string, unknown>, opts: { timeoutMs?: number } = {}): Promise<OpencodeSnapshot> {
-    if (!validHome(home)) return Promise.resolve({ ok: false, error: 'unavailable' })
-    const keys = request && typeof request === 'object' && !Array.isArray(request) ? Object.keys(request) : null
-    if (!keys || keys.some(k => !['op', 'session', 'cursor', 'expect'].includes(k))
-      || !validReadTarget(request)
-      || (request.expect !== undefined && (typeof request.expect !== 'string' || !FINGERPRINT_OK.test(request.expect)))) {
-      return Promise.resolve({ ok: false, error: 'invalid_request' })
-    }
-    // The request is snapshotted into owned primitives before any await:
-    // retries and coalescing never observe a mutated caller object.
-    const op = request.op as string
-    const session = request.session as string
-    const cursor = typeof request.cursor === 'string' ? request.cursor : ''
-    const expect = typeof request.expect === 'string' ? request.expect : ''
-    const budget = opts.timeoutMs === undefined ? DEFAULT_BUDGET_MS
-      : Number.isFinite(opts.timeoutMs) ? Math.min(Math.max(opts.timeoutMs, 1), MAX_BUDGET_MS) : DEFAULT_BUDGET_MS
-    const key = JSON.stringify([home, op, session, cursor, expect, budget])
+  function queue(key: string, ctx: Ctx, deadline: number): Promise<OpencodeSnapshot> {
     const existing = inflight.get(key)
     if (existing) return existing
     if (inflight.size >= MAX_INFLIGHT) return Promise.resolve({ ok: false, error: 'busy' })
-    const ctx: Ctx = { home, op, session, cursor, expect }
-    const deadline = performance.now() + budget
     const pending: Promise<unknown>[] = []
     const p = run(exec, ctx, deadline, pending).catch(() => ({ ok: false, error: 'unavailable' }) as OpencodeSnapshot)
     inflight.set(key, p)
     p.finally(() => void Promise.allSettled(pending).then(() => { if (inflight.get(key) === p) inflight.delete(key) }))
     return p
   }
-  return { read }
+  const budgetMs = (v?: number) => v === undefined ? DEFAULT_BUDGET_MS
+    : Number.isFinite(v) ? Math.min(Math.max(v, 1), MAX_BUDGET_MS) : DEFAULT_BUDGET_MS
+
+  function read(home: string, request: Record<string, unknown>, opts: { timeoutMs?: number } = {}): Promise<OpencodeSnapshot> {
+    if (!validHome(home)) return Promise.resolve({ ok: false, error: 'unavailable' })
+    const keys = request && typeof request === 'object' && !Array.isArray(request) ? Object.keys(request) : null
+    if (!keys || keys.some(k => !['op', 'session', 'cursor', 'expect'].includes(k))
+      || !validReadTarget(request) || request.op === 'patch'
+      || (request.expect !== undefined && (typeof request.expect !== 'string' || !FINGERPRINT_OK.test(request.expect)))) {
+      return Promise.resolve({ ok: false, error: 'invalid_request' })
+    }
+    // The request is snapshotted into owned primitives before any await:
+    // retries and coalescing never observe a mutated caller object. A
+    // 'models' target legitimately carries no session.
+    const op = request.op as string
+    const session = typeof request.session === 'string' ? request.session : ''
+    const cursor = typeof request.cursor === 'string' ? request.cursor : ''
+    const expect = typeof request.expect === 'string' ? request.expect : ''
+    const budget = budgetMs(opts.timeoutMs)
+    const key = JSON.stringify([home, op, session, cursor, expect, budget])
+    const ctx: Ctx = { home, op, session, cursor, expect }
+    return queue(key, ctx, performance.now() + budget)
+  }
+
+  // The single whitelisted write: PATCH {model:{id,providerID[,variant]}} to
+  // the session's own fixed path, then the re-read snapshot's body comes back
+  // through the same bounded assembly — callers verify id/providerID/variant
+  // against it, never a blind "patched" claim.
+  function patch(home: string, request: Record<string, unknown>, opts: { timeoutMs?: number } = {}): Promise<OpencodeSnapshot> {
+    if (!validHome(home)) return Promise.resolve({ ok: false, error: 'unavailable' })
+    const keys = request && typeof request === 'object' && !Array.isArray(request) ? Object.keys(request) : null
+    if (!keys || keys.some(k => !['op', 'session', 'model'].includes(k))
+      || request.op !== 'patch'
+      || typeof request.session !== 'string' || !SESSION_OK.test(request.session)
+      || !validPatchModel(request.model)) {
+      return Promise.resolve({ ok: false, error: 'invalid_request' })
+    }
+    const model = request.model as Record<string, string>
+    const session = request.session
+    const budget = budgetMs(opts.timeoutMs)
+    const key = JSON.stringify([home, 'patch', session, model, budget])
+    const ctx: Ctx = { home, op: 'patch', session, cursor: '', expect: '', model }
+    return queue(key, ctx, performance.now() + budget)
+  }
+  return { read, patch }
 }

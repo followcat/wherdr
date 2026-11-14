@@ -1,0 +1,33 @@
+
+
++- Switch Model ------------------------------------------------------------------------------------------------------------------------------------------------------------+
+|  Session-only switch — role models stay unchanged                                                                                                                         |
+|  [/] >                                                                                                                                                                    |
+|                                                                                                                                                                           |
+| > anthropic/claude-sonnet-4-5 [x]                                                                                                                       1m ctx     $3/15█ |
+|   anthropic/claude-fable-5-1                                                                                                          IQ 53   ~66t/s    1m ctx    $10/50█ |
+|   ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  █ |
+|   anthropic/claude-haiku-5-5                                                                                                          IQ 43  ~243t/s  100k ctx  $0.1/0.5█ |
+|   anthropic/claude-opus-5-5                                                                                                           IQ 58   ~96t/s    1m ctx     $4/20█ |
+|   anthropic/claude-sonnet-5-5                                                                                                         IQ 56  ~125t/s    1m ctx     $2/10█ |
+|   anthropic/claude-mythos-5-1                                                                                                                           1m ctx    $10/50█ |
+|   anthropic/claude-fable-5                                                                                                            IQ 50   ~68t/s    1m ctx    $10/50█ |
+|   anthropic/claude-mythos-5                                                                                                                             1m ctx    $10/50█ |
+|   anthropic/claude-opus-5                                                                                                             IQ 51   ~53t/s    1m ctx     $5/25█ |
+|   anthropic/claude-sonnet-5                                                                                                           IQ 38   ~81t/s    1m ctx     $2/10█ |
+|   anthropic/claude-opus-4-8                                                                                                           IQ 42   ~63t/s    1m ctx     $5/25█ |
+|   anthropic/claude-opus-4-7                                                                                                           IQ 41   ~49t/s    1m ctx     $5/25█ |
+|   anthropic/claude-opus-4-6                                                                                                           IQ 26   ~41t/s    1m ctx     $5/25█ |
+|   anthropic/claude-sonnet-4-6                                                                                                         IQ 25   ~44t/s    1m ctx     $3/15█ |
+|   anthropic/claude-opus-4-5-20251101                                                                                                  IQ 24   ~48t/s  200k ctx     $5/25█ |
+|   anthropic/claude-haiku-4-5-20251001                                                                                                                 200k ctx      $1/5│ |
+|   anthropic/claude-sonnet-4-5-20250929                                                                                                                  1m ctx     $3/15│ |
+|   anthropic/claude-haiku-4-5                                                                                                                          200k ctx      $1/5│ |
+|   anthropic/claude-opus-4-5                                                                                                           IQ 24   ~48t/s  200k ctx     $5/25│ |
+|   anthropic/claude-opus-4-1-20250805                                                                                                                  200k ctx    $15/75│ |
+|   anthropic/claude-opus-4-1                                                                                                                           200k ctx    $15/75│ |
+|                                                                                                                                                                           |
+|   Claude Sonnet 4.5 · 1m ctx · 64k out · $3/15 per M · reasoning · vision                                                                                                 |
+|   [x] current · [x] default [high] · [/] smol · [/] slow · [/] tiny · [/] memory                                                                                          |
+| Up/Down models · Enter use for this session · type to search · @ quick roles · Esc close · Alt+P task model                                                               |
++---------------------------------------------------------------------------------------------------------------------------------------------------------------------------+

@@ -1,0 +1,40 @@
+
+                                            ████████████
+                                               ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                               ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                               ▒▒  ██                  █
+                                                   ██       v18.6.1
+
+                       Tip: Press ← ← to drill into a running or finished agent and inspect its
+                                               tool calls and transcript
+
+
+ 󰵗  󰪣 Opus 5.5   demo  󰙺 ─1%──────────────────────────────────────────────────────────────󰕝─󰁨───────────1M─
+╰─
+
+
+
+
+
+
+
+
+
+
+
+╭─ Switch Model ──────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  Session-only switch — role models stay unchanged                                                                   │
+│   >                                                                                                                │
+│                                                                                                                     │
+│   anthropic/claude-haiku-4-5                                                            0.6s 90t/s  200k     $1/5█ │
+│   openai-codex/gpt-5.6-sol                                                         47      ~76t/s  272k    $4/20│ │
+│  anthropic/claude-opus-5-5                                                       58  1.7s 71t/s    1m    $4/20│ │
+│   openai-codex/gpt-6.1-sol                                                         52      ~52t/s  272k    $2/10│ │
+│   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────  │ │
+│   anthropic/claude-sonnet-5-5                                                      56     ~134t/s    1m    $2/10│ │
+│   anthropic/claude-fable-5-1                                                       53      ~66t/s    1m   $10/50│ │
+│                                                                                                                     │
+│   Claude Opus 5.5 · 1m ctx · 128k out · $4/20 per M · reasoning · vision ·  58 · ~71t/s · 1.7s ttft                │
+│    current                                                                                                         │
+│ ↑/↓ models · 󰌑 use for this session · type to search · @ quick roles · 󱊷 close · Alt+P task model                   │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

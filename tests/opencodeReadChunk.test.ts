@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, expect, it } from 'vitest'
-import { opencodeReadMeta } from '../server/utils/opencodeReadMeta'
+import { opencodePatchMeta, opencodeReadMeta } from '../server/utils/opencodeReadMeta'
 import { opencodeReadChunk } from '../server/utils/opencodeReadChunk'
 import { OPENCODE_CHUNK } from '../server/utils/opencodeChunk'
 import { CHUNK_REPLY_LIMIT, replyObject } from '../server/utils/opencodeTransport'
@@ -80,6 +80,27 @@ it('runs one exact 4 MiB piece through localShell, the helper and the owned peer
   expect(p.hits.map(h => h.url)).toEqual(['/api/info', '/api/session/ses_example',
     '/api/info', '/api/session/ses_example', '/api/info'])
   expect(p.hits.every(h => h.headers.authorization === basic())).toBe(true)
+}, 60000)
+
+it('serves a patch descriptor through the same fixed session read', async () => {
+  // The post-write re-GET is a chunk read on the session's own path bound to
+  // the post-patch fingerprint — the whitelisted write never widens the read
+  // surface.
+  const body = '{"data":{"id":"ses_example","model":{"id":"m-1","providerID":"acme"}}}'
+  const p = await peer(body)
+  const home = mkhome(p.url)
+  const m = await opencodePatchMeta(localShell, home,
+    { op: 'patch', session: 'ses_example', model: { id: 'm-1', providerID: 'acme' } })
+  if (!m.ok) throw new Error(`patch meta failed: ${JSON.stringify(m)}`)
+  const r = await opencodeReadChunk(localShell, home,
+    { op: 'patch', session: 'ses_example', server: m.server, fingerprint: m.fingerprint, size: m.size, offset: 0 })
+  expect(r).toMatchObject({ ok: true, server: m.server, fingerprint: m.fingerprint, size: m.size, offset: 0 })
+  if (!r.ok) throw new Error(`chunk failed: ${JSON.stringify(r)}`)
+  expect(r.piece.toString('utf8')).toBe(canon(JSON.parse(body)))
+  expect(p.hits.map(h => `${h.method} ${h.url}`)).toEqual(
+    ['GET /api/info', 'PATCH /api/session/ses_example', 'GET /api/session/ses_example',
+      'GET /api/info', 'GET /api/session/ses_example', 'GET /api/info'])
+  expect(p.hits.filter(h => h.method === 'PATCH')).toHaveLength(1)
 }, 60000)
 
 it('refuses invalid homes and descriptors before exec, and fixes argv/bounds on valid calls', async () => {

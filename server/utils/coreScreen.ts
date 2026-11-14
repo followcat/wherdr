@@ -49,6 +49,8 @@ export interface CoreScreenDeps {
   asked?: (p: Pane) => Promise<ClaudeAsked[]>
   /** Colored screen (see corePaint): without it, no draft is shown. */
   colors?: (p: Pane) => Promise<string>
+  /** Every text read (model/effort shown on screen feed their caches). */
+  noted?: (p: Pane, text: string) => void
   now?: () => number
 }
 
@@ -86,6 +88,7 @@ export function createCoreScreens(deps: CoreScreenDeps) {
     try {
       const r = await deps.call('terminal.read', { terminal: p.coreAddress, lines: 0 }, 3000)
       const text = String(r?.text ?? '')
+      deps.noted?.(p, text)
       const old = cache.get(p.id)
       cache.set(p.id, { at: now(), text, working: p.status === 'working', ...(old?.text === text ? { parsed: old.parsed } : {}) })
       failed.delete(p.id)

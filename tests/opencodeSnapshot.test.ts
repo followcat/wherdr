@@ -295,3 +295,100 @@ it('fails closed when the clock passes the deadline before a reply publishes', a
     expect(calls).toBe(3)
   } finally { spy.mockRestore() }
 })
+
+it('reads the server-wide models catalog with no session field', async () => {
+  const body = Buffer.from('{"data":[{"id":"m1","providerID":"acme","name":"Alpha"}]}')
+  const fp = snapFp(hex32, '', 'models', '', sha(body))
+  const requests: Record<string, unknown>[] = []
+  const fake: ShellExec = async (_s, args = []) => {
+    requests.push(JSON.parse(String(args?.[2] || '{}')))
+    if (args[0] === OPENCODE_META)
+      return env({ status: 200, server: hex32, fingerprint: fp, size: body.length, unchanged: false })
+    return env({ status: 200, server: hex32, fingerprint: fp, size: body.length, offset: 0, piece: body.toString('base64') })
+  }
+  const r = await opencodeSnapshots(fake).read('/home/user', { op: 'models' })
+  expect(r).toMatchObject({ ok: true, unchanged: false })
+  expect((r as { body?: Buffer }).body?.toString('utf8')).toBe(body.toString('utf8'))
+  // Both the metadata and the descriptor carry the fixed 'models' op and no
+  // session field at all — the catalog is a server-wide read.
+  expect(requests).toHaveLength(2)
+  for (const req of requests) {
+    expect(req.op).toBe('models')
+    expect(req.session).toBeUndefined()
+    expect(req.cursor).toBeUndefined()
+  }
+})
+
+it('refuses a models target carrying a session or cursor', async () => {
+  for (const req of [{ op: 'models', session: 'ses_example' }, { op: 'models', cursor: 'abc' }])
+    expect(await opencodeSnapshots(async () => env({})).read('/home/user', req), JSON.stringify(req))
+      .toEqual({ ok: false, error: 'invalid_request' })
+})
+
+// ------------------------------------------------------------------ patch
+it('sends the whitelisted model body through patch meta, then proves the re-read body by chunks', async () => {
+  const body = Buffer.from('{"data":{"id":"ses_example","model":{"id":"m-1","providerID":"acme","variant":"high"}}}')
+  const fp = snapFp(hex32, 'ses_example', 'patch', '', sha(body))
+  const requests: Record<string, unknown>[] = []
+  const fake: ShellExec = async (_s, args = []) => {
+    requests.push(JSON.parse(String(args?.[2] || '{}')))
+    if (args[0] === OPENCODE_META)
+      return env({ status: 200, server: hex32, fingerprint: fp, size: body.length, unchanged: false })
+    return env({ status: 200, server: hex32, fingerprint: fp, size: body.length, offset: 0, piece: body.toString('base64') })
+  }
+  const r = await opencodeSnapshots(fake).patch('/home/user',
+    { op: 'patch', session: 'ses_example', model: { id: 'm-1', providerID: 'acme', variant: 'high' } })
+  expect(r).toMatchObject({ ok: true, unchanged: false })
+  expect((r as { body?: Buffer }).body?.toString('utf8')).toBe(body.toString('utf8'))
+  // The meta request carries the whitelisted body only; the chunk descriptor
+  // re-reads the same session path — never a caller path, never plain model
+  // fields beyond id/providerID/variant.
+  expect(requests).toHaveLength(2)
+  expect(requests[0]).toEqual({ op: 'patch', session: 'ses_example', model: { id: 'm-1', providerID: 'acme', variant: 'high' } })
+  expect(requests[1]!.op).toBe('patch')
+  expect(requests[1]!.session).toBe('ses_example')
+  expect(requests[1]).not.toHaveProperty('model')
+})
+
+it('PATCHes the real helper end to end and returns the re-read session body', async () => {
+  const session = '{"data":{"id":"ses_example","model":{"id":"m-1","providerID":"acme"}}}'
+  const patches: string[] = []
+  const p = await serve((req, res) => {
+    if (req.url === '/api/info') { res.end(JSON.stringify({ version: '2.0.27', pid: 10 })); return }
+    if (req.method === 'PATCH') {
+      let body = ''
+      req.on('data', c => { body += c })
+      req.on('end', () => { patches.push(body); res.end(session) })
+      return
+    }
+    res.end(session)
+  })
+  const home = mkhome(p.url)
+  const r = await opencodeSnapshots(localShell).patch(home,
+    { op: 'patch', session: 'ses_example', model: { id: 'm-1', providerID: 'acme' } })
+  if (!r.ok || r.unchanged) throw new Error(`unexpected ${JSON.stringify(r)}`)
+  expect(r.body.toString('utf8')).toBe(canon(JSON.parse(session)))
+  expect(patches).toEqual(['{"model": {"id": "m-1", "providerID": "acme"}}'])
+  // PATCH once on the fixed session path, GETs only on that same path.
+  for (const h of p.hits) {
+    if (h.method === 'PATCH') expect(h.url).toBe('/api/session/ses_example')
+    else expect(h.url === '/api/info' || h.url === '/api/session/ses_example').toBe(true)
+  }
+  expect(p.hits.filter(h => h.method === 'PATCH')).toHaveLength(1)
+}, 60000)
+
+it('refuses write requests on read and read requests on patch before any exec', async () => {
+  const calls: unknown[][] = []
+  const fake: ShellExec = async (_s, args = []) => { calls.push(args); return env({}) }
+  const snap = opencodeSnapshots(fake)
+  const model = { id: 'm-1', providerID: 'acme' }
+  for (const req of [{ op: 'patch', session: 'ses_example', model }, { op: 'patch', session: 'ses_example' }])
+    expect(await snap.read('/home/user', req), JSON.stringify(req)).toEqual({ ok: false, error: 'invalid_request' })
+  for (const req of [{ op: 'session', session: 'ses_example' }, { op: 'patch', session: 'ses_example' },
+    { op: 'patch', session: '../x', model }, { op: 'patch', session: 'ses_example', model: { id: 'm-1' } },
+    { op: 'patch', session: 'ses_example', model: { ...model, extra: 'x' } },
+    { op: 'patch', session: 'ses_example', model, expect: hex64 },
+    { op: 'patch', session: 'ses_example', model, cursor: 'x' }])
+    expect(await snap.patch('/home/user', req as never), JSON.stringify(req)).toEqual({ ok: false, error: 'invalid_request' })
+  expect(calls).toHaveLength(0)
+})

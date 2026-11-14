@@ -1,0 +1,17 @@
+──────────────────────────────────────────
+/ Fusion
+──────────────────────────────────────────
+❭ Fusion                    ◼◼◼◼◼    Max           Lead GPT-6.1 Sol   ▾   Sidekick SWE-2 High    ▾   Fast Mode Off
+                                                 ▸ Claude Opus 5.5
+                                                   GPT-6.1 Sol
+                                                   Claude Fable 5.1
+                                                   GPT-6 Astra
+                                                   GPT-6 Sol
+                                                   GPT-5.6 Sol
+                                                   Claude Opus 5
+                                                   Claude Sonnet 5.5
+
+  ━━━━━━━━━━━━●━━━━━━━━━━━━━━━━━━━━━━━
+  Input        Cached input   Output       Sidekick  Free
+  $2 / 1M      $0.1 / 1M      $10 / 1M
+↑↓ select · tab sidekick · shift+←/→ move cursor · ↵ confirm · alt+↵ this session only · esc collapse

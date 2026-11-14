@@ -1,0 +1,19 @@
+
+
+
+╭─ Switch Model ─────────────────────╮
+│  Session-only switch — role model… │
+│   >                               │
+│                                    │
+│  anthropic/cla…   1m      $3/15█ │
+│   anthropic/cla…   1m     $10/50│ │
+│   ─────────────────────────────  │ │
+│   anthropic/cla… 100k   $0.1/0.5│ │
+│   anthropic/cla…   1m      $4/20│ │
+│   anthropic/cla…   1m      $2/10│ │
+│   anthropic/cla…   1m     $10/50│ │
+│                                    │
+│   Claude Sonnet 4.5 · 1m ctx · 64… │
+│    current ·  default 󰪣 ·  smo… │
+│ ↑/↓ models · 󰌑 use for this sessi… │
+╰────────────────────────────────────╯

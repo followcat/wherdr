@@ -630,7 +630,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
           <div class="agent-title"><AlfredEmblem v-if="isAlfredPane(pane)" class="head-emblem" /><ProjectBadge v-if="badge" class="head-badge" :text="badge.text" :color="badge.color" />{{ headTitle }} <UIcon v-if="pane && paneNotificationsMuted(pane)" name="i-lucide-bell-off" class="notification-muted" :title="t('Muted')" /></div>
           <div class="agent-meta">
             <!-- No state known yet (startup): nothing rather than "closed". -->
-            <StatusPill v-if="pane || herdrState.ok" :pane="pane" kind />
+            <StatusPill v-if="pane || herdrState.ok" :pane="pane" kind model />
             <OmpContext v-if="pane?.agent === 'omp'" :pane="pane" variant="head" />
             <span v-if="subtitle" class="agent-subtitle">{{ subtitle }}</span>
             <span v-if="command" class="agent-subtitle agent-command">{{ command }}</span>

@@ -2688,7 +2688,19 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     claudeAskCache.delete(paneId)
   }
 
-  return { chat, preview, latestReply, image, forget, locate, model, observe, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions, current, live }
+  return { chat, preview, latestReply, image, forget, locate, model, observe, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions, current, live,
+    // The service's /api/model catalog (opencode only): the drive side of
+    // the picker reads it; the session-scoped PATCH is its whitelisted
+    // switch (A7). A pane that reselected while the write was in flight
+    // reports nothing — the same moved-selection guard as model().
+    opencodeModels: (p: TranscriptPane) => oc ? oc.models() : Promise.resolve([]),
+    opencodePatchModel: async (p: TranscriptPane, model: { id: string, providerID: string, variant?: string }) => {
+      if (!oc || p.agent !== 'opencode') return null
+      const loc = await locate(p)
+      if (!loc) return null
+      const d = await oc.patchModel(loc, model)
+      return d && selections.get(p.id)?.file === loc.file ? d : null
+    } }
 }
 
 export type Transcripts = ReturnType<typeof createTranscripts>

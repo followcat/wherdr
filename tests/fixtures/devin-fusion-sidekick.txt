@@ -1,0 +1,17 @@
+──────────────────────────────────────────
+/ Fusion
+──────────────────────────────────────────
+❭ Fusion                    ◼◼◼◼◼    Max           Lead GPT-6.1 Sol   ▾   Sidekick SWE-2 High    ▾   Fast Mode Off
+                                                                           SWE-2 Medium *
+                                                                         ▸ SWE-2 High
+                                                                           GPT-6 Luna High
+                                                                           GPT-6.1 Terra High
+                                                                           GPT-5.6 Luna High
+                                                                           GPT-5.6 Sol High
+                                                                           GLM-5.2 High
+                                                                           Claude Sonnet 5.5 Medium
+
+  ━━━━━━━━━━━━●━━━━━━━━━━━━━━━━━━━━━━━
+  Input        Cached input   Output       Sidekick  Free
+  $2 / 1M      $0.1 / 1M      $10 / 1M
+↑↓ select · tab fast mode · shift+←/→ move cursor · ↵ confirm · alt+↵ this session only · esc collapse
