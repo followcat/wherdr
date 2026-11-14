@@ -23,4 +23,11 @@ describe('position de lecture', () => {
     expect(restoredScrollTop('p3', 'b.jsonl', 5000)).toBeNull()
     expect(restoredScrollTop('inconnu', 'a.jsonl', 5000)).toBeNull()
   })
+  it('matches a copy kept before the transcript was recorded on the pane alone', () => {
+    saveReadingPosition('p4', 'a.jsonl', box(1000))
+    // file undefined: the copy kept on this device does not say which
+    // transcript it is — the pane is enough.
+    expect(restoredScrollTop('p4', undefined, 5000)).toBe(1000)
+    expect(restoredScrollTop('p4', 'b.jsonl', 5000)).toBeNull()
+  })
 })

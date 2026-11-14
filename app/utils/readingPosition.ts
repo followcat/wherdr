@@ -18,8 +18,10 @@ export function saveReadingPosition(paneId: string, file: string | null, box: { 
 }
 
 // Scroll to restore, or null (nothing kept, other session: we go to the bottom).
-export function restoredScrollTop(paneId: string, file: string | null, scrollHeight: number): number | null {
+// file undefined: not known (a copy kept on this device before files were kept),
+// matched on the pane alone.
+export function restoredScrollTop(paneId: string, file: string | null | undefined, scrollHeight: number): number | null {
   const p = positions.get(paneId)
-  if (!p || p.file !== file) return null
+  if (!p || (file !== undefined && p.file !== file)) return null
   return Math.max(0, scrollHeight - p.fromBottom)
 }

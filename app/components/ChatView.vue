@@ -117,6 +117,17 @@ function resetChat(reason: ChatResponse['reason'] | null = null) {
   search.cur = -1
   clearMarks()
   synced = false
+  // The scroll state was the old conversation's: the new one opens at its
+  // saved place (restoring re-arms the one-time restore) or at the bottom —
+  // never held mid-scroll by the previous one.
+  stick = true
+  held = false
+  lastTop = 0
+  anchor = null
+  shown.value = Infinity
+  restoring = typeof route.query.hit !== 'string'
+  keptFile = null
+  keptAnchor = false
 }
 // Commands in the agent's replies can be run in its shell mode (Run buttons,
 // utils/shellCommand.ts); the replies carry `can-run` then.
@@ -147,6 +158,7 @@ async function restoreChat() {
   await apply(() => {
     chat.value = { ...fresh(), file: saved.file || null, tail: saved.items, held: true }
     savedAt.value = saved.at
+    keptFile = saved.file
   })
   if (!mayReadOffline(readOfflineAccess()) || staleGen(gen) || id !== props.pane.id
     || ((props.pane.agent === 'cmd' || props.pane.agent === 'opencode') && !readOnly.value)) return
@@ -166,15 +178,30 @@ function scrollToEnd(force: boolean) {
     held = false
     // At once (no frame of a conversation opened at its top), and again once laid out.
     pin(b)
+    // A reading position restored before this frame wins (see apply).
     requestAnimationFrame(() => { if (stick) pin(b) })
   }
 }
+// Transcript of the kept copy shown (undefined: kept without it, see readingPosition.ts).
+let keptFile: string | null | undefined = null
+// Position restored on the kept copy: the network's first answer keeps it,
+// measured from the bottom, unless the reader has scrolled since.
+let keptAnchor = false
+// The skeleton hides every block for at least its minimum time: nothing to measure before.
+const blocksShown = () => skeleton.value
+  ? new Promise<void>((resolve) => { const stop = watch(skeleton, (v) => { if (!v) { stop(); resolve() } }) }).then(() => nextTick())
+  : Promise.resolve()
 // Updates the conversation while keeping the current reading position: stuck to the bottom if
 // we were there (or on first display), otherwise at the same place.
 async function apply(update: () => void, keepScroll = false) {
   const gen = resetGen
   const wasNear = !held && stick
   const first = !rendered.value
+  // Same position from the bottom across the network's first answer (its end is the
+  // kept one's; the top may differ): see keptAnchor.
+  const fromBottom = keptAnchor && savedAt.value === null && !wasNear && box.value ? box.value.scrollHeight - box.value.scrollTop : null
+  const anchorFile = keptFile
+  if (savedAt.value === null) keptAnchor = false
   const before = blocks.value.length
   update()
   // Bottom first (see `shown`); what arrives below while blocks wait above stays shown.
@@ -188,13 +215,21 @@ async function apply(update: () => void, keepScroll = false) {
   // Back to a conversation already read: same position (see readingPosition.ts),
   // once its session is known; further up than what is shown: everything first.
   let restoreTop: number | null = null
-  if (restoring && chat.value.file && box.value) {
+  const kept = savedAt.value !== null // the kept copy is what this update shows
+  const file = kept ? keptFile : chat.value.file
+  if (restoring && file !== null && box.value) {
     restoring = false
-    if (hiddenBlocks.value && restoredScrollTop(props.pane.id, chat.value.file, box.value.scrollHeight) === 0) await revealAll()
+    // Measure and place only once the blocks are in the DOM (see blocksShown).
+    await blocksShown()
+    if (staleGen(gen) || !box.value) return
+    if (hiddenBlocks.value && restoredScrollTop(props.pane.id, file, box.value.scrollHeight) === 0) await revealAll()
     // The reveal may have crossed a reset: the new conversation positions itself.
-    if (staleGen(gen)) return
-    restoreTop = restoredScrollTop(props.pane.id, chat.value.file, box.value.scrollHeight)
+    if (staleGen(gen) || !box.value) return
+    restoreTop = restoredScrollTop(props.pane.id, file, box.value.scrollHeight)
+    keptAnchor = kept && restoreTop !== null
   }
+  else if (fromBottom !== null && (anchorFile === undefined || anchorFile === chat.value.file) && box.value
+    && box.value.scrollHeight - box.value.scrollTop !== fromBottom) restoreTop = box.value.scrollHeight - fromBottom
   if (!jumping && searchOpen.value && search.q.length >= 2) applySearchMarks(false)
   else if (restoreTop !== null && !jumping && box.value) {
     stick = false
@@ -216,6 +251,7 @@ let lastTop = 0
 let held = false
 function onUserScroll(e: Event) {
   held = false
+  keptAnchor = false
   if (e instanceof WheelEvent && e.deltaY < 0) stick = false
   interruptThought()
 }
@@ -493,9 +529,13 @@ const loadChat = tailLoader.load
 // ChatView stays mounted across pane changes (AgentView has no key): the
 // conversation belongs to the identity, compared by value — a new pane
 // object, title, status or preview alone resets nothing. On a real change:
-// drop the old conversation and load the new one at once, do not wait for
-// an unrelated poll.
+// the pane leaving the screen keeps its reading position, like leaving the
+// view does (onBeforeUnmount), then the new conversation drops the old one's
+// state and loads at once, not waiting for an unrelated poll.
+let openPaneId = props.pane.id
 watch(() => identityOf(props.pane), () => {
+  if (box.value && rendered.value) saveReadingPosition(openPaneId, chat.value.file, box.value)
+  openPaneId = props.pane.id
   resetChat()
   tailLoader.invalidate()
   if (!offlineView.value) loadChat()
@@ -1680,8 +1720,9 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
     <!-- The end kept on this device while the network is slow to answer: said, over the list (nothing moves). -->
     <span v-if="cachedTag && savedAt" class="cached-tag chat-cached" role="status">{{ tl(`Read at ${fmtTime(savedAt)}`, `Lu à ${fmtTime(savedAt)}`) }}</span>
     <div ref="box" class="chat" @scroll.passive="onScroll" @wheel.passive="onUserScroll" @touchmove.passive="onUserScroll" @click.capture="onJump">
+      <!-- No bottom pin of its own (at mount, then 100 ms later): apply() places the first paint. -->
       <UChatMessages
-        :status="working ? 'streaming' : 'ready'" :should-auto-scroll="false"
+        :status="working ? 'streaming' : 'ready'" :should-auto-scroll="false" :should-scroll-to-bottom="false"
         :auto-scroll="{ color: 'neutral', variant: 'outline' }"
         auto-scroll-icon="i-lucide-arrow-down"
         :ui="MSGS_UI"
