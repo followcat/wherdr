@@ -1,0 +1,13 @@
+
+⠀⣴⣾⣶⡄⠀⠀⠀⠀
+⠀⠛⠿⠟⠻⣶⣾⣶⡄  Devin CLI
+⠀⣤⣶⣦⣴⠿⢿⠿⠃  v3000.12.57
+⠀⠻⢿⠿⠃⠀⠀⠀⠀
+
+ Pro · 50% remaining (resets in 5h)
+
+ ● ~/work/acme-shop
+──────────────────────────────────────────────
+❭ Ask Devin to build features, fix bugs, or …
+──────────────────────────────────────────────
+Claude Opus 5.5 Max  See usage and cost: /ses…

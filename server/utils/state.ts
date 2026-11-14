@@ -283,6 +283,8 @@ export function corePollGate(run: () => Promise<void>, { debounceMs = 50, gapMs 
 }
 const corePolls = corePollGate(() => poll(), { active: () => !stopped })
 const scheduleCorePoll = corePolls.schedule
+/** Another poll soon, through the same debounce and gap as core's events. */
+export const wakeCorePoll = () => scheduleCorePoll()
 
 export function startPolling() {
   stopped = false

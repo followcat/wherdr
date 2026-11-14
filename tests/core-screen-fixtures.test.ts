@@ -124,7 +124,10 @@ describe('enrich + card preview on recorded screens', () => {
     expect(p.interaction).toBe('input')
     expect(readCoreScreen(text, 'devin', 'unknown').status).toBe('idle')
     expect(readCoreScreen(text, 'codex', 'idle').interaction).toBe('terminal')
-    expect(readCoreScreen(text.replace('Context:', 'Status:'), 'devin', 'idle').interaction).toBe('terminal')
+    // The footer's words vary (mode, hints, width): only a frame still being
+    // painted, without its footer, is not the field.
+    expect(readCoreScreen(text.replace('Context:', 'Status:'), 'devin', 'idle').interaction).toBe('input')
+    expect(readCoreScreen(text.replace(/\n[^\n]*Context:[^\n]*\n?$/, ''), 'devin', 'idle').interaction).toBe('terminal')
   })
 
   it.each(CASES)('$name', async (c) => {

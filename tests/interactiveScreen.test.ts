@@ -44,6 +44,18 @@ describe('terminal fallback after native recognition', () => {
   it.each(['pi', 'gemini', 'kimi', null])('does not infer a menu from an unsupported agent %s', agent => {
     expect(classifyScreen({ text: 'A normal reply without a known input marker', agent })).toBe('unknown')
   })
+  it.each(['devin-idle.txt', 'devin-status-plain.txt', 'devin-idle-edits.txt', 'devin-idle-narrow.txt'])(
+    'confirms the Devin field in %s whatever its footer says', name => {
+      const text = fx(name)
+      expect(confirmedInput(text, 'devin')).toBe(true)
+      expect(classifyScreen({ text, agent: 'devin', status: 'idle' })).toBe('input')
+      // Mid-paint, before the footer is drawn, the field is not confirmed.
+      expect(confirmedInput(text.trimEnd().split('\n').slice(0, -1).join('\n'), 'devin')).toBe(false)
+    },
+  )
+  it.each(['devin-fusion-lead.txt', 'devin-fusion-sidekick.txt', 'devin-menu.txt'])('never reads the Devin picker %s as the field', name => {
+    expect(confirmedInput(fx(name), 'devin')).toBe(false)
+  })
   it('reads an unrecognized opencode screen as a plain terminal like other transcript agents', () => {
     expect(classifyScreen({ text: 'A normal reply without a known input marker', agent: 'opencode' })).toBe('terminal')
   })

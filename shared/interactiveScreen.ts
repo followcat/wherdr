@@ -45,8 +45,15 @@ export function confirmedInput(text: string, agent?: string | null): boolean {
   const below = lines.slice(at + 1).join('\n')
   if (/\b(?:enter|esc|escape)\s+(?:to\s+)?(?:select|open|back|cancel|confirm|close)\b/i.test(below)) return false
   if (/^\s*[❯›❭]\s+\d{1,2}\.\s/.test(line)) return false
-  if (/^\s*❭(?:\s|$)/.test(line)) return /^\s*─{3,}/.test(lines[at - 1] || '')
-    && /^\s*─{3,}/m.test(below) && /\bContext:\s*[\d,.]+[km]?\s*\/\s*[\d,.]+[km]?\s+tokens\b/i.test(below)
+  // Devin's field: a rule above (it may carry the session title), a rule
+  // below, then the footer. The footer's words change with the mode, the
+  // session and the width (model only, `· smart`, `ctrl+o …`, a quota or
+  // `/session-stats`, cut short on a phone), so only its presence counts:
+  // a frame still being painted has none.
+  if (/^\s*❭(?:\s|$)/.test(line)) {
+    const rule = lines.findIndex((l, i) => i > at && /^\s*─{3,}/.test(l))
+    return /^\s*─/.test(lines[at - 1] || '') && rule > at && Boolean(lines[rule + 1]?.trim())
+  }
   if (/^╰─(?:\s|$)/.test(line)) return true
   if (/^\s*›(?:\s|$)/.test(line)) return /for shortcuts|context left|\b(?:gpt-[\w.-]+|o[1-9](?:-[\w.-]+)?)\b.*·/i.test(below)
   return /^\s*─{3,}/.test(lines[at - 1] || '')

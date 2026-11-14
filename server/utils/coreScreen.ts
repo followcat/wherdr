@@ -51,11 +51,16 @@ export interface CoreScreenDeps {
   colors?: (p: Pane) => Promise<string>
   /** Every text read (model/effort shown on screen feed their caches). */
   noted?: (p: Pane, text: string) => void
+  /** Ask for a poll in `ms`: a suppressed 'terminal' wants its second read. */
+  wake?: (ms: number) => void
   now?: () => number
 }
 
 const VIEWED_MS = 1000
 const IDLE_MS = 5000
+// An unconfirmed 'terminal' observation is re-read at this faster pace so a
+// real interactive screen still opens quickly on an otherwise quiet server.
+const CONFIRM_MS = 250
 const MAX_READS = 6
 // A draft is shown once it stayed the same this long (not while someone types it)
 // and the colored screen confirms it.
@@ -83,11 +88,17 @@ export function createCoreScreens(deps: CoreScreenDeps) {
   // omp's status line and context gauge, kept between reads (an unviewed resting omp
   // is read at the background pace).
   const omps = new Map<string, { at: number, status: OmpStatus | null }>()
-  // Consecutive 'terminal' readings per pane: a TUI mid-redraw (footer or rule
-  // not yet painted) classifies 'terminal' for one read, and the overlay that
-  // opens on it flaps. Only a reading seen twice in a row is published; every
-  // other interaction publishes at once.
-  const terms = new Map<string, number>()
+  // Consecutive 'terminal' observations per pane, keyed to the read that
+  // produced them (at): a TUI mid-redraw (footer or rule not yet painted)
+  // classifies 'terminal' for one read, and the overlay that opens on it
+  // flaps. Only a reading seen in two consecutive reads is published; while
+  // unconfirmed the pane keeps its last published interaction instead of
+  // dropping to 'unknown'. Re-parsing the same cached text never counts.
+  const terms = new Map<string, { at: number, streak: number, published?: NonNullable<Pane['interaction']> }>()
+  const terminalPending = (id: string) => {
+    const t = terms.get(id)
+    return Boolean(t && t.streak > 0 && t.published !== 'terminal')
+  }
   const isKeyed = (id: string) => (keyed.get(id) ?? -Infinity) > now()
   const read = async (p: Pane) => {
     try {
@@ -114,7 +125,12 @@ export function createCoreScreens(deps: CoreScreenDeps) {
     p.ompStatus = p.status === 'working' && !failed.has(p.id) ? o.status : { ...o.status, metersFresh: false }
   }
   return {
-    forget: (id: string) => { cache.delete(id) },
+    forget: (id: string) => {
+      cache.delete(id)
+      // The screen we knew is gone: its terminal streak starts over.
+      const t = terms.get(id)
+      if (t) t.streak = 0
+    },
     /** Keys were just pressed in this agent (key bar): read it again, its draft follows. */
     keyed: (id: string) => {
       cache.delete(id)
@@ -138,7 +154,7 @@ export function createCoreScreens(deps: CoreScreenDeps) {
         if (!c || isKeyed(p.id) || (c.open && now() - (born.get(p.id) ?? 0) < STARTUP_MS)) return true
         // A screen read during the turn (omp's gauge) says nothing of the question that ends it.
         if (c.working && p.status !== 'working') return true
-        return now() - c.at >= (deps.viewed(p.id) ? VIEWED_MS : IDLE_MS)
+        return now() - c.at >= (!deps.viewed(p.id) ? IDLE_MS : terminalPending(p.id) ? CONFIRM_MS : VIEWED_MS)
       }).sort((a, b) => Number(deps.viewed(b.id)) - Number(deps.viewed(a.id))).slice(0, MAX_READS)
       await Promise.all(due.map(read))
       const alive = new Set(panes.map(p => p.id))
@@ -149,6 +165,8 @@ export function createCoreScreens(deps: CoreScreenDeps) {
       for (const id of terms.keys()) if (!alive.has(id)) terms.delete(id)
       for (const id of omps.keys()) if (!alive.has(id) || panes.find(p => p.id === id)?.agent !== 'omp') omps.delete(id)
       for (const p of panes) if (p.agent === 'omp') readOmpStatus(p)
+      // Work redraws the whole screen: a terminal streak never spans it.
+      for (const p of panes) if (p.status === 'working') terms.delete(p.id)
       for (const p of agents) {
         const c = cache.get(p.id)
         if (!c) continue
@@ -168,9 +186,12 @@ export function createCoreScreens(deps: CoreScreenDeps) {
         if (error) p.error = error
         else delete p.error
         const raw = failed.has(p.id) ? 'unknown' : r.interaction
-        const streak = raw === 'terminal' ? (terms.get(p.id) ?? 0) + 1 : 0
-        terms.set(p.id, streak)
-        p.interaction = raw === 'terminal' && streak < 2 ? (p.interaction ?? 'unknown') : raw
+        const prev = terms.get(p.id)
+        // Only a new read (another c.at) advances the streak.
+        const streak = raw !== 'terminal' ? 0 : prev?.at === c.at && prev.streak ? prev.streak : (prev?.streak ?? 0) + 1
+        const published = raw === 'terminal' && streak < 2 ? prev?.published ?? 'unknown' : raw
+        terms.set(p.id, { at: c.at, streak, published })
+        p.interaction = published
         if (choices && r.interaction === 'native') p.prompt = choices
         if (parsed.sendNow) p.queueSendNow = true
         const draft = !failed.has(p.id) && r.interaction === 'input' && p.status !== 'working' ? (parsed.draft === undefined ? parsed.draft = readDraft(c.text, p.agent) : parsed.draft) : null
@@ -185,6 +206,9 @@ export function createCoreScreens(deps: CoreScreenDeps) {
           }
         }
       }
+      // An unconfirmed 'terminal' on a viewed pane waits for its second read,
+      // CONFIRM_MS away: ask for that poll instead of the next core event.
+      if (deps.wake && agents.some(p => deps.viewed(p.id) && terminalPending(p.id))) deps.wake(CONFIRM_MS)
     },
   }
 }
