@@ -16,8 +16,8 @@ export class CoreError extends Error {
 }
 const MAX_REPLY = 16 * 1024 * 1024
 
-// Guide for a 2.x install that got wherdr 3 (shipped in the package's docs/).
-export const MIGRATION_GUIDE = 'docs/migrate-from-2.x.md'
+// Guide for a 2.x install moving to wherdr 3 (in the checkout's docs/).
+export const MIGRATION_GUIDE = 'docs/migrate-from-v2.md'
 // Why wherdr cannot start without hc, or '' when HC_SOCKET is set.
 export function missingHcSocket(env = process.env) {
   return env.HC_SOCKET ? '' : `HC_SOCKET is not set: wherdr 3 runs on herdr-core (hc) and needs the socket of an hc session (--hc-socket <path>, or HC_SOCKET). Coming from wherdr 2.x? See ${MIGRATION_GUIDE}.`

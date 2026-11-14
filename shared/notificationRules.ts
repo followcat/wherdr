@@ -3,6 +3,7 @@
 import type { LinkedCoordinator, MachineLinks } from './boardLinks'
 import type { HerdrState, Pane } from './types'
 import { machineOf } from './ids'
+import { MAIN } from './pm/coordinator'
 
 export const NOTIFICATION_EVENTS = ['needs-you', 'finished', 'message', 'scheduled'] as const
 export type NotificationEvent = typeof NOTIFICATION_EVENTS[number]
@@ -69,6 +70,9 @@ export const defaultNotifications = (): NotificationSettings => ({
   version: 2, default: { events: [...LEVEL_EVENTS.finished], subagents: false }, exceptions: [],
 })
 export const coordinatorKey = (c: Pick<LinkedCoordinator, 'level' | 'repo' | 'session'>) => `${c.session ?? ''}/${c.level}/${c.repo ?? ''}`
+// Today's coordinators: Alfred (the main one, MAIN) and one per project, by
+// key. One of each across machines and restarts: no session.
+export const coordinatorTarget = (project: string) => coordinatorKey(project === MAIN ? { level: 'top' } : { level: 'project', repo: project })
 export function parseCoordinatorKey(key: string) {
   const [session = '', level = '', repo = ''] = key.split('/')
   return { session, level: level as LinkedCoordinator['level'], repo: repo || undefined }
@@ -131,7 +135,8 @@ export function migrateNotificationSettings(v: { defaults?: unknown, muteSubagen
 // and left nothing behind no longer count).
 export const exceptionLive = (e: NotificationException, now = Date.now()) => e.events !== null || (e.until !== null && e.until > now)
 export function notificationException(settings: NotificationSettings, source: NotificationSource, now = Date.now()): NotificationException | undefined {
-  const live = (e: NotificationException) => e.machine === source.machine && exceptionLive(e, now)
+  // A coordinator's exception follows it on any machine.
+  const live = (e: NotificationException) => (e.kind === 'coordinator' || e.machine === source.machine) && exceptionLive(e, now)
   const task = source.subagent || source.board
   // Task agents never have an exception of their own (only the Sub-agents
   // switches), even one migrated from the older per-conversation rules.
@@ -208,6 +213,31 @@ export function tidyNotificationExceptions(settings: NotificationSettings, board
     else addException(exceptions, e)
   }
   return changed ? { ...settings, exceptions } : null
+}
+
+// Coordinator exceptions of the older model (one per Herdr session: main,
+// machine and project coordinators) move to today's: the main one to Alfred, a
+// project one to its project's coordinator while that project exists, labelled
+// with its current name. A machine coordinator or a gone project can match
+// nothing any more: dropped. Duplicates merge (the last wins). projects: the
+// project keys, null when unknown (projects off or not loaded yet): project
+// exceptions then stay as they are. Null: nothing changes.
+export function migrateCoordinatorExceptions(settings: NotificationSettings, projects: readonly string[] | null,
+  name: (project: string) => string): NotificationSettings | null {
+  const exceptions: NotificationException[] = []
+  let changed = false
+  for (const e of settings.exceptions) {
+    if (e.kind !== 'coordinator') { addException(exceptions, e); continue }
+    const k = parseCoordinatorKey(e.id)
+    const project = k.level === 'top' ? MAIN : k.level === 'project' && k.repo ? k.repo : null
+    if (project && project !== MAIN && !projects) { addException(exceptions, e); continue }
+    if (!project || (project !== MAIN && !projects!.includes(project))) { changed = true; continue }
+    const id = coordinatorTarget(project)
+    if (id === e.id && e.machine === '') { addException(exceptions, e); continue }
+    changed = true
+    addException(exceptions, { ...e, machine: '', id, label: name(project).slice(0, 120) })
+  }
+  return changed || exceptions.length !== settings.exceptions.length ? { ...settings, exceptions } : null
 }
 
 // A lease uses server time only. A hidden, disconnected or idle tab cannot

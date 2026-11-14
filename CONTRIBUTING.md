@@ -162,6 +162,13 @@ both change the account's default model. wherdr itself only uses "this session" 
   French dictionary and optional second argument inactive. Error messages the server
   sends to the UI are English keys too.
 - **Design**: follow the [design rules](docs/design.md) for every interface change.
+- **Docs**: add a new section where it belongs in its page, never at the end of the file,
+  and its line under the matching heading of `docs/llms.txt`. Parallel tasks that all append
+  to the same spot conflict at every merge. `docs/llms.txt` merges with `merge=union`
+  (`.gitattributes`); `npm install` adds a local driver (`scripts/llms-merge.mjs`, in the
+  clone's `info/attributes`) that also keeps one line per entry: yours when you changed it.
+  Keep each line unique: edit the existing line of your entry. After a merge without the
+  driver, run `node scripts/llms-merge.mjs fix`.
 - **iOS**: keep `apple-mobile-web-app-status-bar-style` on `black` (with `black-translucent`,
   iOS 26 shortens the installed app from the bottom), and mind the keyboard and safe areas.
 - **Terminal input and IME**: xterm's `onData` does not distinguish a keystroke from

@@ -4,15 +4,22 @@
 import type { ThemeDef, ThemeGroup } from '~/utils/themes'
 import type { TypingSpeed } from '~/utils/typewriter'
 import { SETTINGS_ALIASES, SETTINGS_SECTIONS, settingsBack } from '~/utils/settingsNav'
+import { CONVERSATION_TABS, conversationTab, type ConversationTab } from '#shared/appLinks'
 import type { SettingsSection } from '~/utils/settingsNav'
 import { type QuietDuration, type QuietScope, quietUntil } from '#shared/quiet'
 import { quietPeriodEnd } from '~/utils/quietPeriodEnd'
 import { ENGINES } from '~/utils/dictation/registry'
 import { DEFAULT_MAX_SESSION_DAYS, MAX_SESSION_DAYS, type MaxSessionDays } from '#shared/sessionLimit'
 import { APP_START_DEFAULT, readAppStart, writeAppStart, type AppStart } from '#shared/appStart'
+import { chatFilesLevel, type ChatFilesLevel } from '#shared/chatFiles'
+import { projectTarget, uiTarget, uiTargetName, type UiTargetId } from '#shared/uiTargets'
+import { followElement, showHalo, waitForElement } from '~/utils/uiHalo'
 
+// panel: beside the conversation on a wide computer (utils/settingsPanel.ts);
+// the section lives in the conversation's URL, the full page stays one click away.
+const props = defineProps<{ panel?: boolean }>()
 const router = useRouter()
-// v3's own version (shared/v3Version.ts), also in /api/health.
+// The build's version (shared/v3Version.ts), also in /api/health.
 const appVersion = useRuntimeConfig().public.version
 // Sections: sidebar on a computer (one section shown), iOS Settings-style
 // list on the phone (a tap opens the section, Back returns to the list).
@@ -22,7 +29,7 @@ const appVersion = useRuntimeConfig().public.version
 const route = useRoute()
 watch(() => [route.path, route.query.section], () => {
   if (route.query.section === 'desktop' || route.path === '/settings/desktop') {
-    router.replace({ path: '/settings', query: { ...route.query, section: 'conversation' } })
+    router.replace({ path: props.panel ? route.path : '/settings', query: { ...route.query, section: 'conversation' } })
   }
 }, { immediate: true })
 const alias = computed(() => SETTINGS_ALIASES[String(route.query.section)] ?? null)
@@ -45,38 +52,97 @@ const activeSection = computed<SettingsSection | null>(() => {
   if (section.value && sections.value.some(s => s.id === section.value)) return section.value
   return desk.value ? 'appearance' : null
 })
+// Conversation's tabs, the one shown in the URL (`&tab=dictation`).
+const convTab = computed(() => conversationTab(route.query.tab))
+const CONV_TAB_LABEL: Record<ConversationTab, string> = { 'display': 'Display', 'dictation': 'Dictation', 'read-aloud': 'Read aloud' }
+const openConvTab = (tab: ConversationTab) => router.replace({ query: { ...route.query, tab, target: undefined } })
 const activeLabel = computed(() => sections.value.find(s => s.id === activeSection.value)?.label || t('Settings'))
 const body = ref<HTMLElement | null>(null)
-// A new section starts at the top; an alias (?section=pacing) scrolls to its
-// group, and keeps it in place while the groups above finish loading, until
-// the user scrolls or for 3 s.
+// A new section (or Conversation tab) starts at the top. A target
+// (`&target=appearance.theme`, shared/uiTargets.ts; an alias such as
+// ?section=pacing names one) is waited for, scrolled to, kept in place while
+// the groups above finish loading, and highlighted (utils/uiHalo.ts). Not
+// shown (a feature off): the section's note says so, highlighted instead.
+// A project's target is the project sheet's (ProjectSheet.vue).
+const target = computed(() => {
+  const id = uiTarget(route.query.target) ?? uiTarget(alias.value?.target)
+  return id && !projectTarget(id) ? id : null
+})
+const pointed = ref<UiTargetId | null>(null)
+const missing = ref<UiTargetId | null>(null)
+const missingNote = ref<HTMLElement | null>(null)
+const targetNote = computed(() => {
+  const id = pointed.value ?? missing.value
+  if (!id) return ''
+  const name = uiTargetName(id)
+  if (missing.value) return `${name} ${t('is not shown here.')}`
+  return openedBy.value ? `${openedBy.value} ${t('points to')} ${name}` : `${t('Pointing to')} ${name}`
+})
 let stopFollow = () => {}
-watch(() => route.query.section, () => nextTick(() => {
+let endHalo = () => {}
+let pointing = 0
+// body: a direct load points once the column is mounted.
+watch(() => `${route.query.section}|${route.query.section === 'conversation' ? convTab.value : ''}|${target.value ?? ''}|${!!body.value}`, () => nextTick(async () => {
   stopFollow()
+  endHalo()
+  pointed.value = missing.value = null
   const b = body.value
   if (!b) return
   b.scrollTop = 0
-  const el = alias.value && document.getElementById(alias.value.anchor)
-  if (!el || typeof ResizeObserver === 'undefined') return
-  const place = () => { b.scrollTop += el.getBoundingClientRect().top - b.getBoundingClientRect().top }
-  place()
-  const ro = new ResizeObserver(place)
-  ro.observe(b.firstElementChild!)
-  const timer = setTimeout(() => stopFollow(), 3000)
-  stopFollow = () => {
-    ro.disconnect()
-    clearTimeout(timer)
-    for (const ev of ['wheel', 'touchstart', 'keydown']) b.removeEventListener(ev, stopFollow)
-    stopFollow = () => {}
+  const id = target.value
+  if (!id) return
+  const run = ++pointing
+  const el = await waitForElement(b, `[data-ui-target="${id}"]`)
+  if (run !== pointing) return
+  if (!el) {
+    missing.value = id
+    await nextTick()
+    if (missingNote.value) endHalo = showHalo(missingNote.value)
+    return
   }
-  for (const ev of ['wheel', 'touchstart', 'keydown']) b.addEventListener(ev, stopFollow, { passive: true })
+  pointed.value = id
+  el.setAttribute('aria-describedby', 'ui-target-note')
+  stopFollow = followElement(b, el)
+  endHalo = showHalo(el)
 }), { immediate: true })
-onBeforeUnmount(() => stopFollow())
+onBeforeUnmount(() => { pointing++; stopFollow(); endHalo() })
 function openSection(id: SettingsSection) {
   if (id === section.value) return
-  const to = { path: '/settings', query: { section: id } }
+  const to = { path: props.panel ? route.path : '/settings', query: { section: id } }
   if (desk.value) router.replace(to)
   else router.push(to)
+}
+// Opened by an agent's `ui open` (AgentView.vue): its name, while its section shows.
+const openedBy = computed(() => {
+  const o = uiOpenedBy.value
+  return props.panel && o && o.section === route.query.section ? o.by : null
+})
+if (props.panel) onBeforeUnmount(() => { uiOpenedBy.value = null })
+function closePanel() {
+  const { section: _s, project: _p, tab: _t, review: _r, library: _l, group: _g, target: _x, ...query } = route.query
+  router.replace({ query })
+}
+function openFullPage() {
+  fullSettingsOnce.value = true
+  navigateTo({ path: '/settings', query: route.query })
+}
+// Escape closes the panel first, unless a window or menu is open or the key is
+// typed in the conversation (message field, terminal). Capture phase: the
+// conversation's own Escape (Stop, the Your turn card) waits for the next press.
+function onPanelKey(e: KeyboardEvent) {
+  if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented) return
+  if (anySheetOpen.value || document.querySelector('[role="dialog"], [role="alertdialog"]')) return
+  // HeaderMenu closes its menu with a fake Escape sent to the document: not for us.
+  const el = e.target instanceof Element ? e.target : null
+  if (!el || el.closest('[role="menu"], [role="listbox"]')) return
+  if (!el.closest('#settings') && (el.closest('.xterm') || el.matches('input, textarea, [contenteditable="true"]'))) return
+  e.preventDefault()
+  e.stopPropagation()
+  closePanel()
+}
+if (props.panel) {
+  onMounted(() => document.addEventListener('keydown', onPanelKey, true))
+  onBeforeUnmount(() => document.removeEventListener('keydown', onPanelKey, true))
 }
 function back() {
   const to = settingsBack({ desk: desk.value, section: section.value, historyBack: (history.state as { back?: unknown } | null)?.back })
@@ -88,7 +154,7 @@ function back() {
 // underneath, the system Back button would close the app. We slip the home screen
 // underneath, as if we came from the agent list.
 onMounted(async () => {
-  if (desk.value || typeof (history.state as { back?: unknown } | null)?.back === 'string') return
+  if (props.panel || desk.value || typeof (history.state as { back?: unknown } | null)?.back === 'string') return
   const here = route.fullPath
   await router.replace('/')
   await router.push(here)
@@ -286,6 +352,21 @@ const deadlineText = computed(() => {
   return tl(`This device asks for the passkey again at the first opening after ${when}.`, `Cet appareil redemandera la clé d’accès à la première ouverture après le ${when}.`)
 })
 
+// Files shown from conversations (shared/chatFiles.ts): applied by the server.
+// Picking the default saves nothing, so it keeps following the exposure.
+const publicExposure = computed(() => Boolean(appConfig.value.publicExposure))
+const chatFilesSaved = syncedRef<string | null>('chatFilesLevel', raw => raw, v => v)
+const chatFiles = computed({
+  get: () => chatFilesLevel(chatFilesSaved.value, publicExposure.value),
+  set: (v: ChatFilesLevel) => { chatFilesSaved.value = v === chatFilesLevel(null, publicExposure.value) ? null : v },
+})
+const chatFilesItems = computed(() => [
+  { label: t('Everything my user can read'), description: publicExposure.value ? t('Not recommended: wherdr is reachable from the Internet.') : t('Default while wherdr answers only this computer and your tailnet.'), value: 'all' },
+  { label: t('Home and the agents’ temporary folders'), description: publicExposure.value ? t('Default while wherdr is reachable from the Internet.') : t('Your home folder, /tmp, /var/tmp and /var/folders.'), value: 'temp' },
+  { label: t('Home only'), description: t('Only files in your home folder.'), value: 'home' },
+])
+const chatFilesProtected = syncedRef('chatFilesProtected', flag.read(false), flag.write)
+
 // How this device opens the app (shared/appStart.ts): kept where the service
 // worker reads it, nothing on the server.
 const appStartItems = [
@@ -311,16 +392,21 @@ onMounted(() => {
 </script>
 
 <template>
-  <section id="settings" data-wherdr="settings" class="view settings-view">
+  <section id="settings" data-wherdr="settings" class="view settings-view" :class="{ 'settings-panel': panel }" :aria-label="panel ? t('Settings') : undefined">
+    <SidePanelHandle v-if="panel" />
     <header class="top bar settings-top">
-      <UButton icon="i-lucide-chevron-left" color="neutral" variant="ghost" size="lg" class="icon-btn" :aria-label="t('Back')" @click="back" />
-      <h2>{{ desk ? t('Settings') : activeLabel }}</h2>
+      <UButton v-if="!panel" icon="i-lucide-chevron-left" color="neutral" variant="ghost" size="lg" class="icon-btn" :aria-label="t('Back')" @click="back" />
+      <h2>{{ desk ? t('Settings') : activeLabel }}<span v-if="openedBy" class="settings-opened-by">{{ tl(`Opened by ${openedBy}`) }}</span></h2>
+      <template v-if="panel">
+        <UButton icon="i-lucide-maximize-2" color="neutral" variant="ghost" size="lg" class="icon-btn settings-panel-full" :aria-label="t('Open full page')" :title="t('Open full page')" @click="openFullPage" />
+        <UButton icon="i-lucide-panel-right-close" color="neutral" variant="ghost" size="lg" class="icon-btn" :aria-label="t('Close settings')" :title="t('Close settings')" @click="closePanel" />
+      </template>
     </header>
     <div class="settings-layout" :class="{ 'section-open': activeSection }">
       <nav class="settings-nav" :aria-label="t('Settings sections')">
         <button
           v-for="item in sections" :key="item.id" type="button" class="settings-nav-item"
-          :class="{ selected: activeSection === item.id }" :aria-current="activeSection === item.id ? 'page' : undefined"
+          :class="{ selected: activeSection === item.id }" :title="panel ? item.label : undefined" :aria-current="activeSection === item.id ? 'page' : undefined"
           @click="openSection(item.id)"
         >
           <UIcon :name="item.icon" /><span>{{ item.label }}</span><UIcon name="i-lucide-chevron-right" class="settings-nav-arrow" />
@@ -329,9 +415,11 @@ onMounted(() => {
       <div v-show="activeSection" ref="body" class="settings-body">
         <div class="settings-column">
         <h2 class="settings-section-title">{{ activeLabel }}</h2>
+        <p v-if="missing" ref="missingNote" class="muted settings-hint ui-target-missing">{{ targetNote }}</p>
+        <p v-else id="ui-target-note" class="sr-only" role="status" aria-live="polite">{{ targetNote }}</p>
 
         <div v-show="activeSection === 'appearance'" class="settings-section">
-          <div class="settings-group">
+          <div data-ui-target="appearance.theme" class="settings-group">
             <h3>{{ t('Theme') }}</h3>
             <!-- Collapsed by default: the current theme shows, a tap expands the list. -->
             <button type="button" class="theme-opt theme-current" :aria-expanded="themesOpen" @click="themesOpen = !themesOpen">
@@ -363,7 +451,7 @@ onMounted(() => {
             <p class="muted settings-hint">{{ t('Also on omp’s running actions (border only). Frozen when the system asks for reduced motion. Follows you on every device.') }}</p>
           </div>
 
-          <div class="settings-group">
+          <div data-ui-target="appearance.home-screen" class="settings-group">
             <h3>{{ t('Home screen') }}</h3>
             <label class="settings-toggle">
               <span><b>{{ t('Compact list') }}</b><small>{{ t('Cards: one line in Compact, two in Normal with current activity. Follows you on every device.') }}</small></span>
@@ -388,7 +476,7 @@ onMounted(() => {
             <MachineBarSettings />
           </div>
 
-          <div class="settings-group">
+          <div data-ui-target="appearance.quotas" class="settings-group">
             <h3>{{ t('Quotas') }}</h3>
             <URadioGroup v-model="quotaMode" :items="quotaItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
             <p class="muted settings-hint">{{ t('The color always flags a nearly exhausted quota. Follows you on every device.') }}</p>
@@ -420,35 +508,42 @@ onMounted(() => {
         </div>
 
         <div v-show="activeSection === 'conversation'" class="settings-section">
-          <div class="settings-group">
-            <h3>{{ t('Default pane view') }}</h3>
-            <URadioGroup v-model="defaultPane" :items="defaultPaneItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
-            <p class="muted settings-hint">{{ t('What an agent pane opens on. A pane you switched to Terminal stays there. Follows you on every device.') }}</p>
+          <div class="segmented settings-tabs" role="tablist" :aria-label="t('Conversation')" :style="{ '--segment-count': CONVERSATION_TABS.length }">
+            <button v-for="k in CONVERSATION_TABS" :id="`conversation-tab-${k}`" :key="k" type="button" role="tab" :class="{ on: convTab === k }" :aria-selected="convTab === k" :aria-controls="`conversation-panel-${k}`" :data-tab="k" @click="openConvTab(k)">
+              <span>{{ t(CONV_TAB_LABEL[k]) }}</span>
+            </button>
           </div>
-          <div class="settings-group settings-typing">
-            <h3>{{ t('Typewriter') }}</h3>
-            <URadioGroup v-model="typewriter" :items="typingItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" :disabled="reducedMotion" />
-            <p class="muted settings-hint">{{ t(reducedMotion ? 'Off: the system asks for reduced motion.' : 'Only new replies are animated; history appears at once. Tap a reply while it types to show it in full. Follows you on every device.') }}</p>
-            <label class="settings-toggle encrypted-toggle" :class="{ 'is-disabled': !typewriterActive }">
-              <span><b>{{ t('Encrypted text') }}</b><small>{{ t('Writing advances in glyphs, then the text decrypts behind it.') }}</small></span>
-              <USwitch v-model="encryptedOn" :disabled="!typewriterActive" color="success" size="xl" />
-            </label>
-            <TypingPreview v-if="activeSection === 'conversation'" />
+          <div v-show="convTab === 'display'" id="conversation-panel-display" role="tabpanel" aria-labelledby="conversation-tab-display">
+            <div data-ui-target="conversation.default-pane" class="settings-group">
+              <h3>{{ t('Default pane view') }}</h3>
+              <URadioGroup v-model="defaultPane" :items="defaultPaneItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
+              <p class="muted settings-hint">{{ t('What an agent pane opens on. A pane you switched to Terminal stays there. Follows you on every device.') }}</p>
+            </div>
+            <div data-ui-target="conversation.typewriter" class="settings-group settings-typing">
+              <h3>{{ t('Typewriter') }}</h3>
+              <URadioGroup v-model="typewriter" :items="typingItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" :disabled="reducedMotion" />
+              <p class="muted settings-hint">{{ t(reducedMotion ? 'Off: the system asks for reduced motion.' : 'Only new replies are animated; history appears at once. Tap a reply while it types to show it in full. Follows you on every device.') }}</p>
+              <label class="settings-toggle encrypted-toggle" :class="{ 'is-disabled': !typewriterActive }">
+                <span><b>{{ t('Encrypted text') }}</b><small>{{ t('Writing advances in glyphs, then the text decrypts behind it.') }}</small></span>
+                <USwitch v-model="encryptedOn" :disabled="!typewriterActive" color="success" size="xl" />
+              </label>
+              <TypingPreview v-if="activeSection === 'conversation' && convTab === 'display'" />
+            </div>
+            <div data-ui-target="conversation.reply-style" class="settings-group">
+              <h3>{{ tl('Reply style', 'Style de réponse') }}</h3>
+              <p class="muted settings-lead">{{ tl('Each question an agent asks, and each point it lists, can be quoted in the field to answer them one by one. Choose how they offer it.', 'Chaque question d’un agent, et chaque point qu’il liste, peut être cité dans le champ pour y répondre un par un. Choisis comment ils le proposent.') }}</p>
+              <URadioGroup v-model="replyStyleChoice" :items="replyStyleItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio reply-style-radio" />
+              <p class="muted settings-hint">{{ tl('Follows you on every device.', 'Te suit sur tous tes appareils.') }}</p>
+            </div>
+            <div class="settings-group">
+              <h3>{{ tl('Quoted replies', 'Réponses citées') }}</h3>
+              <p class="muted settings-lead">{{ tl('Answer several questions, passages or decisions of an agent in one message: each one goes into the field as a “↳ … —” line that names the message and quotes it, your answer below. Choose how the field shows these lines; the message sent is the same.', 'Réponds à plusieurs questions, passages ou décisions d’un agent dans un seul message : chacun entre dans le champ sous la forme d’une ligne « ↳ … — » qui nomme le message et le cite, ta réponse en dessous. Choisis comment le champ affiche ces lignes ; le message envoyé est le même.') }}</p>
+              <QuoteTokensPreview v-if="activeSection === 'conversation' && convTab === 'display'" :mode="quoteChoice" />
+              <URadioGroup v-model="quoteChoice" :items="quoteItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio quote-mode-radio" />
+              <p class="muted settings-hint">{{ tl('Saved on this device.', 'Enregistré sur cet appareil.') }}</p>
+            </div>
           </div>
-          <div class="settings-group">
-            <h3>{{ tl('Reply style', 'Style de réponse') }}</h3>
-            <p class="muted settings-lead">{{ tl('Each question an agent asks, and each point it lists, can be quoted in the field to answer them one by one. Choose how they offer it.', 'Chaque question d’un agent, et chaque point qu’il liste, peut être cité dans le champ pour y répondre un par un. Choisis comment ils le proposent.') }}</p>
-            <URadioGroup v-model="replyStyleChoice" :items="replyStyleItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio reply-style-radio" />
-            <p class="muted settings-hint">{{ tl('Follows you on every device.', 'Te suit sur tous tes appareils.') }}</p>
-          </div>
-          <div class="settings-group">
-            <h3>{{ tl('Quoted replies', 'Réponses citées') }}</h3>
-            <p class="muted settings-lead">{{ tl('Answer several questions, passages or decisions of an agent in one message: each one goes into the field as a “↳ … —” line that names the message and quotes it, your answer below. Choose how the field shows these lines; the message sent is the same.', 'Réponds à plusieurs questions, passages ou décisions d’un agent dans un seul message : chacun entre dans le champ sous la forme d’une ligne « ↳ … — » qui nomme le message et le cite, ta réponse en dessous. Choisis comment le champ affiche ces lignes ; le message envoyé est le même.') }}</p>
-            <QuoteTokensPreview v-if="activeSection === 'conversation'" :mode="quoteChoice" />
-            <URadioGroup v-model="quoteChoice" :items="quoteItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio quote-mode-radio" />
-            <p class="muted settings-hint">{{ tl('Saved on this device.', 'Enregistré sur cet appareil.') }}</p>
-          </div>
-          <div class="settings-group" data-testid="dictation-settings">
+          <div v-show="convTab === 'dictation'" id="conversation-panel-dictation" role="tabpanel" aria-labelledby="conversation-tab-dictation" class="settings-group" data-testid="dictation-settings" data-ui-target="conversation.dictation">
             <h3>{{ tl('Dictation', 'Dictée') }}</h3>
             <p class="muted settings-lead">{{ tl('A mic next to +: hold it and talk, or tap it to start and again to stop. The text goes into the field; nothing is sent on its own.', 'Un micro à côté de + : maintiens-le et parle, ou touche-le pour démarrer puis encore pour arrêter. Le texte va dans le champ ; rien n’est envoyé tout seul.') }}</p>
             <URadioGroup v-model="dictationChoice" :items="dictationItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
@@ -457,7 +552,7 @@ onMounted(() => {
             <DictationRewriteSettings v-if="dictationChoice !== 'off'" />
             <p class="muted settings-hint">{{ tl('Saved on this device.', 'Enregistré sur cet appareil.') }}</p>
           </div>
-          <div class="settings-group" data-testid="read-aloud-group">
+          <div v-show="convTab === 'read-aloud'" id="conversation-panel-read-aloud" role="tabpanel" aria-labelledby="conversation-tab-read-aloud" class="settings-group" data-testid="read-aloud-group" data-ui-target="conversation.read-aloud">
             <h3>{{ tl('Read aloud', 'Lecture à voix haute') }}</h3>
             <p class="muted settings-lead">{{ tl('Play under each agent reply reads it aloud: the words only, with “code block” in place of code. One reply at a time; tap Stop to end it. On iPhone, iOS may stop reading when the screen locks or you leave the app.', 'Lire sous chaque réponse d’agent la lit à voix haute : les mots seulement, avec « bloc de code » à la place du code. Une réponse à la fois ; Arrêter y met fin. Sur iPhone, iOS peut arrêter la lecture quand l’écran se verrouille ou que tu quittes l’app.') }}</p>
             <ReadAloudSettings />
@@ -473,7 +568,7 @@ onMounted(() => {
               <USwitch v-model="shellsOn" color="success" size="xl" />
             </label>
           </div>
-          <div class="settings-group">
+          <div data-ui-target="terminal.text-size" class="settings-group">
             <h3>{{ t('Text') }}</h3>
             <div class="settings-stepper">
               <span>{{ t('Terminal text size') }}</span>
@@ -497,23 +592,23 @@ onMounted(() => {
               <USwitch v-model="smoothScrollingOn" color="success" size="xl" />
             </label>
           </div>
-          <div class="settings-group settings-renderer">
+          <div data-ui-target="terminal.rendering" class="settings-group settings-renderer">
             <h3>{{ t('Terminal rendering') }}</h3>
             <URadioGroup v-model="renderer" :items="rendererItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
             <p class="muted settings-hint">{{ t('Rendering is saved on this device.') }}</p>
             <p class="settings-renderer-status" role="status">{{ rendererStatus }}</p>
           </div>
-          <PhoneKeyOrderSettings />
+          <PhoneKeyOrderSettings data-ui-target="terminal.key-order" />
         </div>
 
         <div v-show="activeSection === 'agents'" class="settings-section">
           <OfferedAgentsSettings />
           <ProxiesSettings />
-          <div id="claude-quotas" class="settings-group">
+          <div data-ui-target="agents.claude-quotas" id="claude-quotas" class="settings-group">
             <h3>{{ tl('Claude quotas', 'Quotas Claude') }}</h3>
             <ClaudeQuotaSetup v-if="activeSection === 'agents'" />
           </div>
-          <PacingSettings id="settings-pace" :active="activeSection === 'agents'" />
+          <PacingSettings id="settings-pace" data-ui-target="agents.pace" :active="activeSection === 'agents'" />
         </div>
 
         <div v-show="activeSection === 'machines'" class="settings-section" data-testid="settings-machines">
@@ -521,7 +616,7 @@ onMounted(() => {
         </div>
 
         <div v-show="activeSection === 'notifications'" class="settings-section">
-          <div class="settings-group" data-testid="notification-quiet">
+          <div class="settings-group" data-testid="notification-quiet" data-ui-target="notifications.do-not-disturb">
             <label class="settings-toggle quiet-toggle">
               <span><b><UIcon :name="quietOn ? 'i-lucide-bell-off' : 'i-lucide-bell'" />{{ tl('Do not disturb', 'Silence') }}</b><small>{{ tl('Turns off every notification, no exceptions: the rules below are ignored.', 'Coupe toutes les notifications, sans exception : les réglages ci-dessous sont ignorés.') }}</small></span>
               <USwitch v-model="quietOn" color="success" size="xl" />
@@ -534,7 +629,7 @@ onMounted(() => {
             <p class="muted notify-hint" :class="{ 'quiet-end': quietOn }">{{ quietEnd || tl('Notifications come back on by themselves at the end.', 'Retour automatique à la normale à la fin de la durée choisie.') }}</p>
           </div>
           <NotificationRules />
-          <div class="settings-group">
+          <div data-ui-target="notifications.device" class="settings-group">
             <h3>{{ tl('This device’s notifications', 'Notifications de cet appareil') }}</h3>
             <PushCard detailed />
             <PushDevices v-if="activeSection === 'notifications'" />
@@ -550,8 +645,8 @@ onMounted(() => {
         </div>
 
         <div v-show="activeSection === 'phone'" class="settings-section">
-          <PhoneSetup :active="activeSection === 'phone'" />
-          <div class="settings-group">
+          <PhoneSetup data-ui-target="phone.setup" :active="activeSection === 'phone'" />
+          <div data-ui-target="phone.app-start" class="settings-group">
             <h3>{{ t('App start') }}</h3>
             <URadioGroup v-model="appStart" :items="appStartItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
             <p class="muted settings-hint">{{ t('On this device only.') }}</p>
@@ -566,6 +661,16 @@ onMounted(() => {
             <NetworkTips />
           </div>
           <div class="settings-group">
+            <h3>{{ t('Files shown from conversations') }}</h3>
+            <URadioGroup v-model="chatFiles" :items="chatFilesItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
+            <p v-if="chatFiles === 'all' && publicExposure" class="settings-hint settings-warning" role="alert">{{ t('wherdr is reachable from the Internet: anyone who gets in can open every file your user can read.') }}</p>
+            <p class="muted settings-hint">{{ t('Previews and downloads of a path an agent writes in a conversation. wherdr runs as your user: files it cannot read stay closed, and a symlink counts where it leads.') }}</p>
+            <label class="settings-toggle">
+              <span><b>{{ t('Also show protected files') }}</b><small>{{ t('SSH keys, wherdr’s own data and settings, ~/.config/herdr. Off by default.') }}</small></span>
+              <USwitch v-model="chatFilesProtected" color="success" size="xl" />
+            </label>
+          </div>
+          <div data-ui-target="security.passkey" class="settings-group">
             <h3>{{ tl('Passkey · optional', 'Passkey · facultative') }}</h3>
             <PasskeyCard />
           </div>

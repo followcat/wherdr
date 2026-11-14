@@ -63,7 +63,7 @@ test('core smoke: home, conversation attach and key bar, terminal attach', async
     expect(html.headers()['content-security-policy']).not.toContain('wasm-unsafe-eval')
     expect(html.headers()['content-security-policy']).not.toContain("'unsafe-eval'")
     await expect.poll(() => eventsPanes, { message: '/ws/events opens and sends a state frame with the agent' }).toBeGreaterThan(0)
-    await expect(page.locator('.home-version')).toHaveText(/^wherdr v3 · herdr-core$/i)
+    await expect(page.locator('.home-version')).toHaveText(/^wherdr v3$/i)
     await page.getByRole('button', { name: /review-agent/ }).first().click()
     await expect(page).toHaveURL(/#\/(a|t)\//)
     await expect(page.locator('.agent-top')).toBeVisible()

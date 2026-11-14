@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createChatDelta, itemSigs, splitToken } from '../server/utils/chatDelta'
 import { anchorOf, createTranscripts, headOf } from '../server/utils/transcripts'
-import { createTailLoader, nextTail, restartsTail, swapTail, tailQuery } from '../app/utils/chatTail'
+import { createFlipGuard, createTailLoader, nextTail, restartsTail, swapTail, tailQuery } from '../app/utils/chatTail'
 import type { ChatItem } from '../shared/types'
 import { type FsStat, type MachineFs, type ShellExec, createShellFs, localFs } from '../server/utils/fsx'
 import { spawn } from 'node:child_process'
@@ -645,5 +645,21 @@ describe('createTailLoader', () => {
     const loader = createTailLoader(async () => { steps++; return true }, 3)
     await loader.load()
     expect(steps).toBe(3)
+  })
+})
+
+describe('createFlipGuard', () => {
+  const a: ChatItem[] = [{ role: 'user', text: 'Kept question', ts: '2026-01-05T09:00:00.000Z' }]
+  it('keeps the last non-empty list once the list alternates more than twice, and says so once', () => {
+    let t = 0
+    const warn = vi.fn()
+    const guard = createFlipGuard({ now: () => t, warn })
+    const shown = [a, [], a, [], a, [], a].map((l) => { t += 500; return guard(l) })
+    // A first empty answer still shows (a conversation may really be emptied).
+    expect(shown.map(l => l.length)).toEqual([1, 0, 1, 0, 1, 1, 1])
+    expect(warn).toHaveBeenCalledOnce()
+    // Calm again past the window: an empty list shows.
+    t += 5000
+    expect(guard([])).toEqual([])
   })
 })

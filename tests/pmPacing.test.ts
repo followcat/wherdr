@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { DEFAULT_BURN, DEFAULT_PACE, dayShares, mergePolicy, paceVerdict, targetLine, type PacePolicy } from '../shared/pm/pacing'
-import { paceRows } from '../shared/pm/pace'
+import { DEFAULT_PACE, dayShares, mergePolicy, paceVerdict, targetLine, type PacePolicy } from '../shared/pm/pacing'
+import { paceRows, weekLimit } from '../shared/pm/pace'
 import { policyIn, readPolicies, setPolicy } from '../server/utils/pacingPolicies'
 import type { Quota, Quotas } from '../shared/types'
 
 // Week of Sunday 8 → Sunday 15 November 2026, reset on Sunday at 21:00 (local).
 const at = (day: number, h = 12, m = 0) => new Date(2026, 10, day, h, m).getTime()
 const R = at(15, 21)
+const DAY = 86_400_000
 const workdays: PacePolicy = { ...DEFAULT_PACE, mode: 'workdays' }
 const everyday: PacePolicy = { ...DEFAULT_PACE, mode: 'everyday' }
 const quota = (week: number | null, five: number | null, now: number, more: Partial<Quota> = {}): Quota => ({
@@ -46,10 +47,19 @@ describe('target line', () => {
   })
 })
 
-describe('reserves', () => {
-  const free = DEFAULT_PACE
+describe('free (no restriction)', () => {
+  it('is a new account\'s mode, and goes until the account itself is limited', () => {
+    expect(DEFAULT_PACE.mode).toBe('unlimited')
+    const now = at(14, 22) // the burn's window, but Free has no burn
+    const p: PacePolicy = { ...DEFAULT_PACE, burn: { until: R } }
+    expect(paceVerdict(p, quota(99, 99, now, { at: now - 60 * 60_000 }), now)).toEqual({ go: true }) // no line, reserve, burn cap or stale wait
+    expect(weekLimit(p, R, now)).toEqual({ label: 'limit', value: 100 })
+    expect(paceVerdict(p, quota(100, 40, now, { limited: { resetsAt: R } }), now)).toEqual({ go: false, reason: 'limited', until: R })
+  })
+})
 
-  it('a new account is free with reserve', () => expect(DEFAULT_PACE.mode).toBe('free'))
+describe('reserves', () => {
+  const free: PacePolicy = { ...DEFAULT_PACE, mode: 'free' }
 
   it('weekly reserve of 10 % per day left, rounded up', () => {
     const monday = at(9, 12) // 6.4 days left → 7 → keeps 70 %
@@ -83,21 +93,19 @@ describe('reserves', () => {
   })
 })
 
-describe('burn before the reset', () => {
-  const burn: PacePolicy = { ...workdays, burn: DEFAULT_BURN }
+describe('end-of-week burn', () => {
+  const burn: PacePolicy = { ...workdays, burn: { until: R } }
 
-  it('from R - 24 h ignores the line, up to 95 % with a 5-hour reserve of 10 %', () => {
-    const before = at(14, 12) // Saturday noon: the usual line (90) still applies
-    expect(paceVerdict(burn, quota(91, 0, before), before)).toMatchObject({ go: false, reason: 'ahead' })
-    const now = at(14, 22)
-    expect(paceVerdict(burn, quota(91, 85, now), now)).toEqual({ go: true })
-    expect(paceVerdict(burn, quota(95, 0, now), now)).toEqual({ go: false, reason: 'burnCap', until: R })
-    expect(paceVerdict(burn, quota(50, 90, now), now)).toMatchObject({ go: false, reason: 'reserve5h' })
-  })
-
-  it('may start now', () => {
-    const now = at(10, 15)
-    expect(paceVerdict({ ...burn, burn: { ...DEFAULT_BURN, start: now } }, quota(80, 0, now), now)).toEqual({ go: true })
+  it('on: no pace hold until the reset, only the account\'s own limit; off at the reset', () => {
+    const now = at(10, 15) // Wednesday, well ahead of the line and past both reserves
+    expect(paceVerdict(workdays, quota(91, 95, now), now)).toMatchObject({ go: false })
+    expect(paceVerdict(burn, quota(91, 95, now), now)).toEqual({ go: true, burning: true })
+    expect(paceVerdict(burn, { ...quota(100, 100, now), limited: { resetsAt: now + 3_600_000 } }, now)).toMatchObject({ go: false, reason: 'limited' })
+    expect(weekLimit(burn, R, now)).toEqual({ label: 'burn', value: 100 })
+    // After the reset: the usual line again.
+    const next = R + 6 * DAY
+    expect(paceVerdict(burn, { ...quota(91, 0, next), week: { used: 91, resetsAt: R + 7 * DAY, minutes: 7 * 24 * 60 } }, next)).toMatchObject({ go: false, reason: 'ahead' })
+    expect(weekLimit(burn, R + 7 * DAY, next).label).toBe('line')
   })
 })
 
@@ -124,12 +132,21 @@ describe('readings', () => {
     expect(paceVerdict(workdays, q, now)).toEqual({ go: false, reason: 'limited', until: now + 3_600_000 })
     expect(paceVerdict(workdays, q, now + 3_600_000)).toEqual({ go: true, unknown: true })
   })
+
+  it('an expired limit or one covered by credits holds nothing', () => {
+    // Read 3 days ago, its reset long passed; no reset known: over 5 h after the reading.
+    expect(paceVerdict(workdays, quota(null, null, now - 3 * DAY, { limited: { resetsAt: now - 2 * DAY } }), now)).toEqual({ go: true, unknown: true })
+    expect(paceVerdict(workdays, quota(null, null, now - 6 * 3_600_000, { limited: { resetsAt: null } }), now)).toEqual({ go: true, unknown: true })
+    expect(paceVerdict(workdays, quota(null, null, now - 3_600_000, { limited: { resetsAt: null } }), now)).toEqual({ go: false, reason: 'limited', until: now + 4 * 3_600_000 })
+    const credits = quota(null, null, now, { limited: { resetsAt: now + 3_600_000 }, credits: { unlimited: false, balance: 120 } })
+    expect(paceVerdict(workdays, credits, now)).toEqual({ go: true, unknown: true })
+  })
 })
 
 describe('user requests', () => {
   it('are never refused, only warned about', () => {
     const now = at(10, 15)
-    expect(paceVerdict(DEFAULT_PACE, quota(10, 81, now), now, 'user')).toEqual({ go: true, warn: 'reserve5h' })
+    expect(paceVerdict(everyday, quota(10, 81, now), now, 'user')).toEqual({ go: true, warn: 'reserve5h' })
     expect(paceVerdict(workdays, quota(60, 0, now), now, 'user')).toEqual({ go: true, warn: 'ahead' })
     expect(paceVerdict(workdays, quota(null, null, now, { limited: { resetsAt: null } }), now, 'user')).toEqual({ go: true, warn: 'limited' })
     expect(paceVerdict(workdays, quota(10, 0, now), now, 'user')).toEqual({ go: true })
@@ -140,9 +157,23 @@ describe('policy per account (Settings › Pace)', () => {
   it('merges the user\'s changes field by field, clamped, invalid ones ignored', () => {
     const p = mergePolicy(DEFAULT_PACE, { mode: 'workdays', days: [5, 1, 1, 9, 'x'], cap: 140, reserve5h: -3, reservePerDay: 'a', margin: 50 })
     expect(p).toEqual({ ...DEFAULT_PACE, mode: 'workdays', days: [1, 5], cap: 100, reserve5h: 0 })
-    expect(mergePolicy(DEFAULT_PACE, { mode: 'turbo' }).mode).toBe('free')
+    expect(mergePolicy(DEFAULT_PACE, { mode: 'turbo' }).mode).toBe('unlimited')
+    expect(mergePolicy(DEFAULT_PACE, { mode: 'free' }).mode).toBe('free') // a saved mode stays
     expect(mergePolicy(DEFAULT_PACE, { days: [] }).days).toEqual([1, 2, 3, 4, 5]) // never no day at all
-    expect(DEFAULT_PACE).toMatchObject({ mode: 'free', days: [1, 2, 3, 4, 5], cap: 90, reserve5h: 25, reservePerDay: 10 })
+    expect(DEFAULT_PACE).toMatchObject({ mode: 'unlimited', days: [1, 2, 3, 4, 5], cap: 90, reserve5h: 25, reservePerDay: 10 })
+  })
+
+  it('merges the burn: on until a coming reset, off with null, dropped after its reset; old fields ignored', () => {
+    const now = at(10, 15)
+    const on = mergePolicy(DEFAULT_PACE, { burn: { until: R } }, now)
+    expect(on.burn).toEqual({ until: R })
+    expect(mergePolicy(on, { cap: 50 }, now).burn).toEqual(on.burn) // other changes keep it
+    expect(mergePolicy(DEFAULT_PACE, { burn: { until: now - 1 } }, now).burn).toBeUndefined() // a past reset is refused
+    expect(mergePolicy(on, { burn: null }, now).burn).toBeUndefined()
+    expect(mergePolicy(DEFAULT_PACE, on, R).burn).toBeUndefined() // read at its reset: dropped
+    // The old settings: an every-week burn is off, a this-week one keeps its reset only.
+    expect(mergePolicy(DEFAULT_PACE, { burn: { cap: 95, atOnce: 3, reserve5h: 10, hours: 48 } }, now).burn).toBeUndefined()
+    expect(mergePolicy(DEFAULT_PACE, { burn: { cap: 95, atOnce: 3, reserve5h: 10, until: R } }, now).burn).toEqual({ until: R })
   })
 
   it('rows: each account with its policy, line and verdict; a program with no reading is unknown', () => {

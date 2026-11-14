@@ -415,10 +415,22 @@ export function markQuestions(root: ParentNode, labels: ReplyLabels) {
     }
   }
   markDecisions(root, labels)
+  markChoices(root)
   let n = 0
   for (const btn of root.querySelectorAll<HTMLElement>('.q-reply')) {
     btn.dataset.n = String(++n)
     for (const span of wrapped.get(btn) || []) span.dataset.n = btn.dataset.n
+  }
+}
+
+// The buttons of a `choices` line (utils/markdown.ts) answer the last
+// question written before them: each carries it (`data-q`). Without one, a
+// tap quotes the whole message.
+function markChoices(root: ParentNode) {
+  let question: string | null = null
+  for (const el of root.querySelectorAll<HTMLElement>('.q-reply, .w-choices')) {
+    if (el.classList.contains('q-reply')) question = el.dataset.q || null
+    else if (question) for (const b of el.querySelectorAll<HTMLElement>('.q-choice')) b.dataset.q = question
   }
 }
 

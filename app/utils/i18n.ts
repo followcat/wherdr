@@ -234,7 +234,6 @@ const FR: Record<string, string> = {
   // New version
   'Command copied: paste it into a terminal on the server, in the wherdr folder.': 'Commande copiée : colle-la dans un terminal du serveur, dans le dossier de wherdr.',
   'Then restart wherdr.': 'Puis relance wherdr.', 'Release notes': 'Notes',
-  'Stop wherdr first, then run this command.': 'Arrête d’abord wherdr, puis lance cette commande.',
   'Hide until the next version': 'Masquer jusqu’à la version suivante',
   // Settings
   'Cards: one line in Compact, two in Normal with current activity. Follows you on every device.': 'Cartes : une ligne en compact, deux en normal avec l’activité en cours. Te suit sur tous tes appareils.',
@@ -343,7 +342,7 @@ const FR: Record<string, string> = {
   // Machines
   'Run': 'Exécuter',
   'All': 'Toutes',
-  'Machine': 'Machine', 'This machine': 'Cette machine', 'LOCAL': 'LOCAL', 'online': 'en ligne', 'reconnecting…': 'reconnexion…',
+  'Machine': 'Machine', 'This machine': 'Cette machine', 'online': 'en ligne', 'reconnecting…': 'reconnexion…',
   'offline': 'hors ligne', 'No agents on this machine.': 'Aucun agent sur cette machine.', 'No known agents.': 'Aucun agent connu.',
   'unknown machine': 'machine inconnue',
   'running': 'en cours', 'stopped': 'arrêtée',

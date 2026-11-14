@@ -10,9 +10,10 @@ import type { Pane } from './types'
 // approval) or "Ask" list would lose it, and Enter would answer them in the
 // user's place.
 // Codex stopped by its update, or just gone (`leaving`): a shell. The server
-// holds the message; typed with Enter it would run as a command.
-export function viaPrompt(p: Pick<Pane, 'agent' | 'status' | 'prompt' | 'stopped' | 'leaving'> | undefined): boolean {
-  if (p?.stopped || p?.leaving || p?.prompt?.kind === 'self-update') return true
+// holds the message; typed with Enter it would run as a command. Codex
+// installing or updating itself: held too, until it is ready.
+export function viaPrompt(p: Pick<Pane, 'agent' | 'status' | 'prompt' | 'stopped' | 'leaving' | 'installing'> | undefined): boolean {
+  if (p?.stopped || p?.leaving || p?.installing || p?.prompt?.kind === 'self-update') return true
   if (!p || !p.agent) return false
   if (p.status !== 'blocked') return true
   if (p.agent === 'omp') return !p.prompt?.typing

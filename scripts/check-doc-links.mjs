@@ -23,6 +23,12 @@ function anchors(tokens, source) {
   return ids
 }
 
+/** The heading anchors (and explicit ids) of a Markdown file, as GitHub makes them. */
+export function docAnchors(path) {
+  const source = readFileSync(path, 'utf8')
+  return anchors(marked.lexer(source), source)
+}
+
 /** Check Markdown/HTML links and repository documentation URLs without network requests. */
 export function checkDocLinks() {
   const files = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' }).trim().split('\n')

@@ -3,14 +3,17 @@ import { flushPromises } from '@vue/test-utils'
 import { mockNuxtImport, mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import NewAgentSheet from '~/components/NewAgentSheet.vue'
 import { newAgentOpen } from '~/composables/useUi'
-import { herdrState } from '~/composables/useHerdr'
+import { herdrState, lastMachine } from '~/composables/useHerdr'
 import { newTabSpace } from '~/composables/useSpaces'
 import { proxies, proxyLast } from '~/composables/useProxies'
+import { machineBarSaved, machineGroups } from '~/composables/useMachineBar'
+import { BAR_ALL } from '~/utils/machineBar'
 
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }))
 mockNuxtImport('navigateTo', () => navigate)
 
-registerEndpoint('/api/config', () => ({ kinds: ['claude', 'codex'], home: '/repos', dirs: ['/repos'], push: { enabled: false, key: null, devices: 0 } }))
+let configMachines: Record<string, unknown>[] | undefined
+registerEndpoint('/api/config', () => ({ kinds: ['claude', 'codex'], home: '/repos', dirs: ['/repos'], machines: configMachines, push: { enabled: false, key: null, devices: 0 } }))
 registerEndpoint('/api/proxies', () => ({ proxies: proxies.value, last: proxyLast.value }))
 const created: Record<string, unknown>[] = []
 registerEndpoint('/api/agents', async (event) => {
@@ -70,4 +73,35 @@ it('shows no Proxy row when nothing is offered on the machine', async () => {
   await vi.waitFor(() => expect(created).toHaveLength(1))
   expect(created[0]!.proxy).toBeUndefined()
   w.unmount()
+})
+
+it('names the host with its HOST badge and preselects a machine of the current tab', async () => {
+  const machine = (key: string, label: string, status: 'online' | 'offline' = 'online') => ({ key, label, local: !key, status, error: null })
+  configMachines = [['', 'home-server'], ['build', 'build'], ['work', 'work']].map(([key, label]) => ({ key, label, local: !key, home: '/srv', dirs: [], kinds: ['claude'] }))
+  herdrState.value = { ok: true, workspaces: [], panes: [], machines: [machine('', 'home-server'), machine('build', 'build', 'offline'), machine('work', 'work')] }
+  machineGroups.value = [{ id: '*group:office', name: 'Office', machines: ['build', 'work'] }]
+  const w = await mountSuspended(NewAgentSheet, { global: { stubs } })
+  const opens = async (tab: string, machine: string) => {
+    machineBarSaved.value = tab
+    newAgentOpen.value = true
+    await vi.waitFor(() => expect(w.get('.machine-seg .on').attributes('data-machine')).toBe(machine))
+  }
+  // A tab without the host: its first online machine (build is offline).
+  await opens('*group:office', 'work')
+  newAgentOpen.value = false
+  await flushPromises()
+  // The all-machines view: the host, even after a machine was picked by hand.
+  await opens(BAR_ALL, 'local')
+  await w.get('[data-machine="work"]').trigger('click')
+  newAgentOpen.value = false
+  await flushPromises()
+  await opens(BAR_ALL, 'local')
+  // The host, by its name, with the HOST badge.
+  const host = w.get('[data-machine="local"]')
+  expect(host.text()).toContain('home-server')
+  expect(host.get('.machine-local-badge').text()).toBe('HOST')
+  w.unmount()
+  configMachines = undefined
+  machineGroups.value = []
+  lastMachine.value = ''
 })

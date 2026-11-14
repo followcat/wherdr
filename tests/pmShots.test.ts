@@ -6,7 +6,7 @@ import { addShot, isImage, shotRows, shotsMissing, type Shot } from '../shared/p
 import { initialState, onEvent, planSteps, type StepState } from '../shared/pm/steps'
 import { validateTemplate, type Template } from '../shared/pm/workflow'
 import { createPmStore } from '../server/utils/pmStore'
-import { uploadShot } from '../server/utils/pmBoard'
+import { uploadShot, userSendBack, userShot } from '../server/utils/pmBoard'
 
 // A visual task: the worker gives before and after screenshots, then the user merges.
 const visual = (screenshots?: 'after' | 'before-after'): Template => ({
@@ -114,5 +114,52 @@ describe('screenshot upload', () => {
     expect((await fs.readdir(path.join(dir, 'shots', task.id))).sort()).toEqual([a!.file, b!.file].sort())
     expect(await store.shot(task.id, a!.file)).toEqual(png)
     expect(await store.shot(task.id, '../tasks/UI-1.json')).toBeNull()
+  })
+
+  it('after new commits since the review, replaces the worker\'s screenshots at the merge step', async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-shots-'))
+    const store = createPmStore(dir)
+    await store.setEnabled(true)
+    const t = visual()
+    t.taskTypes.ui!.steps.splice(2, 0, { id: 'review', holder: 'reviewer', ends: 'verdict', sendBack: 'work' })
+    await store.saveTemplate(t)
+    await fs.writeFile(store.files.projects, JSON.stringify({ v: 1, projects: [{ key: 'UI', name: 'UI', machine: '', path: '/src/ui', template: 'visual', addedAt: 1 }] }))
+    const task = await store.addTask({ project: 'UI', title: 'New look', type: 'ui' })
+    const png = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13])
+    const key = 'k'.repeat(32), reviewed = 'a'.repeat(40), reworked = 'b'.repeat(40)
+    const old = shot('after', 1)
+    await store.saveTask({ ...task, state: 'working', shotToken: key, step: { ...working(), at: 3, proofs: { review: { commit: reviewed } }, shots: { work: [old] } } })
+    const up = (head: string) => uploadShot(store, task.id, 'after', png, 'image/png', key, async () => head)
+    // The head is the reviewed commit: the merge step takes no screenshots.
+    await expect(up(reviewed)).rejects.toMatchObject({ code: 'refused', message: 'Step "merge" asks for no screenshots' })
+    // New commits: the first shot replaces the shown set, the next ones join it.
+    const a = await up(reworked), b = await up(reworked)
+    expect(a.rework).toBe(reviewed)
+    const step = (await store.task(task.id))!.step!
+    expect(step.at).toBe(3)
+    expect(step.shots?.work?.map(s => s.file)).toEqual([a.file, b.file])
+    expect(step.earlierShots).toEqual({ work: [old] })
+  })
+  it('Reject: the user\'s own screenshot is kept off the step, and the worker gets each picked one as a download with its key (WHR-294)', async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-shots-'))
+    const store = createPmStore(dir)
+    await store.setEnabled(true)
+    await store.saveTemplate(visual())
+    await fs.writeFile(store.files.projects, JSON.stringify({ v: 1, projects: [{ key: 'UI', name: 'UI', machine: '', path: '/src/ui', template: 'visual', addedAt: 1 }] }))
+    const task = await store.addTask({ project: 'UI', title: 'New look', type: 'ui' })
+    const png = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13])
+    const key = 'k'.repeat(32)
+    await store.saveTask({ ...task, state: 'working', step: { ...working(), at: 2, shots: { work: [shot('after')] } }, shotToken: key })
+    await expect(userShot(store, task.id, Buffer.from('nope'), 'image/png')).rejects.toMatchObject({ code: 'bad_input' })
+    const { file } = await userShot(store, task.id, png, 'image/png')
+    expect(await store.shot(task.id, file)).toEqual(png)
+    expect((await store.task(task.id))?.step?.shots).toEqual({ work: [shot('after')] })
+    await fs.writeFile(path.join(dir, 'shots', task.id, shot('after').file), png)
+    const back = await userSendBack(store, task.id, 'The button is cut off', [file, shot('after').file, 'missing.png'])
+    const fix = back.step!.fix!
+    expect(fix).toContain('The button is cut off\n\nScreenshots the user points at:')
+    expect(fix).toContain(`curl -fsS -H 'x-wherdr-shot-token: ${key}' 'http://127.0.0.1:`)
+    expect(fix).toContain(`/api/pm/shot?task=${task.id}&file=${file}' -o ${file}`)
+    expect(fix).not.toContain('missing.png')
   })
 })

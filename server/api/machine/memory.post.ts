@@ -1,5 +1,5 @@
 // { key, minFreeGb?, maxAgents? }: the user's memory settings of a machine
-// (maxAgents null: back to one per 1.5 GB of RAM). Answers with every machine.
+// (minFreeGb or maxAgents null: back to Auto). Answers with every machine.
 import { coreAdminDeps } from '../../utils/coreAdminDeps'
 import { HerdrError } from '../../utils/herdr'
 import { memoryView, setMemorySettings } from '../../utils/pmMemory'

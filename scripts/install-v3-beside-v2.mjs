@@ -16,15 +16,18 @@ import net from 'node:net'
 import path from 'node:path'
 import v8 from 'node:v8'
 import { fileURLToPath } from 'node:url'
-import { defaultRun, describeV2, detectV2, runImport } from './v2-import.mjs'
+import { IGNORED_HP, defaultRun, describeV2, detectV2, runImport } from './v2-import.mjs'
 
 export const EXIT = { ok: 0, usage: 2, missing: 3, conflict: 4, failed: 5, todo: 6 }
 const MANIFEST = 'install-manifest.json'
-// The repository this script comes from (package.json's repository field).
-const REPO = (() => {
-  try { return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).repository.url.replace(/^git\+/, '') }
-  catch { return '' }
+// The repository this script comes from and the branch v3 is installed from
+// (package.json's repository and config.branch, the one place that names it).
+const PKG = (() => {
+  try { return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) }
+  catch { return {} }
 })()
+const REPO = PKG.repository?.url?.replace(/^git\+/, '') ?? ''
+const BRANCH = PKG.config?.branch
 const HELP = `Usage: install-v3-beside-v2.sh [--yes] [options]
 
 Without --yes, prints the plan and changes nothing (--dry-run says so explicitly).
@@ -36,16 +39,17 @@ Without --yes, prints the plan and changes nothing (--dry-run says so explicitly
   --port <n>            v3's local port (default 7684)
   --https-port <n>      tailscale serve HTTPS port (default: the first free one from 8104); --no-tailscale to skip
   --hc-session <s>      herdr-core session (default: default); --hc-bin <path>
-  --repo <url|path>     wherdr repository (default: package.json's repository); --branch <b> (v3)
+  --repo <url|path>     wherdr repository (default: package.json's repository); --branch <b> (${BRANCH})
   --skip-import         do not import from v2
   --auto-deploy <url>   never build here: install prebuilt v3 builds from <url> (scripts/v3-builder.sh
                         on another machine) and keep up with them: <name>-deploy.timer, every 3 min
-  v2 (default: found here): --v2-dir <dir> --v2-unit <file> --herdr-projects <dir> --herdr-bin <path>`
+  v2 (default: found here): --v2-dir <dir> --v2-unit <file> --herdr-bin <path>
+  Nothing of herdr-projects is imported: Alfred sets up your v2 projects with you.`
 
 export function parseArgs(argv, home = os.homedir()) {
-  const o = { dir: path.join(home, 'wherdr-v3'), name: 'wherdr-v3', port: '7684', httpsPort: null, hcSession: 'default', repo: REPO, branch: 'v3' }
+  const o = { dir: path.join(home, 'wherdr-v3'), name: 'wherdr-v3', port: '7684', httpsPort: null, hcSession: 'default', repo: REPO, branch: BRANCH }
   const flags = { '--yes': 'yes', '--dry-run': 'dryRun', '--json': 'json', '--uninstall': 'uninstall', '--keep-data': 'keepData', '--no-tailscale': 'noTailscale', '--skip-import': 'skipImport', '--help': 'help', '-h': 'help' }
-  const values = { '--dir': 'dir', '--name': 'name', '--port': 'port', '--https-port': 'httpsPort', '--hc-session': 'hcSession', '--hc-bin': 'hcBin', '--repo': 'repo', '--branch': 'branch', '--v2-dir': 'v2Dir', '--v2-unit': 'unit', '--herdr-projects': 'hpDir', '--herdr-bin': 'herdrBin', '--auto-deploy': 'deploySource' }
+  const values = { '--dir': 'dir', '--name': 'name', '--port': 'port', '--https-port': 'httpsPort', '--hc-session': 'hcSession', '--hc-bin': 'hcBin', '--repo': 'repo', '--branch': 'branch', '--v2-dir': 'v2Dir', '--v2-unit': 'unit', '--herdr-projects': 'ignoredHp', '--herdr-bin': 'herdrBin', '--auto-deploy': 'deploySource' }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (flags[a]) o[flags[a]] = true
@@ -265,7 +269,8 @@ export async function main(argv = process.argv.slice(2), io = {}) {
     // 1. What is there.
     const v2 = detectV2({ ...o, home, env, run })
     say(describeV2(v2))
-    summary.v2 = { found: v2.found, unit: v2.unit, dir: v2.dir, dataDir: v2.dataDir, port: v2.port, https: v2.tailscale.v2Https, board: v2.board, machines: v2.machines.length }
+    if (o.ignoredHp !== undefined) say(`note: ${IGNORED_HP}`)
+    summary.v2 = { found: v2.found, unit: v2.unit, dir: v2.dir, dataDir: v2.dataDir, port: v2.port, https: v2.tailscale.v2Https, machines: v2.machines.length }
     if (!v2.found && !o.skipImport) next('no v2 install found: give --v2-dir / --v2-unit, or --skip-import for a plain v3 install')
 
     // 2. Prerequisites and 3. conflicts, all checked in one pass: every problem is one ERROR line.
@@ -355,8 +360,8 @@ export async function main(argv = process.argv.slice(2), io = {}) {
       ...(autoDeploy ? [`auto-deploy: ${name}-deploy.timer runs ${o.dir}/${DEPLOY_SCRIPT} every 3 min (log: ${o.dir}/deploy/deploy.log)`] : []),
     ]
     if (!o.skipImport && v2.found) {
-      const r = runImport({ ...o, v2, run, dataDir: path.join(o.dir, 'data'), hcSession: o.hcSession, hcBin: hc, dryRun: true, hcReachable: hcUp })
-      plan.splice(4, 0, `  projects: ${r.projects.added.map(p => `${p.key} (${p.path})`).join(', ') || 'none'}; open tasks: ${r.tasks.added.length}; settings: ${r.settings.carried.length}`,
+      const r = runImport({ ...o, v2, run, home, env, appDir: o.dir, dataDir: path.join(o.dir, 'data'), hcSession: o.hcSession, hcBin: hc, dryRun: true, hcReachable: hcUp })
+      plan.splice(4, 0, `  settings: ${r.settings.carried.length}; projects: none (Alfred sets them up with you)`,
         `  machines to add: ${r.machines.added.map(x => `${x.name} (${x.target})`).join(', ') || 'none'}${r.machines.missing.length ? `; not reachable: ${r.machines.missing.map(x => `${x.target} (${x.reason})`).join(', ')}` : ''}`)
     }
     summary.plan = plan
@@ -411,11 +416,11 @@ export async function main(argv = process.argv.slice(2), io = {}) {
     } else step('SKIP', `already built at ${short(now)}`)
 
     if (!o.skipImport && v2.found) {
-      const r = runImport({ ...o, v2, run, dataDir: path.join(o.dir, 'data'), hcSession: o.hcSession, hcBin: hc })
+      const r = runImport({ ...o, v2, run, home, env, appDir: o.dir, dataDir: path.join(o.dir, 'data'), hcSession: o.hcSession, hcBin: hc })
       for (const x of r.machines.added) if (!m.machines.includes(x.name)) m.machines.push(x.name)
       save(m)
-      summary.import = { report: r.report, projects: r.projects.added.map(p => p.key), tasks: r.tasks.added.length, machines: r.machines.added.map(x => x.name), machinesMissing: r.machines.missing.map(x => `${x.target}: ${x.reason}`), settings: r.settings.carried }
-      step('OK', `imported ${r.projects.added.length} projects, ${r.tasks.added.length} tasks, ${r.machines.added.length} machines, ${r.settings.carried.length} settings; report ${r.report}`)
+      summary.import = { report: r.report, machines: r.machines.added.map(x => x.name), machinesMissing: r.machines.missing.map(x => `${x.target}: ${x.reason}`), settings: r.settings.carried }
+      step('OK', `imported ${r.machines.added.length} machines, ${r.settings.carried.length} settings; report ${r.report}`)
       for (const x of r.machines.missing) next(`machine ${x.target}: ${x.reason}`)
       if (r.machines.missing.length) leftForUser = true
     }

@@ -17,7 +17,8 @@ export interface Finding {
 
 // One send-back: the findings that sent it back, the diff size the server
 // measured then, and the findings the worker contested in its answer.
-export interface Round { findings: Finding[], diffLines?: number, disputed?: string[] }
+// head: the commit the round read; the next round reviews only what came after it.
+export interface Round { findings: Finding[], diffLines?: number, disputed?: string[], head?: string }
 
 export const REVIEW_FORMAT = [
   'End with your verdict as JSON, nothing else on those lines:',
@@ -48,6 +49,23 @@ export function parseFindings(text: string): Finding[] | { error: string } {
     })
   }
   return out
+}
+
+// A preview line that holds a reviewer's verdict JSON (often cut at 200 characters),
+// read back: the full list when it parses, else what the cut text still shows.
+// null when the text holds no verdict.
+export interface VerdictGlance { complete: boolean, count: Partial<Record<Severity, number>>, total: number, title?: string }
+export function verdictGlance(text: string): VerdictGlance | null {
+  const start = text.search(/\{\s*"findings"\s*:/)
+  if (start < 0) return null
+  const json = text.slice(start)
+  const parsed = parseFindings(json)
+  const complete = Array.isArray(parsed)
+  const severities = complete ? parsed.map(f => f.severity) : [...json.matchAll(/"severity"\s*:\s*"(minor|major|critical)"/g)].map(m => m[1] as Severity)
+  const rawTitle = complete ? parsed[0]?.title : /"title"\s*:\s*"((?:[^"\\]|\\.)+)"/.exec(json)?.[1]?.replace(/\\(.)/g, '$1')
+  const count: Partial<Record<Severity, number>> = {}
+  for (const s of severities) count[s] = (count[s] ?? 0) + 1
+  return { complete, count, total: severities.length, ...(rawTitle ? { title: rawTitle } : {}) }
 }
 
 // What a finding weighs: preexisting = minor; without proof, one level down.
@@ -117,6 +135,7 @@ export const sendBackText = (step: string, fs: Finding[]) =>
 export function reviewText(text: string, prev?: Round) {
   if (!prev) return [text, REVIEW_FORMAT].filter(Boolean).join('\n\n')
   const contested = prev.disputed?.length ? [`The agent contests: ${prev.disputed.join(', ')}.`] : []
-  return [text, 'Check only these findings of the last round; raise nothing new unless it is critical:', ...prev.findings.map(line), ...contested, REVIEW_FORMAT]
+  const delta = prev.head ? [`Review only what came after the last round (${prev.head.slice(0, 7)}): list it with \`git log --oneline ${prev.head}..HEAD\`; for a merge of the base branch, \`git show --remerge-diff <commit>\` shows only how its conflicts were resolved; for any other commit, \`git show <commit>\`. What the base branch brought is not reviewed again.`] : []
+  return [text, ...delta, 'Check only these findings of the last round; raise nothing new unless it is critical:', ...prev.findings.map(line), ...contested, REVIEW_FORMAT]
     .filter(Boolean).join('\n')
 }

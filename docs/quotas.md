@@ -7,6 +7,11 @@
 The home screen shows what is left of the Claude and Codex usage limits (5-hour window and
 week, with reset times), for every online machine. wherdr reads each machine's quota files: this
 machine's from disk, a core machine's through `machine.exec`, with a 30-second cache.
+An account shared by every online machine shows once at the top. Otherwise the machine quotas
+come as one block per account (Claude or Codex): its name, the machines that share it as small
+chips (`machine-a` `machine-b`), then its 5-hour and weekly bars with their reset times, or
+**Limit reached · resets …**. A machine whose account is unknown (Claude on API billing, an older
+reading without an account key) keeps a block of its own, titled with the machine's name.
 
 - **Codex**: nothing to do, Codex writes its limits in its session files. Machines on different
   Codex accounts get one block each (told apart by a short hash of the account ID found in the
@@ -14,12 +19,24 @@ machine's from disk, a core machine's through `machine.exec`, with a 30-second c
   conversations created with a ChatGPT login by a recent Codex version. A reading without it
   joins another machine's reading only when both show the same 5-hour window and the same
   weekly window (resets within a minute, week already started), a sign of one account: the
-  machines then share one Codex row at the top, like Claude. Otherwise it stays under its own
+  machines then share one Codex row at the top, like Claude. A machine idle for hours shows a
+  5-hour window that has ended: it is then left out of the comparison, and the same weekly window
+  plus the account ID that machine last showed are enough. An account ID once read stays known
+  when a later read of the file fails. Otherwise it stays under its own
   machine and is never merged with another conversation or machine. A new conversation identifies an account switch even before it
   logs limits; until a reading for that account is available, no Codex gauge is shown. Failed reads do not
   reuse an older machine snapshot, and remembered weekly limits cannot cross account
   identities. Without a known fingerprint, remembered weekly corrections are not reused,
   even on the same machine. Session files are read from `~/.codex/sessions`.
+
+  **Limit reached** shows while the reading says Codex hit its limit and its reset time is ahead
+  (no reset time given: for 5 hours after the reading). Once that reset has passed, the row
+  reads **Reset since the last reading**, never blocked, and automatic work is no longer held.
+  When Codex's session files say the account has credits (`rate_limits.credits`: a balance, or
+  unlimited), the row shows them (**Credits: 120 credits**), and a reached limit reads
+  **Limit reached · work goes on with 120 credits**: automatic work is not held either. A
+  reading older than 6 hours says so under the row: **Last read 3 d ago: send a message to a
+  Codex agent to refresh** (Claude rows the same, with a Claude agent).
 - **Claude Code** only gives them to its status line. On each machine, install wherdr's
   invisible status line (it displays nothing, and chains to your existing status line if you
   have one):
@@ -30,8 +47,7 @@ machine's from disk, a core machine's through `machine.exec`, with a 30-second c
 
   The app offers the same thing in **Settings › Agents › Claude quotas**: each machine with
   Claude, its state (set up, installed, update available, not set up), **Install** or **Update**
-  (on a core machine, through `machine.exec`, the installer on its stdin) and **Copy command**. The home list only adds **Set up Claude quotas** and **Don’t
-  suggest again** to the machine's **…** menu, never a banner. Skipped or declined, it is no
+  (on a core machine, through `machine.exec`, the installer on its stdin) and **Copy command**. The home list never suggests it: no banner, no menu item. Skipped or declined, it is no
   longer suggested on any device (`data/claude-quotas.json`); Settings still offers it. A machine
   whose quotas show from an older status line reads **Update available**, never "not set up".
   Quotas show after the next exchange with a Claude agent. The status line stores the limits in `~/.cache/herdr-web/claude-status.json`
@@ -57,6 +73,50 @@ machine's from disk, a core machine's through `machine.exec`, with a 30-second c
   **New machine**: run `sh scripts/install-claude-statusline.sh` on it once (or **Install** in
   Settings › Agents › Claude quotas), then send a message to any Claude agent there; its quotas
   appear on the home screen.
+
+## Pace
+
+Needs: [Claude and Codex quotas](#claude-and-codex-quotas).
+
+**Settings › Agents › Pace** (also from a project's Autopilot tab) has one row per quota account:
+its weekly use against a target line, today's use, the 5-hour window, its name, and whether
+automatic work may start now. Its **mode** sets the line: **Free** (the default for a new
+account: no line and no reserve, automatic work stops only when the account hits its own 5-hour
+or weekly limit; no mode settings), **Free with reserve** (no line: it keeps a weekly reserve
+per day left and a 5-hour reserve), **Every day**, or **Working days** (the days you pick). Automatic
+work (the autopilot, automations) waits while an account is ahead of its pace; your own starts
+never wait. An account with no quota reading is held by task-count limits only. A Codex row also
+shows the account's credits, and **Limit reached · work goes on with …** or **Limit reset since
+the last reading** when its reading says so. Each machine's
+memory state shows below ([Machines](machines.md#manage-machines)).
+
+**End-of-week burn** (under **Mode settings**, per account, in every mode but Free): one switch. On, from now until the
+account's weekly reset, automatic work runs with no pace limit: no line or weekly reserve, no
+5-hour reserve, and tasks at once are Auto (the machines' room decides). The account's own
+limit still stops it (**Limit reached**), and so does a machine with no room. The line under the
+switch, and the row, say until when it burns (**Burning until Sun 19:00**); it turns itself off at the
+reset. It needs a quota reading, which gives the reset.
+
+A reviewer account near its limit or held by its pace takes no new review:
+the project's [reviewer fallback](project-management.md#reviewer-fallback) does it.
+
+## Codex updates
+
+wherdr starts Codex (new agents, task agents, coordinators) with its update check off
+(`codex -c check_for_update_on_startup=false`, Codex's own setting for that launch only:
+`~/.codex` is never changed), so that an update never ends a fresh conversation. Update Codex
+yourself, in a terminal, when no conversation needs it.
+
+- **A message sent while Codex installs or updates itself** is never typed into it: it waits
+  as **Queued · sent when Codex is ready** and is typed once Codex is ready. If Codex exits
+  instead, it comes back into the message field. The first message of a new Codex agent waits
+  the same way, also behind its startup dialog. If typing it times out, it may have reached
+  Codex: it is never typed again, and comes back into the field for you to check.
+- **If Codex still updates itself and exits** (a new version once it has stopped), the space
+  stays open: its terminal becomes a plain `sh`, and the conversation shows a **Your turn**
+  card with **Resume conversation** (the same session; Codex's picker when wherdr cannot
+  identify it) or **Start fresh**. A message sent meanwhile is refused (**Not sent**): restart
+  Codex first. A plain exit of Codex still ends its terminal.
 
 ## v2 only: Codex updates and restarts
 

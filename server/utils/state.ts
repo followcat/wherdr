@@ -4,7 +4,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { ChatItem, ChatResponse, HerdrState, Pane } from '../../shared/types'
-import type { NotificationEvent } from '../../shared/notificationRules'
+import { coordinatorTarget, type NotificationEvent } from '../../shared/notificationRules'
 import { readCoreState, staleCoreDocs, useCoreSession } from './readCoreState'
 import { CoreSession } from './coreSession'
 import { type CoreAlertKind, createCoreAlerts } from './coreAlerts'
@@ -13,6 +13,7 @@ import { DATA_DIR, HOME, NOTIFY_SETTLE_MS, POLL_MS, log } from './env'
 import { sleep } from './herdr'
 import { takeBackInterrupted } from './interruptRestore'
 import { uploadNames } from '../../shared/queuedMatch'
+import { startingState } from '../../shared/stateReady'
 import { type TranscriptPane } from './transcripts'
 import { type CoreTranscripts, createCoreTranscripts } from './coreTranscripts'
 import { coreCall } from './core'
@@ -22,6 +23,9 @@ import { machineOfPane } from './machines'
 import { createCodexStatus, dirWritable } from './codexStatus'
 import { runLocal, setCodexKnownWeek } from './quotas'
 import { pmStore } from './pmStore'
+import { projectCoordinatorName } from '../../shared/pm/project'
+import { createHeld } from './coreHeld'
+import { coreInputDeps, coreSend } from './coreInput'
 
 const fsp = fs.promises
 const hcCall = <T>(method: string, params: object, timeout: number) => coreCall<T>(process.env.HC_SOCKET || '', method, params, timeout)
@@ -54,11 +58,12 @@ export const transcripts = {
 }
 
 // ---------------------------------------------------------------- clients
-// What each device is looking at (no notification for the agent shown on screen).
-export interface EventClient { send: (data: string) => void, pane: string | null, visible: boolean }
+// What each device is looking at (no notification for the agent shown on screen),
+// its kind and when the user last used it (`ui open` goes to that one).
+export interface EventClient { send: (data: string) => void, pane: string | null, visible: boolean, device?: 'phone' | 'computer', activeAt?: number }
 export const eventClients = new Map<string, EventClient>()
 
-let state: HerdrState = { ok: false, error: 'starting…', workspaces: [], panes: [] }
+let state: HerdrState = startingState()
 let stateJson = JSON.stringify(state)
 export const getStateJson = () => stateJson
 export const getState = () => state
@@ -67,6 +72,16 @@ export const findPane = (id: string | null | undefined) => state.panes.find(p =>
 function broadcastState() {
   for (const c of eventClients.values()) {
     try { c.send(stateJson) }
+    catch { /* client gone */ }
+  }
+}
+
+// The server is stopping (a restart for an update): open pages keep what they
+// show until it is back, instead of switching to their offline look.
+export function announceRestart() {
+  const msg = JSON.stringify({ type: 'restarting' })
+  for (const c of eventClients.values()) {
+    try { c.send(msg) }
     catch { /* client gone */ }
   }
 }
@@ -141,10 +156,15 @@ export function takeBackFromClaude(p: Pane, io: { screen: () => Promise<string>,
   }).catch(() => null)
 }
 
+// ---------------------------------------------------------------- held messages
+// Sent while Codex installs or updates itself: typed once it is ready (coreHeld.ts).
+export const heldMessages = createHeld((p, q) => coreSend(coreInputDeps(), { pane_id: p.id, text: q.text }))
+
 // ---------------------------------------------------------------- poll
 export async function poll() {
   lastCorePoll = Date.now()
   state = await readCoreState(state)
+  heldMessages.apply(state.panes)
   await coreScreens().enrich(state.panes).catch(() => {})
   void coreTranscriptsOf().observe(state.panes)
   corePreviews().apply(state.panes)
@@ -234,17 +254,30 @@ const isTaskAgent = async (address: string) => {
   catch { return false }
 }
 
+// Alfred's or a project coordinator's terminal: its coordinator exception
+// decides, and its push names it (Alfred's name, else the coordinator's: projectCoordinatorName).
+const coordinatorAt = async (address: string) => {
+  try {
+    const store = pmStore(), c = (await store.coordinators()).find(x => x.terminal === address)
+    if (!c) return undefined
+    const p = (await store.projects()).find(x => x.key === c.project)
+    const name = p ? projectCoordinatorName(p) : (await (await import('./pmCoordinator')).alfredView({ store })).name
+    return { target: coordinatorTarget(c.project), name }
+  } catch { return undefined }
+}
+
 async function notifyCorePane(address: string, kind: CoreAlertKind) {
   const p = state.panes.find(x => x.coreAddress === address)
   if (!p || isViewed(p.id)) return
   // A project task's agent waiting for the user goes into the grouped Decisions push.
   if (kind === 'needs-you' && await isTaskAgent(address)) return
   const event: NotificationEvent = kind === 'needs-you' ? 'needs-you' : 'finished'
-  if (!await notificationAllowed(event, state, p, { machine: p.machine ?? '' })) return
+  const coordinator = await coordinatorAt(address)
+  if (!await notificationAllowed(event, state, p, { machine: p.machine ?? '', ...(coordinator ? { coordinator: coordinator.target } : {}) })) return
   const ws = state.workspaces.find(w => w.id === p.workspace)
   const where = [ws && ws.label, notificationTitle(p.title)].filter(Boolean).join(' · ')
   const on = state.machines && state.machines.length > 1 && p.machine ? `${state.machines.find(m => m.key === p.machine)?.label ?? p.machine} · ` : ''
-  const { title, titleFr } = agentNotificationTitle(kind === 'needs-you' ? 'blocked' : 'done', `${on}${agentLabel(p.agent)}`)
+  const { title, titleFr } = agentNotificationTitle(kind === 'needs-you' ? 'blocked' : 'done', `${on}${coordinator?.name || agentLabel(p.agent)}`)
   const badge = state.panes.filter(x => x.status === 'blocked' || x.status === 'done').length
   const sent = await pushSend({ title, titleFr, body: where || p.id, tag: `pane-${p.id}`, url: `/#/a/${encodeURIComponent(p.id)}`, badge })
   log(`notification ${p.id} ${kind} "${title}" -> ${sent} device(s)`)

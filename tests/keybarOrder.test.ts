@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isDefaultKeyOrder, mergeKeyOrder, moveKey, PHONE_KEY_IDS, readKeyOrder, writeKeyOrder, type PhoneKeyId } from '../app/utils/keybarOrder'
+import { isDefaultKeyOrder, mergeKeyOrder, moveKey, PHONE_KEY_IDS, readHiddenKeys, readKeyOrder, shownKeys, writeHiddenKeys, writeKeyOrder, type PhoneKeyId } from '../app/utils/keybarOrder'
 import { PHONE_KEYS } from '../app/utils/phoneKeys'
 
 describe('phone key bar order', () => {
@@ -55,5 +55,14 @@ describe('phone key bar order', () => {
     expect(moveKey(order, 'ctrl', 2)).toEqual(['keyboard', 'esc', 'ctrl', 'tab'])
     expect(moveKey(order, 'keyboard', 99)).toEqual(['ctrl', 'esc', 'tab', 'keyboard'])
     expect(moveKey(order, 'tab', -3)).toEqual(['tab', 'keyboard', 'ctrl', 'esc'])
+  })
+
+  it('stores hidden keys without the keyboard key, and nothing when every key shows', () => {
+    expect(readHiddenKeys('["esc","hyper","esc","keyboard",3]')).toEqual(['esc'])
+    expect(readHiddenKeys('not json')).toEqual([])
+    expect(writeHiddenKeys([])).toBeNull()
+    expect(writeHiddenKeys(['keyboard'])).toBeNull()
+    expect(writeHiddenKeys(['tab', 'esc'])).toBe('["tab","esc"]')
+    expect(shownKeys(['esc', 'keyboard', 'tab'], ['esc'])).toEqual(['keyboard', 'tab'])
   })
 })

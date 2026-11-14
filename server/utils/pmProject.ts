@@ -2,11 +2,18 @@
 // Guards are changed by the user or by Alfred only: a project coordinator's
 // token is refused, and a workflow save (the user's or a coordinator's
 // proposal) may not touch them.
-import { MAIN, guardsPlace, sameGuards } from '../../shared/pm/coordinator'
-import { cleanProjectUpdate } from '../../shared/pm/project'
-import { PREF_KEYS, type Guards, type Prefs, type Template } from '../../shared/pm/workflow'
+import { MAIN, sameGuards } from '../../shared/pm/coordinator'
+import { projectPlace } from '../../shared/pm/places'
+import { freedMerge } from '../../shared/pm/guardEffects'
+import { allowedMachines, cleanProjectUpdate, type Project } from '../../shared/pm/project'
+import { taskPlan } from '../../shared/pm/run'
+import { ownWorkflow } from '../../shared/pm/workspace'
+import { PREF_KEYS, isDefaultWorkflow, type Guards, type Prefs, type Template, type WorktreeSetup } from '../../shared/pm/workflow'
 import { HerdrError } from './herdr'
 import { alfredTokenOk, scopeOf } from './pmCoordinator'
+import type { CoreAdminDeps } from './coreCreate'
+import { archiveDone, startAction } from './pmBoard'
+import { lastReadiness } from './pmReady'
 import type { PmStore } from './pmStore'
 
 const bearer = (authorization: unknown) => String(authorization || '').replace(/^Bearer\s+/i, '')
@@ -19,7 +26,7 @@ export async function guardsAuthor(store: PmStore, authorization: unknown): Prom
   if (!token) return 'user'
   const scope = await scopeOf(store, token)
   if (scope === MAIN || await alfredTokenOk(store, token)) return 'Alfred'
-  if (scope) throw new HerdrError('forbidden', `A project coordinator never changes guards: the user does it in ${guardsPlace(scope)}`)
+  if (scope) throw new HerdrError('forbidden', `A project coordinator never changes guards: the user does it in ${projectPlace(scope, 'guards', true)}`)
   throw new HerdrError('forbidden', 'Guards are changed by the user or by Alfred only')
 }
 
@@ -31,13 +38,20 @@ async function workflowOf(store: PmStore, key: unknown) {
   return { p, t }
 }
 
-// GET /api/pm/project?key=: one load for the project sheet.
+// GET /api/pm/project?key=: one load for the project sheet. A member without
+// its own workflow gets its workspace's, the one its tasks follow, with
+// `inherited` naming the workspace (its first saved change becomes its own).
 export async function projectView(store: PmStore, key: string) {
   const p = await store.project(key)
   if (!p) throw new HerdrError('not_found', 'Unknown project')
   const proposal = (await store.coordinator(p.key))?.proposal
+  // ready: each other allowed machine's last readiness check ('' ready, its failures otherwise; none never checked).
+  const ready = Object.fromEntries(allowedMachines(p).slice(1).flatMap(m => { const r = lastReadiness(p.key, m); return r === undefined ? [] : [[m, r]] }))
+  const saved = await store.savedWorkflow(p.key)
+  const shared = !saved && p.workspace ? await store.workflow(p.key) : null
+  const inherited = shared && !isDefaultWorkflow(shared) ? ownWorkflow(shared) : null
   return {
-    project: p, workflow: await store.workflow(p.key), log: await store.workflowLog(p.key),
+    project: p, workflow: saved ?? inherited, ...(inherited ? { inherited: p.workspace } : {}), log: await store.workflowLog(p.key), ready,
     ...(proposal ? { proposal: { diff: proposal.diff, at: proposal.at, base: proposal.base, ...(proposal.said ? { said: proposal.said } : {}) } } : {}),
   }
 }
@@ -54,28 +68,57 @@ export async function updateProject(store: PmStore, key: unknown, body: Record<s
     const { prefs: _old, ...rest } = t
     await store.saveWorkflow(t.id.toUpperCase(), Object.keys(prefs).length ? { ...rest, prefs } : rest)
   }
-  return { project: await store.updateProject(key, update) }
+  if (body.worktree !== undefined) await saveWorktreeSetup(store, key, body.worktree)
+  const project = await store.updateProject(key, update)
+  // A shorter delay archives at once what it now covers.
+  if (update.archiveAfter !== undefined) await archiveDone(store)
+  return { project }
+}
+
+// The workflow's worktree block, from the General tab: empty fields dropped
+// (but `share: []`, which shares no folder), none left removes it.
+async function saveWorktreeSetup(store: PmStore, key: unknown, raw: unknown) {
+  const { p, t } = await workflowOf(store, key)
+  const w = Object.fromEntries(Object.entries(raw && typeof raw === 'object' ? raw : {}).filter(([k, v]) => (Array.isArray(v) ? v.length || k === 'share' : v !== '' && v !== undefined && v !== null)))
+  const { worktree: _old, ...rest } = t
+  const next = Object.keys(w).length ? { ...rest, worktree: w as WorktreeSetup } : rest
+  await store.saveWorkflow(p.key, next) // checked there
 }
 
 // The user's save of the workflow: everything but the guards.
 export async function saveProjectWorkflow(store: PmStore, key: unknown, next: unknown) {
   const { p, t } = await workflowOf(store, key)
-  if (!sameGuards(t, next as Template)) throw new HerdrError('refused', `Guards are saved in ${guardsPlace(p.key)}, not with the workflow`)
+  if (!sameGuards(t, next as Template)) throw new HerdrError('refused', `Guards are saved in ${projectPlace(p.key, 'guards')}, not with the workflow`)
   return { workflow: await store.saveWorkflow(p.key, next, { by: 'user' }) }
 }
 
-// The project's own guards (each task type's stay in its workflow).
-export async function saveProjectGuards(store: PmStore, key: unknown, guards: unknown, by: 'user' | 'Alfred') {
+// The project's own guards (each task type's stay in its workflow). With
+// deps, the merges they now give the engine are tried again at once (retryFreedMerges).
+export async function saveProjectGuards(store: PmStore, key: unknown, guards: unknown, by: 'user' | 'Alfred', deps?: CoreAdminDeps) {
   const { p, t } = await workflowOf(store, key)
   const { guards: _old, ...rest } = t
   const next = guards && typeof guards === 'object' && Object.keys(guards).length ? { ...rest, guards: guards as Guards } : rest
-  return { workflow: await store.saveWorkflow(p.key, next, { by }) }
+  const workflow = await store.saveWorkflow(p.key, next, { by })
+  if (deps) void retryFreedMerges({ ...deps, store }, p, t, next).catch(() => {})
+  return { workflow }
+}
+
+// Each task of the project waiting at a merge its old guards refused and the
+// new ones give the engine: the log says why, then the engine runs the step
+// again, as its minute tick would for a merge it may do.
+export async function retryFreedMerges(deps: CoreAdminDeps & { store: PmStore }, p: Project, before: Template, after: Template) {
+  for (const task of (await deps.store.tasks()).filter(x => x.project === p.key)) {
+    const into = freedMerge(task, taskPlan(before, task, p), taskPlan(after, task, p))
+    if (!into) continue
+    await deps.store.logTask(task, 'engine', `guards changed: the engine may now merge into ${into}, so it tries the step again`)
+    startAction(deps, task.id, () => {})
+  }
 }
 
 // Save as template: a copy of the project's workflow joins the library under
 // `id` (a taken id is refused). The project is untouched.
 export async function templateFromProject(store: PmStore, key: unknown, id: unknown) {
   const { t } = await workflowOf(store, key)
-  const { version: _version, ...copy } = t
+  const { version: _version, workspaceGuards: _ws, ...copy } = t
   return { template: await store.saveTemplate({ ...copy, id }) }
 }

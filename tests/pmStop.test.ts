@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createPmStore } from '../server/utils/pmStore'
 import { startTask, type PmLaunchDeps } from '../server/utils/pmLaunch'
 import { resumeTask, stopTask } from '../server/utils/pmStop'
-import { handoverText, removeRefusal, resumeRefusal, stopRefusal, stoppedTask } from '../shared/pm/stop'
+import { archivedStep, doneTurnRepair, handoverText, removeRefusal, resumeRefusal, stopRefusal, stoppedTask } from '../shared/pm/stop'
 import { chainState, dueText } from '../shared/pm/advance'
 import { decisionsOf } from '../shared/pm/decisions'
 import { canStop, cardOf } from '../shared/pm/board'
@@ -65,7 +65,7 @@ describe('who may remove', () => {
     for (const t of [working(), stop(working()), todo({ run: 'r1' })]) expect(removeRefusal(t, [], [], user)).toMatch(/has started/)
     expect(removeRefusal(todo(), [{ task: 'WH-1' }], [], user)).toMatch(/has started/)
     const waiters = [todo({ id: 'WH-2', after: 'WH-1' }), todo({ id: 'WH-3', after: 'WH-9, WH-1' }), todo({ id: 'XX-1', project: 'XX', after: 'WH-1' })]
-    expect(removeRefusal(todo(), [], waiters, user)).toBe('WH-2, WH-3 wait for WH-1 (after): remove them first')
+    expect(removeRefusal(todo(), [], waiters, user)).toBe('WH-2, WH-3, XX-1 wait for WH-1 (after): remove them first') // XX-1: another project of its workspace
     expect(cardOf(todo(), plan, []).removable).toBe(true)
     expect(cardOf(working(), plan, []).removable).toBeUndefined()
   })
@@ -118,6 +118,24 @@ describe('a stopped task', () => {
   })
 })
 
+describe('an archived task', () => {
+  // Its merge step refused by the guard, then the PR merged by hand and the task archived.
+  const refused = working({ step: { ...initialState(), started: true, at: 4, since: 5, yourTurn: { reason: 'action', badge: 'merge: main is protected: only you may merge into it' } } })
+
+  it('leaves Your turn', () => {
+    const archived = { ...refused, step: archivedStep(refused.step!) }
+    expect(archived.step).toMatchObject({ done: true, abandoned: true })
+    expect(archived.step.yourTurn).toBeUndefined()
+    expect(cardOf(archived, plan, []).yourTurn).toBeUndefined()
+    // Archived before this fix: the card ignores the leftover badge, and the start repair clears it.
+    const old = { ...refused, step: { ...refused.step!, done: true, abandoned: true } }
+    expect(cardOf(old, plan, []).yourTurn).toBeUndefined()
+    expect(doneTurnRepair(old)?.step?.yourTurn).toBeUndefined()
+    expect(doneTurnRepair(archived)).toBeUndefined()
+    expect(doneTurnRepair(refused)).toBeUndefined()
+  })
+})
+
 describe('stop and resume on the server', () => {
   let dir = ''
   beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-stop-')) })
@@ -167,6 +185,20 @@ describe('stop and resume on the server', () => {
     expect(runs[1]![1]).toMatchObject({ cwd: '/home/u/.wherdr/pm/worktrees/WH-1' })
     expect(files['/home/u/.wherdr/pm/tasks/WH-1/instructions.md']).toMatch(/## Handover[\s\S]*stopped by the user: it loops[\s\S]*## When you are done/)
     expect(c.log!.at(-1)).toMatchObject({ by: 'user', text: 'work: continued' })
+  })
+
+  it('stopped at an action step, continue runs its action again', async () => {
+    const { store, deps } = await setup()
+    const t = (await store.workflow('WH'))!
+    const land = { id: 'land', ends: 'action', action: { kind: 'git.land', target: 'develop' } } as const
+    await store.saveWorkflow('WH', { ...t, taskTypes: { ...t.taskTypes, simple: { steps: [{ id: 'todo' }, 'work', land, { id: 'done' }] } } }, { by: 'user' })
+    const task = (await store.task('WH-1'))!
+    await store.saveTask({ ...task, step: { ...task.step!, at: 2, tries: { land: 1 }, yourTurn: { reason: 'action', badge: 'land: failed' } } })
+    await stopTask(deps, 'WH-1', user, 'stuck', 'user')
+    const c = await resumeTask(deps, 'WH-1', 'continue', user, 'user')
+    expect(c).toMatchObject({ state: 'working', step: { at: 2, acting: true, tries: { land: 2 } } })
+    expect(c.step?.yourTurn).toBeUndefined()
+    expect(c.log!.at(-1)).toMatchObject({ by: 'user', text: 'land: continued' })
   })
 
   it('take it as it is moves to the next step; archive ends the task and keeps its branch', async () => {

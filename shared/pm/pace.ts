@@ -1,9 +1,11 @@
 // The pace of automatic work (WHR-376 § 4.2, § 5): which starts are held by
 // the verdict of the worker's account (shared/pm/pacing.ts), the account's
 // quota among the readings, and the words the coordinator and the firings get.
-import type { Quota, QuotaAccount, Quotas } from '../types'
-import type { Task, TaskOrigin } from './run'
-import { DEFAULT_PACE, current, paceVerdict, targetLine, type PacePolicy, type PaceReason, type PaceVerdict } from './pacing'
+import type { Quota, QuotaAccount, QuotaCredits, Quotas } from '../types'
+import { limitEnds, limitState, type LimitState } from '../quotaLimit'
+import { accountFor } from '../quotaAccount'
+import { quotaOut, type Task, type TaskOrigin } from './run'
+import { DEFAULT_PACE, burning, current, paceVerdict, targetLine, type PacePolicy, type PaceReason, type PaceVerdict } from './pacing'
 
 // Tasks made before `origin` existed: from their other marks.
 export const originOf = (t: Pick<Task, 'origin' | 'auto' | 'autopilot'>): TaskOrigin =>
@@ -28,12 +30,21 @@ export function accountQuota(q: Quotas, account: QuotaAccount): Quota | null {
   return q[account.program]
 }
 
+// An agent's account on a machine at its limit now (an expired reading does
+// not count): why, for its reviewer's fallback. A machine with no account of
+// its own: the program's latest reading.
+export function accountOut(q: Quotas | null, program: string, machine: string, now: number) {
+  if (program !== 'claude' && program !== 'codex') return
+  const account = q && accountFor(q.accounts, machine, program)
+  const quota = q && (account ? accountQuota(q, account) : q[program])
+  return quota && limitState(quota, now) === 'reached' ? quotaOut(program, limitEnds(quota)!) : undefined
+}
+
 const REASONS: Record<PaceReason, string> = {
   limited: 'the account hit its limit',
   ahead: 'ahead of the target line',
   reserveWeek: 'the weekly reserve is reached',
   reserve5h: 'the 5-hour reserve is reached',
-  burnCap: 'the burn\'s cap is reached',
   stale: 'the last reading is too old for the margin left',
 }
 
@@ -48,12 +59,13 @@ export function paceWait(v: Extract<PaceVerdict, { go: false }>): string {
 export const paceRefusal = (v: PaceVerdict | undefined) =>
   v && !v.go ? `Paced: ${paceWait(v)} (automatic work waits; the user's own starts never do)` : undefined
 
-const MODES: Record<PacePolicy['mode'], string> = { workdays: 'working days', everyday: 'every day', free: 'free with reserve' }
+const MODES: Record<PacePolicy['mode'], string> = { unlimited: 'free', workdays: 'working days', everyday: 'every day', free: 'free with reserve' }
 
 // The weekly % automatic work may reach now: the target line, the free mode's
-// limit (100 − the reserve of the days left), or the burn's cap.
+// limit (100 − the reserve of the days left), or all of it while burning. 'unlimited': 100.
 export function weekLimit(p: PacePolicy, resetsAt: number, now: number) {
-  if (p.burn && now >= (p.burn.start ?? resetsAt - 86_400_000)) return { label: 'burn cap' as const, value: p.burn.cap }
+  if (p.mode === 'unlimited') return { label: 'limit' as const, value: 100 }
+  if (burning(p.burn, now)) return { label: 'burn' as const, value: 100 }
   if (p.mode === 'free') return { label: 'limit' as const, value: 100 - p.reservePerDay * Math.ceil((resetsAt - now) / 86_400_000) }
   return { label: 'line' as const, value: targetLine(p, resetsAt, now) }
 }
@@ -87,6 +99,13 @@ export function paceLine(s: PaceState, now: number): string {
   return parts.join(' · ')
 }
 
+// The Autopilot tab's gauge: the week used against the line (or limit), and go or what it waits for.
+export interface PaceGauge { account: string, used: number | null, limit: number | null, label: ReturnType<typeof weekLimit>['label'], wait?: string }
+export function paceGauge(s: PaceState, now: number): PaceGauge {
+  const week = s.quota && current(s.quota.week, now), l = week?.resetsAt ? weekLimit(s.policy, week.resetsAt, now) : null
+  return { account: s.account ? `${s.account.key}${s.account.name ? ` ${s.account.name}` : ''}` : s.program, used: week?.used ?? null, limit: l?.value ?? null, label: l?.label ?? 'line', ...(s.verdict.go ? {} : { wait: paceWait(s.verdict) }) }
+}
+
 // One row of Settings › Pace: an account (or a program with no reading at all:
 // account null, quota unknown), its policy, where it stands and its verdict.
 export interface PaceRow {
@@ -98,6 +117,8 @@ export interface PaceRow {
   at: number | null // time of the reading
   today: number | null
   verdict: PaceVerdict
+  limit?: LimitState // the reading says "limit reached" (shared/quotaLimit.ts)
+  credits?: QuotaCredits
 }
 
 export function paceRows(q: Quotas | null, policyOf: (key: string) => PacePolicy, today: Record<string, number | null>, now: number): PaceRow[] {
@@ -111,7 +132,11 @@ export function paceRows(q: Quotas | null, policyOf: (key: string) => PacePolicy
       const w = quota && current(quota.week, now), f = quota && current(quota.five, now)
       const l = w?.resetsAt ? weekLimit(policy, w.resetsAt, now) : null
       const week = w?.resetsAt && l ? { used: w.used, resetsAt: w.resetsAt, limit: l.value, label: l.label } : null
-      return { program, account, policy, week, five: f ?? null, at: quota?.at ?? null, today: today[account.key] ?? null, verdict: paceVerdict(policy, quota, now) }
+      const limit = quota && limitState(quota, now)
+      return {
+        program, account, policy, week, five: f ?? null, at: quota?.at ?? null, today: today[account.key] ?? null, verdict: paceVerdict(policy, quota, now),
+        ...(limit ? { limit } : {}), ...(quota?.credits ? { credits: quota.credits } : {}),
+      }
     })
   })
 }

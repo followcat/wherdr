@@ -1,1 +1,1 @@
-{"repos":{"app":{"repo":{"key":"APP"},"workspace":{"from":"develop"},"merge":{"by":"itself"},"reviewer":{"agent":"codex"}},"site":{"repo":{"key":"x"}}},"limit":{"time":"2h"}}
+{"repos":{"app":{"repo":{"key":"APP"},"workspace":{"from":"develop"},"merge":{"by":"itself"},"reviewer":{"agent":"codex"}},"site":{"repo":{"key":"x"}}},"limit":{"time":"2h"},"coordinators":{"main":{"autopilot":{"goal":"none"}},"projects":{"app":{"autopilot":{"goal":"Ship the\n  release"}},"site":{"autopilot.goal":"Keep the docs current"}}}}

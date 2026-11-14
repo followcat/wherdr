@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// Rename a pane: the name goes into herdr-core, so it is visible everywhere.
-// A pane can go back to its automatic name.
+// Rename a pane, or a tab (its terminal): the name goes into herdr-core, so it
+// is visible everywhere. A pane can go back to its automatic name.
 const open = computed({
   get: () => Boolean(renameTarget.value),
   set: (v) => { if (!v) renameTarget.value = null },
@@ -14,8 +14,9 @@ function focusInput() {
     input.value?.inputRef?.select()
   }, 80)
 }
+const title = computed(() => (renameAs.value === 'tab' ? t('Rename tab') : t('Rename pane')))
 watch(renameTarget, (id) => {
-  if (!id) return
+  if (!id) { renameAs.value = 'pane'; return }
   const p = pane.value
   value.value = p ? p.label || paneTitle(p) : ''
   focusInput()
@@ -32,9 +33,9 @@ async function save(label: string) {
 </script>
 
 <template>
-  <AppSheet v-model:open="open" :title="t('Rename pane')" screen>
+  <AppSheet v-model:open="open" :title="title" screen>
     <form id="rename-form" class="rename" @submit.prevent="save(value.trim())">
-      <UInput ref="input" v-model="value" maxlength="60" size="xl" class="w-full" :placeholder="t('Pane name (empty = automatic name)')" />
+      <UInput ref="input" v-model="value" maxlength="60" size="xl" class="w-full" :placeholder="renameAs === 'tab' ? t('Tab name (empty = automatic name)') : t('Pane name (empty = automatic name)')" />
     </form>
     <template #footer>
       <div class="rename-actions">

@@ -128,10 +128,18 @@ export function attachmentRef(agent: string | null | undefined, kind: AttachKind
 }
 
 // A message line that is only an attached file (with or without "@").
-const LINE_RE = /^@?(\/\S*\/\.cache\/herdr-web\/files\/[^\s/]+)$/
+// v2 wrote it under <home>/.cache/herdr-web/files/ (kept for old conversations).
+// v3 hands it to herdr-core's terminal.put, which writes it under its state
+// folder: <state>/herdr-core/<session>/files/<terminal>/<stored name>. The
+// folder is core's, on the agent's machine; the name is the one wherdr gives
+// (STORED_NAME_RE), so a photo or a pasted file there is not taken for one.
+const V2_LINE_RE = /^@?(\/\S*\/\.cache\/herdr-web\/files\/[^\s/]+)$/
+const V3_LINE_RE = new RegExp(`^@?(/\\S*/herdr-core/[^\\s/]+/files/[^\\s/]+/(${STORED_NAME_RE.source.slice(1, -1)}))$`)
 export function parseAttachmentLine(line: string): { path: string, name: string } | null {
-  const m = LINE_RE.exec(String(line || '').trim())
-  return m ? { path: m[1]!, name: attachmentDisplayName(m[1]!) } : null
+  const l = String(line || '').trim()
+  const v3 = V3_LINE_RE.exec(l)
+  const path = v3 && isStoredAttachmentName(v3[2]!) ? v3[1]! : V2_LINE_RE.exec(l)?.[1]
+  return path ? { path, name: attachmentDisplayName(path) } : null
 }
 export const isAttachmentLine = (line: string) => parseAttachmentLine(line) !== null
 

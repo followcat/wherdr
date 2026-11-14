@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createPmStore } from '../server/utils/pmStore'
-import { renamed, shownTaskId, storedTaskId } from '../shared/pm/projectKey'
+import { renamed, showIds, shownTaskId, storedTaskId } from '../shared/pm/projectKey'
 
 let dir = ''
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-key-')) })
@@ -61,5 +61,39 @@ describe('project keys', () => {
     expect(await fs.readFile(path.join(dir, 'projects.json'), 'utf8')).toBe(saved)
     // A new project gets the next free color.
     expect((await createPmStore(dir).addProject(project('NEW'), okFolder)).color).toBe('teal')
+  })
+})
+
+describe('showIds', () => {
+  const projects = [{ key: 'CP', label: 'CMP' }, { key: 'PDS' }]
+  it('shows a renamed project\'s task ids in texts and outputs, never in paths, branches or tags', () => {
+    expect(showIds(projects, 'CP-9 (Fix): stuck. After CP-12, PDS-3.')).toBe('CMP-9 (Fix): stuck. After CMP-12, PDS-3.')
+    expect(showIds(projects, '~/.wherdr/pm/worktrees/CP-9 on task/CP-9, CP-9.json, pm-stall-CP-9, CP-9/x, xCP-9, CP-90a')).toBe('~/.wherdr/pm/worktrees/CP-9 on task/CP-9, CP-9.json, pm-stall-CP-9, CP-9/x, xCP-9, CP-90a')
+    expect(showIds(projects, { tasks: [{ id: 'CP-1', n: 2, ok: true }], none: null })).toEqual({ tasks: [{ id: 'CMP-1', n: 2, ok: true }], none: null })
+    expect(showIds([{ key: 'PDS' }], 'PDS-3')).toBe('PDS-3')
+  })
+})
+
+// The engine's ways out to people and agents: each passes its text through
+// showIds (or names the task with shownTaskId), so no text names a task by the
+// fixed key of a renamed project.
+describe('every message the engine sends goes through the shown key', () => {
+  // Sends of texts that hold no task id, or not the engine's own words.
+  const NO_ID = [
+    /Review again: read \$\{files\.review\}/, // a path
+    /text: said \}/, // the coordinator's own words, relayed
+    /text: msg \}/, // the user's report, its id from shownTaskId (pmReport.ts)
+  ]
+  it('terminal sends, PR titles and pushes', async () => {
+    const dir = path.resolve('server/utils')
+    const files = (await fs.readdir(dir)).filter(f => /^pm.*\.ts$/.test(f))
+    const bad: string[] = []
+    for (const f of files) {
+      for (const [i, line] of (await fs.readFile(path.join(dir, f), 'utf8')).split('\n').entries()) {
+        const sends = line.includes('\'terminal.send\'') || line.includes('SCRIPT.pr,') || /pushSend\(\{ title: `\$\{/.test(line)
+        if (sends && !/showIds|shownTaskId|\$\{shown|job\.shown/.test(line) && !NO_ID.some(r => r.test(line))) bad.push(`${f}:${i + 1}`)
+      }
+    }
+    expect(bad).toEqual([])
   })
 })

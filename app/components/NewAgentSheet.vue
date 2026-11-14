@@ -6,8 +6,8 @@
 // "New tab" (`newTabSpace`): a new terminal labelled for that space, on its
 // machine.
 // On the phone it opens full screen, Launch pinned at the bottom.
-import type { MachineConfig } from '#shared/types'
-import type { ProjectDraft } from '#shared/pm/newProject'
+import type { MachineConfig, QueuedMessage } from '#shared/types'
+import { shortHome, type ProjectDraft } from '#shared/pm/newProject'
 import { machineOf } from '#shared/ids'
 import { selectedAgentKind, visibleAgentKinds } from '~/utils/agentChoices'
 
@@ -63,13 +63,14 @@ function syncProxy() { proxy.value = rememberedProxy(machine.value) || 'none' }
 function syncKind() {
   const list = machineList.value
   if (fixedMachine.value) machine.value = machineOf(fixedMachine.value)
-  else if (list && !list.some(m => m.key === machine.value && online(m))) {
-    const last = list.find(m => m.key === lastMachine.value && online(m))
-    setMachine(last ? last.key : '')
-  } else if (!list && machine.value) setMachine('')
+  else if (list && !isOnline(machine.value)) setMachine(defaultMachine())
+  else if (!list && machine.value) setMachine('')
   kind.value = selectedAgentKind(kind.value, kinds.value)
   if (!dir.value) dir.value = recents.value[0] || home.value || '~'
 }
+const isOnline = (k: string) => !!machineList.value?.some(m => m.key === k && online(m))
+// The current machine tab's first online machine (utils/machineBar.ts).
+const defaultMachine = () => tabMachine(machineBarSelection.value, isOnline)
 function setMachine(k: string) {
   if (machine.value === k) return
   machine.value = k
@@ -102,7 +103,7 @@ watch(newAgentOpen, async (open) => {
   syncProxy()
   // Opened from a machine's "…" menu: that machine, once its config (home) is in.
   const want = newAgentMachine.value
-  if (!fixedMachine.value && want !== null && machineList.value?.some(m => m.key === want && online(m))) setMachine(want)
+  if (!fixedMachine.value && machineList.value) setMachine(want !== null && isOnline(want) ? want : defaultMachine())
   syncKind()
 })
 // A machine (re)connects while the sheet is open: its home folder.
@@ -115,7 +116,7 @@ watch(kinds, syncKind)
 function pickCoordinator() {
   coordinator.value = true
   draft.value = null
-  if (!projectCoordinators.value.some(c => c.project === coordProject.value)) coordProject.value = projectCoordinators.value[0]?.project ?? ''
+  coordProject.value = ''
 }
 function pickKind(k: string) {
   coordinator.value = false
@@ -124,7 +125,7 @@ function pickKind(k: string) {
 
 // ------------------------------------------------------------ navigateur de dossiers
 function chooseDir(d: string) {
-  if (coordinator.value && draft.value) draft.value.path = d
+  if (coordinator.value && draft.value) draft.value.path = shortHome(d, home.value || '')
   else dir.value = d
   browsing.value = false
 }
@@ -139,8 +140,11 @@ function resetForm() {
 
 // herdr-core answers once the first message was typed ('sent') or not ('skipped': a dialog
 // to answer, a blocked or busy program). Sent: the chat shows it at once; else say so.
-function afterFirstMessage(r: { pane_id: string, first_message?: string | null }, text: string) {
+// Held on the server (Codex installing or updating itself): shown as waiting in the
+// conversation, and back into its field if Codex exits (composables/useOutbox.ts).
+function afterFirstMessage(r: { pane_id: string, first_message?: string | null, queued?: QueuedMessage }, text: string) {
   if (r.first_message === 'sent') rememberFirstPrompt(r.pane_id, text)
+  else if (r.queued) outboxAdd(r.pane_id, r.queued)
   else if (r.first_message === 'queued') {
     toast(tl('The first message will be sent once you have answered the prompt.', 'Le premier message partira dès que tu auras répondu à la question.'))
   } else if (r.first_message === 'skipped') {
@@ -154,7 +158,7 @@ async function launch() {
   try {
     // A new tab is a new terminal labelled for its space (no layout call).
     const sent = prompt.value
-    const r = await api<{ pane_id: string, first_message?: string | null }>('/api/agents', {
+    const r = await api<{ pane_id: string, first_message?: string | null, queued?: QueuedMessage }>('/api/agents', {
       ...(machine.value ? { machine: machine.value } : {}),
       kind: kind.value,
       cwd: dir.value,
@@ -180,7 +184,8 @@ async function launch() {
 
 <template>
   <AppSheet v-model:open="open" :title="newTabSpace ? t('Start in a new tab') : coordinator ? tl('Project', 'Projet') : t(shell ? 'New terminal' : 'New agent')" tall screen>
-    <div v-if="!browsing" class="sheet-form">
+    <!-- Kept mounted while browsing: the project form then sees the chosen folder. -->
+    <div v-show="!browsing" class="sheet-form">
       <div v-if="newTabSpace" class="into-pane">
         <span class="tabmap" aria-hidden="true"><i class="cur" style="inset: 0" /></span>
         <span>
@@ -205,7 +210,7 @@ async function launch() {
 
       <NewProjectForm
         v-if="coordinator" v-model:project="coordProject" v-model:agent="coordAgent" v-model:draft="draft" :machine="machine" :machines="machineList"
-        @settings="open = false" @browse="browsing = true" @machine="pickMachine"
+        @browse="browsing = true" @machine="pickMachine"
       />
       <template v-else>
         <label class="field-label">{{ t('Folder') }}</label>
@@ -240,7 +245,7 @@ async function launch() {
       </template>
     </div>
 
-    <DirBrowser v-else :start="coordinator && draft ? (draft.probe?.exists ? draft.probe.path : null) : dir" :machine="machine" @choose="chooseDir" @cancel="browsing = false" />
+    <DirBrowser v-if="browsing" :start="coordinator && draft ? (draft.probe?.exists ? draft.probe.path : null) : dir" :machine="machine" @choose="chooseDir" @cancel="browsing = false" />
 
     <template #footer>
       <NewProjectActions

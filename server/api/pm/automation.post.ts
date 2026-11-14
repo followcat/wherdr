@@ -1,8 +1,6 @@
-// The user's automations of a project: { project, automation } adds one, or
-// changes the one with its `id`; { project, id, remove: true } removes it;
+// The user's switch on a project's automation: { project, id, on }; or
 // { project, id, runNow: true } fires it now, on or off. The user's session
-// only: the coordinator reads them with `wherdr pm automation`.
-import { cleanAutomation } from '../../../shared/pm/automations'
+// only: the coordinator or Alfred proposes the rest (`wherdr pm automation propose`).
 import { coreAdminDeps } from '../../utils/coreAdminDeps'
 import { HerdrError } from '../../utils/herdr'
 import { fireAutomation } from '../../utils/pmAutomations'
@@ -11,20 +9,14 @@ import { pmStore } from '../../utils/pmStore'
 export default defineApi(async (event, body) => {
   const store = pmStore()
   const key = typeof body.project === 'string' ? body.project : ''
-  const p = await store.project(key)
-  if (!p) throw new HerdrError('not_found', 'Unknown project')
-  const types = Object.keys(((await store.workflow(p.key))?.taskTypes) || {})
-  const id = typeof body.id === 'string' ? body.id : typeof body.automation?.id === 'string' ? body.automation.id : ''
+  if (!(await store.project(key))) throw new HerdrError('not_found', 'Unknown project')
+  const id = typeof body.id === 'string' ? body.id : ''
   if (body.runNow === true) return { firing: await fireAutomation({ ...coreAdminDeps(), store, origin: getRequestURL(event).origin }, key, id) }
+  if (typeof body.on !== 'boolean') throw new HerdrError('bad_input', 'on: true or false')
   const automations = await store.changeAutomations(key, (f) => {
-    const i = f.automations.findIndex(a => a.id === id)
-    if ((id || body.remove === true) && i < 0) throw new HerdrError('not_found', 'Unknown automation')
-    if (body.remove === true) return { file: { ...f, automations: f.automations.filter(a => a.id !== id) }, out: f.automations.filter(a => a.id !== id) }
-    const r = cleanAutomation(body.automation, f.automations[i], Date.now())
-    if ('error' in r) throw new HerdrError('bad_input', r.error)
-    if (r.automation.type && !types.includes(r.automation.type)) throw new HerdrError('bad_input', `type: one of the template's task types (${types.join(', ') || 'none yet'})`)
-    if (i < 0 && f.automations.some(a => a.id === r.automation.id)) throw new HerdrError('exists', 'An automation already has this name')
-    const list = i < 0 ? [...f.automations, r.automation] : f.automations.map((a, j) => (j === i ? r.automation : a))
+    if (!f.automations.some(a => a.id === id)) throw new HerdrError('not_found', 'Unknown automation')
+    // Switched on: missed slots count from now.
+    const list = f.automations.map(a => (a.id === id ? { ...a, on: body.on, ...(body.on && !a.on ? { last: Date.now() } : {}) } : a))
     return { file: { ...f, automations: list }, out: list }
   })
   return { automations }

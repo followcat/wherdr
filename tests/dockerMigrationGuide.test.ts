@@ -34,12 +34,10 @@ describe('the 1.x Docker migration guide', () => {
     expect(guide).toContain('(cd "$OLD" && docker compose up -d)')
   })
 
-  it('is linked from the release notes, the installer, the plugin and the docs', () => {
+  it('is linked from the release notes and the docs', () => {
     const notes = read('docs/release-notes-2.0.0.md')
     expect(notes).toContain(RELEASE_GUIDE_URL)
     expect(notes).not.toContain('/wherdr/blob/main/docs/migrate-from-1.x-docker.md')
-    expect(read('website/public/install')).toContain('blob/main/docs/migrate-from-1.x-docker.md')
-    expect(read('scripts/herdr-plugin.sh')).toContain('blob/main/docs/migrate-from-1.x-docker.md')
     for (const doc of ['README.md']) expect(read(doc)).toContain('(docs/migrate-from-1.x-docker.md)')
     for (const doc of ['docs/README.md', 'docs/installation.md']) expect(read(doc)).toContain('](migrate-from-1.x-docker.md)')
   })

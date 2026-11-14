@@ -3,7 +3,9 @@
 // Send now / Clear, and Send now for Claude's queue (see server/utils/coreDraft.ts).
 import type { Pane } from '#shared/types'
 
-const props = defineProps<{ pane: Pane }>()
+// `shown`: the field holds a message the conversation already shows as
+// waiting there: no second bubble, only its actions.
+const props = defineProps<{ pane: Pane, shown?: boolean }>()
 const busy = ref<'send' | 'clear' | 'send-queued' | null>(null)
 
 async function act(action: 'send' | 'clear' | 'send-queued') {
@@ -30,6 +32,7 @@ const icon = (a: typeof busy.value, idle: string) => (busy.value === a ? 'i-luci
   </div>
   <div v-if="pane.draft" class="msg-user-wrap unsent-input" data-testid="unsent-input">
     <UChatMessage
+      v-if="!shown"
       id="unsent-input" role="user" side="right" variant="soft"
       :parts="[{ type: 'text', text: pane.draft.text }]"
       :ui="{ root: 'msg msg-user msg-pending queued', container: 'msg-c', content: 'msg-bubble queued' }"
@@ -38,7 +41,7 @@ const icon = (a: typeof busy.value, idle: string) => (busy.value === a ? 'i-luci
         <span class="unsent-text">{{ pane.draft.text }}</span>
       </template>
     </UChatMessage>
-    <div class="queued-tag failed" role="status">
+    <div v-if="!shown" class="queued-tag failed" role="status">
       <UIcon name="i-lucide-circle-alert" /><span>{{ t('Not sent — still in Claude’s input') }}</span>
     </div>
     <div class="queued-tag unsent-actions">

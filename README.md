@@ -24,6 +24,11 @@ copied and nothing runs in the cloud: wherdr talks to the hc session on your com
   messages, quoted replies, attachments.
 - **Terminal**: the real terminal, shared with other viewers (phone, computer, herdr-app).
 - **Search** across agents and conversations.
+- **Projects**: tasks on a board, each going through its project's workflow (work, review, PR,
+  merge) with agents doing the steps; a **coordinator** agent per project, and an **autopilot**
+  that keeps the work going while you are away. Off until you turn it on.
+- **Alfred**, wherdr's assistant: sets up your projects with you and coordinates them on request,
+  showing each change before making it.
 - **Claude and Codex quotas** for every machine.
 - **Machines as tabs** in the home screen; add, reconnect, rename or forget machines in Settings.
 - **Files**: browse, read and download the files of an agent's folder.
@@ -56,11 +61,15 @@ remote access.
 - **[Overview and architecture](docs/overview.md)** — What wherdr does and how it connects to herdr-core.
 - **[First launch](docs/quick-start.md)** — Build, start and open wherdr v3.
 - **[Installation and updates](docs/installation.md)** — Requirements, running as a service, updating.
+- **[Install with an agent](docs/install-with-an-agent.md)** — Prompts for a coding agent that installs or updates wherdr.
+- **[Migrate from v2](docs/migrate-from-v2.md)** — Install v3 beside v2 and import what it can use.
 - **[Home and agent list](docs/home.md)** — Machine tabs, spaces, states, new agents and search.
 - **[Conversation and replies](docs/conversation.md)** — Read transcripts, answer questions, attach files and quote replies.
 - **[Terminal](docs/terminal.md)** — The real terminal, shared viewers and taking control.
 - **[Files](docs/files.md)** — Browse and download the files of an agent's folder.
 - **[Computer, phone and iPad](docs/devices.md)** — Layouts, keyboard shortcuts and touch controls.
+- **[Project management](docs/project-management.md)** — Projects, the board, workflows, coordinators and autopilot.
+- **[Alfred's command](docs/alfred.md)** — What Alfred reads and changes, after your yes.
 - **[Machines](docs/machines.md)** — Machines reached by herdr-core over SSH.
 - **[Claude and Codex quotas](docs/quotas.md)** — Remaining usage on every machine.
 - **[Notifications](docs/notifications.md)** — Web Push, Do not disturb, default and exceptions.

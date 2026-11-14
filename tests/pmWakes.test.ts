@@ -2,7 +2,8 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { WAKE, ackWakes, enqueue, inWake, readQueue, tickWakes, wakeText, type Wake } from '../shared/pm/wakes'
+import { WAKE, ackWakes, addSkip, enqueue, inWake, readQueue, sinceYesterday, tickWakes, wakeKindOf, wakeText, type Wake } from '../shared/pm/wakes'
+import { HEALTH_REPEAT_MS, healthRepeats } from '../shared/pm/health'
 import { createPmStore } from '../server/utils/pmStore'
 
 const MIN = 60_000
@@ -14,6 +15,44 @@ const tick = (q: Wake[], status: 'idle' | 'working' | 'gone', now: number, lastU
 }
 const queued = (reasons: string[], now = 0, id = 'w1') => [enqueue([], 'CO', reasons, now, id)]
 
+describe('the timeline window', () => {
+  it('starts at yesterday\'s local midnight, a 25 h day included', () => {
+    const tz = process.env.TZ
+    process.env.TZ = 'America/New_York'
+    try {
+      const now = new Date(2026, 10, 1, 23, 50).getTime()
+      expect(sinceYesterday(now)).toBe(new Date(2026, 9, 31, 0, 0).getTime())
+      // Handled 31 October at 00:05, 48 h 45 min before: still read.
+      const handled = new Date(2026, 9, 31, 0, 5).getTime()
+      const w = JSON.stringify({ id: 'y', coordinator: 'CO', reasons: [], createdAt: handled, tries: 1, endedAt: handled, ended: 'ack' })
+      expect(readQueue([w], now, now - sinceYesterday(now))).toHaveLength(1)
+    } finally { if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz }
+  })
+})
+
+describe('wakes not sent', () => {
+  it('a health check repeating the last one\'s lines is skipped, for 12 h at most', () => {
+    const sent = { lines: ['Waiting for the user: CO-1 (Fix)', 'ack'], at: 0 }
+    expect(healthRepeats(['Waiting for the user: CO-1 (Fix)', 'ack'], sent, 3 * 3_600_000)).toBe(true)
+    expect(healthRepeats(['Waiting for the user: CO-1 (Fix); CO-2 (New)', 'ack'], sent, 3 * 3_600_000)).toBe(false)
+    expect(healthRepeats(sent.lines, sent, HEALTH_REPEAT_MS)).toBe(false)
+    expect(healthRepeats(sent.lines, undefined, 0)).toBe(false)
+  })
+  it('notes each engine skip once in 12 h, each scheduled one, three days kept', () => {
+    const s = { at: 0, what: 'engine' as const, why: 'CO-1: offline' }
+    const one = addSkip(undefined, s)!
+    expect(addSkip(one, { ...s, at: 3_600_000 })).toBeUndefined()
+    expect(addSkip(one, { ...s, at: HEALTH_REPEAT_MS })).toHaveLength(2)
+    // Every 30 min for two days: all kept; older than three days: dropped.
+    const slots = Array.from({ length: 96 }, (_, i) => i).reduce<ReturnType<typeof addSkip>>((l, i) => addSkip(l, { at: i * 1_800_000, what: 'autopilot', why: 'Scheduled wake: nothing to do' }), undefined)!
+    expect(slots).toHaveLength(96)
+    expect(addSkip(slots, { ...s, at: 3 * 86_400_000 + 1 })).toHaveLength(96)
+    // A scheduled wake is skipped once per slot: each one noted.
+    const slot = { at: 0, what: 'autopilot' as const, why: 'Scheduled wake: nothing to do' }
+    expect(addSkip(addSkip(undefined, slot), { ...slot, at: 3_600_000 })).toHaveLength(2)
+  })
+})
+
 describe('wake queue', () => {
   it('merges pending reasons into one Autopilot message, without repeats', () => {
     let q = queued(['CO-1: done'])
@@ -22,8 +61,33 @@ describe('wake queue', () => {
     const r = tick(q, 'idle', 2 * MIN)
     expect(r.deliver).toMatchObject({ id: 'w1', reasons: ['CO-1: done', 'CO-2: stuck'], tries: 1 })
     expect(wakeText(r.deliver!)).toMatch(/^Autopilot: wake w1\n\nCO-1: done\n\nCO-2: stuck\n\nWhen you have handled this, run: wherdr pm ack w1$/)
+    // With the autopilot on, it says which mechanical fixes it allows, and what stays the user's.
+    expect(wakeText(r.deliver!, true)).toContain('CO-2: stuck\n\nIn this wake you may unblock a task of your project')
+    expect(wakeText(r.deliver!, true)).toMatch(/--fix <kind>.*base \(merge the base.*stall \(restart a stalled agent\).*At most 2 times per task and step.*A permission request, merging, approving, guards, settings and limits stay the user's/)
     // Once delivered, new reasons start a new wake.
     expect(enqueue(r.q, 'CO', ['CO-3: added'], 3 * MIN, 'w3').id).toBe('w3')
+  })
+
+  it('names its source on the first line, one source per wake', () => {
+    let q = queued(['CO-1: done'])
+    q = apply(q, [enqueue(q, 'CO', ['CO-2 (Ship): Check again'], 0, 'w2', false, { kind: 'step', about: 'CO-2 (deploy)' })])
+    q = apply(q, [enqueue(q, 'CO', ['CO-3: gave up'], 0, 'w3', false, { kind: 'engine' })])
+    q = apply(q, [enqueue(q, 'CO', ['Disk almost full'], 0, 'w4', false, { kind: 'health' })])
+    expect(q.map(w => w.reasons)).toEqual([['CO-1: done'], ['CO-2 (Ship): Check again'], ['CO-3: gave up'], ['Disk almost full']])
+    const heads = q.map(w => wakeText(w).split('\n')[0])
+    expect(heads).toEqual(['Autopilot: wake w1', 'Step check: CO-2 (deploy), wake w2', 'Engine: wake w3', 'Health check: wake w4'])
+    expect(heads.map(wakeKindOf)).toEqual(['autopilot', 'step', 'engine', 'health'])
+    expect(wakeKindOf('Autopilot: please look')).toBeNull()
+    // Its queued form (Claude's paste wrapper, a leading line break) reads the same as the transcript's.
+    const text = wakeText({ ...q[0]!, kind: 'incident', about: 'inc1' })
+    expect(wakeKindOf(text)).toBe('incident')
+    expect(wakeKindOf(`<pasted_content id="1">\n${text}\n</pasted_content id="1">`)).toBe('incident')
+    expect(wakeKindOf(`\n ${text}`)).toBe('incident')
+    // An old wake without a kind is the autopilot's; the ack line is the same for all.
+    expect(wakeText({ ...q[0]!, kind: undefined })).toMatch(/^Autopilot: wake w1\n[\s\S]*run: wherdr pm ack w1$/)
+    expect(wakeText(q[1]!)).toMatch(/run: wherdr pm ack w2$/)
+    // Delivered one after the other.
+    expect(tick(q, 'idle', 2 * MIN).deliver).toMatchObject({ id: 'w1' })
   })
 
   it('is never delivered in the middle of a turn', () => {

@@ -29,10 +29,14 @@ and the [browser demo](https://wherdr.dev/demo/) show wherdr v2 on Herdr.
   terminal; the one you type in takes control of its size.
 - **Private by default, passkey lock optional.** wherdr answers only its own computer and your
   tailnet. Add a passkey if you like: Face ID, Touch ID, Windows Hello or Android unlock the app.
+- **Projects run by agents.** Tasks on a board go through each project's workflow (work, review,
+  PR, merge); a coordinator agent per project, with an autopilot for when you are away, and
+  **Alfred**, wherdr's assistant, who sets up projects with you. Off until you turn it on.
 - **Search, quotas, files, push.** One shortcut searches every agent and conversation; Claude and
   Codex quotas per machine; the files of an agent's folder; a push when an agent needs you.
 
-Details in [Features](home.md#features), [herdr-core](core.md) and [Security](security.md#security).
+Details in [Features](home.md#features), [Project management](project-management.md),
+[herdr-core](core.md) and [Security](security.md#security).
 
 ## How it works
 

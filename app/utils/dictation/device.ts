@@ -31,7 +31,7 @@ interface Pending { resolve: (r: { text: string, ms: number }) => void, reject: 
 // A worker that says it ran out of memory: the model is too large for this
 // device. Emscripten reports an abort for OOM or a failed memory grow; the
 // browser, a failed buffer allocation. Other errors stay plain failures.
-const OUT_OF_MEMORY = /out of memory|Aborted\(OOM\)|enlarge memory|allocation failed/i
+export const OUT_OF_MEMORY = /out of memory|Aborted\(OOM\)|enlarge memory|allocation failed/i
 
 function savedModel(): DeviceModel {
   try { return deviceModel(localStorage.getItem(DEVICE_MODEL_KEY)) }

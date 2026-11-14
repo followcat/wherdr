@@ -104,5 +104,9 @@ export function scanDiff(diff: string): Leak[] {
   return out
 }
 
+// The text with what looks private replaced by its kind ("[home path]"), before it leaves wherdr.
+export const maskLeaks = (text: string) =>
+  LEAKS.reduce((t, l) => t.replace(new RegExp(l.re.source, 'g'), (...a) => (l.ok?.(a.slice(0, -2) as unknown as RegExpExecArray) ? a[0] : `[${l.what}]`)), text)
+
 export const leakText = (leaks: Leak[]) =>
   `This repository is public and your diff adds what looks private: ${leaks.map(l => `${l.what} in ${l.file}`).join('; ')}. Remove it from the commits that added it (a placeholder instead; amend or rebase: a later commit would leave it in the history), then say you are done again.`

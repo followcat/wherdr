@@ -11,6 +11,7 @@ import { HerdrError } from './herdr'
 import { coreFilesMachine } from './coreFilesMachine'
 import { defineApi } from './http'
 import { findPane } from './state'
+import { chatFilesPolicy } from './chatFiles'
 import { answer, cutOnError, openVideo, openWrittenVideo } from './videoStream'
 
 import type { Pane } from '../../shared/types'
@@ -24,7 +25,7 @@ async function serveVideo(event: H3Event, p: Pane, q: Record<string, unknown>, t
   res.once('close', () => closed.abort())
   if (res.destroyed) closed.abort()
   const v = q.from === 'chat'
-    ? await openWrittenVideo(m, p.cwd, q.path, closed.signal)
+    ? await openWrittenVideo(m, p.cwd, q.path, closed.signal, await chatFilesPolicy())
     : await openVideo(m, p.cwd!, q.path, closed.signal)
   if (closed.signal.aborted) {
     v.close()
@@ -68,7 +69,7 @@ export const fileDownload = defineApi(async (event) => {
   const video = q.inline === '1' ? videoType(String(q.path || '')) : undefined
   if (video) return serveVideo(event, p, q, video)
   const f = q.from === 'chat'
-    ? await readWrittenBytes(await coreFilesMachine(p.machine), p.cwd, q.path)
+    ? await readWrittenBytes(await coreFilesMachine(p.machine), p.cwd, q.path, await chatFilesPolicy())
     : await readFileBytes(await coreFilesMachine(p.machine), p.cwd!, q.path)
   setResponseHeader(event, 'x-content-type-options', 'nosniff')
   if (q.inline === '1' && isPdf(f.name, f.body)) {

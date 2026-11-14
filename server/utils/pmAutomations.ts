@@ -2,31 +2,32 @@
 // that is due, or an event on a task, adds a task from the project's
 // template and starts it at once (shared/pm/automations.ts). The user's
 // "run now" goes through `fireAutomation` too.
-import { addFiring, firesOn, firingTask, taskEvents, type Automation, type Firing } from '../../shared/pm/automations'
+import { addFiring, answerAutomation, firesOn, firingTask, taskEvents, type Automation, type Firing } from '../../shared/pm/automations'
 import { due, parseSchedule } from '../../shared/pm/schedule'
 import type { Project } from '../../shared/pm/project'
 import { HerdrError } from './herdr'
+import { tellCardOutcome } from './cardOutcome'
+import { MAIN } from '../../shared/pm/coordinator'
 import { paceWait } from '../../shared/pm/pace'
-import { projectPace } from './pmPace'
-import { memoryHold } from './pmMemory'
+import { forgetMemory } from './pmMemory'
+import { goesTo, paceOf, placeFor } from './pmPlace'
 import { startTask, type PmLaunchDeps } from './pmLaunch'
 
 // Adds the firing's task and starts it; a refusal stays on the firing.
-async function fire(deps: PmLaunchDeps, p: Project, a: Automation, f: Omit<Firing, 'task' | 'error'>): Promise<Firing> {
+async function fire(deps: PmLaunchDeps, p: Project, a: Automation, f: Omit<Firing, 'task' | 'error' | 'held'>): Promise<Firing> {
   const t = p ? await deps.store.workflow(p.key) : null
   if (!t) return { ...f, error: 'The project has no template' }
   // A schedule or an event is automatic work: held by the worker account's pace,
   // the slot counted as fired (no catch-up, no retry loop). The user's "run now" never is.
-  if (f.by !== 'user') {
-    const v = (await projectPace(deps.store, p.key, { type: a.type || Object.keys(t.taskTypes)[0]! }, f.at))?.verdict
-    if (v && !v.go) return { ...f, error: `paced: ${paceWait(v)}` }
-  }
+  const pace = f.by !== 'user' ? await paceOf(deps.store, p, { type: a.type || Object.keys(t.taskTypes)[0]! }, f.at) : undefined
+  if (pace?.verdict && !pace.verdict.go) return { ...f, error: `paced: ${paceWait(pace.verdict)}` }
   try {
     const task = await deps.store.addTask(firingTask(a, p.key, Object.keys(t.taskTypes)[0]!, f.at, f.cause))
-    // Short on memory: the task is added and waits for it (the engine starts it then). "Run now" goes.
-    const held = f.by !== 'user' ? await memoryHold(deps, p.key) : undefined
-    if (held) return { ...f, task: (await deps.store.logTask({ ...task, held }, 'engine', held)).id, error: held }
-    const started = await startTask(deps, task.id).catch((e: Error) => ({ ...task, state: 'waiting' as const, waiting: e.message }))
+    // No room on any allowed machine: the task is added and waits for it (the engine starts it then). "Run now" goes.
+    const { on, short: held } = goesTo(await placeFor(deps, task, { waits: pace?.waits }))
+    if (held && f.by !== 'user') return { ...f, task: (await deps.store.logTask({ ...task, held }, 'engine', held)).id, error: held, held: true }
+    if (on !== undefined) forgetMemory(on)
+    const started = await startTask(deps, task.id, on !== undefined ? { on } : {}).catch((e: Error) => ({ ...task, state: 'waiting' as const, waiting: e.message }))
     return { ...f, task: task.id, ...(started.state === 'waiting' ? { error: started.waiting ?? 'Not started' } : {}) }
   } catch (e) { return { ...f, error: (e as Error).message } }
 }
@@ -73,4 +74,25 @@ export async function fireAutomation(deps: PmLaunchDeps, key: string, id: string
   const f = await fire(deps, p, a, { at: now, by: 'user' })
   await record(deps, key, [[id, f]], 'keep')
   return f
+}
+
+// The user's Accept or Refuse on a proposal of the coordinator or Alfred.
+// The proposer learns the answer in its conversation (cardOutcome.ts).
+export async function answerAutomationProposal(deps: Pick<PmLaunchDeps, 'store' | 'call'>, key: string, id: string, accept: boolean) {
+  const p = (await deps.store.automations(key)).proposals?.find(x => x.id === id && !x.outcome)
+  const what = p && `${p.action === 'add' ? 'New' : p.action === 'remove' ? 'Remove' : 'Change'} automation ${p.automation.id}`
+  const tell = (text: string) => (p ? tellCardOutcome(deps, p.by === 'main' ? MAIN : p.by, text).catch(() => {}) : undefined)
+  try {
+    const out = await deps.store.changeAutomations(key, (f) => {
+      const r = answerAutomation(f, id, accept, Date.now())
+      if ('error' in r) throw new HerdrError('refused', r.error)
+      return { file: { ...f, ...r }, out: { accepted: accept } }
+    })
+    await tell(`${accept ? 'Applied' : 'Cancelled'}: ${what}`)
+    return out
+  }
+  catch (e) {
+    if (e instanceof HerdrError) await tell(`Not applied: ${what}: ${e.message}`)
+    throw e
+  }
 }

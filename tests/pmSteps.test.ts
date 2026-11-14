@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { EXAMPLES, common, company, github, vibe, wherdr } from '../shared/pm/examples'
-import { currentStep, initialState, onEvent, planSteps, withBase, type Effect, type StepEvent, type StepState } from '../shared/pm/steps'
+import { currentStep, initialState, nextRecheck, type News, onEvent, pauseClock, planSteps, recheckNews, waitStep, stepLabels, withBase, type Effect, type StepEvent, type StepState } from '../shared/pm/steps'
 import { validateTemplate, type Template } from '../shared/pm/workflow'
 import type { Finding } from '../shared/pm/verdict'
 import { taskBase } from '../shared/pm/run'
 import { guardAction } from '../shared/pm/actions'
+import { runsNow } from '../shared/pm/advance'
+import { coordinatorWake } from '../shared/pm/coordinator'
 import { combineGuards } from '../shared/pm/guards'
+import { clockStops } from '../shared/pm/blocked'
 
 const MIN = 60_000
 const bug: Finding = { id: 'bug', severity: 'major', title: 'Crashes on empty input', proof: 'npm test: 1 failed' }
@@ -110,32 +113,76 @@ describe('step engine, company flow', () => {
     expect(r.refused).toEqual(['Not done yet: step "pr" needs a link.'])
     expect(r.state.proofs.pr).toEqual({ link: 'https://git.example/pr/7' })
     expect(r.state.rounds).toEqual({ review: 1 })
-    expect(r.state.yourTurn).toEqual({ reason: 'user', badge: 'Merge the PR' })
+    expect(r.state.yourTurn).toEqual({ reason: 'user', badge: 'Merge the PR on your Git host' })
     expect(kinds(r.effects)).toEqual(['instruct:work', 'instruct:review', 'instruct:work', 'instruct:review', 'instruct:pr', 'instruct:pr'])
     expect(r.effects[5]).toMatchObject({ text: 'Not done yet: step "pr" needs a link.' })
   })
 
-  it('checks "Merged" in git; not merged keeps the step open in Your turn', () => {
+  it('checks "I merged it" in git; not merged keeps the step open, saying what to do with the PR link', () => {
+    const error = 'verify-merged: commit abc1234 is not in develop'
     const r = play(company, 'feature', [...toMerge,
       [60, { kind: 'user' }],
-      [61, { kind: 'action-result', ok: false, error: 'commit not in develop' }],
+      [61, { kind: 'action-result', ok: false, error }],
     ])
     expect(r.effects.at(-1)).toEqual({ kind: 'action', step: 'merge', action: { kind: 'git.verify-merged', target: 'develop' }, attempt: 1 })
     expect(currentStep(r.plan, r.state)!.id).toBe('merge')
-    expect(r.state.yourTurn).toEqual({ reason: 'action', badge: 'Merge the PR: commit not in develop', error: 'commit not in develop' })
+    expect(r.state.yourTurn).toEqual({ reason: 'action', error,
+      badge: 'The PR is not merged into develop yet: merge it on your Git host (https://git.example/pr/7), then press “I merged it” again' })
+    // No PR link given: the same words without it; another failure keeps the badge and the raw error.
+    const plan = r.plan, at = { ...r.state, proofs: {}, acting: true as const }
+    expect(onEvent(plan, at, { kind: 'action-result', ok: false, error }, 0).state.yourTurn!.badge)
+      .toBe('The PR is not merged into develop yet: merge it on your Git host, then press “I merged it” again')
+    expect(onEvent(plan, at, { kind: 'action-result', ok: false, error: 'verify-merged: task/A-1 has no commit of its own: nothing was merged' }, 0).state.yourTurn!.badge)
+      .toBe('Merge the PR on your Git host: verify-merged: task/A-1 has no commit of its own: nothing was merged')
   })
 
-  it('the coordinator watches the deploy, is told again on recheck, and the timeout goes to Your turn', () => {
-    const r = play(company, 'feature', [...toMerge,
-      [60, { kind: 'user' }], [61, { kind: 'action-result', ok: true }],
-      [64, { kind: 'tick' }], [66, { kind: 'tick' }], [151, { kind: 'tick' }],
-    ])
+  it('a step you end with git.verify-merged: the host from the PR link, the workflow\'s own words first', () => {
+    const merge = { id: 'merge', ends: 'user', action: { kind: 'git.verify-merged', target: 'develop' } } as const
+    expect(stepLabels(merge, 'https://bitbucket.org/example-org/example-repo/pull-requests/7')).toEqual({ badge: 'Merge the PR on Bitbucket', button: 'I merged it' })
+    expect(stepLabels(merge, 'https://github.com/example-org/example-repo/pull/7').badge).toBe('Merge the PR on GitHub')
+    expect(stepLabels(merge, 'https://gitlab.com/example-org/example-repo/-/merge_requests/7').badge).toBe('Merge the PR on GitLab')
+    expect(stepLabels(merge, 'https://dev.azure.com/example-org/example-repo/_git/example-repo/pullrequest/7').badge).toBe('Merge the PR on Azure DevOps')
+    expect(stepLabels({ ...merge, userLabel: 'Merged', badge: 'Merge it' })).toEqual({ badge: 'Merge it', button: 'Merged' })
+    expect(stepLabels({ id: 'pick', ends: 'user' })).toEqual({ badge: 'pick', button: 'Done' })
+  })
+
+  // The deploy step is a pipeline.watch: the engine polls, the coordinator hears only of a failure.
+  const toDeploy: [number, StepEvent][] = [...toMerge, [60, { kind: 'user' }], [61, { kind: 'action-result', ok: true }]]
+  const later: StepEvent = { kind: 'action-result', ok: false, later: true }
+
+  it('the engine watches the deploy every 2m and ends the step on success, with no coordinator wake', () => {
+    const r = play(company, 'feature', [...toDeploy, [62, later]])
     expect(r.steps.at(-1)).toBe('deploy')
-    expect(kinds(r.effects).slice(-3)).toEqual(['instruct:deploy', 'instruct:deploy', 'instruct:deploy'])
-    expect(r.effects.at(-1)).toMatchObject({ holder: 'coordinator', text: expect.stringMatching(/^Check again: /) })
-    expect(r.state.yourTurn).toEqual({ reason: 'timeout', badge: 'Check deploy: over 90m' })
-    const end = onEvent(r.plan, r.state, { kind: 'report', from: 'coordinator' }, 152 * MIN)
-    expect(end.state).toMatchObject({ done: true, yourTurn: undefined })
+    expect(r.state).toMatchObject({ acting: true, watch: { from: 61 * MIN, next: 64 * MIN } })
+    expect([runsNow(r.plan.at(-2), r.state, 63 * MIN), runsNow(r.plan.at(-2), r.state, 64 * MIN)]).toEqual([false, true])
+    expect(coordinatorWake(r.plan, r.state, 64 * MIN).texts).toEqual([])
+    const end = onEvent(r.plan, r.state, { kind: 'action-result', ok: true, evidence: { link: 'https://ci.example/run/1' } }, 64 * MIN)
+    expect(end.state).toMatchObject({ done: true, proofs: { deploy: { link: 'https://ci.example/run/1' } } })
+  })
+
+  it('a failure is logged and said to the coordinator once; the timeout comes to you', () => {
+    const r = play(company, 'feature', [...toDeploy, [62, { kind: 'action-result', ok: false, error: 'pipeline: CI failed (unit): https://ci.example/run/2', detail: 'FAIL a.test.ts' }]])
+    const said = 'deploy: pipeline: CI failed (unit): https://ci.example/run/2\nFAIL a.test.ts'
+    expect(r.effects.at(-1)).toEqual({ kind: 'log', text: said })
+    expect(r.state.yourTurn).toMatchObject({ reason: 'action', error: 'pipeline: CI failed (unit): https://ci.example/run/2' })
+    const first = coordinatorWake(r.plan, r.state, 63 * MIN)
+    expect(first.texts).toEqual([`Pipeline watch failed at ${said}`])
+    expect(coordinatorWake(r.plan, first.state, 64 * MIN).texts).toEqual([])
+    const slow = play(company, 'feature', [...toDeploy, [62, later], [150, later], [151, later]])
+    expect(slow.state.yourTurn).toMatchObject({ reason: 'action', error: 'pipeline: still running after 90m' })
+  })
+
+  it('onFail worker sends a failed watch back to the worker with the output', () => {
+    const t: Template = { id: 'w', taskTypes: { s: { steps: [
+      { id: 'work', holder: 'worker', ends: 'report' },
+      { id: 'ci', ends: 'action', action: { kind: 'pipeline.watch', source: 'command', command: './ci-status', onFail: 'worker' } }, { id: 'done' }] } } }
+    expect(validateTemplate(t)).toEqual([])
+    const r = play(t, 's', [[0, { kind: 'start' }], [1, { kind: 'report', from: 'worker' }], [2, { kind: 'action-result', ok: false, error: 'pipeline: the command failed', detail: 'job lint: red' }]])
+    expect(r.steps.at(-1)).toBe('work')
+    expect(r.state.fix).toBe('pipeline: the command failed.\n\njob lint: red\n\nFix it, commit, then say you are done.')
+    expect(r.state.notify).toBe('ci: pipeline: the command failed\njob lint: red')
+    expect(validateTemplate({ ...t, taskTypes: { s: { steps: [{ id: 'ci', holder: 'coordinator', ends: 'action', action: { kind: 'pipeline.watch', source: 'command' } }] } } }).map(e => e.path))
+      .toEqual(['taskTypes.s.steps[0].action.command', 'taskTypes.s.steps[0].holder'])
   })
 
   it('takes a step\'s end only from its holder', () => {
@@ -223,5 +270,80 @@ describe('step engine, study and feature split', () => {
     const s = onEvent(plan, initialState(), { kind: 'start' }, 0).state
     expect(onEvent(plan, s, { kind: 'tick' }, 59 * MIN).state.yourTurn).toBeUndefined()
     expect(onEvent(plan, s, { kind: 'tick' }, 60 * MIN).state.yourTurn).toEqual({ reason: 'timeout', badge: 'Check work: over 1h' })
+  })
+
+  describe('the step\'s clock stops while its holder cannot work', () => {
+    const H = 60 * MIN
+    const plan = planSteps(common, { type: 'study', steps: { work: { timeout: '3h' } } })
+    const start = onEvent(plan, initialState(), { kind: 'start' }, 0).state
+    // Ticks every 30 min; stopped(t): whether its holder cannot work at t.
+    const run = (until: number, stopped: (t: number) => boolean) => {
+      let s = start
+      for (let t = 30 * MIN; t <= until; t += 30 * MIN) s = onEvent(plan, pauseClock(s, stopped(t), t), { kind: 'tick' }, t).state
+      return s
+    }
+
+    it('an outage of 4 h during a 3 h work step does not time it out', () => {
+      const offline = (t: number) => t > H && t <= 5 * H
+      expect(run(5.5 * H, offline).yourTurn).toBeUndefined()
+      expect(run(7.5 * H, offline).yourTurn).toEqual({ reason: 'timeout', badge: 'Check work: over 3h' })
+    })
+
+    it('waiting for room does not count, and a timeout already shown goes', () => {
+      const late = run(3.5 * H, () => false)
+      expect(late.yourTurn?.reason).toBe('timeout')
+      const held = pauseClock(late, clockStops({ state: 'working', held: 'No room on its machine' }, false), 4 * H)
+      expect(held.yourTurn).toBeUndefined()
+      expect(onEvent(plan, held, { kind: 'tick' }, 9 * H).state.yourTurn).toBeUndefined()
+      expect(held.since).toBe(0)
+    })
+
+    it('normal work still times out after 3 h', () => {
+      expect(run(2.5 * H, () => false).yourTurn).toBeUndefined()
+      expect(run(3 * H, () => false).yourTurn).toEqual({ reason: 'timeout', badge: 'Check work: over 3h' })
+    })
+  })
+})
+
+describe('a coordinator step\'s rechecks', () => {
+  const t: Template = { id: 'watch', taskTypes: { deploy: { steps: [{ id: 'deploy', holder: 'coordinator', ends: 'report', recheck: '5m' }] } } }
+  const plan = planSteps(t, { type: 'deploy' })
+  const start = () => onEvent(plan, initialState(), { kind: 'start' }, 0).state
+  // Ticks every minute until `until`, the news unchanged unless `news` says; the minutes a recheck went.
+  const run = (s: StepState, from: number, until: number, news: (m: number) => News | number = () => 0) => {
+    const at: number[] = []
+    for (let m = from; m <= until; m++) {
+      const n = news(m)
+      s = recheckNews(plan, s, typeof n === 'number' ? { at: n * MIN } : n, m * MIN)
+      const r = onEvent(plan, s, { kind: 'tick' }, m * MIN)
+      if (r.effects.length) at.push(m)
+      s = r.state
+    }
+    return { s, at }
+  }
+
+  it('back off while nothing changes: 5m, 10m, 20m, 40m, then every hour', () => {
+    expect(run(start(), 1, 300).at).toEqual([5, 15, 35, 75, 135, 195, 255])
+  })
+
+  it('start over from the step\'s own interval on news; a wait for the user ends only on the user\'s own', () => {
+    // News at minute 40 (a commit, a tell): the next recheck is 5 minutes after it.
+    expect(run(start(), 1, 60, m => (m >= 40 ? 40 : 0)).at).toEqual([5, 15, 35, 45, 55])
+    const waiting = waitStep(plan, run(start(), 1, 10).s, { untilUser: true }, 10 * MIN)
+    if (!('state' in waiting)) throw new Error(waiting.refused)
+    expect(nextRecheck(waiting.state)).toBe('user')
+    expect(run(waiting.state, 11, 200).at).toEqual([])
+    // The engine's news (a CI run that finished, its log) leaves it waiting.
+    expect(run(waiting.state, 11, 200, m => ({ at: (m >= 50 ? 50 : 0) * MIN, ci: m >= 50 ? 'abc:false:false' : 'abc:false:true' })).at).toEqual([])
+    expect(run(waiting.state, 11, 200, m => (m >= 100 ? { at: 100 * MIN, user: 100 * MIN } : { at: 0 })).at).toEqual([105, 115, 135, 175])
+  })
+
+  it('wait --for sets the next recheck; refused on a step without rechecks', () => {
+    const r = waitStep(plan, start(), { ms: 90 * MIN }, 5 * MIN)
+    if (!('state' in r)) throw new Error(r.refused)
+    expect(nextRecheck(r.state)).toBe(95 * MIN)
+    expect(run(r.state, 6, 100).at).toEqual([95])
+    const study = planSteps(common, { type: 'study' })
+    expect(waitStep(study, onEvent(study, initialState(), { kind: 'start' }, 0).state, { ms: MIN }, 0)).toEqual({ refused: 'Step "work" is not one you hold with a recheck' })
   })
 })

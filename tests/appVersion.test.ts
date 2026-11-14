@@ -1,11 +1,6 @@
-// New version after a deployment: detection and anti-loop guard.
+// New version after a deployment: detection.
 import { describe, expect, it } from 'vitest'
-import { CHUNK_RELOAD_GUARD_MS, installedSwAction, isChunkLoadError, isNewBuild, mayReloadForChunk } from '../app/utils/appVersion'
-
-function memStorage() {
-  const m = new Map<string, string>()
-  return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => { m.set(k, v) } }
-}
+import { installedSwAction, isChunkLoadError, isNewBuild } from '../app/utils/appVersion'
 
 describe('isNewBuild', () => {
   it('detects another build', () => {
@@ -29,24 +24,6 @@ describe('isChunkLoadError', () => {
   it('ignore les autres erreurs', () => {
     expect(isChunkLoadError(new Error('boom'))).toBe(false)
     expect(isChunkLoadError(undefined)).toBe(false)
-  })
-})
-
-describe('mayReloadForChunk', () => {
-  it('reloads once then stops (no loop)', () => {
-    const s = memStorage()
-    expect(mayReloadForChunk(s, 1000)).toBe(true)
-    expect(mayReloadForChunk(s, 2000)).toBe(false)
-    expect(mayReloadForChunk(s, 1000 + CHUNK_RELOAD_GUARD_MS - 1)).toBe(false)
-  })
-  it('allows it again after the delay', () => {
-    const s = memStorage()
-    expect(mayReloadForChunk(s, 1000)).toBe(true)
-    expect(mayReloadForChunk(s, 1000 + CHUNK_RELOAD_GUARD_MS)).toBe(true)
-  })
-  it('sans stockage : jamais de rechargement', () => {
-    expect(mayReloadForChunk(null, 1000)).toBe(false)
-    expect(mayReloadForChunk({ getItem: () => { throw new Error('x') }, setItem: () => {} }, 1000)).toBe(false)
   })
 })
 

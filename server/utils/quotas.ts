@@ -12,8 +12,9 @@
 // their own block (claudeAccounts), shown under their machine by the app.
 // Codex: same principle (codexAccounts), fingerprint taken from `creator_account_id`
 // in the header (session_meta) of its conversations, never from auth.json;
-// without one, only identical 5-hour and weekly windows join machines
-// (sameCodexAccount).
+// without one, only identical 5-hour and weekly windows join machines, or the
+// same week and the machine's last known fingerprint when a 5-hour window
+// ended (sameCodexAccount, CodexMemo).
 // Codex's week may be reset early: without a turn since, its conversations
 // still carry the old window; a `/status` read on one of the machine's Codex
 // screens then corrects the gauge, and stays known after that screen is gone
@@ -22,7 +23,7 @@ import { spawn } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { AccountQuota, ClaudeSetup, ClaudeSetupState, Quota, QuotaAccount, QuotaWindow, Quotas } from '../../shared/types'
+import type { AccountQuota, ClaudeSetup, ClaudeSetupState, Quota, QuotaAccount, QuotaCredits, QuotaWindow, Quotas } from '../../shared/types'
 import { type QuotaProgram, accountKey, uniqueKey } from '../../shared/quotaAccount'
 import { type PacingEntry, pacingEntry } from '../../shared/pacingLog'
 import { readAccountNames } from './accountNames'
@@ -111,14 +112,38 @@ export function codexLimitReset(message: string, at: number): number | null {
   return d.getTime()
 }
 
+// Credits of the account, from `rate_limits.credits` (recent Codex versions:
+// `has_credits`, `unlimited`, `balance` as a string): null without any.
+export function codexCredits(c: Json | null | undefined): QuotaCredits | null {
+  if (!c || !(c.has_credits || c.unlimited)) return null
+  const b = c.balance == null || c.balance === '' ? NaN : Number(c.balance)
+  return { unlimited: Boolean(c.unlimited), balance: Number.isFinite(b) ? b : null }
+}
+
 // Newest limit state of a Codex conversation (read from the end): the last
 // `rate_limits` with numbers, or "limit reached" (`limited`): Codex writes no
 // numbers then (primary/secondary null, no credits) and only reports the error
 // `usage_limit_exceeded` (or sets `rate_limit_reached_type`). Whichever comes
 // last wins, so a later reading with numbers brings the gauges back.
-export type CodexLimits = { rl: Json, at: number, limited?: undefined } | { limited: { resetsAt: number | null }, at: number, rl?: undefined }
+// `credits`: those of the newest `rate_limits` (the null one written just
+// before the error carries them too).
+export type CodexLimits = ({ rl: Json, at: number, limited?: undefined } | { limited: { resetsAt: number | null }, at: number, rl?: undefined }) & { credits?: QuotaCredits }
 export function lastCodexLimits(text: string): CodexLimits | null {
   const lines = text.split('\n')
+  const hit = lastLimits(lines)
+  if (!hit) return null
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i]!.includes('"credits"')) continue
+    try {
+      const rl = JSON.parse(lines[i]!).payload?.rate_limits
+      if (!rl || !('credits' in rl)) continue
+      const credits = codexCredits(rl.credits)
+      return credits ? { ...hit, credits } : hit
+    } catch { /* cut line */ }
+  }
+  return hit
+}
+function lastLimits(lines: string[]): CodexLimits | null {
   for (let i = lines.length - 1; i >= 0; i--) {
     const l = lines[i]!
     const reached = l.includes('usage_limit_exceeded')
@@ -150,7 +175,10 @@ async function ls(fs: MachineFs, d: string) {
 }
 
 // Claude reading of a machine, with its account fingerprint if known.
-export type ClaudeReading = Quota & { account: string | null }
+// `lastAccount` (Codex only): the machine's last fingerprint seen, kept across
+// refreshes (CodexMemo). It is only evidence for sameCodexAccount, never the
+// reading's identity, and never leaves the server.
+export type ClaudeReading = Quota & { account: string | null, lastAccount?: string | null }
 export interface ClaudeMachineReading { q: ClaudeReading | null, setup: ClaudeSetupState }
 
 // Snapshot of the current status line (identity and time bound to it) taken
@@ -240,18 +268,21 @@ export function sameAccount(a: ClaudeReading, b: ClaudeReading): boolean {
 // machines in the order received. The group is compared with its first reading that has
 // a fingerprint (failing that, its first reading). Each group gets its stable
 // key (shared/quotaAccount.ts); the fingerprint itself never leaves.
-export function groupAccounts(list: { key: string, label: string, q: ClaudeReading }[], same = sameAccount, program: QuotaProgram = 'claude'): AccountQuota[] {
-  const groups: { rep: ClaudeReading, best: ClaudeReading, machines: { key: string, label: string }[] }[] = []
+// The key takes a member's last known fingerprint when none has a current one,
+// so a fingerprint flickering on one machine does not flip it to `reset-…`.
+export function groupAccounts(list: { key: string, label: string, q: ClaudeReading }[], same: (a: ClaudeReading, b: ClaudeReading) => boolean = sameAccount, program: QuotaProgram = 'claude'): AccountQuota[] {
+  const groups: { rep: ClaudeReading, best: ClaudeReading, last: string | null, machines: { key: string, label: string }[] }[] = []
   for (const { key, label, q } of list) {
     const g = groups.find(g => same(g.rep, q))
-    if (!g) { groups.push({ rep: q, best: q, machines: [{ key, label }] }); continue }
+    if (!g) { groups.push({ rep: q, best: q, last: q.lastAccount ?? null, machines: [{ key, label }] }); continue }
     g.machines.push({ key, label })
     if (q.at > g.best.at) g.best = q
     if (!g.rep.account && q.account) g.rep = q
+    g.last ??= q.lastAccount ?? null
   }
   const taken = new Set<string>()
-  return groups.map(({ rep, best: { account: _, ...q }, machines }) => ({
-    ...q, machines, key: uniqueKey(accountKey(program, rep.account, rep.week ?? q.week, machines[0]!.key), taken),
+  return groups.map(({ rep, last, best: { account: _, lastAccount: _l, ...q }, machines }) => ({
+    ...q, machines, key: uniqueKey(accountKey(program, rep.account ?? last, rep.week ?? q.week, machines[0]!.key), taken),
   }))
 }
 
@@ -284,7 +315,9 @@ export function latestCodexQuota(readings: CodexReading[]): Quota | null {
     readings = readings.filter(r => !r.q.limited)
   }
   const pick = (k: 'five' | 'week') => latestWindow(readings.flatMap(r => (r.q[k] ? [{ w: r.q[k]!, stamp: r.stamp }] : [])))
-  return quota(pick('five'), pick('week'), Math.max(...readings.map(r => r.q.at)))
+  const q = quota(pick('five'), pick('week'), Math.max(...readings.map(r => r.q.at)))
+  const credits = readings.reduce((a, b) => (b.stamp > a.stamp ? b : a)).q.credits
+  return q && credits ? { ...q, credits } : q
 }
 
 // Codex account fingerprint of a conversation: `creator_account_id` of its
@@ -338,6 +371,20 @@ export function codexSessionStart(head: string): number {
   return m ? Date.parse(m[1]!) || 0 : 0
 }
 
+// What a machine's earlier reads established, kept between refreshes:
+// the fingerprint of each conversation file (its first line never changes, so
+// a failed or cut head read keeps it), and the machine's last fingerprint seen
+// (`last`, from the newest identified session, with or without limits: a
+// switch is remembered before its first limits; `lastStamp` keeps an older
+// session from undoing it).
+export interface CodexMemo { files: Map<string, string>, last: string | null, lastStamp: number }
+const codexMemos = new Map<string, CodexMemo>()
+export function codexMemo(machine: string): CodexMemo {
+  let m = codexMemos.get(machine)
+  if (!m) codexMemos.set(machine, m = { files: new Map(), last: null, lastStamp: 0 })
+  return m
+}
+
 export async function readCodex(fs: MachineFs, home: string): Promise<CodexAccountReading | null> {
   return (await readCodexMachine(fs, home)).q
 }
@@ -346,7 +393,7 @@ export async function readCodex(fs: MachineFs, home: string): Promise<CodexAccou
 // all (`seen`): a machine with conversations but no reading (a new account's
 // first conversation, before its first limits) must not show another
 // machine's account as its own.
-export async function readCodexMachine(fs: MachineFs, home: string): Promise<{ q: CodexAccountReading | null, seen: boolean }> {
+export async function readCodexMachine(fs: MachineFs, home: string, memo?: CodexMemo): Promise<{ q: CodexAccountReading | null, seen: boolean }> {
   const root = path.posix.join(home, '.codex/sessions')
   const files: string[] = []
   const now = new Date()
@@ -363,7 +410,8 @@ export async function readCodexMachine(fs: MachineFs, home: string): Promise<{ q
   // reply), 512 KiB at most if nothing is there.
   const readings = await Promise.all(recent.map(async ({ f, s }): Promise<CodexSessionReading> => {
     const head = await readHead(fs, f, s!.size).catch(() => '')
-    const account = codexAccount(head)
+    const account = codexAccount(head) ?? memo?.files.get(f) ?? null
+    if (account) memo?.files.set(f, account)
     const started = codexSessionStart(head)
     // Even without limits, a new session can identify an account switch.
     // File time is only a fallback when there is no timestamp in the session.
@@ -372,14 +420,23 @@ export async function readCodexMachine(fs: MachineFs, home: string): Promise<{ q
       const len = Math.min(s!.size, max)
       try {
         const hit = lastCodexLimits((await fs.read(f, s!.size - len, len)).toString('utf8'))
-        const q = hit && (hit.limited ? { five: null, week: null, at: hit.at || s!.mtimeMs, limited: hit.limited } : codexQuota(hit.rl, hit.at || s!.mtimeMs))
+        const read = hit && (hit.limited ? { five: null, week: null, at: hit.at || s!.mtimeMs, limited: hit.limited } : codexQuota(hit.rl, hit.at || s!.mtimeMs))
+        const q = read && hit!.credits ? { ...read, credits: hit!.credits } : read
         if (q) return { q, stamp: Math.max(started, hit!.at || s!.mtimeMs), account }
       } catch { return empty /* unreadable file: never reuse an older identity */ }
       if (len === s!.size) break
     }
     return empty
   }))
-  return { q: machineCodexQuota(readings), seen: true }
+  const q = machineCodexQuota(readings)
+  if (!memo) return { q, seen: true }
+  for (const f of memo.files.keys()) if (!recent.some(r => r.f === f)) memo.files.delete(f)
+  const identified = readings.reduce<CodexSessionReading | null>((a, b) => (b.account && (!a || b.stamp > a.stamp) ? b : a), null)
+  if (identified && identified.stamp >= memo.lastStamp) {
+    memo.last = identified.account!
+    memo.lastStamp = identified.stamp
+  }
+  return { q: q && memo.last ? { ...q, lastAccount: memo.last } : q, seen: true }
 }
 
 // Codex gauge of a machine checked against the latest weekly window known
@@ -415,27 +472,37 @@ const fresher = (a: Quota | null, b: Quota | null) => (!a ? b : !b ? a : b.at > 
 // not evidence. Anything less (one window missing, different resets, a reading
 // left over from before an account switch) keeps each machine on its own row:
 // another account's numbers are never shown (WHR-221).
+// A machine idle for hours keeps a 5-hour window that ended (past its reset,
+// or read longer ago than its length): it no longer tells anything. Then the
+// same started week plus the same last known fingerprint (lastAccount) on
+// both sides is enough.
 const SAME_RESET = 60000
 const sameReset = (x: QuotaWindow | null, y: QuotaWindow | null) =>
   Boolean(x?.resetsAt && y?.resetsAt && Math.abs(x.resetsAt - y.resetsAt) <= SAME_RESET)
-export function sameCodexAccount(a: ClaudeReading, b: ClaudeReading): boolean {
+const stale = (w: QuotaWindow | null, at: number, now: number) =>
+  !w?.resetsAt || w.resetsAt <= now || now - at > w.minutes * 60000
+export function sameCodexAccount(a: ClaudeReading, b: ClaudeReading, now = Date.now()): boolean {
   if (a.account && b.account) return a.account === b.account
-  return sameReset(a.five, b.five) && sameReset(a.week, b.week) && a.week!.used > 0 && b.week!.used > 0
+  if (!(sameReset(a.week, b.week) && a.week!.used > 0 && b.week!.used > 0)) return false
+  if (sameReset(a.five, b.five)) return true
+  if (!stale(a.five, a.at, now) && !stale(b.five, b.at, now)) return false
+  const x = a.account ?? a.lastAccount
+  return Boolean(x && x === (b.account ?? b.lastAccount))
 }
 
 // Assembles the readings of the online machines (in machine order).
 // `codexSeen: false`: the machine has no recent Codex conversation (missing:
 // unknown, as after a failed read).
 // `names`: the user's account names, by key (accountNames.ts).
-export function mergeQuotas(readings: { key: string, label: string, claude: ClaudeReading | null, codex: (Quota & { account?: string | null }) | null, codexSeen?: boolean, setup?: ClaudeSetup | null }[], names: Record<string, string> = {}): Quotas {
+export function mergeQuotas(readings: { key: string, label: string, claude: ClaudeReading | null, codex: (Quota & { account?: string | null, lastAccount?: string | null }) | null, codexSeen?: boolean, setup?: ClaudeSetup | null }[], names: Record<string, string> = {}): Quotas {
   let codex: Quota | null = null
   for (const r of readings) {
     if (!r.codex) continue
-    const { account: _, ...q } = r.codex
+    const { account: _, lastAccount: _l, ...q } = r.codex
     codex = fresher(codex, q)
   }
   const named = (a: AccountQuota): AccountQuota => (names[a.key] ? { ...a, name: names[a.key] } : a)
-  const codexAccounts = groupAccounts(readings.flatMap(r => (r.codex ? [{ key: r.key, label: r.label, q: { ...r.codex, account: r.codex.account ?? null } }] : [])), sameCodexAccount, 'codex').map(named)
+  const codexAccounts = groupAccounts(readings.flatMap(r => (r.codex ? [{ key: r.key, label: r.label, q: { ...r.codex, account: r.codex.account ?? null } }] : [])), (a, b) => sameCodexAccount(a, b), 'codex').map(named)
   const accounts = groupAccounts(readings.flatMap(r => (r.claude ? [{ key: r.key, label: r.label, q: r.claude }] : []))).map(named)
   let claude: Quota | null = null
   for (const { machines: _, key: _k, name: _n, ...a } of accounts) claude = fresher(claude, a)
@@ -515,7 +582,7 @@ export async function readQuotas(force = false): Promise<Quotas> {
   const readings = await Promise.all(online.map(async (m) => {
     const [claude, { q: rolled, seen: codexSeen }] = await Promise.all([
       readMachineClaude(m),
-      readCodexMachine(m.fs, m.home).catch(() => ({ q: null, seen: true })),
+      readCodexMachine(m.fs, m.home, codexMemo(m.key)).catch(() => ({ q: null, seen: true })),
     ])
     const week = rolled?.week ? { used: rolled.week.used, resetsAt: rolled.week.resetsAt, at: rolled.at, account: rolled.account } : null
     const known = knownWeek ? await knownWeek(m.key, week).catch(() => null) : null

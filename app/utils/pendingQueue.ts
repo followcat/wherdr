@@ -10,7 +10,7 @@
 import type { ChatItem, ClaudeQueueEntry, ClaudeScreen } from '../../shared/types'
 import type { OutboxItem } from './outbox'
 import { type QueuedPhase, queuedPhases } from '../../shared/queuedPhase'
-import { photosLanded, photosOnly, uploadNames, withoutUploads } from '../../shared/queuedMatch'
+import { fieldHolds, photosLanded, photosOnly, uploadNames, withoutUploads } from '../../shared/queuedMatch'
 import { sameSent } from '../../shared/reference'
 
 export interface PendingMessage {
@@ -33,6 +33,9 @@ export interface PendingMessage {
   // Delivered, but held in the agent's own queue (Claude's transcript lists it as
   // enqueued and not yet taken): it reads it at its next step or when the turn ends.
   inAgentQueue?: boolean
+  // Typed into Claude's input field and still there, not submitted: never
+  // "sent" nor "read" (see `input` of pendingQueue).
+  inInput?: boolean
 }
 
 const normText = (s: string) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase()
@@ -59,6 +62,8 @@ export function pendingQueue(o: {
   memory?: OutboxItem[]
   // Agent idle with nothing holding it back: Claude has emptied its queue.
   idle?: boolean
+  // Text left in Claude's own input field (Pane.draft).
+  input?: string | null
 }): PendingMessage[] {
   // Already in the conversation (the server has not noticed yet): we do not
   // show two copies. "! cmd" appears there as a command without "!" (omp:
@@ -115,6 +120,9 @@ export function pendingQueue(o: {
   }
   return list.map((q, i) => {
     const inAgentQueue = held(q)
+    // Sent from here and still in Claude's field: the send left it there (a
+    // paste Claude did not submit). Waiting there, whatever the agent's state.
+    const inInput = !q.id.startsWith('cc-') && (!q.state || q.state === 'held') && fieldHolds(o.input, q.text)
     return {
       id: q.id,
       raw: q.text,
@@ -122,34 +130,47 @@ export function pendingQueue(o: {
       // Held or failed on the server: never typed yet, so never "sent". Answered
       // with no record (herdr-core types it at once, see outbox.ts settle) while
       // the agent is idle: the agent has it, it is just not in the transcript yet.
-      phase: q.state || inAgentQueue ? 'queued' : q.settledAt && o.idle && !o.screen && !q.id.startsWith('cc-') ? 'sent' : phases[i]!,
+      phase: q.state || inAgentQueue || inInput ? 'queued' : q.settledAt && o.idle && !o.screen && !q.id.startsWith('cc-') ? 'sent' : phases[i]!,
       state: q.state || null,
       ...(q.local ? { local: true } : {}),
       photos: uploadNames(q.text),
       missing: q.missing || 0,
       ...(q.pasted ? { pasted: q.pasted } : {}),
       ...(inAgentQueue ? { inAgentQueue } : {}),
+      ...(inInput ? { inInput } : {}),
     }
   })
 }
 
+// Claude's field holds exactly messages already shown as waiting there: its
+// own "Not sent" bubble would show the same message twice (Send now / Clear stay).
+// A message still being sent counts too: the server waits for Claude to show
+// its photos, then submits it (once more if it stays), so it is "sending",
+// not "Not sent", until the server answers.
+export const inputShown = (list: Pick<PendingMessage, 'raw' | 'inInput' | 'state'>[], input: string | null | undefined) =>
+  Boolean(input) && list.some(q => (q.inInput || q.state === 'sending') && fieldHolds(input, q.raw, true))
+
 // What a waiting message is waiting on (see waitingOn in ChatView.vue).
-export type WaitingOn = 'stopped' | 'question' | 'working' | 'sending'
+export type WaitingOn = 'stopped' | 'question' | 'working' | 'sending' | 'installing'
 export type PendingLabel =
   | { kind: 'read' }
   | { kind: 'sending' }
   | { kind: 'stopped' }
+  | { kind: 'installing' }
   | { kind: 'question' }
   | { kind: 'agent-queue', agent: string }
   | { kind: 'queued' }
+  | { kind: 'input' }
 
 // The tag under a waiting message. "Read" only once the agent took it: a
 // message the agent holds in its own queue says so (it is sent when the turn
 // ends, or at its next step).
-export function pendingLabel(q: Pick<PendingMessage, 'phase' | 'state' | 'inAgentQueue'>, waitFor: WaitingOn, agent: string | null | undefined): PendingLabel {
+export function pendingLabel(q: Pick<PendingMessage, 'phase' | 'state' | 'inAgentQueue' | 'inInput'>, waitFor: WaitingOn, agent: string | null | undefined): PendingLabel {
   if (q.state === 'sending') return { kind: 'sending' }
+  if (q.inInput) return { kind: 'input' }
   if (q.phase === 'sent' && !q.inAgentQueue) return { kind: 'read' }
   if (waitFor === 'stopped') return { kind: 'stopped' }
+  if (waitFor === 'installing') return { kind: 'installing' }
   if (waitFor === 'question') return { kind: 'question' }
   if (q.inAgentQueue) return { kind: 'agent-queue', agent: agent || '' }
   return waitFor === 'working' ? { kind: 'queued' } : { kind: 'sending' }

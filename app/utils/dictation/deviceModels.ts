@@ -24,11 +24,13 @@ export interface DeviceModel {
   dir: string // under /models/
   files: { path: string, bytes: number }[]
   source: { url: string, sha256: string } // the fetch script's pinned archive
-  languages: string[] // ISO 639-1
+  languages: string[] // ISO 639-1 (639-3 when there is none: yue)
+  ranked: string[] // the same languages, best first (see RANKING SOURCES)
   autoDetect?: false // the language is not detected: the device's is used (deviceLanguage)
   punctuation: boolean
   textCase?: 'upper' // writes in capitals: put in sentence case (sentenceCase)
-  quality: { lang: string, dataset: string, wer: number, source: string }[] // published WER, %
+  // Published error rate, %: word errors, or character errors (metric 'CER').
+  quality: { lang: string, dataset: string, wer: number, metric?: 'CER', source: string }[]
   speed?: { estimate: number, basis: string, source: string } // 1-5, until measured here
   license?: { id: string, url: string }
   // Measured: WASM heap after load (what the budget checks) and the page's peak.
@@ -157,6 +159,43 @@ export function qualityRating(m: DeviceModel, lang: string) {
   if (!figure) return null
   const step = WER_STEPS.findIndex(s => figure.wer <= s)
   return { dots: step < 0 ? 1 : 5 - step, ...figure }
+}
+
+// RANKING SOURCES: each model's `ranked` languages, best first, from its
+// own published figures (fetched 2026-11-09):
+// - Parakeet v3: FLEURS WER of each of its 25 languages, model card
+//   https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3 (Italian 3.00 %,
+//   Spanish 3.45 % … Slovenian 24.03 %).
+// - Canary 180M: Common Voice 16.1 WER, the one dataset given for all four
+//   languages, model card https://huggingface.co/nvidia/canary-180m-flash
+//   (es 4.90, de 5.94, fr 8.19, en 9.53).
+// - SenseVoice: the paper's Table 6, https://arxiv.org/html/2407.04051v3, and
+//   the model card's language order (https://huggingface.co/FunAudioLLM/SenseVoiceSmall):
+//   trained mostly on Chinese, with Chinese and Cantonese its best results
+//   (AISHELL-1 2.96 % CER); Common Voice CER (zh, yue, ja, ko) and WER (en)
+//   are not directly comparable, so English comes before Japanese and Korean
+//   as on the card.
+// A model with at least MULTI languages is shown as broadly multilingual.
+export const MULTI = 10
+
+// The languages a model card shows, best first: at most three (two and
+// 'Multi' for a broadly multilingual model), then how many more.
+export function languageLine(m: DeviceModel): string {
+  const multi = m.languages.length >= MULTI
+  const shown = m.ranked.slice(0, multi ? 2 : 3)
+  const more = m.languages.length - shown.length
+  const tail = multi ? [`Multi (${m.languages.length})`] : more ? [`+${more}`] : []
+  return [...shown.map(l => l.toUpperCase()), ...tail].join(' · ')
+}
+
+// The languages the quality bars show: the model's two best, then the
+// device's own language when the model speaks it and it is not one of them.
+// mine: the device's language, when the model speaks it.
+export function ratedLanguages(m: DeviceModel, langs: readonly string[] = globalThis.navigator?.languages ?? []) {
+  const own = langs[0]?.split('-')[0]?.toLowerCase()
+  const mine = own && m.languages.includes(own) ? own : null
+  const top = m.ranked.slice(0, 2)
+  return { langs: mine && !top.includes(mine) ? [...top, mine] : top, mine }
 }
 
 // What this browser offers to models that need the GPU.

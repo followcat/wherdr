@@ -7,13 +7,35 @@ import { hasCommands } from './helpers/commands'
 import type { Quotas } from '../shared/types'
 import { readClaude, mergeQuotas } from '../server/utils/quotas'
 import { localFs } from '../server/utils/fsx'
-import { claudeInstallCommand, claudeSetupOf, claudeSetupRows, claudeSuggestion, machineQuotaRows, quotaLeft, quotaRows, resetText, tabQuotaRows } from '../app/utils/quotas'
+import { claudeInstallCommand, claudeSetupOf, claudeSetupRows, claudeSuggestion, machineQuotaRows, quotaBlocks, quotaLeft, quotaRows, resetText, tabQuotaRows } from '../app/utils/quotas'
 
 // The install command passes settings.json to python3 (missing from node:22-alpine).
 const hasPython = hasCommands('python3')
 const five = (used: number) => ({ used, resetsAt: 2000, minutes: 300 })
 
 describe('quota split (top / machines)', () => {
+  it('machine quotas: one block per account listing its machines, unknown accounts in their own block, Claude first', () => {
+    const q: Quotas = {
+      claude: null, codex: null,
+      claudeAccounts: [
+        { five: five(10), week: null, at: 1, key: 'claude:aaaa1111', machines: [{ key: '', label: 'Local' }, { key: 'b', label: 'machine-b' }] },
+        { five: five(20), week: null, at: 1, key: 'claude:bbbb2222', name: 'Work', machines: [{ key: 'c', label: 'machine-c' }] },
+      ],
+      codexAccounts: [{ five: five(30), week: null, at: 1, key: 'codex:cccc3333', machines: [{ key: '', label: 'Local' }, { key: 'b', label: 'machine-b' }] }],
+    }
+    const m = (key: string, name: string, api = false) => ({ key, name, quotas: machineQuotaRows(q, key), api })
+    // An offline-cached row without an account key: its machine's own block.
+    const legacy = { key: 'd', name: 'machine-d', quotas: [{ key: 'claude:d', agent: 'claude' as const, q: { five: five(5), week: null, at: 1 } }], api: false }
+    const blocks = quotaBlocks([m('', 'Local'), m('b', 'machine-b'), m('c', 'machine-c'), m('e', 'machine-e', true), legacy])
+    expect(blocks.map(b => [b.key, b.title, b.machines, b.rows.map(r => r.q.five!.used), b.api])).toEqual([
+      ['claude:aaaa1111', 'Claude aaaa', ['Local', 'machine-b'], [10], false],
+      ['claude:bbbb2222', 'Work', ['machine-c'], [20], false],
+      ['machine:e', 'machine-e', [], [], true],
+      ['machine:d', 'machine-d', [], [5], false],
+      ['codex:cccc3333', 'Codex cccc', ['Local', 'machine-b'], [30], false],
+    ])
+    expect(quotaBlocks([m('x', 'machine-x')])).toEqual([])
+  })
   it('a tab showing one machine: shared and own rows together, Claude then Codex', () => {
     const q: Quotas = {
       claude: null, codex: { five: five(40), week: null, at: 2 },

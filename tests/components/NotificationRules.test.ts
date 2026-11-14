@@ -92,6 +92,15 @@ describe('notification settings: a default and exceptions', () => {
     w.unmount()
   })
 
+  it('shows an older main coordinator exception as Alfred’s, and a removed machine as Unknown machine', async () => {
+    const w = await mount(policy([], exception(MAIN, { machine: '0a1b2c3d', label: 'Main coordinator' }), agent('0a1b2c3d/w3:p9', 'Gone agent', { machine: '0a1b2c3d' })))
+    const heads = w.findAll('[data-testid="notification-exception"] .notification-rule-head').map(h => h.text())
+    expect(heads[0]).toMatch(/^Coordinator\s*Alfred/)
+    expect(heads[1]).toMatch(/^Unknown machine · Conversation\s*Gone agent/)
+    expect(notificationRules.value.exceptions).toContainEqual(expect.objectContaining({ kind: 'coordinator', machine: '', id: '/top/', label: 'Alfred' }))
+    w.unmount()
+  })
+
   it('an exception has its own level and Customize', async () => {
     const w = await mount(policy([], exception(MAIN)))
     const card = w.find('[data-testid="notification-exception"]')

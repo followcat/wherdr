@@ -279,7 +279,8 @@ export function realIo(plan, now = Date.now) {
       for (const pid of new Set(pids.filter(p => p && p !== process.pid && alive(p)))) {
         log(`stopping pid ${pid}`)
         try { process.kill(pid, 'SIGTERM') } catch {}
-        for (let i = 0; i < 40 && alive(pid); i++) await sleep(250)
+        // 25 s: the server first waits for a merge that runs (server/plugins/pm.ts).
+        for (let i = 0; i < 100 && alive(pid); i++) await sleep(250)
         if (alive(pid)) try { process.kill(pid, 'SIGKILL') } catch {}
       }
       rmSync(path.join(plan.dir, 'wherdr.pid'), { force: true })

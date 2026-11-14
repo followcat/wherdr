@@ -98,6 +98,24 @@ describe('the agent PATH on a machine', () => {
     expect(found(h, sysPath(h), 'opencode')).toBe(path.join(h, '.opencode/bin/opencode'))
   })
 
+  it('prefers a user folder over nvm, and nvm over the machine PATH', () => {
+    const h = home('v24.19.0')
+    alias(h, 'v24.19.0')
+    const outside = bin(h, 'elsewhere', 'marker')
+    bin(h, '.nvm/versions/node/v24.19.0/bin', 'claude', 'marker')
+    bin(h, '.local/bin', 'claude')
+    const envPath = sysPath(h, outside)
+    // A native install in ~/.local/bin wins over an older npm copy under nvm,
+    // for the probe's PATH and the launch line alike.
+    expect(found(h, envPath, 'claude')).toBe(path.join(h, '.local/bin/claude'))
+    expect(execFileSync('sh', ['-c', `${PATH_SETUP}; command -v claude`], { env: { HOME: h, PATH: envPath }, encoding: 'utf8' }).trim())
+      .toBe(path.join(h, '.local/bin/claude'))
+    expect(probe(h, envPath, {}, 'claude')).toEqual(['claude'])
+    // nvm only fills in, but still ahead of what the machine PATH has.
+    expect(found(h, envPath, 'marker')).toBe(path.join(h, '.nvm/versions/node/v24.19.0/bin/marker'))
+  })
+
+
   it('still sees what the machine PATH has, and the launch line finds the same program', () => {
     const h = home('v24.19.0')
     const outside = bin(h, 'elsewhere', 'devin')

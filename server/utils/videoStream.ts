@@ -14,6 +14,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { HerdrError } from './herdr'
 import type { Machine } from './machines'
+import type { ChatFilesPolicy } from '../../shared/chatFiles'
 import { OPEN_FILE, VIDEO_HEAD, cleanRelative, isVideo, rootOf, shellError, writtenTarget } from './files'
 
 // dd's block: the range is read from the block holding its first byte.
@@ -141,9 +142,10 @@ function kill(child: ChildProcess, local: boolean) {
 
 const closedError = () => new HerdrError('closed', 'Request closed')
 
-async function openAt(m: Machine, root: string, rel: string, signal?: AbortSignal): Promise<OpenedVideo> {
+// `show`: '1' opens a protected file too (OPEN_FILE's $5).
+async function openAt(m: Machine, root: string, rel: string, signal?: AbortSignal, show = ''): Promise<OpenedVideo> {
   if (signal?.aborted) throw closedError()
-  const child = spawnScript(m, [root, rel])
+  const child = spawnScript(m, show ? [root, rel, '', '', show] : [root, rel])
   const done = new Promise<void>((resolve) => { child.on('close', () => resolve()); child.on('error', () => resolve()) })
   const local = !m.exec
   const close = () => kill(child, local)
@@ -259,7 +261,7 @@ export async function openVideo(m: Machine, cwd: string, rel: unknown, signal?: 
   return openAt(m, root, p, signal)
 }
 
-export async function openWrittenVideo(m: Machine, cwd: string | null | undefined, written: unknown, signal?: AbortSignal) {
-  const t = writtenTarget(m, cwd, written)
-  return openAt(m, t.root, t.rel, signal)
+export async function openWrittenVideo(m: Machine, cwd: string | null | undefined, written: unknown, signal?: AbortSignal, policy?: ChatFilesPolicy) {
+  const t = writtenTarget(m, cwd, written, policy)
+  return openAt(m, t.root, t.rel, signal, t.show)
 }

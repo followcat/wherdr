@@ -34,6 +34,8 @@ export default defineConfig({
           environmentOptions: { nuxt: { domEnvironment: 'happy-dom' } },
           // The first mount builds the Nuxt app: slow on small machines.
           testTimeout: 20000,
+          // Scoped CSS of the components whose test checks their look.
+          css: { include: [/AlfredRow/] },
         },
       }),
     ],

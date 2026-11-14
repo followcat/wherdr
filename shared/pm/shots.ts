@@ -5,7 +5,8 @@ import type { ShotMode, Step } from './workflow'
 import type { PlannedStep, StepState } from './steps'
 
 export type ShotPhase = 'before' | 'after'
-export interface Shot { file: string, phase: ShotPhase, at: number }
+// rework: the commit the review passed, for a shot taken after new commits since.
+export interface Shot { file: string, phase: ShotPhase, at: number, rework?: string }
 
 export const SHOT_TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }
 export const SHOT_FILE_RE = /^[a-f0-9]{12}\.(png|jpg|webp)$/
@@ -49,13 +50,27 @@ export function shotRows(shots: Shot[], mode: ShotMode): { before?: Shot, after?
 }
 
 // A new screenshot for the task's current step: refused unless that step,
-// open and held by an agent, asks for one of this phase.
-export function addShot(plan: PlannedStep[], state: StepState | undefined, shot: Shot): { state: StepState } | { refused: string } {
-  const step = state?.started && !state.done ? plan[state.at] : undefined
-  if (!state || !step) return { refused: 'The task has no open step' }
+// open and held by an agent, asks for one of this phase. since: the commit the
+// review passed, when the task's head moved after it (reworkSince): a step that
+// takes no screenshots (the merge, the re-review) lets the worker's screenshot
+// step before it take the new set, which replaces the shown one. It drops the
+// user's approval of the merge: they approved the screens they saw, not this one.
+export function addShot(plan: PlannedStep[], state: StepState | undefined, shot: Shot, since?: string): { state: StepState } | { refused: string } {
+  const open = state?.started && !state.done ? plan[state.at] : undefined
+  if (!state || !open) return { refused: 'The task has no open step' }
+  const rework = since && !needsShots(open) ? plan.slice(0, state.at).findLast(s => s.holder === 'worker' && needsShots(s)) : undefined
+  const step = rework ?? open
   if (!needsShots(step)) return { refused: `Step "${step.id}" asks for no screenshots` }
   if (shot.phase === 'before' && shotMode(step) === 'after') return { refused: `Step "${step.id}" asks for screenshots of the result only` }
-  const list = state.shots?.[step.id] ?? []
+  let list = state.shots?.[step.id] ?? [], earlier = state.earlierShots
+  if (rework) {
+    shot = { ...shot, rework: since }
+    // The first shot of this rework: the shown set goes to the earlier ones.
+    if (list.some(s => s.rework !== since)) {
+      earlier = { ...earlier, [step.id]: [...(earlier?.[step.id] ?? []), ...list].slice(-MAX_SHOTS * 2) }
+      list = []
+    }
+  }
   if (list.length >= MAX_SHOTS) return { refused: `Step "${step.id}" has ${MAX_SHOTS} screenshots already` }
-  return { state: { ...state, shots: { ...state.shots, [step.id]: [...list, shot] } } }
+  return { state: { ...state, shots: { ...state.shots, [step.id]: [...list, shot] }, ...(earlier ? { earlierShots: earlier } : {}), approved: undefined } }
 }

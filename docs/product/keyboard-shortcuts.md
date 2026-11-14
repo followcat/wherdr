@@ -8,6 +8,9 @@ Status: **implemented** (2026-10-01). Code: `app/utils/shortcuts.ts` (table and 
 > v3 (herdr-core): pane swaps (`Alt+Shift+arrows`) and side-by-side focus moves are v2 only;
 > Mod+Alt+O (reveal) needs `/api/reveal`, which herdr-core mode does not serve.
 
+> 2026-11-13: Mod+Alt+P toggles the Notes panel (P for pad: N is the new space). No
+> browser binding known for ⌘⌥P or Ctrl+Alt+P `[INFERENCE]`.
+
 > 2026-10-02: Mod+Alt+O (current agent folder in the default editor, via the existing
 > /api/reveal "Open" action on the folder path) added since; action in
 > `app/composables/useHerdr.ts` (`openFolderOnMachine`). First bound to E, moved to O the
@@ -40,6 +43,7 @@ promise that wherdr "can replace the Herdr terminal client day to day".
 | Switch between conversation and terminal | Ctrl+`` ` `` on every platform, by position (`Backquote`; on macOS also `IntlBackslash`, the key left of 1 on ISO keyboards) | Agent with a conversation, or the active cell | Yes (xterm sends nothing for it) |
 | Stop the working agent, same as the Stop button | Esc | Conversation mode, Stop shown, empty field, no conversation search open | No (Esc goes to the program) |
 | Settings | Mod+, | Computer | Yes |
+| Notes panel, open or closed | Mod+Alt+P | Computer | Yes (caught before the terminal) |
 | Shortcut list | Mod+/, or `?` outside a field | Computer; also Settings › Shortcuts | Mod+/ only |
 
 These existing shortcuts are unchanged and listed in the help sheet:

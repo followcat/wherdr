@@ -18,15 +18,26 @@ npm run build
 HC_SOCKET=/path/to/hc.sock npm start   # listens on 127.0.0.1:7683
 ```
 
-- `HC_SOCKET` is the socket of the hc session to drive, from your hc configuration. wherdr never
-  starts or installs hc, and never guesses the socket. If the home screen says
-  **herdr-core is not responding**, start that session (`hc server start`).
+- `HC_SOCKET` is the socket of the hc session to drive. wherdr never starts or installs hc, and
+  never guesses the socket. By default it is `$XDG_RUNTIME_DIR/herdr-core/<session>.sock` on
+  Linux and `~/.local/state/herdr-core/<session>/<session>.sock` on macOS; the session is named
+  `default` unless you chose another ([The hc socket](installation.md#the-hc-socket)). If the
+  home screen says **herdr-core is not responding**, start that session (`hc server start`).
+- wherdr v2 also listens on port 7683: with v2 running on the same computer, start v3 with
+  another port (`PORT=7684 npm start`) and open that one instead
+  ([v2 and v3 on one computer](installation.md#v2-and-v3-on-one-computer)).
 - Start hc from a plain shell, not from inside a Claude Code session: Claude Code started by
   such a core does not save its transcripts, and its agents then show only their terminal
   ([Conversations](core.md#conversations)).
 
-Open **http://localhost:7683** on that computer. Settings › About shows `wherdr · v3 ·
-herdr-core`. The setup guide of v2 is not shown in v3: set up the rest from Settings.
+Open **http://localhost:7683** on that computer. Settings › About shows the version and the
+commit it was built from (`wherdr 3.0.0+1a2b3c4 · herdr-core`).
+
+**Alfred**, wherdr's assistant, is the first row of the home screen: start it and it offers to
+set up your first project with you, one question at a time, or in the **setup window**
+(Settings › Projects › *Set up a project*), three steps: turn projects on, pick a project and its coordinator's agent, then meet the coordinator, whose first message proposes how you work
+([Alfred](home.md#alfred), [Getting started](project-management.md#getting-started)). The rest is in
+Settings:
 
 1. **Phone**: publish wherdr on your tailnet from Settings › Phone, then
    [install it as an app](phone.md#install-it-as-an-app). See
@@ -34,7 +45,7 @@ herdr-core`. The setup guide of v2 is not shown in v3: set up the rest from Sett
 2. **Passkey lock** (optional): Settings › Security, once wherdr is reached over HTTPS.
 3. **Notifications**: Settings › Notifications on each device ([Notifications](notifications.md)).
 4. **Claude quotas**: Settings › Agents › Claude quotas ([quotas](quotas.md#claude-and-codex-quotas)).
-5. **Other machines**: Settings › Agents › Machines ([Machines](machines.md)).
+5. **Other machines**: Settings › Machines ([Machines](machines.md)).
 
 To keep wherdr running, see [Installation and updates](installation.md).
 
@@ -48,6 +59,8 @@ To keep wherdr running, see [Installation and updates](installation.md).
 **On a computer**, wherdr shows your hc spaces and tabs, live conversations and real terminals,
 with keyboard shortcuts. **On a phone**, installed as a PWA, it follows your agents when you are
 away: push notifications when an agent finishes or needs you, one-tap answers and quick replies.
+
+Now open the [Board](project-management.md#board), or talk to Alfred.
 
 *Unofficial project. Not affiliated with or endorsed by Herdr, Anthropic or OpenAI. Claude,
 Claude Code, Codex and other product names are trademarks of their respective owners.*

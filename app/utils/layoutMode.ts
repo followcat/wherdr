@@ -69,3 +69,7 @@ export function enterSends(o: { desk: boolean, touch: boolean, tablet: boolean, 
   if (!o.touch) return true
   return o.desk && o.tablet && o.hardwareKeyboard && !o.softKeyboard
 }
+
+// Settings as a side panel next to the conversation (computer, wide window).
+// The CSS uses the same width (app/assets/css/main.css, .settings-panel).
+export const SIDE_PANEL_QUERY = '(min-width: 1280px)'

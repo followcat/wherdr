@@ -2,6 +2,7 @@
 // projects, four agents and a dev server. Everything here is fiction, in
 // English, with no real path, machine, person or conversation.
 import type { ChatItem, ModelInfo, OmpToolView, Pane, Quotas, Tab, Workspace } from '#shared/types'
+import type { TaskAgent } from '#shared/pm/taskAgents'
 
 export const HOME = '/Users/demo'
 const REPO = `${HOME}/code/acme-api`
@@ -55,11 +56,51 @@ const pane = (p: Partial<Pane> & Pick<Pane, 'id' | 'workspace' | 'agent' | 'cwd'
 export function panes(now: number): Pane[] {
   return [
     pane({ id: COORD, workspace: 'w1', agent: 'claude', cwd: `${HOME}/.herdr-projects/data/coordinator/default/chat`, status: 'idle', model: MODELS.claude, stateSeq: 4, bornAt: now - 3600_000, preview: 'ACME-API-12 and ACME-API-13 are under way. I will tell you when one is ready to review.' }),
-    pane({ id: CODEX, workspace: 'w2', agent: 'codex', cwd: `${WT}/acme-api-12-rate-limits`, status: 'working', model: MODELS.codex, stateSeq: 7, bornAt: now - 1800_000 }),
-    pane({ id: OMP, workspace: 'w3', agent: 'omp', cwd: `${WT}/acme-api-13-flaky-export`, status: 'blocked', model: MODELS.omp, stateSeq: 9, bornAt: now - 1500_000, prompt: approval('npm test -- export.spec.ts --repeat 20') }),
+    pane({ id: CODEX, workspace: 'w2', agent: 'codex', cwd: `${WT}/acme-api-12-rate-limits`, status: 'working', model: MODELS.codex, stateSeq: 7, bornAt: now - 1800_000, coreAddress: 'demo/codex', since: now - 8 * 60_000 }),
+    pane({ id: OMP, workspace: 'w3', agent: 'omp', cwd: `${WT}/acme-api-13-flaky-export`, status: 'blocked', model: MODELS.omp, stateSeq: 9, bornAt: now - 1500_000, coreAddress: 'demo/omp', task: 'ACME-API-13', role: 'worker', since: now - 2 * 60_000, prompt: approval('npm test -- export.spec.ts --repeat 20') }),
     pane({ id: CLAUDE_WEB, workspace: 'w4', agent: 'claude', cwd: WEB, status: 'done', model: MODELS.claude, stateSeq: 8, bornAt: now - 2400_000 }),
     pane({ id: DEV_SERVER, workspace: 'w4', agent: null, cwd: WEB, command: 'npm run dev', status: null, agentSession: null }),
   ]
+}
+
+// The task agents' rows (GET /api/pm/agents): Codex on its task (by address),
+// omp fixing red CI (by its task and role labels, as after a restart).
+export const taskAgents = (): Record<string, TaskAgent> => ({
+  'demo/codex': { task: 'ACME-API-12', shown: 'ACME-API-12', title: 'Per-key rate limits on the public API', role: 'dev' },
+  'ACME-API-13#worker': { task: 'ACME-API-13', shown: 'ACME-API-13', title: 'Fix the flaky CSV export test', role: 'fix' },
+})
+
+// The notes the agents wrote (GET /api/notes, NotesPanel.vue).
+export const notes = (now: number) => [
+  { id: 'this-week', title: 'This week', scope: 'all', body: '- [x] Rate limits merged [[API-12]]\n- [ ] Look at the flaky export fix [[API-13]]\n- [ ] Release notes for 1.4', created: '', updated: new Date(now - 600_000).toISOString() },
+  { id: 'billing-page', title: 'Billing page redesign', scope: 'all', body: '[[Waiting|clock|amber]] on the new prices from sales.\nThe [plan](plans/billing.md) has the open questions.', created: '', updated: new Date(now - 3600_000).toISOString() },
+  { id: 'reminders', title: 'Reminders', scope: 'all', body: '[[Friday|calendar|blue]] demo to the team, see [this week](this-week.md)\n[[Idea|lightbulb|violet]] cache the CSV export, [sketch](plans/csv-cache.md)', created: '', updated: new Date(now - 7200_000).toISOString() },
+]
+
+// The files the notes link to (GET /api/notes/file).
+export const noteFiles: Record<string, string> = {
+  'plans/billing.md': `# Billing page redesign
+
+The pricing page moves to three plans and yearly billing. Sales confirms the prices by Friday.
+
+## Open questions
+
+- [x] Keep the free plan? Yes, with one project.
+- [ ] Show prices with or without tax by default?
+- [ ] Discount for yearly billing: 15 % or two months free?
+- [ ] Where does the plan comparison table go on a phone?
+
+## Steps
+
+1. Price table component, with the plans from the API.
+2. Checkout: the yearly switch, then the summary.
+3. Emails: receipt and renewal reminder, see [the email notes](emails.md).
+
+## Out of scope
+
+Invoices in other currencies wait for the next quarter. The current team list stays as it is: see [this week](../this-week.md).
+`,
+  'plans/emails.md': '# Billing emails\n\n- Receipt right after payment.\n- Renewal reminder 7 days before.\n\nBack to [the plan](billing.md).\n',
 }
 
 // omp's tool approval dialog, as wherdr reads it from the screen.

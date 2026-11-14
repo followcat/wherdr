@@ -9,14 +9,16 @@ const modifierLabels = { ctrl: 'Ctrl', alt: 'Alt', shift: 'Shift' }
 const selected = computed(() => props.ctl.virtualModifiers.value)
 function modifier(key: VirtualModifier) { haptic(); props.ctl.toggleModifier(key) }
 
+// Most used first (esc, arrows, tab, ^C, y, n): on a narrow column the rest
+// scrolls, the keyboard toggle stays pinned at the end.
 const KEYS: { key: string, label: string, cls?: string }[] = [
-  { key: 'esc', label: 'esc' }, { key: 'enter', label: '⏎', cls: 'wide' }, { key: 'up', label: '↑' }, { key: 'down', label: '↓' },
-  { key: '1', label: '1' }, { key: '2', label: '2' }, { key: '3', label: '3' }, { key: 'tab', label: 'tab' },
-  { key: 'shift+tab', label: '⇧tab' }, { key: 'left', label: '←' }, { key: 'right', label: '→' },
-  { key: 'ctrl+c', label: '^C', cls: 'danger' }, { key: 'backspace', label: '⌫' }, { key: 'y', label: 'y' }, { key: 'n', label: 'n' },
+  { key: 'esc', label: 'esc' }, { key: 'up', label: '↑' }, { key: 'down', label: '↓' }, { key: 'left', label: '←' }, { key: 'right', label: '→' },
+  { key: 'tab', label: 'tab' }, { key: 'ctrl+c', label: '^C', cls: 'danger' }, { key: 'y', label: 'y' }, { key: 'n', label: 'n' },
+  { key: 'enter', label: '⏎', cls: 'wide' }, { key: 'shift+tab', label: '⇧tab' }, { key: 'backspace', label: '⌫' },
+  { key: '1', label: '1' }, { key: '2', label: '2' }, { key: '3', label: '3' },
 ]
 const keys = computed<{ key: string, label: string, cls?: string }[]>(() => props.allDigits
-  ? [...KEYS.slice(0, 7), ...['4', '5', '6', '7', '8', '9', '0'].map(key => ({ key, label: key })), ...KEYS.slice(7)]
+  ? [...KEYS, ...['4', '5', '6', '7', '8', '9', '0'].map(key => ({ key, label: key }))]
   : KEYS)
 
 function press(key: string) {
@@ -33,9 +35,11 @@ const keyboardTap = createKeyboardTap(toggleKbd)
 <template>
   <PhoneKeybar v-if="compact" :ctl="ctl" :all-digits="allDigits" :terminal="terminal" @keyboard="emit('keyboard')" />
   <div v-else class="keybar" role="toolbar" :aria-label="t('Keys')">
-    <button v-for="m in VIRTUAL_MODIFIERS" :key="m" type="button" class="key-modifier" :aria-label="t(modifierLabels[m])"
-      :aria-pressed="selected.includes(m)" @pointerdown.prevent @click="modifier(m)">{{ t(modifierLabels[m]) }}</button>
-    <button v-for="k in keys" :key="k.key" type="button" :class="k.cls" @pointerdown.prevent @click="press(k.key)">{{ k.label }}</button>
+    <div class="keybar-keys">
+      <button v-for="k in keys" :key="k.key" type="button" :class="k.cls" @pointerdown.prevent @click="press(k.key)">{{ k.label }}</button>
+      <button v-for="m in VIRTUAL_MODIFIERS" :key="m" type="button" class="key-modifier" :aria-label="t(modifierLabels[m])"
+        :aria-pressed="selected.includes(m)" @pointerdown.prevent @click="modifier(m)">{{ t(modifierLabels[m]) }}</button>
+    </div>
     <button type="button" class="kbd" :class="{ on: ctl.kbdOn.value }" :aria-label="t('Type in terminal')" @pointerdown.prevent @click="keyboardTap.click"
       @touchstart.passive="keyboardTap.start" @touchmove.passive="keyboardTap.move" @touchend="keyboardTap.end" @touchcancel="keyboardTap.cancel">
       <UIcon name="i-lucide-keyboard" />

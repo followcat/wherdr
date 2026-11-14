@@ -10,19 +10,28 @@ import type { RevealNode, RevealPlan } from '~/utils/typewriter'
 import type { TypingSpeed } from '~/utils/typewriter'
 import { SVG_THEME_VARS, svgPreview } from '~/utils/svgPreview'
 import type { SvgColors } from '~/utils/svgPreview'
+import { appRoute, isAppLink, linkedTask } from '#shared/appLinks'
+import type { StatusKind } from '#shared/statusBlock'
+import StatusCard from './StatusCard.vue'
+import UiOpenCard from './UiOpenCard.vue'
+import UiShowCard from './UiShowCard.vue'
+import ActionCard from './ActionCard.vue'
+import { h, render } from 'vue'
 
 // `cipher` must default to undefined, not false: Vue casts a missing Boolean
 // prop to false, which would switch the encrypted text off everywhere.
 const props = withDefaults(defineProps<{ html: string, typing: number | null, speed?: TypingSpeed, cipher?: boolean }>(), { speed: undefined, cipher: undefined })
 const emit = defineEmits<{ done: [] }>()
+// Two roots (the task cards' teleports): a class given to this component goes on the body.
+defineOptions({ inheritAttrs: false })
 const el = ref<HTMLElement | null>(null)
 
 let plan: RevealPlan | null = null
 let raf = 0
-// Reveal the SVG card atomically so typing never rewrites its source or controls.
+// Reveal the SVG card and the choice buttons atomically so typing never rewrites their source or controls.
 const atomic = (n: RevealNode) => {
   const classes = (n as unknown as Element).classList
-  return Boolean(classes?.contains('code-head') || classes?.contains('svg-block'))
+  return Boolean(classes?.contains('code-head') || classes?.contains('svg-block') || classes?.contains('w-choices') || classes?.contains('wherdr-block'))
 }
 const keep = (n: RevealNode) => /^T[DH]$/.test((n as unknown as Element).tagName || '')
 
@@ -163,6 +172,26 @@ watchImageViolations()
 function onImageError(e: Event) {
   if (e.target instanceof HTMLImageElement && !revealSvgSource(e.target)) showImageFallback(e.target)
 }
+// An in-app address (utils/markdown.ts): the router opens it, no reload, the
+// conversation's history entry kept for Back. A task's sheet opens over the
+// conversation.
+const router = useRouter()
+function onAppLink(event: MouseEvent) {
+  const href = (event.target as Element).closest('a[href]')?.getAttribute('href')
+  if (!href || !isAppLink(href) || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  event.preventDefault()
+  const task = linkedTask(href)
+  if (task) openTaskSheet(task)
+  else router.push(appRoute(href))
+}
+// A `wherdr` block's task lines (utils/markdown.ts): each placeholder shows
+// its live card (ChatTaskCard.vue) in place of the link it holds.
+const taskSlots = shallowRef<{ to: HTMLElement, id: string }[]>([])
+function fillTaskSlots() {
+  const found = Array.from(el.value?.querySelectorAll<HTMLElement>('.wd-task[data-task]') ?? [])
+  for (const to of found) to.replaceChildren()
+  taskSlots.value = found.map(to => ({ to, id: to.dataset.task! }))
+}
 function onClick() {
   if (plan) {
     stop()
@@ -170,8 +199,53 @@ function onClick() {
   }
 }
 
+// Live status cards (utils/markdown.ts `status-slot`): each slot gets its own
+// StatusCard, with the app's context; unmounted when the HTML is replaced.
+const app = getCurrentInstance()!.appContext
+let slots: HTMLElement[] = []
+function dropCards() {
+  for (const slot of slots) render(null, slot)
+  slots = []
+}
+function mountCards() {
+  dropCards()
+  for (const slot of el.value?.querySelectorAll<HTMLElement>('.status-slot') ?? []) {
+    const card = h(StatusCard, { kind: slot.dataset.statusKind as StatusKind, arg: slot.dataset.statusArg ?? '' })
+    card.appContext = app
+    slot.textContent = ''
+    render(card, slot)
+    slots.push(slot)
+  }
+  // An agent's `ui open` card, kept in its reply: no ×, it opens the place.
+  for (const slot of el.value?.querySelectorAll<HTMLElement>('.open-slot') ?? []) {
+    const card = h(UiOpenCard, { event: { type: 'ui-open', pane: '', link: slot.dataset.link ?? '', by: '' }, kept: true })
+    card.appContext = app
+    slot.textContent = ''
+    render(card, slot)
+    slots.push(slot)
+  }
+  // What an agent showed with `ui show`: a tap shows it again.
+  for (const slot of el.value?.querySelectorAll<HTMLElement>('.show-slot') ?? []) {
+    const card = h(UiShowCard, { event: { type: 'ui-show', pane: '', what: slot.dataset.what === 'shots' ? 'shots' : 'file', arg: slot.dataset.arg ?? '', by: '' }, kept: true })
+    card.appContext = app
+    slot.textContent = ''
+    render(card, slot)
+    slots.push(slot)
+  }
+  // An agent's `ui action` button: only the user's click runs it.
+  for (const slot of el.value?.querySelectorAll<HTMLElement>('.action-slot') ?? []) {
+    const card = h(ActionCard, { id: slot.dataset.action ?? '' })
+    card.appContext = app
+    slot.textContent = ''
+    render(card, slot)
+    slots.push(slot)
+  }
+}
+
 // First state applied before display: no flash of the full text.
 onMounted(() => {
+  mountCards()
+  fillTaskSlots()
   syncSvgTheme(true)
   if (props.typing !== null) start(props.typing)
 })
@@ -187,8 +261,9 @@ watch(() => props.html, () => {
   plan = null
   emit('done')
 }, { flush: 'pre' })
-watch(() => props.html, () => syncSvgTheme(true), { flush: 'post' })
+watch(() => props.html, () => { mountCards(); fillTaskSlots(); syncSvgTheme(true) }, { flush: 'post' })
 onBeforeUnmount(() => {
+  dropCards()
   themeObserver?.disconnect()
   cancelAnimationFrame(raf)
   dropBands()
@@ -198,11 +273,16 @@ onBeforeUnmount(() => {
 
 <template>
   <!-- eslint-disable-next-line vue/no-v-html -- HTML sanitized by DOMPurify (utils/markdown.ts) -->
-  <div ref="el" class="md-body" :class="{ typing: typing !== null }" @click.capture="onClick" @click="onSvgToggle" @keydown="onKey" @error.capture="onImageError" v-html="html" />
+  <div ref="el" v-bind="$attrs" class="md-body" :class="{ typing: typing !== null }" @click.capture="onClick" @click="onAppLink($event); onSvgToggle($event)" @keydown="onKey" @error.capture="onImageError" v-html="html" />
+  <Teleport v-for="(s, i) in taskSlots" :key="`${i}:${s.id}`" :to="s.to">
+    <ChatTaskCard :id="s.id" />
+  </Teleport>
 </template>
 
 <style scoped>
 .md-body :deep(.svg-block) { background: transparent; }
+.md-body :deep(.wherdr-block .ui-open-card) { margin: 0; }
+.md-body :deep(.wherdr-block) { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 8px; margin: 8px 0; }
 .md-body :deep(img.svg-preview) {
   display: block; width: 100%; max-width: 100%; max-height: 65dvh;
   object-fit: contain; margin: 0; padding: 12px; border: 0;

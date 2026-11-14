@@ -1,40 +1,24 @@
+# wherdr v3 is not a Herdr plugin: it runs on herdr-core (hc) and installs
+# beside v2 (docs/migrate-from-v2.md). This manifest is kept only so that
+# `herdr plugin install afloury/wherdr` and `herdr plugin update` on a v3
+# commit stop with a clear message: its build fails at once, before touching
+# anything, and Herdr then keeps the plugin already installed (v2) as it was.
 id = "afloury.wherdr"
 name = "wherdr"
-version = "2.5.0"
+version = "3.0.0-dev"
 min_herdr_version = "0.9.1"
-description = "Your Herdr agents from your phone and browser: live conversations, real terminals, push notifications and one-tap answers. Self-hosted, private network only."
+description = "wherdr v3 is not a Herdr plugin: install it beside v2, see docs/migrate-from-v2.md."
 platforms = ["linux", "macos"]
 
-# Installs wherdr natively with Node.js 22 in ~/wherdr (WHERDR_DIR).
 [[build]]
-command = ["sh", "scripts/herdr-plugin.sh", "build"]
-
-# One-shot on each Herdr start: starts wherdr detached, unless something
-# already answers on its port (a wherdr started another way is left alone).
-[[startup]]
-command = ["sh", "scripts/herdr-plugin.sh", "start"]
-
-# The main action: a popup with the state, the addresses, the phone QR code
-# and a key per command (start, stop, restart, open, log, update, auto-start).
-# The install binds it to a free Herdr key (scripts/herdr-plugin.sh key).
-# Named "wherdr" up to 1.2.0: a key bound to afloury.wherdr.wherdr must be
-# changed to afloury.wherdr.panel (Herdr manifests have no action aliases).
-[[actions]]
-id = "panel"
-title = "wherdr"
-contexts = ["global", "workspace"]
-command = ["sh", "-c", "exec \"${HERDR_BIN_PATH:-herdr}\" plugin pane open --plugin \"$HERDR_PLUGIN_ID\" --entrypoint panel --focus"]
-
-[[actions]]
-id = "open"
-title = "wherdr: open in the browser"
-contexts = ["global", "workspace"]
-command = ["sh", "scripts/herdr-plugin.sh", "open"]
-
-[[panes]]
-id = "panel"
-title = "wherdr"
-placement = "popup"
-width = "80%"
-height = "90%"
-command = ["sh", "scripts/herdr-plugin.sh", "panel"]
+command = ["sh", "-c", '''
+cat >&2 <<'MSG'
+wherdr v3 is not a Herdr plugin, and nothing was changed: your wherdr v2
+plugin stays installed and running as it was.
+v3 runs on herdr-core (hc) and installs beside v2, from git:
+  https://github.com/afloury/wherdr/blob/v3/docs/migrate-from-v2.md
+To stay on v2, install the plugin from its branch:
+  herdr plugin install afloury/wherdr --ref 2.x
+MSG
+exit 1
+''']

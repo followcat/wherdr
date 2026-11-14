@@ -10,8 +10,6 @@
     "preview": "nuxt preview",
     "typecheck": "nuxt typecheck",
     "postinstall": "nuxt prepare",
-    "test:install": "sh tests/install.test.sh",
-    "test:install:bwrap": "sh tests/install.bwrap.sh",
     "deploy": "wrangler deploy"
   },
   "dependencies": {

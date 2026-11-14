@@ -185,3 +185,34 @@ export function createTailLoader(step: (current: () => boolean) => Promise<boole
   }
   return { load, invalidate: () => { gen++ } }
 }
+
+// Last line of defence against a conversation that blinks: a list that keeps
+// coming back to the one shown two changes before (a loop between two sources,
+// e.g. the device's copy and the server's) more than `limit` times within
+// `windowMs`. While that lasts, an empty list keeps the last non-empty one on
+// screen, and a diagnostic is logged once.
+export function createFlipGuard({ windowMs = 4000, limit = 2, now = Date.now, warn = console.warn }: {
+  windowMs?: number, limit?: number, now?: () => number, warn?: (msg: string, info: object) => void
+} = {}) {
+  let last: string | null = null
+  let before: string | null = null
+  let flips: number[] = []
+  let full: ChatItem[] = []
+  let warned = false
+  const sig = (l: ChatItem[]) => (l.length ? `${l.length}|${l[0]!.role}:${l[0]!.ts}|${l.at(-1)!.role}:${l.at(-1)!.ts}:${l.at(-1)!.text?.length}` : '')
+  return (list: ChatItem[]): ChatItem[] => {
+    const t = now()
+    const s = sig(list)
+    if (s !== last) {
+      if (s === before) flips.push(t)
+      before = last
+      last = s
+    }
+    flips = flips.filter(x => t - x < windowMs)
+    const looping = flips.length > limit
+    if (looping && !warned) warn('[wherdr] conversation list alternates: last non-empty list kept', { flips: flips.length, items: list.length, kept: full.length })
+    warned = looping
+    if (list.length) full = list
+    return looping && !list.length ? full : list
+  }
+}

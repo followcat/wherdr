@@ -1,4 +1,4 @@
-// Model-file access shared by the dictation workers: a file comes from
+// Model-file access shared by the dictation and read-aloud workers: a file comes from
 // Cache Storage — a whole entry, or its 8 MB `?chunk=N` slices written by
 // app/utils/dictation/modelStore.ts — or streams from the server in
 // resumable Range slices when there is no cache. A classic script each
@@ -17,6 +17,8 @@
 //   cachedSlices(cache, url, file, count) -> async generator of the
 //     `url?chunk=i` slices for i < count; a missing slice throws
 //     `${file}: not downloaded`.
+//   fsWriteStreamed(FS, path, res) -> Promise: a Response's body into the
+//     emscripten FS slice by slice.
 
 'use strict'
 
@@ -100,5 +102,23 @@ async function* cachedSlices(cache, url, file, count) {
   }
 }
 
-self.wherdrModelFiles = { openFile, streamFile, cachedSlices }
+// A file into the emscripten FS slice by slice: the weights must live in the
+// WASM heap anyway, but no second whole copy is held in JS (a whole-file
+// writeFile got a phone tab killed, in followcat's tests).
+async function fsWriteStreamed(FS, path, res) {
+  const fd = FS.open(path, 'w')
+  const reader = res.body.getReader()
+  let off = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      FS.write(fd, value, 0, value.length, off)
+      off += value.length
+    }
+  }
+  finally { FS.close(fd) }
+}
+
+self.wherdrModelFiles = { openFile, streamFile, cachedSlices, fsWriteStreamed }
 })()

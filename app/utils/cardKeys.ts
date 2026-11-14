@@ -59,7 +59,8 @@ const TEXT_INPUT = /^(?:text|search|email|url|tel|password|number|)$/
 export function describeFocus(el: Element | null): FocusInfo {
   const out: FocusInfo = { editable: false, empty: true, control: false, overlay: false }
   if (!el || el === document.body) return out
-  out.overlay = Boolean(el.closest('[role="dialog"], [role="menu"], [role="listbox"], [role="alertdialog"]'))
+  // Settings beside the conversation count as a window: their keys stay theirs.
+  out.overlay = Boolean(el.closest('[role="dialog"], [role="menu"], [role="listbox"], [role="alertdialog"], .settings-panel'))
   if (el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && TEXT_INPUT.test(el.type))) {
     out.editable = true
     out.empty = !el.value

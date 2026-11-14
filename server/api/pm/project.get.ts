@@ -1,4 +1,4 @@
-// ?key=: the project, its own workflow, the workflow's log and the coordinator's waiting proposal.
+// ?key=: the project, its own workflow, the workflow's log, its machines' last readiness and the coordinator's waiting proposal.
 import { projectView } from '../../utils/pmProject'
 import { pmStore } from '../../utils/pmStore'
 

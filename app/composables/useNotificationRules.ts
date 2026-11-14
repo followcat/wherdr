@@ -1,9 +1,10 @@
 import { SETTING_MAX } from '#shared/settings'
 import { machineOf } from '#shared/ids'
-import { EXCEPTIONS_MAX, LEVEL_EVENTS, NOTIFICATION_LEVELS, levelOf, notificationEvents, notificationException,
-  paneNotificationSource, parseNotificationSettings, tidyNotificationExceptions, sameNotificationTarget,
+import { EXCEPTIONS_MAX, LEVEL_EVENTS, NOTIFICATION_LEVELS, coordinatorTarget, levelOf, migrateCoordinatorExceptions, notificationEvents, notificationException,
+  paneNotificationSource, parseCoordinatorKey, parseNotificationSettings, tidyNotificationExceptions, sameNotificationTarget,
   type NotificationEvent, type NotificationException, type NotificationLevel, type NotificationSettings, type NotificationTarget } from '#shared/notificationRules'
 import type { Pane } from '#shared/types'
+import { MAIN } from '#shared/pm/coordinator'
 import type { MenuItem } from './useUi'
 
 export const notificationRules = syncedRef('notificationRules', parseNotificationSettings, JSON.stringify)
@@ -31,17 +32,29 @@ const baseMachine = (key: string) => {
   const m = allSessionsState.value.machines?.find(x => x.key === key) ?? herdrState.value.machines?.find(x => x.key === key)
   return m?.baseKey ?? m?.key ?? key
 }
+// A machine id that matches no known machine (one removed since) is not shown raw.
 export const notificationMachineName = (key: string) => machineName(key)
-  || (allSessionsState.value.machines ?? herdrState.value.machines)?.find(m => m.key === key || m.baseKey === key)?.label || key || t('This machine')
-export function notificationSource(pane: Pick<Pane, 'id' | 'workspace'>) {
-  return paneNotificationSource(pane, herdrState.value, [], baseMachine(machineOf(pane.id)))
+  || (allSessionsState.value.machines ?? herdrState.value.machines)?.find(m => m.key === key || m.baseKey === key)?.label || (key ? t('Unknown machine') : t('This machine'))
+type NotifiedPane = Pick<Pane, 'id' | 'workspace'> & Partial<Pick<Pane, 'coreAddress'>>
+export function notificationSource(pane: NotifiedPane) {
+  const source = paneNotificationSource(pane, herdrState.value, [], baseMachine(machineOf(pane.id)))
+  const c = coordinatorAtAddress(pane.coreAddress)
+  return c ? { ...source, coordinator: coordinatorTarget(c.project) } : source
 }
-// The exception a conversation can have: its own pane.
-export function paneNotificationTarget(p: Pick<Pane, 'id' | 'workspace' | 'title'>): NotificationTarget {
+// The exception a conversation can have: its coordinator's (Alfred or a
+// project's, kept across its restarts), else its own pane.
+export function paneNotificationTarget(p: NotifiedPane & Pick<Pane, 'title'>): NotificationTarget {
+  const c = coordinatorAtAddress(p.coreAddress)
+  if (c) return { kind: 'coordinator', machine: '', id: coordinatorTarget(c.project), label: c.name.slice(0, 120) }
   const s = notificationSource(p)
   return { kind: 'conversation', machine: s.machine, id: p.id, label: (p.title || p.id).slice(0, 120) }
 }
-export function paneNotificationsMuted(p: Pick<Pane, 'id' | 'workspace'>) {
+// A coordinator exception's current name ('' when its coordinator is unknown).
+export const coordinatorExceptionName = (id: string) => {
+  const k = parseCoordinatorKey(id)
+  return k.session ? '' : k.level === 'top' ? coordinatorNameOf(MAIN) : k.level === 'project' && k.repo ? coordinatorNameOf(k.repo) : ''
+}
+export function paneNotificationsMuted(p: NotifiedPane) {
   return !notificationEvents(notificationRules.value, notificationSource(p), notificationClock.value).length
 }
 export const findException = (target: Pick<NotificationTarget, 'kind' | 'machine' | 'id'>) =>
@@ -69,20 +82,25 @@ export function removeException(target: Pick<NotificationTarget, 'kind' | 'machi
   toast(tl(`Back to the default: ${defaultLevelLabel()}`, `Retour au défaut : ${defaultLevelLabel()}`))
 }
 
-// Ended timed mutes that left nothing behind are dropped from the saved exceptions.
+// Ended timed mutes that left nothing behind are dropped from the saved
+// exceptions; older coordinator exceptions move to today's coordinators.
 export function useNotificationRekey() {
-  watch([notificationRules, notificationClock], ([s, now]) => {
-    const next = tidyNotificationExceptions(s, [], now)
-    if (next) saveNotificationRules(next)
+  onMounted(() => { if (!coordinatorsLoaded.value) loadCoordinators(); if (!alfred.value) loadAlfred() })
+  watch([notificationRules, notificationClock, coordinators, alfred], ([s, now]) => {
+    const tidy = tidyNotificationExceptions(s, [], now)
+    // Projects on: the list starts with the main coordinator.
+    const projects = coordinators.value.some(c => c.main) ? projectCoordinators.value.map(c => c.project) : null
+    const next = migrateCoordinatorExceptions(tidy ?? s, projects, p => coordinatorNameOf(p) || p)
+    if (next || tidy) saveNotificationRules(next ?? tidy!)
   }, { immediate: true })
 }
 
 // Row menus show the effective state; the settings panel keeps the same rules.
-export function notificationMenuItem(p: Pick<Pane, 'id' | 'workspace' | 'title'>, showState = false): MenuItem {
+export function notificationMenuItem(p: NotifiedPane & Pick<Pane, 'title'>, showState = false): MenuItem {
   const label = showState ? (paneNotificationsMuted(p) ? t('Unmute notifications') : t('Mute notifications')) : t('Notifications')
   return { label, icon: 'i-lucide-bell', run: () => openNotificationMenu(p) }
 }
-function openNotificationMenu(p: Pick<Pane, 'id' | 'workspace' | 'title'>) {
+function openNotificationMenu(p: NotifiedPane & Pick<Pane, 'title'>) {
   const settings = { label: t('Notification settings'), icon: 'i-lucide-settings-2', run: () => navigateTo('/settings?section=notifications') }
   const target = paneNotificationTarget(p)
   const now = Date.now()

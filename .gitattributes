@@ -1,1 +1,6 @@
 CHANGELOG.md merge=union
+# Parallel tasks each add a line to the docs index: merges keep both sides'
+# lines. Locally, npm install puts a driver that also keeps one line per entry
+# in the clone's info/attributes (scripts/llms-merge.mjs). GitHub and clones
+# without it keep union; the engine runs the same fix after such a merge.
+docs/llms.txt merge=union

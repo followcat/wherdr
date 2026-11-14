@@ -1,5 +1,5 @@
 import fs from 'node:fs'
-import { inspect, probe, publishArgs, publishCommand, runTailscale, serveError, tailscaleBin, tailscaledSocket, unpublishArgs } from '../../bin/lib/tailnet.mjs'
+import { inspect, probe, publishArgs, publishCommand, runTailscale, serveError, tailscaleBins, tailscaledSocket, unpublishArgs } from '../../bin/lib/tailnet.mjs'
 import { phoneReach } from '../../shared/phone'
 import { qrSvg } from '../../shared/qr'
 import type { PhoneError, PhoneResult, PhoneStatus } from '../../shared/phone'
@@ -68,8 +68,8 @@ let adopting: Promise<void> | null = null
 export function adoptServed(maxAgeMs = 0): Promise<void> {
   if (adopting) return adopting
   if (maxAgeMs && Date.now() - adoptedAt < maxAgeMs) return Promise.resolve()
-  const bin = tailscaleBin()
-  adopting = inspect(PORT, bin, bin ? null : tailscaledSocket())
+  const bins = tailscaleBins()
+  adopting = inspect(PORT, bins, bins.length ? null : tailscaledSocket())
     .then((net) => { applyServed(net.served); tellName(net.name) }, (e) => { log(`tailscale serve could not be read: ${e?.message || e}`) })
     .finally(() => { adoptedAt = Date.now(); adopting = null })
   return adopting
@@ -90,15 +90,15 @@ export function stopTailnetWatch() {
 const waitSince = new Map<string, number>()
 
 export async function phoneStatus(): Promise<PhoneStatus> {
-  const bin = tailscaleBin()
-  const socket = bin ? null : tailscaledSocket()
+  const bins = tailscaleBins()
+  const socket = bins.length ? null : tailscaledSocket()
   const out: PhoneStatus = {
-    mode: bin ? 'native' : 'missing',
+    mode: bins.length ? 'native' : 'missing',
     platform: process.platform, port: PORT, connected: false, https: false, url: null, served: false, funnel: false, taken: false, suggested: null,
     command: publishCommand(PORT), reach: null, reachCause: null, reachStatus: null, checkedAt: null, appUrl: '', appUrlFromEnv: Boolean(ENV_APP_URL), qr: null,
   }
-  if (bin || socket) {
-    const net = await inspect(PORT, bin, socket)
+  if (bins.length || socket) {
+    const net = await inspect(PORT, bins, socket)
     applyServed(net.served)
     tellName(net.name)
     out.connected = Boolean(net.connected && net.name)
@@ -129,9 +129,10 @@ const fail = async (error: PhoneError, more: { link?: string, detail?: string } 
 
 export async function phoneAction(body: { action?: unknown, url?: unknown }): Promise<PhoneResult> {
   if (body.action !== 'publish' && body.action !== 'unpublish') return fail('failed', { detail: 'Unknown action' })
-  const bin = tailscaleBin()
-  if (!bin) return fail('offline', { link: 'https://tailscale.com/download' })
-  const net = await inspect(PORT, bin)
+  const bins = tailscaleBins()
+  if (!bins.length) return fail('offline', { link: 'https://tailscale.com/download' })
+  // The CLI that answered (on macOS the app's binary may not, issue #724).
+  const net = await inspect(PORT, bins)
   if (!net.connected || !net.phone) return fail('offline', { link: 'https://tailscale.com/download' })
   let args: string[]
   if (body.action === 'publish') {
@@ -142,7 +143,7 @@ export async function phoneAction(body: { action?: unknown, url?: unknown }): Pr
     if (!net.phone.served) return { ok: true, status: await phoneStatus() }
     args = unpublishArgs(net.phone.httpsPort)
   }
-  const r = await runTailscale(bin, args)
+  const r = await runTailscale(net.bin || bins[0]!, args)
   // A fresh publication: its certificate wait starts now.
   waitSince.clear()
   log(`tailscale ${args.join(' ')} → ${r.code}`)

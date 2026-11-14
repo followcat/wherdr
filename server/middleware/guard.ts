@@ -39,7 +39,7 @@ export default defineEventHandler(async (event) => {
     unlocked: auth.isUnlocked(req) || cliTokenCall(path, check, headers.authorization),
     hostOk: hostAllowed(headers.host),
     crossSite: crossSiteRequest(headers),
-    agentKey: event.method === 'POST' && typeof headers[SHOT_TOKEN_HEADER] === 'string',
+    agentKey: (event.method === 'POST' || event.method === 'GET') && typeof headers[SHOT_TOKEN_HEADER] === 'string',
   })
   const html = hostRefusalIsHtml(path, headers.accept)
   switch (verdict) {

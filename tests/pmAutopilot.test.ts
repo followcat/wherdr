@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_AUTOPILOT, skippedWake, autopilotEvents, coordinatorStartRefusal, sentence, cleanAutopilot, inHours, LOOK_PER_DAY, bump, limitsLeft, lookAddRefusal, nothingToDo, scheduledWake, startRefusal, today, tellRefusal } from '../shared/pm/autopilot'
+import { DEFAULT_AUTOPILOT, quietEvents, holdsSlot, skippedWake, autopilotEvents, coordinatorStartRefusal, sentence, cleanAutopilot, inHours, LOOK_PER_DAY, bump, limitsLeft, lookAddRefusal, nothingToDo, pastLimit, scheduledWake, startRefusal, today, tellRefusal, countFix } from '../shared/pm/autopilot'
 import type { Run, Task } from '../shared/pm/run'
+import { HEALTH_ACK, healthEvery, healthSummary } from '../shared/pm/health'
 import { accountQuota, pacedStart, paceLine } from '../shared/pm/pace'
 import { DEFAULT_PACE, type PaceVerdict } from '../shared/pm/pacing'
 import type { Quotas } from '../shared/types'
@@ -17,7 +18,13 @@ describe('autopilot settings', () => {
     expect(cleanAutopilot({ ...DEFAULT_AUTOPILOT, at: ' daily 08:00 ' })).toMatchObject({ autopilot: { at: 'daily 08:00' } })
     for (const at of ['every 2h', 'soon']) expect(cleanAutopilot({ ...DEFAULT_AUTOPILOT, at })).toEqual({ error: expect.stringMatching(/^at:/) })
     expect(cleanAutopilot({ ...DEFAULT_AUTOPILOT, events: ['merged'] })).toEqual({ error: expect.stringMatching(/events/) })
-    expect(cleanAutopilot({ ...DEFAULT_AUTOPILOT, perDay: 1000 })).toEqual({ error: expect.stringMatching(/perDay/) })
+    // Tasks / day: empty is no daily limit, up to 1000 otherwise.
+    for (const perDay of ['', null]) expect(cleanAutopilot({ ...DEFAULT_AUTOPILOT, perDay })).toEqual({ autopilot: { on: false, goal: '', events: [], perDay: null, atOnce: 2 } })
+    expect(cleanAutopilot({ ...DEFAULT_AUTOPILOT, health: ' 6h ' })).toMatchObject({ autopilot: { health: '6h' } })
+    expect(cleanAutopilot({ ...DEFAULT_AUTOPILOT, health: 'off' })).toMatchObject({ autopilot: { health: 'off' } })
+    expect(cleanAutopilot({ ...DEFAULT_AUTOPILOT, health: 'soon' })).toEqual({ error: expect.stringMatching(/^health:/) })
+    for (const perDay of [0, 250]) expect(cleanAutopilot({ ...DEFAULT_AUTOPILOT, perDay })).toMatchObject({ autopilot: { perDay } })
+    expect(cleanAutopilot({ ...DEFAULT_AUTOPILOT, perDay: 2000 })).toEqual({ error: expect.stringMatching(/perDay/) })
     expect(cleanAutopilot({ ...DEFAULT_AUTOPILOT, hours: { from: 8, to: 8 } })).toEqual({ error: expect.stringMatching(/hours/) })
   })
 
@@ -35,6 +42,23 @@ describe('autopilot limits', () => {
     expect(limitsLeft(ap, tasks, [], at(12))).toMatchObject({ working: 1, startLeft: 1 })
     expect(startRefusal(ap, tasks, [], at(12))).toBeUndefined()
     expect(startRefusal(ap, [...tasks, task(4)], [], at(12))).toMatch(/2 tasks already work at once/)
+    // While the account burns, tasks at once are Auto.
+    expect(startRefusal(ap, [...tasks, task(4)], [], at(12), { go: true, burning: true })).toBeUndefined()
+    // Auto (null): no project ceiling, the machines decide; only the day's limit holds.
+    expect(cleanAutopilot({ ...ap, atOnce: null })).toMatchObject({ autopilot: { atOnce: null } })
+    expect(startRefusal({ ...ap, atOnce: null }, [...tasks, task(4), task(5)], [], at(12))).toBeUndefined()
+    expect(limitsLeft({ ...ap, atOnce: null }, tasks, [], at(12))).toMatchObject({ startLeft: 3, atOnce: null })
+  })
+
+  it('a working task whose step holds no agent takes no slot, unless the engine handed its worker work', () => {
+    const plan = [{ holder: 'worker' as const }, { holder: 'none' as const }]
+    const step = (at: number, more = {}) => ({ step: { at, started: true, proofs: {}, rounds: {}, ...more } })
+    const tasks = [task(1, step(0)), task(2, step(1)), task(3, step(1, { agent: { kind: 'catch-up', head: 'abc', at: 0 } }))]
+    const holds = (t: Task) => holdsSlot(t, plan)
+    expect(limitsLeft(ap, tasks, [], at(12), holds)).toMatchObject({ working: 2, startLeft: 0 })
+    expect(startRefusal(ap, tasks.slice(0, 2), [], at(12), undefined, holds)).toBeUndefined()
+    // Without its plan, a task holds its slot.
+    expect(holdsSlot(tasks[1]!)).toBe(true)
   })
 
   it('counts the tasks started since midnight, a task once', () => {
@@ -44,6 +68,15 @@ describe('autopilot limits', () => {
     // A task first started yesterday does not count today.
     expect(startRefusal(ap, [...tasks, task(4, { state: 'waiting' })], [...runs, run(3, at(4)), run(4, at(4))], at(12))).toMatch(/Today's limit is reached \(3/)
     expect(startRefusal({ ...ap, hours: { from: 22, to: 6 } }, [], [], at(12))).toMatch(/hours/)
+  })
+
+  it('has no daily limit without Tasks / day: only At once holds', () => {
+    const noCap = { ...ap, perDay: null }
+    const runs = [1, 2, 3, 4].map(n => run(n, at(n)))
+    const tasks = [1, 2, 3, 4].map(n => task(n, { state: 'waiting' }))
+    expect(limitsLeft(noCap, tasks, runs, at(12))).toMatchObject({ started: 4, perDay: null, startLeft: 2 })
+    expect(startRefusal(noCap, tasks, runs, at(12))).toBeUndefined()
+    expect(startRefusal(noCap, [...tasks, task(5), task(6)], runs, at(12))).toMatch(/at once/)
   })
 })
 
@@ -56,6 +89,52 @@ describe('autopilot events', () => {
     expect(r.reasons).toEqual(['CO-1 (T1): stuck: Which DB?', 'CO-3 (T3): added'])
     expect(r.seen).toEqual({ 'CO-1': 'waiting', 'CO-2': 'done', 'CO-3': 'todo' })
     expect(autopilotEvents({ ...ap, events: [...ap.events] }, tasks, r.seen).reasons).toEqual([])
+  })
+
+  it('by default, wakes only for what needs judgment', () => {
+    const seen = { 'CO-1': 'working', 'CO-2': 'working', 'CO-3': 'working', 'CO-4': 'working', 'CO-5': 'working', 'CO-6': 'todo' } as const
+    const step = { at: 2, started: true, proofs: {}, rounds: {} }
+    const tasks = [
+      task(1, { state: 'waiting', waitKind: 'question', waiting: 'Which DB?' }),
+      task(2, { state: 'waiting', waitKind: 'permission', waiting: 'Run rm?' }), // the user's
+      task(3, { step: { ...step, yourTurn: { reason: 'rounds', badge: 'Decide: review failed 3 times' } } }),
+      task(4, { step: { ...step, done: true } }),
+      task(5, { step: { ...step, yourTurn: { reason: 'user', badge: 'Merge' } } }),
+      task(6), // started
+      task(7, { state: 'todo' }), // added
+    ]
+    expect(autopilotEvents(DEFAULT_AUTOPILOT, tasks, seen).reasons).toEqual(['CO-1 (T1): question: Which DB?', 'CO-3 (T3): decide: Decide: review failed 3 times'])
+    // Turned back on, routine events come too; a question is never also stuck.
+    expect(autopilotEvents({ ...DEFAULT_AUTOPILOT, events: ['added', 'done', 'stuck', 'ready'] }, tasks, seen).reasons)
+      .toEqual(['CO-1 (T1): question: Which DB?', 'CO-2 (T2): stuck: Run rm?', 'CO-3 (T3): decide: Decide: review failed 3 times', 'CO-4 (T4): done', 'CO-5 (T5): ready', 'CO-7 (T7): added'])
+  })
+
+  it('a question a tell answered, back while its agent\'s label stays, wakes no one again', () => {
+    const asked = task(1, { state: 'waiting', waitKind: 'question', waiting: 'Which DB?', answered: 50 })
+    expect(autopilotEvents(DEFAULT_AUTOPILOT, [asked], { 'CO-1': 'working' })).toMatchObject({ reasons: [], skipped: ['CO-1 (T1): its question was answered already'] })
+    // Its label gone, answered is cleared: the next question wakes.
+    expect(autopilotEvents(DEFAULT_AUTOPILOT, [{ ...asked, answered: undefined }], { 'CO-1': 'working' }).reasons).toEqual(['CO-1 (T1): question: Which DB?'])
+  })
+
+  it('an autopilot saved with the old default events drops them; any other choice stays', () => {
+    expect(quietEvents({ ...DEFAULT_AUTOPILOT, on: true, events: ['stuck', 'done'] })).toEqual({ ...DEFAULT_AUTOPILOT, on: true, events: [] })
+    for (const events of [['done'], ['done', 'stuck', 'ready'], []] as const) expect(quietEvents({ ...DEFAULT_AUTOPILOT, events: [...events] }).events).toEqual(events)
+  })
+
+  it('wakes for a task added by someone else than this coordinator only', () => {
+    const ap = { ...DEFAULT_AUTOPILOT, events: ['added' as const] }
+    const self = { key: 'CO', by: 'coordinator CO' }
+    const log = (by: string) => ({ log: [{ at: 0, by, text: 'added the task' }] })
+    const tasks = [
+      task(1, { state: 'todo', origin: 'user', addedBy: 'user' }), // the user, in wherdr
+      task(2, { state: 'todo', origin: 'user', addedBy: 'CO' }), // this coordinator, in a user turn
+      task(3, { state: 'todo', origin: 'coordinator', addedBy: '_main' }), // another coordinator
+      task(4, { state: 'todo', origin: 'automation', addedBy: 'automation' }),
+      task(5, { state: 'todo', ...log('coordinator CO') }), // made before addedBy: its log
+      task(6, { state: 'todo', ...log('main coordinator') }),
+    ]
+    expect(autopilotEvents(ap, tasks, {}, self).reasons).toEqual(['CO-1 (T1): added', 'CO-3 (T3): added', 'CO-4 (T4): added', 'CO-6 (T6): added'])
+    expect(autopilotEvents(ap, tasks, {}, { key: '_main', by: 'main coordinator' }).reasons).toEqual(['CO-1 (T1): added', 'CO-2 (T2): added', 'CO-4 (T4): added', 'CO-5 (T5): added'])
   })
 })
 
@@ -97,6 +176,16 @@ describe('nothing to do: scheduled wakes skipped', () => {
     expect(cleanAutopilot({ ...DEFAULT_AUTOPILOT, lookForWork: true, lookPerDay: 21 })).toEqual({ error: expect.stringMatching(/^lookPerDay/) })
     expect(cleanAutopilot({ ...DEFAULT_AUTOPILOT, lookForWork: 'yes', lookPerDay: 7 })).toEqual({ autopilot: DEFAULT_AUTOPILOT })
   })
+  it('skipped while nothing it could act on changed: to-do tasks that cannot start, no new block or answer', () => {
+    const blocked = [done(1), task(2, { state: 'todo', after: 'CO-1' }), task(3, { state: 'todo', sameFiles: 'CO-4' }), task(4, { state: 'waiting', waiting: 'Waits for its machine' })]
+    const last = { at: 100, seen: { 'CO-1': 'done', 'CO-2': 'todo', 'CO-3': 'todo', 'CO-4': 'waiting' } as const }
+    expect(scheduledWake(DEFAULT_AUTOPILOT, blocked, last, undefined, 0)).toBe('waits')
+    // A task startable now (Keep the board busy off), a new block or answer, a message of the user: it goes.
+    expect(scheduledWake({ ...DEFAULT_AUTOPILOT, on: true, keepBusy: false }, [...blocked, task(5, { state: 'todo' })], { ...last, seen: { ...last.seen, 'CO-5': 'todo' } }, undefined, 0)).toBe('send')
+    expect(scheduledWake(DEFAULT_AUTOPILOT, blocked, { ...last, seen: { ...last.seen, 'CO-4': 'working' } }, undefined, 0)).toBe('send')
+    expect(scheduledWake(DEFAULT_AUTOPILOT, blocked, last, 101, 0)).toBe('send')
+    expect(scheduledWake(DEFAULT_AUTOPILOT, blocked, {}, undefined, 0)).toBe('send')
+  })
   it('counts per local day', () => {
     const c = { day: new Date(at(9)).toDateString(), n: 3 }
     expect(today(c, at(23))).toBe(3)
@@ -114,6 +203,22 @@ describe('tell', () => {
     expect(tellRefusal({ state: 'working' }, false)).toBeUndefined()
     expect(tellRefusal({ state: 'waiting', waitKind: 'permission' }, false)).toMatch(/permission request is the user's/)
   })
+  it('in a wake, fixes a mechanical block: a project coordinator, its autopilot on, twice per step', () => {
+    const on = { autopilot: { ...DEFAULT_AUTOPILOT, on: true }, main: false }
+    const step = { at: 2, since: 50, started: true, proofs: {} }
+    expect(tellRefusal({ state: 'working', step }, true, on)).toBeUndefined()
+    expect(tellRefusal({ state: 'working' }, true, { ...on, autopilot: DEFAULT_AUTOPILOT })).toMatch(/only with the autopilot on/)
+    expect(tellRefusal({ state: 'working' }, true, { ...on, main: true })).toMatch(/only the project's coordinator/)
+    expect(tellRefusal({ state: 'waiting', waitKind: 'permission' }, true, on)).toMatch(/permission request is the user's/)
+    expect(tellRefusal({ state: 'waiting', stopped: { by: 'the user', why: 'x', at: 1 } }, true, on)).toMatch(/was stopped: --fix does not start it again/)
+    expect(tellRefusal({ state: 'working', step: { ...step, done: true } }, true, on)).toMatch(/task is done/)
+    const twice = countFix({ step, fixes: countFix({ step }) })
+    expect(twice).toEqual({ step: '2:50', n: 2 })
+    expect(tellRefusal({ state: 'working', step, fixes: twice }, true, on)).toMatch(/Already fixed 2 times in this step/)
+    // The next step counts again; the user's turn is never counted.
+    expect(tellRefusal({ state: 'working', step: { ...step, at: 3, since: 90 }, fixes: twice }, true, on)).toBeUndefined()
+    expect(tellRefusal({ state: 'working', step, fixes: twice }, false, on)).toBeUndefined()
+  })
 })
 
 describe('starting a task (coordinator, or the engine for a chained one)', () => {
@@ -121,11 +226,10 @@ describe('starting a task (coordinator, or the engine for a chained one)', () =>
   const todo = (n: number, more: Partial<Task> = {}) => task(n, { state: 'todo', ...more })
   const done = task(1, { step: { at: 3, started: true, done: true, proofs: {}, rounds: {} } })
 
-  it('in a wake only with the autopilot on, within its limits; a user turn keeps the limits', () => {
+  it('in a wake only with the autopilot on, within its limits', () => {
     expect(coordinatorStartRefusal(ap, todo(2), [todo(2)], [], at(12), true)).toBeUndefined()
-    expect(coordinatorStartRefusal({ ...ap, on: false }, todo(2), [todo(2)], [], at(12), true)).toBe('In a wake, a task starts only with the autopilot on')
+    expect(coordinatorStartRefusal({ ...ap, on: false }, todo(2), [todo(2)], [], at(12), true)).toBe('A task starts only on a request from the user, sent from wherdr, or in a wake with the autopilot on')
     expect(coordinatorStartRefusal({ ...ap, on: false }, todo(2), [todo(2)], [], at(12), false)).toBeUndefined()
-    expect(coordinatorStartRefusal(ap, todo(2), [task(3), todo(2)], [], at(12), false)).toMatch(/already work at once/)
     const finished = (n: number) => task(n, { step: { at: 3, started: true, done: true, proofs: {}, rounds: {} } })
     expect(coordinatorStartRefusal(ap, todo(2), [todo(2), finished(4), finished(5)], [run(4, at(9)), run(5, at(10))], at(12), true)).toMatch(/Today's limit/)
     expect(coordinatorStartRefusal({ ...ap, hours: { from: 22, to: 6 } }, todo(2), [todo(2)], [], at(12), true)).toBe('Outside the autopilot\'s hours')
@@ -138,6 +242,25 @@ describe('starting a task (coordinator, or the engine for a chained one)', () =>
     expect(coordinatorStartRefusal(ap, stopped, [stopped], [run(2, at(9)), run(2, at(10))], at(12), true)).toBe('CO-2 already ran 2 times: starting it again is the user\'s call')
     expect(coordinatorStartRefusal(ap, stopped, [stopped], [run(2, at(9)), run(2, at(10))], at(12), false)).toBeUndefined()
     expect(coordinatorStartRefusal(ap, { ...stopped, waitKind: 'question' }, [stopped], [], at(12), false)).toBe('CO-2 is not to do (waiting)')
+  })
+
+  it('a user turn goes past each limit, and says so; a wake and the engine are still refused', () => {
+    const finished = (n: number) => task(n, { step: { at: 3, started: true, done: true, proofs: {}, rounds: {} } })
+    const cases: [typeof ap, Task[], Run[], RegExp, string][] = [
+      [ap, [task(3), todo(2)], [], /1 tasks already work at once/, 'past the autopilot\'s limit of 1 at once'],
+      [ap, [todo(2), finished(4), finished(5)], [run(4, at(9)), run(5, at(10))], /Today's limit/, 'past the autopilot\'s limit of 2 tasks a day'],
+      [{ ...ap, hours: { from: 22, to: 6 } }, [todo(2)], [], /hours/, 'outside the autopilot\'s hours'],
+    ]
+    for (const [pilot, tasks, runs, refused, past] of cases) {
+      expect(coordinatorStartRefusal(pilot, todo(2), tasks, runs, at(12), false)).toBeUndefined()
+      expect(pastLimit(pilot, tasks, runs, at(12))).toBe(past)
+      expect(coordinatorStartRefusal(pilot, todo(2), tasks, runs, at(12), true)).toMatch(refused)
+      expect(coordinatorStartRefusal(pilot, todo(2), tasks, runs, at(12), false, { engine: true })).toMatch(refused)
+    }
+    expect(pastLimit(ap, [todo(2)], [], at(12))).toBeUndefined()
+    // Real refusals stay: not to do, 'after' not done.
+    expect(coordinatorStartRefusal(ap, task(2), [task(2)], [], at(12), false)).toBe('CO-2 is not to do (working)')
+    expect(coordinatorStartRefusal(ap, todo(2, { after: 'CO-1' }), [task(1, { state: 'todo' }), todo(2, { after: 'CO-1' })], [], at(12), false)).toMatch(/starts after CO-1/)
   })
 
   it('a chained task waits until the task before it is done', () => {
@@ -188,7 +311,7 @@ describe('the pace holds automatic starts only', () => {
     expect(scheduledWake({ ...DEFAULT_AUTOPILOT, lookForWork: true }, [done], wake, undefined, 0, wait)).toBe('paced')
     expect(scheduledWake(DEFAULT_AUTOPILOT, [done], wake, undefined, 0, wait)).toBe('idle')
     expect(scheduledWake(DEFAULT_AUTOPILOT, [task(1)], wake, undefined, 0, { go: true })).toBe('send')
-    expect(['send', 'look', 'idle', 'limit', 'paced'].map(k => skippedWake(k as never))).toEqual([false, false, true, true, true])
+    expect(['send', 'look', 'idle', 'limit', 'waits', 'paced'].map(k => skippedWake(k as never))).toEqual([false, false, true, true, true, true])
   })
 
   it('finds the account\'s quota and describes the pace for `autopilot show`', () => {
@@ -198,9 +321,43 @@ describe('the pace holds automatic starts only', () => {
     const q: Quotas = { claude: quota, codex: null, accounts: [account] }
     expect(accountQuota(q, account)).toBe(quota)
     expect(accountQuota({ ...q, claudeAccounts: [{ ...quota, key: 'claude:ffff0000', machines: [] }] }, account)).toBeNull()
-    const s = { program: 'claude', account, quota, policy: DEFAULT_PACE, verdict: { go: true } as PaceVerdict, today: 9 }
+    const s = { program: 'claude', account, quota, policy: { ...DEFAULT_PACE, mode: 'free' as const }, verdict: { go: true } as PaceVerdict, today: 9 }
     expect(paceLine(s, now)).toBe('claude:ab12cd34 Pro work · free with reserve · week 41 % / limit 60 % · today +9 % · 5 h 30 % · go')
+    expect(paceLine({ ...s, policy: DEFAULT_PACE }, now)).toBe('claude:ab12cd34 Pro work · free · week 41 % / limit 100 % · today +9 % · 5 h 30 % · go')
     expect(paceLine({ ...s, policy: { ...DEFAULT_PACE, mode: 'workdays' }, verdict: wait }, now)).toMatch(/· working days · week 41 % \/ line \d+ % · .* · wait: ahead of the target line until Fri 00:00$/)
     expect(paceLine({ ...s, account: null, quota: null, verdict: { go: true, unknown: true }, today: null }, now)).toBe('claude · quota unknown (no reading of claude on this project\'s machine) · task-count limits only')
+  })
+})
+
+describe('the health check', () => {
+  const now = at(12), hour = 3_600_000
+  it('runs every 3h unless set or off', () => {
+    expect(healthEvery(DEFAULT_AUTOPILOT)).toBe('3h')
+    expect(healthEvery({ health: '6h' })).toBe('6h')
+    expect(healthEvery({ health: 'off' })).toBeNull()
+  })
+
+  it('sums up done, waiting for the user, stuck for long and idle machines', () => {
+    const step = { at: 2, started: true, proofs: {}, rounds: {} }
+    const tasks = [
+      task(1, { step: { ...step, done: true } }),
+      task(2, { step: { ...step, done: true } }), // done before the last check
+      task(3, { state: 'waiting', waiting: 'Which DB?\nmore' }),
+      task(4, { step: { ...step, yourTurn: { reason: 'user', badge: 'Merge' } } }),
+      task(5, { stall: { cause: 'idle', reason: 'agent idle', since: now - 2 * hour } }),
+      task(6, { stall: { cause: 'idle', reason: 'agent idle', since: now - 10 * 60_000 } }), // not long yet
+      task(7, { state: 'todo', createdAt: 1 }),
+    ]
+    const seen = { 'CO-1': 'working', 'CO-2': 'done' } as const
+    expect(healthSummary(tasks, seen, now, ['mini'])).toEqual([
+      'Done since the last check: CO-1 (T1).',
+      'Waiting for the user: CO-3 (T3): Which DB?; CO-4 (T4): Merge.',
+      'Stuck for over 1 h: CO-5 (T5): agent idle, for 2 h.',
+      'Machines idle while 1 to-do task waits: mini.',
+      HEALTH_ACK,
+    ])
+    // No machine idle: no line for it. Nothing at all to say: no wake.
+    expect(healthSummary(tasks, seen, now, [])).not.toContainEqual(expect.stringMatching(/^Machines idle/))
+    expect(healthSummary([task(2, { step: { ...step, done: true } }), task(6)], seen, now, ['mini'])).toEqual([])
   })
 })

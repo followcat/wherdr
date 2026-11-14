@@ -110,7 +110,7 @@ describe('server dictation files', () => {
     const files = createServerFiles({ modelsDir: dir, models: [model], sets: sets(), fetch: r.fetch, retryMs: 1 })
     const last = (await until(files, 'm1')).at(-1)!
     expect(last.state).toBe('error')
-    expect((last as { error: string }).error).toMatch(/enc\.onnx: sha256 mismatch/)
+    expect((last as { error: string }).error).toMatch(/not the pinned one \(sha256 mismatch.*\(https:\/\/x\/enc\.onnx\)$/)
     expect(existsSync(path.join(dir, 'm1/enc.onnx')) || existsSync(path.join(dir, 'm1/enc.onnx.part'))).toBe(false)
     // The runtime came whole and stays; the next request fetches only the model again.
     expect(readFileSync(path.join(dir, 'runtime/r-1/rt.js'))).toEqual(rt)

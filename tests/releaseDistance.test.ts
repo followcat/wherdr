@@ -11,9 +11,9 @@ describe('newer stable releases', () => {
 
   it('counts only newer stable versions in numeric order', async () => {
     const fetch = fetcher()
-    const check = createUpdateChecker({ current: '1.2.0', env: { WHERDR_INSTALL: 'npm-global' }, fetch })
-    expect(await check()).toMatchObject({ latest: '1.10.0', behind: 2, missed: ['1.10.0', '1.3.0'], behindAtLeast: false, mode: 'npm-global', oneTap: true })
-    expect(fetch).toHaveBeenCalledTimes(2) // existing release and npm tarball checks
+    const check = createUpdateChecker({ current: '1.2.0', env: {}, fetch })
+    expect(await check()).toMatchObject({ latest: '1.10.0', behind: 2, missed: ['1.10.0', '1.3.0'], behindAtLeast: false })
+    expect(fetch).toHaveBeenCalledTimes(1)
     expect(fetch).toHaveBeenCalledWith(RELEASES_URL)
   })
 

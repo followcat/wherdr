@@ -13,11 +13,13 @@ const phases = computed<ShotPhase[]>(() => (compare.value ? ['before', 'after'] 
 // The viewer's set, in the order shown: each row's before, then its after.
 const srcs = computed(() => rows.value.flatMap(r => phases.value.flatMap(p => (r[p] ? [shotUrl(props.task, r[p]!.file)] : []))))
 const open = (s: Shot) => openLightbox(srcs.value, srcs.value.indexOf(shotUrl(props.task, s.file)))
+const reworked = computed(() => props.shots.some(s => s.rework))
 const label = (p: ShotPhase) => (p === 'before' ? tl('Before', 'Avant') : tl('After', 'Après'))
 </script>
 
 <template>
   <div class="shots" :class="{ compare }" :data-side="side" data-testid="task-shots">
+    <span v-if="reworked" class="mono-label muted" data-testid="shots-rework">{{ tl('After rework') }}</span>
     <div v-if="compare" class="shots-toggle" role="group" :aria-label="tl('Show', 'Afficher')">
       <UButton
         v-for="p in phases" :key="p" size="sm" color="neutral" :variant="side === p ? 'solid' : 'outline'"

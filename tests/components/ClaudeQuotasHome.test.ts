@@ -1,7 +1,7 @@
 // WHR-48 regression: after #89, machines whose Claude quotas were read showed
 // "Claude quotas not set up" right under their gauges (legacy status line
 // reported `missing`). The home list never shows an install block now: at
-// most two items in the machine's menu (the header "…" for a single machine).
+// Its set-up stays in Settings › Agents only (WHR-72): no menu item either.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import HomeView from '~/components/HomeView.vue'
@@ -47,14 +47,11 @@ describe('home list: Claude quota setup', () => {
     w.unmount()
   })
 
-  it('a single machine without a bar: its suggestion goes in the header "…"', async () => {
+  it('a single machine without a bar: no suggestion in the header "…"', async () => {
     homeQuotas.value = { ...quotas, claudeAccounts: [], claudeSetup: [{ key: '', state: 'outdated', installable: true }] }
     herdrState.value = { ok: true, panes: panes.slice(0, 1), workspaces: [{ id: 'w1', number: 1, label: 's0', focused: false, machine: '' }] } as never
     const w = await mountSuspended(HomeView, { global: { stubs: { UContextMenu: pass, UTooltip: pass } } })
     expect(w.find('.machine-bar').exists()).toBe(false)
-    expect(w.find('.home-actions .space-menu').exists()).toBe(true)
-    homeQuotas.value = { ...quotas, claudeAccounts: [], claudeSetup: [] }
-    await nextTick()
     expect(w.find('.home-actions .space-menu').exists()).toBe(false)
     w.unmount()
   })

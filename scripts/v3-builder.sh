@@ -10,16 +10,24 @@
 # Folder (WHERDR_V3_BUILDER_DIR, default ~/wherdr-v3-builder): src/ (its own clone), www/
 # (what is served: the latest build at the top, the last builds in www/builds/<sha>),
 # builds.log (one line per build), last-build.log (output of the last build).
-# Settings: WHERDR_V3_REPO (the repository to clone), WHERDR_V3_BUILDER_PORT (HTTPS port of
-# the serve entry, 8110), WHERDR_V3_KEEP (builds kept, 5), WHERDR_HEAVY_LOCK.
+# Settings: WHERDR_V3_REPO (the repository to clone), WHERDR_V3_BRANCH (package.json's
+# config.branch), WHERDR_V3_BUILDER_PORT (HTTPS port of the serve entry, 8110),
+# WHERDR_V3_KEEP (builds kept, 5), WHERDR_HEAVY_LOCK.
 set -euo pipefail
 
 ROOT="${WHERDR_V3_BUILDER_DIR:-$HOME/wherdr-v3-builder}"
+PKG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/package.json"
 # Default: the clone's remote, else the repository of the checkout this script is in.
 REPO="${WHERDR_V3_REPO:-$(git -C "$ROOT/src" remote get-url origin 2>/dev/null \
-  || node -p "require('$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/package.json').repository.url.replace(/^git\\+/, '')" 2>/dev/null || true)}"
+  || node -p "require('$PKG').repository.url.replace(/^git\\+/, '')" 2>/dev/null || true)}"
 [ -n "$REPO" ] || { echo "v3-builder: set WHERDR_V3_REPO (the repository to clone)" >&2; exit 2; }
-BRANCH=v3
+# The branch v3 is built from: package.json's config.branch, the one place that names it.
+# The installed copy ($ROOT/v3-builder.sh) has no checkout beside it: setup writes the branch
+# into the unit (WHERDR_V3_BRANCH); else the clone's package.json.
+branch_of() { node -p "require('$1').config?.branch ?? ''" 2>/dev/null || true; }
+BRANCH="${WHERDR_V3_BRANCH:-$(branch_of "$PKG")}"
+BRANCH="${BRANCH:-$(branch_of "$ROOT/src/package.json")}"
+[ -n "$BRANCH" ] || { echo "v3-builder: set WHERDR_V3_BRANCH (no package.json with config.branch)" >&2; exit 2; }
 PORT="${WHERDR_V3_BUILDER_PORT:-8110}"
 KEEP="${WHERDR_V3_KEEP:-5}"
 LOCK="${WHERDR_HEAVY_LOCK:-/tmp/wherdr-heavy.lock}"
@@ -70,7 +78,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-Environment="WHERDR_V3_BUILDER_DIR=$ROOT" "WHERDR_V3_REPO=$REPO" "WHERDR_V3_KEEP=$KEEP" "PATH=$PATH"
+Environment="WHERDR_V3_BUILDER_DIR=$ROOT" "WHERDR_V3_REPO=$REPO" "WHERDR_V3_BRANCH=$BRANCH" "WHERDR_V3_KEEP=$KEEP" "PATH=$PATH"
 UnsetEnvironment=CLAUDE_CODE_CHILD_SESSION CLAUDECODE CLAUDE_CODE_ENTRYPOINT HC_SCOPE HC_TERMINAL_ID HC_TERMINAL_SOCKET
 ExecStart=/bin/bash "$self"
 EOF
@@ -118,7 +126,7 @@ cmd_remove() {
 
 cmd_status() {
   echo "served:    $(cat "$WWW/COMMIT" 2>/dev/null || echo none)"
-  echo "origin/v3: $(git -C "$SRC" rev-parse "origin/$BRANCH" 2>/dev/null || echo unknown)"
+  echo "origin/$BRANCH: $(git -C "$SRC" rev-parse "origin/$BRANCH" 2>/dev/null || echo unknown)"
   [ ! -f "$ROOT/failed-commit" ] || echo "failed:    $(cat "$ROOT/failed-commit")"
   tail -n 5 "$ROOT/builds.log" 2>/dev/null || true
 }

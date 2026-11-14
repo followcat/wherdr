@@ -23,7 +23,7 @@
   to 8 MB per file.
 - **The first message was not sent**: the program opened on a dialog or was busy. Answer it in
   the terminal, then send the message again.
-- **A core machine is offline**: Settings › Agents › Machines shows its last error; **Reconnect**
+- **A core machine is offline**: Settings › Machines shows its last error; **Reconnect**
   tries again. Check that this host can log in with `ssh -o BatchMode=yes <target> true` and that
   herdr-core is installed there ([Machines](machines.md)).
 - **wherdr stops when you log out** (Linux): lingering is off. Run `loginctl enable-linger` once

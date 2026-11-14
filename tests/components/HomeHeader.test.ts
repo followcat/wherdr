@@ -1,9 +1,7 @@
 // The home list's header: the Board button (WHR-395, where it leads:
-// tests/boardEntry.test.ts) and each machine's menu, which always carries the
-// actions herdr-core can do (WHR-394: it was empty without a Claude quota suggestion).
-// With the machine bar off, the menus live on the machine chips and the offline line.
+// tests/boardEntry.test.ts). With the machine bar off, no machine chips
+// (WHR-72): only a machine that is not connected gets a line, with Reconnect.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { defineComponent, h } from 'vue'
 import { mockNuxtImport, mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import HomeView from '~/components/HomeView.vue'
 import { eventsOpen, herdrState } from '~/composables/useHerdr'
@@ -24,17 +22,8 @@ const pane = (id: string, m: string): Pane => ({
   id, workspace: id.split(':')[0]!, tab: `${id.split(':')[0]}:t1`, tabLabel: null, agent: 'claude', name: null, label: null,
   status: 'idle', title: `Agent ${id}`, cwd: '/tmp/demo', agentSession: null, machine: m,
 })
-// The dropdown renders its items inline so the test can read and pick them.
-type Item = { label: string, onSelect: () => void }
-const Dropdown = defineComponent({
-  props: { items: { type: Array, default: () => [] } },
-  setup: (props, { slots }) => () => h('div', { class: 'dd' }, [slots.default?.(), ...(props.items as Item[][]).flat().map(i =>
-    h('button', { class: 'dd-item', onClick: () => i.onSelect() }, i.label))]),
-})
 const pass = { template: '<div><slot /></div>' }
-const mountHome = () => mountSuspended(HomeView, { global: { stubs: { UDropdownMenu: Dropdown, UContextMenu: pass, UTooltip: pass } } })
-const menuOf = (w: Awaited<ReturnType<typeof mountHome>>, key: string) =>
-  w.findAll('.dd').find(d => d.find(`[data-machine="${key}"]`).exists() || d.element.closest(`[data-machine="${key}"]`))!
+const mountHome = () => mountSuspended(HomeView, { global: { stubs: { UContextMenu: pass, UTooltip: pass } } })
 
 describe('home list header', () => {
   beforeEach(() => {
@@ -62,26 +51,21 @@ describe('home list header', () => {
     w.unmount()
   })
 
-  it('a machine with no agents gets actions, and New agent here preselects it', async () => {
+  it('every machine online: no machine chips and no offline line', async () => {
+    herdrState.value = { ...herdrState.value, machines: [machine('', 'Local'), machine('dell', 'Dell')] } as never
     const w = await mountHome()
-    const local = menuOf(w, 'local')
-    expect(local.findAll('.dd-item').map(b => b.text())).toEqual(['New agent here', 'Machine settings'])
-    expect(w.find('.state-machines').exists()).toBe(true)
-    await local.findAll('.dd-item')[0]!.trigger('click')
-    expect(newAgentOpen.value).toBe(true)
-    expect(newAgentMachine.value).toBe('')
-    await menuOf(w, 'dell').findAll('.dd-item')[1]!.trigger('click')
-    expect(navigate).toHaveBeenCalledWith({ path: '/settings', query: { section: 'agents' } })
+    expect(w.find('.state-machines').exists()).toBe(false)
+    expect(w.find('.state-away').exists()).toBe(false)
     w.unmount()
   })
 
-  it('an offline core machine offers Reconnect instead of New agent', async () => {
+  it('an offline machine gets one line with Reconnect', async () => {
     const w = await mountHome()
-    const vps = menuOf(w, 'vps')
-    expect(vps.findAll('.dd-item').map(b => b.text())).toEqual(['Reconnect', 'Machine settings'])
-    await vps.findAll('.dd-item')[0]!.trigger('click')
-    await new Promise(r => setTimeout(r, 20))
-    expect(connect).toHaveBeenCalled()
+    const lines = w.findAll('.state-away-item')
+    expect(lines.map(l => l.attributes('data-machine'))).toEqual(['vps'])
+    expect(lines[0]!.text()).toMatch(/Vps.*offline/i)
+    await lines[0]!.get('.state-away-reconnect').trigger('click')
+    await vi.waitFor(() => expect(connect).toHaveBeenCalled())
     w.unmount()
   })
 })

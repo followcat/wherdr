@@ -6,8 +6,11 @@ import type { MdView } from '~/utils/filesPrefs'
 
 // Read-only browser of the agent's folder: listing, then a file's text or image.
 // `file`: one file only, a path as written in the conversation (ChatView's
-// Preview), with no folder around it. Any file shown can be downloaded.
-const props = defineProps<{ paneId: string, file?: string }>()
+// Preview), with no folder around it. inFolder: that file is a path relative to
+// the agent's folder, read only there (an agent's `ui show file`). Any file
+// shown can be downloaded.
+const props = defineProps<{ paneId: string, file?: string, inFolder?: boolean }>()
+const written = computed(() => Boolean(props.file) && !props.inFolder)
 const listing = ref<FilesListing | null>(null)
 const preview = ref<FilePreview | null>(null)
 const loading = ref(false)
@@ -33,7 +36,7 @@ function openDir(path: string | null) {
   const q = path === null ? '' : `&path=${encodeURIComponent(path)}`
   return load<FilesListing>(`/api/files?pane=${pane()}${q}`, (d) => { listing.value = d; preview.value = null })
 }
-const fileQuery = (path: string) => `pane=${pane()}&path=${encodeURIComponent(path)}${props.file ? '&from=chat' : ''}`
+const fileQuery = (path: string) => `pane=${pane()}&path=${encodeURIComponent(path)}${written.value ? '&from=chat' : ''}`
 // The file asked for last, as asked (a conversation's "~/…" stays so).
 let shown = ''
 function openFile(path: string) {
@@ -125,7 +128,7 @@ async function loadImages(el: HTMLElement, from: string) {
   const run = ++imageRun
   if (imagesOf !== from) images.clear()
   imagesOf = from
-  const absolute = Boolean(props.file)
+  const absolute = written.value
   for (const img of Array.from(el.querySelectorAll<HTMLImageElement>('img[data-src]')).slice(0, MAX_IMAGES)) {
     const target = resolveLink(from, img.dataset.src || '', absolute)
     if (target?.kind !== 'file') continue
@@ -164,20 +167,13 @@ function onDocClick(e: MouseEvent) {
   if (copy) {
     const text = copy.closest('.code-block')?.querySelector('pre')?.textContent
     if (text == null) return
-    navigator.clipboard.writeText(text).then(() => {
-      copy.textContent = t('Copied')
-      copy.classList.add('done')
-      setTimeout(() => {
-        copy.textContent = t('Copy')
-        copy.classList.remove('done')
-      }, 1400)
-    }).catch(() => toast(t('Copy failed'), true))
+    copyCodeBlock(copy, text)
     return
   }
   const a = target.closest?.('a[href]') as HTMLAnchorElement | null
   const from = preview.value?.path
   if (!a || !from) return
-  const to = resolveLink(from, a.getAttribute('href') || '', Boolean(props.file))
+  const to = resolveLink(from, a.getAttribute('href') || '', written.value)
   if (!to || to.kind === 'external') return
   e.preventDefault()
   if (to.kind === 'anchor') {

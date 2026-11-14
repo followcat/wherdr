@@ -1,13 +1,24 @@
 <script setup lang="ts">
 // Settings › Terminal › Phone key bar: the order of the keys in the phone key
-// bar (PhoneKeybar.vue), the same in the Conversation and the Terminal. Drag
-// a row by its ⠿ handle (or arrow keys on it), or use its up and down buttons.
+// bar (PhoneKeybar.vue), the same in the Conversation and the Terminal, and
+// which ones it shows. Drag a row by its ⠿ handle (or arrow keys on it), or use
+// its up and down buttons; uncheck a key to hide it (it keeps its place).
 // Kept on this device (composables/useHerdr.ts, utils/keybarOrder.ts).
-import { isDefaultKeyOrder, moveKey, PHONE_KEY_IDS, type PhoneKeyId } from '~/utils/keybarOrder'
+import { isDefaultKeyOrder, isRequiredKey, moveKey, PHONE_KEY_IDS, shownKeys, type PhoneKeyId } from '~/utils/keybarOrder'
 import { PHONE_KEYS, phoneKeyName } from '~/utils/phoneKeys'
 
 const rows = computed(() => phoneKeyOrder.value.map(id => PHONE_KEYS[id]))
-const isDefault = computed(() => isDefaultKeyOrder(phoneKeyOrder.value))
+const preview = computed(() => shownKeys(phoneKeyOrder.value, phoneKeyHidden.value).map(id => PHONE_KEYS[id]))
+const isDefault = computed(() => isDefaultKeyOrder(phoneKeyOrder.value) && !phoneKeyHidden.value.length)
+const shown = (id: PhoneKeyId) => !phoneKeyHidden.value.includes(id)
+// The keyboard key, and the last key still shown, cannot be hidden.
+const locked = (id: PhoneKeyId) => isRequiredKey(id) || (shown(id) && preview.value.length === 1)
+function setShown(id: PhoneKeyId, on: boolean) {
+  if (!on && locked(id)) return
+  phoneKeyHidden.value = on ? phoneKeyHidden.value.filter(k => k !== id) : [...phoneKeyHidden.value, id]
+  haptic()
+  announcement.value = tl(`${phoneKeyName(PHONE_KEYS[id])}: ${on ? 'shown' : 'hidden'}`)
+}
 const announcement = ref('')
 const list = ref<HTMLElement | null>(null)
 
@@ -41,7 +52,8 @@ function onKey(id: PhoneKeyId, e: KeyboardEvent) {
 }
 function reset() {
   phoneKeyOrder.value = [...PHONE_KEY_IDS]
-  announcement.value = tl('Default order restored', 'Ordre par défaut rétabli')
+  phoneKeyHidden.value = []
+  announcement.value = t('Default order restored, every key shown')
 }
 
 // Drag by the handle (mouse, finger, pen), as in MachineBarSettings.vue: the
@@ -104,27 +116,31 @@ function onGrab(id: PhoneKeyId, e: PointerEvent) {
 <template>
   <div class="settings-group phone-key-order">
     <h3>{{ tl('Phone key bar', 'Barre de touches du téléphone') }}</h3>
-    <p class="muted settings-lead">{{ tl('One row that scrolls sideways, in the Conversation and the Terminal: only the first keys show at once. Put the ones you use most first.', 'Une seule rangée qui défile sur le côté, dans la Conversation et le Terminal : seules les premières touches sont visibles d’emblée. Mets en tête celles dont tu te sers le plus.') }}</p>
+    <p class="muted settings-lead">{{ t('One row that scrolls sideways, in the Conversation and the Terminal: only the first keys show at once. Put the ones you use most first, and uncheck the ones you never use.') }}</p>
     <p class="bar-pref-head">{{ tl('Preview', 'Aperçu') }}</p>
     <div class="key-order-preview" aria-hidden="true">
-      <span v-for="k in rows" :key="k.id" class="key-order-cap" :class="{ danger: k.danger }" :data-key="k.id">
+      <span v-for="k in preview" :key="k.id" class="key-order-cap" :class="{ danger: k.danger }" :data-key="k.id">
         <UIcon v-if="k.icon" :name="k.icon" mode="svg" /><template v-else>{{ k.cap!() }}</template>
       </span>
     </div>
     <p class="bar-pref-head">{{ tl('Order', 'Ordre') }}</p>
     <ul ref="list" class="bar-pref-list key-order-list" :class="{ dragging: drag }" :aria-label="tl('Order of the phone keys', 'Ordre des touches du téléphone')">
       <li
-        v-for="(k, i) in rows" :key="k.id" class="bar-pref-row" :class="{ moving: drag?.id === k.id }"
+        v-for="(k, i) in rows" :key="k.id" class="bar-pref-row" :class="{ moving: drag?.id === k.id, off: !shown(k.id) }"
         :style="{ transform: shift(i) }" :data-key-row="k.id"
       >
         <button
           type="button" class="bar-pref-grip" :aria-label="tl(`Move ${phoneKeyName(k)} — up and down arrows`, `Déplacer ${phoneKeyName(k)} — flèches haut et bas`)"
           :title="t('Drag to reorder')" @pointerdown="onGrab(k.id, $event)" @keydown="onKey(k.id, $event)"
         >⠿</button>
-        <span class="key-order-label">
+        <label class="key-order-label" :title="isRequiredKey(k.id) ? t('Needed to open the keyboard') : undefined">
+          <input
+            class="key-order-check" type="checkbox" :checked="shown(k.id)" :disabled="locked(k.id)"
+            :aria-label="tl(`Show ${phoneKeyName(k)}`)" @change="setShown(k.id, ($event.target as HTMLInputElement).checked)"
+          >
           <span class="key-order-cap" :class="{ danger: k.danger }" aria-hidden="true"><UIcon v-if="k.icon" :name="k.icon" mode="svg" /><template v-else>{{ k.cap!() }}</template></span>
-          <span class="key-order-name">{{ phoneKeyName(k) }}</span>
-        </span>
+          <span class="key-order-name">{{ phoneKeyName(k) }}<small v-if="isRequiredKey(k.id)" class="key-order-required">{{ t('Always shown') }}</small></span>
+        </label>
         <button
           type="button" class="key-order-step key-order-up" :disabled="i === 0"
           :aria-label="tl(`Move ${phoneKeyName(k)} up`, `Monter ${phoneKeyName(k)}`)" @click="step(k.id, -1)"
@@ -137,7 +153,7 @@ function onGrab(id: PhoneKeyId, e: PointerEvent) {
     </ul>
     <p class="key-order-announcement" aria-live="polite">{{ announcement }}</p>
     <UButton color="neutral" variant="outline" icon="i-lucide-rotate-ccw" class="bar-pref-reset" :disabled="isDefault" @click="reset">
-      {{ tl('Reset to default order', 'Rétablir l’ordre par défaut') }}
+      {{ t('Reset to default') }}
     </UButton>
     <p class="muted settings-hint">{{ tl('Saved on this device.', 'Enregistré sur cet appareil.') }}</p>
   </div>

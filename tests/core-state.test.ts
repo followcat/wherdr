@@ -89,3 +89,14 @@ describe('Command Code agent kind', () => {
     expect(TRANSCRIPT_AGENTS).toContain('cmd')
   })
 })
+
+it('keeps a Codex stopped by its update as a Codex waiting for a restart, and tells an installing one', () => {
+  const state = coreState([
+    terminal('t1', { labels: { 'wherdr.codex-updated': '1' } }),
+    terminal('t2', { template: 'codex', title: 'Installing Codex 0.167.0', status: { state: 'idle' } }),
+    terminal('t3', { agent: 'codex', labels: { 'wherdr.codex-updated': '1' }, status: { state: 'idle' } }),
+  ], [])
+  expect(state.panes.map(p => [p.agent, p.status, p.stopped?.reason ?? null, p.installing ?? false])).toEqual([
+    ['codex', 'blocked', 'update', false], ['codex', 'idle', null, true], ['codex', 'idle', null, false],
+  ])
+})

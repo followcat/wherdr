@@ -1,7 +1,7 @@
 // New app version (redeployment): state of the "Reload" banner,
 // waiting service worker, periodic check of the served build.
 // Pure logic and anti-loop guard: app/utils/appVersion.ts.
-import { installedSwAction, isNewBuild, mayReloadForChunk } from '../utils/appVersion'
+import { installedSwAction, isNewBuild } from '../utils/appVersion'
 import { onceEvery } from '../utils/onceEvery'
 
 export const newVersionReady = ref(false)
@@ -52,19 +52,15 @@ async function startupBuildCheck() {
   } catch { /* offline: the periodic check will catch up */ }
 }
 
-// A file of the running build is missing: reload to a newer build once (guard
-// against loops), otherwise the banner. Used only for missing-chunk recovery:
-// a deployment removed it (terminal opened for the first time after a deploy).
-// Offline or same build: nothing. True if a newer build is served.
-export async function reloadIfNewBuild(): Promise<boolean> {
+// A file of the running build could not be loaded (a deployment removed it, or
+// the server is restarting): the banner when a newer build is served, never a
+// reload by itself. Offline or same build: nothing. True if a newer build is served.
+export async function offerNewBuild(): Promise<boolean> {
   try {
     const res = await fetch(`/_nuxt/builds/latest.json?${Date.now()}`, { cache: 'no-store' })
     if (!res.ok || !isNewBuild(useRuntimeConfig().app.buildId, await res.json())) return false
   } catch { return false } // offline: the periodic check will catch up
-  let storage: Storage | null = null
-  try { storage = sessionStorage } catch { /* unavailable */ }
-  if (mayReloadForChunk(storage, Date.now())) void applyNewVersion()
-  else markNew()
+  markNew()
   return true
 }
 
@@ -95,9 +91,9 @@ export async function checkNewVersion() {
   try { await swReg?.update() } catch { /* same */ }
 }
 
-// Activates the new SW if it is waiting, then reloads (at the `hash` address if given).
-// Drafts are already in localStorage (useDraft).
-export async function applyNewVersion(hash?: string) {
+// Activates the new SW if it is waiting, then reloads. Only on the user's
+// request (Reload). Drafts are already in localStorage (useDraft).
+export async function applyNewVersion() {
   if (applying) return
   applying = true
   // New SW still installing: we wait for it to be ready.
@@ -116,6 +112,5 @@ export async function applyNewVersion(hash?: string) {
       waiting.postMessage({ type: 'skip-waiting' })
     })
   }
-  if (hash !== undefined && location.hash !== hash) location.replace(location.pathname + location.search + hash)
   location.reload()
 }

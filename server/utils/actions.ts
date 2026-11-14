@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { DATA_DIR, HOME, UPLOAD_DIR, UPLOAD_TTL_MS } from './env'
 import { type Machine, getMachine } from './machines'
+import { inProjectsHome } from '../../bin/lib/userpath.mjs'
 
 const fsp = fs.promises
 const px = path.posix
@@ -21,9 +22,11 @@ async function readDirsFile(): Promise<{ dirs?: string[], machines?: Record<stri
 }
 const dirsKey = (m: DirsOwner) => m.profileId || m.key
 export type DirsOwner = Pick<Machine, 'local' | 'key' | 'profileId'>
+// Never a herdr-projects folder of this machine (a v2 import used to copy them):
+// the next folder remembered writes the list without them.
 export async function recentDirs(m: DirsOwner = getMachine('')!): Promise<string[]> {
   const f = await readDirsFile()
-  return (m.local ? f.dirs : f.machines && f.machines[dirsKey(m)]) || []
+  return m.local ? (f.dirs || []).filter(d => !inProjectsHome(d, process.env, HOME)) : (f.machines && f.machines[dirsKey(m)]) || []
 }
 export async function rememberDir(d: string, m: DirsOwner) {
   const f = await readDirsFile()

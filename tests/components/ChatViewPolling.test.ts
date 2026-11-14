@@ -5,7 +5,8 @@ import { defineComponent, getCurrentInstance, h, nextTick, shallowRef } from 'vu
 import { UApp } from '#components'
 import ChatView from '~/components/ChatView.vue'
 import { herdrState } from '~/composables/useHerdr'
-import { outboxDrop, outboxFor, outboxPrune, outboxSend } from '~/composables/useOutbox'
+import { outboxAdd, outboxDrop, outboxFor, outboxPrune, outboxSend, outboxSync } from '~/composables/useOutbox'
+import { useDraft } from '~/composables/useDraft'
 import type { ChatItem, ChatResponse, Pane } from '#shared/types'
 
 const idle: Pane = { id: 'w1:p7', workspace: 'w1', tab: 'w1:t1', tabLabel: null, agent: 'claude', name: null, label: null, status: 'idle', title: null, cwd: '/home/user/demo', agentSession: null }
@@ -211,5 +212,27 @@ describe('sent message typed into the agent', () => {
       if (id) outboxDrop(idle.id, id)
       w.unmount()
     }
+  })
+})
+
+describe('a message held for Codex while it installs', () => {
+  const codex = { ...idle, id: 'w1:p9', agent: 'codex' as const, coreAddress: 't9', installing: true }
+  const held = { id: 'w-held1', text: 'Hi', state: 'held' as const }
+  afterEach(() => { outboxDrop(codex.id, held.id); useDraft(codex.id).text = '' })
+  it('survives a failed state, then comes back into the field once Codex is gone', () => {
+    outboxAdd(codex.id, held)
+    // A connection reset: no panes, state not ok. Nothing changes.
+    outboxSync(codex.id, undefined, false)
+    expect(outboxFor(codex.id).map(q => q.state)).toEqual(['held'])
+    outboxSync(codex.id, { ...codex, queued: [held] }, true)
+    outboxSync(codex.id, undefined, true)
+    expect(outboxFor(codex.id)).toEqual([])
+    expect(useDraft(codex.id).text).toBe('Hi')
+  })
+  it('comes back into the field when its send timed out, Codex still there', () => {
+    outboxAdd(codex.id, held)
+    outboxSync(codex.id, { ...codex, installing: undefined, queued: [{ ...held, state: 'failed', reason: 'unseen' }] }, true)
+    expect(outboxFor(codex.id)).toEqual([])
+    expect(useDraft(codex.id).text).toBe('Hi')
   })
 })

@@ -7,6 +7,7 @@ import { machineOn, type CoreAdminDeps } from './coreCreate'
 import { exec } from './pmLaunch'
 import { HerdrError } from './herdr'
 import type { Project } from '../../shared/pm/project'
+import { parseRepoList } from '../../shared/pm/workspaceMap'
 
 export const REPO_DEPTH = 4 // ~/a/b/c/.git: a repository three folders down
 const MAX = 500
@@ -51,4 +52,24 @@ export async function remoteBranches(deps: CoreAdminDeps, p: Pick<Project, 'mach
   const r = await exec(deps, on, BRANCHES_SCRIPT, [p.path])
   if (r.code !== 0) throw new HerdrError('core', 'Could not read the branches of this repository')
   return parseBranches(r.out)
+}
+
+// A workspace's repositories (`wherdr pm map list`, pmMap.ts): every git
+// repository under its root, up to three folders down, without node_modules or
+// hidden folders. For each: "\x1e<rel path>", then its first
+// manifest and its README, each "\x1f<file name>\n<first bytes>".
+const LIST_DEPTH = 3
+export const REPO_LIST_SCRIPT = `cd "$1" 2>/dev/null || exit 1
+find . -mindepth 1 -maxdepth ${LIST_DEPTH + 1} \\( -name node_modules -o \\( -name '.*' ! -name .git \\) \\) -prune -o -name .git -print 2>/dev/null | head -n 300 | while IFS= read -r g; do
+  d=\${g%/.git}; printf '\\036%s\\n' "\${d#./}"
+  for f in package.json Cargo.toml pyproject.toml; do [ -f "$d/$f" ] && { printf '\\037%s\\n' "$f"; head -c 4000 "$d/$f"; break; }; done
+  r=$(ls "$d" 2>/dev/null | grep -i -m 1 '^readme'); [ -n "$r" ] && { printf '\\037%s\\n' "$r"; head -c 3000 "$d/$r"; }
+done
+exit 0`
+
+export async function listRepos(deps: CoreAdminDeps, machine: string, root: string) {
+  const { on } = machineOn(deps, machine)
+  const r = await exec(deps, on, REPO_LIST_SCRIPT, [root])
+  if (r.code !== 0) throw new HerdrError('core', `Could not list the repositories under ${root}`)
+  return parseRepoList(r.out, root)
 }

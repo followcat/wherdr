@@ -115,6 +115,18 @@ describe('paths and references', () => {
     expect(parseAttachmentLine('/home/dev/.cache/herdr-web/uploads/a.jpg')).toBeNull()
   })
 
+  it('recognizes a file attached on herdr-core (v3), on macOS and Linux', () => {
+    for (const state of ['/home/user/.local/state', '/Users/user/.local/state']) {
+      const p = `${state}/herdr-core/default/files/w1-p1/${stored}`
+      expect(parseAttachmentLine(p)).toEqual({ path: p, name: 'spec.pdf' })
+      expect(parseAttachmentLine(`@${p}`)).toEqual({ path: p, name: 'spec.pdf' })
+    }
+    // Same folder, not a name wherdr gives a file: a photo or a pasted file.
+    expect(parseAttachmentLine('/home/user/.local/state/herdr-core/default/files/t1/2026-10-02T10-20-30-456Z-a1b2c3.jpg')).toBeNull()
+    expect(parseAttachmentLine(`/home/user/.local/state/herdr-core/default/screens/t1/${stored}`)).toBeNull()
+    expect(parseAttachmentLine(`see /home/user/.local/state/herdr-core/default/files/t1/${stored}`)).toBeNull()
+  })
+
   it('picks an icon by type', () => {
     expect(attachmentIcon('a.pdf')).toBe('i-lucide-file-text')
     expect(attachmentIcon('a.ipynb')).toBe('i-lucide-notebook-pen')

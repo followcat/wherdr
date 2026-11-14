@@ -91,7 +91,7 @@ function onFreeKey(e: KeyboardEvent, i: number, label: string) {
 // go to the terminal (the card follows the re-read screen), 1-9 picks the
 // option (or opens the free-answer field), ←/→ change tabs. Field open: the
 // keyboard is its own.
-const disabled = computed(() => busy.value || props.prompt?.unavailable || !eventsOpen.value || offlineView.value)
+const disabled = computed(() => busy.value || props.prompt?.unavailable || !linkShown.value || offlineView.value)
 const keyboard = computed(() => Boolean(props.keys && desk.value && props.prompt && !props.prompt.kind && props.prompt.options.length && freeAt.value === null && !disabled.value))
 useCardKeys(() => keyboard.value, () => ({ digits: Math.min(9, props.prompt?.options.length || 0), enter: true, tabs: Boolean(tabs.value) }), (k) => {
   const p = props.prompt

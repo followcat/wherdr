@@ -65,14 +65,19 @@ export function pathCandidate(code: string): string | null {
   return null
 }
 
+// `p` is `root` or lies under it (both absolute and normalized).
+export const insideRoot = (root: string, p: string) => p === root || p.startsWith(root === '/' ? '/' : root + '/')
+
 // Absolute path for a path written by an agent: `~` is the machine's home,
 // a relative path is relative to the agent's folder (its home when the folder
-// is unknown or outside home). Null outside the home folder.
-export function resolveAgentPath(written: string, cwd: string | null | undefined, home: string): string | null {
+// is unknown or outside `roots`). Null outside `roots` (the home folder by
+// default; shared/chatFiles.ts).
+export function resolveAgentPath(written: string, cwd: string | null | undefined, home: string, roots: string[] = [home]): string | null {
   const p = stripPosition(String(written || '').trim())
   if (!p || !home.startsWith('/') || /[\0\n\r]/.test(p)) return null
   const root = posixResolve('/', home)
-  const inside = (r: string) => r === root || r.startsWith(root === '/' ? '/' : root + '/')
+  const allowed = roots.filter(r => r.startsWith('/')).map(r => posixResolve('/', r))
+  const inside = (r: string) => allowed.some(a => insideRoot(a, r))
   const base = cwd && cwd.startsWith('/') && inside(posixResolve('/', cwd)) ? posixResolve('/', cwd) : root
   const r = posixResolve(base, p.replace(/^~(?=$|\/)/, root))
   return inside(r) ? r : null

@@ -56,6 +56,16 @@ describe('protected folders in the file browser', () => {
     expect(await files.readWrittenPreview(m, home, '~/.config/other/ok.txt')).toMatchObject({ kind: 'text', text: 'ok\n' })
   })
 
+  it('keeps them hidden at every level, unless "Also show protected files" is on', async () => {
+    const all = { level: 'all', protected: false } as const
+    const shown = { level: 'all', protected: true } as const
+    const project = path.join(home, 'project')
+    await expect(files.readWrittenPreview(m, home, '~/.ssh/id_ed25519', all)).rejects.toMatchObject({ code: 'protected' })
+    await expect(files.readWrittenBytes(m, project, 'auth-link.json', all)).rejects.toMatchObject({ code: 'protected' })
+    expect(await files.readWrittenPreview(m, home, '~/.ssh/id_ed25519', shown)).toMatchObject({ kind: 'text', text: 'key\n' })
+    expect(await files.readWrittenBytes(m, project, 'auth-link.json', shown)).toMatchObject({ body: Buffer.from('{"secret":"s"}\n') })
+  })
+
   it('refuses them inside a browsed project, and through a symlink', async () => {
     // The app's own folder browsed as a project: its data folder stays hidden.
     await expect(files.readFilePreview(m, app, 'data/auth.json')).rejects.toMatchObject({ code: 'protected' })

@@ -1,13 +1,6 @@
 // Settings: sections and Back button.
 
-export const SETTINGS_SECTIONS = ['appearance', 'conversation', 'terminal', 'agents', 'machines', 'projects', 'plugins', 'phone', 'notifications', 'security', 'shortcuts', 'about'] as const
-export type SettingsSection = typeof SETTINGS_SECTIONS[number]
-
-// Old section ids still linked from elsewhere (coordinator and autopilot
-// texts): ?section=pacing opens Agents, scrolled to its Pace group.
-export const SETTINGS_ALIASES: Record<string, { section: SettingsSection, anchor: string }> = {
-  pacing: { section: 'agents', anchor: 'settings-pace' },
-}
+export { SETTINGS_ALIASES, SETTINGS_SECTIONS, type SettingsSection } from '../../shared/appLinks'
 
 // Phone: an open section is a history entry (?section=…), above
 // the list: Back pops it (like Android's Back button); opened

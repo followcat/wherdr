@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanAutomation, firesOn, firingTask, globMatch, taskEvents, type Automation } from '../shared/pm/automations'
+import { cleanAutomation, firesOn, firingKind, firingTask, globMatch, scheduleWords, taskEvents, type Automation } from '../shared/pm/automations'
 import type { Task } from '../shared/pm/run'
 import type { Quotas } from '../shared/types'
 import { createPmStore } from '../server/utils/pmStore'
@@ -22,7 +22,7 @@ vi.mock('../server/utils/pmLaunch', async orig => ({
 // The quota readings the pace reads; none by default (quota unknown).
 const quotas = vi.hoisted(() => ({ q: null as Quotas | null }))
 vi.mock('../server/utils/quotas', async orig => ({ ...(await orig<object>()), readQuotas: async () => quotas.q ?? { claude: null, codex: null } }))
-const { automationTick, fireAutomation } = await import('../server/utils/pmAutomations')
+const { answerAutomationProposal, automationTick, fireAutomation } = await import('../server/utils/pmAutomations')
 
 const at = (d: number, h = 0, mi = 0) => new Date(2026, 10, d, h, mi).getTime()
 const task = (id: string, more: Partial<Task> = {}): Task => ({ id, project: 'CO', title: 'Fix', description: '', type: 'feature', state: 'working', createdAt: 0, ...more })
@@ -68,8 +68,11 @@ describe('automations', () => {
     expect(firesOn({ ...a, filter: undefined }, ev(task('CO-1', { auto: 'a' })))).toBe(false)
     expect(firesOn({ ...a, filter: undefined }, ev(task('CO-1', { auto: 'other' })))).toBe(false)
     expect(firesOn({ ...a, event: 'failed' }, ev(task('CO-1', { title: 'Docs' })))).toBe(false)
+    // A task added then a start that failed is a failure; held for room, it waits.
+    expect([{ error: 'boom', task: 'CO-1' }, { error: 'No room', task: 'CO-1', held: true as const }, { error: 'paced: limit' }, {}].map(f => firingKind({ at: 0, by: 'schedule', ...f })))
+      .toEqual(['failed', 'waits', 'skipped', 'fired'])
     expect(firingTask(auto({ type: 'study' }), 'CO', 'feature', at(5, 4, 17), 'CO-1 (Fix): merged'))
-      .toEqual({ project: 'CO', title: 'A · 2026-11-05 04:17', type: 'study', auto: 'a', origin: 'automation', description: 'Do it\n\nTriggered by CO-1 (Fix): merged.' })
+      .toEqual({ project: 'CO', title: 'A · 2026-11-05 04:17', type: 'study', auto: 'a', origin: 'automation', addedBy: 'automation', description: 'Do it\n\nTriggered by CO-1 (Fix): merged.' })
   })
 })
 
@@ -135,6 +138,44 @@ describe('the engine', () => {
     expect(await cli(['automation', 'list'])).toMatchObject({ automations: ['off  clean  daily 04:17  Clean'] })
     expect(await cli(['automation', 'show', 'clean'])).toMatchObject({ automation: { prompt: 'Do it' } })
     await expect(cli(['automation', 'show', 'nope'])).rejects.toThrow('Unknown automation')
-    for (const verb of ['add', 'on', 'run', 'remove']) await expect(cli(['automation', verb, 'clean'])).rejects.toThrow(/only in wherdr, by the user/)
+    for (const verb of ['add', 'on', 'run', 'remove']) await expect(cli(['automation', verb, 'clean'])).rejects.toThrow(/Only the user switches/)
+  })
+
+  it('automation propose: refused in a wake; accepted, it applies; refused, nothing changes', async () => {
+    const token = await issueToken(store, 'CO')
+    const turn = async (kind: 'user' | 'wake') => store.saveCoordinator({ ...(await store.coordinator('CO'))!, turn: { kind, at: Date.now(), said: 'Clean the tests every weekday' } })
+    const propose = (argv: string[], input?: object) => runCommand(deps(), token, { argv: ['automation', 'propose', ...argv], ...(input ? { input: JSON.stringify(input) } : {}) })
+    const answer = async (accept: boolean) => answerAutomationProposal(deps(), 'CO', (await store.automations('CO')).proposals!.find(p => !p.outcome)!.id, accept)
+    await save([auto({ id: 'clean', name: 'Clean', schedule: 'daily 04:17', on: false, firings: [{ at: 1, by: 'user', task: 'CO-1' }] })])
+    await turn('wake')
+    await expect(propose([], { name: 'Docs', prompt: 'Check', event: 'merged' })).rejects.toThrow(/only in a turn that comes from the user/)
+    await turn('user')
+    await expect(propose([], { name: 'Docs', prompt: 'Check', type: 'nope', event: 'merged' })).rejects.toThrow(/type: one of/)
+    // New: accepted, it is added switched on.
+    expect(await propose([], { name: 'Docs check', prompt: 'Check the docs', event: 'merged', filter: 'docs*', on: false })).toMatchObject({ proposed: { action: 'add', by: 'CO', said: 'Clean the tests every weekday' } })
+    expect((await store.automations('CO')).automations).toHaveLength(1)
+    await answer(true)
+    expect((await store.automations('CO')).automations[1]).toMatchObject({ id: 'docs-check', on: true, event: 'merged', filter: 'docs*' })
+    // A change: refused, nothing changes; accepted, it keeps its switch and firings.
+    await propose(['clean'], { name: 'Clean', prompt: 'Remove dead tests', schedule: '0 9 * * 1-5' })
+    await answer(false)
+    expect((await store.automations('CO')).automations[0]).toMatchObject({ prompt: 'Do it', schedule: 'daily 04:17' })
+    await propose(['clean'], { name: 'Clean', prompt: 'Remove dead tests', schedule: '0 9 * * 1-5' })
+    await answer(true)
+    expect((await store.automations('CO')).automations[0]).toMatchObject({ prompt: 'Remove dead tests', on: false, firings: [{ task: 'CO-1' }] })
+    expect(Object.fromEntries(['0 9 * * 1-5', 'daily 09:00', 'mon,thu 09:00', '0 9,14 * * *', '0 9 1 * *', '*/15 * * * *', '0 */2 * * *', '30 9-17 * * 1-5', '5,20 * * * *', '0 0 * 1 *', '0 9 1 * 1', '0 9 1 * 0-6', '0 9 1 * */1', '*/15 * 1 * 1-5', 'every 2h']
+      .map(x => [x, scheduleWords(x)]))).toEqual({
+      '0 9 * * 1-5': 'every weekday at 9:00', 'daily 09:00': 'every day at 9:00', 'mon,thu 09:00': 'every Monday and Thursday at 9:00',
+      '0 9,14 * * *': 'every day at 9:00 and 14:00', '0 9 1 * *': 'at 9:00 on day 1 of the month', '*/15 * * * *': 'every 15 minutes',
+      '0 */2 * * *': 'every 2 hours at :00', '30 9-17 * * 1-5': 'every hour at :30 from 9:00 to 17:59 on weekdays', '5,20 * * * *': 'at minutes 5 and 20',
+      '0 0 * 1 *': 'every day at 0:00 in January', '0 9 1 * 1': 'at 9:00 on day 1 of the month or on Monday', '0 9 1 * 0-6': 'every day at 9:00', '0 9 1 * */1': 'every day at 9:00', '*/15 * 1 * 1-5': 'every 15 minutes on day 1 of the month or on weekdays', 'every 2h': 'every 2 hours',
+    })
+    // A removal; the outcomes stay for automation list.
+    await propose(['docs-check', '--remove'])
+    await answer(true)
+    expect((await store.automations('CO')).automations.map(a => a.id)).toEqual(['clean'])
+    await expect(answer(true)).rejects.toThrow()
+    expect((await runCommand(deps(), token, { argv: ['automation', 'list'] }) as { proposals: string[] }).proposals.map(l => l.split('  ').slice(0, 2).join(' ')))
+      .toEqual(['accepted add docs-check', 'refused change clean', 'accepted change clean', 'accepted remove docs-check'])
   })
 })

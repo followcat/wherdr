@@ -1,7 +1,8 @@
 import { expect, it, vi } from 'vitest'
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import { mountSuspended } from '@nuxt/test-utils/runtime'
 import PhoneKeybar from '~/components/PhoneKeybar.vue'
+import { phoneKeyHidden } from '~/composables/useHerdr'
 import type { TerminalCtl } from '~/composables/useTerminal'
 import { toggleVirtualModifier, virtualChord, type VirtualModifier } from '~/utils/terminalModifiers'
 import { displayVirtualChord } from '~/utils/keybarKeys'
@@ -28,7 +29,10 @@ it('keeps the complete ordered key strip usable in Conversation', async () => {
     await wrapper.findAll('button')[0]!.trigger('click')
     expect(ctl.focus).toHaveBeenCalledOnce()
     expect(labels().slice(0, 16)).toEqual(['Show or hide the phone keyboard', 'Ctrl', 'Esc', 'Tab', 'Left arrow', 'Up arrow', 'Down arrow', 'Right arrow', 'Enter', 'Ctrl+C', 'Backspace', 'Home', 'End', 'PgUp', 'PgDn', 'Delete'])
-  } finally { wrapper.unmount() }
+    phoneKeyHidden.value = ['ctrl', 'esc']
+    await nextTick()
+    expect(labels().slice(0, 3)).toEqual(['Show or hide the phone keyboard', 'Tab', 'Left arrow'])
+  } finally { phoneKeyHidden.value = []; wrapper.unmount() }
 })
 
 it('announces the armed chord and spends the modifiers on the next key', async () => {

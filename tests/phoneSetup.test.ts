@@ -23,7 +23,7 @@ const fake = vi.hoisted(() => {
 
 vi.mock('../bin/lib/tailnet.mjs', async orig => ({
   ...await orig<typeof Tailnet>(),
-  tailscaleBin: () => fake.bin,
+  tailscaleBins: () => [fake.bin],
   probe: async () => fake.reach === 'unreachable' ? { reach: fake.reach, cause: fake.cause } : { reach: fake.reach, status: 200 },
 }))
 

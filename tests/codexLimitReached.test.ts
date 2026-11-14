@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { localFs } from '../server/utils/fsx'
-import { codexLimitReset, lastCodexLimits, mergeQuotas, readCodexMachine } from '../server/utils/quotas'
+import { codexCredits, codexLimitReset, lastCodexLimits, mergeQuotas, readCodexMachine } from '../server/utils/quotas'
 
 const nullTokens = (t: string) => JSON.stringify({ timestamp: t, type: 'event_msg', payload: { type: 'token_count', rate_limits: { limit_id: 'premium', primary: null, secondary: null, credits: { has_credits: false, unlimited: false, balance: '0' }, rate_limit_reached_type: null } } })
 const limitError = (t: string, text = 'try again at Nov 8th, 2026 2:52 PM.') => JSON.stringify({ timestamp: t, type: 'event_msg', payload: { type: 'task_complete', last_agent_message: null, error: { message: `You’ve hit your usage limit. Upgrade to Pro, or ${text}`, codex_error_info: 'usage_limit_exceeded' } } })
@@ -26,6 +26,16 @@ describe('Codex usage limit reached', () => {
     const back = lastCodexLimits([limited, numbers('2026-11-08T21:00:00Z', 3)].join('\n'))!
     expect(back.limited).toBeUndefined()
     expect(back.rl!.primary.used_percent).toBe(3)
+  })
+
+  it('credits: from the newest rate_limits, also before a limit error', () => {
+    const withCredits = (t: string, credits: object) => nullTokens(t).replace('{"has_credits":false,"unlimited":false,"balance":"0"}', JSON.stringify(credits))
+    const hit = lastCodexLimits([withCredits('2026-11-02T10:00:00Z', { has_credits: true, unlimited: false, balance: '120.5' }), limitError('2026-11-02T10:00:01Z')].join('\n'))!
+    expect(hit.limited).toBeTruthy()
+    expect(hit.credits).toEqual({ unlimited: false, balance: 120.5 })
+    expect(lastCodexLimits(numbers('2026-11-02T10:00:00Z', 3))!.credits).toBeUndefined()
+    expect(codexCredits({ has_credits: false, unlimited: false, balance: '0' })).toBeNull()
+    expect(codexCredits({ has_credits: false, unlimited: true, balance: null })).toEqual({ unlimited: true, balance: null })
   })
 
   it('rate_limit_reached_type with numbers also means limited', () => {

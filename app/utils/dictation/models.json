@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-11-05",
+  "updated": "2026-11-09",
   "models": [
     {
       "id": "parakeet-v3",
@@ -20,11 +20,35 @@
         "sha256": "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf"
       },
       "languages": ["bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "hr", "hu", "it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk"],
+      "ranked": ["it", "es", "pt", "en", "de", "fr", "ru", "uk", "pl", "nl", "sk", "cs", "ro", "hr", "bg", "fi", "sv", "hu", "et", "da", "lt", "mt", "el", "lv", "sl"],
       "punctuation": true,
       "quality": [
+        { "lang": "it", "dataset": "FLEURS", "wer": 3, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "es", "dataset": "FLEURS", "wer": 3.45, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "pt", "dataset": "FLEURS", "wer": 4.76, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "en", "dataset": "FLEURS", "wer": 4.85, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "de", "dataset": "FLEURS", "wer": 5.04, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
         { "lang": "fr", "dataset": "FLEURS", "wer": 5.15, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
         { "lang": "fr", "dataset": "MLS", "wer": 4.97, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
-        { "lang": "en", "dataset": "FLEURS", "wer": 4.85, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" }
+        { "lang": "ru", "dataset": "FLEURS", "wer": 5.51, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "uk", "dataset": "FLEURS", "wer": 6.79, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "pl", "dataset": "FLEURS", "wer": 7.31, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "nl", "dataset": "FLEURS", "wer": 7.48, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "sk", "dataset": "FLEURS", "wer": 8.82, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "cs", "dataset": "FLEURS", "wer": 11.01, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "ro", "dataset": "FLEURS", "wer": 12.44, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "hr", "dataset": "FLEURS", "wer": 12.46, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "bg", "dataset": "FLEURS", "wer": 12.64, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "fi", "dataset": "FLEURS", "wer": 13.21, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "sv", "dataset": "FLEURS", "wer": 15.08, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "hu", "dataset": "FLEURS", "wer": 15.72, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "et", "dataset": "FLEURS", "wer": 17.73, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "da", "dataset": "FLEURS", "wer": 18.41, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "lt", "dataset": "FLEURS", "wer": 20.35, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "mt", "dataset": "FLEURS", "wer": 20.46, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "el", "dataset": "FLEURS", "wer": 20.7, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "lv", "dataset": "FLEURS", "wer": 22.84, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" },
+        { "lang": "sl", "dataset": "FLEURS", "wer": 24.03, "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3" }
       ],
       "speed": {
         "estimate": 3,
@@ -55,10 +79,16 @@
         "sha256": "7a38ed8b13f014ad632b09ff8d22e0c6f1359dd046af9235d281dfae841b9ab9"
       },
       "languages": ["de", "en", "es", "fr"],
+      "ranked": ["es", "de", "fr", "en"],
       "autoDetect": false,
       "punctuation": true,
       "quality": [
+        { "lang": "es", "dataset": "MLS", "wer": 3.17, "source": "https://huggingface.co/nvidia/canary-180m-flash" },
         { "lang": "fr", "dataset": "MLS", "wer": 4.75, "source": "https://huggingface.co/nvidia/canary-180m-flash" },
+        { "lang": "de", "dataset": "MLS", "wer": 4.81, "source": "https://huggingface.co/nvidia/canary-180m-flash" },
+        { "lang": "es", "dataset": "CV", "wer": 4.9, "source": "https://huggingface.co/nvidia/canary-180m-flash" },
+        { "lang": "de", "dataset": "CV", "wer": 5.94, "source": "https://huggingface.co/nvidia/canary-180m-flash" },
+        { "lang": "fr", "dataset": "CV", "wer": 8.19, "source": "https://huggingface.co/nvidia/canary-180m-flash" },
         { "lang": "en", "dataset": "CV", "wer": 9.53, "source": "https://huggingface.co/nvidia/canary-180m-flash" }
       ],
       "speed": {
@@ -89,9 +119,14 @@
         "sha256": "7305f7905bfcf77fa0b39388a313f3da35c68d971661a65475b56fb2162c8e63"
       },
       "languages": ["zh", "en", "ja", "ko", "yue"],
+      "ranked": ["zh", "yue", "en", "ja", "ko"],
       "punctuation": false,
       "quality": [
-        { "lang": "en", "dataset": "CV", "wer": 14.71, "source": "https://arxiv.org/html/2407.04051v3" }
+        { "lang": "zh", "dataset": "CV", "wer": 10.78, "metric": "CER", "source": "https://arxiv.org/html/2407.04051v3" },
+        { "lang": "yue", "dataset": "CV", "wer": 7.09, "metric": "CER", "source": "https://arxiv.org/html/2407.04051v3" },
+        { "lang": "en", "dataset": "CV", "wer": 14.71, "source": "https://arxiv.org/html/2407.04051v3" },
+        { "lang": "ja", "dataset": "CV", "wer": 11.96, "metric": "CER", "source": "https://arxiv.org/html/2407.04051v3" },
+        { "lang": "ko", "dataset": "CV", "wer": 8.28, "metric": "CER", "source": "https://arxiv.org/html/2407.04051v3" }
       ],
       "speed": {
         "estimate": 5,

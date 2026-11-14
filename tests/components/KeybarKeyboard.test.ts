@@ -70,3 +70,16 @@ describe.each([false, true])('key bar keyboard button (compact=%s)', compact => 
     expect(r.ctl.focus).toHaveBeenCalledOnce()
   })
 })
+
+describe('desktop key bar layout', () => {
+  // Only the keys scroll on a narrow column; the keyboard toggle stays pinned at the end.
+  it('puts the most used keys first and keeps the toggle out of the scrolling keys', async () => {
+    const { btn } = await mounted()
+    const bar = btn.element.parentElement!
+    const keys = bar.querySelector('.keybar-keys')!
+    expect(bar.lastElementChild).toBe(btn.element)
+    expect(keys.contains(btn.element)).toBe(false)
+    const labels = [...keys.querySelectorAll('button')].map(b => b.textContent!.trim())
+    expect(labels.slice(0, 9)).toEqual(['esc', '↑', '↓', '←', '→', 'tab', '^C', 'y', 'n'])
+  })
+})

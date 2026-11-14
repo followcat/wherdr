@@ -38,6 +38,12 @@ The screen reads top to bottom:
 3. **Exceptions**: **Add an exception** picks an agent conversation, with its own level;
    removing one goes back to the default. Right-click → **Notifications** on an agent sets its
    exception: the levels, **Mute for 1 hour / 8 hours** and **Follow the default**.
+   Alfred's or a project coordinator's exception belongs to the coordinator, not its
+   conversation: it is listed under its current name (**Alfred**, **SHOP coordinator**) and
+   still applies after a restart or on another machine. Coordinator exceptions saved by older
+   versions move to Alfred (the main coordinator) or to their project's coordinator; those of
+   a machine coordinator or a removed project are dropped, since nothing can match them. An
+   exception on a machine wherdr no longer knows shows **Unknown machine**.
 4. **This device's notifications** only asks this browser or phone for permission to
    show push notifications, and shows whether it is allowed, blocked or not asked yet.
    Below it, every registered device is listed with the result of the last push sent to it:

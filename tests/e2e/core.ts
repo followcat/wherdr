@@ -108,8 +108,14 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
     sockets.add(socket)
     socket.on('error', () => {})
     socket.once('close', () => sockets.delete(socket))
-    socket.once('data', (first) => {
-      const call = JSON.parse(first.toString().split('\n')[0]!) as Call
+    // The first line can come in several chunks (a long request): read up to its end.
+    let head = Buffer.alloc(0)
+    const onHead = (chunk: Buffer) => {
+      head = Buffer.concat([head, chunk])
+      const end = head.indexOf(10)
+      if (end < 0) return
+      socket.off('data', onHead)
+      const call = JSON.parse(head.subarray(0, end).toString()) as Call
       if (call.method !== 'hello' || !call.params?.framed) {
         calls.push(call)
         const result = reply(call)
@@ -144,7 +150,8 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
           }
         }
       })
-    })
+    }
+    socket.on('data', onHead)
   })
   const url = `http://localhost:${port}`
   await expect.poll(async () => {

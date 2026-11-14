@@ -47,3 +47,37 @@ export function saveListCollapsed(collapsed: boolean) {
     else localStorage.removeItem(RAIL_KEY)
   } catch { /* stockage indisponible */ }
 }
+
+// Width of the side panel beside the conversation (Settings, or a place an
+// agent opens), set with the handle on its left edge and kept on the device.
+// null: the CSS default, clamp(440px, 36vw, 560px).
+export const PANEL_MIN = 400
+// The conversation keeps at least this much beside the panel.
+export const CONVERSATION_MIN = 480
+const PANEL_KEY = 'sidePanelWidth'
+
+// Bounds: at least 400 px, and the conversation (between the list's right edge
+// and the panel) keeps 480 px; window too narrow: the minimum wins.
+export function clampPanelWidth(w: number, viewport: number, listRight: number): number {
+  const max = Math.max(PANEL_MIN, viewport - listRight - CONVERSATION_MIN)
+  return Math.round(Math.min(max, Math.max(PANEL_MIN, w)))
+}
+
+// CSS value of --settings-panel: also clamped in CSS, the window or the list may change later.
+export function panelWidthCss(w: number): string {
+  return `clamp(${PANEL_MIN}px, ${w}px, calc(100vw - var(--side) - ${CONVERSATION_MIN}px))`
+}
+
+export function readPanelWidth(): number | null {
+  try {
+    const v = Number(localStorage.getItem(PANEL_KEY))
+    return Number.isFinite(v) && v >= PANEL_MIN && v <= 4000 ? Math.round(v) : null
+  } catch { return null }
+}
+
+export function savePanelWidth(w: number | null) {
+  try {
+    if (w === null) localStorage.removeItem(PANEL_KEY)
+    else localStorage.setItem(PANEL_KEY, String(w))
+  } catch { /* storage unavailable */ }
+}

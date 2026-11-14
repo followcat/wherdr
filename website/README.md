@@ -38,7 +38,7 @@ makes no request to another site.
   root test checks they agree). When the app's look changes, update them to match. A demo plays
   only on screen in a visible tab; `prefers-reduced-motion` shows its final step, still. A root
   test checks every script's timing. Data is invented: never use real data.
-- **Installer**: [`public/install`](public/install) (`curl -fsSL https://wherdr.dev/install | sh`);
-  `sh tests/install.test.sh` runs its cases in a bubblewrap sandbox as your user
-  (no network, an empty `/home`, Node.js hidden), with stub `herdr` and download commands.
-  The install section replays its output: if it changes, update `app/utils/installDemo.ts`.
+- **Installer**: [`public/install`](public/install) (`curl -fsSL https://wherdr.dev/install | sh`).
+  On v3 it installs nothing: it prints how to install v3 beside v2 (`tests/herdrPlugin.test.ts`
+  checks it). The site, its install section (`app/utils/installDemo.ts`) and the installer it
+  serves stay v2's until the site moves to v3 (`docs/RELEASING.md`, transition step 8).

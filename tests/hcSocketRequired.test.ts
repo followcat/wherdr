@@ -1,4 +1,6 @@
+import { existsSync } from 'node:fs'
 import { afterEach, expect, it, vi } from 'vitest'
+import { MIGRATION_GUIDE } from '../bin/lib/hc.mjs'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -15,7 +17,9 @@ it('exits at startup with a log line naming HC_SOCKET when it is unset', async (
   requireHcSocket({}, exit, log)
   expect(exit).toHaveBeenCalledWith(1)
   expect(log).toHaveBeenCalledOnce()
-  expect(log.mock.calls[0]![0]).toMatch(/^wherdr: HC_SOCKET is not set: .*docs\/migrate-from-2\.x\.md/)
+  expect(log.mock.calls[0]![0]).toMatch(/^wherdr: HC_SOCKET is not set: .*docs\/migrate-from-v2\.md/)
+  // The guide it names is a real page.
+  expect(existsSync(new URL(`../${MIGRATION_GUIDE}`, import.meta.url))).toBe(true)
 })
 
 it('starts normally when HC_SOCKET is set', async () => {

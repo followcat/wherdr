@@ -1,4 +1,5 @@
 # npm moderation can outlive a workflow. Recheck without republishing anything.
+# Only 2.x releases (the npm line) are promoted to latest; 3.x is skipped (release-ready.mjs).
 name: release readiness
 on:
   schedule:

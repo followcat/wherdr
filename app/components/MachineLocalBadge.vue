@@ -1,3 +1,3 @@
 <template>
-  <span class="machine-local-badge">{{ t('LOCAL') }}</span>
+  <span class="machine-local-badge">{{ t('HOST') }}</span>
 </template>

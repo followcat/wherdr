@@ -17,7 +17,7 @@ export async function notificationAllowed(event: NotificationEvent, state: Pick<
   // sub-agent's message: it follows the default or its project coordinator.
   const boardEvent = fallback?.board === true
   const resolved = { ...source, project: source.project ?? fallback?.project, session: source.session ?? fallback?.session, board: boardEvent,
-    subagent: !boardEvent && Boolean(source.subagent || fallback?.subagent), coordinator: boardEvent ? undefined : source.coordinator,
+    subagent: !boardEvent && Boolean(source.subagent || fallback?.subagent), coordinator: boardEvent ? undefined : source.coordinator ?? fallback?.coordinator,
     machine: getMachine(source.machine)?.info().baseKey ?? source.machine }
   return notificationEvents(settings, resolved).includes(event)
     && !(source.conversation && notificationPresence.viewed(source.conversation))

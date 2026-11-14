@@ -9,10 +9,10 @@ import { DEVICE_MODEL_KEY } from '~/utils/dictation/deviceModels'
 import type { DeviceModel } from '~/utils/dictation/deviceModels'
 import { fakeCaches, rangeServer } from '../fakeModelCache'
 
-// One more model, for the GPU only.
+// One more model, for the GPU only, that speaks English only.
 vi.mock('~/utils/dictation/models.json', async (real) => {
   const { default: catalog } = await real<{ default: { models: DeviceModel[] } }>()
-  const gpu = { ...catalog.models.find(m => m.id === 'sensevoice')!, id: 'gpu-model', name: 'GPU model', requires: ['webgpu', 'shader-f16'], quality: [], speed: undefined }
+  const gpu = { ...catalog.models.find(m => m.id === 'sensevoice')!, id: 'gpu-model', name: 'GPU model', requires: ['webgpu', 'shader-f16'], languages: ['en'], ranked: ['en'], quality: [], speed: undefined }
   return { default: { ...catalog, models: [...catalog.models, gpu] } }
 })
 
@@ -37,17 +37,29 @@ describe('DictationDeviceSettings', () => {
     await flushPromises()
     expect(rows(w).map(r => r.find('b').text())).toEqual(['Parakeet v3', 'Canary 180M', 'SenseVoice'])
     const parakeet = row(w, 'parakeet-v3')
-    expect(parakeet.find('.dictation-model-meta').text()).toBe('FR · EN · +23 · 670 MB')
-    expect(rating(parakeet)).toEqual(['Quality', 'FR ■■■■□', 'EN ■■■■■', 'Speed', '■■■□□ est.'])
+    // Broadly multilingual: its two best languages, then Multi; the bars
+    // follow them, then this device's language (English here), marked.
+    expect(parakeet.find('.dictation-model-meta').text()).toBe('IT · ES · Multi (25) · 670 MB')
+    expect(rating(parakeet)).toEqual(['Quality', 'IT ■■■■■', 'ES ■■■■■', 'EN ■■■■■ yours', 'Speed', '■■■□□ est.'])
     expect(parakeet.find('[role="radio"]').attributes('aria-checked')).toBe('true')
     const sense = row(w, 'sensevoice')
-    expect(sense.find('.dictation-model-meta').text()).toBe('EN · +4 · 237 MB')
-    expect(rating(sense)).toEqual(['Quality', 'FR —', 'EN ■■□□□', 'Speed', '■■■■■ est.'])
+    expect(sense.find('.dictation-model-meta').text()).toBe('ZH · YUE · EN · +2 · 237 MB')
+    expect(rating(sense)).toEqual(['Quality', 'ZH ■■□□□', 'YUE ■■■□□', 'EN ■■□□□ yours', 'Speed', '■■■■■ est.'])
+    expect(sense.find('.dictation-model-rating i').attributes('title')).toBe('10.78 % character errors on CV (https://arxiv.org/html/2407.04051v3)')
     expect(sense.find('button:not([role])').text()).toBe('Install · 237 MB')
     const canary = row(w, 'canary-180m')
-    expect(canary.find('.dictation-model-meta').text()).toBe('FR · EN · +2 · 207 MB')
+    expect(canary.find('.dictation-model-meta').text()).toBe('ES · DE · FR · +1 · 207 MB')
     expect(canary.find('[data-testid="model-language"]').text()).toMatch(/^No language detection: writes [A-Z]{2}, this device’s language$/)
     expect(w.find('[data-testid="model-too-large"]').exists()).toBe(false)
+  })
+
+  it('marks the device language among the best ones, and never shows one the model does not speak', async () => {
+    vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['es-ES', 'en'])
+    const w = await mountSuspended(DictationDeviceSettings)
+    await flushPromises()
+    expect(rating(row(w, 'parakeet-v3'))).toEqual(['Quality', 'IT ■■■■■', 'ES ■■■■■ yours', 'Speed', '■■■□□ est.'])
+    expect(rating(row(w, 'sensevoice'))).toEqual(['Quality', 'ZH ■■□□□', 'YUE ■■■□□', 'Speed', '■■■■■ est.'])
+    vi.restoreAllMocks()
   })
 
   it('on an iPhone, marks Parakeet too large, never chooses it, and defaults to Canary', async () => {
@@ -85,7 +97,8 @@ describe('DictationDeviceSettings', () => {
     const w = await mountSuspended(DictationDeviceSettings)
     await flushPromises()
     expect(rows(w)).toHaveLength(4)
-    expect(rating(row(w, 'gpu-model'))).toEqual(['Quality', 'FR —', 'EN unknown', 'Speed', 'unknown'])
+    expect(row(w, 'gpu-model').find('.dictation-model-meta').text()).toBe('EN · 237 MB') // one language, no +N
+    expect(rating(row(w, 'gpu-model'))).toEqual(['Quality', 'EN unknown yours', 'Speed', 'unknown'])
   })
 
   it('installs with progress, counts the space used, deletes, and saves the chosen model', async () => {

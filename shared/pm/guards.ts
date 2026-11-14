@@ -2,9 +2,9 @@
 // and the strictest wins, so a task type or a task can only make them stricter.
 import { MERGE_BY, type Guards, type MergeBy } from './workflow'
 
-// Broadest first. The user's own settings and the project set guards; a task
-// type and a task may add to them.
-export const GUARD_LEVELS = ['user', 'project', 'task-type', 'task'] as const
+// Broadest first. The user's own settings, a workspace (for its member
+// projects) and the project set guards; a task type and a task may add to them.
+export const GUARD_LEVELS = ['user', 'workspace', 'project', 'task-type', 'task'] as const
 export type GuardSource = typeof GUARD_LEVELS[number] | 'builtin'
 
 export interface Sourced<T> { value: T, source: GuardSource }
@@ -34,9 +34,9 @@ export function combineGuards(levels: { source: typeof GUARD_LEVELS[number], gua
     for (const k of ['protected', 'others'] as const) {
       const v = guards?.merge?.[k]
       if (!v) continue
-      // The user or the project may replace the default; past that, and for a
-      // task type or a task always, a level only hardens.
-      const chooses = !set[k] && (source === 'user' || source === 'project')
+      // The first of the user, the workspace and the project to say may replace
+      // the default; past that, and for a task type or a task always, a level only hardens.
+      const chooses = !set[k] && (source === 'user' || source === 'workspace' || source === 'project')
       if (chooses || strictness(v) > strictness(out.merge[k].value)) out.merge[k] = { value: v, source }
       if (chooses) set[k] = true
     }

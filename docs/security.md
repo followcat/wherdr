@@ -48,8 +48,12 @@ only the routes listed in `shared/coreRoutes.ts` answer.
   subscriptions, the OpenRouter key), its settings (`wherdr.env`, which can hold
   `OPENROUTER_API_KEY`, and `wherdr.json`, in `WHERDR_DIR` and in `~/wherdr`), `~/.ssh` or
   `~/.config/herdr`, on any machine, even through a symlink or inside
-  a browsed project. Agents themselves can still read them: the lock protects the app, not the
-  machine.
+  a browsed project. For paths shown in conversations only, Settings › Security › **Also show
+  protected files** (off by default) lifts this. Agents themselves can still read them: the lock
+  protects the app, not the machine.
+- **Files shown from conversations**: which folders a path written by an agent may open
+  ([Files › Paths in a conversation](files.md#paths-in-a-conversation)); everything your user can
+  read by default, home and temporary folders once wherdr is reachable from the Internet.
 - <a id="new-device"></a>**New device**: it can only get in with an existing passkey. Unlock it
   with a passkey synced by your password manager (iCloud Keychain, Google Password Manager,
   1Password…), or with the passkey of another device through the browser's "use a phone or

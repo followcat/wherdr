@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
+import { useRouter } from '#app'
 import { readBody } from 'h3'
 import DecisionsView from '~/components/DecisionsView.vue'
 import { herdrState } from '~/composables/useHerdr'
@@ -60,8 +61,11 @@ it('answers a permission with the agent\'s own buttons, and opens an agent with 
   expect(item(b, 'CO-2').exists()).toBe(true)
   expect(b.find('[data-testid="decisions-count"]').text()).toBe('6')
   herdrState.value = { ...herdrState.value!, panes }
-  // An overdue step without a button of its own: its task.
-  expect(item(b, 'CO-5').find('[data-testid="decision-task"]').attributes('href')).toBe('#/board?task=CO-5')
+  // An overdue step without a button of its own: its task's sheet, over Decisions.
+  await useRouter().push('/decisions')
+  await item(b, 'CO-5').find('[data-testid="decision-task"]').trigger('click')
+  await expect.poll(() => useRouter().currentRoute.value.fullPath).toBe('/decisions?task=CO-5')
+  await useRouter().replace('/')
 })
 
 it('answers a permission whose prompt is not shown with Allow or Deny, and an overdue step with its own button', async () => {

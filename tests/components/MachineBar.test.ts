@@ -6,11 +6,16 @@ import { desk, eventsOpen, herdrState, hostLabel } from '~/composables/useHerdr'
 import { machineBarHidden, machineBarOn, machineBarOrder, machineBarSaved, machineGroups } from '~/composables/useMachineBar'
 import { BAR_ALL } from '~/utils/machineBar'
 import type { MachineInfo, Pane } from '#shared/types'
+import type { TaskAgent } from '#shared/pm/taskAgents'
+import { taskAgents } from '~/composables/useTaskAgents'
 
 import { menuState } from '~/composables/useUi'
 
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }))
 mockNuxtImport('navigateTo', () => navigate)
+// The list reads its task agents: none, unless a test sets some.
+let taskAnswer: Record<string, TaskAgent> = {}
+registerEndpoint('/api/pm/agents', () => taskAnswer)
 
 
 const machine = (key: string, label: string, status: MachineInfo['status'] = 'online'): MachineInfo =>
@@ -42,6 +47,8 @@ function reset() {
   localStorage.removeItem('machineConversations')
   navigate.mockClear()
   desk.value = false
+  taskAnswer = {}
+  taskAgents.value = {}
 }
 const pass = { template: '<div><slot /></div>' }
 let mounted: { unmount: () => void }[] = []
@@ -73,6 +80,15 @@ describe('the machine bar on the home list', () => {
     expect(navigate).toHaveBeenCalledWith('/', { replace: true })
   })
 
+  it('stays on the board when a desktop tab changes (the board follows the tab itself)', async () => {
+    desk.value = true
+    localStorage.setItem('machineConversations', JSON.stringify({ laptop: { pane: panes[2]!.id } }))
+    const w = track(await mountSuspended(HomeView, { route: '/board', global: { stubs: { UContextMenu: pass, UTooltip: pass } } }))
+    await w.find('[data-bar-id="laptop"]').trigger('click')
+    await w.find('[data-bar-id=""]').trigger('click')
+    expect(navigate).not.toHaveBeenCalled()
+  })
+
   it('keeps the phone list first while retaining the per-tab history', async () => {
     localStorage.setItem('machineConversations', JSON.stringify({ laptop: { pane: panes[2]!.id } }))
     const w = await mountHome()
@@ -92,6 +108,18 @@ describe('the machine bar on the home list', () => {
     // A single machine shown: its cards need no machine label.
     expect(w.find('.state-group .card').attributes('data-pane')).toBe('laptop/w1:p1')
     expect(w.find('.state-group .card-origin').exists()).toBe(false)
+  })
+
+  it('agents of one task share a row, in the most urgent one\'s group, a line per agent with its machine', async () => {
+    const fix = { task: 'CO-1', shown: 'AC-1', title: 'Fix the login' }
+    taskAnswer = { a1: { ...fix, role: 'fix' }, a2: { ...fix, role: 'review' } }
+    taskAgents.value = taskAnswer
+    herdrState.value = { ok: true, workspaces, machines, panes: panes.map(p => p.id === 'w2:p1' ? { ...p, coreAddress: 'a1' } : p.id === 'laptop/w1:p1' ? { ...p, coreAddress: 'a2' } : p) } as never
+    const w = await mountHome()
+    expect(w.findAll('.state-group.working .card').map(c => c.attributes('data-pane'))).toEqual(['w1:p1'])
+    const row = w.find('.state-group.blocked .card')
+    expect(row.find('.card-title').text()).toBe('Fix the login')
+    expect(row.findAll('[data-testid="task-agent-line"]').map(l => l.text())).toEqual(['fix · Server', 'review · Laptop'])
   })
 
   it('filters state groups by a machine group, including an empty group', async () => {
@@ -172,11 +200,11 @@ describe('the machine bar on the home list', () => {
     // A machine off the bar still shows under All.
     expect(w.findAll('.state-group .card-origin').map(b => b.text())).toContain('Server')
     expect(w.find('.state-machines').exists()).toBe(false)
-    // Turned off: each machine's menu moves to its chip.
+    // Turned off: still no machine chips.
     machineBarOn.value = false
     await nextTick()
     expect(w.find('.machine-bar').exists()).toBe(false)
-    expect(w.findAll('.state-machine').map(c => c.attributes('data-machine'))).toEqual(['local', 'laptop'])
+    expect(w.find('.state-machines').exists()).toBe(false)
   })
 
 })

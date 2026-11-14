@@ -2,9 +2,9 @@
 // for each holder and end, and one sentence saying what happens at a step.
 // The one place for these texts, shared by the template editor and the board.
 // Pure: the caller passes its own tl(en, fr) for the language.
-import { actionField, type End, type Holder, type Step, type StepAction } from './workflow'
+import { WATCH, actionField, type End, type Holder, type Step, type StepAction } from './workflow'
 import { shotMode } from './shots'
-import { DEFAULT_ROUNDS } from './steps'
+import { DEFAULT_ROUNDS, stepLabels } from './steps'
 
 export type Tl = (en: string, fr: string) => string
 const english: Tl = en => en
@@ -21,7 +21,9 @@ export function actionLabel(a: Pick<StepAction, 'kind' | 'target' | 'base'>, tl:
     case 'git.push': return tl('Push the branch', 'Pousser la branche')
     case 'github.pr': return tl(`Open a GitHub PR to ${b}`, `Ouvrir une PR GitHub vers ${b}`)
     case 'github.merge': return tl('Merge the GitHub PR', 'Fusionner la PR GitHub')
+    case 'bitbucket.merge': return tl('Merge the Bitbucket PR', 'Fusionner la PR Bitbucket')
     case 'git.verify-merged': return tl(`Check it is merged into ${b}`, `Vérifier que c’est fusionné dans ${b}`)
+    case 'pipeline.watch': return 'Watch the pipeline'
   }
 }
 
@@ -70,14 +72,21 @@ function engineDoes(a: StepAction, guarded: boolean, tl: Tl): string {
     case 'git.push': return tl('The engine pushes the task’s branch. Uncommitted changes send it back to the agent.',
       'Le moteur pousse la branche de la tâche. Des changements non commités la renvoient à l’agent.')
     case 'github.pr': return tl(`The engine pushes the branch and opens a GitHub PR to ${b}.`, `Le moteur pousse la branche et ouvre une PR GitHub vers ${b}.`)
-    case 'github.merge': {
-      const how = a.method ? tl(` (${a.method})`, ` (${a.method})`) : ''
+    case 'github.merge':
+    case 'bitbucket.merge': {
+      const how = a.method ? tl(` (${a.method})`, ` (${a.method})`) : a.kind === 'bitbucket.merge' ? tl(' (merge commit)', ' (commit de fusion)') : ''
       const checks = a.checks?.length ? tl(` once ${a.checks.join(', ')} ${a.checks.length > 1 ? 'are' : 'is'} green`, ` une fois ${a.checks.join(', ')} au vert`) : ''
-      return tl(`The engine merges the GitHub PR${how}${checks}.`, `Le moteur fusionne la PR GitHub${how}${checks}.`)
-        + (guarded ? tl(' Its base is protected: it waits for you to merge.', ' Sa base est protégée : la fusion t’attend.') : '')
+      const host = a.kind === 'github.merge' ? 'GitHub' : 'Bitbucket'
+      return tl(`The engine merges the ${host} PR${how}${checks}.`, `Le moteur fusionne la PR ${host}${how}${checks}.`)
+        + (guarded ? tl(' Its base is protected: it waits for you to merge.', ' Sa base est protégée : la fusion t’attend.')
+          : a.kind === 'bitbucket.merge' ? tl(' Into a protected base, it waits for you.', ' Vers une base protégée, la fusion t’attend.') : '')
     }
     case 'git.verify-merged': return tl(`The engine checks the branch is merged into ${b}; if not, it waits for you.`,
       `Le moteur vérifie que la branche est fusionnée dans ${b} ; sinon, il t’attend.`)
+    case 'pipeline.watch': {
+      const what = a.source === 'command' ? `runs \`${a.command}\`` : `follows the GitHub Actions runs of ${a.branch ? `${a.branch}’s latest commit` : 'the task’s commit'}`
+      return `The engine ${what} every ${a.every ?? WATCH.every}, up to ${a.timeout ?? WATCH.timeout}. A failure is said to the coordinator and ${a.onFail === 'worker' ? 'goes back to the agent' : 'comes to you'}.`
+    }
   }
 }
 
@@ -101,7 +110,8 @@ export function describeStep(s: Step & { guarded?: boolean }, tl: Tl = english, 
         `${who(s.holder, tl)} vérifie le travail : un problème majeur le renvoie à ${s.sendBack || '…'}, jusqu’à ${n} fois, puis tu décides.`) + after(s, tl)
     }
     case 'user': {
-      const button = s.userLabel ? tl(` (button “${s.userLabel}”)`, ` (bouton « ${s.userLabel} »)`) : ''
+      const label = stepLabels(s).button
+      const button = tl(` (button “${label}”)`, ` (bouton « ${label} »)`)
       const then = s.action ? ' ' + tl('Then:', 'Ensuite :') + ' ' + engineDoes(s.action, false, tl).replace(/^./, c => c.toLowerCase()) : ''
       return tl(`Waits here until you act${button}.`, `Attend ici que tu agisses${button}.`) + then + after(s, tl)
     }

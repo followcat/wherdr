@@ -9,8 +9,13 @@
 // week) missing from Claude's reading (it just restarted): "fresh window".
 // `api`: Claude Code runs on API billing there (no rate limits): a muted
 // label in place of the gauges, never a warning colour.
-import type { QuotaWindow } from '#shared/types'
-import { type QuotaRow, quotaLevel, quotaShown, resetText, STALE_MS } from '~/utils/quotas'
+// Codex "limit reached" (shared/quotaLimit.ts): blocked until its reset; with
+// credits on the account, work goes on with them; once its reset has passed,
+// the reading no longer says blocked. A reading older than OLD_MS says how to
+// refresh it; the account's credits show on the same line.
+import type { Quota, QuotaWindow } from '#shared/types'
+import { limitState } from '#shared/quotaLimit'
+import { type QuotaRow, creditsText, OLD_MS, quotaLevel, quotaShown, resetText, STALE_MS } from '~/utils/quotas'
 
 defineProps<{ rows: QuotaRow[], api?: boolean }>()
 
@@ -23,15 +28,28 @@ function resetLabel(w: QuotaWindow) {
   const s = resetText(w, now.value, language)
   return s === null ? t('reset') : s || '—'
 }
+const limit = (q: Quota) => limitState(q, now.value)
 // Codex hit its usage limit: no gauges, the reset time from its message.
-function limitedLabel(resetsAt: number | null) {
+function limitedLabel(q: Quota) {
+  const resetsAt = q.limited!.resetsAt
   let text = ''
   if (resetsAt) {
     const d = new Date(resetsAt)
     const time = d.toLocaleTimeString(language, { hour: 'numeric', minute: '2-digit' })
-    text = resetsAt - now.value < 86400000 ? time : `${d.toLocaleDateString(language, { weekday: 'short' })} ${time}`
+    text = Math.abs(resetsAt - now.value) < 86400000 ? time : `${d.toLocaleDateString(language, { weekday: 'short' })} ${time}`
   }
+  const state = limit(q)
+  if (state === 'expired') return text ? tl(`Reset since the last reading (limit lifted ${text})`) : tl('Limit over since the last reading')
+  if (state === 'credits') return tl(`Limit reached · work goes on with ${creditsText(q.credits!)}`)
   return text ? tl(`Limit reached · resets ${text}`, `Limite atteinte · réinitialisation ${text}`) : tl('Limit reached', 'Limite atteinte')
+}
+// Line under the row: the credits (when the limit line does not already say
+// them) and, for an old reading, how to refresh it.
+function note(r: QuotaRow) {
+  const parts: string[] = []
+  if (r.q.credits && limit(r.q) !== 'credits') parts.push(tl(`Credits: ${creditsText(r.q.credits)}`))
+  if (now.value - r.q.at > OLD_MS) parts.push(tl(`Last read ${ago(r.q.at)}: send a message to a ${kindLabel(r.agent)} agent to refresh`))
+  return parts.join(' · ')
 }
 // Short age of the reading, under each row's logo ("3 min", "2 h").
 function agoShort(at: number) {
@@ -63,7 +81,7 @@ function ago(at: number) {
         <AgentAvatar :agent="r.agent" />
         <small><UIcon v-if="stale(r)" name="i-lucide-clock-alert" />{{ agoShort(r.q.at) }}</small>
       </div>
-      <p v-if="r.q.limited" class="quota-api-label quota-limited" data-testid="quota-limited">{{ limitedLabel(r.q.limited.resetsAt) }}</p>
+      <p v-if="r.q.limited" class="quota-api-label" :class="{ 'quota-limited': limit(r.q) === 'reached' }" data-testid="quota-limited">{{ limitedLabel(r.q) }}</p>
       <template v-else>
       <template v-for="(w, k) in { five: r.q.five, week: r.q.week }" :key="k">
         <div v-if="w" class="quota" :class="[level(w), { guessed: w.resetsAt && w.resetsAt <= now }]">
@@ -77,6 +95,7 @@ function ago(at: number) {
         <div v-else class="quota empty" />
       </template>
       </template>
+      <p v-if="note(r)" class="quota-note" data-testid="quota-note">{{ note(r) }}</p>
     </div>
   </section>
 </template>

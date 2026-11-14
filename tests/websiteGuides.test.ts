@@ -4,13 +4,16 @@ import { checkDocLinks } from '../scripts/check-doc-links.mjs'
 import { AGENT_PROMPT, REPO } from '../website/app/utils/site'
 
 // website/public/agent.md guides coding agents through an install: every
-// command, port and variable it cites must be one the documentation or the installer
-// script really uses, so the guide cannot drift from them.
+// command, port and variable it cites must be one the documentation really uses,
+// so the guide cannot drift from it. The guide is part of the v2 site, kept as is
+// until the site moves to v3 (docs/RELEASING.md, transition step 8): the settings
+// of v2's installer (2.x branch) it quotes are listed here.
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
 const documentation = ['installation', 'networks', 'command', 'plugins', 'security', 'machines', 'troubleshooting'].map(page => read(`../docs/${page}.md`)).join('\n')
 const guide = read('../website/public/agent.md')
+const V2_INSTALLER = ['WHERDR_YES=1', 'WHERDR_PORT=7684']
 // Shell line continuations joined, as in the guide's snippets below.
-const sources = (documentation + read('../website/public/install')).replace(/\\\n\s*/g, '')
+const sources = [documentation, ...V2_INSTALLER].join('\n').replace(/\\\n\s*/g, '')
 const llms = read('../website/public/llms.txt')
 
 // Checks an agent runs to verify a step: not in the documentation, harmless, read-only.
@@ -59,11 +62,6 @@ describe('agent.md', () => {
     expect(documentation).toContain('The passkey lock is never required')
     expect(guide).not.toMatch(/passkey[^\n]*\(required|\brequired\b[^\n]*passkey/i)
     expect(guide).toMatch(/\*\*Passkey lock\*\* \(optional/)
-  })
-
-  it('cites the Herdr version the installer requires', () => {
-    const min = read('../website/public/install').match(/version_lt "\$\{HERDR_VERSION:-0\}" "([\d.]+)"/)![1]
-    expect(guide).toContain(`Herdr ≥ ${min}`)
   })
 
   it('documentation links resolve to existing pages and anchors', () => {

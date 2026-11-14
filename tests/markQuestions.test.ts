@@ -327,3 +327,24 @@ describe('the reply style setting', () => {
     expect([null, undefined, '', 'tag'].map(parseReplyStyle)).toEqual(['icon', 'icon', 'icon', 'icon'])
   })
 })
+
+describe('choices of a wherdr block', () => {
+  const choices = (markdown: string) => [...reply(markdown).host.querySelectorAll<HTMLElement>('.q-choice')].map(b => ({ a: b.dataset.a, q: b.dataset.q }))
+
+  it('draws 2 to 4 buttons that answer the question before them', () => {
+    const got = choices('Done. Shall I merge it? Pick how:\n\n```wherdr\nchoices "Squash" | "Merge commit" | "Rebase"\n```')
+    expect(got).toEqual(['Squash', 'Merge commit', 'Rebase'].map(a => ({ a, q: 'Shall I merge it?' })))
+    // No question before them: a tap quotes the whole message.
+    expect(choices('Pick one.\n\n```wherdr\nchoices "A" | "B"\n```')).toEqual([{ a: 'A', q: undefined }, { a: 'B', q: undefined }])
+  })
+
+  it('leaves a block it does not understand as code', () => {
+    for (const block of ['choices', 'pick "A" | "B"', 'choices "A" | "B" | "C" | "D" | "E"', 'choices "A" | "a"', 'choices A | B', 'choices "A" | "B"\nwhatever else']) {
+      const html = md(`\`\`\`wherdr\n${block}\n\`\`\``)
+      expect(html).toContain('code-head')
+      expect(html).not.toContain('q-choice')
+    }
+    // A file read outside a conversation shows its source.
+    expect(md('```wherdr\nchoices "A" | "B"\n```', { plain: true })).not.toContain('q-choice')
+  })
+})

@@ -21,12 +21,12 @@ it('vibe: the engine lands the branch on dev without a PR', () => {
   })
 })
 
-it('company: review rounds, a PR link, your merge checked, a coordinator watching the deploy', () => {
+it('company: review rounds, a PR link, your merge checked, the engine watching the deploy', () => {
   expect(say(company, 'feature')).toMatchObject({
     review: 'The reviewer checks the work: a major finding sends it back to work, up to 2 times, then you decide.',
     pr: 'The worker does the task and says when it is done; it must attach a link.',
-    merge: 'Waits here until you act (button “Merged”). Then: the engine checks the branch is merged into develop; if not, it waits for you.',
-    deploy: 'The coordinator follows its instructions and says when it is done. It is asked to check again every 5m. After 90m, it comes to you.',
+    merge: 'Waits here until you act (button “I merged it”). Then: the engine checks the branch is merged into develop; if not, it waits for you.',
+    deploy: 'The engine follows the GitHub Actions runs of develop’s latest commit every 2m, up to 90m. A failure is said to the coordinator and comes to you.',
   })
 })
 
@@ -50,7 +50,7 @@ it('wherdr: screenshots, timeouts and a squash merge once smoke is green', () =>
   expect(say(wherdr, 'visual')).toMatchObject({
     work: 'The worker does the task and says when it is done; it must attach screenshots. After 3h, it comes to you.',
     review: 'The reviewer checks the work: a major finding sends it back to work, up to 3 times, then you decide. After 45m, it comes to you.',
-    merge: 'Waits here until you act (button “Merge”). Then: the engine merges the GitHub PR (squash) once smoke is green.',
+    merge: 'Waits here until you act (button “Accept”). Then: the engine merges the GitHub PR (squash) once smoke is green.',
   })
   expect(say(wherdr, 'simple').merge).toBe('The engine merges the GitHub PR (squash) once smoke is green.')
 })
@@ -74,7 +74,7 @@ it('says when a merge is left to you, and what a step with no end does', () => {
 it('labels every action, holder and end, in French too', () => {
   const fr = (_en: string, f: string) => f
   expect(ACTIONS.map(kind => actionLabel({ kind, target: 'dev', base: 'dev' }))).toEqual([
-    'Merge into dev (no PR)', 'Push the branch', 'Open a GitHub PR to dev', 'Merge the GitHub PR', 'Check it is merged into dev',
+    'Merge into dev (no PR)', 'Push the branch', 'Open a GitHub PR to dev', 'Merge the GitHub PR', 'Merge the Bitbucket PR', 'Check it is merged into dev', 'Watch the pipeline',
   ])
   expect(actionLabel({ kind: 'github.pr' })).toBe('Open a GitHub PR to the working branch')
   for (const h of HOLDERS) expect(holderHint(h, fr)).not.toBe(holderHint(h))

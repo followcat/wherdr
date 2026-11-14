@@ -10,7 +10,7 @@ import type { Terminal, IBuffer, IMarker } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
 import type { WebglAddon } from '@xterm/addon-webgl'
 import { loadWebgl, loadXterm } from '~/utils/xtermLoader'
-import { reloadIfNewBuild } from '~/composables/useAppVersion'
+import { offerNewBuild } from '~/composables/useAppVersion'
 import { proposeTerminalSize, terminalPixelWidth } from '~/utils/terminalSize'
 import { writeTerminalFrame } from '~/utils/terminalFrame'
 import { kbOpen } from './useViewport'
@@ -273,8 +273,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       [xterm, gl] = await Promise.all([loadXterm(), renderer === 'webgl' ? loadWebgl().catch(() => null) : null])
     } catch {
       // A deployment may have removed this version's xterm files (not
-      // precached, shared/precache.ts): move to the new version.
-      void reloadIfNewBuild()
+      // precached, shared/precache.ts): the banner offers the new version.
+      void offerNewBuild()
       if (seq !== mountSeq || disposed) return false
       mounting = false
       loading.value = false

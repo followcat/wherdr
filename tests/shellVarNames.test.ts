@@ -54,8 +54,8 @@ function isShellBin(file: string) {
 }
 
 describe('shell scripts', () => {
-  it('include herdr-plugin.sh', () => {
-    expect(shellScripts()).toContain('scripts/herdr-plugin.sh')
+  it('include the v3 installer', () => {
+    expect(shellScripts()).toContain('scripts/install-v3-beside-v2.sh')
   })
 
   it('flag only expanded variables', () => {

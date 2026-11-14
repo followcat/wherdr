@@ -188,7 +188,8 @@ describe('resume and first message', () => {
     expect(t.runs()[0]![1].line).toMatch(/exec claude --continue$/)
     t = setup(() => ({ address: 't3' }))
     await coreCreate(t.deps, { kind: 'codex', cwd: '/home/u', resume: true })
-    expect(t.runs()[0]![1].line).toMatch(/exec codex resume --last$/)
+    // Codex: its update check off, and a line that keeps the terminal when an update ends it.
+    expect(t.runs()[0]![1].line).toContain(`'codex' '-c' 'check_for_update_on_startup=false' 'resume' '--last'; s=$?;`)
     t = setup(() => ({ address: 't3' }))
     await coreCreate(t.deps, { kind: 'claude', cwd: '/home/u' })
     expect(t.runs()[0]![1].line).toMatch(/exec claude$/)
@@ -213,6 +214,30 @@ describe('resume and first message', () => {
     const t = setup((m: string) => m === 'terminal.run' ? { address: 't3' } : m === 'terminal.get' ? { state: 'live' } : m === 'terminal.read' ? { text: '› 1. Trust and continue\n  2. Back\n  enter continue · esc back' } : {})
     const r = await coreCreate({ ...t.deps, pollMs: 1, readyWatchMs: 50 }, { kind: 'codex', cwd: '/home/u', prompt: 'hi' })
     expect(r.first_message).toBe('queued')
+    expect(t.calls.some(c => c[0] === 'terminal.send')).toBe(false)
+  })
+  it('holds the first message of a Codex that installs or updates itself, like any message, never typed', async () => {
+    const t = setup((m: string) => m === 'terminal.run' ? { address: 't3' } : m === 'terminal.get' ? { state: 'live', title: 'Installing Codex', status: { state: 'idle' } } : m === 'terminal.read' ? { text: '> ' } : {})
+    const held: string[] = []
+    const r = await coreCreate({ ...t.deps, pollMs: 1, readyWatchMs: 50, hold: (p, text) => { held.push(`${p.coreAddress} ${text}`); return { id: 'held-1', text, state: 'held' } }, handOver: () => {} }, { kind: 'codex', cwd: '/home/u', prompt: 'Hi' })
+    expect(r).toMatchObject({ first_message: 'queued', queued: { id: 'held-1', text: 'Hi', state: 'held' } })
+    expect(held).toEqual(['t3 Hi'])
+    expect(t.calls.some(c => c[0] === 'terminal.send')).toBe(false)
+  })
+  it('holds a Codex first message behind a dialog, and hands it to the queue when Codex then installs', async () => {
+    let installing = false
+    const t = setup(m => m === 'terminal.run' ? { address: 't3' } : m === 'terminal.get' ? { state: 'live', title: installing ? 'Installing Codex' : null, status: null } : m === 'terminal.read' ? { text: 'Yes, I trust this folder\nEnter to confirm' } : {})
+    const log: string[] = []
+    let watch: Promise<unknown> = Promise.resolve()
+    const r = await coreCreate({
+      ...t.deps, pollMs: 1, readyWatchMs: 50, queueWatchMs: 2000, onQueued: (w) => { watch = w },
+      hold: (p, text, byHolder) => { log.push(`hold ${text} ${byHolder}`); return { id: 'held-1', text, state: 'held' } },
+      handOver: (a, id, typed) => { log.push(`handOver ${a} ${id} ${typed}`) },
+    }, { kind: 'codex', cwd: '/home/u', prompt: 'Hi' })
+    expect(r).toMatchObject({ first_message: 'queued', queued: { id: 'held-1' } })
+    installing = true
+    await watch
+    expect(log).toEqual(['hold Hi true', 'handOver t3 held-1 false'])
     expect(t.calls.some(c => c[0] === 'terminal.send')).toBe(false)
   })
   it('sends a queued first message once the trust dialog has been answered', async () => {

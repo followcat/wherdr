@@ -24,7 +24,7 @@ env:
 jobs:
   smoke:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
@@ -53,8 +53,10 @@ jobs:
       - name: Build (herdr-core)
         run: npm run build
 
+      # The runner image already has Chromium's libraries; --with-deps would only
+      # add fonts through apt, which can stall for minutes on an unreachable mirror.
       - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: E2e (core, Chromium)
         run: npx playwright test --project=chromium-phone

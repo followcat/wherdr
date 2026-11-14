@@ -4,6 +4,8 @@ import { type CoreDocs, SPACE_LABEL, TAB_LABEL, rootTerminals, SEEN_LABEL } from
 import { addressOnly, coreActivity, coreTitle, coreUnread, ownTitle } from './coreInventory'
 import type { HerdrState, MachineInfo, Pane } from './types'
 import { cleanTitle } from './paneTitle'
+import { LABEL } from './pm/run'
+import { CODEX_UPDATED_LABEL, codexInstalling } from './codexLaunch'
 
 export interface CoreMachine { name: string; state: string; why?: string }
 // Lossless encoding keeps IDs stable across inventory order and core restarts.
@@ -36,9 +38,10 @@ const cmdProgram = (argv: string[] | null | undefined) => {
 // Placement of a terminal, in this order: its herdr.space / herdr.tab labels, the tab
 // of the machine's herdr-app document whose layout holds it, then its folder
 // (one workspace per folder, one tab per terminal) when nothing says otherwise.
-export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], docs: CoreDocs = {}): HerdrState {
+// `host`: the name of the machine wherdr runs on (its host name, or the one the user gave it).
+export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], docs: CoreDocs = {}, host = ''): HerdrState {
   const result: HerdrState = { ok: true, ready: true, workspaces: [], tabs: [], panes: [], machines: [
-    { key: '', label: 'Local', local: true, status: 'online', error: null },
+    { key: '', label: host, local: true, status: 'online', error: null },
     ...machines.map((m): MachineInfo => ({ key: key(m.name), label: m.name, local: false,
       status: m.state === 'connected' ? 'online' : m.state === 'connecting' ? 'connecting' : 'offline', error: m.why ?? null })),
   ] }
@@ -71,21 +74,26 @@ export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], do
     }
     const activity = coreActivity(terminal)
     const commands = [terminal.template, terminal.status?.app, ...(terminal.foreground?.argv ?? []), ...(terminal.argv ?? [])]
-    const agent = canonicalAgent(terminal.agent)
-      ?? declaredAgent(terminal.template) ?? declaredAgent(terminal.status?.app)
-      ?? cmdProgram(terminal.foreground?.argv) ?? cmdProgram(terminal.argv)
-      ?? (commands.map(commandAgent).find(c => c && KNOWN_AGENTS.includes(c)) ?? null)
+    // Codex exited after updating itself: a shell now, kept for its restart card.
+    const updated = Boolean(terminal.labels?.[CODEX_UPDATED_LABEL]) && !terminal.agent
+    const agent = updated ? 'codex'
+      : canonicalAgent(terminal.agent)
+        ?? declaredAgent(terminal.template) ?? declaredAgent(terminal.status?.app)
+        ?? cmdProgram(terminal.foreground?.argv) ?? cmdProgram(terminal.argv)
+        ?? (commands.map(commandAgent).find(c => c && KNOWN_AGENTS.includes(c)) ?? null)
     if (!result.tabs!.some(t => t.id === tab)) {
-      result.tabs!.push({ id: tab, workspace, machine, label: docTab?.name || coreTitle(terminal), number: result.tabs!.length + 1, layout: null })
+      result.tabs!.push({ id: tab, workspace, machine, label: docTab?.name || coreTitle(terminal), ...(docTab?.name ? { docName: true as const } : {}), number: result.tabs!.length + 1, layout: null })
       if (docTab) order.set(tab, space!.tabs!.indexOf(docTab))
     }
     const state = activity === 'error' ? 'blocked' : activity
     // idle after a turn nobody looked at yet = finished, unread ('done').
-    const status = (state === 'idle' || state === 'done') && terminal.labels?.[SEEN_LABEL] !== undefined ? (coreUnread(terminal) ? 'done' : 'idle') : state
+    const status = updated ? 'blocked' : (state === 'idle' || state === 'done') && terminal.labels?.[SEEN_LABEL] !== undefined ? (coreUnread(terminal) ? 'done' : 'idle') : state
     const pane: Pane = { id: `${workspace}:p${id}`, coreAddress: terminal.address, machine, workspace, tab, tabLabel: result.tabs!.find(t => t.id === tab)!.label,
       agent, name: addressOnly(terminal.name, terminal.address) ? null : terminal.name ?? null, label: ownTitle(terminal), title: terminal.title == null ? null : cleanTitle(terminal.title), cwd, agentSession: null,
-      status, interaction: 'unknown',
-      ...(typeof terminal.status_ms === 'number' ? { stateSeq: terminal.status_ms } : terminal.turn ? { stateSeq: terminal.turn } : {}) }
+      status, interaction: 'unknown', ...(terminal.labels?.[LABEL.task] ? { task: terminal.labels[LABEL.task], ...(terminal.labels[LABEL.role] ? { role: terminal.labels[LABEL.role] } : {}) } : {}),
+      ...(terminal.labels?.['wherdr.coordinator'] !== undefined ? { coordinator: true } : {}),
+      ...(updated ? { stopped: { reason: 'update' as const } } : agent === 'codex' && codexInstalling(terminal.title, terminal.status?.msg) ? { installing: true } : {}),
+      ...(typeof terminal.status_ms === 'number' ? { stateSeq: terminal.status_ms, since: terminal.status_ms } : terminal.turn ? { stateSeq: terminal.turn } : {}) }
     result.panes.push(pane)
   }
   // Tabs follow their document's order inside a space, then renumber from 1.

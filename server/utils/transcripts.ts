@@ -118,6 +118,8 @@ const PASTED = /<pasted_content(?:\s[^>]*)?>\n?|\n?<\/pasted_content(?:\s[^>]*)?
 export const unwrapPasted = (t: string) => (t.includes('<pasted_content') ? t.replace(PASTED, '').trim() : t)
 // Prompt of a scheduled task (CronCreate, /loop…) wrapped by Claude Code.
 const SCHEDULED = /^\s*<scheduled-task(?:\s[^>]*)?>\n?([\s\S]*?)\n?<\/scheduled-task>\s*$/
+// A background task's notification (Claude Code), as a string or a text part.
+const TASK_NOTE = /^\s*<task-notification>/
 const scheduledText = (t: unknown) => (String(t || '').match(SCHEDULED) || [])[1]?.trim() || null
 // A message written by the user (after removing the paste wrappers).
 function humanText(t: unknown): string | null {
@@ -348,8 +350,18 @@ export function claudeParser(home = '') {
     // A prompt Claude ran from its queue (promptSource "queued") is never put back into its field.
     lastSaid = item && item.role === 'user' && d.parentUuid && d.promptSource !== 'queued' ? { item, parent: d.parentUuid, uuid: d.uuid } : null
   }
+  // A background task's notification starts a turn Claude takes by itself: its
+  // first agent item is marked `own` (the notification itself never shows).
+  let ownAt = -1
+  const markOwn = () => {
+    if (ownAt < 0 || items.length <= ownAt) return
+    const it = items[ownAt]!
+    if (it.role === 'assistant' || it.role === 'tool' || it.role === 'thinking') it.own = true
+    ownAt = -1
+  }
   function feed(lines: Lines) {
     for (let li = 0; li < lines.length; li++) {
+      markOwn()
       const line = lines[li]
       const ref = lines.refs ? lines.refs[li] : undefined
       if (!line) continue
@@ -454,6 +466,8 @@ export function claudeParser(home = '') {
           else if (cmd) {
             const args = (content.match(/<command-args>([^<]*)<\/command-args>/) || [])[1] || ''
             pushCmd({ role: 'cmd', text: `${cmd[1]} ${args}`.trim(), ts })
+          } else if (TASK_NOTE.test(content)) {
+            ownAt = items.length
           } else if (special(content, ts)) {
             continue
           } else if (/^\[Request interrupted/.test(content)) {
@@ -494,6 +508,7 @@ export function claudeParser(home = '') {
             const sched = scheduledText(part.text) || (fire && sameMsg(fire, String(part.text || '')) ? String(part.text) : null)
             if (sched) { injected(sched, ts, true); continue }
             if (special(String(part.text || ''), ts)) continue
+            if (TASK_NOTE.test(String(part.text || ''))) { ownAt = items.length; continue }
             const t = humanText(part.text)
             if (t === null) continue
             raw.push(String(part.text || ''))
@@ -520,6 +535,7 @@ export function claudeParser(home = '') {
         }
       }
     }
+    markOwn()
   }
   function result(): Parsed {
     const out: Parsed = items.map((orig) => {

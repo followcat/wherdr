@@ -5,6 +5,10 @@
 import type { HerdrState, MachineInfo } from './types'
 import { LOCAL, machineOf } from './ids'
 
+// What the server sends before its first read: not ready, so a page that
+// reconnects to a restarted server keeps the state it shows.
+export const startingState = (): HerdrState => ({ ok: false, ready: false, error: 'starting…', workspaces: [], panes: [] })
+
 // State to show: null = keep the current state. `settling`: recent
 // reconnection (the server may have restarted).
 export function settleState(prev: HerdrState | null, next: HerdrState, settling: boolean): HerdrState | null {

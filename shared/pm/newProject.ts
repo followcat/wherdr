@@ -1,8 +1,10 @@
 // "New" sheet › Project › Add: what a chosen folder is, and the name and key
 // proposed from it.
+import type { Template } from './workflow'
 
-// GET /api/pm/folder: the folder as it stands on its machine.
-export interface FolderProbe { path: string, exists: boolean, git: boolean, empty: boolean }
+// GET /api/pm/folder: the folder as it stands on its machine. remote: its
+// repository has an origin.
+export interface FolderProbe { path: string, exists: boolean, git: boolean, remote?: boolean, empty: boolean }
 // POST /api/pm/project from the sheet: create a missing folder, git init a
 // new or empty one, take a folder without git as it is.
 export interface FolderOptions { create?: boolean, gitInit?: boolean, plain?: boolean }
@@ -12,6 +14,13 @@ export type FolderKind = 'git' | 'new' | 'empty' | 'plain'
 export const folderKind = (p: FolderProbe): FolderKind => (!p.exists ? 'new' : p.git ? 'git' : p.empty ? 'empty' : 'plain')
 // Only a new or empty folder offers `git init`: a folder with files stays as it is.
 export const canGitInit = (k: FolderKind) => k === 'new' || k === 'empty'
+
+// A folder under the machine's home as ~/…, as the repository list shows it:
+// a typed, browsed or listed folder then reads the same. Others stay as they are.
+export const shortHome = (path: string, home: string) => {
+  const h = home.replace(/\/+$/, '')
+  return h && (path === h || path.startsWith(`${h}/`)) ? `~${path.slice(h.length)}` : path
+}
 
 // The folder's own name: "~/src/my-web/" → "my-web".
 export const proposeName = (folder: string) => folder.replace(/\/+$/, '').split('/').pop()?.trim().slice(0, 80) || ''
@@ -43,23 +52,28 @@ function free(key: string, taken: readonly string[]) {
   return key
 }
 
-// The project being added. template: a saved template's id, or example:<id>
-// (an example, saved under its id at start).
-export interface ProjectDraft { machine: string, path: string, name: string, key: string, template: string, gitInit: boolean, probe: FolderProbe | null }
+// The project being added: no template, it gets the minimal default workflow.
+export interface ProjectDraft { machine: string, path: string, name: string, key: string, gitInit: boolean, probe: FolderProbe | null }
 
 // Whether the project will be a git repository: one already, or git init asked.
-// Without git, no template: its tasks never start, its coordinator does the work.
+// Without git, no workflow: its tasks never start, its coordinator does the work.
 export function draftGit(d: ProjectDraft) {
   const kind = d.probe ? folderKind(d.probe) : 'plain'
   return kind === 'git' || (canGitInit(kind) && d.gitInit)
 }
 
+// A workflow that pushes or opens pull requests needs an origin; git.land
+// alone merges into a local branch when there is none.
+export const needsRemote = (t: Pick<Template, 'steps' | 'taskTypes'>) =>
+  [...Object.values(t.steps ?? {}), ...Object.values(t.taskTypes).flatMap(tt => tt.steps)]
+    .some(s => typeof s !== 'string' && !!s?.action && s.action.kind !== 'git.land')
+
 // POST /api/pm/project for a draft whose folder was probed: git init only where
 // it is offered, the folder created when missing.
-export function draftBody(d: ProjectDraft, template: string) {
+export function draftBody(d: ProjectDraft) {
   const kind = d.probe ? folderKind(d.probe) : 'plain'
   return {
-    key: d.key.trim(), name: d.name.trim(), machine: d.machine, path: d.probe?.path || d.path.trim(), template: draftGit(d) ? template : '',
+    key: d.key.trim(), name: d.name.trim(), machine: d.machine, path: d.probe?.path || d.path.trim(),
     plain: true, create: kind === 'new', gitInit: canGitInit(kind) && d.gitInit,
   }
 }

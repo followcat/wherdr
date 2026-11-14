@@ -56,7 +56,7 @@ export function useComposerDictation(o: { text: Ref<string>, ta: ComputedRef<HTM
     // on the model Settings shows (one that fits).
     if (e.reason === 'too-large') disposeEngines()
     toast(msg, true, settings ? undefined : e.detail, settings
-      ? { label: t('Settings'), run: () => navigateTo({ path: '/settings', query: { section: 'conversation' } }) }
+      ? { label: t('Settings'), run: () => navigateTo({ path: '/settings', query: { section: 'conversation', tab: 'dictation' } }) }
       : undefined)
     d.cancel()
   })

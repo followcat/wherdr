@@ -67,9 +67,11 @@ describe('outbox: a send that fails', () => {
     expect(shown([], box)).toEqual([expect.objectContaining({ id: 'w-a', raw: text, state: 'failed', local: true, photos: ['2026-01-01T10-00-00-000Z-a.jpg'] })])
   })
 
-  it('sends again under the same bubble on Retry', () => {
-    const box = resend(failLocal(addSending([], 'w-a', 'hi', T0), 'w-a'), 'w-a')
-    expect(box).toEqual([{ id: 'w-a', text: 'hi', at: T0, state: 'sending' }])
+  it('sends again under the same bubble on Retry, its photo still a photo', () => {
+    const text = 'hi\n/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.png'
+    const box = resend(failLocal(addSending([], 'w-a', text, T0), 'w-a'), 'w-a')
+    expect(box).toEqual([{ id: 'w-a', text, at: T0, state: 'sending' }])
+    expect(shown([], box)).toEqual([expect.objectContaining({ id: 'w-a', state: 'sending', photos: ['2026-01-01T10-00-00-000Z-a1b2c3.png'] })])
   })
 })
 

@@ -1,2 +1,2 @@
-// Is a new wherdr version available? (see utils/updates.ts) No one-tap update with herdr-core.
-export default defineApi(async () => ({ ...await checkUpdate(), oneTap: false }))
+// Is a new wherdr version available? (see utils/updates.ts) No one-tap update in v3.
+export default defineApi(() => checkUpdate())

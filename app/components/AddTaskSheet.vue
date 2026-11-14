@@ -1,10 +1,14 @@
 <script setup lang="ts">
 // Add a task from the board: its project (the board's when filtered on one),
-// title, type (each with its steps in one line), description (markdown), the
-// tasks of the same project it starts after, and Start now. The board reloads
+// title, type (each with its steps in one line), weight (Auto: its type's),
+// description (markdown), the tasks of the same project it starts after, and Start now. The board reloads
 // at once; a refused start is said there, the task stays added.
 import type { BoardProject, Card } from '#shared/pm/board'
 import type { Task } from '#shared/pm/run'
+import { WEIGHTS, type Weight } from '#shared/pm/workflow'
+import { projectOption } from '~/utils/projectOption'
+
+const AUTO = 'auto'
 
 const open = defineModel<boolean>('open', { default: false })
 const props = defineProps<{ projects: BoardProject[], cards: Card[], project?: string }>()
@@ -14,6 +18,7 @@ const project = ref(props.project ?? '')
 const title = ref('')
 const type = ref('')
 const description = ref('')
+const weight = ref<Weight | typeof AUTO>(AUTO)
 const after = ref<string[]>([])
 const startNow = ref(false)
 const busy = ref(false)
@@ -21,10 +26,15 @@ const error = ref('')
 const tried = ref(false) // the field errors show once the user tried to add
 
 const projectPick = noneModel(project)
-const projectItems = computed(() => [{ label: tl('Pick a project', 'Choisis un projet'), value: NONE, disabled: true }, ...props.projects.map(p => ({ label: p.name, value: p.key }))])
+const projectItems = computed(() => [{ label: tl('Pick a project', 'Choisis un projet'), value: NONE, disabled: true }, ...props.projects.map(p => projectOption(p))])
 const types = computed(() => props.projects.find(p => p.key === project.value)?.types ?? [])
 const typeItems = computed(() => types.value.map(x => ({ label: x.id, value: x.id, description: x.plan })))
 const plan = computed(() => types.value.find(x => x.id === type.value)?.plan)
+const WEIGHT_LABELS: Record<Weight, string> = { light: tl('Light'), standard: tl('Standard'), heavy: tl('Heavy') }
+const weightItems = computed(() => {
+  const auto = types.value.find(x => x.id === type.value)?.weight
+  return [{ label: auto ? `${tl('Auto')}: ${auto}` : tl('Auto'), value: AUTO }, ...WEIGHTS.map(w => ({ label: WEIGHT_LABELS[w], value: w }))]
+})
 const afterItems = computed(() => props.cards.filter(c => c.project === project.value && c.phase !== 'done').map(c => ({ label: `${c.shown} · ${c.title}`, value: c.id })))
 // A new project: its first type, and no 'after' from another project.
 watch(project, () => { type.value = types.value[0]?.id ?? ''; after.value = [] }, { immediate: true })
@@ -45,6 +55,7 @@ async function add() {
   try {
     const { task } = await api<{ task: Task }>('/api/pm/task', {
       project: project.value, title: title.value.trim(), type: type.value, description: description.value,
+      ...(weight.value !== AUTO ? { weight: weight.value } : {}),
       ...(after.value.length ? { after: after.value.join(',') } : {}),
     })
     let refused: string | undefined
@@ -61,7 +72,7 @@ async function add() {
   <AppSheet v-model:open="open" :title="tl('Add a task', 'Ajouter une tâche')" tall>
     <form id="add-task" class="sheet-form" data-testid="add-task" novalidate @submit.prevent="add">
       <label class="field-label">{{ tl('Project', 'Projet') }}</label>
-      <USelect v-model="projectPick" :items="projectItems" size="xl" class="w-full" :aria-label="tl('Project', 'Projet')" data-testid="add-task-project" />
+      <ProjectSelect v-model="projectPick" :items="projectItems" size="xl" class="w-full" :aria-label="tl('Project', 'Projet')" data-testid="add-task-project" />
       <p v-if="shown('project')" class="form-error" data-testid="add-task-error">{{ shown('project') }}</p>
 
       <label class="field-label" for="add-task-title">{{ tl('Title', 'Titre') }}</label>
@@ -73,6 +84,9 @@ async function add() {
         <USelect v-if="typeItems.length" v-model="type" :items="typeItems" size="xl" class="w-full" :aria-label="tl('Type', 'Type')" data-testid="add-task-type" />
         <p v-if="plan" class="muted add-task-plan mono" data-testid="add-task-plan">{{ plan }}</p>
         <p v-if="problems.type" class="form-error" data-testid="add-task-error">{{ problems.type }}</p>
+
+        <label class="field-label">{{ tl('Weight') }}</label>
+        <USelect v-model="weight" :items="weightItems" size="xl" class="w-full" :aria-label="tl('Weight')" data-testid="add-task-weight" />
       </template>
 
       <label class="field-label" for="add-task-description">{{ tl('Description', 'Description') }} <span class="muted">{{ tl('(optional, markdown)', '(facultatif, markdown)') }}</span></label>

@@ -55,3 +55,29 @@ export function moveKey(order: readonly PhoneKeyId[], id: PhoneKeyId, to: number
   next.splice(Math.max(0, Math.min(to, next.length)), 0, id)
   return next
 }
+
+// Keys hidden from the bar (Settings › Terminal), kept on this device next to
+// the order; a hidden key keeps its place in the order. The keyboard key is
+// never hidden: on iPhone it is the only way to type in the terminal.
+export const PHONE_KEY_HIDDEN_KEY = 'phoneKeyHidden'
+export const REQUIRED_PHONE_KEYS: readonly PhoneKeyId[] = ['keyboard']
+export const isRequiredKey = (id: PhoneKeyId) => REQUIRED_PHONE_KEYS.includes(id)
+
+// The stored text (a JSON list of ids) as the hidden keys; unknown, repeated
+// and required ids are dropped.
+export function readHiddenKeys(raw: string | null | undefined): PhoneKeyId[] {
+  let value: unknown = null
+  try { value = raw ? JSON.parse(raw) : null } catch { /* nothing hidden */ }
+  if (!Array.isArray(value)) return []
+  return [...new Set(value.filter(isPhoneKeyId))].filter(id => !isRequiredKey(id))
+}
+
+// The text to store, or null when every key is shown (nothing stored).
+export function writeHiddenKeys(hidden: readonly PhoneKeyId[]): string | null {
+  const clean = readHiddenKeys(JSON.stringify(hidden))
+  return clean.length ? JSON.stringify(clean) : null
+}
+
+// The keys of the bar, in order, without the hidden ones.
+export const shownKeys = (order: readonly PhoneKeyId[], hidden: readonly PhoneKeyId[]) =>
+  order.filter(id => !hidden.includes(id))

@@ -50,27 +50,9 @@ function startRuntime(runtime) {
 // resumable 8 MB Range slices from the server, { t:'dl' } progress posted
 // as the bytes arrive.
 importScripts('/workers/model-files.js')
-const { openFile } = self.wherdrModelFiles
+const { openFile, fsWriteStreamed } = self.wherdrModelFiles
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
-
-// A file into the emscripten FS slice by slice: the weights must live in the
-// WASM heap anyway, but no second whole copy is held in JS (a whole-file
-// writeFile got a phone tab killed, in followcat's tests).
-async function fsWriteStreamed(path, res) {
-  const fd = Module.FS.open(path, 'w')
-  const reader = res.body.getReader()
-  let off = 0
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      Module.FS.write(fd, value, 0, value.length, off)
-      off += value.length
-    }
-  }
-  finally { Module.FS.close(fd) }
-}
 
 // The model part of the recognizer config, per model family. Field names are
 // the runtime's (sherpa-onnx-asr.js): a wrong name is silently ignored.
@@ -107,7 +89,7 @@ async function load(msg) {
   try { Module.FS.mkdir(MODEL_DIR) }
   catch { /* already there */ }
   for (const [i, file] of msg.files.entries()) {
-    await fsWriteStreamed(`${MODEL_DIR}/${file}`, await openFile(`${msg.base}/${file}`, file, msg.bytes[i], msg))
+    await fsWriteStreamed(Module.FS, `${MODEL_DIR}/${file}`, await openFile(`${msg.base}/${file}`, file, msg.bytes[i], msg))
   }
 
   postMessage({ t: 'phase', phase: 'create' })

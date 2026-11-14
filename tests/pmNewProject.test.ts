@@ -6,11 +6,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { draftBody, folderKind, proposeKey, proposeName, type ProjectDraft } from '../shared/pm/newProject'
+import { draftBody, folderKind, needsRemote, proposeKey, proposeName, shortHome, type ProjectDraft } from '../shared/pm/newProject'
 import { findRepos, parseRepos } from '../server/utils/pmRepos'
 import { pmFolderCheck, probeFolder } from '../server/utils/pmFolder'
 import { createPmStore } from '../server/utils/pmStore'
 import { coordinatorArgs, roleFiles } from '../shared/pm/coordinator'
+import { EXAMPLES } from '../shared/pm/examples'
 import type { CoreAdminDeps } from '../server/utils/coreCreate'
 
 describe('name and key proposal', () => {
@@ -20,6 +21,12 @@ describe('name and key proposal', () => {
     expect(proposeName('')).toBe('')
   })
 
+  it('shows a folder under the home as ~/…, any other as it is', () => {
+    expect(shortHome('/home/user/projects/demo-app', '/home/user')).toBe('~/projects/demo-app')
+    expect(shortHome('/home/user', '/home/user/')).toBe('~')
+    expect(shortHome('/home/username/app', '/home/user')).toBe('/home/username/app')
+    expect(shortHome('/srv/app', '')).toBe('/srv/app')
+  })
   it('proposes initials, or a word\'s consonants, free among the taken keys', () => {
     expect(proposeKey('my-web-app')).toBe('MWA')
     expect(proposeKey('myWebApp')).toBe('MWA')
@@ -38,11 +45,14 @@ describe('folder kinds', () => {
     expect(folderKind({ ...probe, exists: false })).toBe('new')
     expect(folderKind({ ...probe, empty: true })).toBe('empty')
     expect(folderKind(probe)).toBe('plain')
-    const d: ProjectDraft = { machine: '', path: '~/x', name: ' X ', key: 'x', template: 'vibe', gitInit: true, probe }
-    expect(draftBody(d, 'vibe')).toEqual({ key: 'x', name: 'X', machine: '', path: '/home/user/x', template: '', plain: true, create: false, gitInit: false })
-    expect(draftBody(d, 'vibe').template).toBe('') // no git: no template
-    expect(draftBody({ ...d, probe: { ...probe, exists: false } }, 'vibe')).toMatchObject({ create: true, gitInit: true, template: 'vibe' })
-    expect(draftBody({ ...d, gitInit: false, probe: { ...probe, empty: true } }, 'vibe')).toMatchObject({ gitInit: false, template: '' })
+    const d: ProjectDraft = { machine: '', path: '~/x', name: ' X ', key: 'x', gitInit: true, probe }
+    expect(draftBody(d)).toEqual({ key: 'x', name: 'X', machine: '', path: '/home/user/x', plain: true, create: false, gitInit: false })
+    expect(draftBody({ ...d, probe: { ...probe, exists: false } })).toMatchObject({ create: true, gitInit: true })
+    expect(draftBody({ ...d, gitInit: false, probe: { ...probe, empty: true } })).toMatchObject({ gitInit: false })
+  })
+
+  it('tells the examples that need a remote from those that land locally', () => {
+    expect(EXAMPLES.filter(needsRemote).map(e => e.id)).toEqual(['company', 'github', 'wherdr'])
   })
 })
 
@@ -82,11 +92,14 @@ describe('repository discovery', () => {
 
 describe('folder check', () => {
   it('probes a folder: missing, empty, plain or git', async () => {
-    await Promise.all([mk('empty'), mk('plain', 'one'), mk('repo', '.git')])
-    expect(await probeFolder('', '~/missing', deps)).toEqual({ path: path.join(home, 'missing'), exists: false, git: false, empty: false })
+    await Promise.all([mk('empty'), mk('plain', 'one'), mk('remote')])
+    spawnSync('git', ['init', '-q', path.join(home, 'repo')]); spawnSync('git', ['init', '-q', path.join(home, 'remote')])
+    spawnSync('git', ['-C', path.join(home, 'remote'), 'remote', 'add', 'origin', 'https://example.com/r.git'])
+    expect(await probeFolder('', '~/missing', deps)).toEqual({ path: path.join(home, 'missing'), exists: false, git: false, remote: false, empty: false })
     expect(await probeFolder('', '~/empty', deps)).toMatchObject({ exists: true, git: false, empty: true })
     expect(await probeFolder('', '~/plain', deps)).toMatchObject({ exists: true, git: false, empty: false })
-    expect(await probeFolder('', '~/repo', deps)).toMatchObject({ exists: true, git: true })
+    expect(await probeFolder('', '~/repo', deps)).toMatchObject({ exists: true, git: true, remote: false })
+    expect(await probeFolder('', '~/remote', deps)).toMatchObject({ git: true, remote: true })
     await expect(probeFolder('', '/etc', deps)).rejects.toMatchObject({ code: 'bad_input' })
   })
 

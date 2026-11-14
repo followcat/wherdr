@@ -63,15 +63,31 @@ export function prune(list: OutboxItem[], server: QueuedMessage[], now: number, 
   const out: OutboxItem[] = []
   for (const q of list) {
     if (q.state === 'sending') out.push(q)
-    else if (known.has(q.id)) continue
+    // Held on the server for a Codex not ready yet: the local copy stays until
+    // it is typed, or comes back into the field (see returnHeld).
+    else if (known.has(q.id)) { if (q.state === 'held') out.push(q) }
     else if (q.local) out.push(q)
     else {
-      const gone = q.goneAt ?? Math.max(now, q.settledAt ?? q.at ?? 0)
+      // No longer listed, Codex still there: typed. Never "held" again.
+      const left = q.state === 'held' ? { ...q, state: undefined } : q
+      const gone = left.goneAt ?? Math.max(now, left.settledAt ?? left.at ?? 0)
       if (readAt - gone >= SETTLED_MS || now - gone >= GONE_MAX_MS) continue
-      out.push(q.goneAt === gone ? q : { ...q, goneAt: gone })
+      out.push(left.goneAt === gone && left === q ? q : { ...left, goneAt: gone })
     }
   }
   return out
+}
+
+// Messages held on the server for Codex (coreHeld.ts) that come back as texts,
+// for the message field. Codex gone (`gone`: exited, or stopped by its update):
+// the server dropped them, so those it no longer lists. Codex still there: only
+// those it lists as 'unseen' (their send timed out, they may have reached Codex);
+// one it no longer lists was typed.
+export function returnHeld(list: OutboxItem[], server: QueuedMessage[], gone = true): { kept: OutboxItem[], back: string[] } {
+  const known = new Set(server.map(q => q.id))
+  const unseen = new Set(server.filter(q => q.reason === 'unseen').map(q => q.id))
+  const back = list.filter(q => q.state === 'held' && !q.local && (gone ? !known.has(q.id) : unseen.has(q.id)))
+  return { kept: list.filter(q => !back.includes(q)), back: back.map(q => q.text) }
 }
 
 // What the conversation shows: the server's records (its state wins), then the

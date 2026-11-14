@@ -7,14 +7,13 @@ import { expect, it } from 'vitest'
 import { hasCommands } from './helpers/commands'
 
 const workflow = readFileSync('.github/workflows/release.yml', 'utf8')
-for (const job of ['package', 'publish-release']) {
-  it.skipIf(!hasCommands('bash') || (job === 'package' && !hasCommands('sha256sum')))(`${job} refuses missing drafts/notes and never generates release notes`, () => {
+{
+  it.skipIf(!hasCommands('bash'))('publish-release refuses missing drafts/notes and never generates release notes', () => {
     const home = mkdtempSync(path.join(os.tmpdir(), 'wherdr-draft-'))
     try {
       const bin = path.join(home, 'bin')
       mkdirSync(bin)
       cpSync('scripts', path.join(home, 'scripts'), { recursive: true })
-      writeFileSync(path.join(home, 'wherdr-1.3.3.tgz'), 'archive')
       writeFileSync(path.join(bin, 'gh'), `#!/bin/sh
 case "$*" in
   'release view '*)
@@ -26,8 +25,7 @@ case "$*" in
   *) printf '%s\\n' "$*" >> "$HOME/mutations" ;;
 esac
 `, { mode: 0o755 })
-      const name = job === 'package' ? 'Attach package to draft' : 'Publish without advancing the legacy update channel'
-      const section = workflow.split(`      - name: ${name}\n`)[1]!
+      const section = workflow.split('      - name: Publish the GitHub release only\n')[1]!
       const script = section.split('        run: |\n')[1]!.split('\n\n')[0]!
         .split('\n').map(line => line.replace(/^          /, '')).join('\n')
       for (const scenario of [
@@ -36,11 +34,11 @@ esac
         { exists: '1', draft: 'true', notes: '', ok: false },
         { exists: '1', draft: 'true', notes: ' \n\t ', ok: false },
         { exists: '1', draft: 'true', notes: 'See CHANGELOG.md', ok: false },
-        { exists: '1', draft: 'true', notes: '## Fixed\nDownloads now work correctly on supported Node versions. Temporary download links are released after the browser saves the file.\n\n[Full changelog](https://github.com/example/wherdr/blob/v1.3.3/CHANGELOG.md)', ok: true },
+        { exists: '1', draft: 'true', notes: '## Fixed\nDownloads now work correctly on supported Node versions. Temporary download links are released after the browser saves the file.\n\n[Full changelog](https://github.com/example/wherdr/blob/v3.0.0/CHANGELOG.md)', ok: true },
       ]) {
         rmSync(path.join(home, 'mutations'), { force: true })
         const run = spawnSync('bash', ['-e', '-c', script], { cwd: home, encoding: 'utf8', env: {
-          ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, GITHUB_REF_NAME: 'v1.3.3',
+          ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, GITHUB_REF_NAME: 'v3.0.0',
           GITHUB_REPOSITORY: 'example/wherdr', DRAFT_EXISTS: scenario.exists,
           IS_DRAFT: scenario.draft, DRAFT_NOTES: scenario.notes,
         } })
@@ -48,7 +46,7 @@ esac
         let mutations = ''
         try { mutations = readFileSync(path.join(home, 'mutations'), 'utf8') } catch {}
         if (!scenario.ok) expect(mutations).toBe('')
-        else expect(mutations).toContain(job === 'package' ? 'release upload' : 'release edit')
+        else expect(mutations).toBe('release edit v3.0.0 --repo example/wherdr --draft=false --latest=false\n')
         expect(mutations).not.toMatch(/release create|generate-notes/)
       }
     } finally { rmSync(home, { recursive: true, force: true }) }
@@ -79,17 +77,18 @@ it('uses one release tag for dispatch, checkout and concurrency, preserving OIDC
   expect(npmWorkflow).not.toMatch(/^\s+environment:/m)
 })
 
-// A tag push used to start npm.yml beside release.yml, before the release had its package.
-it('starts npm only from release.yml, after publish-release, or by hand', () => {
+// v2 installs update from the release archive, npm and Homebrew: a v3 release reaches none of them.
+it('publishes a 3.x tag as a GitHub release only: no archive, npm or Homebrew', () => {
+  const jobs = [...workflow.split('\njobs:\n')[1]!.matchAll(/^  ([\w-]+):$/gm)].map(m => m[1])
+  expect(jobs).toEqual(['publish-release'])
+  expect(workflow).toContain("if: startsWith(github.ref, 'refs/tags/v3.')")
+  const code = workflow.split('\n').filter(line => !line.trim().startsWith('#')).join('\n')
+  expect(code).not.toMatch(/npm (ci|pack|publish)|\.tgz|release upload|workflow run|npm\.yml|homebrew/i)
+  expect(workflow).toContain('--latest=false')
+  // npm.yml stays for 2.x recovery runs, started by hand only.
   const on = npmWorkflow.split('\non:\n')[1]!.split('\nenv:\n')[0]!
   expect(on.split('\n')[0]).toBe('  workflow_dispatch:')
   expect(on).not.toMatch(/^  (push|release|workflow_run):/m)
-  const job = workflow.split('\n  npm:\n')[1]!.split('\n\n')[0]!
-  expect(job).toContain('    needs: publish-release\n')
-  expect(job).toContain('      actions: write')
-  expect(job).toContain('run: gh workflow run npm.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" -f version="$GITHUB_REF_NAME"')
-  // Homebrew failing must not hold npm back: the dispatch depends on publish-release only.
-  expect(workflow.indexOf('\n  publish-release:\n')).toBeLessThan(workflow.indexOf('\n  npm:\n'))
 })
 
 it('skips every publishing step once the version is on npm', () => {
@@ -134,7 +133,7 @@ printf '%s\\n' "$*" >> "$HOME/requests"
       ['v1.3.3', '1', true], ['v2.0.0', '1', true], ['v1.3.3', '0', false],
       ['main', '1', false], ['1.3.3', '1', false], ['v1.3.3-beta.1', '1', false],
       ['v1.3', '1', false], ['v1.3.3/extra', '1', false], ['v1.3.3\necho injected', '1', false],
-      ['$(touch injected)', '1', false], ['', '1', false],
+      ['$(touch injected)', '1', false], ['', '1', false], ['v3.0.0', '1', false],
     ] as const) {
       rmSync(path.join(home, 'requests'), { force: true })
       const run = spawnSync('bash', ['-e', '-c', npmStep('Validate release tag')], {

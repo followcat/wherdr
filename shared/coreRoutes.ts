@@ -32,21 +32,26 @@ import v from './coreRoutes/v'
 import w from './coreRoutes/w'
 import x from './coreRoutes/x'
 import y from './coreRoutes/y'
+import z from './coreRoutes/z'
 
 const BASE = [
   'auth/status', 'auth/lock', 'auth/lock-all', 'auth/disable', 'auth/max-session',
   'auth/login/options', 'auth/login/verify', 'auth/register/options', 'auth/register/verify',
   'core', 'core/terminals', 'client-plugins', 'client-plugins/:id/:file',
   'state', 'config', 'settings', 'health', 'search',
-  'chat', 'chat/image', 'prompt', 'input', 'interrupt', 'close', 'agents',
+  'chat', 'chat/image', 'prompt', 'input', 'interrupt', 'close', 'agents', 'codex-restart',
   'dirs', 'isgit', 'quotas', 'claude-statusline', 'claude-setup', 'proxies',
   'machine/add', 'machine/connect', 'machine/core', 'machine/core-rename', 'machine/core-forget',
   'upload', 'attach', 'file', 'keep',
   'dictation/status', 'dictation/key', 'dictation/transcribe', 'dictation/prepare', 'GET dictation/models',
   'dictation/rewrite', 'GET dictation/text-models',
+  // Action buttons an agent puts in its reply (shared/uiActions.ts).
+  'GET ui/card', 'ui/act',
+  // The notes agents write, read-only (NotesPanel.vue).
+  'GET notes', 'GET notes/file',
 ]
 
-export const CORE_ROUTES = [...BASE, ...a, ...b, ...c, ...d, ...e, ...f, ...g, ...h, ...i, ...j, ...k, ...l, ...m, ...n, ...o, ...p, ...q, ...r, ...s, ...t, ...u, ...v, ...w, ...x, ...y]
+export const CORE_ROUTES = [...BASE, ...a, ...b, ...c, ...d, ...e, ...f, ...g, ...h, ...i, ...j, ...k, ...l, ...m, ...n, ...o, ...p, ...q, ...r, ...s, ...t, ...u, ...v, ...w, ...x, ...y, ...z]
 const readOnly = CORE_ROUTES.filter(r => r.startsWith('GET ')).map(r => r.slice(4))
 const open = CORE_ROUTES.filter(r => !r.startsWith('GET '))
 const exact = new Set(open.filter(r => !r.includes(':')))

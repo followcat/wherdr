@@ -1,5 +1,11 @@
 name: release
 
+# v3 (3.x tags) is published as a GitHub release with its notes, and nothing else: no
+# package archive, no npm, no Homebrew formula. v2 installs update through those three
+# channels, so a v3 release must never reach them. v3 is installed beside v2, from git
+# (docs/RELEASING.md). 2.x releases are tagged on the `2.x` branch and run that branch's
+# release.yml, which still publishes to npm and Homebrew.
+
 on:
   push:
     tags: ['v*']
@@ -12,47 +18,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  package:
+  publish-release:
     permissions:
       contents: write
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v3.')
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Check version
-        run: |
-          version=$(node -p "require('./package.json').version")
-          test "$GITHUB_REF_NAME" = "v$version"
-          test "$(sed -n 's/^version = "\(.*\)"$/\1/p' herdr-plugin.toml)" = "$version"
-      - run: npm ci
-      - run: npm pack
-      - name: Attach package to draft
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -o pipefail
-          version="${GITHUB_REF_NAME#v}"
-          sha256sum "wherdr-${version}.tgz" > "wherdr-${version}.tgz.sha256"
-          test "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = true
-          gh release view "$GITHUB_REF_NAME" --json body --jq .body | node scripts/check-release-notes.mjs
-          gh release upload "$GITHUB_REF_NAME" "wherdr-${version}.tgz" "wherdr-${version}.tgz.sha256" --clobber
-
-  publish-release:
-    permissions:
-      contents: write
-    needs: package
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-      - name: Publish without advancing the legacy update channel
+        run: test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
+      # latest=false: the legacy update channel of v2 installs follows releases/latest.
+      - name: Publish the GitHub release only
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -60,38 +40,3 @@ jobs:
           test "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
           gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json body --jq .body | node scripts/check-release-notes.mjs
           gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
-
-  # npm publishes only once the GitHub release and its package are public. npm.yml is
-  # dispatched rather than chained to the tag push or a `release` event: a release made
-  # public with GITHUB_TOKEN fires no event, and npm Trusted Publishing names npm.yml.
-  npm:
-    permissions:
-      actions: write
-    needs: publish-release
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Start npm publication
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run npm.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" -f version="$GITHUB_REF_NAME"
-
-  homebrew:
-    permissions: {}
-    needs: publish-release
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    env:
-      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-    steps:
-      - uses: actions/checkout@v7
-      - name: Skip without HOMEBREW_TAP_TOKEN
-        if: env.TAP_TOKEN == ''
-        run: echo "::notice::Run scripts/bump-homebrew.sh ${GITHUB_REF_NAME#v} to update Homebrew."
-      - name: Update formula from GitHub
-        if: env.TAP_TOKEN != ''
-        env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
-          gh auth setup-git
-          scripts/bump-homebrew.sh "${GITHUB_REF_NAME#v}" "$GITHUB_REPOSITORY_OWNER"

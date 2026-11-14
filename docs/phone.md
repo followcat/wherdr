@@ -36,3 +36,5 @@ Settings › Phone › **App start** sets how this device opens the app:
 
 After an update the server keeps serving the files of the two previous versions (in
 `<data dir>/builds/`), so a page opened before the update keeps working.
+While the server restarts for an update, an open page keeps showing what it showed; only
+a **Reload** banner appears, and the app never reloads by itself.

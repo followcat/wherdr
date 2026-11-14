@@ -19,9 +19,14 @@ export const offerAgents = (installed: readonly string[] = installedAgents.value
 export const offerCoordinators = (installed?: readonly string[], project: string = MAIN) =>
   offerAgents(installed).filter(isCoordinatorProgram).filter(p => canRunCoordinator(p, project))
 
+// The offered agents installed on wherdr's own machine, where Alfred runs.
+export const alfredPrograms = computed(() => offerCoordinators(appConfig.value.machines?.find(m => m.local)?.kinds ?? appConfig.value.kinds))
+
 // A coordinator's agent: the default the user set for it while still offered,
-// else their first agent that can coordinate.
+// else their first agent that can coordinate. Alfred keeps the one the user
+// chose, offered or not: wherdr never moves it to another program on its own.
 export function coordinatorAgent(c: Pick<CoordinatorView, 'agent' | 'project'>): CoordinatorAgent | undefined {
+  if (c.project === MAIN && c.agent) return c.agent
   const offered = offerCoordinators(undefined, c.project)
   if (c.agent && offered.includes(c.agent.program)) return c.agent
   return offered[0] ? { program: offered[0] } : c.agent

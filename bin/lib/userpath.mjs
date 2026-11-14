@@ -52,10 +52,23 @@ export function knownBinDirs(home = os.homedir(), exists = isDir) {
   return [...USER_BIN_DIRS.map(d => path.join(home, d)), ...SYSTEM_BIN_DIRS].filter(d => exists(d))
 }
 
+// herdr-projects' folder: HERDR_PROJECTS_HOME, else ~/.herdr-projects.
+export function projectsHome(env = process.env, home = os.homedir()) {
+  return env.HERDR_PROJECTS_HOME || path.join(home, '.herdr-projects')
+}
+
 // herdr-projects' data folder, as it finds it: HERDR_PROJECTS_DATA_DIR, else
 // HERDR_PROJECTS_HOME/data, else ~/.herdr-projects/data.
 export function projectsDataDir(env = process.env, home = os.homedir()) {
-  return env.HERDR_PROJECTS_DATA_DIR || path.join(env.HERDR_PROJECTS_HOME || path.join(home, '.herdr-projects'), 'data')
+  return env.HERDR_PROJECTS_DATA_DIR || path.join(projectsHome(env, home), 'data')
+}
+
+// A folder of herdr-projects' own (its board, a coordinator's chat folder):
+// never a folder of the user's to start an agent in. The default home counts
+// too when another one is set (folders an earlier setup left there).
+export function inProjectsHome(dir, env = process.env, home = os.homedir()) {
+  const d = path.resolve(String(dir || ''))
+  return [path.join(home, '.herdr-projects'), projectsHome(env, home), projectsDataDir(env, home)].some(h => d === path.resolve(h) || d.startsWith(path.resolve(h) + path.sep))
 }
 
 // The PATH herdr-projects recorded from a login shell, '' when there is none.

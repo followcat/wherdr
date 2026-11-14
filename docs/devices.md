@@ -10,6 +10,9 @@
 - **Composer under the terminal**: an agent's terminal keeps the message field below it.
   The sidebar can be resized, or collapsed to a narrow rail (search, new agent, settings and
   state counters) with the button next to Settings; the choice is kept on the device.
+- **Terminal key bar**: as wide as the message field, most used keys first (esc, arrows, tab,
+  ^C, y, n). When the column is too narrow the keys scroll sideways; the keyboard button
+  stays at the end of the bar.
 - **Keyboard shortcuts** (`Mod` is ⌘ on macOS, Ctrl elsewhere; `Mod+/` or `?` lists them all,
   also in Settings › Computer):
   - `Ctrl/⌘+K` global search across agents and conversations, `Alt+↑/↓` previous / next agent
@@ -75,6 +78,9 @@
   be lost.
   On iPhone and iPad a tap on the terminal does not open the on-screen keyboard: type in the
   message field, or tap the key bar's keyboard button to type in the terminal.
+  In **Settings › Terminal › Phone key bar**, reorder the keys and uncheck the ones you never
+  use: a hidden key keeps its place for when you show it again, and the keyboard button is
+  always shown. **Reset to default** restores the order and shows every key. Saved on the device.
   Terminal links back to this app stay in the current window on a phone; external
   links still open separately.
 - **Offline reading** of the last known state and of recently opened conversations.

@@ -1,26 +1,10 @@
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { INSTALL_OUTPUT } from '../website/app/utils/installDemo'
 import { listGroups, scriptProblems } from '../website/app/utils/demoScript'
 import type { DemoAgent, DemoScript } from '../website/app/utils/demoScript'
 import { ANSWER, HERO, actionsAt, agentState } from '../website/app/utils/heroDemo'
 import { CATCHUP_MS, GLYPH_MS as SITE_GLYPH_MS, TRAIL_GLYPHS as SITE_TRAIL, trailGlyphs as siteGlyphs, typeDuration, typingFronts as siteFronts } from '../website/app/utils/typing'
 import { GLYPH_MS as APP_GLYPH_MS, TRAIL_GLYPHS as APP_TRAIL, trailGlyphs as appGlyphs, typingFronts as appFronts } from '../app/utils/typewriter'
 import { CONVERSATION, PHONE } from '../website/app/utils/storyDemos'
-
-describe('install demo', () => {
-  // Every step / ok line the site replays must be one the real script prints,
-  // with the shell variables filled in.
-  const script = readFileSync(new URL('../website/public/install', import.meta.url), 'utf8')
-  const templates = [...script.matchAll(/(?:^|\s)(step|ok) "((?:[^"\\]|\\.)*)"/gm)].map(([, kind, text]) => ({
-    kind,
-    re: new RegExp(`^${text!.split(/\$\(.*?\)|\$\{?\w+\}?/).map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.+')}$`),
-  }))
-
-  it.each(INSTALL_OUTPUT.filter(l => l.kind === 'step' || l.kind === 'ok'))('$kind "$text" comes from public/install', (line) => {
-    expect(templates.some(t => t.kind === line.kind && t.re.test(line.text))).toBe(true)
-  })
-})
 
 describe('live demos', () => {
   it.each([HERO, CONVERSATION, PHONE].map(s => [s.id, s] as const))('%s plays in order, inside its loop', (_, script) => {

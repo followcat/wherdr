@@ -14,8 +14,9 @@ import { toAgentName } from '../../shared/ids'
 import { cleanLabel } from '../../shared/spaceActions'
 import { fmt } from '../../shared/message'
 import { placementLabels } from '../../shared/coreLayout'
+import { codexInstalling, codexLine } from '../../shared/codexLaunch'
 import { coreCapabilities, hasPort, type CoreCapabilities } from '../../shared/coreCapabilities'
-import type { DirEntry, DirListing, MachineConfig, MachineInfo, Pane, Workspace } from '../../shared/types'
+import type { ChatItem, DirEntry, DirListing, MachineConfig, MachineInfo, Pane, QueuedMessage, Workspace } from '../../shared/types'
 
 export interface CoreAdminDeps {
   call: <T>(method: string, params: object, timeout: number) => Promise<T>
@@ -25,6 +26,7 @@ export interface CoreAdminDeps {
   settle: () => Promise<unknown> // fresh inventory, published
   recent: (m: MachineInfo) => Promise<string[]>
   remember: (dir: string, m: MachineInfo) => Promise<unknown>
+  chat?: (pane: Pane) => Promise<ChatItem[] | null> // an agent's conversation, on any machine (pmRead.ts)
   launchWatchMs?: number // how long a new agent is watched for an immediate failure (default 2 s)
   queueWatchMs?: number // how long a first message waits for a dialog to be answered (default 10 min)
   onQueued?: (watch: Promise<unknown>) => void // test hook: the background wait of a queued first message
@@ -35,6 +37,10 @@ export interface CoreAdminDeps {
   // choice); rememberProxy records a choice the picker sent. Absent: no proxy.
   proxyEnv?: (machineKey: string, choice?: unknown) => Promise<Record<string, string>>
   rememberProxy?: (machineKey: string, choice: string) => Promise<unknown>
+  // A first message to Codex: held like any message (coreHeld.ts), so that it comes back into
+  // the field if Codex exits first. `byHolder`: behind a dialog, typed here until handOver.
+  hold?: (pane: Pane, text: string, byHolder?: boolean) => QueuedMessage
+  handOver?: (address: string, id: string, typed: boolean) => void
 }
 
 const REQUEST_LABEL = 'wherdr-request'
@@ -119,7 +125,7 @@ export async function coreMachineConfigs(deps: CoreAdminDeps): Promise<MachineCo
   }))
 }
 
-interface CoreFacts { state?: string, exit_code?: number | null, signal?: string | null, reason?: string }
+interface CoreFacts { state?: string, exit_code?: number | null, signal?: string | null, reason?: string, title?: string }
 
 // An agent that ends with a failure within a couple of seconds did not start: say so with
 // the exit code and the last lines it printed, rather than leaving a dead entry to find.
@@ -150,14 +156,16 @@ const STILL_POLLS = 6
 // state until the dialog is answered: a still screen alone is not enough when a status exists.
 // Never retried or replayed: a program that ends or stays busy past the deadline gets
 // nothing ('skipped'); one that shows a dialog or blocks is 'dialog' (see sendAfterDialog).
-export async function sendFirstMessage(deps: CoreAdminDeps, address: string, text: string): Promise<'sent' | 'skipped' | 'dialog'> {
+// Codex installing or updating itself (its title or status says so): 'installing'.
+export async function sendFirstMessage(deps: CoreAdminDeps, address: string, text: string): Promise<'sent' | 'skipped' | 'dialog' | 'installing'> {
   const step = deps.pollMs ?? 500
   const end = Date.now() + (deps.readyWatchMs ?? 15000)
   let last = '', stable = 0, sawStatus = false
   while (Date.now() < end) {
-    const t = await deps.call<CoreFacts & { status?: string | { state?: string } | null }>('terminal.get', { terminal: address }, 3000).catch(() => null)
+    const t = await deps.call<CoreFacts & { status?: string | { state?: string, msg?: string } | null }>('terminal.get', { terminal: address }, 3000).catch(() => null)
     const state = typeof t?.status === 'string' ? t.status : t?.status?.state
     if (!t || t.state === 'finished') return 'skipped'
+    if (codexInstalling(t.title, typeof t.status === 'object' ? t.status?.msg : null)) return 'installing'
     if (state === 'blocked') return 'dialog'
     if (state) sawStatus = true
     const screen = String((await deps.call<{ text?: string }>('terminal.read', { terminal: address, lines: 40 }, 3000).catch(() => null))?.text || '')
@@ -174,15 +182,20 @@ export async function sendFirstMessage(deps: CoreAdminDeps, address: string, tex
 
 // The first message of a program that opened on a dialog (trust this folder): waits in the
 // background until the person has answered it, then sends it once. Gives up after queueWatchMs.
-export async function sendAfterDialog(deps: CoreAdminDeps, address: string, text: string): Promise<'sent' | 'skipped'> {
+// `stopOnInstall`: returns 'installing' when Codex starts installing (the held queue takes it).
+export async function sendAfterDialog(deps: CoreAdminDeps, address: string, text: string, stopOnInstall = false): Promise<'sent' | 'skipped' | 'installing'> {
   const end = Date.now() + (deps.queueWatchMs ?? 600_000)
   while (Date.now() < end) {
     await new Promise(r => setTimeout(r, (deps.pollMs ?? 500) * 2))
     const r = await sendFirstMessage(deps, address, text).catch(() => 'skipped' as const)
-    if (r !== 'dialog') return r
+    if (r === 'installing' && stopOnInstall) return r
+    if (r !== 'dialog' && r !== 'installing') return r
   }
   return 'skipped'
 }
+
+// Codex runs in a line that keeps its terminal when an update ends it (shared/codexLaunch.ts).
+const launchLine = (kind: string, args: string[]) => (kind === 'codex' ? codexLine(args) : `exec ${[kind, ...args].join(' ')}`)
 
 export interface CreateBody { kind?: unknown, machine?: unknown, cwd?: unknown, name?: unknown, workspace?: unknown, prompt?: unknown, resume?: unknown, proxy?: unknown }
 
@@ -221,7 +234,7 @@ export async function coreCreate(deps: CoreAdminDeps, body: CreateBody) {
   const params = {
     cwd, ...(on ? { on } : {}), ...(name ? { name } : {}), no_parent: true, wait: false,
     ...(Object.keys(env).length ? { env } : {}),
-    labels: { [REQUEST_LABEL]: request, ...creationLabels(deps, m, cwd, body.workspace) }, ...(kind === 'shell' ? {} : { line: `${PATH_SETUP}; exec ${[kind, ...(body.resume === true ? RESUME_ARGS[kind] || [] : [])].join(' ')}` }),
+    labels: { [REQUEST_LABEL]: request, ...creationLabels(deps, m, cwd, body.workspace) }, ...(kind === 'shell' ? {} : { line: `${PATH_SETUP}; ${launchLine(kind, body.resume === true ? RESUME_ARGS[kind] || [] : [])}` }),
   }
   let address: string
   try {
@@ -246,15 +259,23 @@ export async function coreCreate(deps: CoreAdminDeps, body: CreateBody) {
   // The program needs time to start: wait for it so that the sheet can say when nothing was
   // typed. A failure here must not undo the creation.
   let sent: 'sent' | 'skipped' | 'queued' | null = null
+  let queued: QueuedMessage | undefined
   if (first) {
     const r = await sendFirstMessage(deps, address, first).catch(() => 'skipped' as const)
-    sent = r === 'dialog' ? 'queued' : r
-    if (r === 'dialog') {
-      const watch = sendAfterDialog(deps, address, first)
+    sent = r === 'dialog' || r === 'installing' ? 'queued' : r
+    // Codex installing: held on the server, listed in the conversation, back into the field if Codex exits.
+    const held = kind === 'codex' && deps.hold && deps.handOver
+    if (r === 'installing' && held) queued = deps.hold!(pane, first)
+    else if (sent === 'queued') {
+      // Codex behind a dialog: held too (it may install next, or exit), typed here once answered.
+      const q = held ? deps.hold!(pane, first, true) : undefined
+      const watch = sendAfterDialog(deps, address, first, Boolean(q))
+        .then((res) => { if (q) deps.handOver!(address, q.id, res === 'sent'); return res })
+      queued = q
       deps.onQueued?.(watch)
     }
   }
-  return { pane_id: pane.id, workspace_id: pane.workspace, name: kind === 'shell' ? null : name || kind, first_message: sent }
+  return { pane_id: pane.id, workspace_id: pane.workspace, name: kind === 'shell' ? null : name || kind, first_message: sent, ...(queued ? { queued } : {}) }
 }
 
 // Adds a machine over SSH (like `hc machine add <target>`): no command (`via`) and no

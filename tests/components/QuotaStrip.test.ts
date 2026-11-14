@@ -69,6 +69,28 @@ describe('QuotaStrip', () => {
   })
 })
 
+describe('QuotaStrip with a Codex limit', () => {
+  const limited = (q: Partial<QuotaRow['q']>): QuotaRow[] => [{ key: 'codex', agent: 'codex', q: { five: null, week: null, at: now - 60000, limited: { resetsAt: now + 3600000 }, ...q } }]
+
+  it('an expired limit no longer reads as blocked, and an old reading says how to refresh', async () => {
+    quotaNow.value = now
+    const w = await mountSuspended(QuotaStrip, { props: { rows: limited({ at: now - 3 * 86400000, limited: { resetsAt: now - 2 * 86400000 } }) } })
+    const label = w.find('[data-testid="quota-limited"]')
+    expect(label.text()).toMatch(/^Reset since the last reading/)
+    expect(label.classes()).not.toContain('quota-limited')
+    expect(w.find('[data-testid="quota-note"]').text()).toBe('Last read 3 d ago: send a message to a Codex agent to refresh')
+  })
+
+  it('with credits left, says work goes on with them; credits also show beside the gauges', async () => {
+    quotaNow.value = now
+    const w = await mountSuspended(QuotaStrip, { props: { rows: limited({ credits: { unlimited: false, balance: 120 } }) } })
+    expect(w.find('[data-testid="quota-limited"]').text()).toBe('Limit reached · work goes on with 120 credits')
+    expect(w.find('.quota-limited').exists()).toBe(false)
+    const gauges = await mountSuspended(QuotaStrip, { props: { rows: [{ key: 'codex', agent: 'codex', q: { five: win(10, 30, 300), week: null, at: now, credits: { unlimited: true, balance: null } } }] } })
+    expect(gauges.find('[data-testid="quota-note"]').text()).toBe('Credits: unlimited credits')
+  })
+})
+
 describe('QuotaStrip on API billing', () => {
   it('shows a muted label instead of gauges, with no warning colour', async () => {
     quotaNow.value = now

@@ -1,5 +1,6 @@
 import type { HerdrState } from '../../shared/types'
 import { BAR_ALL, barMachineSelection, type MachineGroup } from './machineBar'
+import { projectOnTab } from './projectTabs'
 
 export type Conversation = { pane: string } | { tab: string }
 export type ConversationMemory = Record<string, Conversation>
@@ -22,15 +23,22 @@ export function conversationMachine(s: HerdrState, view: Conversation): string |
   const key = s.workspaces.find(w => w.id === item.workspace)?.machine ?? item.machine ?? ''
   return s.machines?.find(m => m.key === key)?.baseKey ?? key
 }
-export function conversationIn(s: HerdrState, view: Conversation, pick: string | null, groups: MachineGroup[]): boolean {
-  const machine = conversationMachine(s, view)
+// A project coordinator's conversation belongs to its project's tab machines
+// (utils/projectTabs.ts), not to the machine it runs on: one pinned to a group
+// stays open on that group's tab.
+export interface CoordinatorPlace { terminal: string, tabMachines: readonly string[] | null }
+export function conversationIn(s: HerdrState, view: Conversation, pick: string | null, groups: MachineGroup[], coordinators: readonly CoordinatorPlace[] = []): boolean {
   const selection = barMachineSelection(pick, groups)
+  const pane = 'pane' in view ? s.panes.find(p => p.id === view.pane) : undefined
+  const place = pane?.coreAddress ? coordinators.find(c => c.terminal === pane.coreAddress) : undefined
+  if (place) return projectOnTab(place.tabMachines, selection)
+  const machine = conversationMachine(s, view)
   return machine !== undefined && (selection === null || selection.includes(machine))
 }
 // undefined keeps the current route; null opens the usual empty state.
-export function machineConversation(s: HerdrState, pick: string | null, groups: MachineGroup[], memory: ConversationMemory, current: Conversation | null): Conversation | null | undefined {
-  if (pick === null || pick === BAR_ALL || (current && conversationIn(s, current, pick, groups))) return undefined
+export function machineConversation(s: HerdrState, pick: string | null, groups: MachineGroup[], memory: ConversationMemory, current: Conversation | null, coordinators: readonly CoordinatorPlace[] = []): Conversation | null | undefined {
+  if (pick === null || pick === BAR_ALL || (current && conversationIn(s, current, pick, groups, coordinators))) return undefined
   const saved = Object.hasOwn(memory, pick) ? memory[pick] : undefined
-  if (saved && conversationIn(s, saved, pick, groups)) return saved
+  if (saved && conversationIn(s, saved, pick, groups, coordinators)) return saved
   return null
 }

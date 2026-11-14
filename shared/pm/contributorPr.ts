@@ -20,9 +20,9 @@ export const contributorPrsLine = (g?: Guards) => g?.contributorPrs
   ? `- merge an outside contributor's PR (\`pr merge\`): only after the user's yes in this conversation, with their words; ${g.contributorPrs === 'all' ? 'into any branch' : 'never into a branch reserved for the user'}; never a board task's PR (the engine's)`
   : undefined
 
-// A board task's branch (task/<ID>) or a PR linked on a task's card.
+// A board task's branch (task/<ID>, or its own: taskLinks has it) or a PR linked on a task's card.
 export const isTaskPr = (pr: Pick<ContributorPr, 'headRefName' | 'url'>, taskLinks: string[]) =>
-  /^task\/[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(pr.headRefName) || taskLinks.includes(pr.url)
+  /^task\/[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(pr.headRefName) || taskLinks.includes(pr.url) || taskLinks.includes(pr.headRefName)
 
 // Why the coordinator may not merge a PR in this turn at all, or undefined:
 // checked before GitHub is asked anything.

@@ -37,6 +37,23 @@ export function shownTaskId(projects: Keyed[], id: string) {
   return p ? `${shownKey(p)}${id.slice(i)}` : id
 }
 
+// Every text the engine writes for people or agents goes through this: each
+// stored task id of a renamed project reads in its shown form (CP-9 → CMP-9),
+// in a string or in the strings of an array or object (a command's output).
+// A path, a branch or a tag keeps the stored id: nothing is rewritten after a
+// `/`, `.` or `-`, or before a `/`, `-` or a file extension.
+export function showIds<T>(projects: Keyed[], v: T): T {
+  const map = new Map(projects.filter(p => p.label && p.label !== p.key).map(p => [p.key, p.label!]))
+  if (!map.size) return v
+  const re = new RegExp(`(?<![\\w/.-])(${[...map.keys()].join('|')})-(\\d+)(?![\\w/-]|\\.\\w)`, 'g')
+  const walk = (x: unknown): unknown =>
+    typeof x === 'string' ? x.replace(re, (_, k: string, n: string) => `${map.get(k)}-${n}`)
+      : Array.isArray(x) ? x.map(walk)
+        : x && typeof x === 'object' && Object.getPrototypeOf(x) === Object.prototype ? Object.fromEntries(Object.entries(x).map(([k, y]) => [k, walk(y)]))
+          : x
+  return walk(v) as T
+}
+
 // The other project a key would clash with (any case), or undefined: a key
 // names one project only, its id and former keys included.
 export const keyClash = <P extends Keyed>(projects: P[], key: string, self?: string) =>

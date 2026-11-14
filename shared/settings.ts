@@ -11,6 +11,8 @@ export const SYNCED_SETTINGS = [
   'theme', 'focusBorder', 'backdrop', 'backdropPackets',
   // Machine bar and groups
   'machineBar', 'machineBarOrder', 'machineBarHidden', 'machineGroups',
+  // Which home tab shows each project (see readProjectTabs)
+  'projectTabs',
   // Home list (compactListV2: 2.0's key, see app/utils/compactCard.ts; the
   // 1.x `compactList` is no longer read)
   'compactListV2', 'homeGrouping', 'individualAgentList', 'collapsedMachines', 'collapsedRepos',
@@ -19,9 +21,15 @@ export const SYNCED_SETTINGS = [
   // Conversation
   'typewriterSpeed', 'encryptedText', 'replyStyle', 'defaultViewMode',
   // Board
-  'boardGrouping', 'boardDone', 'boardFolds',
+  'boardGrouping', 'boardDone', 'boardFolds', 'boardProject',
+  // Notes panel: its filter (shared/notes.ts)
+  'notesFilter',
+  // Tasks to review: its filter (useReview.ts)
+  'reviewFilter',
   // Files
   'wherdr.files.hidden', 'wherdr.files.md',
+  // Security: files shown from conversations (shared/chatFiles.ts), read by the server
+  'chatFilesLevel', 'chatFilesProtected',
 ] as const
 
 export type SyncedSetting = typeof SYNCED_SETTINGS[number]
@@ -82,4 +90,19 @@ export function applySettingsPatch(current: SettingsMap, patch: SettingsPatch, o
     }
   }
   return { next, changed }
+}
+
+// Which home tab shows a project: its fixed key → a machine group id
+// ('*group:…') or '*' (every tab). A missing key: automatic, the tabs holding
+// one of its machines. Anything else in the text is dropped.
+export type ProjectTabs = Record<string, string>
+export function readProjectTabs(raw: string | null | undefined): ProjectTabs {
+  let v: unknown
+  try { v = raw ? JSON.parse(raw) : null } catch { return {} }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+  const out: ProjectTabs = {}
+  for (const [key, tab] of Object.entries(v)) {
+    if (typeof tab === 'string' && (tab === '*' || tab.startsWith('*group:'))) out[key] = tab
+  }
+  return out
 }

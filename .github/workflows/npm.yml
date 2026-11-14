@@ -1,5 +1,6 @@
-# npm package `wherdr` (npx / bunx / pnpm dlx wherdr) published for each version tag
-# (vX.Y.Z), through npm Trusted Publishing (OIDC): no NPM_TOKEN secret. On npmjs.com,
+# npm package `wherdr` (npx / bunx / pnpm dlx wherdr) published for each 2.x version tag
+# (v2.Y.Z; 1.x for recovery), through npm Trusted Publishing (OIDC): no NPM_TOKEN secret.
+# 3.x is never published on npm: it is a GitHub release only. On npmjs.com,
 # the package's Trusted Publisher must name this repository and this file: npm.yml.
 #
 # release.yml dispatches this workflow once its publish-release job has made the GitHub
@@ -39,6 +40,9 @@ jobs:
         run: |
           if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::not a version tag: $RELEASE_TAG"; exit 1
+          fi
+          if [[ ! "$RELEASE_TAG" =~ ^v[12]\. ]]; then
+            echo "::error::$RELEASE_TAG is not a 2.x release: v3 is published on GitHub only, never on npm"; exit 1
           fi
           gh release view "$RELEASE_TAG" --json tagName --jq .tagName
 

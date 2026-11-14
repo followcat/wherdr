@@ -3,8 +3,9 @@
 # <out-dir>, the folder the Pi reads (served on the tailnet, for example). Run it on the
 # machine that builds, never on the Pi.
 #   pi-v3-package.sh <out-dir> [<sha>]   (sha: the commit that was built, default HEAD)
-# <out-dir> gets wherdr-v3.tgz (.output + COMMIT), wherdr-v3.tgz.sha256 and COMMIT. COMMIT is
-# removed first and written last: when it is there, the archive is that commit's.
+# <out-dir> gets wherdr-v3.tgz (.output, this checkout's docs in .output/docs, and COMMIT),
+# wherdr-v3.tgz.sha256 and COMMIT. COMMIT is removed first and written last: when it is
+# there, the archive is that commit's.
 set -euo pipefail
 
 ASSET=wherdr-v3.tgz
@@ -25,13 +26,17 @@ sha="${2:-$(git rev-parse HEAD 2>/dev/null || true)}"
 [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || die "not a full commit SHA: '$sha'"
 [ -f .output/server/index.mjs ] || die "no .output/server/index.mjs here: run npm run build first"
 # The Pi checks that /api/health answers this version (shared/v3Version.ts).
-grep -rqF "3.0.0-dev+${sha:0:7}" .output/server || die ".output was not built from ${sha:0:7} (its version differs): rebuild, or pass the built commit"
+grep -rqF "$(node -p 'require("./package.json").version')+${sha:0:7}" .output/server || die ".output was not built from ${sha:0:7} (its version differs): rebuild, or pass the built commit"
 
 # Nitro links some packages (.nitro/<name>@<version>): replaced by copies, as npm pack does.
 [ ! -d .output/server/node_modules/.nitro ] || node "$(dirname "$0")/pack-output.mjs" >/dev/null
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 cp -a .output "$tmp/.output"
+# The deploy replaces .output only: the docs travel inside it, so Alfred reads this build's
+# (server/utils/wherdrDocs.ts), not those of the Pi's first clone.
+mkdir -p "$tmp/.output/docs"
+cp docs/*.md docs/llms.txt "$tmp/.output/docs/" || die "no docs/*.md or docs/llms.txt here"
 printf '%s\n' "$sha" > "$tmp/COMMIT"
 bad="$(native_files "$tmp")"
 [ -z "$bad" ] || die "native code or links in the build (it would not run on the Pi):

@@ -1,22 +1,43 @@
 <script setup lang="ts">
 // The COORDINATORS section under Alfred (AlfredRow, which coordinates all projects) at
-// the top of the agent list: the project coordinators that run. One tap opens
-// its conversation; its menu (right click, or long press on a touch screen)
-// restarts it with another agent, which becomes its default. Hidden while
-// project management is off.
+// the top of the agent list: the project coordinators that run, or whose
+// conversation stopped (its terminal ended), those the home tab picked shows
+// (useMachineBar.projectOnBar). One tap opens its conversation, or asks whether
+// to resume the stopped one or start a new one. Its menu (right click, or long
+// press on a touch screen) opens its board, its settings or autopilot tab,
+// renames it inline, mutes it, restarts it with another agent (which becomes
+// its default) or stops it. Hidden while project management is off.
 import type { CoordinatorView } from '#shared/pm/coordinator'
+import type { Pane } from '#shared/types'
 
 const busy = ref('')
 const error = ref('')
-const rows = computed(() => projectCoordinators.value.filter(c => coordinatorPane(c)))
+const rows = computed(() => projectCoordinators.value.filter(c => (coordinatorPane(c) || coordinatorStopped(c)) && projectOnBar(c.project)))
 
-async function open(c: CoordinatorView) {
-  if (busy.value || rowMenu.swallowClick()) return
+async function run(c: CoordinatorView, fn: () => Promise<unknown>) {
   busy.value = c.project
   error.value = ''
-  try { await openCoordinator(c) }
+  try { await fn() }
   catch (e) { error.value = (e as Error).message }
   finally { busy.value = '' }
+}
+function open(c: CoordinatorView) {
+  if (busy.value || rowMenu.swallowClick()) return
+  if (coordinatorStopped(c)) { stopped.value = c; return }
+  void run(c, () => openCoordinator(c))
+}
+
+// A stopped conversation: resume it (with the agent that ran it), or a new one.
+const stopped = ref<CoordinatorView | null>(null)
+const stoppedOpen = computed({ get: () => !!stopped.value, set: (v) => { if (!v) stopped.value = null } })
+function restartStopped(how: 'resume' | 'new') {
+  const c = stopped.value
+  if (!c || busy.value) return
+  stopped.value = null
+  void run(c, async () => {
+    const p = await launchCoordinator(c.project, how === 'resume' ? 'resume' : coordinatorAgent(c))
+    if (p) await navigateTo(panePath(p.id))
+  })
 }
 
 // Its conversation is the one open: the same selected style as agent cards.
@@ -25,6 +46,7 @@ const sub = (c: CoordinatorView) => {
   const p = coordinatorPane(c)
   const program = kindLabel((c.ran ?? coordinatorAgent(c))?.program)
   if (p) return `${program} · ${statusLabel(p)}`
+  if (coordinatorStopped(c)) return `${program} · ${tl('Stopped')}`
   return tl(`Start with ${program}`, `Lancer avec ${program}`)
 }
 
@@ -33,7 +55,48 @@ const rowMenu = useRowMenu()
 const restarting = ref<CoordinatorView | null>(null)
 const pick = ref('')
 const choices = computed(() => (restarting.value ? offerCoordinators(undefined, restarting.value.project) : []))
-const menu = (c: CoordinatorView) => (): MenuItem[] => [{ label: tl('Restart with…', 'Relancer avec…'), icon: 'i-lucide-refresh-cw', run: () => choose(c) }]
+const settingsPath = (c: CoordinatorView, tab: string) => `/settings?section=projects&project=${encodeURIComponent(c.project)}&tab=${tab}`
+const menu = (c: CoordinatorView) => (): MenuItem[] => {
+  const p = coordinatorPane(c)
+  const pilot = !!c.autopilot?.on
+  return [
+    { label: t('Open the board'), icon: 'i-lucide-kanban', run: () => navigateTo(`/board?project=${encodeURIComponent(c.project)}`) },
+    { label: t('Project settings'), icon: 'i-lucide-settings-2', run: () => navigateTo(settingsPath(c, 'general')) },
+    { label: t('Autopilot'), icon: pilot ? 'i-lucide-check' : 'i-lucide-plane', desc: pilot ? t('On') : t('Off'), run: () => navigateTo(settingsPath(c, 'autopilot')) },
+    { kind: 'separator' },
+    { label: t('Rename…'), icon: 'i-lucide-pencil', run: () => startRename(c) },
+    // The conversation header's mute: a coordinator's exception, kept across its restarts.
+    ...(p ? [notificationMenuItem({ ...p, title: coordinatorName(c) }, true)] : []),
+    { kind: 'separator' },
+    { label: tl('Restart with…', 'Relancer avec…'), icon: 'i-lucide-refresh-cw', run: () => choose(c) },
+    ...(p ? [{ label: t('Stop the coordinator'), icon: 'i-lucide-square', danger: true, run: () => stop(c, p) }] : []),
+  ]
+}
+
+// Rename…: its name in place, empty = the project's.
+const renaming = ref('')
+const newName = ref('')
+function startRename(c: CoordinatorView) {
+  renaming.value = c.project
+  newName.value = c.coordinatorName ?? ''
+  nextTick(() => (document.querySelector('[data-testid="coordinator-rename"] input') as HTMLInputElement | null)?.select())
+}
+function rename(c: CoordinatorView) {
+  if (renaming.value !== c.project) return
+  renaming.value = ''
+  const v = newName.value.trim()
+  if (v === (c.coordinatorName ?? '')) return
+  void run(c, async () => { await api('/api/pm/project-update', { key: c.project, coordinatorName: v === c.name ? '' : v }); await loadCoordinators() })
+}
+
+// Stop: its agent ends; the next message or wake starts it again.
+async function stop(c: CoordinatorView, p: Pane) {
+  if (!(await askConfirm(tl(`Stop ${coordinatorName(c)}? It starts again on the next message or wake.`), t('Stop')))) return
+  void run(c, async () => {
+    await api('/api/close', { pane_id: p.id })
+    if (curPane.value === p.id) await navigateTo('/')
+  })
+}
 function choose(c: CoordinatorView) {
   restarting.value = c
   const now = (c.ran ?? coordinatorAgent(c))?.program
@@ -67,17 +130,29 @@ onUnmounted(() => clearInterval(timer))
   <section v-if="rows.length" class="agent-group coord-list" data-testid="coordinators">
     <h2 class="group-title"><span>{{ tl('Coordinators', 'Coordinateurs') }}</span><span class="count">{{ rows.length }}</span></h2>
     <UContextMenu v-for="c in rows" :key="c.project" :disabled="sheetMenus" :items="rowMenu.dropdown(menu(c))" :press-open-delay="700" :ui="{ content: 'hw-dropdown' }" @update:open="rowMenu.opened">
+    <form v-if="renaming === c.project" class="coord-row coord-rename" data-testid="coordinator-rename" @submit.prevent="rename(c)">
+      <i class="coord-dot" aria-hidden="true" />
+      <UInput v-model="newName" autofocus size="lg" class="w-full" maxlength="80" :placeholder="c.name" :aria-label="t('Coordinator name')" @blur="rename(c)" @keydown.esc.prevent="renaming = ''" />
+    </form>
     <button
-      type="button" class="coord-row" :class="{ on: !!coordinatorPane(c), sel: selected(c) }" :aria-current="selected(c) ? 'page' : undefined"
-      :disabled="!!busy" data-testid="coordinator-row" v-on="rowMenu.on(menu(c), coordinatorName(c))" @click="open(c)"
+      v-else type="button" class="coord-row" :class="{ on: !!coordinatorPane(c), sel: selected(c) }" :aria-current="selected(c) ? 'page' : undefined"
+      :disabled="!!busy" data-testid="coordinator-row" :title="c.main ? undefined : tl(`Coordinator of ${c.name}`)" v-on="rowMenu.on(menu(c), coordinatorName(c))" @click="open(c)"
     >
       <i class="coord-dot" aria-hidden="true" />
-      <span class="coord-text"><b>{{ coordinatorName(c) }}</b><small>{{ busy === c.project ? tl('Starting…', 'Lancement…') : sub(c) }}</small></span>
+      <span class="coord-text"><b v-if="c.main">{{ coordinatorName(c) }}</b><b v-else class="coord-name"><ProjectBadge :text="c.label ?? c.project" :color="c.color" /><span data-testid="coordinator-name">{{ coordinatorName(c) }}</span></b><small>{{ busy === c.project ? tl('Starting…', 'Lancement…') : sub(c) }}</small></span>
       <UIcon :name="coordinatorPane(c) ? 'i-lucide-chevron-right' : 'i-lucide-play'" class="coord-go" />
     </button>
     </UContextMenu>
     <p v-if="error" class="error coord-error">{{ error }}</p>
   </section>
+
+  <AppSheet v-model:open="stoppedOpen" :title="stopped ? coordinatorName(stopped) : ''">
+    <div class="sheet-form coord-stopped" data-testid="coordinator-stopped">
+      <p class="coord-note">{{ tl('Its conversation stopped (its terminal ended, for example when its machine restarted).') }}</p>
+      <UButton block size="xl" color="primary" icon="i-lucide-history" data-testid="coordinator-stopped-resume" @click="restartStopped('resume')">{{ tl('Resume the conversation') }}</UButton>
+      <UButton block size="xl" color="neutral" variant="outline" icon="i-lucide-plus" data-testid="coordinator-stopped-new" @click="restartStopped('new')">{{ tl('New conversation') }}</UButton>
+    </div>
+  </AppSheet>
 
   <AppSheet v-model:open="sheetOpen" :title="restarting ? tl(`Restart ${coordinatorName(restarting)} with…`, `Relancer ${coordinatorName(restarting)} avec…`) : ''">
     <div class="sheet-form" data-testid="coordinator-sheet">
@@ -109,8 +184,13 @@ onUnmounted(() => clearInterval(timer))
 .coord-row.on .coord-dot { background: var(--green); }
 .coord-text { display: grid; flex: 1; min-width: 0; }
 .coord-text b { font: 600 14px/1.3 var(--display); }
+.coord-name { display: flex; align-items: center; gap: var(--badge-gap); min-width: 0; }
+.coord-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .coord-text small { overflow: hidden; color: var(--muted); font: 12px/1.4 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .coord-go { flex: none; color: var(--dim); }
+.coord-rename { cursor: default; }
 .coord-error { margin: 6px 0 0; }
+.coord-stopped { display: grid; gap: 10px; }
+.coord-stopped .coord-note { margin-bottom: 4px; }
 .coord-note { margin: 0 2px 14px; color: var(--text-2); font-size: 14px; }
 </style>

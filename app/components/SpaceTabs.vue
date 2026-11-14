@@ -3,7 +3,7 @@
 // The "+" of a single tab is in its view's header. Mini-map for
 // a tab with several panes, otherwise state dot of the most urgent pane.
 // The open tab is remembered for the space. Long press (phone) or right
-// click (computer) on a tab: its options (new tab).
+// click (computer) on a tab: its options (new tab, rename, close).
 import { leadPane } from '#shared/spaces'
 import { longPress } from '~/utils/longPress'
 

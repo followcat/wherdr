@@ -26,7 +26,8 @@ export async function ready(...args) { return (await readiness(...args)).ready }
 export async function promote({ repo, request = fetch, run = execFileSync, log = console.log }) {
   if (!repo) throw new Error('GITHUB_REPOSITORY is required')
   const releases = JSON.parse(run('gh', ['api', `repos/${repo}/releases?per_page=100`], { encoding: 'utf8' }))
-  const versions = releases.filter(r => !r.draft && !r.prerelease && /^v\d+\.\d+\.\d+$/.test(r.tag_name))
+  // Only the npm line (1.x, 2.x): v3 is a GitHub release only and never becomes latest.
+  const versions = releases.filter(r => !r.draft && !r.prerelease && /^v[12]\.\d+\.\d+$/.test(r.tag_name))
     .sort((a, b) => b.tag_name.slice(1).localeCompare(a.tag_name.slice(1), 'en', { numeric: true }))
   const tag = versions[0]?.tag_name
   if (!tag) { log('No published stable release.'); return }

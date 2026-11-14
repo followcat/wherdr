@@ -117,8 +117,6 @@ export function serverEnv(opts, env, home = os.homedir(), bin = BIN) {
   const hc = opts.hcSocket ?? env.HC_SOCKET
   if (hc) out.HC_SOCKET = path.resolve(expandHome(hc, home))
   out.NODE_ENV = 'production'
-  // Open WebSockets do not hold Ctrl+C for 30 s; clients reconnect on their own.
-  out.NITRO_SHUTDOWN_TIMEOUT ??= '1500'
   // Update command, or one-tap update, offered in the app (shared/updates.ts):
   // the package to replace and the folder of its state and log (bin/lib/updater.mjs).
   out.WHERDR_INSTALL = installKind(bin)

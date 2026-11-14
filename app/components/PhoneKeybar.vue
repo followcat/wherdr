@@ -3,11 +3,12 @@ import { createKeyboardTap } from '~/utils/keyboardTap'
 import type { VirtualModifier } from '~/utils/terminalModifiers'
 import { displayVirtualChord } from '~/utils/keybarKeys'
 import { PHONE_KEYS, type PhoneKey } from '~/utils/phoneKeys'
+import { shownKeys } from '~/utils/keybarOrder'
 
 const props = defineProps<{ ctl: TerminalCtl, allDigits?: boolean, terminal?: boolean }>()
 const emit = defineEmits<{ keyboard: [] }>()
-// The order chosen in Settings › Terminal (utils/keybarOrder.ts); the digits stay last.
-const keys = computed(() => phoneKeyOrder.value.map(id => PHONE_KEYS[id]))
+// The order and shown keys chosen in Settings › Terminal (utils/keybarOrder.ts); the digits stay last.
+const keys = computed(() => shownKeys(phoneKeyOrder.value, phoneKeyHidden.value).map(id => PHONE_KEYS[id]))
 const digits = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0']
 const active = computed(() => props.ctl.virtualModifiers.value)
 const preview = computed(() => active.value.length
@@ -63,5 +64,5 @@ const isOn = (k: PhoneKey) => isKbd(k) ? Boolean(props.terminal && props.ctl.kbd
 .virtual-keyboard button:active { background: var(--surface-3); }
 .virtual-keyboard button.danger { color: var(--rose); border-color: var(--rose); }
 .virtual-keyboard .vk-key-icon { width: 19px; height: 19px; flex: none; }
-.vk-announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+.vk-announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; } /* overflow-safe: visually hidden: absolute, 1px, clipped */
 </style>

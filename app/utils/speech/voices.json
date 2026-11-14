@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "updated": "2026-11-10",
+  "voices": [
+    {
+      "id": "siwis-medium",
+      "name": "Siwis",
+      "lang": "fr",
+      "locale": "fr-FR",
+      "default": true,
+      "speakers": 1,
+      "sampleRate": 22050,
+      "set": "tts-siwis-medium",
+      "dir": "vits-piper-fr_FR-siwis-medium",
+      "model": "fr_FR-siwis-medium.onnx",
+      "members": [
+        { "path": "fr_FR-siwis-medium.onnx", "bytes": 63149190 },
+        { "path": "tokens.txt", "bytes": 921 },
+        { "path": "espeak-ng-data/phontab", "bytes": 55796 },
+        { "path": "espeak-ng-data/phonindex", "bytes": 39074 },
+        { "path": "espeak-ng-data/phondata", "bytes": 550424 },
+        { "path": "espeak-ng-data/phondata-manifest", "bytes": 21821 },
+        { "path": "espeak-ng-data/intonations", "bytes": 2040 },
+        { "path": "espeak-ng-data/fr_dict", "bytes": 63727 },
+        { "path": "espeak-ng-data/en_dict", "bytes": 166944 },
+        { "path": "espeak-ng-data/lang/roa/fr", "bytes": 79 },
+        { "path": "espeak-ng-data/lang/gmw/en", "bytes": 140 }
+      ],
+      "source": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-fr_FR-siwis-medium.tar.bz2",
+        "sha256": "375909aa30842b3a4efa10b1beb1d761af792960ae6873b4d53889f96c66195b"
+      },
+      "memory": { "heap": 536870912, "basis": "iPhone 13, iOS Safari home-screen app, Settings › Read aloud › Test, 2026-11-10: the worker's WASM memory (512 MiB, the same for every voice), not the voice's own use" },
+      "speed": { "rtf": 0.16, "basis": "iPhone 13, iOS Safari home-screen app, Settings › Read aloud › Test, 2026-11-10" },
+      "license": {
+        "id": "CC-BY-4.0",
+        "url": "https://doi.org/10.7488/ds/1705"
+      },
+      "attribution": "Voice trained on the SIWIS French Speech Synthesis Database by Pierre-Edouard Honnet, Philip Garner and Alexandros Lazaridis (University of Edinburgh, CSTR), CC BY 4.0. Piper model packaged by sherpa-onnx."
+    },
+    {
+      "id": "cori-medium",
+      "name": "Cori",
+      "lang": "en",
+      "locale": "en-GB",
+      "default": true,
+      "speakers": 1,
+      "sampleRate": 22050,
+      "set": "tts-cori-medium",
+      "dir": "vits-piper-en_GB-cori-medium",
+      "model": "en_GB-cori-medium.onnx",
+      "members": [
+        { "path": "en_GB-cori-medium.onnx", "bytes": 63531507 },
+        { "path": "tokens.txt", "bytes": 940 },
+        { "path": "espeak-ng-data/phontab", "bytes": 55796 },
+        { "path": "espeak-ng-data/phonindex", "bytes": 39074 },
+        { "path": "espeak-ng-data/phondata", "bytes": 550424 },
+        { "path": "espeak-ng-data/phondata-manifest", "bytes": 21821 },
+        { "path": "espeak-ng-data/intonations", "bytes": 2040 },
+        { "path": "espeak-ng-data/fr_dict", "bytes": 63727 },
+        { "path": "espeak-ng-data/en_dict", "bytes": 166944 },
+        { "path": "espeak-ng-data/lang/roa/fr", "bytes": 79 },
+        { "path": "espeak-ng-data/lang/gmw/en", "bytes": 140 }
+      ],
+      "source": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_GB-cori-medium.tar.bz2",
+        "sha256": "49c9a5361bbdd95d7ca9687c4de11e5908481f65e7c7c368960df79949fdac2b"
+      },
+      "memory": { "heap": 536870912, "basis": "iPhone 13, iOS Safari home-screen app, Settings › Read aloud › Test, 2026-11-10: the worker's WASM memory (512 MiB, the same for every voice), not the voice's own use" },
+      "speed": { "rtf": 0.17, "basis": "iPhone 13, iOS Safari home-screen app, Settings › Read aloud › Test, 2026-11-10" },
+      "license": {
+        "id": "Public domain (LibriVox recordings)",
+        "url": "https://brycebeattie.com/files/tts/"
+      },
+      "attribution": "Voice by Bryce Beattie, trained on public-domain LibriVox recordings. Piper model packaged by sherpa-onnx."
+    },
+    {
+      "id": "mls-medium",
+      "name": "MLS",
+      "lang": "fr",
+      "locale": "fr-FR",
+      "speakers": 125,
+      "sampleRate": 22050,
+      "set": "tts-mls-medium",
+      "dir": "vits-piper-fr_FR-mls-medium",
+      "model": "fr_FR-mls-medium.onnx",
+      "members": [
+        { "path": "fr_FR-mls-medium.onnx", "bytes": 76733879, "sha256": "cb02104afedb7d38252ec3a6efb1343451926652d07f4e2d1f033c9e65753bcd" },
+        { "path": "tokens.txt", "bytes": 954, "sha256": "620e1aecf1a68fea3ba5850d137b0138fa2037c9b372dad13b95a2a215d0849a" },
+        { "path": "espeak-ng-data/phontab", "bytes": 55796, "sha256": "886f3fa402cb0ba73d483aa8ad000af47a6b7cc06293c75a97913fba68a530f6" },
+        { "path": "espeak-ng-data/phonindex", "bytes": 39074, "sha256": "3ca7b8fa3b42624e4b0f152707e7a39245fce569aa99ea47c055d9e622fcf0c4" },
+        { "path": "espeak-ng-data/phondata", "bytes": 550424, "sha256": "4e0288957874029a8c3c9f41a8f517ad4bf18127046decbdd4b9d1d6807ce3a3" },
+        { "path": "espeak-ng-data/phondata-manifest", "bytes": 21821, "sha256": "7b387af0702c7cf0b61f0bead68feded0bd8e1620729b0b252e76acbc30d3813" },
+        { "path": "espeak-ng-data/intonations", "bytes": 2040, "sha256": "3f8af65fd3eda9759a10f021d61361c120871f463515229c925995c7f90918cc" },
+        { "path": "espeak-ng-data/fr_dict", "bytes": 63727, "sha256": "e399ab924c4d10beef1fc310b30ea56e4ddfd8b4b64b8ed978e9c65394d49b2d" },
+        { "path": "espeak-ng-data/en_dict", "bytes": 166944, "sha256": "71bd330ba8a2e3e8076e631508208ef49449d6147c17b7bd2b4b1e1468292e35" },
+        { "path": "espeak-ng-data/lang/roa/fr", "bytes": 79, "sha256": "95f44834b48c075dad13eace54d2c98ff79b81aa0074dd67eebaf66c2909eef8" },
+        { "path": "espeak-ng-data/lang/gmw/en", "bytes": 140, "sha256": "4605d5330801de3641c6e366d15f129ea1f5ffbce8722642aba01ace07ab9c83" }
+      ],
+      "source": {
+        "base": "https://huggingface.co/csukuangfj/vits-piper-fr_FR-mls-medium/resolve/06ef1f996a72d027ce9a42e3eeac7cd21fc351ec/"
+      },
+      "license": {
+        "id": "CC-BY-4.0",
+        "url": "https://openslr.org/94/"
+      },
+      "attribution": "Voice trained on the Multilingual LibriSpeech (MLS) French corpus by Vineel Pratap et al. (Meta AI), CC BY 4.0. Piper model packaged by sherpa-onnx."
+    }
+  ]
+}

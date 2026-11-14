@@ -39,7 +39,7 @@ Steps:
 ## v3 beside an existing v2, with import
 
 ```text
-Install wherdr v3 (the web app for herdr-core) on this machine NEXT TO the wherdr v2 that already runs here, from the v3 branch of REPO, and import what v3 can use from v2 (herdr-projects projects and open tasks, Herdr SSH machines, settings). v2 must keep running untouched so I can compare and fall back.
+Install wherdr v3 (the web app for herdr-core) on this machine NEXT TO the wherdr v2 that already runs here, from the v3 branch of REPO, and import what v3 can use from v2 (Herdr SSH machines, settings, recent folders; nothing of herdr-projects: Alfred sets up my v2 projects with me later). v2 must keep running untouched so I can compare and fall back.
 
 Rules:
 - Never stop, restart, change, move or delete anything of wherdr v2: its service, its folder (usually ~/wherdr), its data, its port, Herdr, the herdr-projects board, or its tailscale serve entry. Read them only.
@@ -48,10 +48,10 @@ Rules:
 - Never start hc from your own shell: the installer starts it as a systemd user service, so it does not inherit your agent environment.
 
 Steps:
-1. Look at the machine first: OS and architecture, node --version (22 or newer), git, npm, hc --version, systemctl --user status, tailscale status and tailscale serve status, ports in use (ss -ltn). Find v2: systemctl --user cat wherdr (or another unit running wherdr), ~/wherdr/wherdr.env, its DATA_DIR and port, curl -fsS http://127.0.0.1:<v2 port>/api/health, herdr machine list, ~/.herdr-projects.
+1. Look at the machine first: OS and architecture, node --version (22 or newer), git, npm, hc --version, systemctl --user status, tailscale status and tailscale serve status, ports in use (ss -ltn). Find v2: systemctl --user cat wherdr (or another unit running wherdr), ~/wherdr/wherdr.env, its DATA_DIR and port, curl -fsS http://127.0.0.1:<v2 port>/api/health, herdr machine list.
 2. git clone -b v3 REPO "${TMPDIR:-/tmp}/wherdr-setup"
 3. Dry run: sh "${TMPDIR:-/tmp}/wherdr-setup/scripts/install-v3-beside-v2.sh" --json
-   If v2 is not where the script looks, pass --v2-dir, --v2-unit, --herdr-projects or --herdr-bin. It checks everything at once: each problem is one line "ERROR <id>: ...". Read the plan: the v2 it found, the projects and machines it will import, the commit it builds, and the HTTPS port it picked (the first one from 8104 that tailscale serve does not use yet; never assume 8104). Exit codes: 0 plan ready, 3 missing prerequisite, 4 conflict (pick another --port, --https-port, --dir or --name: the ERROR line names a free one), 5 a step failed, 6 installed but something is left for me. "NEXT: ..." lines are for me. On a small machine (a Raspberry Pi) the build needs about 1.5 GB of memory: the script raises Node's heap for it and says so in the plan.
+   If v2 is not where the script looks, pass --v2-dir, --v2-unit or --herdr-bin. It checks everything at once: each problem is one line "ERROR <id>: ...". Read the plan: the v2 it found, the machines it will import, the commit it builds, and the HTTPS port it picked (the first one from 8104 that tailscale serve does not use yet; never assume 8104). Exit codes: 0 plan ready, 3 missing prerequisite, 4 conflict (pick another --port, --https-port, --dir or --name: the ERROR line names a free one), 5 a step failed, 6 installed but something is left for me. "NEXT: ..." lines are for me. On a small machine (a Raspberry Pi) the build needs about 1.5 GB of memory: the script raises Node's heap for it and says so in the plan.
 4. Fix what the script cannot do itself: a missing hc build, an old Node, Tailscale operator rights, SSH key login to each machine (ssh <target> true must answer without a password, with hc installed there; do not change the PATH there when the import found hc). Ask me first when it needs sudo or changes anything outside the new install folder. Dry-run again until the exit code is 0.
 5. Show me the plan, then run the same command with --yes.
 6. Check: curl -fsS http://127.0.0.1:<v3 port>/api/health, the HTTPS address of the summary, systemctl --user status <name> <name>-hc, and that v2 still answers on its port and its HTTPS address. Read <dir>/data/migration-report.md.
@@ -59,6 +59,9 @@ Steps:
 ```
 
 ## Update v3
+
+The home banner's **Update with Alfred** does this with Alfred, following
+[Update with an agent](update-with-an-agent.md), which also reads the release's *Upgrade notes*.
 
 ```text
 Update the wherdr v3 that runs on this machine to the latest v3 branch, keeping its data.

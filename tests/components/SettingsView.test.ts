@@ -7,7 +7,7 @@ import { useRouter } from '#app'
 import SettingsView from '~/components/SettingsView.vue'
 import ShortcutsSheet from '~/components/ShortcutsSheet.vue'
 import ShortcutsReference from '~/components/ShortcutsReference.vue'
-import { coarse, defaultViewMode, desk, encryptedText, reducedMotion, smoothTouchScrolling, typewriterSpeed, uiScale } from '~/composables/useHerdr'
+import { coarse, defaultViewMode, desk, encryptedText, reducedMotion, sidePanelRoom, smoothTouchScrolling, typewriterSpeed, uiScale } from '~/composables/useHerdr'
 
 const global = { stubs: { UTooltip: { template: '<span><slot /></span>' } } }
 const original = {
@@ -18,6 +18,7 @@ afterEach(async () => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   desk.value = original.desk
+  sidePanelRoom.value = false
   coarse.value = original.coarse
   defaultViewMode.value = original.mode
   encryptedText.value = original.encrypted
@@ -75,7 +76,7 @@ it('shows the same reference component in Settings and the shortcut sheet', asyn
   try {
     expect(w.getComponent(ShortcutsReference).isVisible()).toBe(true)
     const rows = w.getComponent(ShortcutsReference).findAll('.shortcut-row')
-    expect(rows).toHaveLength(18)
+    expect(rows).toHaveLength(19)
     // The hardware Alt+←/→ tab step is a supported v3 row, not filtered v2-only.
     const tabRow = rows.find(r => r.text().includes('tab of this space'))!
     expect(tabRow.find('dt').text()).toBe('Previous / next tab of this space')
@@ -216,5 +217,82 @@ it('Machines has its own section; Agents holds Pace, which ?section=pacing still
     await vi.waitFor(() => expect(shown(machines)).toBe(true))
     expect(machines.find('.core-machines').exists()).toBe(true)
     expect(shown(agents)).toBe(false)
+  } finally { w.unmount() }
+})
+
+it('Wide computer: Settings open beside the conversation, on the linked section, and close', async () => {
+  desk.value = true
+  coarse.value = false
+  sidePanelRoom.value = true
+  const router = useRouter()
+  const w = await mountSuspended(SettingsView, { props: { panel: true }, route: '/a/w1:p1', global })
+  const path = () => router.currentRoute.value.fullPath
+  const shown = (el: { element: Element }) => (el.element as HTMLElement).style.display !== 'none'
+  try {
+    // A link to a section, from the conversation: the panel opens on it, the conversation stays.
+    await router.push('/settings?section=pacing')
+    await vi.waitFor(() => expect(path()).toBe('/a/w1:p1?section=pacing'))
+    const agents = w.findAll('.settings-section').find(s => s.find('#settings-pace').exists())!
+    await vi.waitFor(() => expect(shown(agents)).toBe(true))
+    expect(w.get('#settings').classes()).toContain('settings-panel')
+    // Another section stays in the panel.
+    await w.findAll('.settings-nav-item').find(b => b.attributes('title') === 'Terminal')!.trigger('click')
+    await vi.waitFor(() => expect(path()).toBe('/a/w1:p1?section=terminal'))
+    // Escape closes it first, before the conversation's own Escape (Stop on a working agent,
+    // registered earlier); the listener sits nearer the target so it would run first otherwise.
+    let conversationGotEscape = false
+    const stop = (e: KeyboardEvent) => { conversationGotEscape = true; e.preventDefault() }
+    document.body.addEventListener('keydown', stop)
+    try {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await vi.waitFor(() => expect(path()).toBe('/a/w1:p1'))
+      expect(conversationGotEscape).toBe(false)
+    } finally { document.body.removeEventListener('keydown', stop) }
+    // The gear (a plain /settings) opens it again; the close button closes it.
+    await router.push('/settings')
+    await vi.waitFor(() => expect(path()).toBe('/a/w1:p1?section=appearance'))
+    await w.get('button[aria-label="Close settings"]').trigger('click')
+    await vi.waitFor(() => expect(path()).toBe('/a/w1:p1'))
+    // "Open full page" keeps today's page.
+    await router.push('/settings?section=about')
+    await vi.waitFor(() => expect(path()).toBe('/a/w1:p1?section=about'))
+    await w.get('button[aria-label="Open full page"]').trigger('click')
+    await vi.waitFor(() => expect(path()).toBe('/settings?section=about'))
+  } finally { w.unmount() }
+})
+
+it('Conversation: tabs split Display, Dictation and Read aloud, the tab kept in the URL', async () => {
+  desk.value = true
+  coarse.value = false
+  const router = useRouter()
+  const w = await mountSuspended(SettingsView, { route: '/settings?section=conversation&tab=dictation', global })
+  try {
+    const shown = (sel: string) => (w.get(sel).element as HTMLElement).style.display !== 'none'
+    const panels = () => ['#conversation-panel-display', '#conversation-panel-dictation', '#conversation-panel-read-aloud'].filter(shown)
+    const tabs = () => w.findAll('[role="tab"]').filter(b => b.attributes('id')?.startsWith('conversation-tab-'))
+    expect(tabs().map(b => b.text())).toEqual(['Display', 'Dictation', 'Read aloud'])
+    expect(panels()).toEqual(['#conversation-panel-dictation'])
+    expect(tabs()[1]!.attributes('aria-selected')).toBe('true')
+    await tabs()[2]!.trigger('click')
+    await vi.waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/settings?section=conversation&tab=read-aloud'))
+    await vi.waitFor(() => expect(panels()).toEqual(['#conversation-panel-read-aloud']))
+    // No tab, or an unknown one: Display.
+    await router.replace('/settings?section=conversation&tab=nope')
+    await vi.waitFor(() => expect(panels()).toEqual(['#conversation-panel-display']))
+    expect(w.get('#conversation-panel-display').text()).toContain('Default pane view')
+  } finally { w.unmount() }
+})
+
+it('points at a target: opens its tab, highlights it until a click, and says so politely', async () => {
+  desk.value = true
+  coarse.value = false
+  const w = await mountSuspended(SettingsView, { route: '/settings?section=conversation&tab=display&target=conversation.reply-style', global })
+  try {
+    const el = w.get('[data-ui-target="conversation.reply-style"]')
+    await vi.waitFor(() => expect(el.classes()).toContain('ui-halo'))
+    expect(el.attributes('aria-describedby')).toBe('ui-target-note')
+    expect(w.get('#ui-target-note').text()).toBe('Pointing to Reply style')
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(el.classes()).not.toContain('ui-halo')
   } finally { w.unmount() }
 })

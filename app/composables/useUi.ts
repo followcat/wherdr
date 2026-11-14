@@ -36,6 +36,8 @@ export const newProjectOpen = ref(false)
 // Machine to preselect when the sheet opens (a machine's "…" menu), then cleared.
 export const newAgentMachine = ref<string | null>(null)
 export const renameTarget = ref<string | null>(null)
+// What the rename sheet names: a pane, or a tab (its terminal's name, which the tab shows).
+export const renameAs = ref<'pane' | 'tab'>('pane')
 
 export const lightboxSrc = ref<string | null>(null)
 // Images of the same message, browsable in the viewer (← →, swipe).

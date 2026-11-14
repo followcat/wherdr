@@ -15,7 +15,7 @@ import { tl } from '~/utils/i18n'
 /* Every screen of the app is a fixed `.view`: they start under the strip. */
 :root { --demo-h: 28px; }
 .view { top: var(--demo-h) !important; height: calc(100% - var(--demo-h)) !important; }
-.list-handle { top: var(--demo-h) !important; }
+:is(.list-handle, .panel-handle) { top: var(--demo-h) !important; }
 .demo-banner {
   position: fixed; z-index: 100; left: 0; right: 0; top: 0; height: var(--demo-h);
   display: flex; align-items: center; justify-content: center; gap: 10px; padding: 0 12px;

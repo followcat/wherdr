@@ -64,7 +64,7 @@ always refused (with a passkey, they reach the lock screen). A passkey adds an a
 each device if you want one, for example on a computer other people log in to (see
 [Shared computers](security.md#shared-computers)).
 
-**6. More machines** (optional): add your other computers to hc over SSH, from Settings › Agents ›
+**6. More machines** (optional): add your other computers to hc over SSH, from Settings ›
 Machines or with `hc machine add` (see [Several machines (SSH)](machines.md#several-machines-ssh)).
 Each one gets its tab on the home screen, and New starts agents on it.
 

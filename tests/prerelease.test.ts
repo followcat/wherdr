@@ -1,10 +1,8 @@
 // Rolling develop prerelease: scripts/prerelease.sh and .github/workflows/develop-prerelease.yml.
-import { execFile, execFileSync, spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import http from 'node:http'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import { hasCommands } from './helpers/commands'
 
@@ -379,45 +377,4 @@ describe('workflow', () => {
     expect(readFileSync('.github/workflows/release.yml', 'utf8')).toContain("tags: ['v*']")
     expect(readFileSync('.github/workflows/npm.yml', 'utf8')).toMatch(/\^v\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/)
   })
-})
-
-it.skipIf(!hasCommands('bash', 'tar', 'curl'))('a prerelease package installs through fetch_prebuilt without compiling', async () => {
-  const home = workspace()
-  // The wherdr 2 Herdr plugin (scripts/herdr-plugin.sh) still wants the 2.x skill.
-  const tgz = archive(home, { extra: { 'skills/wherdr/SKILL.md': 'skill' } })
-  expect(run(home, ['package', tgz, SHA]).status).toBe(0)
-  const requests: string[] = []
-  const server = http.createServer((req, res) => {
-    requests.push(req.url || '')
-    const file = path.join(home, 'out', path.basename(req.url || ''))
-    if (!req.url?.startsWith('/github/v2.0.0-dev/') || !existsSync(file)) { res.writeHead(404); res.end(); return }
-    res.end(readFileSync(file))
-  })
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
-  try {
-    const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
-    const script = readFileSync('scripts/herdr-plugin.sh', 'utf8')
-    const downloader = script.slice(script.indexOf('fetch_prebuilt()'), script.indexOf('# qrcode-terminal'))
-      .replace('https://github.com/$SOURCE/releases/download', `${base}/github`)
-      .replaceAll('https://registry.npmjs.org', `${base}/npm`)
-    const builder = script.slice(script.indexOf('build_native()'), script.indexOf('# Copies the commands'))
-    const checkout = path.join(home, 'checkout')
-    mkdirSync(path.join(checkout, 'bin/lib'), { recursive: true })
-    cpSync('bin/lib/verify-release.mjs', path.join(checkout, 'bin/lib/verify-release.mjs'))
-    cpSync(path.join(home, 'herdr-plugin.toml'), path.join(checkout, 'herdr-plugin.toml'))
-    const runtime = path.join(home, 'node')
-    symlinkSync(process.execPath, runtime)
-    writeFileSync(path.join(home, 'npm'), '#!/bin/sh\nprintf compiled > "$HOME/compiled"\n', { mode: 0o755 })
-    const shell = path.join(home, 'build.sh')
-    writeFileSync(shell, `set -eu\nROOT="$1"\nRUNTIME="$2"\nfind_runtime() { echo "$RUNTIME"; }\nok() { echo "$*"; }\ntell() { :; }\ndie() { echo "$*" >&2; exit 1; }\ninstall_app() { touch "$HOME/installed"; }\n${downloader}\n${builder}\nbuild_native\n`)
-    const result = await promisify(execFile)('sh', [shell, checkout, runtime], { env: { ...process.env, HOME: home } })
-    expect(result.stdout).toContain('wherdr 2.0.0-dev downloaded (github package, checksum matched)')
-    expect(existsSync(path.join(home, 'compiled'))).toBe(false)
-    expect(existsSync(path.join(home, 'installed'))).toBe(true)
-    expect(readFileSync(path.join(checkout, 'skills/wherdr/SKILL.md'), 'utf8')).toBe('skill')
-    expect(existsSync(path.join(checkout, 'bin/lib/install-skill.sh'))).toBe(true)
-    expect(requests.some(url => url.startsWith('/npm/'))).toBe(false)
-  } finally {
-    await new Promise<void>(resolve => server.close(() => resolve()))
-  }
 })

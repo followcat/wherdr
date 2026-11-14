@@ -9,7 +9,8 @@ const open = ref(false)
 const entry = computed(() => tabOf(props.pane.tab))
 const panes = computed(() => entry.value?.panes || [props.pane])
 const tabs = computed(() => spaceTabs(props.pane.workspace))
-const title = computed(() => props.pane.label || props.pane.name || paneOwnTitle(props.pane))
+const badge = computed(() => paneBadge(props.pane))
+const title = computed(() => (badge.value?.coordinator ? paneCoordinatorName(props.pane) : props.pane.label || props.pane.name || paneOwnTitle(props.pane)))
 const kind = computed(() => kindLabel(props.pane.agent))
 // No " · omp" under a pane already titled "omp".
 const context = computed(() => props.pane.agent === 'omp' ? parseOmpContext(props.pane.ompStatus?.meters) : null)
@@ -22,7 +23,7 @@ const stateLabel = computed(() => disconnected.value
   ? (host.value?.status === 'connecting' ? t('Reconnecting…') : t('Offline')) : statusLabel(props.pane))
 const tone = computed(() => disconnected.value ? 'blocked' : statusKey(props.pane))
 const label = computed(() => [
-  tl('Panes and tabs', 'Panneaux et onglets'), title.value, showKind.value ? kind.value : null, stateLabel.value,
+  tl('Panes and tabs', 'Panneaux et onglets'), badge.value?.text, title.value, showKind.value ? kind.value : null, stateLabel.value,
   context.value ? tl(`Context ${Math.round(context.value.pct)}%, about ${Math.round(context.value.estimated / 1000)}K tokens`, `Contexte ${Math.round(context.value.pct)} %, environ ${Math.round(context.value.estimated / 1000)}K tokens`) : null,
   ...(panes.value.length > 1 ? [`${t('Pane')} ${position.value}`] : []), props.workspace?.label, hostLabel.value,
 ].filter(Boolean).join(', '))
@@ -61,7 +62,7 @@ function tabStatus(e: typeof tabs.value[number]) {
 <template>
   <button type="button" class="phone-identity" :aria-label="label" aria-haspopup="dialog" :aria-expanded="open" @click="open = true">
     <span class="phone-identity-copy" aria-hidden="true">
-      <span class="phone-identity-title">{{ title }}</span>
+      <span class="phone-identity-title"><AlfredEmblem v-if="isAlfredPane(pane)" class="head-emblem" /><ProjectBadge v-if="badge" class="head-badge" :text="badge.text" :color="badge.color" />{{ title }}</span>
       <span class="phone-identity-meta"><span v-if="stateLabel" class="pill" :class="tone"><i />{{ stateLabel }}</span><template v-if="showKind && !context"><span>·</span><span class="phone-identity-kind">{{ kind }}</span></template><template v-if="context"><span>·</span><OmpContext :pane="pane" variant="text" /></template></span>
     </span>
     <UIcon v-if="paneNotificationsMuted(pane)" name="i-lucide-bell-off" mode="svg" class="phone-identity-muted" aria-hidden="true" />
@@ -105,6 +106,8 @@ function tabStatus(e: typeof tabs.value[number]) {
 .phone-identity:active { background: var(--bg-2); }
 .phone-identity:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .phone-identity-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.head-badge { margin-right: var(--badge-gap); }
+.head-emblem { display: inline-block; width: 16px; margin-right: var(--badge-gap); vertical-align: -1px; }
 .phone-identity-title { font-size: 14px; font-weight: 700; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .phone-identity-meta { display: flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; color: var(--muted); font: 500 11px/1.2 var(--mono); white-space: nowrap; }
 /* omp's context percentage takes the kind's place (still in the panel and the label) and stays

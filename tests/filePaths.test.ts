@@ -2,6 +2,7 @@
 // against the agent's folder, and the clickable markup in rendered markdown.
 import { describe, expect, it, vi } from 'vitest'
 import { pathCandidate, posixResolve, resolveAgentPath } from '../shared/filePaths'
+import { chatFilesLevel } from '../shared/chatFiles'
 
 // markdown.ts runs in the browser: DOMPurify needs a DOM, `t` is auto-imported.
 vi.mock('dompurify', () => ({ default: { sanitize: (s: string) => s, addHook: () => {} } }))
@@ -68,6 +69,21 @@ describe('resolveAgentPath', () => {
     expect(resolveAgentPath('a\nb', null, HOME)).toBeNull()
     expect(resolveAgentPath('a\0b', null, HOME)).toBeNull()
     expect(resolveAgentPath('a.ts', null, 'relative')).toBeNull()
+  })
+
+  it('accepts the other allowed folders, and the agent folder in one of them', () => {
+    expect(resolveAgentPath('/tmp/claude-1000/a.md', null, HOME, [HOME, '/tmp'])).toBe('/tmp/claude-1000/a.md')
+    expect(resolveAgentPath('a.md', '/tmp/claude-1000', HOME, [HOME, '/tmp'])).toBe('/tmp/claude-1000/a.md')
+    expect(resolveAgentPath('/etc/passwd', null, HOME, [HOME, '/tmp'])).toBeNull()
+    expect(resolveAgentPath('../../etc/passwd', '/srv/app', HOME, ['/'])).toBe('/etc/passwd')
+  })
+
+  it('defaults to everything unless wherdr is publicly exposed; a saved choice wins', () => {
+    expect(chatFilesLevel(null, false)).toBe('all')
+    expect(chatFilesLevel(null, true)).toBe('temp')
+    expect(chatFilesLevel('bogus', true)).toBe('temp')
+    expect(chatFilesLevel('all', true)).toBe('all')
+    expect(chatFilesLevel('home', false)).toBe('home')
   })
 
   it('keeps absolute paths inside home as they are', () => {

@@ -5,7 +5,7 @@
 // chosen model is kept per device. Row layout after followcat's model list
 // (followcat/wherdr, branch mobile, MIT).
 import { fmtBytes } from '~/utils/bytes'
-import { checkCrash, DEVICE_MODELS, DEVICE_MODEL_KEY, deviceLanguage, deviceModel, forgetCrash, gpuFeatures, memoryBudget, memoryFit, modelBytes, qualityRating, runnableModels } from '~/utils/dictation/deviceModels'
+import { checkCrash, DEVICE_MODELS, DEVICE_MODEL_KEY, deviceLanguage, deviceModel, forgetCrash, gpuFeatures, languageLine, memoryBudget, memoryFit, modelBytes, qualityRating, ratedLanguages, runnableModels } from '~/utils/dictation/deviceModels'
 import type { DeviceModel, DeviceNeed } from '~/utils/dictation/deviceModels'
 import { cancelInstall, deleteModel, fetchCommand, installModel, MissingOnServer, ServerFetchFailed, storageInfo, storedBytes, watchInstall } from '~/utils/dictation/modelStore'
 import type { Progress, StorageInfo } from '~/utils/dictation/modelStore'
@@ -102,19 +102,12 @@ onMounted(async () => {
 const used = computed(() => Object.values(have).reduce((n, b) => n + b, 0))
 const pct = (p: Progress) => Math.floor((p.got / Math.max(1, p.total)) * 100)
 
-// FR and EN first (the interface's languages), then how many more.
-function langs(m: DeviceModel) {
-  const head = ['fr', 'en'].filter(l => m.languages.includes(l))
-  const shown = head.length ? head : m.languages.slice(0, 2)
-  const more = m.languages.length - shown.length
-  return [...shown.map(l => l.toUpperCase()), ...(more ? [`+${more}`] : [])].join(' · ')
-}
-
 const dots = (n: number) => '■'.repeat(n) + '□'.repeat(5 - n)
 function quality(m: DeviceModel, lang: string) {
   const q = qualityRating(m, lang)
   if (q === 'unsupported') return { text: '—', title: tl('Not supported', 'Non prise en charge') }
   if (!q) return { text: tl('unknown', 'inconnue'), title: tl('No published figure', 'Aucun chiffre publié') }
+  if (q.metric === 'CER') return { text: dots(q.dots), title: tl(`${q.wer} % character errors on ${q.dataset} (${q.source})`) }
   return { text: dots(q.dots), title: tl(`${q.wer} % word errors on ${q.dataset} (${q.source})`, `${q.wer} % de mots faux sur ${q.dataset} (${q.source})`) }
 }
 </script>
@@ -127,12 +120,12 @@ function quality(m: DeviceModel, lang: string) {
           <UIcon :name="chosen === m.id ? 'i-lucide-square-dot' : 'i-lucide-square'" class="dictation-model-dot" />
           <span class="dictation-model-text">
             <b>{{ m.name }}</b>
-            <small class="dictation-model-meta" :title="m.languages.join(', ')">{{ langs(m) }} · {{ fmtBytes(modelBytes(m)) }}</small>
+            <small class="dictation-model-meta" :title="m.languages.join(', ')">{{ languageLine(m) }} · {{ fmtBytes(modelBytes(m)) }}</small>
             <small v-if="m.autoDetect === false" data-testid="model-language">{{ tl(`No language detection: writes ${deviceLanguage(m).toUpperCase()}, this device’s language`, `Sans détection de langue : écrit en ${deviceLanguage(m).toUpperCase()}, la langue de cet appareil`) }}</small>
             <small class="dictation-model-rating">
               <span>{{ tl('Quality', 'Qualité') }}</span>
-              <template v-for="l in ['fr', 'en']" :key="l">
-                <i :title="quality(m, l).title">{{ l.toUpperCase() }} <em>{{ quality(m, l).text }}</em></i>
+              <template v-for="l in ratedLanguages(m).langs" :key="l">
+                <i :title="quality(m, l).title" :class="{ mine: l === ratedLanguages(m).mine }">{{ l.toUpperCase() }} <em>{{ quality(m, l).text }}</em> <b v-if="l === ratedLanguages(m).mine">{{ tl('yours') }}</b></i>
               </template>
             </small>
             <small class="dictation-model-rating">
@@ -202,6 +195,7 @@ function quality(m: DeviceModel, lang: string) {
 .dictation-model-rating span { color: var(--dim); }
 .dictation-model-rating i { font-style: normal; color: var(--text-2); }
 .dictation-model-rating em { font-style: normal; color: var(--accent); letter-spacing: .02em; }
+.dictation-model-rating i.mine b { display: inline; font: inherit; color: var(--dim); }
 .dictation-model-state { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 0 16px 13px 46px; }
 .dictation-model-state small { font: 500 11px/1.4 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
 .dictation-model-state progress { flex: 1 1 100%; height: 4px; appearance: none; border: 0; background: var(--line); accent-color: var(--accent); }

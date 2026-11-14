@@ -5,19 +5,22 @@
 // stay under the root. Nothing here writes.
 //
 // A file path written in a conversation (shared/filePaths.ts) is previewed and
-// downloaded the same way, with the machine's home folder as the root.
+// downloaded the same way, with the folder the chosen level allows as the
+// root (shared/chatFiles.ts: home, a temporary folder, or /).
 //
 // Never shown, whatever the root: wherdr's own data folder (DATA_DIR: the
 // lock's signing secret, push keys), its settings (wherdr.env, which can hold
 // the OpenRouter key, and wherdr.json), ~/.ssh and ~/.config/herdr. Checked on
 // the machine once symlinks are resolved (exit 9), and before that on the
-// written path for a clear error.
+// written path for a clear error. Only a written path, with "Also show
+// protected files" on, skips them ($5 = 1).
 import { execFile } from 'node:child_process'
 import path from 'node:path'
 import { DATA_DIR, WHERDR_DIR } from './env'
 import { shq } from './fsx'
 import type { FileEntry, FilePreview, FilesListing } from '../../shared/types'
-import { posixResolve, resolveAgentPath } from '../../shared/filePaths'
+import { insideRoot, posixResolve, resolveAgentPath } from '../../shared/filePaths'
+import { chatFilesRoots, type ChatFilesPolicy } from '../../shared/chatFiles'
 import { gitToplevel } from './changes'
 import { HerdrError } from './herdr'
 import type { Machine } from './machines'
@@ -110,7 +113,8 @@ const PROTECTED = `protected_path() {
   return 1
 }`
 
-// The file $2 resolved under the root into $f, then opened on fd 3.
+// The file $2 resolved under the root into $f, then opened on fd 3 ($5 = 1:
+// protected files too).
 // Symlinks resolved one link at a time (readlink, cd -P: realpath is missing
 // before macOS 13).
 export const OPEN_FILE = `${RESOLVE}
@@ -129,10 +133,12 @@ while [ -L "$f" ]; do
 done
 [ -e "$f" ] || { echo "not found" >&2; exit 4; }
 under "$f" || { echo "outside" >&2; exit 5; }
-protected_path "$f" && { echo "protected" >&2; exit 9; }
+[ "$5" = 1 ] || ! protected_path "$f" || { echo "protected" >&2; exit 9; }
 [ -f "$f" ] || { echo "not a file" >&2; exit 6; }
 [ -r "$f" ] || { echo "permission denied" >&2; exit 7; }
-command exec 3< "$f" || { echo "permission denied" >&2; exit 7; }
+# \`command exec\` keeps dash alive when the open fails; macOS's bash 3.2 (its
+# sh) then spins at 100 % CPU on any later \`exit\`, and never exits on it anyway.
+if [ -n "\${BASH_VERSION-}" ]; then exec 3< "$f"; else command exec 3< "$f"; fi 2>/dev/null || { echo "permission denied" >&2; exit 7; }
 # "<inode> <size> <mtime> <version>" of the opened file, from its metadata:
 # never a read (BusyBox's wc -c reads every byte). <version>: modification
 # and change times to the nanosecond (GNU/BusyBox, then BSD). Without the
@@ -252,18 +258,27 @@ export function cutAt(b: Buffer, max: number) {
   return i
 }
 
+const HOME_ONLY: ChatFilesPolicy = { level: 'home', protected: false }
+const OUTSIDE = {
+  home: 'Only files in your home folder can be shown',
+  temp: 'Only files in your home folder and the agents’ temporary folders can be shown',
+}
+
 // Root and path under it of a file written in a conversation: resolved against
-// the agent's folder, and under the machine's home folder (checked again on
-// the machine once symlinks are resolved).
-export function writtenTarget(m: Machine, cwd: string | null | undefined, written: unknown): { root: string, rel: string, abs: string } {
+// the agent's folder, and under a folder the policy allows (checked again on
+// the machine once symlinks are resolved). `show`: the script's protected
+// switch ($5).
+export function writtenTarget(m: Machine, cwd: string | null | undefined, written: unknown, policy: ChatFilesPolicy = HOME_ONLY): { root: string, rel: string, abs: string, show: string } {
   const w = String(written ?? '')
-  const abs = w.length > 1024 ? null : resolveAgentPath(w, cwd, m.home)
-  if (!abs) throw new HerdrError('outside_home', 'Only files in your home folder can be shown')
-  const root = posixResolve('/', m.home)
+  const roots = chatFilesRoots(posixResolve('/', m.home), policy.level)
+  const abs = w.length > 1024 ? null : resolveAgentPath(w, cwd, m.home, roots)
+  if (!abs && policy.level === 'all') throw new HerdrError('not_found', 'File not found')
+  if (!abs) throw new HerdrError('outside_home', `${OUTSIDE[policy.level as 'home' | 'temp']} (Settings › Security › Files shown from conversations)`)
+  const root = roots.find(r => insideRoot(r, abs))!
   const rel = path.posix.relative(root, abs)
   if (!rel) throw new HerdrError('not_file', 'Not a file')
-  refuseProtected(m, abs)
-  return { root, rel, abs }
+  if (!policy.protected) refuseProtected(m, abs)
+  return { root, rel, abs, show: policy.protected ? '1' : '' }
 }
 
 // Early, on the path as written (the machine checks again once symlinks are resolved).
@@ -274,19 +289,20 @@ export function refuseProtected(m: Machine, abs: string) {
 }
 
 // Size and first `max` bytes of a file (`whole`: no bytes at all when it has `max` or more).
-async function readHead(m: Machine, root: string, rel: string, max: number, opts?: RunOpts & { whole?: boolean }) {
-  const out = await run(m, READ_SCRIPT, [root, rel, String(max), ...(opts?.whole ? ['1'] : [])], opts)
+async function readHead(m: Machine, root: string, rel: string, max: number, opts?: RunOpts & { whole?: boolean, show?: string }) {
+  const whole = opts?.whole ? '1' : ''
+  const out = await run(m, READ_SCRIPT, [root, rel, String(max), ...(opts?.show ? [whole, opts.show] : whole ? [whole] : [])], opts)
   const nl = out.indexOf(10)
   return { size: Number(out.subarray(0, nl).toString('utf8')) || 0, body: out.subarray(nl + 1) }
 }
 
 // `shown`: the path given back to the client (relative to the project in the
 // file browser, absolute for a path written in a conversation).
-async function previewAt(m: Machine, root: string, rel: string, shown: string): Promise<FilePreview> {
+async function previewAt(m: Machine, root: string, rel: string, shown: string, show?: string): Promise<FilePreview> {
   const ext = path.posix.extname(rel).slice(1).toLowerCase()
   const mime = IMAGE_TYPES[ext]
   const video = VIDEO_TYPES[ext]
-  const { size, body } = await readHead(m, root, rel, mime ? IMAGE_BYTES + 1 : ext === 'pdf' ? PDF_HEAD : video ? VIDEO_HEAD : TEXT_BYTES + 1)
+  const { size, body } = await readHead(m, root, rel, mime ? IMAGE_BYTES + 1 : ext === 'pdf' ? PDF_HEAD : video ? VIDEO_HEAD : TEXT_BYTES + 1, { show })
   if (video) return { path: shown, size, kind: isVideo(rel, body) ? 'video' : 'binary', truncated: false }
   if (ext === 'pdf') {
     if (!isPdf(rel, body)) return { path: shown, size, kind: 'binary', truncated: false }
@@ -310,14 +326,14 @@ export async function readFilePreview(m: Machine, cwd: string, rel: unknown): Pr
   return previewAt(m, root, p, p)
 }
 
-export async function readWrittenPreview(m: Machine, cwd: string | null | undefined, written: unknown): Promise<FilePreview> {
-  const t = writtenTarget(m, cwd, written)
-  return previewAt(m, t.root, t.rel, t.abs)
+export async function readWrittenPreview(m: Machine, cwd: string | null | undefined, written: unknown, policy?: ChatFilesPolicy): Promise<FilePreview> {
+  const t = writtenTarget(m, cwd, written, policy)
+  return previewAt(m, t.root, t.rel, t.abs, t.show)
 }
 
 // The whole file, for a download: refused beyond DOWNLOAD_BYTES rather than cut.
-async function bytesAt(m: Machine, root: string, rel: string) {
-  const { size, body } = await readHead(m, root, rel, DOWNLOAD_BYTES + 1, { timeoutMs: 120000, maxBytes: DOWNLOAD_BYTES + 1, whole: true })
+async function bytesAt(m: Machine, root: string, rel: string, show?: string) {
+  const { size, body } = await readHead(m, root, rel, DOWNLOAD_BYTES + 1, { timeoutMs: 120000, maxBytes: DOWNLOAD_BYTES + 1, whole: true, show })
   if (size > DOWNLOAD_BYTES || body.length > DOWNLOAD_BYTES) throw new HerdrError('too_large', 'File too large to download (50 MB max)')
   return { name: path.posix.basename(rel), body }
 }
@@ -330,9 +346,9 @@ export async function readFileBytes(m: Machine, cwd: string, rel: unknown) {
   return bytesAt(m, root, p)
 }
 
-export async function readWrittenBytes(m: Machine, cwd: string | null | undefined, written: unknown) {
-  const t = writtenTarget(m, cwd, written)
-  return bytesAt(m, t.root, t.rel)
+export async function readWrittenBytes(m: Machine, cwd: string | null | undefined, written: unknown, policy?: ChatFilesPolicy) {
+  const t = writtenTarget(m, cwd, written, policy)
+  return bytesAt(m, t.root, t.rel, t.show)
 }
 
 // Content-Disposition of a download (or of a PDF shown `inline`): an ASCII

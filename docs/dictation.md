@@ -263,7 +263,17 @@ posts again every second, Settings shows *Preparing on the server… 40 %*, and 
 starts once the answer is `ready`. It runs the fetch script's own code (`scripts/dictation-files.mjs`:
 same pinned URLs, sha256 checks, `.part` resume), one fetch at a time for the whole server; a
 second request for the same model joins the running one. A failed fetch (`error`, shown in the
-row) is told once; the next Install tries again and resumes. Cancel stops the phone's polling, not
+row) is told once in plain words; the next Install tries again and resumes. Before downloading
+an archive the server checks how it can unpack the format (`unpackMode`; `extractCommand` maps
+`.tar.bz2`, `.tar.gz`, `.tar.xz`, `.tar.zst` and `.tar` to a flag and the decompressor GNU tar
+runs; bsdtar has them built in). A `.tar.bz2` on a server without `bzip2` (every model and voice
+archive today) is decoded in JS (`unbzip2-stream`, about 2.5 MB/s on a desktop CPU) and streamed
+into `tar -x -f -`, so bzip2 is never a requirement. Another format whose decompressor is missing
+is refused before the download with the command that installs it (*this archive format needs xz
+on the server: install it (sudo apt install xz-utils), then try again*; `brew install` on macOS); the
+next Install tries again. A failed unpack removes the archive
+and the half-written files and says why (disk full, permission denied, incomplete archive, missing
+files: `tarFailure`); a cut download says how far it got and keeps its `.part` to resume. Cancel stops the phone's polling, not
 the server's fetch. A server without the route (older build) falls back to the 404 message with
 the command to run.
 
@@ -279,12 +289,13 @@ next piece (the piece being decoded cannot be stopped).
 
 ### The fetch script
 
-`scripts/fetch-dictation-files.mjs` downloads named **sets** (`runtime`, `ort`, model sets;
-default `runtime parakeet`; `all`). Every entry has a pinned URL and a **sha256**: a download
+`scripts/fetch-dictation-files.mjs` downloads named **sets** (`runtime`, `ort`, model sets,
+read-aloud voice sets `tts-<voice>`; default `runtime parakeet`; `all`). Every entry has a pinned URL and a **sha256**: a download
 goes to `file.part`, resumes with `Range` after an interruption, and is moved into place only
 when its hash matches. An entry is either a single file (`{ url, sha256, to }`) or a `.tar.bz2`
 archive (`{ url, sha256, dir, members }`) from which only the listed members are extracted; a
-`.complete` stamp holding the archive's hash marks it done. `tests/fetchDictationFiles.test.ts`
+`.complete` stamp holding the archive's hash marks it done. A voice with no published archive
+lists its files one by one, each with its own sha256. `tests/fetchDictationFiles.test.ts`
 covers resume, mismatch and the set list; `tests/dictationServerFiles.test.ts` the server's use of
 it. The code lives in `scripts/dictation-files.mjs`, which has no CLI, since the server bundles it.
 
@@ -301,13 +312,20 @@ family is added there without code; the app needs a rebuild to ship it. An entry
 | `requires` | `[]`, `['webgpu']` or `['webgpu', 'shader-f16']`: Settings hides the model when the browser lacks it |
 | `set`, `source` | The fetch script's set name and its pinned archive (`url`, `sha256`) |
 | `dir`, `files` | Folder under `/models/` and its files, each with its exact `bytes` (checked against the server's on download) |
-| `languages`, `punctuation` | ISO 639-1 codes; punctuation and capitals |
+| `languages`, `punctuation` | ISO 639-1 codes (639-3 when there is none: `yue`); punctuation and capitals |
+| `ranked` | The same languages, best first, from the model's own published figures (sources in the `RANKING SOURCES` comment of `deviceModels.ts`) |
 | `autoDetect` | `false` when the model does not detect the language (Canary): the worker is given the first of the device's languages it speaks, else English |
 | `textCase` | `"upper"` when the model writes in capitals (SenseVoice, even with inverse text normalization on): the app puts its text in sentence case |
 | `memory` | Measured `{ heap, peak, basis }`: WASM heap after load, and the page's peak memory. `heap` is what the device budget checks |
-| `quality` | Raw published WER per language: `{ lang, dataset, wer, source }` |
+| `quality` | Raw published error rate per language: `{ lang, dataset, wer, source }`, plus `metric: "CER"` for a character error rate (Chinese, Cantonese, Japanese, Korean) |
 | `speed` | `{ estimate: 1–5, basis, source }`, absent when there is no source |
 | `license` | `{ id, url }` |
+
+**Each card shows what the model is good at, not a fixed pair of languages.** The language line
+gives the first three of `ranked` and how many more (`ZH · YUE · EN · +2`); a model of 10
+languages or more shows its best two and `Multi (25)`. Only languages the model speaks are
+listed. The quality bars follow the two best languages, then the device's own language when the
+model speaks it, marked "yours" (never forced first).
 
 **Ratings are computed, never typed by hand.** Quality: the WER for the language, FLEURS first,
 else MLS, else Common Voice; ≤ 5 → 5 dots, ≤ 7 → 4, ≤ 10 → 3, ≤ 15 → 2, above → 1, no figure →
@@ -454,21 +472,53 @@ memory reported in the pull request; a device without WebGPU or `shader-f16` get
 ## Read aloud
 
 The other direction: **Play** under each agent reply reads it aloud, chosen in **Settings ›
-Conversation › Read aloud** (per device: Off, or the device's voices; on by default where the
-browser has `speechSynthesis`).
+Conversation › Read aloud** (per device: Off, the device's voices, or **Voice of wherdr (on this
+device)**; the device's voices by default where the browser has `speechSynthesis`).
 
 | File | Role |
 | --- | --- |
 | `app/utils/speech/plainText.ts` | `speakableText()`: the words of a reply, "Code block." for code; `speechChunks()`: pieces of at most 220 characters (Chrome cuts long utterances) |
 | `app/composables/useReadAloud.ts` | Engine and voice choice, the voice list (`voiceschanged`), one reply at a time for the app |
+| `app/utils/speech/neuralVoice.ts` | The `wherdr` engine: a neural voice in the TTS worker, played through WebAudio (see below) |
 | `app/utils/speech/voicePicker.ts` | Voice quality (Premium, Enhanced, Standard, Online, Low quality, from the name or Apple's voiceURI) and the language and quality filters of the voice list |
 | `app/utils/speech/lowQualityVoices.ts` | Names of Apple's novelty, MacinTalk and Eloquence voices, hidden by default |
 | `app/components/ReadAloudButton.vue`, `ReadAloudSettings.vue` | Play / Stop under a reply; the settings (language filter, hide low-quality voices, voice search in sections, Test) |
+| `app/components/ReadAloudNeuralVoices.vue` | The Voice of wherdr settings: one row per language voice (name, size, attribution, Install / progress / Cancel / Delete, Test) |
 
 Every piece is queued in the tap itself: iOS only speaks from a user gesture. iOS may stop
 speech when the screen locks or the app goes to the background, without an `end` event; a check
 every 1.5 s puts the button back to Play. Leaving the pane stops its reply. Voices marked
-"online" (Chrome's Google voices) send the text to their vendor. An OpenRouter engine
+"online" (Chrome's Google voices) send the text to their vendor. On iPhone and iPad, the Premium and
+Enhanced voices downloaded in iOS Settings are kept for native apps: Safari and home-screen web
+apps only list the standard ones, and the settings say so under the voice list.
+
+Neural voices run on the phone (sherpa-onnx with Piper models, as for dictation). Their catalog is `app/utils/speech/voices.json`: Siwis (French, default), Cori (English,
+UK, default) and MLS (French, fallback), each with its files (the model, `tokens.txt`, and
+espeak-ng data trimmed to French and English, about 0.9 MB), its source pinned by sha256, its
+licence and the attribution to show (Siwis: CC BY 4.0). Each voice is a fetch set
+(`tts-siwis-medium`, ...), and `POST /api/dictation/prepare` with `{ voice }` has the server fetch
+it, as `{ model }` does for a dictation model. The runtime set also carries sherpa-onnx's TTS
+binding, `sherpa-onnx-tts.js`, unchanged from v1.12.34 to v1.12.40, the releases the pinned WASM
+build matches. `tests/speechVoices.test.ts` checks the catalog. Licences, the espeak-ng note,
+the memory budget and the phone figures are in [Read aloud: the voice of wherdr](read-aloud.md).
+
+The engine, `app/utils/speech/neuralVoice.ts`, is the `wherdr` choice of `useReadAloud`. Its
+voice is installed through the dictation model store (`installModel`, Cache Storage); a voice
+not installed, or too large for this device (memory budget, or a crash mark as for dictation
+models), is not used and the reply goes to the device's voices instead. A reply goes to
+`public/workers/tts-worker.js` one piece at a time, at most two pieces ahead of the one playing,
+so Stop never waits behind a long queue; the pieces play back to back through WebAudio, whose
+`AudioContext` is resumed inside the tap (iOS). Audio that arrives for a stopped reply is
+dropped. The worker and the `AudioContext` are released after 60 s without speech and on
+`pagehide`. `tests/neuralVoice.test.ts` covers it with a fake worker.
+
+With **Voice of wherdr** chosen, the settings list one voice per language, Siwis (French) and
+Cori (English), each with its size and attribution and its own Install, Cancel, Delete and Test.
+Install and Test then show what they measured on the device (download, load, first sentence,
+real-time factor, heap; see [How to measure](read-aloud.md#how-to-measure)).
+Each reply is read by the voice of its language: `replyLanguage()` guesses French or English from
+common short words and French accents. A reply whose voice is not installed is read by the
+device's voices. An OpenRouter engine
 (`POST /api/v1/audio/speech`, relayed by the server like dictation) is a planned follow-up.
 
 ## Known limits

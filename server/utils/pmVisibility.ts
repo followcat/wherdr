@@ -3,7 +3,7 @@
 // without a remote), and kept on the project. The rules themselves are in
 // shared/pm/visibility.ts.
 import { HerdrError } from './herdr'
-import { machineOn, type CoreAdminDeps } from './coreCreate'
+import { PATH_SETUP, machineOn, type CoreAdminDeps } from './coreCreate'
 import { exec } from './pmLaunch'
 import type { PmStore } from './pmStore'
 import type { Project } from '../../shared/pm/project'
@@ -15,11 +15,13 @@ const SEP = '--wherdr-leak--'
 // The remote's URL (origin, else the first one), then gh's answer when gh is
 // there and logged in. Only a missing folder fails: gh's own failure (absent,
 // logged out, not a GitHub remote) leaves the host's API to answer.
-export const REMOTE_SCRIPT = `cd "$1" 2>/dev/null || exit 1
+// PATH_SETUP: gh from Homebrew, as a login shell would find it.
+export const REMOTE_SCRIPT = `${PATH_SETUP}
+cd "$1" 2>/dev/null || exit 1
 r=$(git remote | grep -qx origin && echo origin || git remote | head -n 1)
 [ -n "$r" ] || exit 0
 u=$(git remote get-url "$r") || exit 0
-echo "$u"
+printf '%s\\n' "$u"
 command -v gh >/dev/null 2>&1 && GH_PROMPT_DISABLED=1 gh repo view "$u" --json visibility 2>/dev/null
 exit 0`
 

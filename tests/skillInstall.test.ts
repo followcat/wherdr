@@ -16,66 +16,12 @@ function fixture(mode: string) {
   cpSync(path.join(repo, 'bin'), path.join(root, 'bin'), { recursive: true })
   cpSync(path.join(repo, 'skills'), path.join(root, 'skills'), { recursive: true })
   cpSync(path.join(repo, 'package.json'), path.join(root, 'package.json'))
-  mkdirSync(path.join(root, 'scripts'))
-  cpSync(path.join(repo, 'scripts/herdr-plugin.sh'), path.join(root, 'scripts/herdr-plugin.sh'))
-  cpSync(path.join(repo, 'herdr-plugin.toml'), path.join(root, 'herdr-plugin.toml'))
   const bin = path.join(home, 'tools')
   mkdirSync(bin)
   const env = { ...process.env, HOME: home, HC_SOCKET: path.join(home, 'hc.sock'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), WHERDR_DIR: path.join(home, 'wherdr'), IMAGE_ROOT: root, PATH: `${bin}:${process.env.PATH}` }
   const source = path.join(root, 'skills/wherdr/SKILL.md')
-  // wherdr 3's CLI installs no skill: only the wherdr 2 Herdr plugin script does.
-  const run = () => { execFileSync('sh', [path.join(root, 'scripts/herdr-plugin.sh'), 'skill', 'install'], { env }) }
-  return { home, root, source, run, env, copy: path.join(home, 'wherdr/skills/wherdr'), link: path.join(home, '.claude/skills/wherdr') }
+  return { home, root, source, env, copy: path.join(home, 'wherdr/skills/wherdr'), link: path.join(home, '.claude/skills/wherdr') }
 }
-
-for (const mode of ['plugin-native']) {
-  describe(`skill installation: ${mode}`, () => {
-    it('installs for existing agents and refreshes the stable copy after an update', () => {
-      const f = fixture(mode)
-      mkdirSync(path.join(f.home, '.claude'))
-      mkdirSync(path.join(f.home, '.codex'))
-      f.run()
-      expect(readlinkSync(f.link)).toBe(f.copy)
-      expect(readlinkSync(path.join(f.home, '.agents/skills/wherdr'))).toBe(f.copy)
-      expect(readFileSync(path.join(f.link, 'SKILL.md'), 'utf8')).toBe(readFileSync(f.source, 'utf8'))
-      writeFileSync(f.source, 'updated release')
-      f.run()
-      expect(readFileSync(path.join(f.link, 'SKILL.md'), 'utf8')).toBe('updated release')
-    })
-
-    it('preserves a foreign skill directory and a dangling foreign link', () => {
-      const f = fixture(mode)
-      mkdirSync(f.link, { recursive: true })
-      writeFileSync(path.join(f.link, 'SKILL.md'), 'foreign')
-      mkdirSync(path.join(f.home, '.agents/skills'), { recursive: true })
-      symlinkSync(path.join(f.home, 'missing'), path.join(f.home, '.agents/skills/wherdr'))
-      f.run()
-      expect(readFileSync(path.join(f.link, 'SKILL.md'), 'utf8')).toBe('foreign')
-      expect(readlinkSync(path.join(f.home, '.agents/skills/wherdr'))).toBe(path.join(f.home, 'missing'))
-    })
-
-    it('creates no agent folders or managed copy without an installed agent', () => {
-      const f = fixture(mode)
-      f.run()
-      for (const name of ['.claude', '.agents', 'wherdr']) expect(existsSync(path.join(f.home, name))).toBe(false)
-    })
-  })
-}
-
-it('adopts legacy plugin copies but leaves unrelated managed-path content alone', () => {
-  const f = fixture('plugin-native')
-  mkdirSync(f.copy, { recursive: true })
-  writeFileSync(path.join(f.copy, 'SKILL.md'), 'foreign copy')
-  mkdirSync(path.dirname(f.link), { recursive: true })
-  f.run()
-  expect(readFileSync(path.join(f.copy, 'SKILL.md'), 'utf8')).toBe('foreign copy')
-  expect(existsSync(f.link)).toBe(false)
-  symlinkSync(f.copy, f.link)
-  f.run()
-  expect(readFileSync(path.join(f.copy, 'SKILL.md'), 'utf8')).toBe(readFileSync(f.source, 'utf8'))
-  execFileSync('sh', [path.join(f.root, 'bin/lib/install-skill.sh'), 'uninstall'], { env: f.env })
-  expect(existsSync(f.link)).toBe(false)
-})
 
 it('silently ignores an unwritable destination and respects a custom Claude directory', () => {
   const f = fixture('npm')
@@ -112,19 +58,6 @@ it('removes the 2.x skill and its links, then starts the CLI server', () => {
   expect(result.stdout).toContain('fixture server started')
   expect(result.stderr).toBe('')
   removed(f)
-})
-
-it('does not follow a foreign symlink at the stable managed copy', () => {
-  const f = fixture('plugin-native')
-  mkdirSync(path.join(f.home, '.claude'))
-  const foreign = path.join(f.home, 'foreign')
-  mkdirSync(foreign)
-  writeFileSync(path.join(foreign, 'SKILL.md'), 'foreign')
-  mkdirSync(path.dirname(f.copy), { recursive: true })
-  symlinkSync(foreign, f.copy)
-  f.run()
-  expect(readFileSync(path.join(foreign, 'SKILL.md'), 'utf8')).toBe('foreign')
-  expect(existsSync(f.link)).toBe(false)
 })
 
 for (const args of [['start'], ['service', 'install']]) {
@@ -166,7 +99,6 @@ exit 0
   expect(existsSync(path.join(f.home, '.config/systemd/user/skill-test.service'))).toBe(false)
 })
 
-
 it.skipIf(process.platform !== 'linux')('normalizes a relative Claude config and preserves skill opt-out in the login service', () => {
   const f = fixture('npm')
   mkdirSync(path.join(f.root, '.output/server'), { recursive: true })
@@ -184,38 +116,3 @@ it.skipIf(process.platform !== 'linux')('normalizes a relative Claude config and
   expect(existsSync(f.copy)).toBe(false)
   expect(result.stderr).toContain('enable --now failed')
 })
-
-
-for (const mode of ['plugin-native']) {
-  it(`${mode}: WHERDR_SKILL=off neither installs nor refreshes`, () => {
-    const f = fixture(mode)
-    mkdirSync(path.join(f.home, '.claude'))
-    const disabled = { ...f.env, WHERDR_SKILL: 'off' }
-    Object.assign(f.env, disabled)
-    f.run()
-    expect(existsSync(f.copy)).toBe(false)
-    Object.assign(f.env, { WHERDR_SKILL: '' })
-    f.run()
-    const installed = readFileSync(path.join(f.copy, 'SKILL.md'), 'utf8')
-    writeFileSync(f.source, 'a new release')
-    Object.assign(f.env, disabled)
-    f.run()
-    expect(readFileSync(path.join(f.copy, 'SKILL.md'), 'utf8')).toBe(installed)
-  })
-}
-
-
-for (const mode of ['plugin-native']) {
-  it(`${mode}: automatic refresh preserves uninstall until explicit installation`, () => {
-    const f = fixture(mode)
-    mkdirSync(path.join(f.home, '.claude'))
-    f.run()
-    execFileSync('sh', [path.join(f.root, 'bin/lib/install-skill.sh'), 'uninstall'], { env: f.env })
-    const script = 'scripts/herdr-plugin.sh'
-    execFileSync('sh', [path.join(f.root, script), 'skill', 'refresh'], { env: f.env })
-    expect(existsSync(f.link)).toBe(false)
-    expect(existsSync(f.copy)).toBe(false)
-    f.run()
-    expect(readFileSync(path.join(f.link, 'SKILL.md'), 'utf8')).toBe(readFileSync(f.source, 'utf8'))
-  })
-}

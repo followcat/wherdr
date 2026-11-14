@@ -7,8 +7,12 @@
 import { DEVICE_CACHE } from './deviceModels'
 import type { DeviceModel } from './deviceModels'
 
+// What the store needs of a model: a dictation model, or a read-aloud voice
+// (app/utils/speech/neuralVoice.ts) with its catalog members as files.
+export type StoredModel = Pick<DeviceModel, 'id' | 'dir' | 'set' | 'files'>
+
 export const CHUNK = 8 * 1024 * 1024
-export const fileUrl = (m: DeviceModel, path: string) => `/models/${m.dir}/${path}`
+export const fileUrl = (m: StoredModel, path: string) => `/models/${m.dir}/${path}`
 export const chunkUrl = (url: string, i: number) => `${url}?chunk=${i}`
 export const chunkCount = (bytes: number) => Math.max(1, Math.ceil(bytes / CHUNK))
 const chunkEnd = (bytes: number, i: number) => Math.min(bytes, (i + 1) * CHUNK) - 1
@@ -16,14 +20,14 @@ const chunkEnd = (bytes: number, i: number) => Math.min(bytes, (i + 1) * CHUNK) 
 // The server answers 404: its DATA_DIR/models has no such file (an older
 // server that cannot fetch it itself, and the fetch script was not run there).
 export class MissingOnServer extends Error {
-  constructor(readonly model: DeviceModel, readonly path: string) {
+  constructor(readonly model: StoredModel, readonly path: string) {
     super(`${path}: HTTP 404`)
     this.name = 'MissingOnServer'
   }
 }
 
 // The command that fetches this model's files on the server.
-export const fetchCommand = (m: DeviceModel) => `node scripts/fetch-dictation-files.mjs runtime ${m.set}`
+export const fetchCommand = (m: StoredModel) => `node scripts/fetch-dictation-files.mjs runtime ${m.set}`
 
 export interface StoreDeps { caches?: CacheStorage | null, fetch?: typeof fetch }
 // `server`: the wherdr server is still fetching the files (`unpack`: extracting them).
@@ -50,7 +54,7 @@ const pause = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, 
 // are there. An older server without the route, a refusal or no answer to the
 // first request is left to the download, which says what went wrong; once the
 // server fetches, a dropped poll is retried.
-export async function prepareOnServer(m: DeviceModel, deps: StoreDeps, signal: AbortSignal, onProgress: (p: Progress) => void) {
+export async function prepareOnServer(m: StoredModel, deps: StoreDeps, signal: AbortSignal, onProgress: (p: Progress) => void) {
   const doFetch = deps.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a))
   const init = { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: m.id }), signal }
   for (let first = true; ; first = false) {
@@ -74,7 +78,7 @@ const cachesOf = (d: StoreDeps) => (d.caches === undefined ? globalThis.caches ?
 const keyOf = (u: string) => { const url = new URL(u, 'http://x'); return url.pathname + url.search }
 
 // Bytes of the model this device holds (an F2 whole-file entry counts too).
-export async function storedBytes(m: DeviceModel, deps: StoreDeps = {}): Promise<number> {
+export async function storedBytes(m: StoredModel, deps: StoreDeps = {}): Promise<number> {
   const cs = cachesOf(deps)
   if (!cs) return 0
   const keys = new Set((await (await cs.open(DEVICE_CACHE)).keys()).map(r => keyOf(r.url)))
@@ -107,7 +111,7 @@ async function refetch(doFetch: () => Promise<Response>, signal?: AbortSignal): 
   throw lastErr
 }
 
-async function download(m: DeviceModel, deps: StoreDeps, signal: AbortSignal, onProgress: (p: Progress) => void) {
+async function download(m: StoredModel, deps: StoreDeps, signal: AbortSignal, onProgress: (p: Progress) => void) {
   const cs = cachesOf(deps)
   if (!cs) throw new Error('This browser cannot keep files (no Cache Storage)')
   const doFetch = deps.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a))
@@ -143,7 +147,7 @@ const running = new Map<string, Running>()
 
 // Download what is missing. A second call for the same model joins the first.
 // The browser is asked to keep the site's storage (it may still say no).
-export function installModel(m: DeviceModel, onProgress?: (p: Progress) => void, deps: StoreDeps = {}): Promise<void> {
+export function installModel(m: StoredModel, onProgress?: (p: Progress) => void, deps: StoreDeps = {}): Promise<void> {
   let run = running.get(m.id)
   if (!run) {
     const r: Running = { abort: new AbortController(), listeners: new Set(), last: null, promise: Promise.resolve() }
@@ -174,7 +178,7 @@ export function cancelInstall(id: string): void {
   running.get(id)?.abort.abort()
 }
 
-export async function deleteModel(m: DeviceModel, deps: StoreDeps = {}): Promise<void> {
+export async function deleteModel(m: StoredModel, deps: StoreDeps = {}): Promise<void> {
   cancelInstall(m.id)
   const cs = cachesOf(deps)
   if (!cs) return

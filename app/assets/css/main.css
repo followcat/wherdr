@@ -133,6 +133,8 @@
 /* Default palette: wherdr Titanium. Keep these values in sync with
    app/utils/themes.ts so the first paint matches the selected theme. */
 :root {
+  /* Between a project key badge and the name after it. */
+  --badge-gap: 8px;
   --bg: #12151b;
   --bg-2: #0d1015;
   --surface: #1a1e26;
@@ -155,6 +157,17 @@
   --rose: #ff4757;
   --blue: #1fb2ff;
   --teal: #00dbe4;
+  /* Project colors (shared/pm/projectKey.ts): fixed and distinct in every theme
+     (theme colors coincide in some, lav = blue…), mid-tones that read on dark and
+     light backgrounds; the badge mixes its text with --text-strong (ProjectBadge.vue). */
+  --project-violet: #8b5cf6;
+  --project-blue: #3b82f6;
+  --project-teal: #14b8a6;
+  --project-green: #22c55e;
+  --project-amber: #f59e0b;
+  --project-orange: #f97316;
+  --project-red: #ef4444;
+  --project-pink: #ec4899;
 
   --working: #a98bff;
   --blocked: #ffb347;
@@ -282,6 +295,15 @@
    the home bar, no need to add the bottom safe area. */
 body.short-bottom { --safe-bottom: 0px; }
 
+/* Scrollbars in the app's style everywhere (docs/design.md): thin, in the
+   theme's line color, never the browser default. Bars hidden on purpose
+   (strips of chips, the key bar) keep `scrollbar-width: none`. */
+* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line); }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
 /* ---------- Headers ---------- */
 .top {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
@@ -313,7 +335,7 @@ body.short-bottom { --safe-bottom: 0px; }
 /* Versions in the eyebrow: a tap opens Settings › About; truncated before the row overflows. */
 .home-version { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: inherit; text-decoration: none; }
 .home-version:hover, .home-version:focus-visible { color: var(--text); }
-.home-actions { display: flex; align-items: center; gap: 4px; flex: none; margin-right: -6px; }
+.home-actions { display: flex; align-items: center; gap: 4px; flex: none; margin-right: -6px; } /* overflow-safe: .home-top has 16px side padding */
 /* Global search: square window with thin lines (like the sheets), agent-card-style
    group headers, match highlighted in ochre like the
    search in a conversation. No rounding. */
@@ -396,11 +418,12 @@ body.short-bottom { --safe-bottom: 0px; }
 .stat + .stat { border-left: 1px solid var(--line); }
 .stat b { display: block; font: 850 30px/1 var(--display); letter-spacing: -.04em; color: var(--text); }
 .stat span {
-  display: flex; align-items: center; gap: 6px; margin-top: 8px;
+  display: block; margin-top: 8px;
   font: 500 9.5px/1.2 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.stat span i { width: 6px; height: 6px; flex: none; background: currentColor; }
+/* Block line, not flex: text-overflow only ellipsizes the text of a block. */
+.stat span i { display: inline-block; width: 6px; height: 6px; margin-right: 6px; vertical-align: 1px; background: currentColor; }
 .stat.blocked span i { background: var(--blocked); }
 .stat.working span i { background: var(--working); }
 .stat.done span i { background: var(--done); }
@@ -442,6 +465,9 @@ body.short-bottom { --safe-bottom: 0px; }
 .quota-row.quota-api { grid-template-columns: 44px 1fr; min-height: 34px; }
 .quota-api-label { margin: 0; padding: 4px 10px; align-self: center; min-width: 0; font: 400 10px/1.3 var(--mono); letter-spacing: .04em; color: var(--dim); overflow-wrap: anywhere; }
 .quota-limited { color: var(--danger); }
+/* Credits, and how to refresh an old reading: one line across the row. */
+.quota-note { grid-column: 1 / -1; margin: 0; padding: 3px 8px; border-top: 1px solid var(--line); font: 400 9.5px/1.3 var(--mono); color: var(--dim); overflow-wrap: anywhere; }
+.quota-row.stale .quota-note { color: var(--ochre); }
 
 .agent-group { margin-bottom: 26px; }
 .group-title {
@@ -451,7 +477,7 @@ body.short-bottom { --safe-bottom: 0px; }
 .group-title { color: var(--mauve); }
 .group-title::before { content: ''; width: 18px; height: 1px; background: var(--mauve); opacity: .6; flex: none; }
 .group-title .count { color: var(--dim); }
-.group-title .group-sort { margin: -8px -6px -8px auto; color: var(--dim); }
+.group-title .group-sort { margin: -8px -6px -8px auto; color: var(--dim); } /* overflow-safe: .scroll has 12-16px side padding */
 .group-title .group-sort:hover { color: var(--text); }
 .agent-group.blocked .group-title { color: var(--rose); }
 .agent-group.blocked .group-title::before { background: var(--rose); }
@@ -541,48 +567,46 @@ body.short-bottom { --safe-bottom: 0px; }
 .update-banner-body { flex: 1 1 220px; min-width: 0; display: grid; gap: 6px; }
 .update-banner-body p { margin: 0; color: var(--text); }
 .update-banner-body p small, .update-banner-body > small { display: block; margin-top: 2px; font-size: 11px; color: var(--dim); }
-.update-banner-body code { display: block; padding: 5px 7px; border: 1px solid var(--line); font: 400 11px/1.45 var(--mono); color: var(--text-2); overflow-wrap: anywhere; user-select: all; }
-.update-banner-actions { display: flex; gap: 6px; margin-left: auto; }
+.update-banner-actions { display: flex; flex-wrap: wrap; gap: 6px; flex-basis: 100%; margin-left: -6px; } /* overflow-safe: inside the banner's 12px left padding */
+.update-banner-hide { flex: none; margin: -4px -2px 0 0; } /* overflow-safe: inside the banner's 10px right padding */
+.update-banner-actions > * { white-space: nowrap; }
 .update-banner-actions .iconify { width: 14px; height: 14px; }
+.update-notes-link { margin-top: 14px; }
 /* One-tap update: the Updating screen reuses the lock screen's frame. */
 .lock-screen.self-update { z-index: 61; }
 .machine-empty { margin: -2px 0 20px 24px; font: 400 12px/1.4 var(--mono); color: var(--dim); }
-/* Machine chips (no machine bar, several machines), each opening the machine's
-   menu; machine quotas under the shared ones; offline or reconnecting
-   machines on one compact line at the bottom of the list. */
-.state-machines { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 18px; padding: 0; list-style: none; }
-.state-machine { min-width: 0; max-width: 100%; }
-.state-machine-chip, .state-away-item {
-  display: inline-flex; align-items: center; gap: 7px; max-width: 100%; min-height: 34px; padding: 0 8px 0 10px;
-  border: 1px solid var(--line); background: var(--bg-2); color: var(--text);
-  font: 600 10.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; white-space: nowrap;
-  cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation;
-}
-.state-machine-chip:hover, .state-away-item:hover { background: var(--surface); border-color: var(--line-strong); }
-.state-machine-chip:focus-visible, .state-away-item:focus-visible { outline: 1px solid var(--accent); outline-offset: -3px; }
+/* Machine quotas under the shared ones; offline or reconnecting machines on
+   one compact line at the bottom of the list, each with Reconnect. */
 .state-machine-dot { width: 6px; height: 6px; flex: none; background: var(--green); }
 .state-machine-name { min-width: 0; max-width: 18ch; overflow: hidden; text-overflow: ellipsis; }
-.state-machine-session { flex: none; color: var(--mauve); font: 500 10px/1 var(--mono); letter-spacing: .1em; text-transform: none; }
-.state-machine-claude { width: 13px; height: 13px; flex: none; color: var(--ochre); }
-.state-machine-more { width: 14px; height: 14px; flex: none; color: var(--dim); }
 .state-machine-quotas { margin: -6px 0 18px; }
 .state-machine-quotas-label { margin: 0 0 6px; font: 500 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
 .state-machine-quotas .quotas { margin: 0; }
+.state-machine-quotas-machines { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 8px; padding: 0; list-style: none; }
+.state-machine-quotas-machines li { padding: 2px 6px; border: 1px solid var(--line); font: 500 10px/1.3 var(--mono); color: var(--text-2); }
 .machine-empty.state-empty { margin-left: 0; }
 .state-away {
   display: flex; align-items: center; margin: 4px 0 18px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
   overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
 }
 .state-away::-webkit-scrollbar { display: none; }
-.state-away-item { flex: none; gap: 6px; min-height: 36px; padding: 0 10px; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--muted); }
+.state-away-item {
+  display: inline-flex; flex: none; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px; border-right: 1px solid var(--line);
+  color: var(--muted); font: 600 10.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; white-space: nowrap;
+}
 .state-away-item:first-child { padding-left: 2px; }
 .state-away-item:last-child { border-right: 0; }
-.state-away-item:hover { border-color: var(--line); }
 .state-away-item .state-machine-dot { background: var(--rose); }
 .state-away-item.connecting .state-machine-dot { background: var(--ochre); animation: pulse 1.2s ease-in-out infinite; }
 .state-away-state { color: var(--rose); font-weight: 500; letter-spacing: .1em; }
 .state-away-item.connecting .state-away-state { color: var(--ochre); }
 .state-away-known { color: var(--text-3); font-weight: 700; letter-spacing: 0; }
+.state-away-reconnect {
+  min-height: 28px; padding: 0 8px; border: 1px solid var(--line); background: var(--bg-2); color: var(--text);
+  font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+}
+.state-away-reconnect:hover { background: var(--surface); border-color: var(--line-strong); }
+.state-away-reconnect:focus-visible { outline: 1px solid var(--accent); outline-offset: -3px; }
 
 /* Card of an unreachable machine (agent view, etc.). */
 .card.stale { cursor: pointer; }
@@ -665,7 +689,7 @@ body.short-bottom { --safe-bottom: 0px; }
   background-position: -1px -1px;
 }
 .empty-box { background: var(--bg); border: 1px solid var(--line); padding: 28px 26px; max-width: 420px; margin: 0 auto; }
-.empty { text-align: center; padding: 40px 16px; margin: 0 -16px; color: var(--text-2); }
+.empty { text-align: center; padding: 40px 16px; margin: 0 -16px; color: var(--text-2); } /* overflow-safe: .scroll has the same side padding */
 .empty.hw-grid { background-color: transparent; }
 .empty-art { font: 700 40px/1 var(--mono); color: var(--dim); margin-bottom: 18px; }
 .empty p { margin: 4px 0; }
@@ -702,7 +726,7 @@ body.short-bottom { --safe-bottom: 0px; }
   font: 500 11.5px/1.2 var(--mono); text-transform: lowercase; color: var(--muted); white-space: nowrap;
 }
 .pill i { width: 7px; height: 7px; background: currentColor; flex: none; }
-.pill .sep { color: var(--dim); margin: 0 -1px; }
+.pill .sep { color: var(--dim); margin: 0 -1px; } /* overflow-safe: between the pill's own items, inside its padding */
 .pill.working { color: var(--working); }
 .pill.working i { animation: pulse 1.3s ease-in-out infinite; }
 .pill.blocked { color: var(--blocked); }
@@ -716,7 +740,7 @@ body.short-bottom { --safe-bottom: 0px; }
 /* Model on the card: discreet, the state color stays on "working". */
 .pill .pill-model { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
 /* Reasoning level (medium, high…) next to the model. */
-.pill .pill-effort { color: var(--dim); margin-left: -2px; flex: none; }
+.pill .pill-effort { color: var(--dim); margin-left: -2px; flex: none; } /* overflow-safe: between the pill's own items, inside its padding */
 
 /* ---------- Logos d'agents ---------- */
 .avatar {
@@ -856,7 +880,7 @@ body.short-bottom { --safe-bottom: 0px; }
 .md-body.files-md :is(h1, h2) { padding-bottom: .3em; border-bottom: 1px solid var(--line); }
 .md-body.files-md h5, .md-body.files-md h6 { font: 600 11px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 1.2em 0 .5em; }
 .md-body.files-md li:has(> input[type="checkbox"], > p > input[type="checkbox"]) { list-style: none; }
-.md-body.files-md li input[type="checkbox"] { margin: 0 .55em 0 -1.35em; vertical-align: -2px; accent-color: var(--mauve); }
+.md-body.files-md li input[type="checkbox"] { margin: 0 .55em 0 -1.35em; vertical-align: -2px; accent-color: var(--mauve); } /* overflow-safe: into the list item's indent */
 /* A table scrolls sideways: its columns stay readable rather than squeezed. */
 .md-body.files-md :is(td, th) { min-width: 7.5em; }
 .md-body.files-md td code { white-space: nowrap; overflow-wrap: normal; }
@@ -889,6 +913,53 @@ body.short-bottom { --safe-bottom: 0px; }
 }
 .term-banner > span { flex: 1; }
 .term-banner > .term-banner-icon { width: 16px; height: 16px; color: var(--ochre); flex: none; }
+/* A place an agent opened with `ui open` (UiOpenCard.vue), above the message field. */
+.ui-open-row { flex: none; padding: 6px 12px; }
+.ui-open-card { display: flex; align-items: stretch; background: var(--surface); border: 1px solid var(--line); }
+.ui-open-card:hover, .ui-open-card:focus-within { border-color: var(--accent); }
+.ui-open-main { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; padding: 8px 12px; text-align: left; cursor: pointer; }
+.ui-open-main:focus-visible { outline: none; }
+.ui-open-by, .settings-opened-by { font: 600 10px/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--text-2); }
+.settings-opened-by { display: block; margin-top: 5px; }
+.ui-open-place { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text); }
+.ui-open-place .iconify { flex: none; color: var(--accent); }
+.ui-open-x { display: grid; place-items: center; width: 44px; flex: none; border-left: 1px solid var(--line); color: var(--muted); cursor: pointer; }
+.ui-open-x:hover { color: var(--text); }
+/* The "questions unanswered" chip floats above the message field: room for it under the card. */
+.ui-open-card:has(+ .composer .composer-ask-anchor) { margin-bottom: 36px; }
+.ui-show-top { display: flex; align-items: stretch; flex: none; min-height: 56px; border-bottom: 1px solid var(--line); }
+.ui-show-head { display: flex; flex-direction: column; justify-content: center; gap: 3px; flex: 1; min-width: 0; padding: 8px 16px; }
+.ui-show-head h2 { font: 700 16px/1.2 var(--sans); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-show-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+/* Notes (NotesList.vue): a short whiteboard, the filter then each note's title and lines. */
+.notes-wrap, .notes-index { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+#notes .notes-wrap { padding: 14px 16px 20px; }
+.notes-filter { width: min(100%, 260px); }
+.notes-list { display: flex; flex-direction: column; min-width: 0; }
+.note { padding: 10px 0 12px; border-top: 1px solid var(--line); min-width: 0; scroll-margin-top: 8px; }
+.note h3 { display: flex; align-items: baseline; gap: 8px; min-width: 0; margin-bottom: 4px; font: 700 15px/1.3 var(--sans); color: var(--text-strong); }
+.note h3 span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.note h3 small { flex: none; color: var(--dim); }
+.note-body { font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.note-body :is(p, ul, ol) { margin: 0; }
+.note-body :is(ul, ol) { padding-left: 20px; }
+.note-body ul:has(> li > input[type=checkbox]) { padding-left: 0; list-style: none; }
+.note-body input[type=checkbox] { margin-right: 6px; vertical-align: -1px; pointer-events: none; }
+.note-body a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+/* A linked file (plans/x.md) open in place of the list: back, its path, then its Markdown. */
+.note-file { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.note-file-top { display: flex; align-items: center; gap: 6px; min-width: 0; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.note-file-top .mono-label { flex: 1; min-width: 0; color: var(--dim); overflow-wrap: anywhere; }
+.note-file-body { font-size: 14.5px; min-width: 0; }
+.note-file-body a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.note-file-body input[type=checkbox] { margin-right: 6px; pointer-events: none; }
+.note-file-body ul:has(> li > input[type=checkbox]) { padding-left: 0; list-style: none; }
+.note-file-body pre { max-width: 100%; overflow-x: auto; }
+/* A link that leads nowhere or out of the notes folder: muted, its title says why. */
+.notes-wrap a.note-link-missing { color: var(--dim); text-decoration-style: dotted; cursor: not-allowed; }
+.notes-empty { padding: 12px 0; border-top: 1px solid var(--line); }
+/* The tab the list follows: a muted line under the filter. */
+.notes-following { margin-top: -8px; font-size: 13px; overflow-wrap: anywhere; }
 
 /* ---------- Terminal ---------- */
 #termWrap { position: relative; flex: 1; min-height: 0; padding: 6px 4px 0 6px; background: var(--bg); }
@@ -907,15 +978,17 @@ body.short-bottom { --safe-bottom: 0px; }
 /* A Herdr client may send a wider frame: scrolling, without distorting the glyphs. */
 #term .xterm { box-sizing: border-box; width: 100%; overflow-x: auto; overflow-y: hidden; }
 
+/* The keys scroll inside the bar; the keyboard toggle stays pinned at its end. */
 .keybar {
-  display: flex; gap: 0; overflow-x: auto; flex: none;
-  margin: 0; padding: 6px 8px; scrollbar-width: none;
+  display: flex; align-items: center; flex: none; min-width: 0;
+  margin: 0; padding: 6px 12px;
   border-top: 1px solid var(--line-soft); background: var(--bg);
 }
-.keybar::-webkit-scrollbar { display: none; }
+.keybar-keys { display: flex; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+.keybar-keys::-webkit-scrollbar { display: none; }
 .keybar button {
   flex: none; min-width: 42px; height: 36px; padding: 0 10px;
-  background: var(--bg-2); border: 1px solid var(--line); margin-left: -1px;
+  background: var(--bg-2); border: 1px solid var(--line); margin-left: -1px; /* overflow-safe: overlaps the neighbour's border; the first one's goes left of a scroller, out of reach */
   font: 500 13px/1 var(--mono); color: var(--text-2);
   display: grid; place-items: center;
 }
@@ -1018,6 +1091,23 @@ body.short-bottom { --safe-bottom: 0px; }
 .md-body ol li::marker { font: 500 .88em var(--mono); color: var(--mauve); }
 .md-body a { color: var(--mauve); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent); text-underline-offset: 3px; }
 .md-body a:hover { text-decoration-color: var(--mauve); }
+/* An in-app link (utils/markdown.ts): an action button in the text, icon and
+   label, wrapping inside the message; a 44 px hit area. */
+.md-body a.md-app-link {
+  display: inline-flex; align-items: center; gap: 7px; max-width: 100%; min-height: 44px; margin: 2px 0;
+  padding: 6px 12px 6px 10px; vertical-align: middle; box-sizing: border-box;
+  background: var(--surface); border: 1px solid var(--line); color: var(--text);
+  font-size: 14px; line-height: 1.35; text-align: left; text-decoration: none; overflow-wrap: anywhere;
+}
+.md-body a.md-app-link:hover { border-color: var(--accent); }
+.md-body a.md-app-link:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.md-body a.md-app-link > span:last-child { min-width: 0; }
+.md-app-icon {
+  flex: none; width: 16px; height: 16px; background: var(--accent);
+  -webkit-mask: var(--md-app-icon) center / contain no-repeat; mask: var(--md-app-icon) center / contain no-repeat;
+  /* Lucide panel-right-open, as UiOpenCard shows it. */
+  --md-app-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='18' x='3' y='3' rx='2'/%3E%3Cpath d='M15 3v18'/%3E%3Cpath d='m10 15-3-3 3-3'/%3E%3C/svg%3E");
+}
 /* Inline code, like a prompt in a terminal: a 1 px rule on the left, a faint
    selection tint and a small glyph tinted by what the code holds (data-k from
    utils/codeKind.ts: ❯ command, ▸ path, # ID, ✗ failure, ✓ success). Kept
@@ -1293,7 +1383,7 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
 .msg-cmd > button.msg-system:hover, .msg-cmd.open > button.msg-system { color: var(--text-2); }
 .msg-cmd-chev { flex: none; width: 12px; height: 12px; }
 .msg-cmd > .msg-shell-out { border: 1px solid var(--line-soft); margin: 2px 0 10px; }
-.turn-end { display: flex; align-items: center; gap: 6px; font: 400 11px/1 var(--mono); color: var(--dim); letter-spacing: .04em; margin: -6px 0 6px -6px; min-height: 28px; }
+.turn-end { display: flex; align-items: center; gap: 6px; font: 400 11px/1 var(--mono); color: var(--dim); letter-spacing: .04em; margin: -6px 0 6px -6px; min-height: 28px; } /* overflow-safe: .chat-list has 16px side padding */
 .turn-end > span { padding-left: 6px; }
 .turn-copy { color: var(--dim); width: 28px; height: 28px; justify-content: center; }
 .turn-copy:hover { color: var(--text); }
@@ -1335,12 +1425,12 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
    (ClaudeSpinner) has a fixed box: the verb does not move when it changes. */
 .chat-status .claude-verb-line { display: inline-flex; align-items: baseline; min-width: 0; font-family: var(--font-mono); font-size: 13px; }
 .chat-status .claude-verb { --ui-text-muted: var(--claude); --ui-text-highlighted: color-mix(in srgb, var(--claude) 45%, var(--text)); }
-.chat-status .claude-spinner { display: inline-block; flex: none; width: 1.6em; margin-left: -.3em; text-align: center; color: var(--claude); overflow: hidden; }
+.chat-status .claude-spinner { display: inline-block; flex: none; width: 1.6em; margin-left: -.3em; text-align: center; color: var(--claude); overflow: hidden; } /* overflow-safe: .chat-status has 16px side padding */
 /* omp's running step: braille spinner, shimmering step, elapsed time. Agent
    color when the theme defines one, otherwise the accent. */
 .chat-status .omp-step-line { --omp-color: var(--omp, var(--accent)); display: inline-flex; align-items: baseline; min-width: 0; font-family: var(--font-mono); font-size: 13px; }
 .chat-status .omp-step { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; --ui-text-muted: var(--muted); --ui-text-highlighted: color-mix(in srgb, var(--omp-color) 55%, var(--text)); }
-.chat-status .omp-spinner { display: inline-block; flex: none; width: 1.6em; margin-left: -.3em; text-align: center; color: var(--omp-color); }
+.chat-status .omp-spinner { display: inline-block; flex: none; width: 1.6em; margin-left: -.3em; text-align: center; color: var(--omp-color); } /* overflow-safe: .chat-status has 16px side padding */
 .chat-status .omp-elapsed { flex: none; margin-left: .75em; padding-left: .75em; border-left: 1px solid var(--line); color: var(--dim); font-variant-numeric: tabular-nums; }
 
 /* UChatMessages "scroll to bottom" button. */
@@ -1389,7 +1479,7 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
 .lightbox-btn .iconify { width: 18px; height: 18px; }
 .lightbox-close { position: fixed; top: calc(var(--safe-top) + 8px); right: max(8px, env(safe-area-inset-right, 0px)); }
 .lightbox-bar { position: fixed; left: 50%; bottom: calc(var(--safe-bottom) + 12px); transform: translateX(-50%); display: flex; }
-.lightbox-bar > * + * { margin-left: -1px; }
+.lightbox-bar > * + * { margin-left: -1px; } /* overflow-safe: overlaps the previous button's border */
 .lightbox-zoom, .lightbox-real { padding: 0 12px; font: 500 11.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
 .lightbox-zoom { min-width: 76px; }
 .lightbox-real[aria-pressed="true"] { background: #f4f4f5; color: #0a0a0c; }
@@ -1448,7 +1538,7 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
   max-height: 60vh; overflow: auto; -webkit-overflow-scrolling: touch;
 }
 .prompt-detail-code.collapsed { max-height: calc(6 * 1.5em + 16px); }
-.prompt-detail-code code > span { display: block; min-height: 1.5em; margin: 0 -10px; padding: 0 10px; }
+.prompt-detail-code code > span { display: block; min-height: 1.5em; margin: 0 -10px; padding: 0 10px; } /* overflow-safe: .prompt-detail-code has the same side padding */
 .prompt-detail-code .add { color: var(--green); background: color-mix(in srgb, var(--green) 10%, transparent); }
 .prompt-detail-code .del { color: var(--rose); background: color-mix(in srgb, var(--rose) 10%, transparent); }
 .prompt-detail-note { margin: 0; padding: 6px 10px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ochre); }
@@ -1782,20 +1872,30 @@ body.kb .composer { padding-bottom: 8px; }
    ================================================================ */
 .hw-scrim { background: rgba(8, 8, 10, .62); z-index: 20; }
 .hw-sheet {
-  z-index: 21; background: var(--bg-2); color: var(--text);
+  z-index: 21; --sheet-bg: var(--bg-2); background: var(--sheet-bg); color: var(--text);
   top: auto; bottom: 0; left: 0; right: 0; translate: 0 0;
   bottom: var(--vv-bottom, 0px);
   width: 100%; max-width: none; max-height: calc(var(--vv-h, 100dvh) * .88);
   border-radius: 0; border-top: 1px solid var(--line);
-  /* Second shadow: the sheet's background carries on below its edge, so no
-     strip of scrim shows under it if iOS paints past the visible area. */
-  box-shadow: 0 -20px 50px var(--shadow), 0 160px 0 var(--bg-2); --tw-ring-shadow: 0 0 #0000;
-  padding: 8px 16px calc(var(--safe-bottom) + 16px);
+  box-shadow: 0 -20px 50px var(--shadow); --tw-ring-shadow: 0 0 #0000;
+  /* The gap under the last element and the home bar's room are padding at the
+     end of the sheet's scroll (its body, or its footer when it has one), never
+     outside it: no band under the scrolled content. --sheet-safe: the home
+     bar's part of it, for a bar pinned at the scroll's bottom (TaskTodo).
+     --sheet-bg: the sheet's color, for such a bar. */
+  --sheet-safe: var(--safe-bottom); --sheet-end: calc(var(--sheet-safe) + 16px);
+  padding: 8px 16px 0;
   display: flex; flex-direction: column; gap: 0;
 }
+/* Focused on open (AppSheet): no outline, its buttons keep their own ring. */
+.hw-sheet:focus { outline: none; }
 /* A confirmation asked from an open window sits above it. */
 .hw-scrim.top { z-index: 22; }
 .hw-sheet.top { z-index: 23; }
+/* Floating content (select, select menu, dropdown, context menu, popover,
+   tooltip) opens above every window, `.top` ones included, and under the
+   lightbox (50). Reka copies the content's z-index inline on this wrapper. */
+[data-reka-popper-content-wrapper] { z-index: 40 !important; }
 .hw-sheet[data-state="open"] { animation: rise .24s cubic-bezier(.2, .8, .2, 1); }
 .hw-sheet[data-state="closed"] { animation: sink .16s ease-in; }
 .hw-sheet.tall { height: calc(var(--vv-h, 100dvh) * .88); }
@@ -1804,25 +1904,56 @@ body.kb .composer { padding-bottom: 8px; }
    agent view, on the whole layout viewport, so its bottom edge is the page's
    (no strip of scrim under it, nothing cut). In the page color, the same as
    html/body and the theme-color meta, so whatever iOS paints past the edge
-   matches. Keyboard open: it sits on the visible area above the keyboard and
-   its content scrolls. */
+   matches. Its second shadow carries that color on below its edge, so no
+   strip of scrim shows if iOS paints past the visible area (bottom sheet
+   only: the centered window on a computer has a plain drop shadow).
+   Keyboard open: it sits on the visible area above the keyboard and its
+   content scrolls. */
 @media (max-width: 699px), (max-width: 899px) and (max-height: 699px) and (max-device-width: 699px), (max-width: 899px) and (max-height: 699px) and (max-device-height: 699px), (max-width: 899px) and (max-height: 699px) and (pointer: fine), (max-width: 899px) and (max-height: 699px) and (pointer: none) {
   .hw-sheet:not(.screen) {
     bottom: 0; max-height: calc((100% - var(--safe-top)) * .85);
-    background: var(--bg); box-shadow: 0 -20px 50px var(--shadow), 0 160px 0 var(--bg);
+    --sheet-bg: var(--bg); box-shadow: 0 -20px 50px var(--shadow), 0 160px 0 var(--bg);
   }
-  body.kb .hw-sheet:not(.screen) { bottom: var(--vv-bottom, 0px); max-height: calc(var(--vv-h) - var(--safe-top) - 8px); padding-bottom: 12px; }
+  /* A tall sheet (a task's) takes that whole height, from the same layout
+     viewport as its bottom edge, so it is never clamped: its last element
+     ends above the home bar with the usual gap. */
+  .hw-sheet.tall:not(.screen) { height: calc((100% - var(--safe-top)) * .85); }
+  body.kb .hw-sheet:not(.screen) { bottom: var(--vv-bottom, 0px); max-height: calc(var(--vv-h) - var(--safe-top) - 8px); --sheet-safe: 0px; --sheet-end: 12px; }
+  /* A long title (a task's, AppSheet `clamp`): two lines in smaller type, cut
+     with an ellipsis, a tap shows it whole; one line once the body is scrolled
+     or a field is typed in (`compact`), so the keyboard leaves room to write. */
+  .hw-sheet-title.clamp { font-size: 18px; line-height: 1.15; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; cursor: pointer; }
+  .hw-sheet-head.compact .hw-sheet-title.clamp { -webkit-line-clamp: 1; line-clamp: 1; }
+  .hw-sheet .hw-sheet-title.clamp.open { display: block; overflow: visible; }
+  .hw-sheet-lead:has(+ .hw-sheet-title.clamp) { margin-top: 0; }
+  .hw-sheet > .hw-sheet-head.compact { padding-bottom: 6px; }
+  /* Typing (AppSheet `.typing`): a text area grows up to part of the visible
+     area, then scrolls inside itself, the caret line always in sight. */
+  .hw-sheet:has(> .typing) textarea { max-height: calc(var(--vv-h, 100dvh) * .4); }
 }
 .hw-sheet > * { border-top: 0 !important; border-bottom: 0 !important; }
 /* Keep wrapped titles above the scrolling body when the sheet reaches its height limit. */
 .hw-sheet > [data-slot="header"] { padding: 4px 0 10px; min-height: 0; flex: none; border: 0; order: 1; display: flex; align-items: center; justify-content: space-between; }
-.hw-sheet > [data-slot="body"] { padding: 0; order: 2; overflow-y: auto; overscroll-behavior: contain; flex: 1; min-height: 0; scroll-padding-bottom: 16px; }
+.hw-sheet > [data-slot="body"] { padding: 0 0 var(--sheet-end); order: 2; overflow-y: auto; overscroll-behavior: contain; flex: 1; min-height: 0; scroll-padding-bottom: 16px; }
+/* A body whose content fills the sheet's height (a task's), still its one scroll. */
+.hw-sheet > [data-slot="body"]:has(> .task-sheet) { display: flex; flex-direction: column; }
+/* A bar pinned (sticky) at the bottom of the body is its last element and
+   carries the end gap and the home bar's room itself: the body adds no padding
+   below it, so a sticky bottom: 0 sits on the sheet's edge and nothing scrolls
+   under it. The folder picker's buttons; a task's To do buttons on the phone
+   (TaskTodo.vue, next to its sticky rule). */
+.hw-sheet > [data-slot="body"]:has(.dir-actions) { padding-bottom: 0; }
+/* The autopilot's pinned Save bar (CoordinatorAutopilot.vue) in the coordinator window. */
+.hw-sheet > [data-slot="body"]:has(> .coord > .ap[data-tab="settings"]) { padding-bottom: 0; }
 .hw-sheet-title { min-width: 0; font: 850 24px/1 var(--display); letter-spacing: -.035em; word-spacing: .06em; color: var(--text); overflow-wrap: anywhere; }
 .hw-sheet [data-slot="close"] { position: static; inset: auto; }
+/* Before the title (a task's id badge): the title follows it. */
+.hw-sheet-lead { flex: none; align-self: flex-start; margin: 3px 10px 0 0; }
+.hw-sheet-lead + .hw-sheet-title { flex: 1; }
 /* Handle at the top of the sheet, on the phone: tap or swipe down to close.
    The bar is drawn small; the button around it is a 44 px touch target. */
 .hw-sheet-handle {
-  order: 0; flex: none; align-self: stretch; height: 44px; margin: -8px -16px -10px;
+  order: 0; flex: none; align-self: stretch; height: 44px; margin: -8px -16px -10px; /* overflow-safe: .hw-sheet has the same side padding */
   display: flex; align-items: center; justify-content: center;
   background: none; border: 0; cursor: pointer; touch-action: none; -webkit-tap-highlight-color: transparent;
 }
@@ -1830,7 +1961,8 @@ body.kb .composer { padding-bottom: 8px; }
 .hw-sheet-handle:active::before, .hw-sheet-handle:focus-visible::before { background: var(--muted); }
 .hw-sheet-head { touch-action: none; }
 /* Footer pinned under the scrolling content (e.g. Launch). */
-.hw-sheet > [data-slot="footer"] { order: 3; padding: 0; border: 0; flex: none; display: block; }
+.hw-sheet > [data-slot="footer"] { order: 3; padding: 0 0 var(--sheet-end); border: 0; flex: none; display: block; }
+.hw-sheet:has(> [data-slot="footer"]:not(:empty)) > [data-slot="body"] { padding-bottom: 0; }
 .hw-sheet > [data-slot="footer"]:empty { display: none; }
 .hw-sheet-foot .sheet-form { padding: 0; }
 .hw-sheet-foot .launch-btn { margin-top: 16px; }
@@ -1844,15 +1976,15 @@ body.kb .composer { padding-bottom: 8px; }
   .hw-scrim.screen { background: var(--bg); }
   body .hw-sheet.screen {
     top: 0; bottom: auto; height: 100%; max-height: none;
-    background: var(--bg); border-top: 0;
+    --sheet-bg: var(--bg); border-top: 0;
     box-shadow: 0 160px 0 var(--bg);
-    padding: calc(var(--safe-top) + 6px) 16px calc(var(--safe-bottom) + 12px);
+    padding: calc(var(--safe-top) + 6px) 16px 0; --sheet-end: calc(var(--sheet-safe) + 12px);
   }
-  body.kb .hw-sheet.screen { top: var(--vv-top, 0px); height: var(--vv-h, 100%); max-height: none; padding-bottom: 10px; }
+  body.kb .hw-sheet.screen { top: var(--vv-top, 0px); height: var(--vv-h, 100%); max-height: none; --sheet-safe: 0px; --sheet-end: 10px; }
   .hw-sheet.screen .hw-sheet-handle { display: none; }
-  .hw-sheet.screen > [data-slot="header"] { padding: 6px 0 12px; margin: 0 -16px; padding-left: 16px; padding-right: 8px; border-bottom: 1px solid var(--line-soft) !important; }
+  .hw-sheet.screen > [data-slot="header"] { padding: 6px 0 12px; margin: 0 -16px; padding-left: 16px; padding-right: 8px; border-bottom: 1px solid var(--line-soft) !important; } /* overflow-safe: .hw-sheet has the same side padding */
   .hw-sheet.screen > [data-slot="body"] { padding-top: 4px; }
-  .hw-sheet.screen .hw-sheet-foot > * { margin: 0 -16px; padding: 12px 16px 0; border-top: 1px solid var(--line-soft); }
+  .hw-sheet.screen .hw-sheet-foot > * { margin: 0 -16px; padding: 12px 16px 0; border-top: 1px solid var(--line-soft); } /* overflow-safe: into .hw-sheet's 16px side padding (the footer has none) */
   .hw-sheet.screen .hw-sheet-foot .launch-btn { margin-top: 0; }
   /* Form actions (Cancel / Save): side by side across the width, in thumb reach. */
   .hw-sheet.screen .hw-sheet-foot .rename-actions > * { flex: 1; justify-content: center; padding-top: 14px; padding-bottom: 14px; }
@@ -1894,8 +2026,9 @@ body.kb .composer { padding-bottom: 8px; }
 .menu pre.screen.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
 .menu pre.screen .spinner { display: block; margin: 16px auto; }
 
-.confirm { display: flex; flex-direction: column; min-height: 0; max-height: calc(88dvh - var(--safe-bottom) - 48px); }
-.confirm p { margin: 6px 2px 4px; font-size: 16px; line-height: 1.45; min-height: 0; overflow-y: auto; }
+/* A long message scrolls with the sheet's body, its one scroll. */
+.confirm { display: flex; flex-direction: column; }
+.confirm p { margin: 6px 2px 4px; font-size: 16px; line-height: 1.45; }
 .confirm .rename-actions { flex: none; }
 /* Command to run, in full (ChatView.vue): as the terminal will receive it. */
 .confirm-code {
@@ -2055,7 +2188,7 @@ body.kb .composer { padding-bottom: 8px; }
 }
 .dir-denied-label .iconify { width: 15px; height: 15px; color: var(--ochre); flex: none; }
 .dir-denied-path { display: block; margin-top: 4px; font: 12.5px/1.5 var(--mono); color: var(--text-strong); }
-.dir-actions { display: flex; gap: 8px; padding-top: 12px; position: sticky; bottom: 0; background: var(--bg-2); }
+.dir-actions { display: flex; gap: 8px; padding: 12px 0 var(--sheet-end); position: sticky; bottom: 0; background: var(--sheet-bg, var(--bg-2)); }
 .dir-actions > * { flex: 1; justify-content: center; }
 
 /* Square switches, green once enabled. */
@@ -2084,6 +2217,7 @@ body.kb .composer { padding-bottom: 8px; }
 .settings-section-title { display: none; }
 .settings-version { font: 500 12px/1.5 var(--mono); color: var(--muted); }
 .settings-group { margin: 0 0 30px; }
+.settings-tabs { margin: 0 0 26px; }
 .settings-group h3, .theme-section-title {
   display: flex; align-items: center; gap: 10px; margin: 0 0 10px;
   font: 500 10.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--muted);
@@ -2091,8 +2225,23 @@ body.kb .composer { padding-bottom: 8px; }
 .settings-group h3::before, .theme-section-title::before { content: ''; width: 18px; height: 1px; background: var(--line); }
 .settings-hint { font-size: 13px; margin: -20px 2px 30px; }
 .settings-group .settings-hint { margin: 9px 2px 0; }
+.settings-group .settings-warning { color: var(--danger); }
 /* Sub-section of a settings section shown only on a computer (Appearance › Desktop). */
 .settings-subhead { margin: 6px 0 22px; padding-top: 22px; border-top: 1px solid var(--line); }
+
+/* A pointed-at setting (`&target=`, utils/uiHalo.ts): an accent outline and a
+   soft shadow, drawn around the box so the layout never moves (the 6 px offset
+   stays inside the settings' 16 px side padding); two pulses, then it fades
+   over 4 s. Reduced motion: a still outline that fades. */
+.ui-halo { outline: 2px solid var(--accent); outline-offset: 6px; animation: ui-halo 4s ease-out forwards; }
+@keyframes ui-halo {
+  0%, 24%, 48% { outline-color: var(--accent); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 10%, transparent), 0 0 22px 8px color-mix(in srgb, var(--accent) 22%, transparent); }
+  12%, 36% { outline-color: color-mix(in srgb, var(--accent) 45%, transparent); box-shadow: 0 0 0 6px transparent, 0 0 10px 2px color-mix(in srgb, var(--accent) 8%, transparent); }
+  100% { outline-color: transparent; box-shadow: 0 0 0 6px transparent, 0 0 0 0 transparent; }
+}
+@keyframes ui-halo-still { 0%, 50% { outline-color: var(--accent); } 100% { outline-color: transparent; } }
+@media (prefers-reduced-motion: reduce) { .ui-halo { animation-name: ui-halo-still; } }
+.settings-column > .ui-target-missing { margin: 0 2px 22px; }
 
 .settings-typing .encrypted-toggle { margin-top: 14px; }
 /* Settings › Phone (PhoneSetup.vue): steps with a mono label, live state, QR code. */
@@ -2281,12 +2430,16 @@ body.kb .composer { padding-bottom: 8px; }
 .key-order-label .key-order-cap { min-width: 34px; height: 30px; font-size: 11px; }
 .key-order-label .key-order-cap svg { width: 16px; height: 16px; }
 .key-order-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: var(--text); }
+.key-order-label:has(.key-order-check:not(:disabled)) { cursor: pointer; }
+.key-order-check { width: 21px; height: 21px; flex: none; margin: 0; accent-color: var(--accent); }
+.bar-pref-row.off .key-order-name, .bar-pref-row.off .key-order-label .key-order-cap { color: var(--dim); }
+.key-order-required { display: block; margin-top: 4px; font: 500 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .key-order-step { flex: none; width: 44px; display: grid; place-items: center; border: 0; border-left: 1px solid var(--line-soft); border-radius: 0; background: none; color: var(--text-2); cursor: pointer; touch-action: manipulation; }
 .key-order-step svg { width: 18px; height: 18px; }
 .key-order-step:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
 .key-order-step:disabled { color: var(--dim); opacity: .45; cursor: default; }
 .key-order-step:focus-visible { outline: 1px solid var(--accent); outline-offset: -3px; }
-.key-order-announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+.key-order-announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; } /* overflow-safe: visually hidden: absolute, 1px, clipped */
 .settings-stepper { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 58px; padding: 8px 12px 8px 16px; }
 .settings-stepper > span { font-size: 15px; }
 .settings-stepper > div { display: flex; align-items: center; border: 1px solid var(--line); }
@@ -2315,7 +2468,7 @@ body.kb .composer { padding-bottom: 8px; }
 .offline-note { display: flex; align-items: center; gap: 7px; padding: 9px 14px; border-bottom: 1px solid var(--line); color: var(--ochre); background: color-mix(in srgb, var(--ochre) 7%, var(--bg)); font: 600 10px/1.4 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
 .offline-note svg { width: 14px; height: 14px; flex: none; }
 .offline-note-text { flex: 1; min-width: 0; }
-.offline-retry { position: relative; flex: none; margin: -4px -4px -4px 0; padding: 5px 9px; border: 1px solid color-mix(in srgb, var(--ochre) 45%, transparent); color: inherit; font: inherit; letter-spacing: .1em; cursor: pointer; }
+.offline-retry { position: relative; flex: none; margin: -4px -4px -4px 0; padding: 5px 9px; border: 1px solid color-mix(in srgb, var(--ochre) 45%, transparent); color: inherit; font: inherit; letter-spacing: .1em; cursor: pointer; } /* overflow-safe: .offline-note has 14px side padding */
 .offline-retry:hover { background: color-mix(in srgb, var(--ochre) 14%, transparent); }
 .offline-retry::before { content: ''; position: absolute; inset: -8px -6px; }
 .home-offline { margin: 0 0 16px; border: 1px solid var(--line); }
@@ -2440,7 +2593,7 @@ ol[data-slot="viewport"] { top: calc(var(--safe-top) + 12px) !important; bottom:
 }
 .plan-cell.done .plan-cell-title { font-weight: 700; }
 .plan-cell-focus { width: 7px; height: 7px; flex: none; margin-top: 4px; background: var(--mauve); }
-.plan-cell-head .space-menu { margin: -6px -6px 0 -4px; color: var(--dim); }
+.plan-cell-head .space-menu { margin: -6px -6px 0 -4px; color: var(--dim); } /* overflow-safe: .plan-cell clips (overflow: hidden) */
 .plan-cell .pill { font-size: 10.5px; min-width: 0; overflow: hidden; }
 .plan-cell-line {
   flex: 1 1 0; min-height: 0; margin: 0; font-size: 13px; line-height: 1.45; color: var(--text-3); overflow: hidden; overflow-wrap: anywhere;
@@ -2559,6 +2712,28 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
    background. Computer only. */
 .hw-backdrop-host { isolation: isolate; }
 
+/* Settings beside the conversation (computer ≥ 1280 px, utils/settingsPanel.ts): a fixed
+   column on the right, the conversation shrinks to its left; the sections as an icon rail. */
+@media (min-width: 1280px) {
+  :root { --settings-panel: clamp(440px, 36vw, 560px); }
+  #settings.settings-panel { left: auto; right: 0; width: var(--settings-panel); border-left: 1px solid var(--line); z-index: 4; }
+  body:has(#settings.settings-panel) :is(#agent, #placeholder, #tabview) { right: var(--settings-panel); }
+  .settings-panel .settings-top h2 { flex: 1; }
+  /* What an agent showed with `ui show` (UiShowPanel.vue): the same column, in place of Settings. */
+  /* Notes (NotesPanel.vue) too. */
+  :is(#ui-show, #notes) { position: fixed; top: 0; bottom: 0; right: 0; width: var(--settings-panel); display: flex; flex-direction: column; background: var(--bg); border-left: 1px solid var(--line); z-index: 4; }
+  body:has(#ui-show, #notes) :is(#agent, #placeholder, #tabview) { right: var(--settings-panel); }
+  .settings-panel .settings-nav { width: 57px; padding: 16px 6px; }
+  .settings-panel .settings-nav-item { justify-content: center; padding: 0; }
+  .settings-panel .settings-nav-item span:not(.iconify) { display: none; }
+  .settings-panel .settings-column { padding: 22px 20px 44px; }
+  .settings-panel .settings-section-title { font-size: 24px; margin-bottom: 20px; }
+  /* Its left edge resizes it (components/SidePanelHandle.vue), drawn like .list-handle. */
+  .panel-handle { position: fixed; top: 0; bottom: 0; right: var(--settings-panel); width: 0; z-index: 30; cursor: col-resize; touch-action: none; outline: none; }
+  body:has(.panel-handle.dragging) { cursor: col-resize; user-select: none; }
+  body:has(.panel-handle.dragging) :is(iframe, .xterm) { pointer-events: none; }
+}
+
 /* ================================================================
    Computer (≥ 900 px): list as a sidebar + agent on the right,
    conversation centered on a reading width, sheets as windows.
@@ -2579,9 +2754,9 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
 
   #home { right: auto; width: var(--side); border-right: 1px solid var(--line-soft); background: var(--bg-2); }
   .list-handle { position: fixed; top: 0; bottom: 0; left: var(--side); width: 0; z-index: 30; cursor: col-resize; touch-action: none; outline: none; }
-  .list-handle::before { content: ''; position: absolute; top: 0; bottom: 0; left: -5px; width: 9px; cursor: col-resize; }
-  .list-handle::after { content: ''; position: absolute; top: 0; bottom: 0; left: -1px; width: 2px; background: transparent; transition: background-color .12s ease; pointer-events: none; }
-  .list-handle:hover::after, .list-handle.dragging::after, .list-handle:focus-visible::after { background: var(--mauve); }
+  :is(.list-handle, .panel-handle)::before { content: ''; position: absolute; top: 0; bottom: 0; left: -5px; width: 9px; cursor: col-resize; }
+  :is(.list-handle, .panel-handle)::after { content: ''; position: absolute; top: 0; bottom: 0; left: -1px; width: 2px; background: transparent; transition: background-color .12s ease; pointer-events: none; }
+  :is(.list-handle, .panel-handle):is(:hover, .dragging, :focus-visible)::after { background: var(--mauve); }
   #home.resizing, body:has(#home.resizing) { user-select: none; }
   body:has(#home.resizing) { cursor: col-resize; }
   body:has(#home.resizing) iframe, body:has(#home.resizing) .xterm { pointer-events: none; }
@@ -2621,7 +2796,7 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
   .card.sel.blocked::before { background: var(--rose); }
   .card-title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 14.5px; }
   .card-preview { font-size: 13px; margin-left: 50px; }
-  .empty { margin: 0 -12px; }
+  .empty { margin: 0 -12px; } /* overflow-safe: .scroll has the same side padding on the phone */
   .fab-wrap { left: 12px; right: 12px; bottom: 14px; }
   .fab { width: 100%; justify-content: center; }
   .fab.hw-cta { box-shadow: inset 0 0 0 1px var(--line-strong); }
@@ -2641,8 +2816,10 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
   .md { font-size: 15.5px; }
   .msg-user .msg-c { max-width: 78%; }
   .choices, .composer { padding-left: max(12px, calc((100% - var(--read)) / 2 + 12px)); padding-right: max(12px, calc((100% - var(--read)) / 2 + 12px)); }
+  /* An agent's opened place: in the reading column, as wide as the message field. */
+  .ui-open-row { padding-left: max(12px, calc((100% - var(--read)) / 2 + 12px)); padding-right: max(12px, calc((100% - var(--read)) / 2 + 12px)); }
   /* Reading column framed by thin lines, grid in the margins. */
-  .chat, .composer, .keybar {
+  .chat, .composer, .keybar, .ui-open-row {
     --col-l: calc(50% - var(--read) / 2);
     --col-r: calc(50% + var(--read) / 2);
     background-color: var(--bg);
@@ -2658,7 +2835,7 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
   }
   /* Background "wherdr grid": the margins show GridBackdrop instead of the flat grid;
      the reading column stays solid, nothing behind the text. */
-  html[data-backdrop='wherdr'] :is(.chat, .composer) {
+  html[data-backdrop='wherdr'] :is(.chat, .composer, .ui-open-row) {
     background-color: transparent;
     background-image:
       linear-gradient(90deg, transparent calc(var(--col-l) - 1px), var(--line) calc(var(--col-l) - 1px), var(--line) var(--col-l),
@@ -2699,7 +2876,8 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
     height: 100%; padding: 8px 10px 0;
     background: var(--bg); box-shadow: -1px 0 0 var(--line), 1px 0 0 var(--line);
   }
-  .keybar { justify-content: center; }
+  /* Same width and side margins as the message field below. */
+  .keybar { padding-left: max(12px, calc((100% - var(--read)) / 2 + 12px)); padding-right: max(12px, calc((100% - var(--read)) / 2 + 12px)); }
   .search-bar { max-width: calc(var(--read) - 24px); margin: 10px auto 0; width: calc(100% - 24px); }
 
   /* Side-by-side cells: full width, without reading column or grid. */
@@ -2708,12 +2886,13 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
   .cell-view .md { font-size: 14px; }
   .cell-view .choices, .cell-view .composer { padding-left: 10px; padding-right: 10px; }
   .cell-view .composer { padding-bottom: 10px; }
+  .cell-view .ui-open-row { padding-left: 10px; padding-right: 10px; }
   /* Also over the "wherdr grid" rule above (html[data-backdrop] outweighs .cell-view):
      a cell keeps a solid background, without the column lines. */
-  .cell-view .chat, .cell-view .composer,
-  html[data-backdrop='wherdr'] .cell-view :is(.chat, .composer) { background-color: var(--bg); background-image: none; }
-  /* Narrow cell: from the left, so the first keys stay reachable when it scrolls. */
-  .cell-view .keybar { background-image: none; border-top: 1px solid var(--line-soft); justify-content: flex-start; }
+  .cell-view .chat, .cell-view .composer, .cell-view .ui-open-row,
+  html[data-backdrop='wherdr'] .cell-view :is(.chat, .composer, .ui-open-row) { background-color: var(--bg); background-image: none; }
+  /* Narrow cell: no reading column, the margins of its composer. */
+  .cell-view .keybar { background-image: none; border-top: 1px solid var(--line-soft); padding-left: 10px; padding-right: 10px; }
   .cell-view .keybar::before { content: none; }
   .cell-view .search-bar { max-width: none; }
   /* The terminal of the focused cell takes the whole cell (no reading column). */
@@ -2724,12 +2903,31 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
   .hw-sheet {
     top: 50%; left: 50%; right: auto; bottom: auto; translate: -50% -50%;
     width: 540px; max-height: 84vh; height: auto; border: 1px solid var(--line);
-    padding: 20px 22px 22px; box-shadow: 0 30px 80px var(--shadow);
+    padding: 20px 22px 0; --sheet-safe: 0px; --sheet-end: 22px; box-shadow: 0 30px 80px var(--shadow);
   }
   .hw-sheet.wide { width: 680px; }
   .hw-sheet.tall { height: auto; max-height: 86vh; }
-  /* A task's sheet: wider, and one height whatever its open tab (TaskSheet.vue). */
-  .hw-sheet:has(.task-sheet) { width: min(780px, 92vw); height: min(820px, 86vh); }
+  /* A task's sheet: wider, and one height whatever its open tab (TaskSheet.vue);
+     the sheet's body is its only scroll. */
+  .hw-sheet:has(.task-sheet) { width: min(920px, 92vw); height: min(820px, 86vh); }
+  /* Tasks to review (ReviewSheet.vue): wide, one height whatever the task (no
+     jump as the next one slides in); the filter, the task's title and the footer
+     stay, the task's content scrolls; screenshots two per row. */
+  .hw-sheet:has(.review-sheet) { width: min(960px, 90vw); height: min(900px, 90vh); max-height: 90vh; }
+  .hw-sheet > [data-slot="body"]:has(> .review-sheet) { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0; }
+  .hw-sheet > [data-slot="body"] > .review-sheet { flex: 1 1 auto; min-height: 0; }
+  .hw-sheet .review-sheet .review-stage { flex: 1; min-height: 0; overflow: clip; }
+  .hw-sheet .review-sheet .review-item { min-height: 0; }
+  .hw-sheet .review-sheet .review-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 16px; }
+  .hw-sheet .review-sheet .shots-grid { grid-template-columns: 1fr 1fr; }
+  /* All done alone: the window shrinks to it. */
+  .hw-sheet:has(.review-done):not(:has(.review-item)) { height: auto; }
+  /* A project's sheet: as wide, its height from its tab (ProjectSheet.vue). */
+  .hw-sheet:has(.project-sheet) { width: min(920px, 92vw); }
+  /* A coordinator's window with its autopilot's tabs (CoordinatorPanel.vue). */
+  .hw-sheet.tall:has(> [data-slot="body"] > .coord .ap-tabs) { width: min(880px, 90vw); max-height: 90vh; }
+  /* New › Project: room for folder paths and the repository list (NewProjectForm.vue). */
+  .hw-sheet:has(.coord-new) { width: min(760px, 92vw); }
   .hw-sheet.full { width: min(1100px, 92vw); height: 86vh; max-height: 86vh; padding-top: 20px; }
   :root[data-content-width="full"] .hw-sheet.full { width: calc(100vw - 48px); }
   /* On-screen keyboard (iPad): the window is centered in the visible area
@@ -2806,7 +3004,7 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
 @media (hover: hover) { .tab-chip.tab-add:hover { border-style: solid; color: var(--text); } }
 .tab-chip.tab-add:disabled { opacity: .4; cursor: default; }
 
-.msg-actions { display: flex; align-items: center; margin: -10px 0 4px -6px; min-height: 28px; }
+.msg-actions { display: flex; align-items: center; margin: -10px 0 4px -6px; min-height: 28px; } /* overflow-safe: .chat-list has 16px side padding */
 .msg-reply {
   display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 6px;
   font: 500 10px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
@@ -2814,7 +3012,7 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
 }
 .msg-reply:hover, .msg-reply:focus-visible { color: var(--text); }
 .msg-reply .iconify, .msg-reply svg { width: 13px; height: 13px; }
-.turn-end .msg-reply { margin-left: -4px; }
+.turn-end .msg-reply { margin-left: -4px; } /* overflow-safe: between the turn end's own items */
 .msg-quote {
   display: flex; align-items: baseline; gap: 6px; max-width: 88%; min-width: 0; padding: 5px 10px;
   font-size: 12px; line-height: 1.35; text-align: left; color: var(--text-2);
@@ -2823,6 +3021,34 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
 .msg-quote:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); border-left-color: var(--accent); }
 .msg-quote-time { flex: none; font: 500 10px/1.4 var(--mono); letter-spacing: .06em; color: var(--dim); }
 .msg-quote-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A wake: not the user's. One compact row across the column (kind tag, first
+   line, time), the coordinator's answer under it, smaller and muted. */
+.wake, .wake-run { display: flex; flex-direction: column; min-width: 0; margin-top: 6px; color: var(--muted); }
+.wake-row, .wake-run { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: 28px; padding: 2px 0; text-align: left; cursor: pointer; }
+.wake-run { flex-direction: row; font: 500 10.5px/1.4 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.wake-head { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.wake-run .wake-head { font-size: inherit; }
+.wake-run:has(.wake-last) .wake-head { flex: none; }
+.wake-last { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 12.5px/1.4 var(--sans); letter-spacing: 0; text-transform: none; }
+.wake-time { flex: none; font: 400 10.5px/1 var(--mono); color: var(--dim); letter-spacing: .04em; }
+.wake-chev { flex: none; width: 13px; height: 13px; }
+.wake-row:hover .wake-head, .wake-run:hover, .wake-row:focus-visible .wake-head, .wake-run:focus-visible { color: var(--text-2); outline: none; }
+.wake-answer { padding-left: 10px; border-left: 1px solid var(--line); font-size: 12.5px; line-height: 1.45; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.wake-text { margin: 4px 0 2px; padding: 8px 10px; font: 400 12px/1.5 var(--mono); color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--surface); border: 1px solid var(--line-soft); }
+/* An incident, or a wake whose answer asks the user: its stronger colour. */
+.wake.loud .wake-head { color: var(--text); }
+.wake.loud .msg-wake { color: var(--wake, var(--accent)); border-color: var(--wake, var(--accent)); }
+.msg-wake {
+  flex: none; padding: 1px 5px; font: 500 9.5px/1.4 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-2); border: 1px solid var(--line); border-left: 2px solid var(--wake, var(--accent));
+}
+.msg-wake[data-kind="step"] { --wake: var(--working); }
+.msg-wake[data-kind="engine"] { --wake: var(--blocked); }
+.msg-wake[data-kind="health"] { --wake: var(--done); }
+.msg-wake[data-kind="incident"] { --wake: var(--danger); }
+/* The user's click on a card, told to the agent: the same muted row, not a button. */
+.card-note .wake-row { cursor: default; }
+.msg-wake[data-kind="card"] { --wake: var(--done); }
 /* Floating "Reply" button near a selected passage. */
 .sel-reply {
   position: fixed; z-index: 60; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px;
@@ -2876,7 +3102,7 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
   .rs-icon .md-body .q-pt { padding-right: 28px; }
   /* What a point holds after its own text (a nested list, a code block)
      keeps the full width. */
-  .rs-icon .md-body .q-pt > :is(ul, ol, pre, div, blockquote, table) { margin-right: -28px; }
+  .rs-icon .md-body .q-pt > :is(ul, ol, pre, div, blockquote, table) { margin-right: -28px; } /* overflow-safe: its .q-pt parent has the same right padding */
   .rs-icon .q-point:not(.quoted) { opacity: 0; }
   .rs-icon .md-body :is(p, li):hover > .q-point, .rs-icon .q-point:focus-visible { opacity: 1; }
 }
@@ -3018,6 +3244,20 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
   .q-trow { min-height: 40px; }
   .q-all { min-height: 36px; }
 }
+/* Choice buttons (a `choices` line of a `wherdr` block, utils/markdown.ts):
+   they wrap, never scroll; a tap sends the option. Once answered, or in an
+   older message, greyed with the answer given pressed. */
+.w-choices { display: flex; flex-wrap: wrap; gap: 6px; max-width: 620px; margin: .2em 0 .9em; }
+.q-choice {
+  min-height: 36px; max-width: 100%; padding: 6px 12px; font: inherit; font-size: 13px; line-height: 1.3; text-align: left;
+  overflow-wrap: anywhere; color: var(--text); background: none; border: 1px solid var(--line); border-left: 2px solid var(--accent);
+  border-radius: 0; cursor: pointer;
+}
+.q-choice:is(:hover, :focus-visible):not(:disabled) { border-color: var(--accent); background: var(--surface-2); outline: 0; }
+.q-choice:disabled { color: var(--dim); border-left-color: var(--line); cursor: default; }
+.q-choice:disabled[aria-pressed="true"] { color: var(--text-2); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.q-choice:disabled[aria-pressed="true"]::before { content: "✓ "; color: var(--accent); }
+@media (pointer: coarse) { .q-choice { min-height: 44px; } }
 /* Room for it under the last message, as long as that message asks something. */
 .chat-list.asking { padding-bottom: 36px; }
 .composer-ask-anchor { position: relative; height: 0; z-index: 3; }
@@ -3063,7 +3303,7 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
 .qm-on::selection { background: color-mix(in srgb, var(--accent) 32%, transparent); -webkit-text-fill-color: transparent; }
 .qm-mirror { position: absolute; z-index: 0; margin: 0; overflow: hidden; pointer-events: none; color: var(--text); }
 .qm-q {
-  margin: 0 calc(-1 * var(--qm-pr)) 0 calc(-1 * var(--qm-pl)); padding: 0 var(--qm-pr) 0 var(--qm-pl);
+  margin: 0 calc(-1 * var(--qm-pr)) 0 calc(-1 * var(--qm-pl)); padding: 0 var(--qm-pr) 0 var(--qm-pl); /* overflow-safe: the same padding inside, and .qm-mirror clips */
   color: var(--text-2); background: color-mix(in srgb, var(--accent) 9%, transparent);
   box-shadow: inset 2px 0 0 var(--accent), inset 0 1px 0 color-mix(in srgb, var(--accent) 22%, transparent), inset 0 -1px 0 color-mix(in srgb, var(--accent) 22%, transparent);
 }
@@ -3117,7 +3357,7 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
 .qt-chip i { font-style: normal; font-size: 10px; color: var(--dim); }
 /* Preview of the "native" mode: a band across the field. */
 .qt-preview[data-mode="native"] .qt-tok {
-  align-self: stretch; max-width: none; margin: 0 -44px 0 -8px; padding: 0 44px 0 8px; border: 0;
+  align-self: stretch; max-width: none; margin: 0 -44px 0 -8px; padding: 0 44px 0 8px; border: 0; /* overflow-safe: .qt-field has the same side padding */
   background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: inset 2px 0 0 var(--accent);
 }
 .qt-send {
@@ -3346,7 +3586,14 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
 
 /* Only tab content moves; the header and footer are outside this clipped viewport. */
 .home-content { position: relative; flex: 1; min-height: 0; overflow: hidden; isolation: isolate; background: inherit; }
-.home-content > .scroll { position: absolute; inset: 0; padding-bottom: 16px; background: inherit; }
+.home-content > .scroll { position: absolute; inset: 0; padding-bottom: 16px; background: inherit; overflow-x: hidden; }
+/* The list's scrollbar: thin, shown while the pointer is over the list. Rows shrink
+   or ellipsize; overflow-x above is only a last guard against a row too wide. */
+.home-content > .scroll { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.home-content > .scroll:hover, .home-content > .scroll:focus-within { scrollbar-color: var(--line) transparent; }
+.home-content > .scroll::-webkit-scrollbar { width: 6px; height: 0; }
+.home-content > .scroll::-webkit-scrollbar-thumb { background: transparent; }
+.home-content > .scroll:hover::-webkit-scrollbar-thumb { background: var(--line); }
 #home > .fab-wrap { position: static; flex: none; display: flex; justify-content: flex-end; padding: 12px 16px calc(var(--safe-bottom) + 18px); }
 .home-next-enter-active, .home-next-leave-active,
 .home-prev-enter-active, .home-prev-leave-active { transition-property: transform, opacity; transition-duration: 260ms; transition-timing-function: cubic-bezier(.22,.68,0,1); will-change: transform, opacity; }

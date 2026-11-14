@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { company, github } from '../shared/pm/examples'
-import { reviewerPlan, type Task } from '../shared/pm/run'
+import { reviewSwitch, reviewerPlan, type Task } from '../shared/pm/run'
 import { initialState, onEvent, planSteps, type Effect, type StepEvent, type StepState } from '../shared/pm/steps'
 import { advise, blocking, parseFindings, weight, type Finding, type Round } from '../shared/pm/verdict'
-import type { Template } from '../shared/pm/workflow'
+import { validateTemplate, type Template } from '../shared/pm/workflow'
+import { accountOut } from '../shared/pm/pace'
 
 const f = (id: string, severity: Finding['severity'], more: Partial<Finding> = {}): Finding => ({ id, severity, title: `${id} title`, proof: `${id} proof`, ...more })
 const round = (findings: Finding[], more: Partial<Round> = {}): Round => ({ findings, ...more })
@@ -110,6 +111,8 @@ describe('verdict steps in the engine', () => {
     expect(r.state.yourTurn).toMatchObject({ reason: 'rounds', advice: { outcome: 'arbitrate', options: ['worker', 'reviewer'] } })
     const { plan, state } = r
     expect(onEvent(plan, state, { kind: 'decide', by: 'coordinator', choice: 'pass', note: 'nitpick' }, 0).refused).toBe('The coordinator may only choose worker or reviewer')
+    // A pass on a spec change (cited, checked by the server) ends the loop outside the options.
+    expect(onEvent(plan, state, { kind: 'decide', by: 'coordinator', choice: 'pass', note: 'Spec change of 2026-11-10.', spec: true }, 0).effects[0]).toMatchObject({ text: expect.stringMatching(/^review: coordinator chose pass on a spec change/) })
     expect(onEvent(plan, state, { kind: 'decide', by: 'coordinator', choice: 'worker' }, 0).refused).toBe('Give the reason of the choice')
     const ok = onEvent(plan, state, { kind: 'decide', by: 'coordinator', choice: 'worker', note: 'The test was wrong' }, 0)
     expect(ok.effects[0]).toEqual({ kind: 'log', text: 'review: coordinator chose worker (advice: arbitrate, Sent back again and contested by the agent: bug title). The test was wrong' })
@@ -149,6 +152,10 @@ describe('verdict steps in the engine', () => {
     const r = play(guarded, 'simple', [{ kind: 'start' }, report, ok, verdict(bug), report, ok, verdict(bug), report, ok, verdict(bug)])
     expect(r.state.yourTurn?.advice).toMatchObject({ outcome: 'your-turn', why: 'The next step is a merge only you may do' })
     expect(onEvent(r.plan, r.state, { kind: 'decide', by: 'coordinator', choice: 'pass', note: 'x' }, 0).refused).toBe('This one is for the user')
+    expect(onEvent(r.plan, r.state, { kind: 'decide', by: 'coordinator', choice: 'pass', note: 'x', spec: true }, 0).refused).toBe('The next step is a merge only the user may do: this one is for the user')
+    // Nor a critical finding with proof, whatever the spec change.
+    const leak = play(company, 'feature', [...twice, verdict(f('leak', 'critical'))])
+    expect(onEvent(leak.plan, leak.state, { kind: 'decide', by: 'coordinator', choice: 'pass', note: 'x', spec: true }, 0).refused).toBe('A critical finding with proof is for the user')
   })
 })
 
@@ -162,5 +169,40 @@ describe('reviewer plan', () => {
     expect(reviewerPlan(company, task({ reviewModel: 'same' }))).toEqual({ program: 'claude', model: 'sonnet' })
     expect(reviewerPlan(company, task({ reviewModel: 'same', reviewAgent: 'codex' }))).toEqual({ reason: 'reviewModel "same" needs the worker\'s agent (claude)' })
     expect(reviewerPlan({ ...company, prefs: { agent: 'claude', model: 'sonnet' } }, task())).toEqual({ reason: 'No review model set: add prefs.reviewModel to the template' })
+  })
+  // The engine's reading says the review agent's account is out (`out`); none: as before.
+  const out = 'Codex out of quota until 14:52'
+  it('a review agent out of quota: the fallback the prefs set, whatever the pair', () => {
+    const codexFirst = task({ reviewAgent: 'codex', reviewModel: 'gpt-6.1-sol', reviewFallbackAgent: 'claude', reviewFallbackModel: 'same' })
+    expect(reviewerPlan(company, codexFirst, out)).toEqual({ program: 'claude', model: 'sonnet', switched: out })
+    // Its quota back (an expired reading counts as back): the review agent again.
+    expect(reviewerPlan(company, codexFirst)).toEqual({ program: 'codex', model: 'gpt-6.1-sol' })
+    const claudeFirst = task({ reviewFallbackAgent: 'codex', reviewFallbackModel: 'gpt-6.1-sol' })
+    expect(reviewerPlan(company, claudeFirst, 'Claude out of quota until 09:10')).toEqual({ program: 'codex', model: 'gpt-6.1-sol', switched: 'Claude out of quota until 09:10' })
+  })
+  it('reads the review agent\'s account on the machine: limit reached, or an expired reading that does not count', () => {
+    const now = new Date(2026, 10, 10, 13, 0).getTime(), resetsAt = new Date(2026, 10, 10, 14, 52).getTime()
+    const q = (at: number) => ({ claude: null, codex: { at, five: null, week: null, limited: { resetsAt } } })
+    expect(accountOut(q(now - 60_000), 'codex', '', now)).toBe(out)
+    expect(accountOut(q(now - 60_000), 'codex', '', resetsAt + 1)).toBeUndefined()
+    expect(accountOut(q(now - 60_000), 'claude', '', now)).toBeUndefined()
+  })
+  it('no fallback set: the review agent, as before; an invalid one says why', () => {
+    expect(reviewerPlan(company, task({ reviewAgent: 'codex', reviewModel: 'gpt-6.1-sol' }), out)).toEqual({ program: 'codex', model: 'gpt-6.1-sol' })
+    expect(reviewerPlan(company, task({ reviewFallbackAgent: 'claude' }), out)).toEqual({ reason: 'reviewFallbackAgent and reviewFallbackModel go together' })
+    expect(reviewerPlan(company, task({ reviewFallbackAgent: 'claude', reviewFallbackModel: 'sonnet' }), out)).toEqual({ reason: 'The reviewer must use another model than the worker (sonnet), or set reviewFallbackModel to "same"' })
+  })
+  it('the task sheet shows the last start when the fallback took it', () => {
+    const log = (...texts: string[]) => texts.map(text => ({ text }))
+    expect(reviewSwitch(log('review: started the reviewer (codex gpt-6.1-sol)', `review: ${out}, reviewed by claude sonnet`))).toBe(`${out}, reviewed by claude sonnet`)
+    expect(reviewSwitch(log(`review: ${out}, reviewed by claude sonnet`, 'review: sent to the reviewer', 'review: started the reviewer (codex gpt-6.1-sol)'))).toBeUndefined()
+  })
+  it('a workflow with an invalid fallback is refused at save', () => {
+    const errors = (prefs: Template['prefs']) => validateTemplate({ ...company, prefs: { ...company.prefs, ...prefs } })
+    expect(errors({ reviewFallbackAgent: 'claude', reviewFallbackModel: 'same' })).toEqual([])
+    expect(errors({ reviewFallbackAgent: 'codex', reviewFallbackModel: 'gpt-6.1-sol' })).toEqual([])
+    expect(errors({ reviewFallbackModel: 'opus' })).toContainEqual({ path: 'prefs.reviewFallbackModel', message: 'reviewFallbackAgent and reviewFallbackModel go together' })
+    expect(errors({ reviewFallbackAgent: 'codex', reviewFallbackModel: 'same' })).toContainEqual({ path: 'prefs.reviewFallbackModel', message: 'reviewFallbackModel "same" needs the worker\'s agent (claude) (task type feature)' })
+    expect(errors({ reviewFallbackAgent: 'gemini', reviewFallbackModel: 'pro' })).toContainEqual(expect.objectContaining({ path: 'prefs.reviewFallbackAgent' }))
   })
 })

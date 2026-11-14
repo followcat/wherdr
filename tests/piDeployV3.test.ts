@@ -142,16 +142,21 @@ describe.skipIf(!hasCommands('bash', 'tar', 'sha256sum'))('pi-v3-package.sh', ()
   const pkg = (extra?: (root: string) => void, version = `3.0.0-dev+${A.slice(0, 7)}`) => {
     const root = tmp()
     build(root, version)
+    fs.mkdirSync(path.join(root, 'docs'))
+    for (const f of ['llms.txt', 'overview.md']) fs.writeFileSync(path.join(root, 'docs', f), '')
     extra?.(root)
     return { root, r: spawnSync('bash', [PACKAGE, path.join(root, 'www'), A], { cwd: root, encoding: 'utf8' }) }
   }
 
-  it('packs .output and COMMIT with its checksum, COMMIT beside it', () => {
+  it('packs .output (the docs inside) and COMMIT with its checksum, COMMIT beside it', () => {
     const { root, r } = pkg()
     expect(r.status, r.stderr).toBe(0)
     const out = path.join(root, 'www')
     expect(fs.readFileSync(path.join(out, 'COMMIT'), 'utf8').trim()).toBe(A)
-    expect(execFileSync('tar', ['-tzf', path.join(out, 'wherdr-v3.tgz')], { encoding: 'utf8' })).toMatch(/^COMMIT$/m)
+    const files = execFileSync('tar', ['-tzf', path.join(out, 'wherdr-v3.tgz')], { encoding: 'utf8' })
+    expect(files).toMatch(/^COMMIT$/m)
+    expect(files).toMatch(/^\.output\/docs\/llms\.txt$/m)
+    expect(files).toMatch(/^\.output\/docs\/overview\.md$/m)
     expect(execFileSync('sha256sum', ['-c', 'wherdr-v3.tgz.sha256'], { cwd: out, encoding: 'utf8' })).toContain('OK')
   })
 
@@ -171,6 +176,22 @@ describe.skipIf(!hasCommands('bash', 'tar', 'sha256sum'))('pi-v3-package.sh', ()
   })
 })
 
+describe.skipIf(!hasCommands('bash'))('v3-builder.sh installed copy', () => {
+  // setup copies the script to $ROOT/v3-builder.sh, where no checkout is beside it.
+  it('the installed copy takes its branch from the unit, else from its clone', () => {
+    const root = path.join(tmp(), 'b')
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true })
+    fs.copyFileSync(BUILDER, path.join(root, 'v3-builder.sh'))
+    const status = (more: Record<string, string> = {}) => spawnSync('bash', [path.join(root, 'v3-builder.sh'), 'status'], {
+      encoding: 'utf8', env: { ...process.env, WHERDR_V3_BUILDER_DIR: root, WHERDR_V3_REPO: 'https://example.invalid/x.git', WHERDR_V3_BRANCH: '', ...more },
+    })
+    expect(status()).toMatchObject({ status: 2, stderr: expect.stringContaining('WHERDR_V3_BRANCH') })
+    fs.writeFileSync(path.join(root, 'src', 'package.json'), JSON.stringify({ config: { branch: 'main' } }))
+    expect(status().stdout).toMatch(/^origin\/main: /m)
+    expect(status({ WHERDR_V3_BRANCH: 'v3' }).stdout).toMatch(/^origin\/v3: /m)
+  })
+})
+
 describe.skipIf(!hasCommands('bash', 'git', 'tar', 'sha256sum', 'flock'))('v3-builder.sh', () => {
   it('builds a new commit of origin/v3 once and serves it at the top of www/', () => {
     const root = tmp()
@@ -179,6 +200,9 @@ describe.skipIf(!hasCommands('bash', 'git', 'tar', 'sha256sum', 'flock'))('v3-bu
     fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true })
     fs.mkdirSync(bin)
     fs.copyFileSync(PACKAGE, path.join(repo, 'scripts', 'pi-v3-package.sh'))
+    // The package ships the checkout's docs inside .output.
+    fs.mkdirSync(path.join(repo, 'docs'))
+    for (const f of ['llms.txt', 'overview.md']) fs.writeFileSync(path.join(repo, 'docs', f), '')
     const git = (...a: string[]) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...a], { encoding: 'utf8' }).trim()
     git('init', '-q', '-b', 'v3')
     git('add', '.')

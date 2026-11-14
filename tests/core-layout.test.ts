@@ -30,6 +30,8 @@ describe('herdr-app spaces and tabs on the home', () => {
     const s = coreState([term('t1', { labels: { 'herdr.space': 'sp1', 'herdr.tab': 'new' } }),
       term('t2', { labels: { 'herdr.space': 'sp1', 'herdr.tab': 'tbB' } })], [], docs)
     expect(s.tabs!.map(t => t.label)).toEqual(['Logs', 'app'])
+    // Named by the document (Rename tab is not offered there), or by its terminal.
+    expect(s.tabs!.map(t => t.docName ?? false)).toEqual([true, false])
   })
   it('keeps the same ids for a machine whose space ids equal the local ones', () => {
     const s = coreState([term('t1', { labels: { 'herdr.space': 'sp1', 'herdr.tab': 'tbA' } }),

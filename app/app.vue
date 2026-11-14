@@ -2,6 +2,7 @@
 // Shell: agent list (sidebar on a computer) + current page
 // (agent, settings), windows, lock screen, network banner.
 import { en, fr } from '@nuxt/ui/locale'
+import { isConversationPath } from '~/utils/settingsPanel'
 
 setToaster(useToast())
 const route = useRoute()
@@ -10,6 +11,8 @@ const isHome = computed(() => route.path === '/' || route.path === '')
 const searchOpen = ref(false)
 function openSearch() { searchOpen.value = true }
 function closeListDrawer() { listDrawer.value = false }
+// Settings beside the conversation (utils/settingsPanel.ts).
+const settingsPanel = computed(() => sidePanelRoom.value && isConversationPath(route.path) && typeof route.query.section === 'string')
 
 useHead({
   htmlAttrs: { lang: language, class: computed(() => (activeTheme.value.light ? 'light' : 'dark')) },
@@ -110,6 +113,10 @@ onUnmounted(() => {
     <div v-if="desk && slim && listDrawer" class="list-scrim" aria-hidden="true" @click="closeListDrawer" />
     <GlobalSearch v-model:open="searchOpen" />
     <NuxtPage />
+    <SettingsView v-if="settingsPanel" panel />
+    <UiShowPanel />
+    <NotesPanel />
+    <TaskSheetHost />
     <NewAgentSheet />
     <MenuSheet />
     <RenameSheet />

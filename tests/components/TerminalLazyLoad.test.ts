@@ -33,8 +33,8 @@ vi.mock('~/utils/xtermLoader', () => {
     loadWebgl: () => { loads.webgl++; return Promise.resolve({ WebglAddon }) },
   }
 })
-const reloadIfNewBuild = vi.hoisted(() => vi.fn(async () => false))
-vi.mock('~/composables/useAppVersion', () => ({ reloadIfNewBuild }))
+const offerNewBuild = vi.hoisted(() => vi.fn(async () => false))
+vi.mock('~/composables/useAppVersion', () => ({ offerNewBuild }))
 vi.mock('~/utils/terminalRenderer', async orig => ({ ...await orig<object>(), guardWebglCanvasSize: () => {} }))
 vi.mock('~/utils/terminalMouse', () => ({ bindTerminalMouse: () => ({ dispose() {} }) }))
 vi.mock('~/utils/terminalSelection', () => ({ bindTerminalSelection: () => () => {} }))
@@ -132,7 +132,7 @@ it('offers a retry when xterm cannot be downloaded', async () => {
   expect(await ready).toBe(false)
   expect(ctl.loading.value).toBe(false)
   // Its files may be gone after a deployment: the app checks for a new version.
-  expect(reloadIfNewBuild).toHaveBeenCalledTimes(1)
+  expect(offerNewBuild).toHaveBeenCalledTimes(1)
   const offer = banner.mock.calls.at(-1)![0]
   expect(offer.btn).toBe('Retry')
   offer.fn()

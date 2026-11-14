@@ -120,7 +120,7 @@ describe('command context', () => {
   it('refuses to start without HC_SOCKET and points to the migration guide', () => {
     dir = mkdtempSync(path.join(os.tmpdir(), 'wherdr-ctx-'))
     const ctx = context({}, { WHERDR_DIR: dir }, '/home/test')
-    expect(() => needCore(ctx)).toThrow(/HC_SOCKET is not set[\s\S]*docs\/migrate-from-2\.x\.md/)
+    expect(() => needCore(ctx)).toThrow(/HC_SOCKET is not set[\s\S]*docs\/migrate-from-v2\.md/)
     expect(() => needCore(context({ hcSocket: '/run/hc.sock' }, { WHERDR_DIR: dir }, '/home/test'))).not.toThrow()
   })
 })
@@ -308,11 +308,5 @@ describe('wherdr dictation fetch', () => {
       ])
       await expect(dictation({ ...opts, sets: ['nope'] }, { log: () => {}, load })).rejects.toMatchObject({ code: 2, message: expect.stringContaining('unknown set: nope') })
     } finally { rmSync(dir, { recursive: true, force: true }) }
-  })
-
-  it('ships the script and the model catalog it reads in the npm package', () => {
-    const files = JSON.parse(readFileSync('package.json', 'utf8')).files as string[]
-    expect(files).toEqual(expect.arrayContaining(['scripts/fetch-dictation-files.mjs', 'scripts/dictation-files.mjs', 'app/utils/dictation/models.json']))
-    expect(files).not.toContain('skills/wherdr')
   })
 })

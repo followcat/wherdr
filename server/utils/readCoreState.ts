@@ -5,6 +5,7 @@ import { coreState, type CoreMachine } from '../../shared/coreState'
 import type { CoreInventory } from '../../shared/coreInventory'
 import { liveTerminals } from '../../shared/coreEvents'
 import type { HerdrState } from '../../shared/types'
+import { localMachineLabel } from './machines'
 
 // Terminals come from the events session once it holds a snapshot (else one terminal.list).
 // Core does not push machine or document changes except `doc`: those are read again
@@ -30,7 +31,7 @@ export async function readCoreState(previous: HerdrState): Promise<HerdrState> {
       if (gen !== generation) return readCoreState(previous)
       cache = { at: Date.now(), machines, docs }
     }
-    return coreState(terminals, cache.machines, cache.docs)
+    return coreState(terminals, cache.machines, cache.docs, localMachineLabel())
   } catch {
     return { ...previous, ok: false, ready: true, error: 'Cannot read herdr-core inventory',
       machines: previous.machines?.map(m => ({ ...m, status: 'offline' })) }

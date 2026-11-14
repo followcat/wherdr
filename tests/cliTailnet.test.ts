@@ -1,7 +1,7 @@
 // The tailnet helpers shared by `wherdr phone` and the server: the phone
 // address, Tailscale's errors, and whether the published address answers.
-import { describe, expect, it } from 'vitest'
-import { healthReach, phoneAddress, serveError, servedAddresses, servedPorts, tailnetStatus, tailscaleBin } from '../bin/lib/tailnet.mjs'
+import { describe, expect, it, vi } from 'vitest'
+import { healthReach, phoneAddress, readTailscale, serveError, servedAddresses, servedPorts, tailnetStatus, tailscaleBin, tailscaleBins } from '../bin/lib/tailnet.mjs'
 
 const URL = 'https://box.example.ts.net:7683/'
 
@@ -33,11 +33,52 @@ describe('phone address', () => {
     expect(tailnetStatus('not json')).toEqual({ name: null, connected: false, https: false })
   })
 
-  it('finds the macOS app binary of Tailscale', () => {
+  it('finds the macOS app binary of Tailscale, last on macOS behind the wrapper (#724)', () => {
     const mac = '/Applications/Tailscale.app/Contents/MacOS/Tailscale'
-    expect(tailscaleBin({ PATH: '/usr/bin' }, (p: string) => p === mac)).toBe(mac)
-    expect(tailscaleBin({ PATH: '/opt/x/bin' }, (p: string) => p === '/opt/x/bin/tailscale')).toBe('/opt/x/bin/tailscale')
+    expect(tailscaleBin({ PATH: '/usr/bin' }, (p: string) => p === mac, 'darwin')).toBe(mac)
+    expect(tailscaleBins({ PATH: '/usr/bin:/bin' }, (p: string) => p === mac || p === '/usr/local/bin/tailscale', 'darwin'))
+      .toEqual(['/usr/local/bin/tailscale', mac])
+    expect(tailscaleBin({ PATH: '/opt/x/bin' }, (p: string) => p === '/opt/x/bin/tailscale', 'linux')).toBe('/opt/x/bin/tailscale')
     expect(tailscaleBin({ PATH: '' }, () => false)).toBeNull()
+  })
+
+  it('moves on to the next CLI when an answer is not JSON, and logs each failure once', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const answers: Record<string, string | Error> = { '/a/tailscale': '', '/b/tailscale': 'The Tailscale GUI failed to start', '/c/tailscale': Object.assign(new Error('exit 1'), { stderr: 'CLIError error 3\nmore' }), '/d/tailscale': '{"BackendState":"Running"}' }
+    const run = async (bin: string) => {
+      const a = answers[bin]!
+      if (a instanceof Error) throw a
+      return { stdout: a, stderr: '' }
+    }
+    const all = Object.keys(answers)
+    expect(await readTailscale(all, ['status', '--json'], run)).toEqual({ bin: '/d/tailscale', out: '{"BackendState":"Running"}' })
+    expect(await readTailscale(all.slice(0, 3), ['status', '--json'], run)).toEqual({ bin: '/a/tailscale', out: '' })
+    expect(warn).toHaveBeenCalledTimes(3)
+    expect(String(warn.mock.calls[2]![0])).toContain('/c/tailscale status --json failed: CLIError error 3 / more')
+    warn.mockRestore()
+  })
+
+  it('bounds the whole reading, all candidates together, by one timeout', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let t = 0
+    const given: number[] = []
+    const run = async (_bin: string, _args: string[], o: { timeout: number }) => {
+      given.push(o.timeout)
+      t += o.timeout
+      throw new Error('timed out')
+    }
+    expect(await readTailscale(['/t1/tailscale', '/t2/tailscale'], ['status', '--json'], run, 4500, () => t)).toEqual({ bin: '/t1/tailscale', out: '' })
+    expect(given).toEqual([4500])
+    t = 0
+    given.length = 0
+    const slowThenOk = async (bin: string, _args: string[], o: { timeout: number }) => {
+      given.push(o.timeout)
+      if (bin === '/u1/tailscale') { t += 3000; throw new Error('failed') }
+      return { stdout: '{}', stderr: '' }
+    }
+    expect((await readTailscale(['/u1/tailscale', '/u2/tailscale'], ['status', '--json'], slowThenOk, 4500, () => t)).bin).toBe('/u2/tailscale')
+    expect(given).toEqual([4500, 1500])
+    warn.mockRestore()
   })
 })
 

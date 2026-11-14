@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { LEVEL_EVENTS, NOTIFICATION_EVENTS, NotificationPresence, compareEvents, coordinatorKey, defaultNotifications, levelOf,
-  notificationEvents, paneNotificationSource, parseNotificationSettings, tidyNotificationExceptions,
+import { LEVEL_EVENTS, NOTIFICATION_EVENTS, NotificationPresence, compareEvents, coordinatorKey, coordinatorTarget, defaultNotifications, levelOf,
+  migrateCoordinatorExceptions, notificationEvents, paneNotificationSource, parseNotificationSettings, tidyNotificationExceptions,
   type NotificationException, type NotificationSettings, type NotificationSource } from '../shared/notificationRules'
 import type { MachineLinks } from '../shared/boardLinks'
 
@@ -55,7 +55,8 @@ describe('a default and exceptions', () => {
   it('keys a coordinator exception on its identity, not its pane: a recreated coordinator keeps it', () => {
     const s = settings([], exception(MAIN))
     expect(notificationEvents(s, { ...main, conversation: 'w9:p7' })).toEqual(LEVEL_EVENTS.finished)
-    expect(notificationEvents(s, { ...main, machine: 'abcd' })).toEqual([])
+    // One coordinator of each across machines: its exception follows it.
+    expect(notificationEvents(s, { ...main, machine: 'abcd' })).toEqual(LEVEL_EVENTS.finished)
   })
   it('a standalone agent exception follows its conversation', () => {
     const s = settings([], exception('w3:p1', { events: ['message'] }))
@@ -204,6 +205,32 @@ describe('migration of #156 rules', () => {
     // The same intent as before the move, and after a restart on a new pane.
     expect(notificationEvents(next, main)).toEqual(['needs-you'])
     expect(notificationEvents(next, { ...main, conversation: 'w8:p1' })).toEqual(['needs-you'])
+  })
+})
+
+describe('coordinator exceptions of the older model', () => {
+  const name = (p: string) => p === '_main' ? 'Alfred' : `${p} coordinator`
+  const old = (id: string, opts: Partial<NotificationException> = {}) => exception(id, { machine: '0a1b2c3d', label: 'Main coordinator', ...opts })
+  it('move to Alfred or a project coordinator by key, with its current name, merged; the rest go', () => {
+    const s = settings([], old('default/top/', { events: [] }), old('other/top/'), old('default/machine/'),
+      old('default/project/SHOP', { events: ['needs-you'] }), old('default/project/GONE'), exception('w1:p1'))
+    const next = migrateCoordinatorExceptions(s, ['SHOP'], name)!
+    expect(next.exceptions).toEqual([
+      exception(coordinatorTarget('_main'), { label: 'Alfred' }),
+      exception(coordinatorTarget('SHOP'), { label: 'SHOP coordinator', events: ['needs-you'] }),
+      exception('w1:p1'),
+    ])
+    expect(migrateCoordinatorExceptions(next, ['SHOP'], name)).toBeNull()
+    // They now apply to today's coordinator panes, wherever they run.
+    expect(notificationEvents(next, { machine: 'm2', conversation: 'w5:p1', coordinator: coordinatorTarget('_main') })).toEqual(LEVEL_EVENTS.finished)
+    expect(notificationEvents(next, { machine: '', conversation: 'w6:p1', coordinator: coordinatorTarget('SHOP') })).toEqual(['needs-you'])
+  })
+  it('keep project ones while the projects are unknown, and drop a deleted project’s', () => {
+    const s = settings([], old('default/project/SHOP'))
+    expect(migrateCoordinatorExceptions(s, null, name)).toBeNull()
+    const current = settings([], exception(coordinatorTarget('SHOP')))
+    expect(migrateCoordinatorExceptions(current, ['SHOP'], name)).toBeNull()
+    expect(migrateCoordinatorExceptions(current, [], name)!.exceptions).toEqual([])
   })
 })
 

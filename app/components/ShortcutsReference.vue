@@ -15,6 +15,7 @@ const allGroups: Group[] = [
     { label: tl('Close this pane', 'Fermer ce pane'), keys: [shortcutKbds('close-pane')] },
     { label: tl('Current agent folder in the editor', 'Dossier de l’agent dans l’éditeur'), keys: [shortcutKbds('open-editor')], v2: true },
     { label: t('Settings'), keys: [shortcutKbds('settings')] },
+    { label: tl('Notes'), keys: [shortcutKbds('notes')] },
     { label: tl('Keyboard shortcuts', 'Raccourcis clavier'), keys: [shortcutKbds('help'), ['?']] },
   ] },
   { title: tl('Agent', 'Agent'), rows: [

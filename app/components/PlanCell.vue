@@ -37,7 +37,7 @@ watch(() => props.pane.prompt, () => { busy.value = false })
     <div v-if="quick.length" class="plan-cell-choices">
       <button
         v-for="o in quick" :key="o.i" type="button"
-        :disabled="busy || prompt?.unavailable || !eventsOpen || offlineView || paneStale(pane)" @click.stop="pick(o.i, o.label)"
+        :disabled="busy || prompt?.unavailable || !linkShown || offlineView || paneStale(pane)" @click.stop="pick(o.i, o.label)"
       >
         <span class="n">{{ o.i + 1 }}</span><span class="l">{{ o.label }}</span>
       </button>

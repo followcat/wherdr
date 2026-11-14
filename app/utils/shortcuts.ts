@@ -6,7 +6,7 @@
 
 export type ShortcutId = 'search-all' | 'search-chat' | 'toggle-term' | 'stop' | 'prev-agent' | 'next-agent'
   | 'prev-tab' | 'next-tab'
-  | 'new-space' | 'new-tab' | 'close-pane' | 'open-editor' | 'settings' | 'help'
+  | 'new-space' | 'new-tab' | 'close-pane' | 'open-editor' | 'settings' | 'notes' | 'help'
 
 type Mod = 'mod' | 'ctrl' | 'alt' | 'shift'
 
@@ -65,6 +65,9 @@ export const SHORTCUTS: readonly Shortcut[] = [
   // would be ESC + the control byte.
   { id: 'open-editor', mods: ['mod', 'alt'], key: 'o', fields: 'any', terminal: true, capture: true, kbds: ['meta', 'alt', 'O'] },
   { id: 'settings', mods: ['mod'], key: ',', fields: 'any', terminal: true, kbds: ['meta', ','] },
+  // Notes (P for pad): Mod+Alt like the other app panels' chords. ⌘⌥P and Ctrl+Alt+P are
+  // free in Chromium, Firefox and Safari; caught before the terminal as N, T, W and O.
+  { id: 'notes', mods: ['mod', 'alt'], key: 'p', fields: 'any', terminal: true, capture: true, kbds: ['meta', 'alt', 'P'] },
   { id: 'help', mods: ['mod'], anyShift: true, key: '/', fields: 'any', terminal: true, overlay: true, kbds: ['meta', '/'] },
   { id: 'help', mods: [], anyShift: true, key: '?', fields: 'none', terminal: false, overlay: true, kbds: ['?'] },
 ]

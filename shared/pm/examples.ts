@@ -31,10 +31,9 @@ export const company: Template = {
       { id: 'review', column: 'Review', holder: 'reviewer', ends: 'verdict', sendBack: 'work', rounds: 2 },
       { id: 'pr', column: 'Review', holder: 'worker', ends: 'report', evidence: ['link'],
         instructions: 'Create the PR to develop with your PR tool, with the task description as its body.' },
-      { id: 'merge', column: 'Review', holder: 'none', ends: 'user', userLabel: 'Merged', badge: 'Merge the PR',
-        action: { kind: 'git.verify-merged', target: 'develop' } },
-      { id: 'deploy', column: 'Deploy', holder: 'coordinator', ends: 'report', recheck: '5m', timeout: '90m',
-        instructions: 'Watch the develop pipeline and the deploy. Deployed: say so and finish. Failed: say which test failed and investigate.' },
+      { id: 'merge', column: 'Review', holder: 'none', ends: 'user', action: { kind: 'git.verify-merged', target: 'develop' } },
+      // The engine watches the develop pipeline: the coordinator hears only of a failure.
+      { id: 'deploy', column: 'Deploy', ends: 'action', action: { kind: 'pipeline.watch', branch: 'develop', every: '2m', timeout: '90m' } },
       done] },
   },
 }
@@ -77,7 +76,7 @@ export const common: Template = {
 const toV3: Step = { id: 'pr', column: 'Review', ends: 'action', action: { kind: 'github.pr', base: 'v3' } }
 const squash: StepAction = { kind: 'github.merge', method: 'squash', checks: ['smoke'] }
 const work = (more = ''): Step => ({ id: 'work', column: 'Working', holder: 'worker', ends: 'report', timeout: '3h',
-  instructions: `Test policy: fewer tests, at the cheapest level (unit, then Vitest component, an e2e test only when nothing else can check it), never a duplicate. Run only the tests of what you changed (npx vitest related --run <files>) and npx nuxt typecheck; never a full suite, CI runs them. Keep the change under about 400 lines: past that, stop and propose a split. Before you finish, merge origin/v3 into your branch.${more}` })
+  instructions: `Test policy: fewer tests, at the cheapest level (unit, then Vitest component, an e2e test only when nothing else can check it), never a duplicate. Run only the tests of what you changed (npx vitest related --run <files>) and npx nuxt typecheck; never a full suite, CI runs them. Run a test command that could hang with a timeout (timeout 600 …), and leave no background job running when you report done. Keep the change under about 400 lines: past that, stop and propose a split. Before you finish, merge origin/v3 into your branch.${more}` })
 export const wherdr: Template = {
   id: 'wherdr',
   prefs: { agent: 'claude', model: 'claude-opus-5-5', reviewModel: 'same' },
@@ -104,3 +103,6 @@ export const wherdr: Template = {
 }
 
 export const EXAMPLES = [vibe, company, github, common, wherdr]
+// The setup window's choices: wherdr's own workflow is an advanced example,
+// offered in Settings › Projects only.
+export const STARTER_EXAMPLES = EXAMPLES.filter(e => e !== wherdr)

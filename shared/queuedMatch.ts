@@ -27,6 +27,26 @@ export const imageTagCount = (text: string) => (String(text || '').match(IMAGE_T
 // Only image tags (a photos-only message in Claude's queue or on its screen).
 export const onlyImageTags = (text: string) => imageTagCount(text) > 0 && !String(text || '').replace(IMAGE_TAG, '').trim()
 
+// Claude's input field holds this message, not sent yet: the field shows each
+// of its photo lines as "[Image #N]" (the number grows with the session), a
+// long multi-line part as one "[Pasted text #N +K lines]", and wraps it
+// (spaces aside). `exact`: the field holds it and nothing else; otherwise it
+// starts with it (more text may follow). A field with a paste stand-in is
+// only matched exactly: what it stands for is unknown.
+const fieldForm = (t: string) => String(t || '').replace(IMAGE_TAG, '[Image]').replace(/\s+/g, '')
+const PASTE_TAG = /\[Pasted text #\d+(?: \+\d+ lines)?\]/
+export function fieldHolds(field: string | null | undefined, text: string, exact = false): boolean {
+  const m = fieldForm(String(text || '').split('\n').map(l => (isUploadLine(l) ? '[Image]' : l)).join('\n'))
+  const parts = String(field || '').split(PASTE_TAG).map(fieldForm)
+  if (!m || !fieldForm(field || '')) return false
+  if (parts.length === 1) return exact ? parts[0] === m : m.length > 0 && parts[0]!.startsWith(m)
+  // One paste stand-in, for a multi-line message: the text around it is ours,
+  // and it stands for at least one character of it.
+  if (parts.length !== 2 || !withoutUploads(text).includes('\n')) return false
+  const [before, after] = parts as [string, string]
+  return m.length > before.length + after.length && m.startsWith(before) && m.endsWith(after)
+}
+
 // A photos-only message taken by the agent: a user message showing one of its
 // photos (path kept as text), or carrying images (Claude may group it with
 // other queued messages into one turn, so text of its own does not rule it out).

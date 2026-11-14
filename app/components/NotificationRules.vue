@@ -11,11 +11,13 @@ function setDefault(patch: { events?: NotificationEvent[], subagents?: boolean }
 }
 const defaultEvents = computed(() => rules.value.default.events)
 
-// Exceptions, by machine then name (ended timed mutes that left nothing are gone).
-// A coordinator's exception (older settings) keeps its saved name.
+// Exceptions: coordinators first (one each, on any machine), then by machine
+// and name (ended timed mutes that left nothing are gone).
 const exceptions = computed(() => rules.value.exceptions
   .filter(e => exceptionLive(e, now.value))
-  .map(e => ({ e, machine: notificationMachineName(e.machine), name: livePaneTitle(e.id) || e.label }))
+  .map(e => e.kind === 'coordinator'
+    ? { e, machine: '', where: t('Coordinator'), name: coordinatorExceptionName(e.id) || e.label }
+    : { e, machine: notificationMachineName(e.machine), where: `${notificationMachineName(e.machine)} · ${t('Conversation')}`, name: livePaneTitle(e.id) || e.label })
   .sort((a, b) => a.machine.localeCompare(b.machine) || a.name.localeCompare(b.name)))
 const livePaneTitle = (id: string) => herdrState.value.panes.find(p => p.id === id)?.title || ''
 const mutedUntil = (e: NotificationException) => e.until !== null && e.until > now.value ? e.until : null
@@ -32,19 +34,19 @@ function difference(e: NotificationException) {
       : c === 0 ? tl(`Same as the default (${base})`, `Identique au défaut (${base})`)
         : tl(`Different from the default (${base})`, `Différent du défaut (${base})`)
 }
-const kindLabel = (e: NotificationTarget) => e.kind === 'coordinator' ? t('Coordinator') : t('Conversation')
 
 // "Add an exception": an agent conversation, grouped by machine.
 const picking = ref(false)
 const candidates = computed(() => {
   const groups = new Map<string, { machine: string, name: string, items: NotificationTarget[] }>()
-  const add = (t: NotificationTarget) => {
+  // Grouped by the pane's machine (a coordinator's target has none).
+  const add = (t: NotificationTarget, machine: string) => {
     if (rules.value.exceptions.some(e => exceptionLive(e, now.value) && sameNotificationTarget(e, t))) return
-    const g = groups.get(t.machine) ?? { machine: t.machine, name: notificationMachineName(t.machine), items: [] }
+    const g = groups.get(machine) ?? { machine, name: notificationMachineName(machine), items: [] }
     if (!g.items.some(x => sameNotificationTarget(x, t))) g.items.push(t)
-    groups.set(t.machine, g)
+    groups.set(machine, g)
   }
-  for (const p of herdrState.value.panes) if (p.agent) add(paneNotificationTarget(p))
+  for (const p of herdrState.value.panes) if (p.agent) add(paneNotificationTarget(p), notificationSource(p).machine)
   return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name))
 })
 function addException(t: NotificationTarget) {
@@ -70,9 +72,9 @@ function removeAll() {
     <div class="settings-group notification-exceptions" data-testid="notification-exceptions">
       <h3>{{ t('Exceptions') }}</h3>
       <p v-if="!exceptions.length" class="muted">{{ t('No exceptions: everything follows the default. Add one for an agent, or use Notifications in its menu.') }}</p>
-      <article v-for="{ e, machine, name } in exceptions" :key="JSON.stringify([e.kind, e.machine, e.id])" class="notification-rule" data-testid="notification-exception">
+      <article v-for="{ e, where, name } in exceptions" :key="JSON.stringify([e.kind, e.machine, e.id])" class="notification-rule" data-testid="notification-exception">
         <div class="notification-rule-head">
-          <small>{{ machine }} · {{ kindLabel(e) }}</small>
+          <small>{{ where }}</small>
           <b>{{ name }}</b>
           <small class="notification-diff">{{ difference(e) }}</small>
         </div>

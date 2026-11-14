@@ -84,7 +84,7 @@ const stepIds = (tt: TaskType) => tt.steps.map(s => (typeof s === 'string' ? s :
 // What a save changed, one short line each: "simple: + land", "simple.work".
 export function templateChanges(old: Template | null, next: Template): string[] {
   if (!old) return []
-  const out = (['id', 'guards', 'instructions', 'prefs', 'steps'] as const).filter(k => !same(old[k], next[k])) as string[]
+  const out = (['id', 'guards', 'instructions', 'prefs', 'worktree', 'steps'] as const).filter(k => !same(old[k], next[k])) as string[]
   for (const name of new Set([...Object.keys(old.taskTypes), ...Object.keys(next.taskTypes)])) {
     const a = old.taskTypes[name], b = next.taskTypes[name]
     if (!a || !b) { out.push(`${a ? '-' : '+'} ${name}`); continue }

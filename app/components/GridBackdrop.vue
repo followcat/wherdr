@@ -96,7 +96,7 @@ onBeforeUnmount(() => {
 /* A small glowing head with a fading 1 px trail on the line. */
 .gbd-packets :deep(.pkt) { position: absolute; display: block; will-change: transform, opacity; --c: var(--accent); }
 .gbd-packets :deep(.pkt.alt) { --c: var(--lav); }
-.gbd-packets :deep(.pkt.h) { width: 56px; height: 1px; margin-left: -56px; background: linear-gradient(90deg, transparent, var(--c)); }
+.gbd-packets :deep(.pkt.h) { width: 56px; height: 1px; margin-left: -56px; background: linear-gradient(90deg, transparent, var(--c)); } /* overflow-safe: .grid-backdrop clips (overflow: hidden) */
 .gbd-packets :deep(.pkt.h.rev) { margin-left: 0; background: linear-gradient(270deg, transparent, var(--c)); }
 .gbd-packets :deep(.pkt.h)::after { content: ''; position: absolute; right: -3px; top: -2px; width: 6px; height: 5px; background: var(--c); box-shadow: 0 0 10px var(--c); }
 .gbd-packets :deep(.pkt.h.rev)::after { right: auto; left: -3px; }

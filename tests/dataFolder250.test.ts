@@ -3,7 +3,7 @@
 // must start on a copy of it and keep the passkey, the push devices, the
 // phone address and the recent folders; settings keys v3 does not know are
 // dropped without an error.
-import { cpSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -120,5 +120,13 @@ describe('2.5.0 data folder on v3', () => {
     const dirs = fixture('dirs.json')
     expect(await recentDirs({ local: true, key: '', profileId: undefined })).toEqual(dirs.dirs)
     expect(await recentDirs({ local: false, key: 'lap', profileId: 'profile-laptop' })).toEqual(dirs.machines['profile-laptop'])
+  })
+
+  it('never offers a herdr-projects folder a v2 import copied', async () => {
+    const { recentDirs } = await import('../server/utils/actions')
+    const { HOME } = await import('../server/utils/env')
+    const { projectsHome } = await import('../bin/lib/userpath.mjs')
+    writeFileSync(path.join(data.dir, 'dirs.json'), JSON.stringify({ dirs: [path.join(projectsHome(process.env, HOME), 'data/main'), '/src/app'] }))
+    expect(await recentDirs({ local: true, key: '', profileId: undefined })).toEqual(['/src/app'])
   })
 })

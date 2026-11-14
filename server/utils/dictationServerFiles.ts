@@ -3,10 +3,11 @@
 // files (the runtime and the model's set), the server downloads them with the
 // fetch script's code: same pinned URLs, sha256 checks and resume. One fetch
 // at a time; a second request for the same model joins the first. Admins can
-// still run scripts/fetch-dictation-files.mjs by hand.
+// still run scripts/fetch-dictation-files.mjs by hand. A read-aloud voice
+// (app/utils/speech/voices.json) is prepared the same way, by its id.
 import { readFile, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
-import { CATALOG, SETS, fetchEntry } from '../../scripts/dictation-files.mjs'
+import { CATALOG, SETS, VOICES, fetchEntry } from '../../scripts/dictation-files.mjs'
 import type { FetchEntry, FetchOptions } from '../../scripts/dictation-files.mjs'
 import { HerdrError } from './herdr'
 
@@ -30,7 +31,11 @@ export interface ServerFilesDeps {
 }
 
 export function createServerFiles(deps: ServerFilesDeps) {
-  const models = deps.models ?? (CATALOG.models as CatalogModel[])
+  // Voices list their files as `members`; ids are unique across both catalogs.
+  const models = deps.models ?? [
+    ...(CATALOG.models as CatalogModel[]),
+    ...VOICES.voices.map(v => ({ id: v.id, set: v.set, dir: v.dir, files: v.members })),
+  ]
   const sets = deps.sets ?? (SETS as Record<string, FetchEntry[]>)
   const jobs = new Map<string, Job>()
   // One fetch at a time, whatever the model: a Pi's link and disk stay usable.
@@ -106,7 +111,7 @@ export function createServerFiles(deps: ServerFilesDeps) {
     // the next request tries again (the parts already downloaded are kept).
     async prepare(id: string, fetch = true): Promise<ServerFilesState> {
       const m = models.find(x => x.id === id)
-      if (!m) throw new HerdrError('bad_model', `Unknown model: ${id}`)
+      if (!m) throw new HerdrError('bad_model', `Unknown model or voice: ${id}`)
       const job = jobs.get(id)
       if (job && !job.done) {
         if (job.error) jobs.delete(id)
