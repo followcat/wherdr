@@ -109,6 +109,25 @@ describe('menu lifecycle', () => {
   })
 })
 
+describe('closeMenu', () => {
+  // esc is sent only while our own /model menu (or the "Switch model?" it
+  // raised) still parses — on a foreign choices screen esc is an answer
+  // (Claude reads it as "reject"), so the prompt is left to the user.
+  it('a foreign choices screen after the menu closes: zero esc', async () => {
+    const { ctl, ops } = make({ screens: [idle, idle, idle, idle, menu1, menu1, menu2, menu2, menu2, ask] })
+    const list = await ctl.listModels('h1')
+    expect(list.options.length).toBeGreaterThan(0)
+    expect(sends(ops).map(o => o.params.text)).toEqual(['/model'])
+    expect(keys(ops).every(o => !o.params.keys.includes('esc'))).toBe(true)
+  })
+  it('a "Switch model?" left on screen still gets esc', async () => {
+    const confirm = fx('claude-model-confirm.txt')
+    const { ctl, ops } = make({ screens: [idle, idle, idle, idle, menu1, menu1, menu2, menu2, menu2, confirm, idle] })
+    await ctl.listModels('h1')
+    expect(keys(ops).some(o => o.params.keys.includes('esc'))).toBe(true)
+  })
+})
+
 describe('listModels dispatch', () => {
   it('claude: gated /model menu read, all pages, esc at the end', async () => {
     const { ctl, ops, noted } = make({ screens: [idle, idle, idle, idle, menu1, menu1, menu2, menu2, menu2, menu2, idle] })
@@ -227,13 +246,14 @@ describe('setModel — claude', () => {
     expect(overrides).toHaveLength(0)
   })
 
-  it('a native prompt replacing the menu mid-switch: refusal, close attempted', async () => {
+  it('a native prompt replacing the menu mid-switch: refusal, the prompt is not answered', async () => {
     const { ctl, ops } = make({ screens: [idle, idle, idle, idle, menu1, menu1, cursor4, ask] })
     await expect(ctl.setModel('h1', 'Sonnet 5')).rejects.toMatchObject({ code: 'stale' })
     const seq = keys(ops).map(o => o.params.keys.join(','))
     expect(seq).not.toContain('s')
     expect(seq).not.toContain('enter')
-    expect(seq).toContain('esc')
+    // closeMenu sees the same foreign prompt: esc would reject it, so none.
+    expect(seq).not.toContain('esc')
   })
 
   it('refuses labels not in the freshly read list and closes the menu', async () => {
@@ -429,11 +449,17 @@ describe('efforts — codex menu', () => {
     expect(keys(ops)).toHaveLength(0)
   })
 
+  const multiLevelCache = async () => ({
+    local: true, home: '/home/user', label: 'host-a',
+    fs: { readFile: async () => JSON.stringify({ models: [{ slug: 'gpt-6-sol', supported_reasoning_levels: [{ effort: 'low' }, { effort: 'medium' }, { effort: 'high' }, { effort: 'xhigh' }] }] }) },
+  }) as any
+
   it('picks the level on the effort page and confirms with s', async () => {
     let cur = cmodel1
     const { ctl, ops, overrides, efforts } = make({
       agent: 'codex',
       screens: [cidle, cidle, cidle, cidle, () => cur],
+      machine: multiLevelCache,
       currentModel: async () => ({ id: 'gpt-6-sol', label: 'GPT-6-Sol', effort: 'medium', at: null }),
       onKeys: (k) => {
         if (k.includes('enter')) cur = cmodel2
@@ -448,6 +474,50 @@ describe('efforts — codex menu', () => {
     expect(seq.indexOf('down')).toBeLessThan(seq.indexOf('s'))
     expect(overrides[0].info.effort).toBe('high')
     expect(efforts[0]).toMatchObject({ label: 'GPT-6-Sol', effort: 'high' })
+  })
+
+  // Enter on a model row applies it as the global default when the model has
+  // no effort page: a single cached level — or a cache that cannot be read —
+  // means the Enter is refused before /model even opens.
+  it('a single-level model in models_cache: unsafe, enter never sent', async () => {
+    const { ctl, ops } = make({
+      agent: 'codex',
+      screens: [cidle],
+      machine: async () => ({
+        local: true, home: '/home/user', label: 'host-a',
+        fs: { readFile: async () => JSON.stringify({ models: [{ slug: 'gpt-6-sol', supported_reasoning_levels: [{ effort: 'medium' }] }] }) },
+      }) as any,
+      currentModel: async () => ({ id: 'gpt-6-sol', label: 'GPT-6-Sol', effort: 'medium', at: null }),
+    })
+    await expect(ctl.setEffort('h1', 'high')).rejects.toMatchObject({ code: 'unsafe' })
+    expect(sends(ops)).toHaveLength(0)
+    expect(keys(ops).every(o => !o.params.keys.includes('enter'))).toBe(true)
+  })
+  it('an unreadable models_cache: unsafe, enter never sent', async () => {
+    const { ctl, ops } = make({
+      agent: 'codex',
+      screens: [cidle],
+      machine: async () => ({
+        local: true, home: '/home/user', label: 'host-a',
+        fs: { readFile: async () => { throw new Error('ENOENT') } },
+      }) as any,
+      currentModel: async () => ({ id: 'gpt-6-sol', label: 'GPT-6-Sol', effort: 'medium', at: null }),
+    })
+    await expect(ctl.setEffort('h1', 'high')).rejects.toMatchObject({ code: 'unsafe' })
+    expect(sends(ops)).toHaveLength(0)
+    expect(keys(ops).every(o => !o.params.keys.includes('enter'))).toBe(true)
+  })
+  it('listEfforts: the live-menu fallback on an unverifiable cache yields an empty list', async () => {
+    const { ctl, ops } = make({
+      agent: 'codex',
+      screens: [cidle],
+      currentModel: async () => ({ id: 'gpt-6-sol', label: 'GPT-6-Sol', effort: 'medium', at: null }),
+    })
+    const r = await ctl.listEfforts('h1')
+    expect(r.levels).toEqual([])
+    expect(r.current).toBe('medium')
+    expect(sends(ops)).toHaveLength(0)
+    expect(keys(ops).every(o => !o.params.keys.includes('enter'))).toBe(true)
   })
 })
 

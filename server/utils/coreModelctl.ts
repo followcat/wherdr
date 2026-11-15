@@ -183,7 +183,9 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
   async function closeMenu(p: Pane) {
     for (let i = 0; i < 4; i++) {
       const text = await screen(p)
-      if (!parseModelMenu(text) && !readCoreScreen(text, p.agent, p.status).choices) return
+      // Esc only while our own menu (or the "Switch model?" it raised) still
+      // parses — on any other choices screen esc is an answer, e.g. "reject".
+      if (!parseModelMenu(text) && !/^\s*Switch model\?\s*$/m.test(text)) return
       await deps.call('terminal.keys', { terminal: p.coreAddress, keys: ['esc'] }, 10000)
       await sleep(400)
     }
@@ -550,12 +552,29 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
   }
 
   // ------------------------------------------------------- codex effort menu
+  // The levels ~/.codex/models_cache.json lists for a model: the /model effort
+  // page only exists for a model offering several. On the row of a model with
+  // a single (or unverifiable) level, Enter applies the pick as the global
+  // default instead of opening the page — the cache check is what makes the
+  // key safe.
+  async function codexCachedLevels(p: Pane, model: string): Promise<string[]> {
+    const machine = await deps.machine(p).catch(() => null)
+    if (!machine?.home) return []
+    try {
+      return codexCachedEfforts(await machine.fs.readFile(`${machine.home}/.codex/models_cache.json`), model)
+    } catch { return [] }
+  }
   async function codexEffortMenu(p: Pane, model: ModelInfo): Promise<ModelMenu> {
+    if ((await codexCachedLevels(p, model.id || model.label)).length < 2)
+      throw new HerdrError('unsafe', 'This model’s effort levels cannot be verified — nothing was changed.')
     const m = await openMenu(p)
     if (!m.enterSelects) throw new HerdrError('unsafe', 'Unexpected /model menu — nothing was changed.')
     const current = m.options.find(o => o.current || sameModel(o.label, model.label))
     if (!current) throw new HerdrError('stale', 'The /model menu changed — try again.')
     await pick(p, m, current.n, current.label, 'model')
+    // The row actually driven may not be `model`: verify it too before Enter.
+    if ((await codexCachedLevels(p, current.label)).length < 2)
+      throw new HerdrError('unsafe', 'This model’s effort levels cannot be verified — nothing was changed.')
     await menuKeys(p, ['enter'], menuCheck('model'))
     const e = await waitScreen(p, menuCheck('effort'), 4000)
     if (!e || !e.sessionKey) throw new HerdrError('unsafe', 'Unexpected effort menu — nothing was changed.')
@@ -582,17 +601,17 @@ export function createCoreModelCtl(deps: CoreModelCtlDeps) {
         // actually offered by the slider before changing anything.
         return { levels: claudeEffortLevels(model.label), current: model.effort || null }
       }
-      const machine = await deps.machine(p).catch(() => null)
-      if (machine?.home) {
-        try {
-          const levels = codexCachedEfforts(await machine.fs.readFile(`${machine.home}/.codex/models_cache.json`), model.id || model.label)
-          if (levels.length) return { levels, current: model.effort || null }
-        } catch { /* live menu as a fallback */ }
-      }
+      const cached = await codexCachedLevels(p, model.id || model.label)
+      if (cached.length) return { levels: cached, current: model.effort || null }
       try {
         const menu = await codexEffortMenu(p, model)
         const levels = menu.options.map(o => effortValue(o.label)).filter((e): e is string => Boolean(e))
         return { levels, current: model.effort || null }
+      } catch (e) {
+        // The live read needs the Enter the cache could not verify: a model
+        // whose levels cannot be listed safely degrades to "no effort UI".
+        if (e instanceof HerdrError && e.code === 'unsafe') return { levels: [], current: model.effort || null }
+        throw e
       } finally { await closeMenu(p).catch(() => {}) }
     })
   }
