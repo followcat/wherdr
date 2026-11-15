@@ -2,11 +2,11 @@
 
 [Documentation](README.md) · [Project](../README.md)
 
-Claude Code, Codex, Devin, Command Code and OpenCode terminals open in conversation mode; any other terminal shows only its
+Claude Code, Codex, Devin, Command Code, OpenCode and Antigravity terminals open in conversation mode; any other terminal shows only its
 [terminal](terminal.md). How wherdr finds the conversation file on herdr-core is described in
 [herdr-core › Conversations](core.md#conversations).
 
-- **Conversation view**: the agent's real transcript (Claude Code, Codex, Devin, Command Code and OpenCode), rendered as
+- **Conversation view**: the agent's real transcript (Claude Code, Codex, Devin, Command Code, OpenCode and Antigravity), rendered as
   Markdown, with grouped tool calls, images (full-screen viewer with pinch / wheel zoom and pan),
   timestamps, search and scrolling through older messages (Command Code follows the bounded
   reads described under [herdr-core › Conversations](core.md#conversations)). Reading a conversation never

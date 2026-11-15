@@ -72,6 +72,14 @@ const CASES: Case[] = [
   { name: 'codex-usage-limit', status: 'idle', interaction: 'input', preview: CODEX_LIMIT, error: CODEX_LIMIT },
   { name: 'codex-queued', status: 'working', interaction: 'working', preview: '⌥ + ↑ edit' },
   { name: 'codex-interrupted', status: 'idle', interaction: 'input', preview: CODEX_INTERRUPTED, error: CODEX_INTERRUPTED },
+  // Antigravity: `>` between rules at rest, "esc to cancel" only while it runs.
+  { name: 'agy-idle', status: 'idle', interaction: 'input', preview: 'Added three cases for the date parser; all tests pass.' },
+  { name: 'agy-working', status: 'working', interaction: 'working', preview: '⠋ Working… (12s)' },
+  {
+    name: 'agy-question', status: 'blocked', interaction: 'native', preview: '3. No',
+    question: 'Allow Antigravity to run this command?',
+    options: ['Yes', 'Always allow', 'No'],
+  },
 ]
 
 const agentOf = (c: Case) => c.name.split('-')[0]!

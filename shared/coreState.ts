@@ -10,10 +10,11 @@ import { CODEX_UPDATED_LABEL, codexInstalling } from './codexLaunch'
 export interface CoreMachine { name: string; state: string; why?: string }
 // Lossless encoding keeps IDs stable across inventory order and core restarts.
 const key = (value: string) => Array.from(new TextEncoder().encode(value), b => b.toString(16).padStart(2, '0')).join('')
-const KNOWN_AGENTS = ['claude', 'codex', 'omp', 'devin', 'opencode', 'gemini', 'aider']
+const KNOWN_AGENTS = ['claude', 'codex', 'omp', 'devin', 'opencode', 'gemini', 'aider', 'agy']
 const baseName = (c: string | null | undefined) => c?.split('/').pop() || undefined
 const canonical = (s: string) => s.replace(/^claude-code$/, 'claude').replace(/^gemini-cli$/, 'gemini')
   .replace(/^(?:command-code|command_code|commandcode|cmdc)$/, 'cmd')
+  .replace(/^antigravity(?:-cli)?$/, 'agy')
 // Core's agent field is an opaque kind, not an argv path: known aliases are
 // normalized, an unknown "custom/tool" stays exactly as declared.
 const canonicalAgent = (c: string | null | undefined) => c ? canonical(c) : undefined

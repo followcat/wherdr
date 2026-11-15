@@ -16,6 +16,11 @@ All notable changes to this project are documented here. The format follows
 - **Devin conversations on herdr-core.** Read saved ATIF transcripts from the running process, locally or on a core machine, with tools, inline images, search and previews. Updates arrive when Devin saves a turn; only history retained after compaction is available.
 
 ## [3.0.0] — 2026-11-14
+### New
+
+- **Antigravity CLI (`agy`) conversations** open on their saved transcript, locally or on another machine.
+
+## [3.0.0]
 
 wherdr 3 runs on herdr-core (`hc`) instead of Herdr and adds built-in project management: you talk to a project's coordinator, agents carry its tasks through your workflow on a board, and Alfred helps you set it up. It installs from source beside wherdr v2, imports v2's machines and settings, and leaves v2 untouched. Release notes: [docs/release-notes-3.0.0.md](docs/release-notes-3.0.0.md).
 

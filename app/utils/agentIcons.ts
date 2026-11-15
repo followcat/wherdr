@@ -8,6 +8,7 @@ export const AGENT_ICON: Record<string, string> = {
   opencode: 'i-lucide-code-xml',
   kimi: 'i-lucide-moon-star',
   cmd: 'i-lucide-square-terminal',
+  agy: 'i-lucide-orbit',
 }
 
 export const agentIcon = (agent: string | null | undefined): string | null =>
