@@ -188,12 +188,17 @@ export async function coreInterrupt(deps: CoreInputDeps, b: { pane_id?: unknown,
   } catch (e) { failure(e) } finally { deps.refresh() }
 }
 
-// Close: ends the program (hangup, terminate, kill). A group ends each of its terminals.
+// Close: ends the program (hangup, terminate, kill). A group ends each of its
+// terminals. Each is removed right after: an explicit close leaves no
+// `finished` (reason 'killed') tombstone in herdr-core.
 export async function coreKill(deps: CoreInputDeps, b: { pane_id?: unknown, close_group?: unknown }) {
   const p = target(deps, b.pane_id)
   const list = b.close_group === true ? deps.panes().filter(x => x.workspace === p.workspace && x.coreAddress) : [p]
   try {
-    for (const x of list) await deps.call('terminal.kill', { terminal: x.coreAddress }, 15000)
+    for (const x of list) {
+      await deps.call('terminal.kill', { terminal: x.coreAddress }, 15000)
+      await deps.call('terminal.rm', { terminal: x.coreAddress }, 5000).catch(() => {})
+    }
     return { ok: true }
   } catch (e) { failure(e) } finally { deps.refresh() }
 }

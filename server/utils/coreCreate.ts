@@ -14,7 +14,7 @@ import { toAgentName } from '../../shared/ids'
 import { cleanLabel } from '../../shared/spaceActions'
 import { fmt } from '../../shared/message'
 import { placementLabels } from '../../shared/coreLayout'
-import { codexInstalling, codexLine } from '../../shared/codexLaunch'
+import { codexInstalling, codexLine, EXIT_OR_BASH, quote } from '../../shared/codexLaunch'
 import { coreCapabilities, hasPort, type CoreCapabilities } from '../../shared/coreCapabilities'
 import type { ChatItem, DirEntry, DirListing, MachineConfig, MachineInfo, Pane, QueuedMessage, Workspace } from '../../shared/types'
 
@@ -195,7 +195,11 @@ export async function sendAfterDialog(deps: CoreAdminDeps, address: string, text
 }
 
 // Codex runs in a line that keeps its terminal when an update ends it (shared/codexLaunch.ts).
-const launchLine = (kind: string, args: string[]) => (kind === 'codex' ? codexLine(args) : `exec ${[kind, ...args].join(' ')}`)
+// The other interactive agents share its exit tail: a failure in the first
+// seconds still ends the terminal (launchFailure reports it); on exit the pane
+// returns to an interactive shell instead of closing.
+const launchLine = (kind: string, args: string[]) => (kind === 'codex' ? codexLine(args)
+  : `t0=$(date +%s 2>/dev/null || echo 0); ${[kind, ...args].map(quote).join(' ')}; s=$?; ${EXIT_OR_BASH}`)
 
 export interface CreateBody { kind?: unknown, machine?: unknown, cwd?: unknown, name?: unknown, workspace?: unknown, prompt?: unknown, resume?: unknown, proxy?: unknown }
 
@@ -234,7 +238,7 @@ export async function coreCreate(deps: CoreAdminDeps, body: CreateBody) {
   const params = {
     cwd, ...(on ? { on } : {}), ...(name ? { name } : {}), no_parent: true, wait: false,
     ...(Object.keys(env).length ? { env } : {}),
-    labels: { [REQUEST_LABEL]: request, ...creationLabels(deps, m, cwd, body.workspace) }, ...(kind === 'shell' ? {} : { line: `${PATH_SETUP}; ${launchLine(kind, body.resume === true ? RESUME_ARGS[kind] || [] : [])}` }),
+    labels: { [REQUEST_LABEL]: request, ...creationLabels(deps, m, cwd, body.workspace) }, ...(kind === 'shell' ? { rm: true } : { line: `${PATH_SETUP}; ${launchLine(kind, body.resume === true ? RESUME_ARGS[kind] || [] : [])}` }),
   }
   let address: string
   try {
@@ -253,7 +257,11 @@ export async function coreCreate(deps: CoreAdminDeps, body: CreateBody) {
   // a path without one (quick tab, restarts) leaves the remembered one.
   if (body.proxy !== undefined) deps.rememberProxy?.(m.key, String(body.proxy || '')).catch(() => {})
   const [failed] = await Promise.all([kind === 'shell' ? null : launchFailure(deps, address, deps.launchWatchMs ?? 2000), deps.settle()])
-  if (failed) throw new HerdrError('launch_failed', fmt('{kind} stopped right after starting (exit code {code}). Last output:\n{lines}', { kind, code: failed.code, lines: failed.lines || '(none)' }))
+  if (failed) {
+    // No dead `finished` entry left in herdr-core for a launch that never started.
+    await deps.call('terminal.rm', { terminal: address }, 5000).catch(() => {})
+    throw new HerdrError('launch_failed', fmt('{kind} stopped right after starting (exit code {code}). Last output:\n{lines}', { kind, code: failed.code, lines: failed.lines || '(none)' }))
+  }
   const pane = deps.panes().find(p => p.coreAddress === address)
   if (!pane) throw new HerdrError('uncertain', 'Created, but not in the list yet: check the list before creating it again')
   // The program needs time to start: wait for it so that the sheet can say when nothing was

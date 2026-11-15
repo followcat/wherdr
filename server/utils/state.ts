@@ -9,6 +9,7 @@ import { hasTranscript } from '../../shared/agentKind'
 import { readCoreState, staleCoreDocs, useCoreSession } from './readCoreState'
 import { CoreSession } from './coreSession'
 import { type CoreAlertKind, createCoreAlerts } from './coreAlerts'
+import { createCoreReaper, type ReapCandidate } from './coreReap'
 import { notificationAllowed } from './notificationRules'
 import { DATA_DIR, HOME, NOTIFY_SETTLE_MS, POLL_MS, log } from './env'
 import { sleep } from './herdr'
@@ -251,6 +252,7 @@ let stopped = false
 let lastCorePoll = 0
 let coreSession: CoreSession | null = null
 let coreAlerts: ReturnType<typeof createCoreAlerts> | null = null
+let coreReaper: ReturnType<typeof createCoreReaper> | null = null
 // Core events come in bursts (a streaming agent, a resize): each poll is still
 // debounced by `debounceMs`, and two event polls start at least `gapMs` apart,
 // so a burst does not broadcast the whole state many times a second. One poll
@@ -291,8 +293,14 @@ export function startPolling() {
   const endpoint = process.env.HC_SOCKET
   if (endpoint) {
     coreAlerts = createCoreAlerts({ settleMs: NOTIFY_SETTLE_MS, current: a => coreSession?.get(a), send: (a, k) => { notifyCorePane(a, k).catch(e => log('notification:', e.message)) } })
+    // A terminal that simply exited is removed from core at once; PM workers,
+    // reviewers and coordinators keep their `finished` record (coreReap.ts).
+    coreReaper = createCoreReaper({ call: (method, params, timeout) => coreCall(endpoint, method, params, timeout) })
     coreSession = new CoreSession({ endpoint,
-      onEvent: (e, before, after) => coreAlerts?.onEvent(e, before, after),
+      onEvent: (e, before, after) => {
+        coreAlerts?.onEvent(e, before, after)
+        if (e.type === 'finished' && e.terminal) coreReaper?.maybeReap({ ...before, state: 'finished', ...(e.data ?? {}) } as ReapCandidate)
+      },
       onChange: (what) => { if (what !== 'terminal') staleCoreDocs(); scheduleCorePoll() },
       onStatus: scheduleCorePoll })
     useCoreSession(coreSession)
@@ -311,6 +319,7 @@ export function stopPolling() {
   coreAlerts?.stop()
   coreSession = null
   coreAlerts = null
+  coreReaper = null
   useCoreSession(null)
   corePolls.cancel()
   if (pollTimer) clearTimeout(pollTimer)

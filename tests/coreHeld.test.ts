@@ -92,24 +92,32 @@ describe('a message sent while Codex installs or updates itself', () => {
 })
 
 describe('the Codex launch line', () => {
-  // A fake codex (its version changes when it "updates") and a fake hc, in a fresh folder.
-  const run = (update: boolean) => {
+  // A fake codex (its version changes when it "updates"), a fake hc, the shells
+  // the line drops into (sh for the update path, bash back to the user), and a
+  // fake `date` that makes `elapsed` the run time the line measures.
+  const run = ({ update = false, exit = 3, elapsed = 0 }: { update?: boolean, exit?: number, elapsed?: number } = {}) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-line-'))
     const write = (name: string, body: string) => fs.writeFileSync(path.join(dir, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 })
-    write('codex', `if [ "$1" = --version ]; then cat "${dir}/v" 2>/dev/null || echo 0.166.0; exit 0; fi\necho "$@" > "${dir}/args"\n${update ? `echo 0.167.0 > "${dir}/v"` : ''}\nexit 3`)
+    write('codex', `if [ "$1" = --version ]; then cat "${dir}/v" 2>/dev/null || echo 0.166.0; exit 0; fi\necho "$@" > "${dir}/args"\n${update ? `echo 0.167.0 > "${dir}/v"` : ''}\nexit ${exit}`)
     write('hc', `echo "$@" > "${dir}/label"`)
     write('sh', `echo kept > "${dir}/shell"`)
+    write('bash', `echo returned > "${dir}/returned"`)
+    write('date', `n=$(cat "${dir}/n" 2>/dev/null || echo 0); echo $((n + 1)) > "${dir}/n"; echo $((1000 + n * ${elapsed}))`)
     let code = 0
     try { execFileSync('/bin/sh', ['-c', codexLine(['resume', '--last'])], { env: { PATH: `${dir}:/usr/bin:/bin`, HC_TERMINAL_ID: 't7' } }) } catch (e) { code = (e as { status: number }).status }
     const read = (f: string) => (fs.existsSync(path.join(dir, f)) ? fs.readFileSync(path.join(dir, f), 'utf8').trim() : null)
-    const out = { code, args: read('args'), label: read('label'), shell: read('shell') }
+    const out = { code, args: read('args'), label: read('label'), shell: read('shell'), returned: read('returned') }
     fs.rmSync(dir, { recursive: true, force: true })
     return out
   }
-  it('starts Codex with its update check off and ends with it on a plain exit', () => {
-    expect(run(false)).toEqual({ code: 3, args: '-c check_for_update_on_startup=false resume --last', label: null, shell: null })
+  it('starts Codex with its update check off, and a failure in its first seconds still ends the terminal', () => {
+    expect(run()).toEqual({ code: 3, args: '-c check_for_update_on_startup=false resume --last', label: null, shell: null, returned: null })
+  })
+  it('returns to an interactive shell when Codex exits, cleanly or after running a while', () => {
+    expect(run({ exit: 0 })).toMatchObject({ code: 0, label: null, shell: null, returned: 'returned' })
+    expect(run({ exit: 7, elapsed: 10 })).toMatchObject({ code: 0, label: null, shell: null, returned: 'returned' })
   })
   it('keeps the terminal as a shell, labelled for the restart card, when Codex exits after updating itself', () => {
-    expect(run(true)).toMatchObject({ code: 0, label: 'label t7 wherdr.codex-updated=1', shell: 'kept' })
+    expect(run({ update: true })).toMatchObject({ code: 0, label: 'label t7 wherdr.codex-updated=1', shell: 'kept', returned: null })
   })
 })

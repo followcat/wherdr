@@ -243,11 +243,22 @@ describe('core input routes', () => {
     }
   })
 
-  it('kills one terminal, or each terminal of its group', async () => {
+  it('kills one terminal, or each terminal of its group, leaving no finished entry', async () => {
     const t = deps()
     await coreKill(t.d, { pane_id: 't1' })
     await coreKill(t.d, { pane_id: 't1', close_group: true })
-    expect(t.calls.map(c => c[1].terminal)).toEqual(['m/t1', 'm/t1', 'm/t2'])
+    expect(t.calls.map(c => [c[0], c[1].terminal])).toEqual([
+      ['terminal.kill', 'm/t1'], ['terminal.rm', 'm/t1'],
+      ['terminal.kill', 'm/t1'], ['terminal.rm', 'm/t1'],
+      ['terminal.kill', 'm/t2'], ['terminal.rm', 'm/t2'],
+    ])
+    // Already gone from core's side (the pane closed itself meanwhile): fine.
+    const gone = deps(m => m === 'terminal.rm' ? new CoreError('not_found', 'gone') : {})
+    await expect(coreKill(gone.d, { pane_id: 't1' })).resolves.toEqual({ ok: true })
+    // The kill itself failing still reports; no rm is attempted.
+    const dead = deps(() => new CoreError('not_found', 'gone'))
+    await expect(coreKill(dead.d, { pane_id: 't1' })).rejects.toMatchObject({ code: 'stale' })
+    expect(dead.calls.map(c => c[0])).toEqual(['terminal.kill'])
   })
 })
 
