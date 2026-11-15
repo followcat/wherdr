@@ -255,6 +255,19 @@ describe('the main coordinator (WHR-398)', () => {
     const route = (await import('../server/api/pm/autopilot.post')).default as unknown as (e: unknown, b: unknown) => Promise<unknown>
     await refused(route({}, { project: MAIN, autopilot: { on: true } }), 'Alfred has no autopilot')
     await refused(route({}, { project: MAIN, runNow: true }), 'Alfred has no autopilot')
+    // Every off saved before the engine's first look: kept off, not migrated to 3h.
+    vi.stubEnv('DATA_DIR', dir)
+    vi.resetModules()
+    const fresh = (await import('../server/api/pm/autopilot.post')).default as unknown as (e: unknown, b: unknown) => Promise<unknown>
+    const own = (await import('../server/utils/pmStore')).pmStore()
+    await own.setEnabled(true)
+    await fs.mkdir(path.dirname(own.files.projects), { recursive: true })
+    await fs.writeFile(own.files.projects, await fs.readFile(store.files.projects))
+    await fresh({}, { project: 'ST', autopilot: { ...DEFAULT_AUTOPILOT, on: true, every: 'off' } })
+    expect(await own.coordinator('ST')).toMatchObject({ oneWake: true, autopilot: { on: true } })
+    await wakeTick({ store: own, call: async () => ({}), machines: () => [] } as unknown as Parameters<typeof wakeTick>[0], 3_600_000)
+    expect((await own.coordinator('ST'))!.autopilot!.every).toBeUndefined()
+    vi.unstubAllEnvs()
     vi.unstubAllGlobals()
   })
 
@@ -578,7 +591,8 @@ it('tell goes to the step\'s agent, else the worker; --to picks one', () => {
 
 describe('role files', () => {
   // A fake herdr-core: the machine's home is /h; files written; terminals started.
-  const fakeCore = (local = true) => {
+  // ended: its terminals end at once (a session that never comes up).
+  const fakeCore = (local = true, ended = false) => {
     const written: string[] = [], runs: Record<string, unknown>[] = [], scripts = new Map<string, string>()
     const call = async (method: string, params: Record<string, unknown>) => {
       const argv = params.argv as string[] | undefined
@@ -586,7 +600,9 @@ describe('role files', () => {
       // The repository's remote and gh's answer: a public GitHub repository.
       if (method === 'machine.exec' && argv?.[2] === REMOTE_SCRIPT) return { code: 0, stdout: Buffer.from('git@github.com:o/co.git\n{"visibility":"PUBLIC"}').toString('base64') }
       if (method === 'machine.exec') return written.push(argv![4]!), scripts.set(argv![4]!, argv![2]!), { code: 0, stdout: '' }
-      if (method === 'terminal.get' || method === 'terminal.read') return {} // no terminal to watch for a trust dialog
+      // Up at once: no trust dialog to answer, the first message delivered.
+      if (method === 'terminal.get') return ended ? { state: 'finished' } : { state: 'live', status: 'idle' }
+      if (method === 'terminal.read') return { text: '> ' }
       runs.push({ method, ...params })
       return { address: `host/t${runs.length + 4}` }
     }
@@ -620,7 +636,7 @@ describe('role files', () => {
     let screen = (await fixture('claude-trust-folder')).replace('/home/user/projects/new-folder', folder)
     const keys: unknown[] = []
     const call = deps.call as (m: string, p: Record<string, unknown>) => Promise<unknown>
-    const d = { ...deps, pollMs: 1, call: async (m: string, p: Record<string, unknown>) => {
+    const d = { ...deps, pollMs: 1, queueWatchMs: 50, call: async (m: string, p: Record<string, unknown>) => {
       if (m === 'terminal.get') return { state: 'live', status: null }
       if (m === 'terminal.read') return { text: screen }
       if (m === 'terminal.keys') return keys.push(p.keys), {}
@@ -701,6 +717,21 @@ describe('role files', () => {
     expect(runs.filter(r => r.method === 'terminal.run')[1]!.line).not.toContain(FIRST_REPLY)
     await startCoordinator(deps, 'NW', { program: 'codex' }, urls)
     expect(runs.filter(r => r.method === 'terminal.run')[2]!.line).not.toContain(FIRST_REPLY)
+  })
+
+  it('a fresh start whose session never comes up: its first message is logged as not delivered, and the next start gives it again', async () => {
+    const projects = JSON.parse(await fs.readFile(store.files.projects, 'utf8'))
+    await fs.writeFile(store.files.projects, JSON.stringify({ ...projects, projects: [...projects.projects, { key: 'NW', name: 'New', machine: '', path: '/src/nw', addedAt: 1 }] }))
+    await startCoordinator(fakeCore(true, true).deps, 'NW', { program: 'claude' }, urls)
+    await expect.poll(async () => (await store.coordinator('NW'))?.undelivered).toMatchObject({ texts: [FIRST_REPLY], why: 'its session ended before it was ready' })
+    expect((await store.projectLog('NW')).map(e => e.text)).toContain('first message not delivered: its session ended before it was ready')
+    const { runs, deps } = fakeCore()
+    await startCoordinator(deps, 'NW', { program: 'claude' }, urls)
+    expect(runs[0]!.line).toContain(FIRST_REPLY)
+    await expect.poll(async () => (await store.coordinator('NW'))?.undelivered).toBeUndefined()
+    // Its delivery logs in the background: wait for it, or it writes into the
+    // project log while afterEach removes the folder (ENOTEMPTY).
+    await expect.poll(async () => (await store.projectLog('NW')).map(e => e.text)).toContain('first message given at its start, its session is up')
   })
 
   it('on another machine, the coordinator gets wherdr\'s published address, never loopback', async () => {
@@ -971,15 +1002,15 @@ describe('wakes', () => {
     expect(now.sent[0]!.text).toContain('CO-2 (New): added')
   })
 
-  it('wakes at its fixed times, once for slots missed while down', async () => {
+  it('wakes for a routine with its own goal, once for slots missed while down', async () => {
     const day = (d: number, h: number) => new Date(2026, 10, d, h).getTime()
-    await store.saveCoordinator({ ...(await store.coordinator('CO'))!, terminal: 'host/t9', atRan: day(1, 9), autopilot: { on: true, goal: 'Triage', at: 'daily 08:00', events: [], perDay: 3, atOnce: 1 } })
+    await store.saveCoordinator({ ...(await store.coordinator('CO'))!, terminal: 'host/t9', routineRan: { r1: day(1, 9) }, oneWake: true, autopilot: { on: true, goal: 'Triage', routines: [{ id: 'r1', when: 'daily 08:00', goal: 'Summarise the night', on: true }], events: [], perDay: 3, atOnce: 1 } })
     expect(await deliver('idle', day(2, 7)).run()).toEqual([])
     const late = deliver('idle', day(5, 10))
     expect(await late.run()).toEqual(['CO'])
-    expect(late.sent[0]!.text).toContain('Scheduled wake (daily 08:00). Your goal: Triage.')
-    expect((await store.coordinator('CO'))!.atRan).toBe(day(5, 10))
-    expect((await store.wakes()).filter(w => w.reasons.some(r => r.startsWith('Scheduled')))).toHaveLength(1)
+    expect(late.sent[0]!.text).toContain('Routine: Summarise the night.')
+    expect((await store.coordinator('CO'))!.routineRan).toEqual({ r1: day(5, 10) })
+    expect((await store.wakes()).filter(w => w.reasons.some(r => r.startsWith('Routine')))).toHaveLength(1)
   })
 
   describe('nothing to do', () => {
@@ -990,17 +1021,17 @@ describe('wakes', () => {
     const asleep = async (more: Partial<typeof DEFAULT_AUTOPILOT> = {}) => {
       const task = await store.addTask({ project: 'CO', title: 'Fix', type: 'feature' })
       await store.saveTask({ ...task, step: state(5, { done: true }) })
-      await store.saveCoordinator({ ...(await store.coordinator('CO'))!, terminal: 'host/t9', atRan: day(1, 9), ranAt: day(2, 6), seen: { 'CO-1': 'done' }, woke: { at: day(2, 6), seen: { 'CO-1': 'done' } },
-        autopilot: { on: true, goal: 'Triage', every: '30m', at: 'daily 08:00', events: ['added', 'done', 'stuck'], perDay: 3, atOnce: 1, ...more } })
+      await store.saveCoordinator({ ...(await store.coordinator('CO'))!, terminal: 'host/t9', ranAt: day(2, 6), seen: { 'CO-1': 'done' }, woke: { at: day(2, 6), seen: { 'CO-1': 'done' } },
+        autopilot: { on: true, goal: 'Triage', every: '30m', events: ['added', 'done', 'stuck'], perDay: 3, atOnce: 1, ...more } })
       return task
     }
 
-    it('skips the interval and fixed-time wakes, marks the slots run and counts them', async () => {
+    it('skips the interval wake, marks the slot run and counts them', async () => {
       await asleep()
       expect(await deliver('idle', day(2, 8, 1)).run()).toEqual([])
       expect(await scheduled()).toBe(0)
       const c = (await store.coordinator('CO'))!
-      expect(c).toMatchObject({ ranAt: day(2, 8, 1), atRan: day(2, 8, 1), skipped: { n: 1 } })
+      expect(c).toMatchObject({ ranAt: day(2, 8, 1), skipped: { n: 1 } })
       // Marked run: the slot does not fire again.
       expect(await deliver('idle', day(2, 8, 2)).run()).toEqual([])
       expect((await store.coordinator('CO'))!.skipped!.n).toBe(1)
@@ -1017,7 +1048,7 @@ describe('wakes', () => {
       quotas.q = { codex: null, claude: { at: now, limited: { resetsAt: now + 3_600_000 }, five: { used: 100, resetsAt: now + 3_600_000, minutes: 300 }, week: { used: 20, resetsAt: now + 3 * 86_400_000, minutes: 10080 } }, accounts: [{ key: 'claude:ab12cd34', program: 'claude', machines: [''] }] }
       expect(await deliver('idle', now).run()).toEqual([])
       expect(await scheduled()).toBe(0)
-      expect((await store.coordinator('CO'))!).toMatchObject({ ranAt: now, atRan: now, skipped: { n: 1 } })
+      expect((await store.coordinator('CO'))!).toMatchObject({ ranAt: now, skipped: { n: 1 } })
       // Marked run: the next tick does not try again.
       expect(await deliver('idle', day(2, 8, 2)).run()).toEqual([])
       expect((await store.coordinator('CO'))!.skipped!.n).toBe(1)
@@ -1057,7 +1088,7 @@ describe('wakes', () => {
       const added = (await store.tasks()).find(t => t.title === 'More tests')!
       await store.saveTask({ ...added, step: state(5, { done: true }) })
       const seen = { 'CO-1': 'done', [added.id]: 'done' } as const
-      await store.saveCoordinator({ ...(await store.coordinator('CO'))!, seen: { ...seen }, woke: { at: day(2, 8, 2), seen: { ...seen } } })
+      await store.saveCoordinator({ ...(await store.coordinator('CO'))!, seen: { ...seen }, woke: { at: day(2, 8, 2), seen: { ...seen } }, health: { at: day(2, 8, 2), seen: { ...seen } } })
       expect(await deliver('idle', day(2, 8, 40)).run()).toEqual([])
       expect((await store.coordinator('CO'))!).toMatchObject({ ranAt: day(2, 8, 40), skipped: { n: 1 } })
       expect((await coordinatorsView(store)).find(v => v.project === 'CO')!.asleep).toBe('limit')
@@ -1070,6 +1101,23 @@ describe('wakes', () => {
       await asleep({ lookForWork: true, lookPerDay: 1 })
       await store.saveCoordinator({ ...(await store.coordinator('CO'))!, lookAdded: { day: new Date(day(1, 12)).toDateString(), n: 1 } })
       expect(await deliver('idle', day(2, 8, 1)).run()).toEqual(['CO'])
+    })
+
+    it('one scheduled wake carries the goal and the health lines; skipped with nothing new to report; none with the autopilot off', async () => {
+      await asleep()
+      await store.saveCoordinator({ ...(await store.coordinator('CO'))!, health: { at: day(2, 6), seen: { 'CO-1': 'working' } } })
+      const r = deliver('idle', day(2, 8, 1))
+      expect(await r.run()).toEqual(['CO'])
+      expect(r.sent[0]!.text).toMatch(/^Autopilot: scheduled wake [0-9a-f]{8}\n\nScheduled wake \(every 30m\)\. Your goal: Triage\.[^\n]*\n\nDone since the last check: CO-1 \(Fix\)\.\n\nIf none of this needs you, ack at once/)
+      expect(await store.wakes()).toHaveLength(1)
+      await cli(['ack', wakeId(r.sent[0]!.text)])
+      // Nothing new since: the next slot is skipped.
+      expect(await deliver('idle', day(2, 8, 40)).run()).toEqual([])
+      expect((await store.coordinator('CO'))!).toMatchObject({ ranAt: day(2, 8, 40), skipped: { n: 1 } })
+      // Autopilot off: no health lines on their own, and they start over once back on.
+      await store.saveCoordinator({ ...(await store.coordinator('CO'))!, autopilot: { ...(await store.coordinator('CO'))!.autopilot!, on: false }, health: { at: 0, seen: {} } })
+      expect(await deliver('idle', day(2, 10)).run()).toEqual([])
+      expect((await store.coordinator('CO'))!.health).toBeUndefined()
     })
 
     it('event wakes are unaffected', async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { infraLog, nextMove, type MechFacts, type PrState } from '../shared/pm/mechanic'
-import { SELF_FIX_GRACE_MS, SELF_FIX_IDLE_MS, blockOf, engineOwns, escalation, mayTry, noteFix } from '../shared/pm/selfFix'
+import { SELF_FIX_GRACE_MS, SELF_FIX_IDLE_MS, blockOf, escalation, mayTry, noteFix } from '../shared/pm/selfFix'
 import { wakesFor } from '../shared/pm/wakes'
 import { handToAgent, agentBack } from '../shared/pm/release'
 import { MAIN } from '../shared/pm/coordinator'
@@ -34,12 +34,11 @@ describe('blocks the engine fixes itself', () => {
   const interrupted = task(failed(2, 'github.merge was interrupted before its result was known: check by hand, then try again', { tries: { merge: 1 } }))
   const stall = task(step(0), { stall: { cause: 'idle:0:100', reason: 'The worker stopped', since: 100 } })
 
-  it('reads each block, and wakes no coordinator for it while the engine has it', () => {
+  it('reads each block; with Task stuck on, the coordinator is woken as the engine starts on it', () => {
     expect([push, conflict, interrupted, stall].map(blockOf)).toEqual(['push', 'conflict', 'interrupted', 'stall'])
     expect(blockOf(task(failed(2, 'merge: 1 check(s) failed')))).toBeUndefined()
     for (const t of [push, conflict, interrupted, stall]) {
-      expect(engineOwns(t)).toBe(true)
-      expect(autopilotEvents(ap, [t], { 'CO-1': 'working' }).reasons).toEqual([])
+      expect(autopilotEvents(ap, [t], { 'CO-1': 'working' }).reasons).toHaveLength(1)
     }
     // Another failure is the coordinator's at once, as before.
     expect(autopilotEvents(ap, [task(failed(2, 'merge: 1 check(s) failed'))], { 'CO-1': 'working' }).reasons).toHaveLength(1)
@@ -80,7 +79,6 @@ describe('blocks the engine fixes itself', () => {
       expect(escalation(two, SELF_FIX_GRACE_MS)).toMatch(/^CO-1 \(T\): stuck: .*; the engine tried one; two, without success\.$/)
       const woke = { ...two, selfFix: { ...two.selfFix, woke: 1 } }
       expect(escalation(woke, 1e9)).toBeUndefined()
-      expect(engineOwns(woke)).toBe(false)
     }
     // A stalled agent: nudged, restarted, then 10 min for the restart to work.
     expect(escalation(tried(stall), SELF_FIX_GRACE_MS)).toBeUndefined()

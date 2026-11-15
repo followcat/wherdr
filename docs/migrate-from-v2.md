@@ -30,14 +30,22 @@ is listed at once. Running it again is safe: what is already done is kept, and t
 moves to the latest `v3` (the plan always shows the commit it builds). `--help` lists the options: `--dir` (default `~/wherdr-v3`), `--name` (`wherdr-v3`),
 `--port` (`7684`), `--https-port` (the first port from `8104` that `tailscale serve` does not use), `--hc-session` (`default`), `--no-tailscale`,
 `--skip-import`, and `--v2-dir`, `--v2-unit`, `--herdr-bin` when v2 is not
-where the installer looks (`--herdr-projects` is ignored: the install reads nothing of herdr-projects).
+where the installer looks, `--herdr-projects` when your herdr-projects board is not the one v2's service names.
+
+The plan names what v3 will use: the herdr-projects board (`~/.herdr-projects`, or v2's
+`HERDR_PROJECTS_HOME` and `HERDR_PROJECTS_DATA_DIR`), with its projects by name (*3 on the v2 board
+(app, site, docs): Alfred offers them at its first start*), and the settings it imports, by name.
 
 What it does:
 
 1. **Finds v2** and prints it: the `wherdr.service` user unit (or the unit running v2's launcher),
    `~/wherdr` and `wherdr.env`, its `DATA_DIR` and port, its `tailscale serve` entry and
-   Herdr's SSH machines (`herdr machine list`). All of it is only read. The herdr-projects
-   board (`~/.herdr-projects`) is not read: [Alfred](#set-up-your-v2-projects-with-alfred) reads it later.
+   Herdr's SSH machines (`herdr machine list`). All of it is only read. v2 counts as found only
+   with its service (or `--v2-dir`), or when a v2 answers on its port: a leftover `~/wherdr/data`
+   alone shows *v2 data found, no running v2*, and the installer asks before using it (`--v2-dir`
+   to import from it, `--skip-import` for a plain v3 install). The herdr-projects board is not
+   imported: v3's service gets v2's `HERDR_PROJECTS_HOME` and `HERDR_PROJECTS_DATA_DIR` (or
+   `--herdr-projects`), so that [Alfred](#set-up-your-v2-projects-with-alfred) reads the same board later.
 2. **Checks** Node.js 22+, git, npm, `systemctl --user`, `hc` (it never installs it: its official
    installer is `curl -fsSL https://releases.herdr.dev/core/install.sh | sh`, into `~/.local/bin`), and that the port, folder,
    service names and HTTPS port are free.
@@ -96,18 +104,21 @@ message, [Alfred](home.md#alfred) sees that this machine has a herdr-projects bo
 to bring them all over in one go. It reads the board then (`wherdr alfred v2`, read
 only): each project's suggested key, folder (and whether it is on this machine), `workspace.from`
 as the base branch, its open tasks with their stage, branch and PR (done and archived ones are left out), and the board settings
-to redo in its workflow (reviewer, merge, worker…). Alfred asks you to switch Projects on first when they are off.
+to redo in its workflow (reviewer, merge, worker…). Your message to Alfred from wherdr's message field
+is your turn, with project management on or off.
 
 Its reply carries **one card for all the projects** (`wherdr alfred v2 import --propose`): one line
 each, with its key, name, machine and folder, and a checkbox, on by default; a project whose folder
 cannot be added (not found, not a git repository) says why and has none. Below them, **Start their
-coordinators**, on by default. *Apply* adds every checked project on this machine, with its v2 base
+coordinators**, on by default. With project management off, the card also has **Turn on project
+management**, on by default, which *Apply* needs and switches on first. *Apply* adds every checked project on this machine, with its v2 base
 branch, then starts their coordinators; one that fails does not stop the others, and the card then
 lists each project: added, coordinator started, or the error.
 
 No workflow is needed first: each project starts with the minimal default workflow, and its new
 coordinator's first message looks at the repository and proposes a workflow, saying why, which
-you accept or refuse (its v2 settings to redo in mind). Then, per project, by its
+you accept or refuse (its v2 settings to redo in mind, which Alfred passes on to it; a repository with
+no origin remote gets the local-merge flow, with no PR). Alfred alone offers to carry over the v2 tasks. Then, per project, by its
 coordinator or by Alfred (for all projects at once, if you like):
 
 - its folder on another machine, when the repository is not on the machine v2 ran on (`project add` there);

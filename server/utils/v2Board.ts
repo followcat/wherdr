@@ -26,8 +26,8 @@ export const HANDOVER_PROMPT = 'Write a handover note, at most 25 lines: decisio
 
 // The repos whose v2 coordinator exists: data/coordinator/<session>/projects/<folder>/state.json
 // (its repo in the state, else the folder's name).
-function coordinated(hpDir: string) {
-  const top = path.join(hpDir, 'data', 'coordinator')
+function coordinated(dataDir: string) {
+  const top = path.join(dataDir, 'coordinator')
   return list(top).flatMap(session => list(path.join(top, session, 'projects')).flatMap((n) => {
     const st = readJson(path.join(top, session, 'projects', n, 'state.json'))
     return isObj(st) ? [typeof st.repo === 'string' && st.repo ? st.repo : n] : []
@@ -36,12 +36,13 @@ function coordinated(hpDir: string) {
 
 // repos.json { name: path }, settings/config.json repos.<name> (key and per-repo settings)
 // and coordinators.projects.<name>, data/tasks/<repo>/<n>/task.json.
-export function readBoard(hpDir: string): Board | null {
-  const repos = readJson(path.join(hpDir, 'data', 'repos.json'))
+// dataDir: HERDR_PROJECTS_DATA_DIR when herdr-projects ran with one.
+export function readBoard(hpDir: string, dataDir = path.join(hpDir, 'data')): Board | null {
+  const repos = readJson(path.join(dataDir, 'repos.json'))
   if (!isObj(repos)) return null
   const config = readJson(path.join(hpDir, 'settings', 'config.json'))
   const tasks: BoardTask[] = []
-  const tdir = path.join(hpDir, 'data', 'tasks')
+  const tdir = path.join(dataDir, 'tasks')
   for (const repo of list(tdir).sort()) {
     for (const n of list(path.join(tdir, repo)).sort((a, b) => Number(a) - Number(b))) {
       const t = readJson(path.join(tdir, repo, n, 'task.json'))
@@ -49,7 +50,7 @@ export function readBoard(hpDir: string): Board | null {
     }
   }
   const coordinators = isObj(config) && isObj(config.coordinators) && isObj(config.coordinators.projects) ? config.coordinators.projects : {}
-  return { repos, settings: isObj(config) && isObj(config.repos) ? config.repos : {}, tasks, coordinators, coordinated: coordinated(hpDir) }
+  return { repos, settings: isObj(config) && isObj(config.repos) ? config.repos : {}, tasks, coordinators, coordinated: coordinated(dataDir) }
 }
 
 // Same rules as shared/pm/project.ts (KEY_RE, BRANCH_RE).
@@ -132,8 +133,8 @@ export function mapCandidates(board: Board, existing: { key: string }[] = [], ex
 
 // The v2 projects, read now from the board. A v3 project already made from one
 // (same folder or name) keeps its key out of the others' way, not its own.
-export function readV2Projects(hpDir: string, existing: { key: string, path: string, name: string }[] = [], exists?: (p: string) => boolean): V2Candidate[] {
-  const board = readBoard(hpDir)
+export function readV2Projects(hpDir: string, existing: { key: string, path: string, name: string }[] = [], exists?: (p: string) => boolean, dataDir?: string): V2Candidate[] {
+  const board = readBoard(hpDir, dataDir)
   if (!board) return []
   const own = new Set(Object.entries(board.repos).flatMap(([n, p]) => [n, String(p)]))
   return mapCandidates(board, existing.filter(p => !own.has(p.path) && !own.has(p.name)), exists).projects

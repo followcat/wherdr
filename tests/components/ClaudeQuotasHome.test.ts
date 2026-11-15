@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import HomeView from '~/components/HomeView.vue'
 import { eventsOpen, herdrState, homeQuotas } from '~/composables/useHerdr'
+import { homeListReady } from '~/composables/useHomeLoad'
 import type { MachineInfo, Pane, Quotas } from '#shared/types'
 
 const now = Date.now()
@@ -32,6 +33,7 @@ const pass = { template: '<div><slot /></div>' }
 
 describe('home list: Claude quota setup', () => {
   beforeEach(() => {
+    homeListReady.value = true // the first load: HomeFirstLoad.test.ts
     herdrState.value = { ok: true, panes, machines: [machine('', 'Server'), machine('ab12', 'Laptop')], workspaces: panes.map((p, i) => ({ id: p.workspace, number: i + 1, label: `s${i}`, focused: false, machine: p.machine })) } as never
     eventsOpen.value = true
   })

@@ -27,15 +27,16 @@ describe('pm store', () => {
     expect(await fs.readdir(dir)).toEqual([])
   })
 
-  it('saves a new project\'s autopilot with no daily limit and Auto, and keeps the values a project saved', async () => {
+  it('saves a new project\'s autopilot with no daily limit, Auto, Task done and Task stuck on, and keeps the values a project saved', async () => {
     const store = createPmStore(dir)
     await store.setEnabled(true)
     await store.saveTemplate(template)
     await store.saveCoordinator({ project: 'WEB', tokenHash: '', autopilot: { on: true, goal: '', events: [], perDay: 10, atOnce: 2 } })
     await store.addProject(input, okFolder)
     await store.addProject({ ...input, key: 'api', path: '~/src/api' }, okFolder)
-    expect((await store.coordinator('WEB'))?.autopilot).toMatchObject({ perDay: 10, atOnce: 2 })
-    expect((await store.coordinator('API'))?.autopilot).toMatchObject({ perDay: null, atOnce: null })
+    expect((await store.coordinator('WEB'))?.autopilot).toMatchObject({ perDay: 10, atOnce: 2, events: [] })
+    // quiet: the old-default cleanup (quietEvents) leaves the new defaults alone.
+    expect(await store.coordinator('API')).toMatchObject({ quiet: true, autopilot: { perDay: null, atOnce: null, events: ['done', 'stuck'] } })
   })
 
   it('keeps projects and templates across a restart, and refuses again once switched off', async () => {

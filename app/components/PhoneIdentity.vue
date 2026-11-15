@@ -10,7 +10,8 @@ const entry = computed(() => tabOf(props.pane.tab))
 const panes = computed(() => entry.value?.panes || [props.pane])
 const tabs = computed(() => spaceTabs(props.pane.workspace))
 const badge = computed(() => paneBadge(props.pane))
-const title = computed(() => (badge.value?.coordinator ? paneCoordinatorName(props.pane) : props.pane.label || props.pane.name || paneOwnTitle(props.pane)))
+// Alfred's title is its name, never its session title (taken from its start message).
+const title = computed(() => (badge.value?.coordinator || isAlfredPane(props.pane) ? paneCoordinatorName(props.pane) : props.pane.label || props.pane.name || paneOwnTitle(props.pane)))
 const kind = computed(() => kindLabel(props.pane.agent))
 // No " · omp" under a pane already titled "omp".
 const context = computed(() => props.pane.agent === 'omp' ? parseOmpContext(props.pane.ompStatus?.meters) : null)

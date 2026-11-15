@@ -1,6 +1,8 @@
 node_modules/
 .nuxt/
 .output/
+.output.next/
+.output.prev/
 .output-demo/
 # `nuxt generate` (npm run build:demo) links its output here
 /dist

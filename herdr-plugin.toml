@@ -5,7 +5,7 @@
 # anything, and Herdr then keeps the plugin already installed (v2) as it was.
 id = "afloury.wherdr"
 name = "wherdr"
-version = "3.0.0-dev"
+version = "3.0.0"
 min_herdr_version = "0.9.1"
 description = "wherdr v3 is not a Herdr plugin: install it beside v2, see docs/migrate-from-v2.md."
 platforms = ["linux", "macos"]

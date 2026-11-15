@@ -28,17 +28,27 @@ export function alfredName(identity: string | null | undefined): string {
   return name || ALFRED
 }
 
-export const FIRST_MESSAGE = 'I\'m Alfred, wherdr\'s assistant. Would you like to give me another name?'
+export const GREETING = 'I\'m Alfred, wherdr\'s assistant.'
+export const FIRST_MESSAGE = `${GREETING} Would you like to give me another name?`
 
 // The message Alfred starts with: the greeting on its very first start, else
 // a short hello after its start routine. v2: the user comes from wherdr v2, so
 // the greeting also offers to set up its projects. Else, none: wherdr has no
-// project yet, so the greeting offers to set up the first one.
-const V2_OFFER = ' In the same message, when some of those v2 projects are not v3 projects yet, add one short line: you see they come from wherdr v2, and you can set up those projects with them (see "Coming from wherdr v2" in AGENTS.md).'
-const FIRST_PROJECT_OFFER = ' In the same message, add one or two short sentences: there is no project yet, and you can set up the first one with them, here one question at a time, or in the setup window (see "The first project" in AGENTS.md).'
-export const startPrompt = (first: boolean, name: string, v2 = false, none = false) => (first
-  ? `Follow "At start" in AGENTS.md, then ${v2 ? 'run `wherdr alfred v2` and ' : ''}say exactly: "${FIRST_MESSAGE}"${v2 ? V2_OFFER : none ? FIRST_PROJECT_OFFER : ''}`
-  : `Follow "At start" in AGENTS.md, then greet the user in one short line as ${name}.`)
+// project yet, so the greeting offers to set up the first one. One question
+// per message: with an offer, the name question waits for a message of its own
+// (a tap on a choice answers one question only).
+const V2_OFFER = ' Then, in the same message, when some of those v2 projects are not v3 projects yet, add one short line: you see they come from wherdr v2, and you can set up those projects with them (see "Coming from wherdr v2" in AGENTS.md), with its own choices block.'
+const FIRST_PROJECT_OFFER = ' Then, in the same message, add one or two short sentences: there is no project yet, and you can set up the first one with them, here one question at a time, or in the setup window (see "The first project" in AGENTS.md).'
+const NAME_LATER = ' Do not ask about your name in this message. Once this offer is answered (done or declined), ask in a message of its own: "Would you like to give me another name?"'
+export const startPrompt = (first: boolean, name: string, v2 = false, none = false) => (!first
+  ? `Follow "At start" in AGENTS.md, then greet the user in one short line as ${name}.`
+  : v2 || none
+    ? `Follow "At start" in AGENTS.md, then ${v2 ? 'run `wherdr alfred v2` and ' : ''}say exactly: "${GREETING}"${v2 ? V2_OFFER : FIRST_PROJECT_OFFER}${NAME_LATER}`
+    : `Follow "At start" in AGENTS.md, then say exactly: "${FIRST_MESSAGE}"`)
+
+// Its start message, as the chat reads it back: wherdr's, not the user's (a
+// collapsed system line, never the conversation's title).
+export const isStartPrompt = (text: string) => /^\s*Follow "At start" in AGENTS\.md\b/.test(text)
 
 export interface AlfredContext {
   home: string, version: string, docs: string, docFiles: string[], pm: boolean
@@ -53,8 +63,8 @@ export interface AlfredContext {
 const V2_SECTION = [
   '## Coming from wherdr v2', '',
   'The user used wherdr v2. Its migration brought none of their v2 projects: `wherdr alfred v2` reads them now from the v2 board of this machine (read only), with their open tasks, each with the v3 project already made from it (`project`), if any. When the user wants to, bring over those not made yet all at once, never one project at a time:',
-  '1. `wherdr alfred v2 import --propose` (Projects must be on): one card lists them all, a checkbox each (on by default; one whose folder cannot be added says why) and *Start their coordinators* (on). The user unchecks what they do not want and clicks Apply once: the checked projects are added on this machine with their v2 folder and base branch, and their coordinators started. Its outcome lists each project (added, coordinator started, or the error): tell the user, and offer to retry a failure.',
-  '2. No workflow is needed: a coordinator starts without one. Each project has the minimal default workflow, and its new coordinator\'s first reply looks at the repository and proposes a workflow (`template edit`), saying why; tell it the project\'s v2 settings to redo (`left`) with `tell <KEY>`. Never ask for a template before starting a coordinator. A repository on another machine than this one: `project add` there, with its path on that machine.',
+  '1. `wherdr alfred v2 import --propose`: one card lists them all, a checkbox each (on by default; one whose folder cannot be added says why) and *Start their coordinators* (on); with project management off, also *Turn on project management* (on), so never send the user to Settings for it first. The user unchecks what they do not want and clicks Apply once: the checked projects are added on this machine with their v2 folder and base branch, and their coordinators started. Its outcome lists each project (added, coordinator started, or the error): tell the user, and offer to retry a failure.',
+  '2. No workflow is needed: a coordinator starts without one. Each project has the minimal default workflow, and its new coordinator\'s first reply looks at the repository and proposes a workflow (`template edit`), saying why; tell it the project\'s v2 settings to redo (`left`) with `tell <KEY>`, its v2 tasks left out (step 4 is yours, so that only one of you offers them); that message is between you and the coordinator: never write it, nor any other note to yourself, to the user. Never ask for a template before starting a coordinator. A repository on another machine than this one: `project add` there, with its path on that machine.',
   'Then, once per project and never before the import, offer the optional steps below; one card or one question for all the projects is fine:',
   '3. What its v2 coordinator knew. v2 keeps no memory file, and v2 still runs beside v3. When the project has a `handover` (its v2 coordinator exists), offer once: the user pastes `handover`, in a code block, to that coordinator in v2, then pastes its answer back here. Declined: nothing, and do not ask again. Never read v2\'s conversations. Its `goalLine`, when it has one (its v2 autopilot goal), goes in too, alone if there is no note.',
   '   Add them with `wherdr alfred project memory <KEY> < note.md` (the goal line, then the note): show its dry run, the lines that will end its new coordinator\'s memory.md, and run it again with `--apply` only after the user\'s yes.',
@@ -90,7 +100,7 @@ export function alfredFiles(c: AlfredContext, pmSection: string[]): Record<strin
     '1. Read identity.md and memory.md; use the name and tone of identity.md, and honour what memory.md says: the user\'s preferences there (what not to run on a machine, for instance) come before your defaults.',
     `2. Clean memory.md: merge duplicates, drop stale lines, check that each file and setting it cites still exists, stay under ${MEMORY_CAP} characters.`,
     '3. Then greet the user as your start message says.', '',
-    'When the user gives you another name, write it on identity.md\'s "Name:" line, then answer to it. Note in memory.md what is worth keeping, as you learn it: when the user states a preference ("never run builds on this machine"), write it there and follow it from then on.', '',
+    'When the user gives you another name, write it on identity.md\'s "Name:" line, then answer to it. One question per message, and at most one choices block, under it: a tap answers that question only. Note in memory.md what is worth keeping, as you learn it: when the user states a preference ("never run builds on this machine"), write it there and follow it from then on.', '',
     '## wherdr', '',
     'wherdr is the web and phone interface of herdr: it lists the agents (Claude, Codex…) running in terminals on the user\'s machines, shows their conversations, and notifies when one needs the user.',
     `Its documentation, for this version (${c.version}), is in \`${c.docs}\`. Pages: ${c.docFiles.join(', ') || '(none found)'}.`,
@@ -119,7 +129,7 @@ export function alfredFiles(c: AlfredContext, pmSection: string[]): Record<strin
     'You do no coding task yourself and work on no particular project: when the user asks for such work, start an agent or a task that does it in the right place (the project\'s machine).',
     'You have no autopilot and act only when the user asks: each project\'s coordinator runs its project\'s autopilot.', '',
     ...(c.v2 ? V2_SECTION : c.projects.length ? [] : FIRST_PROJECT_SECTION),
-    ...(c.pm ? pmSection : ['## Projects', '', `Project management is off: the user switches it on in ${projectPlace(undefined, 'general', true)}. You then coordinate their projects too.`, '']),
+    ...(c.pm ? pmSection : ['## Projects', '', `Project management is off: the user switches it on in ${projectPlace(undefined, 'general', true)}${c.v2 ? ', or with the v2 import card\'s own checkbox' : ''}. You then coordinate their projects too.`, '']),
   ].join('\n')
   return { 'AGENTS.md': agents, ...ROLE_POINTERS }
 }

@@ -4,16 +4,17 @@
 //
 // A wake waits until the coordinator is idle and the user has not written for
 // a minute; its pending reasons go as one message whose first line names its
-// kind (Autopilot, Step check, Engine, Health check, Incident). Delivered, it
+// kind (Autopilot, Step check, Engine, Incident). Delivered, it
 // is open until the coordinator acks it, stays idle 2 min, quits, or 1 h
 // passes; no other wake goes while one is open, except the user's "run now".
 // Not acked within 15 min (and its turn over): delivered once more, then the user is told.
 import { FIXES_PER_STEP, FIX_KINDS, FIX_TEXT, inHours, type Autopilot } from './autopilot'
 
-// Who sends it: the autopilot (its schedule, events, the user's "run now"), a
-// step the coordinator holds (its start, recheck or timeout), the engine giving
-// up on a block, the health check, or an incident (incidentWake.ts, about: its
-// id). Old wakes without one: the autopilot.
+// Who sends it: the autopilot (its schedule with the health lines, events, the
+// user's "run now"), a step the coordinator holds (its start, recheck or
+// timeout), the engine giving up on a block, or an incident (incidentWake.ts,
+// about: its id). Old wakes without one: the autopilot. 'health': the separate
+// health check of older versions, still read in the chat and the timeline.
 export type WakeKind = 'autopilot' | 'step' | 'engine' | 'health' | 'incident'
 export const WAKE_LABEL: Record<WakeKind, string> = { autopilot: 'Autopilot', step: 'Step check', engine: 'Engine', health: 'Health check', incident: 'Incident' }
 
@@ -31,6 +32,7 @@ export interface Wake {
   endedAt?: number
   ended?: 'ack' | 'idle' | 'quit' | 'timeout' | 'unanswered' | 'merged'
   now?: true // the user's "run now"
+  scheduled?: true // holds the autopilot's scheduled wake: its first line says so
 }
 
 export const WAKE = { QUIET_MS: 60_000, ACK_MS: 15 * 60_000, IDLE_MS: 2 * 60_000, TIMEOUT_MS: 3_600_000, TRIES: 2 } as const
@@ -43,21 +45,22 @@ const isOpen = (w: Wake) => w.deliveredAt !== undefined && w.endedAt === undefin
 
 // New reasons join the coordinator's pending wake of the same kind (and step),
 // or start one: each wake keeps one source. Returns the changed wake.
-export function enqueue(q: Wake[], coordinator: string, reasons: string[], now: number, id: string, runNow = false, from: Pick<Wake, 'kind' | 'about'> = {}): Wake {
+export function enqueue(q: Wake[], coordinator: string, reasons: string[], now: number, id: string, runNow = false, from: Pick<Wake, 'kind' | 'about' | 'scheduled'> = {}): Wake {
   const like = { kind: from.kind ?? 'autopilot', ...(from.about ? { about: from.about } : {}) }
   const p = pendingOf(q, coordinator, like)
   const add = (old: string[]) => [...old, ...reasons.filter(r => !old.includes(r))]
-  if (p) return { ...p, reasons: add(p.reasons), ...(runNow ? { now: true as const } : {}) }
-  return { id, coordinator, ...like, reasons: add([]), createdAt: now, tries: 0, ...(runNow ? { now: true as const } : {}) }
+  const flags = { ...(runNow ? { now: true as const } : {}), ...(from.scheduled ? { scheduled: true as const } : {}) }
+  if (p) return { ...p, reasons: add(p.reasons), ...flags }
+  return { id, coordinator, ...like, reasons: add([]), createdAt: now, tries: 0, ...flags }
 }
 
-// The first line: its kind, a step check's task and step, its id.
+// The first line: its kind, a step check's task and step, a scheduled wake, its id.
 export const wakeHead = (w: Wake) =>
-  `${WAKE_LABEL[w.kind ?? 'autopilot']}: ${w.about ? `${w.about}, ` : ''}wake ${w.id}${w.tries > 1 ? ` (again: no ack after ${WAKE.ACK_MS / 60_000} min)` : ''}`
+  `${WAKE_LABEL[w.kind ?? 'autopilot']}: ${w.about ? `${w.about}, ` : ''}${w.scheduled ? 'scheduled ' : ''}wake ${w.id}${w.tries > 1 ? ` (again: no ack after ${WAKE.ACK_MS / 60_000} min)` : ''}`
 
 // A message's wake kind, read from its first line (the chat's label); null: not a wake.
 // Its queued or pasted form reads the same: a leading <pasted_content> wrapper or blank lines are skipped.
-const HEAD_RE = new RegExp(`^(?:\\s*<pasted_content[^>]*>)?\\s*(${Object.values(WAKE_LABEL).join('|')}): (?:.*, )?wake \\S+`)
+const HEAD_RE = new RegExp(`^(?:\\s*<pasted_content[^>]*>)?\\s*(${Object.values(WAKE_LABEL).join('|')}): (?:.*, )?(?:scheduled )?wake \\S+`)
 export const wakeKindOf = (text: string): WakeKind | null => {
   const m = HEAD_RE.exec(text)
   return m ? (Object.keys(WAKE_LABEL) as WakeKind[]).find(k => WAKE_LABEL[k] === m[1]) ?? null : null
@@ -112,7 +115,7 @@ export function tickWakes(q: Wake[], coordinator: string, { status, lastUserAt, 
     if (w.tries >= WAKE.TRIES || status === 'gone') { notify = put({ ...w, endedAt: w.endedAt ?? now, ended: 'unanswered' }); continue }
     const other = pendingOf(cur(), coordinator, w)
     if (other) put({ ...other, ended: 'merged', endedAt: now })
-    put({ ...w, deliveredAt: undefined, idleSince: undefined, endedAt: undefined, ended: undefined, reasons: [...w.reasons, ...(other?.reasons ?? []).filter(r => !w.reasons.includes(r))], ...(other?.now ? { now: true as const } : {}) })
+    put({ ...w, deliveredAt: undefined, idleSince: undefined, endedAt: undefined, ended: undefined, reasons: [...w.reasons, ...(other?.reasons ?? []).filter(r => !w.reasons.includes(r))], ...(other?.now ? { now: true as const } : {}), ...(other?.scheduled ? { scheduled: true as const } : {}) })
   }
   // Never in the middle of a turn; not within a minute of the user's message,
   // nor over an open wake, unless the user asked to run now.
@@ -143,8 +146,8 @@ export interface WakeSkip { at: number, what: WakeKind | 'question', why: string
 export const SKIPS_KEPT_MS = 3 * 86_400_000
 const SKIP_AGAIN_MS = 12 * 3_600_000
 // The list with this skip, unless the same one is noted within 12 h: only for
-// what is seen every tick (an engine block, a question); a scheduled wake or a
-// health check is skipped once per slot, each one noted (the Autopilot tab's timeline).
+// what is seen every tick (an engine block, a question); a scheduled wake is
+// skipped once per slot, each one noted (the Autopilot tab's timeline).
 const PER_TICK = new Set<WakeSkip['what']>(['engine', 'question'])
 export const addSkip = (skips: WakeSkip[] | undefined, s: WakeSkip): WakeSkip[] | undefined =>
   PER_TICK.has(s.what) && skips?.some(x => x.what === s.what && x.why === s.why && s.at - x.at < SKIP_AGAIN_MS) ? undefined : [...(skips ?? []).filter(x => s.at - x.at < SKIPS_KEPT_MS), s]

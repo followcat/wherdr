@@ -73,7 +73,7 @@ function verdictLine(text: string): string {
 }
 // Normal mode: the current activity on a second line, unless the answers show below.
 const activityLine = computed(() => !task.value && !compactList.value && !more.value ? preview.value || '' : '')
-const subtitle = computed(() => conversationSubtitle(props.pane, ws.value))
+const subtitle = computed(() => (isAlfredPane(props.pane) ? '' : conversationSubtitle(props.pane, ws.value)))
 // Selection (computer): the pane being viewed, or for a space one of its panes / tabs.
 const route = useRoute()
 const selected = computed(() => {

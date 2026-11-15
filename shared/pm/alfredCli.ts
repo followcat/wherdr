@@ -38,7 +38,7 @@ const settable = (k: string): k is SyncedSetting => Object.hasOwn(SETTING_VALUES
 export type AlfredCommand =
   | { name: 'help' | 'projects' | 'templates' | 'machines' | 'coordinators' | 'settings' | 'v2' }
   | { name: 'project', key: string }
-  | { name: 'coordinator open', key: string }
+  | { name: 'coordinator open' | 'coordinator resend', key: string }
   | { name: 'last', key: string }
   // Show a place of wherdr beside Alfred's conversation (shared/uiOpen.ts).
   | { name: 'ui open', link: string }
@@ -72,6 +72,7 @@ export const ALFRED_COMMANDS: { usage: string, does: string }[] = [
   { usage: 'templates', does: 'the saved templates, and the examples (example:<id>) a project\'s template can start from' },
   { usage: 'machines', does: 'the machines herdr-core knows (key, label, status); the key "" is this machine' },
   { usage: 'coordinators', does: 'each coordinator: its agent and whether it runs' },
+  { usage: 'coordinator resend <KEY>', does: 'send again the first message a coordinator never got (wherdr alfred coordinators says when: firstMessage)' },
   { usage: 'coordinator open <KEY>', does: 'the link that opens a running project coordinator, to give the user' },
   { usage: 'ui open \'<in-app link>\' | --target <id> [--project <KEY>]', does: 'show that place, or the setting of that target id highlighted, in the user\'s open wherdr, beside this conversation (a card on a phone), quoted; only in a turn that comes from the user, only to the wherdr the user is on now (the answer says which: phone or computer). It changes nothing' },
   { usage: 'ui targets', does: 'the settings ui open --target can highlight: id and where it is' },
@@ -159,7 +160,7 @@ function parseWords(argv: unknown): AlfredCommand | { error: string } {
   if (w0 === 'project' && words.length === 2 && !['add', 'template', 'memory', 'workflow', 'guards', 'machine'].includes(w1)) return key(w1) ? { name: 'project', key: key(w1) } : usage('project <KEY>')
   if (verb === 'ui open') return uiOpenArgs(w2, w3, flags.target, usage(verb), flags.project)
   if (verb === 'ui targets') return w2 ? usage(verb) : { name: verb }
-  if (verb === 'coordinator open') return key(w2) && !w3 ? { name: verb, key: key(w2) } : usage(verb)
+  if (verb === 'coordinator open' || verb === 'coordinator resend') return key(w2) && !w3 ? { name: verb, key: key(w2) } : usage(verb)
   if (verb === 'project add') {
     const { machine, path, name, template } = flags
     if (!key(w2) || w3 || machine === undefined || !path) return usage(verb)

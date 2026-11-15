@@ -69,6 +69,7 @@ const ASK_LABEL: Record<WaitKind, [string, string]> = { question: ['Its agent as
 <template>
   <div class="todo" :data-todo="kind" data-testid="task-todo">
     <template v-if="kind === 'merge'">
+      <LookAgainBanner v-if="card.state?.lookAgain" :look="card.state.lookAgain" />
       <p class="todo-say" data-testid="task-badge">{{ badge }}</p>
       <TaskTldr :card="card" :worker="notes.worker" :review="notes.review" @comments="emit('comments')">
         <span v-if="reworked" class="mono-label muted" data-testid="todo-rework">{{ tl('Screenshots after rework') }}</span>

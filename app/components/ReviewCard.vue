@@ -2,26 +2,27 @@
 // Tasks to review: one card on Home with the count of what waits for the user
 // (the board's Your turn, GET /api/pm/handle: tasks to approve, an agent's
 // question, a failure to try again, a decision) on the projects the home tab
-// shows (useMachineBar.projectOnBar), between the coordinators and the agent
-// sessions; hidden when nothing waits. Under its title, the id badges of the
+// shows (useMachineBar.projectOnBar), right under Alfred, above the
+// coordinators; hidden when nothing waits. Under its title, the id badges of the
 // first ones in their projects' colors, on one line ending with … when they do
 // not all fit. A tap opens ReviewSheet, one at a time.
 import type { ToHandle } from '#shared/pm/board'
 
 const all = ref<ToHandle[]>([])
 const tasks = computed(() => all.value.filter(x => projectOnBar(x.project)))
-const load = () => api<ToHandle[]>('/api/pm/handle').then((v) => { all.value = Array.isArray(v) ? v : [] }, () => {})
+const load = () => api<ToHandle[]>('/api/pm/handle').then((v) => { all.value = Array.isArray(v) ? v : []; markHomeLoad('handle', true) }, () => markHomeLoad('handle', false))
 let timer: ReturnType<typeof setInterval> | undefined
 // Read while the card is on screen: a hidden page waits for the next tick it is shown.
 onMounted(() => { load(); timer = setInterval(() => { if (!document.hidden) load() }, 15_000) })
 onBeforeUnmount(() => clearInterval(timer))
 watch(taskSheetTick, load) // an action in a task's sheet or the review sheet
+watch(homeRetryTick, () => { if (homeFirstLoad.handle !== 'ok') load() }) // the home list's Try again
 const show = (v: boolean) => { reviewOpen.value = v }
 </script>
 
 <template>
   <section v-if="tasks.length" class="agent-group review-group" data-testid="tasks-to-review">
-    <button type="button" class="review-card" data-testid="review-open" @click="show(true)">
+    <button type="button" class="review-card press-row" data-testid="review-open" @click="show(true)">
       <span class="review-count" data-testid="review-count">{{ tasks.length }}</span>
       <span class="review-text">
         <b>{{ tl('Tasks to review') }}</b>

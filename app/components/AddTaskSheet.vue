@@ -99,7 +99,7 @@ async function add() {
 
       <label class="toggle-row">
         <span><b>{{ tl('Start now', 'Lancer tout de suite') }}</b><small>{{ after.length ? tl('it starts once the tasks above are done', 'elle démarre une fois les tâches ci-dessus terminées') : tl('its agent starts on the first step', 'son agent démarre sur la première étape') }}</small></span>
-        <USwitch v-model="startNow" :disabled="!!after.length" color="success" size="xl" data-testid="add-task-start" />
+        <USwitch v-model="startNow" :disabled="!!after.length" size="xl" data-testid="add-task-start" />
       </label>
     </form>
     <template #footer>

@@ -2,7 +2,7 @@
 // interval, fixed times, events, limits, hours). { project, runNow: true }: wake it now,
 // whatever wake is still open. The user's session only: the coordinator's
 // token never reaches this route.
-import { cleanAutopilot } from '../../../shared/pm/autopilot'
+import { cleanAutopilot, routinesOf } from '../../../shared/pm/autopilot'
 import { coreAdminDeps } from '../../utils/coreAdminDeps'
 import { HerdrError } from '../../utils/herdr'
 import { pmStore } from '../../utils/pmStore'
@@ -18,8 +18,10 @@ export default defineApi(async (_event, body) => {
   const r = cleanAutopilot(body.autopilot)
   if ('error' in r) throw new HerdrError('bad_input', r.error)
   const c = await store.coordinator(key)
-  // New fixed times count from now: no wake for a slot before they were set.
-  const atRan = r.autopilot.at && r.autopilot.at !== c?.autopilot?.at ? Date.now() : c?.atRan
-  await store.saveCoordinator({ project: key, tokenHash: '', ...c, autopilot: r.autopilot, ...(atRan ? { atRan } : {}) })
+  // A new routine, or a changed time, counts from now: no wake for a slot before it was set.
+  const old = routinesOf(c?.autopilot), ran: Record<string, number | undefined> = { ...(c?.atRan ? { at: c.atRan } : {}), ...c?.routineRan }
+  const routineRan = Object.fromEntries(routinesOf(r.autopilot).map(x => [x.id, (old.some(o => o.id === x.id && o.when === x.when) && ran[x.id]) || Date.now()]))
+  // Saved by the user: already one schedule, never migrated again (Every off stays off).
+  await store.saveCoordinator({ project: key, tokenHash: '', ...c, autopilot: r.autopilot, oneWake: true, routineRan, atRan: undefined })
   return r
 })

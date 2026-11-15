@@ -121,7 +121,7 @@ Claude Code, Codex, Devin, Command Code and OpenCode terminals open in conversat
   `show file|shots …` lines), and a tap shows it again. Showing approves nothing: the agent adds
   the step's button (*Approve screenshots*) with `ui action step`. Only in a turn that follows
   your message, and a coordinator shows its own project's tasks only.
-- **Wakes**: in a coordinator's conversation, a wake (Autopilot, Health check, Engine, Incident,
+- **Wakes**: in a coordinator's conversation, a wake (Autopilot, Engine, Incident,
   Step check) is a compact muted row, not one of your bubbles, with the coordinator's answer under
   it; routine runs fold into one row. See
   [Who sends a wake](project-management.md#who-sends-a-wake).
@@ -136,6 +136,8 @@ Claude Code, Codex, Devin, Command Code and OpenCode terminals open in conversat
   and comes back into the field if Codex exits instead, see [Codex updates](quotas.md#codex-updates)), attach or paste
   photos and the files the agent can read (Claude Code: PDFs, notebooks, text and code of any
   extension; Codex: notebooks, text and code), up to **8 MB per file** (core's `terminal.put`).
+  A photo sent from this device shows in the message at once, from its own copy; an image that
+  fails to load is tried again once, then shows *Tap to reload*.
   A sent file shows as a chip (icon and original name) in the message and its history, also in
   conversations from v2; a tap opens or downloads it. A photo stays a picture in the message,
   never its file path, also when the message was sent again (**Send now**, **Retry**) or waited

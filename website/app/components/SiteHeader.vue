@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { REPO } from '~/utils/site'
+import { DISCORD, REPO } from '~/utils/site'
 const links = [
   { label: 'Why', to: '#why' },
   { label: 'Features', to: '#features' },
@@ -23,6 +23,9 @@ const open = ref(false)
         <a v-for="l in links" :key="l.to" :href="l.to">{{ l.label }}</a>
       </nav>
       <div class="end">
+        <a class="dc" :href="DISCORD" target="_blank" rel="noopener" aria-label="Discord">
+          <DiscordMark />
+        </a>
         <a class="gh" :href="REPO" target="_blank" rel="noopener">
           <GithubMark />
           <span>GitHub</span>
@@ -62,7 +65,11 @@ const open = ref(false)
   border: 1px solid var(--line-strong); color: var(--text); text-decoration: none;
   font: 600 12px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
 }
-.gh:hover { border-color: var(--text); }
+.gh:hover, .dc:hover { border-color: var(--text); }
+.dc {
+  display: inline-grid; place-items: center; width: 34px; height: 34px;
+  border: 1px solid var(--line-strong); color: var(--text);
+}
 .burger { display: none; width: 34px; height: 34px; place-items: center; background: none; border: 1px solid var(--line-strong); color: var(--text); cursor: pointer; }
 .mnav { display: grid; border-top: 1px solid var(--line); }
 .mnav a { padding: 16px var(--pad); border-bottom: 1px solid var(--line); font-size: 13px; }

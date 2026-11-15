@@ -74,7 +74,7 @@ const exampleCount = computed(() => EXAMPLES.filter(e => !data.value?.templates.
         <small>{{ tl('Tasks follow the workflow of their project. Off, nothing is changed.') }}</small>
       </span>
       <SettingsSkeleton v-if="!data" kind="switch" />
-      <USwitch v-else :model-value="data.enabled" :disabled="busy" color="success" size="xl" data-testid="pm-switch" @update:model-value="v => toggle(v)" />
+      <USwitch v-else :model-value="data.enabled" :disabled="busy" size="xl" data-testid="pm-switch" @update:model-value="v => toggle(v)" />
     </label>
     <UButton color="neutral" variant="ghost" size="lg" icon="i-lucide-list-checks" class="pm-setup" data-testid="pm-setup" data-ui-target="projects.setup" @click="setupAdding = false; setupOpen = true">{{ tl('Set up a project') }}</UButton>
     <SetupWizard v-model:open="setupOpen" :adding="setupAdding" @changed="load" />

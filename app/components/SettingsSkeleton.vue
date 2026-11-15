@@ -21,8 +21,7 @@ defineEmits<{ retry: [] }>()
 </template>
 
 <style scoped>
-/* Muted, square, a gentle pulse (none with reduced motion). */
-.skel { display: block; background: var(--line-soft); animation: skel-pulse 1.6s ease-in-out infinite; }
+/* .skel (main.css): muted, square, a gentle pulse (none with reduced motion). */
 .skel-switch { flex: none; width: 48px; height: 28px; }
 .skel-card { display: grid; padding: 0; }
 /* A project row's height: its padding and three lines (name, key, path). */
@@ -31,6 +30,4 @@ defineEmits<{ retry: [] }>()
 .skel-row i { height: 14px; }
 .skel-row .skel-small { height: 11px; }
 .skel-error { display: grid; justify-items: start; gap: 8px; margin-top: 8px; }
-@keyframes skel-pulse { 50% { opacity: .5; } }
-@media (prefers-reduced-motion: reduce) { .skel { animation: none; } }
 </style>

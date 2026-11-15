@@ -117,10 +117,10 @@ it('the failing tests are read from gh run view --log-failed', () => {
   expect(failingTests(log)).toEqual(['tests/a.test.ts > adds', 'tests/b.test.ts > keeps'])
 })
 
-it('an action refused wakes the coordinator as stuck with its reason; a stall only once the engine gave up on it', () => {
+it('an action refused wakes the coordinator as stuck with its reason; a stall too, once, while the engine still tries', () => {
   const ap = { ...DEFAULT_AUTOPILOT, events: ['stuck' as const] }
   const stalled = task(at(4), { stall: { cause: 'red:abc', reason: 'CI red, no new push for 10 min', since: 1 } })
-  expect(autopilotEvents(ap, [stalled], { 'CO-1': 'working' }).reasons).toEqual([])
+  expect(autopilotEvents(ap, [stalled], { 'CO-1': 'working' }).reasons).toEqual(['CO-1 (T): stuck: CI red, no new push for 10 min'])
   const gaveUp = { ...stalled, selfFix: { step: '4:1000', block: 'stall', tried: ['a nudge', 'a restart'], at: 1, woke: 2 } }
   expect(autopilotEvents(ap, [gaveUp], { 'CO-1': 'working' }).reasons).toEqual(['CO-1 (T): stuck: CI red, no new push for 10 min'])
   expect(autopilotEvents(ap, [stalled], { 'CO-1': 'stalled' }).reasons).toEqual([])

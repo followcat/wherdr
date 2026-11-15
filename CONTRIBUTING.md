@@ -1,6 +1,7 @@
 # Contributing to wherdr
 
 Thanks for your interest! Issues and pull requests are welcome.
+Before a large pull request, discuss it on [Discord](https://discord.gg/ky36WYmtVE) or in an issue first.
 
 ## Development setup
 

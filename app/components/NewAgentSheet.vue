@@ -226,7 +226,7 @@ async function launch() {
 
         <label v-if="canResume" class="toggle-row">
           <span><b>{{ t('Resume the last conversation') }}</b><small>{{ t('for this agent in this folder') }}</small></span>
-          <USwitch v-model="resume" color="success" size="xl" />
+          <USwitch v-model="resume" size="xl" />
         </label>
 
         <label class="field-label" for="newPrompt">{{ t(shell ? 'Command to run' : 'First message') }} <span class="muted">{{ t('(optional)') }}</span></label>

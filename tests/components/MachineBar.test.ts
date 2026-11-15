@@ -8,6 +8,7 @@ import { BAR_ALL } from '~/utils/machineBar'
 import type { MachineInfo, Pane } from '#shared/types'
 import type { TaskAgent } from '#shared/pm/taskAgents'
 import { taskAgents } from '~/composables/useTaskAgents'
+import { homeListReady } from '~/composables/useHomeLoad'
 
 import { menuState } from '~/composables/useUi'
 
@@ -37,6 +38,7 @@ function setState() {
   eventsOpen.value = true
 }
 function reset() {
+  homeListReady.value = true // the first load: HomeFirstLoad.test.ts
   for (const w of mounted) w.unmount()
   mounted = []
   machineGroups.value = []

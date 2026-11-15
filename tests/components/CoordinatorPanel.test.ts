@@ -109,7 +109,7 @@ it('window: Settings and Activity tabs, a pinned Save enabled by a change, and c
   await nextTick()
   expect($('coordinator-autopilot')).not.toBeNull()
   save.click()
-  await vi.waitFor(() => expect(posts.at(-1)).toEqual({ url: '/api/pm/autopilot', body: { project: 'CO', autopilot: { on: true, goal: 'Ship 3', every: '', at: '', events: [], perDay: null, atOnce: null } } }))
+  await vi.waitFor(() => expect(posts.at(-1)).toEqual({ url: '/api/pm/autopilot', body: { project: 'CO', autopilot: { on: true, goal: 'Ship 3', every: '', routines: [], events: [], perDay: null, atOnce: null } } }))
   localStorage.removeItem('wherdr.autopilotTab')
 })
 

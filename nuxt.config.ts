@@ -134,6 +134,9 @@ export default defineNuxtConfig({
     ? { preset: 'static', output: { dir: '.output-demo' } }
     : {
         preset: 'node-server',
+        // An update builds aside (NITRO_OUTPUT_DIR=.output.next) and swaps it
+        // in only once the build succeeded: the running .output stays whole.
+        output: { dir: process.env.NITRO_OUTPUT_DIR || '.output' },
         experimental: { websocket: true },
         // The build's files also kept gzipped and brotli-compressed, served so
         // to a browser that takes it (2.6 MB → about 0.8 MB on a first load).

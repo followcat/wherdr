@@ -19,7 +19,9 @@
 // Approve and Send back say so on their button for a moment (DONE_MS), then the
 // next task slides in from the right (the arrows slide too, in their direction;
 // a fade under prefers-reduced-motion, and into All done). A failure stays put.
-// On a computer: one fixed size, only the task's content scrolls.
+// On a computer: one fixed size, only the task's content scrolls. While open,
+// the list keeps its order: what arrives goes at the end, and the task on screen
+// never changes by itself (handled elsewhere, it stays with a muted line).
 import { linkLabel, mayAccept, prLink, taskRow, type Board, type Card, type ToHandle } from '#shared/pm/board'
 import { reviewLine, reviewNote, workerNote } from '#shared/pm/report'
 import { shotMode } from '#shared/pm/shots'
@@ -46,22 +48,46 @@ const filter = computed({ get: () => reviewPick(known), set: (v: string) => { re
 
 // Approved or rejected here: off the list at once, before the board says so.
 const handled = ref<string[]>([])
-const items = computed(() => (data.value?.cards ?? []).filter(c => c.yourTurn && !c.state?.done && !handled.value.includes(c.id) && reviewShows(filter.value, c.project)))
+// Answered here from its To do (Try again, a choice): it leaves as the board says, not as handled
+// elsewhere. Only the task on screen, after an action that went through (a refusal clears it).
+let acted = ''
+const live = computed(() => (data.value?.cards ?? []).filter(c => c.yourTurn && !c.state?.done && !handled.value.includes(c.id) && reviewShows(filter.value, c.project)))
+// The list while the sheet is open, in a stable order (the board's again once
+// closed): a task that arrives goes at the end, one that leaves drops out, but
+// the one on screen stays, as last read, with its Handled elsewhere line until
+// the user moves on.
+const order = ref<string[]>([])
+const seen = shallowRef<Record<string, Card>>({})
+const items = computed(() => order.value.map(id => seen.value[id]!))
 // items.length: past the last one, All done.
 const at = ref(0)
 const index = computed(() => Math.min(at.value, items.value.length))
+function sync() {
+  const cur = items.value[index.value]?.id
+  const ids = new Set(live.value.map(c => c.id))
+  const next = order.value.filter(id => !handled.value.includes(id) && (ids.has(id) || (id === cur && id !== acted)))
+  for (const c of live.value) if (!next.includes(c.id)) next.push(c.id)
+  seen.value = { ...seen.value, ...Object.fromEntries(live.value.map(c => [c.id, c])) }
+  order.value = next
+  const i = cur ? next.indexOf(cur) : -1
+  at.value = i >= 0 ? i : Math.min(at.value, next.length)
+}
+watch(live, sync)
 // Approved or sent back: kept on screen with its confirmation, whatever the board reads meanwhile.
 const held = ref<Card>()
 const done = ref<'' | 'approved' | 'sent' | 'answered'>('')
 const heldAt = ref('')
 const card = computed<Card | undefined>(() => held.value ?? items.value[index.value])
-// Another filter, or another home tab followed: back to the first one.
-watch([filter, machineBarPick], () => { at.value = 0 })
+// What happened to the one on screen, once it left the list elsewhere.
+const gone = computed(() => (card.value && !held.value && !live.value.some(c => c.id === card.value!.id) ? handledElsewhere(card.value, data.value?.cards.find(c => c.id === card.value!.id)) : ''))
+// Another filter, or another home tab followed: the list again, from its first one.
+watch([filter, machineBarPick], () => { order.value = []; at.value = 0; sync() })
 const dir = ref(1)
 const go = (step: number) => {
   if (done.value) return
   dir.value = step
   at.value = Math.max(0, Math.min(index.value + step, items.value.length))
+  sync()
 }
 const progress = computed(() => (held.value ? heldAt.value : tl(`${index.value + 1} of ${items.value.length}`)))
 const still = ref(false)
@@ -71,6 +97,7 @@ const motion = computed(() => (still.value || !card.value ? 'review-fade' : dir.
 const kind = computed(() => (card.value ? taskTodo(card.value) : undefined))
 // Only a merge to accept: another step of the user's (Create these tasks…) keeps its own button, in the task's sheet.
 const approves = computed(() => !!card.value && (kind.value === 'merge' || kind.value === 'step') && mayAccept(card.value))
+const acts = computed(() => approves.value && !gone.value)
 const row = computed<ToHandle | undefined>(() => (card.value ? taskRow(card.value) : undefined))
 const shotStep = computed(() => (card.value ? shotSteps(card.value)[0] : undefined))
 const shots = computed(() => (shotStep.value ? card.value!.state!.shots![shotStep.value.id]! : []))
@@ -80,9 +107,9 @@ const verdict = computed(() => (card.value && state.value ? reviewLine(card.valu
 const notes = computed(() => (card.value && state.value ? { worker: workerNote(card.value.plan, state.value), review: reviewNote(card.value.plan, state.value) } : {}))
 
 const pane = computed(() => (card.value?.terminal ? herdrState.value?.panes.find(p => p.coreAddress === card.value!.terminal) : undefined))
-const { busy, error, pressing, refused, press, start, resume, decide, sendBack, restartReview, startWorker } = useTaskActions(() => card.value, taskChanged)
+const { busy, error, pressing, refused, press, start, resume, decide, sendBack, restartReview, startWorker } = useTaskActions(() => card.value, () => { acted = card.value && !refused.value ? card.value.id : ''; taskChanged() })
 const rejecting = ref(false)
-watch(() => card.value?.id, () => { error.value = ''; rejecting.value = false })
+watch(() => card.value?.id, () => { error.value = ''; rejecting.value = false; acted = '' })
 const DONE_MS = 400
 // Done with the current one: its confirmation, then off the list, the next one shows.
 async function leave(c: Card, how: 'approved' | 'sent' | 'answered') {
@@ -98,7 +125,7 @@ async function leave(c: Card, how: 'approved' | 'sent' | 'answered') {
 }
 async function approve() {
   const c = card.value
-  if (!c || !approves.value || busy.value || done.value) return
+  if (!c || !acts.value || busy.value || done.value) return
   await press()
   await leave(c, 'approved')
 }
@@ -116,7 +143,7 @@ const answering = ref(false)
 const answered = ref<string>()
 async function reply(text: string) {
   const c = card.value
-  if (!c || answering.value || done.value) return
+  if (!c || answering.value || done.value || gone.value) return
   answering.value = true
   error.value = ''
   try {
@@ -145,7 +172,7 @@ function onKey(e: KeyboardEvent) {
   if (k === 'arrowright') go(1)
   else if (k === 'arrowleft') go(-1)
   else if (k === 'a') approve()
-  else if (k === 'r' && approves.value && !done.value) rejecting.value = true
+  else if (k === 'r' && acts.value && !done.value) rejecting.value = true
   else return
   e.preventDefault()
 }
@@ -163,8 +190,10 @@ function onKey(e: KeyboardEvent) {
           <ProjectBadge :text="card.shown" :color="card.color" />
           <h3>{{ card.title }}</h3>
         </header>
+        <p v-if="gone" class="muted review-gone" data-testid="review-gone">{{ tl(`Handled elsewhere: ${gone}`) }}</p>
         <div class="review-scroll">
         <template v-if="approves">
+          <LookAgainBanner v-if="card.state?.lookAgain" :look="card.state.lookAgain" />
           <TaskTldr :card="card" :worker="notes.worker" :review="notes.review" @comments="answer()">
             <TaskShots v-if="shots.length && shotStep" :task="card.id" :shots="shots" :mode="shotMode(shotStep)" />
           </TaskTldr>
@@ -173,10 +202,10 @@ function onKey(e: KeyboardEvent) {
             <span v-if="verdict" data-testid="review-verdict">{{ tl(verdict) }}</span>
           </p>
         </template>
-        <ReviewQuestion v-else-if="asked" :card="card" :busy="answering" :sent="answered" @send="reply" />
-        <TaskTodo v-else-if="kind" :card="card" :kind="kind" :pane="pane" :busy="busy" :pressing="pressing" :refused="refused"
+        <ReviewQuestion v-else-if="asked" :card="card" :busy="answering || !!gone" :sent="answered" @send="reply" />
+        <TaskTodo v-else-if="kind" :card="card" :kind="kind" :pane="pane" :busy="busy || !!gone" :pressing="pressing" :refused="refused"
           @press="press" @start="start" @resume="resume" @decide="decide" @back="sendBack" @review="restartReview" @worker="startWorker" @comments="answer()" />
-        <ReviewReject v-if="approves && rejecting" :card="card" :busy="busy" @send="reject" @cancel="rejecting = false" />
+        <ReviewReject v-if="acts && rejecting" :card="card" :busy="busy" @send="reject" @cancel="rejecting = false" />
         <p v-if="error" class="error" role="alert" data-testid="review-error">{{ error }}</p>
         <p v-if="approves && refused" class="error" role="alert" data-testid="review-refused">{{ stepRefusalText(refused) }}</p>
         </div>
@@ -195,12 +224,12 @@ function onKey(e: KeyboardEvent) {
     <template #footer>
       <div v-if="card" class="review-foot">
         <div class="review-choices" aria-live="polite">
-          <template v-if="approves">
+          <template v-if="acts">
             <UButton color="primary" size="xl" :icon="done === 'approved' ? 'i-lucide-check-check' : 'i-lucide-check'" :class="{ confirmed: done === 'approved' }" :loading="busy && !rejecting" :disabled="rejecting || done === 'sent'" data-testid="review-approve" @click="approve">{{ done === 'approved' ? tl('Approved') : tl('Approve') }}</UButton>
             <UButton color="error" variant="outline" size="xl" :icon="done === 'sent' ? 'i-lucide-check' : 'i-lucide-undo-2'" :class="{ confirmed: done === 'sent' }" :disabled="busy || rejecting || done === 'approved'" data-testid="review-reject-open" @click="!done && (rejecting = true)">{{ done === 'sent' ? tl('Sent back') : tl('Reject') }}</UButton>
           </template>
           <template v-else>
-            <UButton v-if="kind === 'refused'" color="primary" size="xl" icon="i-lucide-rotate-ccw" :loading="busy" data-testid="review-retry" @click="press">{{ tl('Try again') }}</UButton>
+            <UButton v-if="kind === 'refused' && !gone" color="primary" size="xl" icon="i-lucide-rotate-ccw" :loading="busy" data-testid="review-retry" @click="press">{{ tl('Try again') }}</UButton>
             <UButton color="neutral" variant="outline" size="xl" icon="i-lucide-square-arrow-out-up-right" data-testid="review-answer" @click="answer()">{{ tl('Open the task') }}</UButton>
           </template>
           <AgentButton :card="card" @opened="open = false" />
@@ -233,6 +262,7 @@ function onKey(e: KeyboardEvent) {
 .review-choices .confirmed { pointer-events: none; border-color: var(--done); background: var(--done); color: var(--bg); }
 .review-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .review-head h3 { flex: 1; min-width: 0; margin: 0; font: 600 16px/1.3 var(--display); overflow-wrap: anywhere; }
+.review-gone { font: 12px/1.4 var(--mono); }
 .review-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font: 12px/1.4 var(--mono); }
 .review-meta a { color: var(--accent); }
 /* All done: icon, title, line and button grouped, centred in the body; the button at its own size. */

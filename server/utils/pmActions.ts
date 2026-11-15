@@ -48,11 +48,37 @@ export const mergesSettled = (ms: number) =>
 export const actionShell = (deps: Pick<CoreAdminDeps, 'call'>, on: string | undefined): Shell =>
   (script, args, input) => exec(deps, on, `${PATH_SETUP}\n${script}`, args, input, SLOW.has(script) ? SLOW_SECS : undefined)
 
-// Only merges of the base since the reviewed commit (the task's own change the same): not reviewed again.
-const onlyBase = async (deps: ActionDeps, wt: string, base: string, from: string, to: string) => {
-  const r = await run(deps, SCRIPT.ownChanged, [wt, base, from, to])
-  return r.code === 0 && lastLine(r.out) === 'same'
+// What moved in the task's own change (all its files, or its interface files)
+// from commit `from` to `to`: nothing but merges of its base (same), comments
+// and whitespace only (comments), or the files listed (changed).
+type Moved = { kind: 'same' | 'comments' } | { kind: 'changed', files: string[] }
+const ownMoved = async (deps: ActionDeps, script: string, wt: string, base: string, from: string, to: string): Promise<Moved> => {
+  const r = await run(deps, script, [wt, base, from, to])
+  const lines = r.out.trim().split('\n').map(l => l.trim()).filter(Boolean), last = lines.pop()
+  if (r.code === 0 && (last === 'same' || last === 'comments')) return { kind: last }
+  return { kind: 'changed', files: r.code === 0 ? lines.slice(0, 20) : [] }
 }
+const KEPT = { same: 'base merge, same interface', comments: 'comment-only change' }
+const span = (from: string, to: string) => `${from.slice(0, 7)}..${to.slice(0, 7)}`
+// The head moved after the review (catch-up, conflict, CI fix): reviewed again,
+// unless only base merges or comments moved, said in `kept` for the task's log.
+const newSinceReview = async (deps: ActionDeps, job: ActionJob, base: string, head: string, kept: Set<string>): Promise<ActionResult | undefined> => {
+  if (!job.reviewed || job.reviewed === head) return
+  const m = await ownMoved(deps, SCRIPT.ownChanged, job.worktree, base, job.reviewed, head)
+  if (m.kind === 'changed') return { ok: false, error: `merge: new commits since the review (${span(job.reviewed, head)})`, review: { since: job.reviewed, head }, commit: head }
+  if (m.kind === 'comments') kept.add(`no new review: comment-only change (${span(job.reviewed, head)})`)
+}
+// Approved earlier: a new look only if the task's own interface changed since,
+// with the files and commits as the reason; else the approval stays, said in `kept`.
+const lookAgain = async (deps: ActionDeps, job: ActionJob, base: string, head: string, kept: Set<string>): Promise<ActionResult | undefined> => {
+  if (!job.approved || job.approved === head) return
+  const ui = await ownMoved(deps, SCRIPT.uiChanged, job.worktree, base, job.approved, head)
+  if (ui.kind === 'changed') return { ok: false, error: `merge: the interface changed since your approval (${span(job.approved, head)}${ui.files.length ? `: ${ui.files.join(', ')}` : ''})`, unapproved: { since: job.approved, head, files: ui.files }, commit: head }
+  if (ui.kind === 'comments') return void kept.add(`approval kept: ${KEPT.comments} (${span(job.approved, head)})`)
+  const all = await ownMoved(deps, SCRIPT.ownChanged, job.worktree, base, job.approved, head)
+  kept.add(`approval kept: ${all.kind === 'changed' ? 'no interface file changed' : KEPT[all.kind]} (${span(job.approved, head)})`)
+}
+const keptNote = (kept: Set<string>) => (kept.size ? { note: [...kept].join('; ') } : {})
 
 // A PR head made by GitHub's Update branch (SCRIPT.headOf says update): taken
 // into the worktree, where the project's after-merge fix runs, then pushed at
@@ -158,6 +184,7 @@ async function perform(deps: ActionDeps, job: ActionJob, resumed = false): Promi
       // unread: PR details that could not be read, tried again as a transient error.
       // cut: merges that timed out, after which GitHub is asked again first.
       let pushed = false, synced = false, unread = 0, cut = 0
+      const kept = new Set<string>()
       for (;;) {
         const r = await run(deps, SCRIPT.prInfo, [wt, branch])
         if (r.code !== 0) return fail(r)
@@ -192,13 +219,8 @@ async function perform(deps: ActionDeps, job: ActionJob, resumed = false): Promi
             continue
           }
           if (where === 'foreign') return { ok: false, error: `merge: the PR head ${pr.headRefOid.slice(0, 7)} has commits the task's worktree never had (pushed from elsewhere): bring them into the worktree, or merge by hand` }
-          // The head moved after the review (catch-up, conflict, CI fix): reviewed again first.
-          if (job.reviewed && job.reviewed !== h && !(await onlyBase(deps, wt, pr.baseRefName, job.reviewed, h))) return { ok: false, error: `merge: new commits since the review (${job.reviewed.slice(0, 7)}..${h.slice(0, 7)})`, review: { since: job.reviewed, head: h }, commit: h }
-          // Approved earlier: a new look at the interface only if the task's own UI files changed since.
-          if (job.approved && job.approved !== h) {
-            const ui = await run(deps, SCRIPT.uiChanged, [wt, pr.baseRefName, job.approved, h])
-            if (ui.code !== 0 || lastLine(ui.out) !== 'same') return { ok: false, error: `merge: the interface changed since your approval (${job.approved.slice(0, 7)}..${h.slice(0, 7)})`, unapproved: true, commit: h }
-          }
+          const again = await newSinceReview(deps, job, pr.baseRefName, h, kept) ?? await lookAgain(deps, job, pr.baseRefName, h, kept)
+          if (again) return again
           if (where === 'behind') {
             if (pushed) {
               // GitHub's API can lag a fresh push: the remote branch is the truth.
@@ -230,7 +252,7 @@ async function perform(deps: ActionDeps, job: ActionJob, resumed = false): Promi
         const m = await run(deps, SCRIPT.merge, [wt, pr!.url, head.trim(), a.method ?? ''], undefined, true)
         // Timed out: it may have merged. The PR is read again before any new try.
         if (m.code === null && cut++ < MERGE_RESUMES) continue
-        if (m.code === 0) return { ok: true, link: pr!.url, commit: head.trim(), base: pr!.baseRefName, reached: [pr!.baseRefName] }
+        if (m.code === 0) return { ok: true, link: pr!.url, commit: head.trim(), base: pr!.baseRefName, reached: [pr!.baseRefName], ...keptNote(kept) }
         // GitHub's refusal ends with the commands to fix it: those are the agent's (the catch-up), not the error's.
         const stuck = CONFLICT.test(allText(m)) ? 'conflicts with' : /not up to date/i.test(allText(m)) ? 'is behind' : undefined
         return stuck ? { ok: false, error: `merge: the PR ${stuck} ${pr!.baseRefName}`, catchUp: pr!.baseRefName, commit: head.trim() } : fail(m)
@@ -273,6 +295,7 @@ async function bitbucketMerge(deps: ActionDeps, job: ActionJob, fail: (r: ShellR
   }
   const refusal = (r: { status: number, body: { error?: { message?: string } } }) => ({ ok: false, error: `merge: ${r.body.error?.message || `Bitbucket answered ${r.status}`}` })
   let pushed = false
+  const kept = new Set<string>()
   for (;;) {
     const h = await run(deps, SCRIPT.head, [wt])
     if (h.code !== 0) return fail(h)
@@ -290,7 +313,8 @@ async function bitbucketMerge(deps: ActionDeps, job: ActionJob, fail: (r: ShellR
     const base = pr.destination.branch.name, link = pr.links.html.href
     const refused = guardAction(job.guards, a, { branch, by: job.by, base })
     if (refused) return { ok: false, error: refused }
-    if (job.reviewed && job.reviewed !== head && !(await onlyBase(deps, wt, base, job.reviewed, head))) return { ok: false, error: `merge: new commits since the review (${job.reviewed.slice(0, 7)}..${head.slice(0, 7)})`, review: { since: job.reviewed, head }, commit: head }
+    const again = await newSinceReview(deps, job, base, head, kept)
+    if (again) return again
     if (!head.startsWith(pr.source.commit.hash)) {
       if (pushed) return { ok: false, error: `merge: the PR head ${pr.source.commit.hash.slice(0, 7)} is not the task's commit` }
       const no = guardAction(job.guards, { kind: 'git.push' }, { branch, by: job.by })
@@ -309,7 +333,7 @@ async function bitbucketMerge(deps: ActionDeps, job: ActionJob, fail: (r: ShellR
     const body = JSON.stringify({ type: 'pullrequest', merge_strategy: BB_STRATEGY[a.method ?? 'merge'], close_source_branch: false })
     const m = await api<object>('POST', `/pullrequests/${pr.id}/merge`, body)
     if ('error' in m) return m.error!
-    return m.status === 200 ? { ok: true, link, commit: head, base, reached: [base] } : refusal(m)
+    return m.status === 200 ? { ok: true, link, commit: head, base, reached: [base], ...keptNote(kept) } : refusal(m)
   }
 }
 

@@ -62,7 +62,7 @@ const ask = () => run('ask', async () => { if (coordinator.value) await openCoor
     <ul v-else-if="list.length" class="pa-list">
       <li v-for="a in list" :key="a.id" data-testid="automation">
         <div class="pa-row">
-          <USwitch :model-value="a.on" color="success" size="lg" :disabled="!!busy" :aria-label="tl(`${a.name} on`)" data-testid="automation-on" @update:model-value="v => setOn(a, v)" />
+          <USwitch :model-value="a.on" size="lg" :disabled="!!busy" :aria-label="tl(`${a.name} on`)" data-testid="automation-on" @update:model-value="v => setOn(a, v)" />
           <div class="pa-id">
             <b>{{ a.name }}</b>
             <small class="mono-label" data-testid="automation-trigger">{{ automationTrigger(a) }}</small>

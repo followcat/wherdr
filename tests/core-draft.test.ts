@@ -134,11 +134,22 @@ describe('coreDraft', () => {
     expect(f.keys).toHaveLength(2)
   })
   it('Send now on Claude’s queue: ctrl+enter, only while Claude offers it', async () => {
-    const f = fake([screen('claude-queued')])
+    const f = fake([screen('claude-queued'), EMPTY])
     await expect(coreDraft(f.deps, { pane_id: pane.id, action: 'send-queued' })).resolves.toEqual({ ok: true })
     expect(f.keys).toEqual([['ctrl+enter']])
     const g = fake([TYPED])
     expect(await code(coreDraft(g.deps, { pane_id: pane.id, action: 'send-queued' }))).toBe('stale')
+    const h = fake([screen('claude-queued')])
+    expect(await code(coreDraft(h.deps, { pane_id: pane.id, action: 'send-queued' }))).toBe('not_submitted')
+  })
+  it('two quick Send now share one send; another action meanwhile is refused', async () => {
+    const f = fake([screen('claude-queued'), EMPTY])
+    const one = coreDraft(f.deps, { pane_id: pane.id, action: 'send-queued' })
+    const two = coreDraft(f.deps, { pane_id: pane.id, action: 'send-queued' })
+    expect(await code(coreDraft(f.deps, { pane_id: pane.id, action: 'clear', text: 'x' }))).toBe('busy')
+    expect(two).toBe(one)
+    await one
+    expect(f.keys).toEqual([['ctrl+enter']])
   })
   it('bad action or pane', async () => {
     const f = fake([TYPED])

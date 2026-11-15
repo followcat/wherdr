@@ -14,7 +14,8 @@ All notable changes to this project are documented here. The format follows
 - **Saved proxies for new sessions.** Settings › Agents › Proxies keeps named `http(s)`/`socks5` proxies on the server (passwords never leave it: the list shows `user:•••@host:port` and an edit that leaves the mask keeps the stored one). The New sheet offers them on the chosen machine — each entry may name its machines — preselects the machine's last choice, and the launch gets it as `*_PROXY` environment, never in the command line.
 - **Conversations open on their last read.** After a reload, an update or a network cut, the conversation kept on the device shows at once (the home state no longer waits for the server's first answer), then the server's answer merges in without moving what is on screen; replies that arrived meanwhile come in at the bottom like live ones. The startup background is the theme last shown on the device, so a reload no longer flashes another colour.
 - **Devin conversations on herdr-core.** Read saved ATIF transcripts from the running process, locally or on a core machine, with tools, inline images, search and previews. Updates arrive when Devin saves a turn; only history retained after compaction is available.
-## [3.0.0]
+
+## [3.0.0] — 2026-11-14
 
 wherdr 3 runs on herdr-core (`hc`) instead of Herdr and adds built-in project management: you talk to a project's coordinator, agents carry its tasks through your workflow on a board, and Alfred helps you set it up. It installs from source beside wherdr v2, imports v2's machines and settings, and leaves v2 untouched. Release notes: [docs/release-notes-3.0.0.md](docs/release-notes-3.0.0.md).
 
@@ -22,16 +23,23 @@ wherdr 3 runs on herdr-core (`hc`) instead of Herdr and adds built-in project ma
 
 - **Projects, board and tasks.** Each project's tasks go through the steps of its workflow on a board, done by agents ([Project management](docs/project-management.md)).
 - **Workflows from examples or templates.** Start from a built-in example or a saved template; the project keeps its own copy.
+- **New project in one sheet.** Pick a machine and a repository; the coordinator starts at once and proposes a workflow, which you accept or refuse. The Workflow tab shows each task type as a diagram.
 - **Guards.** Protected branches, and whether a merge waits for you or is done by wherdr.
 - **A coordinator per project.** You talk to it about the project; it adds and follows tasks and keeps its own memory across restarts and agent changes.
 - **Autopilot and pace.** The coordinator keeps the board busy within its limits and hours; Pace decides when automatic work may start against your quotas.
+- **Coordinators on other projects.** A project's coordinator can be allowed to read other projects, or to add, start, stop and edit their tasks; guards, merges, approvals and settings stay with each project.
+- **Tasks to review.** A home card counts what waits for you; open it to approve, or reject with a note and marked screenshots, one task at a time, and answer agents' questions with buttons.
+- **Accept at any time.** *Accept* shows as soon as the review passed, whatever the PR's state; the engine merges it in queue order, bringing the base in and fixing conflicts and red CI first.
+- **Notes.** Alfred and the coordinators keep a short read-only whiteboard for you, with reminders, checklists, task badges and links to rendered Markdown plans.
 - **Merge queue.** Ready PRs merge one after the other.
 - **Routine blocks handled by wherdr.** Conflicts and branches behind their base, red CI from an infrastructure error, refused pushes and stalled agents, before the coordinator is woken.
 - **Crash recovery.** Work cut by a restart or a crash resumes by itself.
+- **A sturdier engine.** Step actions run apart from the engine's pass with time limits, a sentinel reports tasks left without an owner, and step timeouts pause while a machine is offline.
 - **Task sheet.** Time per step, waits for you, review rounds and CI fixes, with the task's description, plan and log.
 - **Tasks that touch the same files.** A task whose declared files overlap a started task's waits for it, unless you start it anyway.
 - **Alfred.** wherdr's assistant guides the setup and sets up your v2 projects with you; it changes settings only after your yes.
 - **Machines.** Placement by memory, cores and load; keep awake; available hours; pause a machine for one project ([Machines](docs/machines.md)).
+- **Quotas.** Claude and Codex quotas per account; one Codex account used on several machines shows as one row.
 - **Project tabs.** A project's coordinator and tasks show on the home tabs of its machines.
 - **Agents show instead of tell.** Choice buttons and live task cards; Alfred and coordinators also highlight a setting and show status cards; Alfred proposes setting changes as cards.
 - **On-device dictation and neural read-aloud**, both running on the phone ([Read aloud](docs/read-aloud.md)).
@@ -43,13 +51,16 @@ wherdr 3 runs on herdr-core (`hc`) instead of Herdr and adds built-in project ma
 - **Machines with an SSH port.** Add machine takes `user@host:port` when herdr-core accepts it.
 - **Agents installed under nvm are found** and offered.
 - **Clearer recovery.** A conversation stays on screen while a restarted server answers, and a silent terminal offers Retry.
+- **Phone sheets.** The task sheet keeps its action bar at the bottom and the typed text above the keyboard; sheets no longer hide their last lines.
+- **Updates.** A home banner offers *What's new* and *Update with Alfred*, which follows the [update guide for agents](docs/update-with-an-agent.md); a release may carry *Upgrade notes*.
 
 ### Changed
 
 - herdr-core (`hc`) replaces Herdr; other machines are hc machines reached over SSH.
 - wherdr installs from source and runs as a user service.
 - Beside v2, it has its own port, data folder, service and address.
-- Update with `git pull` and a rebuild, or let a build machine of your tailnet deploy each new build.
+- v3 is a GitHub release only: no npm or Homebrew package.
+- Update with the banner's *Update with Alfred*, or `git pull` and a rebuild, or let a build machine of your tailnet deploy each new build.
 
 ### Removed (v2 only)
 
@@ -63,6 +74,8 @@ wherdr 3 runs on herdr-core (`hc`) instead of Herdr and adds built-in project ma
 ### Moving from v2
 
 Install v3 beside v2 and import its machines and settings: [Migrate from v2](docs/migrate-from-v2.md). The install script needs Linux with `systemd --user` (macOS by hand), the build about 1.5 GB of memory, and herdr-core installed first.
+
+Workspaces (one coordinator for several repositories) are not part of 3.0: they come in 3.1.
 
 ## 2.x (wherdr on Herdr)
 

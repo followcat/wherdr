@@ -18,6 +18,8 @@ export const SYNCED_SETTINGS = [
   'compactListV2', 'homeGrouping', 'individualAgentList', 'collapsedMachines', 'collapsedRepos',
   'showShells', 'showCounters', 'showQuotas', 'quotaDisplay',
   'autoReorderReady', 'readySort', 'hiddenAgents', 'agentOrder',
+  // Coordinators section: their order and Hidden group (shared/pm/coordinatorOrder.ts)
+  'coordinatorOrder', 'coordinatorsHidden',
   // Conversation
   'typewriterSpeed', 'encryptedText', 'replyStyle', 'defaultViewMode',
   // Board

@@ -237,7 +237,7 @@ async function remove() {
 
           <span class="field-label">{{ tl('Delete the task\'s branch after its merge') }}</span>
           <span class="pm-field">
-            <USwitch v-model="form.deleteBranch" color="success" size="lg" :aria-label="tl('Delete the task\'s branch after its merge')" data-testid="pm-delete-branch" />
+            <USwitch v-model="form.deleteBranch" size="lg" :aria-label="tl('Delete the task\'s branch after its merge')" data-testid="pm-delete-branch" />
             <small class="muted">{{ tl('Once its PR is merged, wherdr deletes the task\'s remote branch, unless a commit came after the merge, another open PR uses it, or it is protected or a base. Off: branches stay.') }}</small>
           </span>
 
@@ -281,7 +281,7 @@ async function remove() {
               </span>
               <label class="toggle-row pm-wide">
                 <span><b>{{ tl('Share no folder') }}</b><small>{{ tl('The setup command always runs') }}</small></span>
-                <USwitch v-model="setup.noShare" color="success" size="xl" data-testid="pm-setup-no-share" />
+                <USwitch v-model="setup.noShare" size="xl" data-testid="pm-setup-no-share" />
               </label>
               <span class="pm-col pm-agent">
                 <label class="field-label" for="pmCommand">{{ tl('Setup command') }}</label>

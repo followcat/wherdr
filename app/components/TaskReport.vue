@@ -30,7 +30,7 @@ const send = () => emit('send', { text: text.value.trim(), shots: shots.value.fi
     </template>
     <label class="toggle-row">
       <span><b>{{ tl('Block the merge until fixed') }}</b><small>{{ tl('Merge stays refused until the coordinator acts or you withdraw this') }}</small></span>
-      <USwitch v-model="block" color="success" size="xl" data-testid="task-report-block" />
+      <USwitch v-model="block" size="xl" data-testid="task-report-block" />
     </label>
     <div class="task-sheet-actions">
       <UButton type="submit" color="primary" size="xl" icon="i-lucide-send" :loading="busy" :disabled="!text.trim()" data-testid="task-report-send">{{ tl('Send to the coordinator') }}</UButton>

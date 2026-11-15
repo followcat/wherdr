@@ -5,7 +5,7 @@
 // holds a step, how it ends, the proofs it needs and its deadline.
 import { WATCH, actionField, type Evidence, type Holder, type Step, type StepAction, type Template, type TaskInput } from './workflow'
 import { mayMerge } from './guards'
-import { taskGuards } from './actions'
+import { taskGuards, type Unapproved } from './actions'
 import { shotsMissing, shotsText, shotMode, type Shot } from './shots'
 import { advise, blocking, weight, reviewText, sendBackText, type Advice, type Choice, type Finding, type Round } from './verdict'
 
@@ -59,10 +59,16 @@ export interface StepState {
   approved?: Approval // the user accepted: it stays, the merge queue merges it once the PR is clean
   catchUp?: CatchUp // the PR conflicts with or is behind its base: being updated, one at a time
   caughtUp?: CaughtUp // updated with its base: not the user's turn until GitHub reads the PR clean (caughtUpSettled)
+  lookAgain?: LookAgain // why an approval was dropped: shown until the user approves again
 }
 
 // The user's Accept, kept: who, when, at which reviewed commit.
 export interface Approval { by: 'user', at: number, commit?: string }
+// Why the user is asked to look again: the engine's words (files, commits), the worker's reason when it gave one.
+export interface LookAgain { why: string, at: number, since?: string, head?: string, files?: string[], reason?: string }
+// The engine's words for an interface change since the approval.
+export const lookAgainWhy = (u: Unapproved) =>
+  `the interface changed since your approval (${u.since.slice(0, 7)}..${u.head.slice(0, 7)})${u.files.length ? ` in ${u.files.join(', ')}` : ''}`
 // from: the task's commit when the catch-up started; base: the branch merged in.
 export interface CatchUp { base: string, from: string, at: number }
 // head: the commit pushed by a clean update with `base`, at `at`.
@@ -94,7 +100,7 @@ export type StepEvent =
   // catchUp: the merge was refused because the PR conflicts with or is behind its base.
   // unapproved: the task's interface files changed since the user approved: they look again.
   // later: a watched pipeline still runs. detail: the tail of a failed one's output.
-  | { kind: 'action-result', ok: boolean, later?: boolean, detail?: string, error?: string, evidence?: Partial<Record<Evidence, string>>, toAgent?: boolean, review?: Rereview, catchUp?: { base: string, head: string }, unapproved?: true }
+  | { kind: 'action-result', ok: boolean, later?: boolean, detail?: string, error?: string, evidence?: Partial<Record<Evidence, string>>, toAgent?: boolean, review?: Rereview, catchUp?: { base: string, head: string }, unapproved?: Unapproved }
   // A merge step waiting for the user: its PR is updated with its base (catch-up), then
   // caught up (head: the pushed commit; review: what the agent changed, else a clean merge).
   | { kind: 'catch-up', base: string, head: string }
@@ -373,7 +379,7 @@ export function onEvent(plan: PlannedStep[], state: StepState, ev: StepEvent, no
         // Work handed to its worker meanwhile no longer brings the user's turn back when it is in.
         const { was: _, ...agent } = state.agent ?? {} as AgentWork
         const handed = state.agent ? { agent: state.agent.was?.reason === 'user' ? agent : state.agent } : {}
-        return { state: { ...state, ...handed, yourTurn: undefined, approved: { by: 'user', at: now, ...(commit ? { commit } : {}) } }, effects }
+        return { state: { ...state, ...handed, yourTurn: undefined, lookAgain: undefined, approved: { by: 'user', at: now, ...(commit ? { commit } : {}) } }, effects }
       }
       // Updating with its base already: it merges once that is done.
       if (state.catchUp) return { state, effects }
@@ -401,8 +407,10 @@ export function onEvent(plan: PlannedStep[], state: StepState, ev: StepEvent, no
       if (ev.ok) return { state: enter(plan, { ...state, proofs }, state.at + 1, now, effects), effects }
       // The approval covered the screens the user saw: the interface changed since, so they look again.
       if (ev.unapproved && waitsToMerge(step)) {
-        effects.push({ kind: 'log', text: `${step.id}: approval dropped, the interface changed since: the user looks again` })
-        return { state: { ...state, proofs, acting: undefined, approved: undefined, yourTurn: { reason: 'user', badge: 'Look again, then merge: the interface changed' } }, effects }
+        const why = lookAgainWhy(ev.unapproved)
+        effects.push({ kind: 'log', text: `${step.id}: approval dropped, ${why}: the user looks again` })
+        const lookAgain = { why, at: now, since: ev.unapproved.since, head: ev.unapproved.head, files: ev.unapproved.files }
+        return { state: { ...state, proofs, acting: undefined, approved: undefined, lookAgain, yourTurn: { reason: 'user', badge: 'Look again, then merge: the interface changed' } }, effects }
       }
       if (ev.catchUp && waitsToMerge(step)) {
         effects.push({ kind: 'log', text: `${step.id}: ${ev.error ?? 'refused'}: updating it with ${ev.catchUp.base}${state.approved ? ', then it merges by itself' : ''}` })

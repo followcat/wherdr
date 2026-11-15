@@ -5,11 +5,12 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanProjectInput } from '../shared/pm/project'
 import { detectV2, keptDirs, v3AppDir, mapMachines, mapSettings, parseArgs as importArgs, parseEnvFile, parseUnit, remapMachineSettings, runImport, sshProblem, v3MachineKey } from '../scripts/v2-import.mjs'
 import { HANDOVER_PROMPT, goalLine, mapCandidates, readBoard } from '../server/utils/v2Board'
-import { EXIT, buildCommand, buildTuning, deployUnits, hcTarget, hcUnit, main, parseArgs, pickHttpsPort, unitProtections, updateScript, v3Unit } from '../scripts/install-v3-beside-v2.mjs'
+import { EXIT, buildCommand, buildTuning, deployUnits, hcTarget, hcUnit, main, parseArgs, pickHttpsPort, unitProtections, updateScript, v2Board, v3Unit } from '../scripts/install-v3-beside-v2.mjs'
 
 const FIX = path.resolve(__dirname, 'fixtures/v2-install')
 const machinesJson = fs.readFileSync(path.join(FIX, 'herdr-machines.json'), 'utf8')
@@ -70,6 +71,20 @@ describe('v2 detection', () => {
     expect(v).toMatchObject({ found: true, active: true, port: '7683', dataDir: '/home/user/wherdr/data', session: 'main' })
     expect(v.machines.map((m: { target: string }) => m.target)).toEqual(['user@laptop', 'vps']) // the disabled one is left out
     expect(v.tailscale.v2Https).toEqual(['8103'])
+  })
+
+  it('counts leftover data with no unit as v2 data only, not as a v2 install', () => {
+    const home = tmp()
+    fs.mkdirSync(path.join(home, 'wherdr', 'data'), { recursive: true })
+    expect(detectV2({ home, env: {}, run: fakeRun().run, platform: 'linux' })).toMatchObject({ found: false, dataOnly: true })
+    expect(detectV2({ home, env: {}, run: fakeRun().run, platform: 'linux', v2Dir: path.join(home, 'wherdr') })).toMatchObject({ found: true, dataOnly: false })
+  })
+
+  it('expands %h in v2\'s unit, as systemd does, for the herdr-projects board', () => {
+    const home = tmp()
+    const unit = path.join(home, 'wherdr.service')
+    fs.writeFileSync(unit, '[Service]\nEnvironment="HERDR_PROJECTS_HOME=%h/board" HERDR_PROJECTS_DATA_DIR=%h/b%%d\n')
+    expect(detectV2({ home: '/home/user', env: {}, unit, run: fakeRun().run }).herdrProjects).toEqual({ home: '/home/user/board', dataDir: '/home/user/b%d' })
   })
 
   it('says when herdr is missing and nothing is found', () => {
@@ -290,7 +305,7 @@ describe('installer', () => {
     expect(buildTuning(574 * 1048576)).toEqual({ heapMb: 574, nodeOptions: '--max-old-space-size=1536', prefix: 'nice -n 19 ionice -c3' })
     expect(buildTuning(574 * 1048576, false)?.prefix).toBe('nice -n 19')
     expect(buildTuning(2048 * 1048576)).toBeNull()
-    expect(buildCommand('/d/src', buildTuning(574 * 1048576))).toContain('export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=1536"; { nice -n 19 ionice -c3 npm ci')
+    expect(buildCommand('/d/src', buildTuning(574 * 1048576))).toContain('export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=1536"; rm -rf .output.next && { nice -n 19 ionice -c3 npm ci')
     expect(buildCommand('/d/src', null)).not.toContain('NODE_OPTIONS')
     const up = updateScript({ branch: 'v3', name: 'wherdr-v3', port: '7684' })
     expect(up).toContain(`-lt ${1536 * 1048576} ]`)
@@ -298,6 +313,38 @@ describe('installer', () => {
     expect(up).toContain('$run npm run build')
     expect(hcTarget('linux', 'arm64')).toBe('linux-aarch64')
     expect(hcTarget('linux', 'x64')).toBe('linux-x86_64')
+  })
+
+  it.runIf(process.platform === 'linux')('update.sh builds aside: a failed build keeps .output, a good one swaps it in and keeps .output.prev', () => {
+    const dir = tmp(), bin = path.join(dir, 'bin'), src = path.join(dir, 'src'), log = path.join(dir, 'calls')
+    fs.mkdirSync(bin); fs.mkdirSync(path.join(src, '.output/server'), { recursive: true })
+    fs.writeFileSync(path.join(src, '.output/server/index.mjs'), 'old')
+    const fake = (name: string, body: string) => fs.writeFileSync(path.join(bin, name), `#!/bin/sh\necho "${name} $*" >> ${JSON.stringify(log)}\n${body}\n`, { mode: 0o755 })
+    fake('git', '[ "$1" = rev-parse ] && echo abc1234; exit 0'); fake('systemctl', 'exit 0'); fake('curl', 'exit 0')
+    // The build writes where Nitro is told to, and fails half way when asked to.
+    fake('npm', '[ "$1" = ci ] && exit 0; mkdir -p "$NITRO_OUTPUT_DIR/server"; [ -n "$FAIL" ] && exit 1; echo new > "$NITRO_OUTPUT_DIR/server/index.mjs"')
+    fs.writeFileSync(path.join(dir, 'update.sh'), updateScript({ branch: 'v3', name: 'wherdr-v3', port: '7684' }))
+    const update = (args: string[], env = {}) => spawnSync('bash', [path.join(dir, 'update.sh'), ...args], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ...env }, encoding: 'utf8' })
+    const read = (p: string) => fs.readFileSync(path.join(src, p, 'server/index.mjs'), 'utf8').trim()
+
+    const bad = update(['3.0.1'], { FAIL: '1' })
+    expect(bad.status).toBe(5)
+    expect(bad.stdout).toContain('ERROR build-failed: the running build (.output) is unchanged')
+    expect(read('.output')).toBe('old')
+    expect(fs.readdirSync(src).sort()).toEqual(['.output'])
+    expect(fs.readFileSync(log, 'utf8')).toContain('git checkout -q -f --detach v3.0.1')
+    expect(fs.readFileSync(log, 'utf8')).not.toContain('systemctl')
+
+    const good = update([])
+    expect(good.status).toBe(0)
+    expect([read('.output'), read('.output.prev')]).toEqual(['new', 'old'])
+    expect(fs.existsSync(path.join(src, '.output.next'))).toBe(false)
+    expect(fs.readFileSync(log, 'utf8')).toContain('git checkout -q -f --detach origin/v3')
+    expect(update(['1.0; rm']).status).toBe(2)
+    // The installer's build (first install and re-run) swaps the same way.
+    fs.writeFileSync(path.join(src, '.output/server/index.mjs'), 'newer')
+    execFileSync('sh', ['-c', buildCommand(src, null)], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } })
+    expect([read('.output'), read('.output.prev')]).toEqual(['new', 'newer'])
   })
 
   const io = (home: string, over: Record<string, Res> = {}) => fakeRun({ ...over, 'sh -c command -v': ok('/usr/bin/x'), 'systemctl --user show-environment': ok(), 'systemctl --user is-active': ok('inactive'), '/usr/bin/x --version': ok('hc 0.1.16') })
@@ -383,5 +430,53 @@ describe('installer', () => {
     expect(plan).toContain('APP_URL https://host-a.tail.ts.net:8106/')
     expect(plan).toContain('OOMScoreAdjust=-900 MemoryLow=256M CPUWeight=200 from defaults')
     expect(plan).toContain('tailscale serve --bg --https=8106 http://127.0.0.1:7699 (added beside the existing entries, which use 8103, 8104, 8105)')
+  })
+  it('carries v2\'s herdr-projects board over to v3\'s service, --herdr-projects first', () => {
+    const hp = path.join(FIX, 'herdr-projects')
+    const b = v2Board({ home: '/home/user', v2: { home: hp, dataDir: null } })
+    expect(b).toMatchObject({ dir: hp, env: { HERDR_PROJECTS_HOME: hp }, projects: ['app', 'site', 'gone', 'my docs'], from: "v2's service" })
+    expect(v2Board({ home: '/home/user', given: '/srv/hp', v2: { home: hp } })).toMatchObject({ env: { HERDR_PROJECTS_HOME: '/srv/hp' }, projects: null })
+    expect(v2Board({ home: '/home/user', v2: { home: '/x', dataDir: path.join(hp, 'data') } }).projects).toHaveLength(4)
+    expect(v2Board({ home: '/home/user', kept: {}, v2: {} }).env).toEqual({})
+    expect(readBoard('/nowhere', path.join(hp, 'data'))?.repos).toHaveProperty('app')
+    const unit = v3Unit({ node: '/n', dir: '/d', socket: '/s', port: '7684', hcService: null, board: b.env })
+    expect(unit).toContain(`Environment="HERDR_PROJECTS_HOME=${hp}"`)
+  })
+
+  it.runIf(process.platform === 'linux')('plans the board, its projects by name and the settings imported', async () => {
+    const home = tmp()
+    const unit = path.join(home, 'wherdr.service')
+    fs.writeFileSync(unit, `${fs.readFileSync(v2Opts.unit, 'utf8')}Environment="HERDR_PROJECTS_HOME=${path.join(FIX, 'herdr-projects')}"\n`)
+    const v2data = path.join(home, 'v2data')
+    fs.mkdirSync(v2data)
+    fs.writeFileSync(path.join(v2data, 'settings.json'), JSON.stringify({ settings: { theme: 'dark' } }))
+    fs.writeFileSync(unit, fs.readFileSync(unit, 'utf8').replace('/home/user/wherdr/data', v2data))
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const code = await main(['--json', '--port', '7699', '--no-tailscale', '--dir', path.join(home, 'v3'), '--v2-unit', unit, '--v2-dir', v2Opts.v2Dir], { run: io(home).run, home, env: { XDG_RUNTIME_DIR: home } })
+    const out = JSON.parse(log.mock.calls.at(-1)![0])
+    vi.spyOn(console, 'error').mockRestore()
+    log.mockRestore()
+    expect(code).toBe(EXIT.ok)
+    const plan = out.plan.join('\n')
+    expect(plan).toContain(`herdr-projects board: ${path.join(FIX, 'herdr-projects')}; HERDR_PROJECTS_HOME from v2's service, set in wherdr-v3.service`)
+    expect(plan).toContain('projects: 4 on the v2 board (app, site, gone, my docs): Alfred offers them at its first start')
+    expect(plan).toMatch(/settings: theme\b/)
+  })
+
+  it.runIf(process.platform === 'linux')('asks about v2 data with no service and no running v2, and refuses --yes', async () => {
+    const home = tmp()
+    fs.mkdirSync(path.join(home, 'wherdr', 'data'), { recursive: true })
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const args = ['--json', '--port', '7699', '--no-tailscale', '--dir', path.join(home, 'v3')]
+    const dry = await main(args, { run: io(home).run, home, env: { XDG_RUNTIME_DIR: home }, health: async () => null })
+    const out = JSON.parse(log.mock.calls.at(-1)![0])
+    expect(dry).toBe(EXIT.ok)
+    expect(out.v2).toMatchObject({ found: false, dataOnly: true })
+    expect(out.next[0]).toMatch(/^v2 data found in .*, but no v2 service and no v2 answering on port 7683: is it your v2\? .*--v2-dir/)
+    expect(await main([...args, '--yes'], { run: io(home).run, home, env: { XDG_RUNTIME_DIR: home }, health: async () => null })).toBe(EXIT.conflict)
+    await main(args, { run: io(home).run, home, env: { XDG_RUNTIME_DIR: home }, health: async () => ({ name: 'wherdr' }) })
+    expect(JSON.parse(log.mock.calls.at(-1)![0]).v2).toMatchObject({ found: true, dataOnly: false })
+    vi.spyOn(console, 'error').mockRestore()
+    log.mockRestore()
   })
 })

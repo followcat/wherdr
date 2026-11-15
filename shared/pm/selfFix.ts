@@ -1,10 +1,10 @@
-// Blocks the engine fixes on its own, without waking the coordinator: a PR in
+// Blocks the engine fixes on its own: a PR in
 // conflict with or behind its base (an update, the conflict handed to the
 // worker), a push refused because the branch is behind its remote (synced,
 // then pushed again), an action interrupted by a restart (run again), a
 // stalled agent (nudged, then restarted). Each try is counted per task, step
 // and block; after SELF_FIX_TRIES the coordinator is woken once, with what
-// was tried. Pure: server/utils/pmMechanic.ts and pmStall.ts make the tries.
+// was tried (with Task stuck on, it was also woken as the block began). Pure: server/utils/pmMechanic.ts and pmStall.ts make the tries.
 import type { Task } from './run'
 
 export type Block = 'conflict' | 'push' | 'interrupted' | 'stall'
@@ -47,9 +47,6 @@ export const noteFix = (t: Pick<Task, 'step' | 'selfFix'>, b: Block, now: number
   return { step: stepKey(t), block: b, tried: [...(f?.tried ?? []), ...(what ? [what] : [])], at: what || !f ? now : f.at }
 }
 export const mayTry = (t: Pick<Task, 'step' | 'selfFix'>, b: Block) => (fixOf(t, b)?.tried.length ?? 0) < SELF_FIX_TRIES
-
-// The engine still owns the task's block: no 'stuck' wake for it (autopilot.ts).
-export const engineOwns = (t: Task) => { const b = blockOf(t); return !!b && !fixOf(t, b)?.woke }
 
 // The coordinator's wake once the engine gives up, with what it tried; undefined: not now.
 // Called only when the engine has no move for the task this tick.

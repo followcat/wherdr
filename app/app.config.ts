@@ -12,6 +12,10 @@ export default defineAppConfig({
     selectMenu: {
       slots: { base: 'min-h-11', content: 'min-w-fit' },
     },
+    // One switch look everywhere: green when on, in every theme (a switch without a color would take primary).
+    switch: {
+      defaultVariants: { color: 'success' },
+    },
     // Same square surface and same colors as the cards and windows.
     toast: {
       slots: {

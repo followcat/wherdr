@@ -129,7 +129,13 @@ async function act(deps: ActDeps, id: unknown, cancel: boolean, choice?: CardCho
   const c = card.change
   if (c) {
     if (!deps.applyChange) throw new HerdrError('unavailable', 'Project changes are not applied here')
-    const made = await deps.applyChange(c.argv, c.lines, c.picks ? choice ?? defaultChoice(c) : undefined)
+    const picked = c.picks ? choice ?? defaultChoice(c) : undefined
+    // Proposed while project management was off: its checkbox switches it on first.
+    if (c.pm) {
+      if (picked?.pm === false) throw new HerdrError('refused', 'Projects are off: check Turn on project management to apply')
+      await deps.store.setEnabled(true)
+    }
+    const made = await deps.applyChange(c.argv, c.lines, picked)
     return save(deps.store, made ? { ...card, state: 'done', outcome: { text: 'Applied by you', at: Date.now(), ...(made.length ? { lines: made } : {}) } } : { ...card, state: 'stale' })
   }
   if (card.kind === 'open') return card

@@ -455,23 +455,23 @@ onMounted(() => {
             <h3>{{ t('Home screen') }}</h3>
             <label class="settings-toggle">
               <span><b>{{ t('Compact list') }}</b><small>{{ t('Cards: one line in Compact, two in Normal with current activity. Follows you on every device.') }}</small></span>
-              <USwitch v-model="compactOn" color="success" size="xl" />
+              <USwitch v-model="compactOn" size="xl" />
             </label>
             <label class="settings-toggle">
               <span><b>{{ t('Reorder automatically') }}</b><small>{{ t('In Ready, show unread agents before read ones. Follows you on every device.') }}</small></span>
-              <USwitch v-model="autoReorderOn" color="success" size="xl" />
+              <USwitch v-model="autoReorderOn" size="xl" />
             </label>
             <label class="settings-toggle">
               <span><b>{{ t('Show terminals') }}</b><small>{{ t('Show terminal spaces in the list, filed under Ready.') }}</small></span>
-              <USwitch v-model="shellsOn" color="success" size="xl" />
+              <USwitch v-model="shellsOn" size="xl" />
             </label>
             <label class="settings-toggle">
               <span><b>{{ t('Show counters') }}</b><small>{{ t('Show agent counters on the home screen.') }}</small></span>
-              <USwitch v-model="countersOn" color="success" size="xl" />
+              <USwitch v-model="countersOn" size="xl" />
             </label>
             <label class="settings-toggle">
               <span><b>{{ t('Show quotas') }}</b><small>{{ t('Show Claude and Codex quotas on the home screen.') }}</small></span>
-              <USwitch v-model="quotasOn" color="success" size="xl" />
+              <USwitch v-model="quotasOn" size="xl" />
             </label>
             <MachineBarSettings />
           </div>
@@ -490,7 +490,7 @@ onMounted(() => {
               <URadioGroup v-model="backdropMode" :items="backdropItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
               <label v-if="backdropMode === 'wherdr'" class="settings-toggle">
                 <span><b>{{ t('Animated packets') }}</b><small>{{ t('Small glowing squares running along the wherdr grid.') }}</small></span>
-                <USwitch v-model="packetsOn" color="success" size="xl" />
+                <USwitch v-model="packetsOn" size="xl" />
               </label>
               <p class="muted settings-hint">{{ t('In the margins of the conversation. Still when the system asks for reduced motion. Follows you on every device.') }}</p>
             </div>
@@ -525,7 +525,7 @@ onMounted(() => {
               <p class="muted settings-hint">{{ t(reducedMotion ? 'Off: the system asks for reduced motion.' : 'Only new replies are animated; history appears at once. Tap a reply while it types to show it in full. Follows you on every device.') }}</p>
               <label class="settings-toggle encrypted-toggle" :class="{ 'is-disabled': !typewriterActive }">
                 <span><b>{{ t('Encrypted text') }}</b><small>{{ t('Writing advances in glyphs, then the text decrypts behind it.') }}</small></span>
-                <USwitch v-model="encryptedOn" :disabled="!typewriterActive" color="success" size="xl" />
+                <USwitch v-model="encryptedOn" :disabled="!typewriterActive" size="xl" />
               </label>
               <TypingPreview v-if="activeSection === 'conversation' && convTab === 'display'" />
             </div>
@@ -565,7 +565,7 @@ onMounted(() => {
             <h3>{{ t('Home screen') }}</h3>
             <label class="settings-toggle">
               <span><b>{{ t('Show terminals') }}</b><small>{{ t('Show terminal spaces in the list, filed under Ready.') }}</small></span>
-              <USwitch v-model="shellsOn" color="success" size="xl" />
+              <USwitch v-model="shellsOn" size="xl" />
             </label>
           </div>
           <div data-ui-target="terminal.text-size" class="settings-group">
@@ -583,13 +583,13 @@ onMounted(() => {
             <h3>{{ t('Clipboard') }}</h3>
             <label class="settings-toggle">
               <span><b>{{ t('Agent copies') }}</b><small>{{ t('Text an agent copies in the terminal (OSC 52) goes to this device’s clipboard. Never read from it. Saved on this device.') }}</small></span>
-              <USwitch v-model="agentClipboardOn" color="success" size="xl" />
+              <USwitch v-model="agentClipboardOn" size="xl" />
             </label>
           </div>
           <div class="settings-group">
             <label class="settings-toggle">
               <span><b>{{ t('Smooth touch scrolling (beta)') }}</b><small>{{ t('Experimental finger tracking and inertia. Saved on this device.') }}</small></span>
-              <USwitch v-model="smoothScrollingOn" color="success" size="xl" />
+              <USwitch v-model="smoothScrollingOn" size="xl" />
             </label>
           </div>
           <div data-ui-target="terminal.rendering" class="settings-group settings-renderer">
@@ -619,7 +619,7 @@ onMounted(() => {
           <div class="settings-group" data-testid="notification-quiet" data-ui-target="notifications.do-not-disturb">
             <label class="settings-toggle quiet-toggle">
               <span><b><UIcon :name="quietOn ? 'i-lucide-bell-off' : 'i-lucide-bell'" />{{ tl('Do not disturb', 'Silence') }}</b><small>{{ tl('Turns off every notification, no exceptions: the rules below are ignored.', 'Coupe toutes les notifications, sans exception : les réglages ci-dessous sont ignorés.') }}</small></span>
-              <USwitch v-model="quietOn" color="success" size="xl" />
+              <USwitch v-model="quietOn" size="xl" />
             </label>
             <p class="notify-caption">{{ tl('Silence on', 'Couper pour') }}</p>
             <URadioGroup :model-value="quietScope" :items="quietScopeItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" @update:model-value="v => pickQuietScope(v as QuietScope)" />
@@ -667,7 +667,7 @@ onMounted(() => {
             <p class="muted settings-hint">{{ t('Previews and downloads of a path an agent writes in a conversation. wherdr runs as your user: files it cannot read stay closed, and a symlink counts where it leads.') }}</p>
             <label class="settings-toggle">
               <span><b>{{ t('Also show protected files') }}</b><small>{{ t('SSH keys, wherdr’s own data and settings, ~/.config/herdr. Off by default.') }}</small></span>
-              <USwitch v-model="chatFilesProtected" color="success" size="xl" />
+              <USwitch v-model="chatFilesProtected" size="xl" />
             </label>
           </div>
           <div data-ui-target="security.passkey" class="settings-group">

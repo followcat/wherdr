@@ -19,4 +19,5 @@
 ## Optional
 
 - [Source code](https://github.com/afloury/wherdr)
+- [Discord](https://discord.gg/ky36WYmtVE): community chat
 - [Herdr](https://herdr.dev): the terminal workspace for coding agents wherdr builds on

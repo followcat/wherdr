@@ -169,9 +169,14 @@ function lastLimits(lines: string[]): CodexLimits | null {
   return null
 }
 
+// A missing folder is empty; any other failure (refused session, timeout)
+// throws: a machine that could not be read must never look "without Codex".
 async function ls(fs: MachineFs, d: string) {
   try { return await fs.readdir(d) }
-  catch { return [] }
+  catch (e) {
+    if ((e as { code?: string } | null)?.code === 'ENOENT') return []
+    throw e
+  }
 }
 
 // Claude reading of a machine, with its account fingerprint if known.
@@ -385,6 +390,15 @@ export function codexMemo(machine: string): CodexMemo {
   return m
 }
 
+// A file read that failed because the session itself did (machine.exec
+// timeout or refusal, `unreachable`) fails the whole machine read, which then
+// keeps its last good reading (lastGoodRead); any other error (a file gone
+// meanwhile, a cut read) only empties that file.
+function failedSession(e: unknown): '' {
+  if ((e as { code?: string } | null)?.code === 'unreachable') throw e
+  return ''
+}
+
 export async function readCodex(fs: MachineFs, home: string): Promise<CodexAccountReading | null> {
   return (await readCodexMachine(fs, home)).q
 }
@@ -409,7 +423,7 @@ export async function readCodexMachine(fs: MachineFs, home: string, memo?: Codex
   // End of each file: 64 KiB is usually enough (one token_count per
   // reply), 512 KiB at most if nothing is there.
   const readings = await Promise.all(recent.map(async ({ f, s }): Promise<CodexSessionReading> => {
-    const head = await readHead(fs, f, s!.size).catch(() => '')
+    const head = await readHead(fs, f, s!.size).catch(failedSession)
     const account = codexAccount(head) ?? memo?.files.get(f) ?? null
     if (account) memo?.files.set(f, account)
     const started = codexSessionStart(head)
@@ -423,7 +437,10 @@ export async function readCodexMachine(fs: MachineFs, home: string, memo?: Codex
         const read = hit && (hit.limited ? { five: null, week: null, at: hit.at || s!.mtimeMs, limited: hit.limited } : codexQuota(hit.rl, hit.at || s!.mtimeMs))
         const q = read && hit!.credits ? { ...read, credits: hit!.credits } : read
         if (q) return { q, stamp: Math.max(started, hit!.at || s!.mtimeMs), account }
-      } catch { return empty /* unreadable file: never reuse an older identity */ }
+      } catch (e) {
+        failedSession(e)
+        return empty /* unreadable file: never reuse an older identity */
+      }
       if (len === s!.size) break
     }
     return empty
@@ -555,8 +572,8 @@ async function canInstall(m: QuotaMachine): Promise<boolean> {
 // A legacy Claude read spans separate SSH requests (status, fingerprint, setup).
 // Even after reading a new status file, a later request can fail. Retrying once
 // recovers a refused multiplexed session without hiding the machine's gauge.
-// Never substitute the last successful reading: that cache had no expiry and
-// could mask a newer file indefinitely, independently of the 30-second TTL.
+// Both failing: null, and readQuotas falls back on the last good reading for a
+// bounded time (lastGoodRead), never indefinitely.
 async function readMachineClaude(m: QuotaMachine): Promise<ClaudeMachineReading | null> {
   for (let attempt = 1; attempt <= 2; attempt++) {
     try { return await readClaude(m.fs, m.home) }
@@ -573,17 +590,43 @@ async function readMachineClaude(m: QuotaMachine): Promise<ClaudeMachineReading 
   return null
 }
 
+// A remote read sometimes fails (core `machine.exec` timeout or refusal):
+// dropping that machine's reading for one refresh let another machine's old
+// reading show instead, or split a shared account into per-machine blocks, and
+// the next refresh flipped back (WHR-337). A failed read (null) reuses the
+// machine's last good one for as long as the reads fail, with its own reading
+// time: the app shows `?` on each window once past its length, so an old value
+// never passes for a current one, and the rows and headings stay put. A machine
+// that goes offline is no longer read at all, so its reading leaves with it.
+// Kept readings never go to the pacing log (readQuotas). `poll`: the read's
+// number; a slow older poll finishing late never replaces a newer reading.
+export type LastGood<T> = Map<string, { v: T, poll: number }>
+export function lastGoodRead<T>(memo: LastGood<T>, key: string, read: T | null, poll: number): T | null {
+  const m = memo.get(key)
+  if (read !== null) {
+    if (!m || poll >= m.poll) memo.set(key, { v: read, poll })
+    return read
+  }
+  return m?.v ?? null
+}
+const claudeGood: LastGood<ClaudeMachineReading> = new Map()
+const codexGood: LastGood<{ q: CodexAccountReading | null, seen: boolean }> = new Map()
+
 export async function readQuotas(force = false): Promise<Quotas> {
   if (!force && cache && Date.now() - cache.at < TTL) return cache.q
   const version = ++readVersion
   const all: QuotaMachine[] = await coreMachines()
-  const online = all.filter(m => m.home && (m.local || m.status === 'online'))
+  // An online machine whose home could not be read counts as a failed read.
+  const online = all.filter(m => m.local || m.status === 'online')
   const dismissed = readDismissed()
   const readings = await Promise.all(online.map(async (m) => {
-    const [claude, { q: rolled, seen: codexSeen }] = await Promise.all([
-      readMachineClaude(m),
-      readCodexMachine(m.fs, m.home, codexMemo(m.key)).catch(() => ({ q: null, seen: true })),
+    const [claudeRead, codexRead] = await Promise.all([
+      m.home ? readMachineClaude(m) : null,
+      m.home ? readCodexMachine(m.fs, m.home, codexMemo(m.key)).catch(() => null) : null,
     ])
+    const claude = lastGoodRead(claudeGood, m.key, claudeRead, version)
+    const { q: rolled, seen: codexSeen } = lastGoodRead(codexGood, m.key, codexRead, version) ?? { q: null, seen: true }
+    const kept = { claude: !claudeRead, codex: !codexRead }
     const week = rolled?.week ? { used: rolled.week.used, resetsAt: rolled.week.resetsAt, at: rolled.at, account: rolled.account } : null
     const known = knownWeek ? await knownWeek(m.key, week).catch(() => null) : null
     const codex = rolled && applyCodexKnown(rolled, known, Date.now())
@@ -593,13 +636,13 @@ export async function readQuotas(force = false): Promise<Quotas> {
     const setup: ClaudeSetup | null = state
       ? { key: m.key, state, installable: await canInstall(m), ...(dismissed.has(m.key) ? { dismissed: true } : {}) }
       : null
-    return { key: m.key, label: m.label, claude: claude?.q || null, codex, codexSeen, setup }
+    return { key: m.key, label: m.label, claude: claude?.q || null, codex, codexSeen, setup, kept }
   }))
   const q = mergeQuotas(readings, await readAccountNames())
   // A slow older poll must not replace a newer completed snapshot.
   if (version === readVersion) {
     cache = { at: Date.now(), q }
-    await recordReadings(pacingEntries(q, readings)).catch((e: NodeJS.ErrnoException) => {
+    await recordReadings(pacingEntries(q, readings.map(r => ({ ...r, claude: r.kept.claude ? null : r.claude, codex: r.kept.codex ? null : r.codex })))).catch((e: NodeJS.ErrnoException) => {
       console.warn(new Date().toISOString(), 'Pacing log write failed', { code: typeof e?.code === 'string' ? e.code : 'unknown' })
     })
   }

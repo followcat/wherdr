@@ -139,6 +139,12 @@ describe('screenshot upload', () => {
     expect(step.at).toBe(3)
     expect(step.shots?.work?.map(s => s.file)).toEqual([a.file, b.file])
     expect(step.earlierShots).toEqual({ work: [old] })
+    // An approval dropped: the worker's new shots carry its reason for the banner, even at the reviewed commit (WHR-333).
+    await store.saveTask({ ...(await store.task(task.id))!, step: { ...step, lookAgain: { why: 'the interface changed', at: 5, since: reviewed } } })
+    await uploadShot(store, task.id, 'after', png, 'image/png', key, async () => reviewed, 'Back to review because: the merge with  UI-9 moved the button')
+    const told = (await store.task(task.id))!
+    expect(told.step!.lookAgain).toEqual({ why: 'the interface changed', at: 5, since: reviewed, reason: 'the merge with UI-9 moved the button' })
+    expect(told.log?.at(-1)).toMatchObject({ by: 'worker', text: 'back to review because: the merge with UI-9 moved the button' })
   })
   it('Reject: the user\'s own screenshot is kept off the step, and the worker gets each picked one as a download with its key (WHR-294)', async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-shots-'))

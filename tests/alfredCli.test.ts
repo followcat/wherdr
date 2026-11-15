@@ -7,7 +7,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { dryRun, parseAlfredCommand } from '../shared/pm/alfredCli'
 import { applyProposedChange, runAlfredCommand } from '../server/utils/alfredCli'
-import { ALFRED_TOKEN_FILE, answerProposal, issueAlfredToken } from '../server/utils/pmCoordinator'
+import { ALFRED_TOKEN_FILE, answerProposal, issueAlfredToken, userMessageTo } from '../server/utils/pmCoordinator'
 import { MAIN } from '../shared/pm/coordinator'
 import { createPmStore } from '../server/utils/pmStore'
 import { actOnCard } from '../server/utils/uiActions'
@@ -157,7 +157,7 @@ describe('runAlfredCommand', () => {
     // MYDOCS unchecked: skipped. APP's coordinator fails to start: SITE still goes on.
     const choice = { picks: ['APP', 'SITE'], start: true }
     const done = await actOnCard({ store, applyChange: (argv: string[], lines: string[], c?: typeof choice) => applyProposedChange(deps(), argv, lines, c) } as never, card.id, undefined, false, choice)
-    expect(done).toMatchObject({ state: 'done', outcome: { lines: ['APP: added; coordinator not started: agent missing', 'SITE: added, coordinator started'] } })
+    expect(done).toMatchObject({ state: 'done', outcome: { lines: ['APP: added; coordinator not started: agent missing', 'SITE: added, coordinator started (its first message is typed once it is ready)'] } })
     expect((await store.projects()).map(p => [p.key, p.from])).toEqual([['APP', undefined], ['SITE', undefined]])
     expect(started).toEqual(['SITE'])
     // --only and --start no are the card's defaults; an Apply without a choice keeps them.
@@ -169,6 +169,24 @@ describe('runAlfredCommand', () => {
     expect(started).toHaveLength(1)
     // A project without a template: its coordinator starts all the same.
     expect(await run('coordinator', 'start', 'APP')).toMatchObject({ dryRun: true, change: ['start the coordinator of APP with claude on this machine'] })
+  })
+
+  // WHR-349: with Projects off, the user's message from the composer is Alfred's user turn, and the
+  // import card turns Projects on with its own checkbox.
+  it('with Projects off: a message from the composer is a user turn; the import card\'s checkbox turns Projects on', async () => {
+    herdrProjects = path.resolve(__dirname, 'fixtures/v2-install/herdr-projects')
+    await store.setEnabled(false)
+    await store.saveCoordinator({ ...(await store.coordinator(MAIN))!, terminal: 'host/t1' })
+    await userMessageTo(store, 'host/t1', 'Yes please, set up my v2 projects.')
+    expect((await store.coordinator(MAIN))!.turn).toMatchObject({ kind: 'user', said: 'Yes please, set up my v2 projects.' })
+    await run('v2', 'import', '--propose')
+    const card = (await store.coordinator(MAIN))!.cards![0]!
+    expect(card.change).toMatchObject({ pm: true })
+    const apply = (choice: object) => actOnCard({ store, applyChange: (argv: string[], lines: string[], c?: never) => applyProposedChange(deps(), argv, lines, c) } as never, card.id, undefined, false, { picks: ['SITE'], start: false, ...choice } as never)
+    await expect(apply({ pm: false })).rejects.toThrow('Turn on project management')
+    expect(await store.enabled()).toBe(false)
+    expect(await apply({ pm: true })).toMatchObject({ state: 'done', outcome: { lines: ['SITE: added'] } })
+    expect(await store.enabled()).toBe(true)
   })
 
   it('adds a note to the coordinator\'s memory.md after a yes only', async () => {
@@ -357,7 +375,9 @@ describe('Alfred and a project\'s workflow and coordinator', () => {
     panes = [{ id: 'p1', coreAddress: 't-web', status: 'idle' }]
     await turn('user', 'ask WEB for a workflow')
     expect(await run(['tell', 'WEB', 'propose a workflow'])).toMatchObject({ told: 'WEB' })
-    expect(sent).toEqual([['terminal.send', { terminal: 't-web', text: 'From Alfred: propose a workflow' }]])
+    // Its own "From Alfred:" is not doubled.
+    await run(['tell', 'WEB', 'From Alfred: propose a workflow'])
+    expect(sent).toEqual([['terminal.send', { terminal: 't-web', text: 'From Alfred: propose a workflow' }], ['terminal.send', { terminal: 't-web', text: 'From Alfred: propose a workflow' }]])
     expect((await store.coordinator('WEB'))!.turn).toMatchObject({ kind: 'user', said: 'ask WEB for a workflow' })
     expect((await store.projectLog('WEB')).at(-1)).toMatchObject({ by: 'Alfred', text: 'told the coordinator: propose a workflow' })
     // In Alfred's wake, the coordinator's turn is a wake too.

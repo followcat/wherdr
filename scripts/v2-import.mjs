@@ -43,18 +43,20 @@ export function parseEnvFile(text) {
   return out
 }
 
-const unquote = s => s.replace(/\\(["\\])/g, '$1').replace(/%%/g, '%')
-const words = s => [...String(s).matchAll(/"((?:[^"\\]|\\.)*)"|(\S+)/g)].map(m => (m[1] !== undefined ? unquote(m[1]) : m[2].replace(/%%/g, '%')))
+// systemd specifiers: %% → %, and those of `spec` (a user unit's %h); others kept as written.
+const specifiers = (s, spec) => s.replace(/%(.)/g, (m, c) => (c === '%' ? '%' : spec[c] ?? m))
+const words = (s, spec = {}) => [...String(s).matchAll(/"((?:[^"\\]|\\.)*)"|(\S+)/g)].map(m => specifiers(m[1] !== undefined ? m[1].replace(/\\(["\\])/g, '$1') : m[2], spec))
 
 // A systemd unit: its Environment= variables, ExecStart words, WorkingDirectory.
-export function parseUnit(text) {
+// spec: the specifiers systemd expands for this user ({ h: home }).
+export function parseUnit(text, spec = {}) {
   const env = {}
   let exec = [], workingDirectory = null
   for (const line of String(text || '').split(/\r?\n/)) {
     const m = /^\s*(Environment|ExecStart|WorkingDirectory)\s*=\s*(.*)$/.exec(line)
     if (!m) continue
-    if (m[1] === 'Environment') for (const w of words(m[2])) { const i = w.indexOf('='); if (i > 0) env[w.slice(0, i)] = w.slice(i + 1) }
-    else if (m[1] === 'ExecStart') exec = words(m[2])
+    if (m[1] === 'Environment') for (const w of words(m[2], spec)) { const i = w.indexOf('='); if (i > 0) env[w.slice(0, i)] = w.slice(i + 1) }
+    else if (m[1] === 'ExecStart') exec = words(m[2], spec)
     else workingDirectory = m[2].trim()
   }
   return { env, exec, workingDirectory }
@@ -122,7 +124,7 @@ export function detectV2(o = {}) {
   const run = o.run || defaultRun
   const notes = []
   const unitFile = findV2Unit({ home, env, unit: o.unit, platform: o.platform })
-  const unit = unitFile ? (unitFile.endsWith('.plist') ? parsePlist(readText(unitFile)) : parseUnit(readText(unitFile))) : { env: {}, exec: [] }
+  const unit = unitFile ? (unitFile.endsWith('.plist') ? parsePlist(readText(unitFile)) : parseUnit(readText(unitFile), { h: home })) : { env: {}, exec: [] }
   const dir = path.resolve(expand(o.v2Dir || unit.env.WHERDR_DIR || env.WHERDR_DIR || path.join(home, 'wherdr'), home))
   const envFile = path.join(dir, 'wherdr.env')
   const saved = parseEnvFile(readText(envFile))
@@ -130,7 +132,12 @@ export function detectV2(o = {}) {
   const dataDir = path.resolve(expand(pick('DATA_DIR') || path.join(dir, 'data'), home))
   const port = pick('PORT') || '7683'
   const files = (() => { try { return fs.readdirSync(dataDir).sort() } catch { return [] } })()
-  const found = !!unitFile || fs.existsSync(dataDir)
+  // A unit, or a folder given by hand, is a v2 install; data alone may be a leftover
+  // (dataOnly: the installer then asks whether a v2 server answers on its port).
+  const found = !!unitFile || !!o.v2Dir
+  const dataOnly = !found && fs.existsSync(dataDir)
+  // herdr-projects' board as v2 ran it: v3 must read the same one.
+  const hp = k => (pick(k) ? path.resolve(expand(pick(k), home)) : null)
   let active = null
   if (unitFile && !unitFile.endsWith('.plist')) {
     const r = run('systemctl', ['--user', 'is-active', path.basename(unitFile)])
@@ -146,7 +153,8 @@ export function detectV2(o = {}) {
   const self = [pick('HOST_LABEL'), o.hostname ?? os.hostname(), tsSelf?.HostName, tsSelf?.DNSName, ...String(pick('HERDR_WEB_SELF_HOSTS') || '').split(',')]
     .map(x => String(x || '').trim()).filter(Boolean)
   return {
-    found, unit: unitFile, active, session: pick('HERDR_WEB_SESSION') || null,
+    found, dataOnly, unit: unitFile, active,
+    herdrProjects: { home: hp('HERDR_PROJECTS_HOME'), dataDir: hp('HERDR_PROJECTS_DATA_DIR') }, session: pick('HERDR_WEB_SESSION') || null,
     dir, envFile: fs.existsSync(envFile) ? envFile : null, dataDir, port, files,
     machines, self,
     tailscale: { available: ts.ok, entries, v2Https: entries.filter(e => proxiesTo(e.proxy, port)).map(e => e.https) },
@@ -377,7 +385,7 @@ const V2_ONLY = [
   ['Devices and push notifications', 'not moved (push keys belong to v2\'s address): open v3 on each device, install the app again and turn notifications on'],
   ['Phone address', 'v3 has its own HTTPS address (see the installer\'s summary)'],
   ['Per-device settings', 'kept in each browser, not on the server: set them again in v3 on each device'],
-  ['herdr-projects board settings', 'limits, reviewer, worker, merge and coordinator settings have no v3 equivalent as such: set them in each project\'s template'],
+  ['herdr-projects board settings', 'limits, reviewer, worker, merge and coordinator settings have no v3 equivalent as such: redo them in each project\'s workflow, which its coordinator proposes'],
   ['Herdr sessions, plugins, worktrees, one-tap update', 'v2 only'],
 ]
 
@@ -385,7 +393,7 @@ export function renderReport(r) {
   const L = []
   const row = (...c) => L.push(`| ${c.map(x => String(x ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ')).join(' | ')} |`)
   L.push('# wherdr v2 → v3 migration report', '', `${r.dryRun ? 'Dry run (nothing written), ' : ''}${r.at}. v2 was only read: ${r.v2.dir} (data ${r.v2.dataDir}, port ${r.v2.port}). v3 data: ${r.dataDir}.`, '')
-  L.push('## Projects', '', 'Not imported: Alfred offers to set up your v2 projects with you (machine, template, coordinator, open tasks), reading the herdr-projects board then.', '')
+  L.push('## Projects', '', 'Not imported: Alfred offers to set up your v2 projects with you (machine, coordinator, open tasks), reading the herdr-projects board then.', '')
   L.push('## Machines', '')
   if (!r.machines.added.length && !r.machines.missing.length && !r.machines.have.length && !r.machines.local?.length) L.push('No SSH machine in Herdr.')
   // hc names are 1-32 of a-z 0-9 - _ . : say when the v2 name was changed.
@@ -433,7 +441,7 @@ export function parseArgs(argv) {
 
 export function describeV2(v) {
   return [
-    `v2 install: ${v.found ? 'found' : 'NOT FOUND'}`,
+    `v2 install: ${v.found ? 'found' : v.dataOnly ? 'v2 data found, no running v2' : 'NOT FOUND'}`,
     `  service: ${v.unit || 'none'}${v.active === null ? '' : v.active ? ' (running)' : ' (not running)'}`,
     `  folder: ${v.dir}${v.envFile ? ' (wherdr.env)' : ''}`,
     `  data: ${v.dataDir} (${v.files.length} files), port ${v.port}${v.session ? `, Herdr session ${v.session}` : ''}`,

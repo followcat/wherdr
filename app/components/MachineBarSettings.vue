@@ -157,7 +157,7 @@ function onGrab(id: string, e: PointerEvent) {
     <h4 class="theme-section-title bar-pref-title">{{ tl('Machine tabs') }}</h4>
     <label v-if="!editing" class="settings-toggle">
       <span><b>{{ tl('Show the machine tabs') }}</b><small>{{ tl('At the top of the home screen: “All”, then one tab per machine. A tap shows that machine only.') }}</small></span>
-      <USwitch v-model="barOn" color="success" size="xl" />
+      <USwitch v-model="barOn" size="xl" />
     </label>
     <template v-if="barOn">
       <template v-if="!editing">

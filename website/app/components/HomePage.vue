@@ -2,7 +2,7 @@
 // The landing page (`/`): dotted background grid with travelling packets,
 // live demos in the hero (phone + desktop on one clock) and next to the
 // feature stories, and an install that types itself.
-import { AGENT_PROMPT, REPO } from '~/utils/site'
+import { AGENT_PROMPT, DISCORD, REPO } from '~/utils/site'
 import { BREW_COMMANDS, INSTALL_COMMAND, ONE_COMMAND_DEMO, PLUGIN_COMMAND, RUNNERS } from '~/utils/installDemo'
 import { SITE_URL, softwareApplication } from '~/utils/seo'
 
@@ -357,6 +357,7 @@ const faq = [
         </div>
         <nav class="foot-links" aria-label="Links">
           <a :href="REPO" target="_blank" rel="noopener">GitHub</a>
+          <a :href="DISCORD" target="_blank" rel="noopener">Community: Discord</a>
           <a :href="`${REPO}/blob/main/LICENSE`" target="_blank" rel="noopener">MIT license</a>
           <a :href="`${REPO}/blob/main/SECURITY.md`" target="_blank" rel="noopener">Security policy</a>
           <a href="https://herdr.dev" target="_blank" rel="noopener">Herdr</a>

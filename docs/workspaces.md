@@ -26,7 +26,7 @@ list the members.
 A member has **no coordinator**: none is started for it, and none shows in the
 sidebar. Every wake about a member's task goes to the workspace's coordinator,
 its first line naming the task (`PAY-3: stuck: …`), and *Ask the coordinator*
-on a member's task asks it too. Its health checks cover all the members' tasks.
+on a member's task asks it too. Its scheduled wakes' health summaries cover all the members' tasks.
 
 The workspace has **one autopilot** for all its members: *At once* and *Tasks
 / day* count the tasks of every member together, and *Keep the board busy*
@@ -69,7 +69,7 @@ does: `payroll-api` → `PA`) and the next free color, takes every shared settin
 and the workspace's workflow, and its repository's visibility (public or
 private) is checked at once. Its line on the [map](#the-workspace-map), when it
 has one, names it. Each adoption is written to the workspace's log and listed
-in the coordinator's next health check (*Repositories adopted since the last
+in the health summary of the coordinator's next scheduled wake (*Repositories adopted since the last
 check*).
 
 wherdr refuses:

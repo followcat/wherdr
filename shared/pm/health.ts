@@ -1,16 +1,24 @@
-// The health check: with routine events off, the coordinator wakes every few
-// hours (autopilot.health, HEALTH_EVERY by default) with a short summary of
-// its project. Nothing wrong: it acks at once. Nothing at all to say: no wake.
+// The health lines of a scheduled wake: a short summary of the project since
+// the last slot, under the goal line. Nothing wrong: it acks at once. Nothing
+// to say and nothing to act on: no wake (pmWakes.ts).
 import { busyQueue, taskStatus, type Autopilot, type TaskStatus } from './autopilot'
 import type { Task } from './run'
 
+// The old health check's default interval, before it joined the scheduled wake.
 export const HEALTH_EVERY = '3h'
 // A stall this long is stuck for long.
 export const STUCK_LONG_MS = 3_600_000
 const MAX_LISTED = 8
 
-// The interval, or null when the user turned the health check off.
-export const healthEvery = (ap: Pick<Autopilot, 'health'> | undefined) => (ap?.health === 'off' ? null : ap?.health || HEALTH_EVERY)
+// Saved before the health check joined the scheduled wake (WHR-341): its own
+// interval (`health`, HEALTH_EVERY when unset, or 'off') becomes Every when
+// shorter, or when Every was unset; off leaves Every as it was. Once (CoordinatorRecord.oneWake).
+const minutes = (d: string) => Number.parseInt(d) * (d.endsWith('h') ? 60 : 1)
+export function oneSchedule(ap: Autopilot & { health?: string }): Autopilot {
+  const { health, ...rest } = ap
+  const h = health || HEALTH_EVERY
+  return h === 'off' || (rest.every && minutes(rest.every) <= minutes(h)) ? rest : { ...rest, every: h }
+}
 
 export const HEALTH_ACK = 'If none of this needs you, ack at once, with no further work.'
 

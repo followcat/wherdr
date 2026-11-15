@@ -135,10 +135,13 @@ describe('runAction', () => {
     const x = fakeDeps([info('COMPLETED'), { code: 0, out: 'same' }, { code: 1, out: 'X Pull request #505 is not mergeable: the merge commit cannot be cleanly created.\nRun the following to resolve the merge conflicts locally:\n  gh pr checkout 505 && git fetch origin dev && git merge origin/dev' }])
     expect(await runAction(x.deps, job({ step: 'merge', action: { kind: 'github.merge' } }))).toMatchObject({ ok: false, error: 'merge: the PR conflicts with dev', catchUp: 'dev' })
     // Approved at an earlier commit: it merges only while the task's own interface is the same.
-    const ui = (out: string) => fakeDeps([info('COMPLETED'), same, { code: 0, out }, { code: 0, out: 'https://pr/1' }]).deps
+    // Comments only, or base merges only, keep it, and the merge says so for the task's log.
+    const ui = (...outs: string[]) => fakeDeps([info('COMPLETED'), same, ...outs.map(out => ({ code: 0, out })), { code: 0, out: 'https://pr/1' }]).deps
     const approved = job({ step: 'merge', action: { kind: 'github.merge' }, approved: 'old' })
-    expect(await runAction(ui('changed'), approved)).toMatchObject({ ok: false, unapproved: true })
-    expect(await runAction(ui('same'), approved)).toMatchObject({ ok: true, commit: 'abc' })
+    expect(await runAction(ui('app/assets/main.css\nchanged'), approved)).toMatchObject({ ok: false, unapproved: { since: 'old', head: 'abc', files: ['app/assets/main.css'] } })
+    expect(await runAction(ui('comments'), approved)).toMatchObject({ ok: true, commit: 'abc', note: 'approval kept: comment-only change (old..abc)' })
+    expect(await runAction(ui('same', 'same'), approved)).toMatchObject({ ok: true, note: 'approval kept: base merge, same interface (old..abc)' })
+    expect(await runAction(ui('same', 'server/x.ts\nchanged'), approved)).toMatchObject({ ok: true, note: 'approval kept: no interface file changed (old..abc)' })
   })
 })
 
@@ -233,11 +236,24 @@ describe('on a real repo', () => {
     expect(await changed(git(wt, 'rev-parse', 'HEAD'))).toBe('same')
     // A CI fix outside the interface keeps it; a change to a screen does not.
     expect(await changed(put(wt, 'server/x.ts', 'fix\n'))).toBe('same')
-    expect(await changed(put(wt, 'app/layouts/default.vue', 'new\n'))).toBe('changed')
+    expect(await changed(put(wt, 'app/layouts/default.vue', 'new\n'))).toBe('app/layouts/default.vue\nchanged')
     // Over all files: the merge of the base keeps the task's own change, the CI fix moves it.
     const own = async (to: string) => (await localSh(SCRIPT.ownChanged, [wt, 'dev', approved, to])).out
     expect(await own(git(wt, 'rev-parse', 'HEAD~2'))).toBe('same')
-    expect(await own(git(wt, 'rev-parse', 'HEAD~1'))).toBe('changed')
+    expect(await own(git(wt, 'rev-parse', 'HEAD~1'))).toBe('server/x.ts\nchanged')
+    // Comments only, in CSS, TS and Vue: comments; a real line among them: changed.
+    git(wt, 'reset', '-q', '--hard', 'HEAD~2')
+    const styled = put(wt, 'app/assets/main.css', '/* a */\n.a { color: red; }\n') && put(wt, 'app/components/B.vue', '<template>\n  <p>b</p>\n</template>\n<script setup lang="ts">\nconst n = 1 // one\n</script>\n') && put(wt, 'app/components/c.ts', '/** c */\nexport const c = "/* old */"\n')
+    const ui2 = async (to: string) => (await localSh(SCRIPT.uiChanged, [wt, 'dev', styled, to])).out
+    put(wt, 'app/assets/main.css', '/* a,\n   longer */\n.a { color: red; } /* why */\n')
+    put(wt, 'app/components/B.vue', '<template>\n  <!-- why -->\n  <p>b</p>\n</template>\n<script setup lang="ts">\nconst n = 1 // one, said better\n</script>\n')
+    expect(await ui2(put(wt, 'app/components/c.ts', '/**\n * c, said better\n */\nexport const c = "/* old */"\n'))).toBe('comments')
+    expect(await ui2(put(wt, 'app/assets/main.css', '/* a */\n.a { color: blue; }\n'))).toBe('app/assets/main.css\nchanged')
+    // Text the user sees is never a comment: in a string, or spaces in the markup.
+    expect(await ui2(put(wt, 'app/components/c.ts', '/** c */\nexport const c = "/* new */"\n'))).toBe('app/assets/main.css\napp/components/c.ts\nchanged')
+    const tip = (title: string) => put(wt, 'app/components/B.vue', `<template>\n  <p title="<!-- ${title} -->">b</p>\n</template>\n`)
+    const before = tip('old')
+    expect((await localSh(SCRIPT.uiChanged, [wt, 'dev', before, tip('new')])).out).toBe('app/components/B.vue\nchanged')
   })
 
   it('lands a task on dev, refuses main, sends a conflict back and verifies the merge', async () => {

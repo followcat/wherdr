@@ -94,6 +94,8 @@ export interface CoordinatorView {
   // machines: the project's allowed machines, home first (none for the main coordinator);
   // paused: those paused for it; busy: the paused ones where one of its tasks still runs.
   project: string, machines?: string[], paused?: string[], busy?: string[], name: string, coordinatorName?: string, label?: string, color?: ProjectColor, main?: boolean, git?: false, agent?: CoordinatorAgent, template?: string, ran?: CoordinatorAgent, terminal?: string
+  // undelivered: its first message never reached its session, and why (Send again).
+  undelivered?: { why: string, at: number }
   // proposal: the change waiting for the user, as a person reads it too (template: the
   // workflow it proposes, drawn with its changes); answers: the last ones, oldest first.
   proposal?: Omit<Proposal, 'template' | 'base'> & { template?: Template }, answers?: ProposalAnswer[]
@@ -609,9 +611,9 @@ export function roleFiles(p: Project, t: Template | null, examples: Template[], 
   // No accepted workflow yet: the coordinator's first conversation sets one up.
   const firstTalk = !plain && isDefaultWorkflow(t) ? ['## Your first conversation', '',
     `This project has no accepted workflow yet: its tasks follow a minimal default (one type \`task\`: todo → work → done). Your first reply proposes one:`,
-    '1. Before it, look at the repository: README, docs, stack, tests, CI files, branches, recent commits, and where its PRs go (GitHub, Bitbucket, none).',
+    '1. Before it, look at the repository: README, docs, stack, tests, CI files, branches, recent commits, and where its PRs go (GitHub, Bitbucket, none: `git remote -v` shows no origin).',
     `2. Introduce yourself as the coordinator of project ${p.key} and say in a few lines what you understood of the project. An empty or nearly empty repository: say so, and ask what the user wants to build after your proposal.`,
-    '3. In that same first reply, propose a workflow with `template edit` (its diff is against the default), with the guards that fit; start from the example of the template library below closest to what you saw, and adapt it. Say in a few lines why: what you saw that led to each choice (the checks before a merge, the reviews, who merges).',
+    '3. In that same first reply, propose a workflow with `template edit` (its diff is against the default), with the guards that fit; start from the example of the template library below closest to what you saw, and adapt it. Say in a few lines why: what you saw that led to each choice (the checks before a merge, the reviews, who merges). A repository with no origin remote: propose the local-merge flow (branches merged on this machine, no PR), never a PR flow it cannot run.',
     '4. The user accepts or refuses its diff in wherdr. Then ask, as `choices`, what they would change (stricter: PRs, reviews, CI checks, the user merges; or lighter: fewer checks, wherdr merges), and propose again.',
     'Note their answers in memory.md. This section goes away once the user accepts a workflow.', ''] : []
   const own = t ? [t.instructions, ...Object.entries(t.taskTypes).map(([k, tt]) => tt.instructions && `${k}: ${tt.instructions}`)].filter(Boolean).map(s => `- ${s}`) : []
@@ -621,12 +623,11 @@ export function roleFiles(p: Project, t: Template | null, examples: Template[], 
       ? `You coordinate project ${p.key} only. Its folder is ${p.path}, without git: its tasks cannot start (a task needs git for its own worktree), so you do the work yourself, directly in that folder: read and change its files as the user asks. Add no task for that work.`
       : `You coordinate project ${p.key} only. Its repository is ${p.path}: read it, never change it; task agents do the work in their own worktrees.`,
     'Wakes are messages sent by wherdr, not the user; the first line names who sends it. The server knows which, and refuses what a wake may not do:',
-    '- "Autopilot:": your autopilot (its schedule, an agent\'s question, a choice after N send-backs, the routine events the user turned on, the user\'s "run now");',
+    '- "Autopilot:": your autopilot (an agent\'s question, a choice after N send-backs, the routine events the user turned on, the user\'s "run now"). "Autopilot: scheduled wake" is its schedule (Every, At): your goal, then a short summary of your project (tasks done since the last one, waiting for the user, stuck for long, machines idle while to-do tasks wait). When nothing in it needs you, ack at once with no further work: look into a line only when it needs you;',
     '- "Step check: <task> (<step>)": a step you hold, at its start, recheck or timeout; it comes even with the autopilot off. When a recheck finds nothing new, postpone the next one (`step wait`);',
     '- "Engine:": the engine gave up on a block after failed fixes, with what it tried;',
-    '- "Incident: <incident>, wake <id>": agents were gone (a restart, a machine offline, a crash, an account limit): once per incident, the engine\'s facts: the cause and its evidence, what it resumed, what still waits and why, what needs you or the user. It comes even with the autopilot off. The engine resumes the rest by itself: tell the user what needs them, start again what needs you, then ack;',
-    '- "Health check:": every few hours, a short summary of your project (tasks done since the last check, waiting for the user, stuck for long, machines idle while to-do tasks wait). When nothing in it is wrong, ack at once with no further work: look into a line only when it needs you.',
-    'The engine runs the board on its own: it starts to-do tasks while machines have room and moves them through their steps. By default no wake comes for a task done, ready or started, nor for a block the engine fixed itself; you wake only for what needs judgment, and for the health check.', '',
+    '- "Incident: <incident>, wake <id>": agents were gone (a restart, a machine offline, a crash, an account limit): once per incident, the engine\'s facts: the cause and its evidence, what it resumed, what still waits and why, what needs you or the user. It comes even with the autopilot off. The engine resumes the rest by itself: tell the user what needs them, start again what needs you, then ack.',
+    'The engine runs the board on its own: it starts to-do tasks while machines have room and moves them through their steps. By default no wake comes for a task done, ready or started, nor for a block the engine fixed itself; you wake only for what needs judgment, and for the scheduled wake.', '',
     ...firstTalk,
     '## Your memory', '',
     `\`memory.md\` in your folder is yours: wherdr creates it once and never rewrites it, so it outlives a restart and a change of program. Read it first, at each start, and follow it: the user's decisions and preferences there come before your defaults. Note there, as you go, each decision or preference the user gives you, one fact per line; nothing a command or the board already says. Keep it clean: merge duplicates, drop stale lines, stay under ${MEMORY_CAP} characters.`, '',

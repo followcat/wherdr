@@ -128,8 +128,12 @@ export const quotaLevel = (w: QuotaWindow, now: number) => {
 
 // Reading older than an hour: numbers to take with caution.
 export const STALE_MS = 3600000
-// Older than 6 hours: the row also says how to get a new one.
-export const OLD_MS = 6 * 3600000
+
+// A window whose value is no longer known: reset since the reading, or read
+// longer ago than the window lasts. Its bar shows dashed and `?` stands for
+// the number, with how to refresh it in a tooltip (QuotaStrip).
+export const windowStale = (w: QuotaWindow, at: number, now: number) =>
+  Boolean(w.resetsAt && w.resetsAt <= now) || (w.minutes > 0 && now - at > w.minutes * 60000)
 
 // "120 credits", "unlimited credits", "credits" (no balance given).
 export const creditsText = (c: QuotaCredits) =>

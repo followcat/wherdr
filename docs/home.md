@@ -41,12 +41,23 @@
   lists each agent's actions under its role. A reviewer kept between rounds shows dimmed. A
   row keeps its task look after a restart of wherdr or herdr-core: an agent is found by its
   task and role, even when it was resumed or its terminal re-attached.
-- **Order**: the header (logo, version, Search, Board, Settings), the counters, the quotas (a
-  machine's own quotas under them), Alfred, the [coordinators](#coordinators), then the agents of
+- **Order**: the header (logo, version, Search, Board, Settings; when the list is too
+  narrow, Search, then Board move into a ⋯ menu, Settings always stays a button), the counters, the quotas (a
+  machine's own quotas under them), Alfred, the [Tasks to review](#tasks-to-review) card, the
+  [coordinators](#coordinators), then the agents of
   the machines shown, by state (Your turn, Working, Ready). When the list mixes several machines,
   each card carries its machine's name. There is no section per machine. The list never scrolls
   sideways: long titles and badges are cut with an ellipsis, and its scrollbar stays thin, shown
   while the pointer is over the list.
+- **Long press**: on a phone, a long press on a row or card of the list (Alfred, Tasks to review,
+  a coordinator, an agent) opens its menu only: no text selection, no iOS callout, no icon drag.
+  Conversations, notes and fields keep their text selectable.
+- **First load**: until the quotas, Alfred, the coordinators, the tasks to review and the task
+  agents have all been read once, the list shows the shapes of its sections (headings and rows at their real
+  size) and the counters show no number, then everything appears at once in its final order.
+  Later refreshes keep what is shown. A read that fails, or has not answered after 10 seconds,
+  shows *Part of the list did not load* and **Try again**, never the list without that section.
+  The list kept on this device shows alone only while the network is down.
 
 ### Alfred
 
@@ -70,26 +81,33 @@ stops and the new one carries on from the same home folder, `alfred/` in
 wherdr's data folder. There, `AGENTS.md` (and `CLAUDE.md`, `GEMINI.md`,
 `QWEN.md`, which point to it) is wherdr's and rewritten at each start; `identity.md` (its name and tone) and `memory.md` (what it learns about
 you, cleaned up at each start) are its own. Give it another name and the row
-shows it as soon as its turn ends. Alfred reads and changes projects, coordinators and settings with
+shows it as soon as its turn ends. Its replies are headed with its name, and the message field
+says *Message to Alfred…*. Its start instructions, sent by wherdr, show as a collapsed *Start instructions
+sent by wherdr* line, never as your message nor as the conversation's title. Alfred reads and changes projects, coordinators and settings with
 [`wherdr alfred`](alfred.md): it shows you each
 change first and makes it only after your yes.
 
 With no project yet, Alfred's first message also offers to set up the first one
 with you: here, one question at a time, or in the setup window, which it can open
 for you (Settings › Projects › *Set up a project*). A user coming from wherdr v2 gets
-the offer to set up their v2 projects instead. Home's empty list says so too: *Set up
-a project with Alfred* opens Alfred's conversation with the setup asked of it, and
-*Open the setup window* opens the same window.
+the offer to set up their v2 projects instead. Alfred asks one question per message: with
+such an offer, it asks whether you want to give it another name only once the offer is answered.
+Home's empty list says so too: *Set up a project with Alfred* opens Alfred's conversation with the
+setup asked of it, and *Open the setup window* opens the same window. Coming from wherdr v2, it
+counts the v2 projects not set up yet instead (*3 projects from wherdr v2: set them up with Alfred.*),
+and *Set up with Alfred* asks Alfred to set them up.
 
 ### Coordinators
 
-Under Alfred, while project management is on, one row per running project coordinator, its
+Under Alfred and [Tasks to review](#tasks-to-review), while project management is on, one row per running project coordinator, its
 project's key badge in the project's color, then its name: the project's, unless you named it
 in the project's General tab (*[WHR] wherdr*; the tooltip reads *Coordinator of wherdr*)
 ([Project management](project-management.md)). A tap opens its conversation, shown as selected
 while it is open. A coordinator whose terminal ended (its machine restarted, say) stays, marked
 *Stopped*: a tap offers *Resume the conversation* (its last one, with the agent that ran it and
-the same options) or *New conversation*. Its menu (right click on a computer, long press on a
+the same options) or *New conversation*. One whose first message never reached its session
+(running or stopped) says *First message not delivered*, and its menu starts with *Send again*
+(a new conversation when its session ended). Its menu (right click on a computer, long press on a
 phone, where it opens as a sheet) offers, in order: *Open the board* (filtered on its project),
 *Project settings* (its General tab), *Autopilot* (its tab, with a check while autopilot is on),
 *Rename…* (an inline field; empty gives it its project's name back), *Mute notifications* /
@@ -98,6 +116,14 @@ with…*, which picks another agent that becomes its default (its folder and mem
 current session stops), and *Stop the coordinator*, after a short confirm: its agent ends and it
 starts again on the next message or wake. Mute and Stop show while it runs. Alfred's row keeps
 its own menu. A coordinator shows only in its own row, never again among the agents.
+
+Their order is yours and follows you to every device: drag a row by the ⠿ handle that shows on
+hover (or with the up and down arrows on it), or long press it on a phone, then drag. The menu's
+*Move to hidden* puts a coordinator in the **Hidden** group at the end of the section, as does
+dropping it there; the group stays collapsed behind a muted *Show hidden (3)* link, which opens
+it (*Hide* closes it again). Hidden rows look the same, a little muted; drag one back up, or
+pick *Move back* in its menu. A hidden coordinator still works as usual (wakes, tasks); when it
+needs you (a question, a block), its row comes back in the main list until you answer.
 
 Coordinators and **Tasks to review** follow the [machine tab](#machines-as-tabs): a tab shows the
 projects whose allowed machines it holds (a project on machines of several groups shows on each
@@ -108,7 +134,7 @@ global.
 
 ### Tasks to review
 
-Under the coordinators, while something waits for you on the tab's projects, one **Tasks to
+Right under Alfred, above the coordinators, while something waits for you on the tab's projects, one **Tasks to
 review** card with its count: tasks to approve, an agent's question, a failure to try again, a
 decision. Under its title, the ids of the first ones as their project's key badge, in its color, on
 one line (… when they do not all fit). A tap opens them one at a time (a sheet on the phone), with Approve, Reject and each
@@ -192,13 +218,16 @@ not filtered by tab; the board is, when its picker follows the machine tab.
 
 ### Search
 
-The magnifier (⌘K / Ctrl+K) searches every agent and the conversations of the Claude Code and
+The magnifier (⌘K / Ctrl+K; in the header's ⋯ menu when the list is narrow) searches every agent and the conversations of the Claude Code and
 Codex agents of online machines. Choosing a result opens it.
 
 ### Notes
 
-The note button in the header (Mod+Alt+P on a computer) opens the [notes](alfred.md#notes)
-Alfred and the coordinators write for you: read-only, a short whiteboard. On a computer of
+The Notes button in a conversation's header, beside Search (Mod+Alt+P on a computer), opens
+and closes the [notes](alfred.md#notes); it shows as pressed while they are open. When the
+header is narrow (a phone, a side-by-side cell, a narrow window) Notes is the first entry of
+the header's ⋯ menu instead. Alfred and the coordinators write them for you:
+read-only, a short whiteboard. On a computer of
 at least 1280 px they open beside the conversation or Home's list, like Settings (drag the panel's left edge
 to resize it); otherwise in a sheet. They follow the home tab by default (**Follow
 tab**), with a muted line saying which (*Work · following the tab*); the menu at the top shows

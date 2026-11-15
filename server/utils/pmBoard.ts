@@ -11,9 +11,10 @@ import { weightOf, weightText } from '../../shared/pm/weight'
 import { allowedMachines, type Project } from '../../shared/pm/project'
 import type { MachineInfo } from '../../shared/types'
 import { lastReadiness } from './pmReady'
-import { shownTaskId } from '../../shared/pm/projectKey'
+import { showIds, shownTaskId } from '../../shared/pm/projectKey'
 import { taskAgents, type TaskAgent } from '../../shared/pm/taskAgents'
 import { CHOICES, type Choice } from '../../shared/pm/verdict'
+import { tellTarget } from '../../shared/pm/coordinator'
 import { actionShell, dropMergedBranch, runAction } from './pmActions'
 import type { CoreAdminDeps } from './coreCreate'
 import { runOn, wherdrBase } from './pmLaunch'
@@ -207,7 +208,7 @@ async function stepActionOf(deps: CoreAdminDeps & { store: PmStore }, task: Task
       result = { ok: true, ...(result.commit ? { commit: result.commit } : {}), note: `verify-merged disagreed: ${(result.error ?? 'no answer').replace(/^verify-merged: /, '')}` }
     const evidence = { ...(result.link ? { link: result.link } : {}), ...(result.commit ? { commit: result.commit } : {}), ...(result.report ? { report: result.report } : {}) }
     const catchUp = result.catchUp && result.commit ? { catchUp: { base: result.catchUp, head: result.commit } } : {}
-    const back = onEvent(plan, state, { kind: 'action-result', ok: result.ok, ...(result.later ? { later: true } : {}), ...(result.detail ? { detail: result.detail } : {}), ...(result.error ? { error: result.error } : {}), ...(result.review ? { review: result.review } : {}), ...(result.unapproved ? { unapproved: true as const } : {}), ...catchUp, evidence }, Date.now())
+    const back = onEvent(plan, state, { kind: 'action-result', ok: result.ok, ...(result.later ? { later: true } : {}), ...(result.detail ? { detail: result.detail } : {}), ...(result.error ? { error: result.error } : {}), ...(result.review ? { review: result.review } : {}), ...(result.unapproved ? { unapproved: result.unapproved } : {}), ...catchUp, evidence }, Date.now())
     state = back.state
     mergedInto = result.ok ? result.base : undefined
     // Try again on a failed action: its result in the log, even when it fails the same way.
@@ -226,9 +227,24 @@ async function stepActionOf(deps: CoreAdminDeps & { store: PmStore }, task: Task
     const gone = merged && await dropMergedBranch(actionShell(deps, runOn(deps, run)), {
       worktree: run.worktree, branch: run.branch, guards: taskGuards(t, task.type), bases: [p.base, act.action.target, act.action.base], on: p.deleteBranch !== false,
     }).catch((e: Error) => `kept the remote branch ${run.branch}: ${e.message}`)
+    // The approval dropped: the worker says why, with new screenshots.
+    if (result.unapproved && state.lookAgain) await askWhy(deps, p, task.id, askWhyText(state.lookAgain.why)).catch(() => {})
     return gone ? store.logTask(saved, 'engine', gone) : saved
   }
   return store.saveTask({ ...(await fresh()), step: state })
+}
+
+// An approval dropped: the task's worker is asked why, in its terminal, or
+// started again with the question when it was released.
+export const askWhyText = (why: string) => [
+  `The merge dropped the user's approval: ${why}. The user needs to know why before approving again.`,
+  'Take new screenshots of the change and upload each with the upload command of your instructions, adding `&reason=` to its URL with one line, URL-encoded:',
+  '"Back to review because: <what changed on screen, and why>", naming the other task (such as ABC-12) when a conflict with it caused it. Change no code for this.',
+].join('\n')
+async function askWhy(deps: CoreAdminDeps & { store: PmStore }, p: Project, id: string, text: string) {
+  const { run, released } = tellTarget(await deps.store.runs(), id, 'worker')
+  if (run) return deps.call('terminal.send', { terminal: run.terminal, text: showIds([p], text) }, 30000)
+  if (released) await (await import('./pmRelease')).reviveWorker(deps, id, 'asked why the approval was dropped', showIds([p], text))
 }
 
 const workerRun = async (store: PmStore, id: string) =>
@@ -310,7 +326,9 @@ const sameKey = (a: string | undefined, b: unknown) =>
 // the task's data. `token`: the task's key, written in the agent's instructions file.
 // head: reads the task's commit, asked only on a step that takes no screenshots:
 // new commits since the review let the worker replace its screenshots (addShot).
-export async function uploadShot(store: PmStore, id: unknown, phase: unknown, data: Buffer, ctype: string, token: unknown, head?: (task: Task) => Promise<string | undefined>): Promise<Shot> {
+// reason: the worker's "Back to review because: …" after an approval dropped
+// (askWhy); its shots then rework the step that took them, since the approval.
+export async function uploadShot(store: PmStore, id: unknown, phase: unknown, data: Buffer, ctype: string, token: unknown, head?: (task: Task) => Promise<string | undefined>, reason?: unknown): Promise<Shot> {
   const task = await store.task(id)
   // An unknown task and a wrong key answer the same.
   if (!task || !sameKey(task.shotToken, token)) throw new HerdrError('forbidden', 'Unknown task or wrong screenshot key')
@@ -324,11 +342,14 @@ export async function uploadShot(store: PmStore, id: unknown, phase: unknown, da
   const shot: Shot = { file: `${randomUUID().replace(/-/g, '').slice(0, 12)}.${ext}`, phase, at: Date.now() }
   let kept = shot
   await store.addShot(task.id, shot.file, data, (fresh) => {
-    const r = addShot(plan, fresh.step, shot, fresh.step && reworkSince(plan, fresh.step, now))
+    const r = addShot(plan, fresh.step, shot, fresh.step && (reworkSince(plan, fresh.step, now) ?? fresh.step.lookAgain?.since))
     if ('refused' in r) throw new HerdrError('refused', r.refused)
+    const why = typeof reason === 'string' ? reason.replace(/\s+/g, ' ').trim().replace(/^back to review because:\s*/i, '').slice(0, 500) : ''
+    if (why) r.state.lookAgain = { ...(r.state.lookAgain ?? { why: 'new screenshots since your approval', at: shot.at }), reason: why }
     kept = Object.values(r.state.shots ?? {}).flat().find(s => s.file === shot.file) ?? shot
     const dropped = fresh.step?.approved ? [{ at: shot.at, by: 'engine', text: 'approval dropped: new screenshots, the user looks again before the merge' }] : []
-    return { ...fresh, step: r.state, ...(dropped.length ? { log: [...(fresh.log ?? []), ...dropped] } : {}) }
+    const said = why ? [{ at: shot.at, by: 'worker', text: `back to review because: ${why}` }] : []
+    return { ...fresh, step: r.state, ...(dropped.length || said.length ? { log: [...(fresh.log ?? []), ...dropped, ...said] } : {}) }
   })
   return kept
 }

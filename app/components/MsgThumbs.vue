@@ -13,7 +13,7 @@ function open(i: number) { openLightbox(props.srcs, i) }
   <span class="thumbs" :class="{ one: fresh.length === 1 }">
     <span v-for="x in fresh.slice(0, layout.shown)" :key="x.src">
       <span v-if="offline" class="offline-image">{{ t('Image unavailable offline') }}</span>
-      <img v-else class="msg-img" :src="x.src" alt="" loading="lazy" decoding="async" @click="open(x.i)">
+      <ThumbImg v-else :src="x.src" @open="open(x.i)" />
     </span>
     <button v-if="layout.more" type="button" class="thumb-more" :aria-label="tl(`Show all ${fresh.length} images`, `Voir les ${fresh.length} images`)" @click="open(fresh[layout.shown]!.i)">
       <img v-if="!offline" :src="fresh[layout.shown]!.src" alt="" loading="lazy" decoding="async">

@@ -84,7 +84,7 @@ async function add() {
     <p v-if="kind && !canGitInit(kind) && kind !== 'git'" class="form-error">{{ tl('This folder has no git repository: tasks need one.') }}</p>
     <label v-if="kind && canGitInit(kind)" class="toggle-row">
       <span><b>{{ tl('Start a git repository') }}</b><small>git init</small></span>
-      <USwitch v-model="d.gitInit" color="success" size="xl" />
+      <USwitch v-model="d.gitInit" size="xl" />
     </label>
     <div class="setup-name-key">
       <span><label class="field-label" for="setupName">{{ t('Name') }}</label><UInput id="setupName" v-model="d.name" size="xl" class="w-full" maxlength="80" /></span>

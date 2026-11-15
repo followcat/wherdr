@@ -7,7 +7,7 @@ import { readBody } from 'h3'
 import CoordinatorsSection from '~/components/CoordinatorsSection.vue'
 import { nextTick } from 'vue'
 import { appConfig, coarse, curPane, desk, herdrState } from '~/composables/useHerdr'
-import { alfred, coordinators, loadCoordinators, paneCoordinatorName } from '~/composables/useCoordinators'
+import { alfred, coordinatorOrder, coordinators, coordinatorsHidden, loadCoordinators, paneCoordinatorName } from '~/composables/useCoordinators'
 import { answerConfirm, confirmState, menuState } from '~/composables/useUi'
 import { paneNotificationsMuted } from '~/composables/useNotificationRules'
 import { machineBarSaved, machineGroups } from '~/composables/useMachineBar'
@@ -30,14 +30,14 @@ const view = (project: string, more: Partial<CoordinatorView> = {}): Coordinator
 let w: Awaited<ReturnType<typeof mountSuspended>> | null = null
 // A coordinators read still in flight would answer the next test's first one
 // with this test's views (loadCoordinators shares it): let it end first.
-afterEach(async () => { w?.unmount(); w = null; posts.length = 0; navigate.mockReset(); document.body.innerHTML = ''; await loadCoordinators() })
+afterEach(async () => { w?.unmount(); w = null; coordinatorOrder.value = []; coordinatorsHidden.value = []; posts.length = 0; navigate.mockReset(); document.body.innerHTML = ''; await loadCoordinators() })
 
 it('lists the running project coordinators only (Alfred, the main one, has its own row)', async () => {
   herdrState.value = { ok: true, workspaces: [], panes: [pane('w:p1', 'host/t1')] }
   views = [view(MAIN, { main: true, terminal: 'host/t1' }), view('CO', { terminal: 'host/t1' }), view('ST')]
   w = await mountSuspended(CoordinatorsSection)
-  await vi.waitFor(() => expect(w!.findAll('button')).toHaveLength(1))
-  const co = w.find('button')
+  await vi.waitFor(() => expect(w!.findAll('[data-testid="coordinator-row"]')).toHaveLength(1))
+  const co = w.find('[data-testid="coordinator-row"]')
   // Its key badge, then its project's name.
   expect(co.find('[data-testid="project-badge"]').text()).toBe('CO')
   expect(co.find('[data-testid="coordinator-name"]').text()).toBe('co app')
@@ -119,6 +119,8 @@ it('no ••• button: right click (computer) and long press (touch) open its 
     w = await mountSuspended(CoordinatorsSection, { attachTo: document.body })
     await vi.waitFor(() => expect(w!.findAll('[data-testid="coordinator-row"]')).toHaveLength(1))
     const row = w.find('[data-testid="coordinator-row"]')
+    // No iOS text selection or callout on the long press (WHR-354): the shared no-select class.
+    expect(row.element.closest('.press-row')).not.toBeNull()
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
       await row.trigger('pointerdown', { pointerType: 'touch', button: 0, clientX: 0, clientY: 0 })
@@ -146,7 +148,7 @@ it('its menu opens the board, settings and autopilot, renames it inline, mutes i
   await vi.waitFor(() => expect(w!.findAll('[data-testid="coordinator-row"]')).toHaveLength(1))
   const items = () => w!.findComponent({ name: 'UContextMenu' }).props('items').flat() as { label: string, icon: string, description?: string, onSelect: () => void }[]
   const pick = (label: string) => items().find(i => i.label === label)!.onSelect()
-  expect(items().map(i => i.label)).toEqual(['Open the board', 'Project settings', 'Autopilot', 'Rename…', 'Mute notifications', 'Restart with…', 'Stop the coordinator'])
+  expect(items().map(i => i.label)).toEqual(['Open the board', 'Project settings', 'Autopilot', 'Rename…', 'Mute notifications', 'Move to hidden', 'Restart with…', 'Stop the coordinator'])
   await vi.waitFor(() => expect(items()[2]).toMatchObject({ icon: 'i-lucide-check', description: 'On' }))
   pick('Open the board')
   pick('Project settings')
@@ -190,4 +192,67 @@ it("titles a coordinator's pane by its name, not its session title (WHR-15)", ()
   alfred.value = { name: 'Jeeves', terminal: 'host/t1' }
   expect(paneCoordinatorName(p('w:p1', 'host/t1'))).toBe('Jeeves')
   expect(paneCoordinatorName(p('w:p3', 'host/t3'))).toBe('')
+})
+
+// WHR-331: the user's order (drag, arrow keys) and the Hidden group.
+const names = () => w!.findAll('[data-testid="coordinator-name"]').map(n => n.text())
+const toggle = () => w!.find('[data-testid="coordinators-hidden-toggle"]')
+async function mountThree(panes = [pane('w:p1', 'host/t1'), pane('w:p2', 'host/t2'), pane('w:p3', 'host/t3')]) {
+  herdrState.value = { ok: true, workspaces: [], panes }
+  views = [view('AA', { terminal: 'host/t1' }), view('BB', { terminal: 'host/t2' }), view('CC', { terminal: 'host/t3' })]
+  w = await mountSuspended(CoordinatorsSection, { attachTo: document.body })
+  await vi.waitFor(() => expect(names()).toHaveLength(3))
+}
+
+it('a drag by the handle saves the new order, a drop on the Hidden group hides it (WHR-331)', async () => {
+  await mountThree()
+  // Each item 48px tall, one under the other (the Hidden mark last).
+  const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    const i = [...document.querySelectorAll('[data-order-id]')].indexOf(this.closest('[data-order-id]')!)
+    return { top: i * 48, height: 48, bottom: i * 48 + 48, left: 0, right: 300, width: 300, x: 0, y: i * 48, toJSON: () => ({}) } as DOMRect
+  })
+  try {
+    const drag = (from: number, dy: number) => {
+      const grip = w!.findAll('[data-grip]')[from]!.element
+      grip.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, isPrimary: true, pointerId: 1, pointerType: 'mouse', button: 0, clientY: from * 48 + 24 }))
+      window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientY: from * 48 + 24 + dy }))
+      window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }))
+    }
+    drag(0, 60)
+    await vi.waitFor(() => expect(names()).toEqual(['bb app', 'aa app', 'cc app']))
+    expect(coordinatorOrder.value).toEqual(['BB', 'AA', 'CC'])
+    // Below the Hidden mark: hidden, the link counts it.
+    drag(2, 60)
+    await vi.waitFor(() => expect(names()).toEqual(['bb app', 'aa app']))
+    expect(coordinatorsHidden.value).toEqual(['CC'])
+    expect(toggle().text()).toBe('Show hidden (1)')
+  } finally { rect.mockRestore() }
+})
+
+it('Move to hidden / Move back, the group collapsed until its link opens it (WHR-331)', async () => {
+  desk.value = true
+  try {
+    await mountThree()
+    const pick = (row: number, label: string) => (w!.findAllComponents({ name: 'UContextMenu' })[row]!.props('items').flat() as { label: string, onSelect: () => void }[]).find(i => i.label === label)!.onSelect()
+    pick(0, 'Move to hidden')
+    await vi.waitFor(() => expect(names()).toEqual(['bb app', 'cc app']))
+    expect(toggle().text()).toBe('Show hidden (1)')
+    await toggle().trigger('click')
+    await vi.waitFor(() => expect(names()).toEqual(['bb app', 'cc app', 'aa app']))
+    expect(toggle().text()).toBe('Hide')
+    expect(w.findAll('[data-testid="coordinator-row"]')[2]!.classes()).toContain('aside')
+    pick(2, 'Move back')
+    await vi.waitFor(() => expect(names()).toEqual(['aa app', 'bb app', 'cc app']))
+    expect(coordinatorsHidden.value).toEqual([])
+  } finally { desk.value = false }
+})
+
+it('a hidden coordinator that needs the user shows in the main list (WHR-331)', async () => {
+  coordinatorsHidden.value = ['BB']
+  await mountThree([pane('w:p1', 'host/t1'), { ...pane('w:p2', 'host/t2'), status: 'blocked' }, pane('w:p3', 'host/t3')])
+  expect(names()).toEqual(['aa app', 'bb app', 'cc app'])
+  expect(toggle().classes()).toContain('empty')
+  herdrState.value = { ...herdrState.value, panes: [pane('w:p1', 'host/t1'), pane('w:p2', 'host/t2'), pane('w:p3', 'host/t3')] }
+  await vi.waitFor(() => expect(names()).toEqual(['aa app', 'cc app']))
+  expect(toggle().text()).toBe('Show hidden (1)')
 })

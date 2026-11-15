@@ -15,12 +15,13 @@ import { viaPrompt } from '#shared/sendRoute'
 import type { AttachKind } from '#shared/attachments'
 import { refusalText, sortForAgent } from '~/utils/fileDrop'
 import { uploadPhoto } from '~/utils/photoUpload'
+import { keepPreview } from '~/utils/sentPreviews'
 import { lostPhotosText, restoreDraft } from '~/utils/queuedCancel'
 import { isLongPaste, messageBody } from '#shared/pastedText'
 import { rememberPastes } from '~/utils/sentPastes'
 import { enterSends as enterSendsFor } from '~/utils/layoutMode'
 import { kbOpen } from '~/composables/useViewport'
-import { PromptHistory, historyDirection } from '~/utils/promptHistory'
+import { PromptHistory, caretOnVisualEdge, historyDirection } from '~/utils/promptHistory'
 import { createTouchTap } from '~/utils/touchTap'
 import { ESC_CONFIRM_MS, type EscapeArm, pressEscape } from '~/utils/escapeStop'
 import { pasteHtmlText } from '~/utils/pasteHtml'
@@ -214,6 +215,7 @@ const placeholder = computed(() => {
   if (!p) return t('Message to agent…')
   if (p.status === 'blocked') return t('Type a reply…')
   if (suggestion.value) return suggestion.value
+  if (isAlfredPane(p)) return tl(`Message to ${alfred.value?.name || 'Alfred'}…`)
   if (p.agent) return tl(`Message to ${kindLabel(p.agent)}…`, `Message à ${kindLabel(p.agent)}…`)
   return t('Command…')
 })
@@ -248,7 +250,7 @@ function onHistoryKey(e: KeyboardEvent) {
   const el = ta.value
   if (!el || e.target !== el || sending.value) return
   const current = { text: el.value, start: el.selectionStart, end: el.selectionEnd }
-  const direction = historyDirection(e, current)
+  const direction = historyDirection(e, current, edge => caretOnVisualEdge(el, edge))
   if (direction === null) return
   const recalled = history.move(direction, current, promptHistoryFor(props.paneId))
   if (!recalled) return
@@ -321,7 +323,7 @@ async function submit() {
   if (free < 0 && viaPrompt(p) && !isSlashCommand(msg)) {
     rememberSent(typed)
     text.value = ''
-    clearAttachments()
+    clearAttachments(true)
     rememberPastes(pastes)
     haptic()
     emit('sent', null)
@@ -349,7 +351,7 @@ async function submit() {
       if (!(await choose(props.paneId, free, prompt.options[free]!.label, prompt.identity, { text: msg, question: prompt.question }))) return giveBack()
     } else queued = await sendMessage(p, props.paneId, msg)
     rememberSent(typed)
-    for (const a of atts) if (a.url) URL.revokeObjectURL(a.url)
+    for (const a of atts) releaseAtt(a, true)
     haptic()
     emit('sent', queued)
     if (!isSlashCommand(msg)) answered(p)
@@ -444,8 +446,13 @@ function stop() {
 onBeforeUnmount(() => clearTimeout(escTimer))
 
 // ------------------------------------------------------------ photos
-function clearAttachments() {
-  for (const a of attachments.value) if (a.url) URL.revokeObjectURL(a.url)
+// `sent`: a photo's local preview goes on to its bubble (utils/sentPreviews.ts).
+function releaseAtt(a: Att, sent = false) {
+  if (sent && a.name && a.url.startsWith('blob:')) keepPreview(a.name, a.url)
+  else if (a.url) URL.revokeObjectURL(a.url)
+}
+function clearAttachments(sent = false) {
+  for (const a of attachments.value) releaseAtt(a, sent)
   attachments.value = []
 }
 // Large preview (same viewer as the conversation), including while

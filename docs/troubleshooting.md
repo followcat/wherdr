@@ -49,5 +49,7 @@
 - **iPhone layout cut at the bottom** after changing the status bar style: reinstall the home
   screen icon (iOS reads this setting at install time).
 
+Still stuck? Ask on [Discord](https://discord.gg/ky36WYmtVE); report bugs in [GitHub issues](https://github.com/afloury/wherdr/issues).
+
 v2 issues (Herdr, the `wherdr` command, Herdr SSH machines) are covered by the
 [v2 troubleshooting page](https://github.com/afloury/wherdr/blob/main/docs/troubleshooting.md).

@@ -64,6 +64,9 @@ const coordinator = computed(() => (project.value ? coordinators.value.find(c =>
 const machinesLink = computed(() => (project.value ? `/settings?section=projects&project=${encodeURIComponent(project.value)}&tab=general&target=project.machines` : '/settings?section=projects'))
 const columns = computed(() => (project.value ? data.value?.projects.find(p => p.key === project.value)?.columns ?? [] : null))
 const lanes = computed(() => boardLanes(cards.value, columns.value))
+// Before the first read: lanes of shapes, not empty lanes counting 0 (nor the
+// default lanes before a project's own columns); none for a short read.
+const skeleton = useDelayedFlag(computed(() => !data.value && !error.value))
 const PHASE_LABEL: Record<string, string> = { 'your-turn': 'Your turn', 'todo': 'To do', 'working': 'Working', 'done': 'Done' }
 const laneLabel = (id: string) => (columns.value && id !== 'your-turn' ? id : t(PHASE_LABEL[id]!))
 // Where its PR and merge stand, one line: 'PR open · waiting for checks (smoke)', 'merged 14:05'.
@@ -159,7 +162,13 @@ const openArchived = (c: Card) => { keepArchivedCard(c); show(c.id) }
     <div class="board-body">
     <p v-if="error" class="error board-note">{{ error }}</p>
     <p v-else-if="data && !data.cards.length" class="muted board-note">{{ tl('No task yet.', 'Aucune tâche pour l’instant.') }}</p>
-    <div class="board-lanes">
+    <div v-if="!data && skeleton" class="board-lanes" role="status" :aria-label="tl('Loading')" aria-busy="true" data-testid="board-skeleton">
+      <section v-for="n in 3" :key="n" class="board-lane">
+        <h2 class="mono-label"><i class="skel board-skel-title" :style="{ width: `${90 - n * 12}px` }" /></h2>
+        <div v-for="m in 4 - n" :key="m" class="board-card"><i class="skel board-skel-line" :style="{ width: `${78 - m * 12}%` }" /><i class="skel board-skel-line small" style="width: 30%" /></div>
+      </section>
+    </div>
+    <div v-else-if="data" class="board-lanes">
       <section v-for="l in lanes" :key="l.id" class="board-lane" :class="{ mine: l.id === 'your-turn' }" :data-lane="l.id" data-testid="board-lane">
         <h2 class="mono-label">{{ laneLabel(l.id) }} <span>{{ l.cards.length }}</span></h2>
         <div v-for="c in l.cards" :key="c.id" class="board-card-wrap" :class="{ 'has-menu': menuOf(c).length > 1 }">
@@ -236,6 +245,10 @@ const openArchived = (c: Card) => { keepArchivedCard(c); show(c.id) }
 .board-archived span { text-decoration: underline; text-underline-offset: 3px; }
 .board-card { display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 10px 12px; min-height: 44px; border: 1px solid var(--line); background: var(--surface); color: var(--text); }
 .board-card:active { background: var(--surface-2); }
+/* Skeleton lines at the heights of a card's title and id lines. */
+.board-skel-title { height: 10px; }
+.board-skel-line { height: 14px; margin: 2px 0; }
+.board-skel-line.small { height: 11px; margin: 4px 0 2px; }
 .board-card-head { display: flex; align-items: center; gap: 8px; }
 .board-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); }
 .board-status.wait { color: var(--working); }

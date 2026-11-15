@@ -26,17 +26,19 @@ export interface SettingChange { key: SyncedSetting, before?: string, after: str
 // picks (several projects in one card, `v2 import`): the key each line adds,
 // null when it cannot be added (the line says why); each a checkbox, on by
 // default, or only those of `on` (the command's --only). start: the "Start
-// their coordinators" checkbox's default (the command's --start).
-export interface ProjectChange { argv: string[], lines: string[], project: string, said?: string, target?: UiTargetId, picks?: (string | null)[], on?: string[], start?: boolean }
-// The user's checkboxes at the click: the keys to add and whether to start their coordinators.
-export interface CardChoice { picks: string[], start: boolean }
-export function cardChoice(body: { picks?: unknown, start?: unknown }): CardChoice | undefined {
+// their coordinators" checkbox's default (the command's --start). pm: project
+// management was off when it was proposed: a "Turn on project management"
+// checkbox (on), switched on by the Apply before the change.
+export interface ProjectChange { argv: string[], lines: string[], project: string, said?: string, target?: UiTargetId, picks?: (string | null)[], on?: string[], start?: boolean, pm?: true }
+// The user's checkboxes at the click: the keys to add, whether to start their coordinators and to turn project management on.
+export interface CardChoice { picks: string[], start: boolean, pm: boolean }
+export function cardChoice(body: { picks?: unknown, start?: unknown, pm?: unknown }): CardChoice | undefined {
   if (!Array.isArray(body.picks)) return undefined
-  return { picks: body.picks.filter((k): k is string => typeof k === 'string' && /^[A-Z][A-Z0-9]{1,9}$/.test(k)), start: body.start !== false }
+  return { picks: body.picks.filter((k): k is string => typeof k === 'string' && /^[A-Z][A-Z0-9]{1,9}$/.test(k)), start: body.start !== false, pm: body.pm !== false }
 }
 // The checkboxes as the card first shows them, and the choice of an Apply that sends none.
 export const defaultChoice = (c: Pick<ProjectChange, 'picks' | 'on' | 'start'>): CardChoice =>
-  ({ picks: (c.picks ?? []).filter((k): k is string => !!k && (!c.on || c.on.includes(k))), start: c.start !== false })
+  ({ picks: (c.picks ?? []).filter((k): k is string => !!k && (!c.on || c.on.includes(k))), start: c.start !== false, pm: true })
 // With the user's choice, the command the click runs (its argv holds no --only nor --start).
 export const choiceArgv = (argv: string[], c?: CardChoice) => (c ? [...argv, '--only', c.picks.join(','), '--start', c.start ? 'yes' : 'no'] : argv)
 export interface UiCard {

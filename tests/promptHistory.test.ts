@@ -1,5 +1,6 @@
+// @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addPromptHistory, historyDirection, PromptHistory, PROMPT_HISTORY_MAX } from '../app/utils/promptHistory'
+import { addPromptHistory, caretOnVisualEdge, historyDirection, PromptHistory, PROMPT_HISTORY_MAX } from '../app/utils/promptHistory'
 
 const draft = { text: 'Unsent\n  draft  ', start: 2, end: 2 }
 describe('prompt history', () => {
@@ -69,6 +70,34 @@ describe('history arrow boundaries', () => {
   })
 })
 
+
+describe('wrapped lines', () => {
+  // No layout in tests: wrap the mirror every 10 characters.
+  const rects = (span: Element) => {
+    const start = span.previousSibling?.textContent?.length ?? 0, length = Math.max(1, span.textContent!.length)
+    const lines = new Set(Array.from({ length }, (_, n) => Math.floor((start + n) / 10)))
+    return [...lines].map(line => ({ top: line * 20 }))
+  }
+  afterEach(() => { vi.restoreAllMocks() })
+  const press = (key: string, text: string, at: number) => {
+    vi.spyOn(HTMLElement.prototype, 'getClientRects').mockImplementation(function (this: Element) { return rects(this) as unknown as DOMRectList })
+    const el = document.createElement('textarea')
+    el.value = text
+    el.setSelectionRange(at, at)
+    return historyDirection({ key }, { text, start: at, end: at }, edge => caretOnVisualEdge(el, edge))
+  }
+  const long = 'aaaaaaaaa bbbbbbbbb ccccccccc'
+  it('recalls with Up only on the first visual line', () => {
+    expect(press('ArrowUp', long, 4)).toBe(-1)
+    expect(press('ArrowUp', long, 14)).toBeNull()
+    expect(press('ArrowUp', `${long}\nnext`, 4)).toBe(-1)
+  })
+  it('recalls with Down only on the last visual line', () => {
+    expect(press('ArrowDown', long, 24)).toBe(1)
+    expect(press('ArrowDown', long, 14)).toBeNull()
+    expect(press('ArrowDown', `first\n${long}`, 30)).toBe(1)
+  })
+})
 
 describe('per-pane history storage', () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.resetModules() })

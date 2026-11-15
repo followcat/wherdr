@@ -66,3 +66,5 @@ The easiest way: give the *v3 beside an existing v2* prompt of [Install with an 
 - Workspaces (one coordinator for several repositories) are not part of 3.0: they come in 3.1.
 
 [Full changelog](https://github.com/afloury/wherdr/blob/v3.0.0/CHANGELOG.md)
+
+Join us on Discord: https://discord.gg/ky36WYmtVE

@@ -52,10 +52,12 @@ export interface CoordinatorRecord {
   agent?: CoordinatorAgent, ran?: CoordinatorAgent, proposal?: Proposal, answers?: ProposalAnswer[], answered?: ProposalAnswer
   // userAt: the user's last message. seen: each task's status at the last tick; ranAt: the last interval wake.
   userAt?: number, autopilot?: Autopilot, seen?: Record<string, TaskStatus>, ranAt?: number
-  atRan?: number // the last scheduled wake at fixed times (autopilot.at), or when it was set
+  atRan?: number // before routines: the last wake at autopilot.at, read as routine 'at''s
+  routineRan?: Record<string, number> // each routine's last slot (run or skipped), or when its time was set
   woke?: LastWake // the last wake the engine queued, and where tasks stood then
   quiet?: true // its saved autopilot's old default events dropped, once (quietEvents)
-  health?: { at: number, seen: Record<string, TaskStatus>, sent?: HealthSent } // the last health check (health.ts), where tasks stood then, the last one sent
+  health?: { at: number, seen: Record<string, TaskStatus>, sent?: HealthSent } // the last scheduled slot's health lines (health.ts): where tasks stood then, the last ones sent
+  oneWake?: true // its saved health check interval joined Every, once (oneSchedule)
   skips?: WakeSkip[] // wakes not sent, and why (autopilot show)
   skipped?: DayCount // scheduled wakes skipped that day: nothing to do (or the new work limit reached)
   lookAdded?: DayCount // tasks added that day in the turns of look-for-new-work wakes
@@ -64,6 +66,7 @@ export interface CoordinatorRecord {
   cards?: UiCard[] // the action buttons it put in its replies (shared/uiActions.ts), newest first
   cardNotes?: string[] // what the user did with its cards while it did not run, said at its next start (cardOutcome.ts)
   visits?: { at: number, by: string, what: string }[] // what other coordinators did on its project since its last wake (reach.ts)
+  undelivered?: { texts: string[], why: string, at: number } // first messages its session never got (coordinatorFirst.ts)
 }
 
 export interface AutomationsFile { automations: Automation[], seen?: Record<string, Mark>, proposals?: AutomationProposal[] }
@@ -518,9 +521,10 @@ export function createPmStore(dir = path.join(DATA_DIR, 'projects')) {
       if (source) added = { ...added, from: (await copyTemplate(added.key, source, 'user')).from }
       await saveProjects([...list, added])
       if (added.workspace) return added // no coordinator of its own: the workspace's runs it
-      // A new project's tasks at once: Auto, from its machines (an existing project keeps its number).
+      // A new project's tasks at once: Auto, from its machines (an existing project keeps its number);
+      // quiet: its default events (done, stuck) are not the old ones quietEvents drops.
       const coordinator = path.join(files.coordinators, `${added.key}.json`)
-      if (!(await readJson(coordinator))) await writeJson(coordinator, { project: added.key, tokenHash: '', autopilot: NEW_AUTOPILOT } satisfies CoordinatorRecord)
+      if (!(await readJson(coordinator))) await writeJson(coordinator, { project: added.key, tokenHash: '', autopilot: NEW_AUTOPILOT, quiet: true } satisfies CoordinatorRecord)
       return added
     }),
 

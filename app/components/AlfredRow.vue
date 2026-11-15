@@ -71,7 +71,7 @@ onUnmounted(() => clearInterval(timer))
 </script>
 
 <template>
-  <div class="alfred-card" :class="{ on: !!alfredPane, banner, sel: selected }">
+  <div class="alfred-card press-row" :class="{ on: !!alfredPane, banner, sel: selected }">
   <UContextMenu :disabled="sheetMenus || banner" :items="rowMenu.dropdown(menu)" :press-open-delay="700" :ui="{ content: 'hw-dropdown' }" @update:open="rowMenu.opened">
   <div class="alfred" data-testid="alfred" :class="{ on: !!alfredPane, sel: selected }" v-on="rowMenu.on(menu, name)">
     <button type="button" class="alfred-open" :disabled="busy" data-testid="alfred-open" :aria-current="selected ? 'page' : undefined" @click="open">

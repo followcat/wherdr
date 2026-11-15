@@ -107,6 +107,16 @@ a first message, and its instructions say its first reply proposes one:
 Until you accept one, tasks follow the minimal default. Once accepted, the
 section leaves the coordinator's instructions.
 
+The first message waits until the coordinator's session is ready, however long
+it takes to start (up to 10 minutes), and the project's log says whether it was
+sent, queued or not delivered and why. Coordinators started together (the v2
+import card) start one after another, each once the one before is up. If the
+message still does not get through, the coordinator's row says *First message
+not delivered* (a stopped one too), its menu offers *Send again* (a new
+conversation when its session ended), and Alfred tells you
+(`wherdr alfred coordinator resend <KEY>`). Its next start, whichever, gives
+it the message again.
+
 Along the way, the coordinator (and Alfred) may suggest a setting you may like,
 or one that solves a problem you mention: once, highlighted with
 `ui open --target`, and not again if you let it pass. When you need something
@@ -442,8 +452,9 @@ running or waiting: its 5-hour and weekly use, and its queue.
 A review round after a send-back reviews only the commits since the last round
 (with that round's findings), not the whole change again. Before a merge, new
 commits since the review go back to a short re-review of those commits only;
-commits that only merge the base, the task's own change unchanged, are not
-reviewed again (the same rule as for your approval).
+commits that only merge the base, the task's own change unchanged, and
+changes to comments only are not reviewed again (the same rule
+as for your approval; a comment-only change is said in the log).
 
 ### Guards
 
@@ -553,7 +564,7 @@ time); a link to the autopilot setting (`project.autopilot`) opens Settings.
   *now* and the next wake (dashed; outside the hours, their next start); the worker's account
   [pace](quotas.md#pace) as a gauge (the week used against its line or limit,
   then *go* or what it waits for); then the same events listed, newest first:
-  *Next wake*, *Now*, each wake sent (*Scheduled*, *Health check*, *Step check*,
+  *Next wake*, *Now*, each wake sent (*Scheduled*, *Step check*,
   *Engine*, *Incident*, *Run now*: its first reason and *handled* or how it
   ended, a wake not handled highlighted), each wake skipped and why (nothing to
   do, the account ahead of its pace, nothing changed since the last wake…), each
@@ -566,14 +577,30 @@ groups the form saves together. A bar pinned at the bottom of the tab, visible
 while you scroll, says *Unsaved changes* and holds *Cancel* (back to the saved
 values) and *Save* (enabled once something changed). Leaving the tab or closing
 the window with unsaved changes asks once whether to discard them. The groups:
-**Goal**; **When it wakes**: *Every*, *At*, the
-  **Health check** interval (empty: every 3h; `off`: never; see
-  [Who sends a wake](#who-sends-a-wake)), the routine events it also wakes on,
-  all off by default since the engine handles them (*Task added*: by someone
-  else than this coordinator, such as you, another coordinator or an
-  automation; *Task done*, *Task stuck*, *Ready for you*; an autopilot saved
-  earlier with the old default, *Task done* and *Task stuck*, has them turned
-  off once), and *Look for new work* (scheduled wakes even with nothing to do,
+**Goal**; **When it wakes**: *Every* (empty or `off`: no interval wake;
+  stalls then show only through engine wakes), each wake bringing the goal and
+  the health summary (see [Who sends a wake](#who-sends-a-wake)); then
+  **Routines**, a list with *Add routine* under it. A routine is a row: when
+  (days of the week as chips, *Every day* or *Weekdays*, and a time; *Advanced*
+  takes a cron or a list such as `mon,thu 09:00`), its own goal (*Summarise
+  the night's work for me*), a switch and *Delete*; tap a row or its pencil to
+  edit it in place. At its time the coordinator gets a wake `Routine: <its
+  goal>` with the health summary, whatever is left to do, within the hours and
+  the pace; a slot that comes with the autopilot or the routine off, or
+  outside the hours, is skipped. A routine wakes the coordinator with a goal;
+  an [automation](#automations) adds a task. An *At* time set in an earlier
+  version became one routine with the autopilot's goal. Then the routine events it also wakes on,
+  a list with a switch per event and one line on what the coordinator does
+  with it: *Task done* (start what follows, tell you, update the notes),
+  *Task stuck* (unblock it before the engine's two failed fixes), *Ready for
+  you* (usually not needed: you already get the notification and the *Tasks
+  to review* card), *Task added* (by someone else than this coordinator, such
+  as you, another coordinator or an automation). A new project starts with
+  *Task done* and *Task stuck* on and the other two off; an existing project
+  keeps its choice (one saved before an earlier version with only these two,
+  then the default, had them turned off once). A question, a choice after
+  review rounds and a block the engine gave up on always wake it. Then
+  *Look for new work* (scheduled wakes even with nothing to do,
   with its own *New tasks / day*); **Limits**: *Tasks / day* (up to 1000,
   empty for no daily limit), *At once* (empty is *Auto*, as many as the
   project's machines have room for; both empty for a new project, while a
@@ -633,9 +660,18 @@ it, that opens on tap. The fold holds only the wakes and their own turns. An inc
 something, keeps its row (in its stronger colour); an answer that asks you
 stays a full reply, with its answer buttons:
 
-- **Autopilot**: the autopilot's scheduled wakes, what needs judgment (an
-  agent's question that is not a permission request, the choice after N review
-  rounds), the routine events you turned on and *Run now*;
+- **Autopilot**: what needs judgment (an agent's question that is not a
+  permission request, the choice after N review rounds), the routine events you
+  turned on, *Run now*, and the **scheduled wake** (`Autopilot: scheduled
+  wake`), on the autopilot's *Every* interval (and its routines, each with its
+  own goal: `Routine: <goal>`): the goal, then a short
+  summary of the project: tasks done since the last one, tasks waiting for you,
+  tasks stalled for over an hour, and machines idle while to-do tasks wait.
+  When nothing in it needs the coordinator, it acks at once with no further
+  work. With the autopilot off, no scheduled wake comes (step checks and
+  incidents still do). A *Health check* field set in an earlier version joined *Every*
+  once: the shorter of the two was kept (3h when it was empty), `off` left
+  *Every* as it was;
 - **Step check** (`Step check: CO-1 (deploy)`): a step the coordinator holds,
   such as *watch the deploy*, at its start, each `recheck` and its timeout. It
   comes even with the autopilot off. Each recheck with no news on the task
@@ -656,17 +692,12 @@ stays a full reply, with its answer buttons:
   engine (`pipeline.watch`, above), which costs no model turn;
 - **Engine**: wherdr gave up on a block after failed fixes
   ([What wherdr fixes on its own](#what-wherdr-fixes-on-its-own));
-- **Health check**: every 3 hours by default (the autopilot's *Health check*
-  field), a short summary of the project: tasks done since the last check,
-  tasks waiting for you, tasks stalled for over an hour, and machines idle
-  while to-do tasks wait. When nothing is wrong the coordinator acks it with no
-  further work; with nothing at all to report, no wake is sent.
 - **Incident**: [the incident wake](#the-incident-wake).
 
 Waking the coordinator costs a turn with its whole context, so with the
 autopilot on and its events left off, it wakes only for these: an agent's
 question, a choice after review rounds, a block the engine gave up on, a step
-it holds, its schedule and the health check. A task done, ready or started, or
+it holds, and its scheduled wake. A task done, ready or started, or
 a block the engine fixed itself, wakes nobody. A permission request is yours,
 in *Tasks to review*.
 
@@ -678,15 +709,14 @@ Each kind is its own wake, sent one after the other. Every wake ends with
 - a **scheduled wake** while nothing the coordinator could act on changed since
   its last wake: every task where it stood then, no task it could start now
   (each to-do one waits for its *after* tasks, its files, room or a machine),
-  no new block, no answer, no message of yours. It counts in the day's skipped
-  wakes, as one with nothing to do;
+  no new block, no answer, no message of yours, and its health summary says
+  nothing new (empty, or all its lines in the last one sent within 12 hours).
+  It counts in the day's skipped wakes, as one with nothing to do;
 - an **Engine** wake for a block whose only cause is an offline or paused
   machine: the incident already said so, and the engine goes on once the machine
   is back. It wakes the coordinator only if that resume fails;
 - a second wake for an agent's **question** the coordinator already answered
-  with `tell`, while the agent's question is still showing;
-- a **health check** whose lines are all in the last one sent; it comes again
-  after 12 hours at most.
+  with `tell`, while the agent's question is still showing.
 
 Each one skipped is listed by `wherdr pm autopilot show` (*skippedWakes*: when,
 what and why), never in the conversation.
@@ -762,6 +792,8 @@ until you pick, it is *Follow machine tab* once machine groups exist, else *All
 projects*. The first column is **Your turn**, then the
 project's columns, or *To do*, *Working* and *Done* for all projects. A done
 or archived task is never under Your turn.
+Until the board is first read, its columns show the shapes of cards, never
+empty columns counting 0.
 
 A card shows the task's title, its id (a badge in the project's color: a tap
 copies it, *Copied*, without opening the task), the machine it runs on when its
@@ -1003,8 +1035,14 @@ Under them, *Full question*, folded: the agent's whole last message, drawn as in
 its conversation (Markdown, its `wherdr` blocks), scrolling inside the window
 when it is long (open when there is no summary). *Open the task* stays. A question answered anywhere (here, in the agent's conversation, a
 coordinator's `tell`) leaves *Tasks to review* and *Tasks to handle* at once,
-without waiting for the engine's next pass, and an open window moves on to the
-next task (or *All done*).
+without waiting for the engine's next pass.
+
+While the window is open, its list keeps its order and the task on screen never
+changes by itself: a task that becomes ready goes at the end (*2 of 6*), one
+handled elsewhere (approved, merged, answered) drops out, and if it is the one
+on screen it stays, under a muted *Handled elsewhere: done* line (or what
+happened), until you move on with the arrows. Closed and opened again, the list
+takes the board's order.
 
 Anything else that waits (a failure, a decision, another
 step of yours such as *Create these tasks*) shows the answers of its To do tab
@@ -1147,8 +1185,25 @@ its checks are green, wherdr merges by itself, even on a branch only you may
 merge into, and the log says so. The task comes back to *Your turn* (*Look
 again, then merge*) only when its agent uploads new screenshots, or when the
 task's own changes to interface files (`components`, `assets`, `pages` and
-`layouts` folders) differ from those you approved; what a merge of the base
-brought does not count.
+`layouts` folders) differ from those you approved. These keep the approval,
+each said in one line of the task's log at the merge (*approval kept:
+comment-only change*, *approval kept: base merge, same interface*, *approval
+kept: no interface file changed*):
+
+- changes to comments only, in CSS, SCSS, Less, JavaScript, TypeScript, Vue,
+  HTML and Markdown files (compared with comments left out; text in strings,
+  Markdown code and every space still count);
+- what a merge of the base brought, a conflict solved included, as long as the
+  task's own interface change is the same as the one you approved;
+- a fix outside the interface files.
+
+When the approval is dropped, the log says why: which interface files changed,
+between which commits, or new screenshots. wherdr then asks the task's agent
+why (started again if it was released): it uploads new screenshots of the
+change with one line, *Back to review because: …*, what changed on screen and
+why. Tasks to review and the task sheet's To do show it in a banner on top,
+the other task it names as a link, above the new screenshots; until the agent
+answers, the banner says what wherdr saw (the files and commits).
 
 It also comes back when wherdr truly cannot go on: a conflict its worker could
 not solve, a merge refused by a guard or by GitHub.
@@ -1241,7 +1296,9 @@ the mechanical blocks itself and wakes it only when that fails:
   that, its late result is only noted in History (*its result is dropped*),
   never undoing what a later run did;
 
-These blocks do not wake the coordinator. After 2 failed tries on the same
+With the autopilot's *Task stuck* event on (a new project's default), the
+coordinator is woken once as such a block begins, so it can act before the
+engine's fixes run out; with it off, these blocks do not wake it. After 2 failed tries on the same
 step (or 15 minutes with nothing left to try), wherdr wakes it once (an
 *Engine* wake, whatever the autopilot's events) and says what it tried. Every try, and giving
 up, is written to the task's **History**. Any other failure (a refused merge, a
@@ -1323,7 +1380,7 @@ open one, so it tells you the cause the engine found.
 
 A task an incident stopped waits for wherdr, not for you: it is not in Your
 turn, the coordinator sees it as working (never stuck, nor waiting for you in
-its health check), its card says why it waits (*… wherdr resumes it once host-b is back*).
+its health summary), its card says why it waits (*… wherdr resumes it once host-b is back*).
 Once the cause is gone, the engine resumes it by itself, every minute:
 
 - **when**: a restart, a crash or an unknown cause at once; a machine offline

@@ -77,6 +77,9 @@ describe('wake queue', () => {
     const heads = q.map(w => wakeText(w).split('\n')[0])
     expect(heads).toEqual(['Autopilot: wake w1', 'Step check: CO-2 (deploy), wake w2', 'Engine: wake w3', 'Health check: wake w4'])
     expect(heads.map(wakeKindOf)).toEqual(['autopilot', 'step', 'engine', 'health'])
+    // The scheduled wake joins the pending Autopilot one and names itself.
+    const sched = enqueue(q, 'CO', ['Scheduled wake (every 1h). Your goal: Ship.'], 0, 'w9', false, { scheduled: true })
+    expect([sched.id, wakeText(sched).split('\n')[0], wakeKindOf(wakeText(sched))]).toEqual(['w1', 'Autopilot: scheduled wake w1', 'autopilot'])
     expect(wakeKindOf('Autopilot: please look')).toBeNull()
     // Its queued form (Claude's paste wrapper, a leading line break) reads the same as the transcript's.
     const text = wakeText({ ...q[0]!, kind: 'incident', about: 'inc1' })

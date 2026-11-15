@@ -417,6 +417,7 @@ body.short-bottom { --safe-bottom: 0px; }
 .stat { padding: 12px 12px 11px; min-width: 0; }
 .stat + .stat { border-left: 1px solid var(--line); }
 .stat b { display: block; font: 850 30px/1 var(--display); letter-spacing: -.04em; color: var(--text); }
+.stat .stat-skel { width: .8em; height: 1em; }
 .stat span {
   display: block; margin-top: 8px;
   font: 500 9.5px/1.2 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
@@ -439,11 +440,17 @@ body.short-bottom { --safe-bottom: 0px; }
 .quota-who { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; border-right: 1px solid var(--line); min-width: 0; }
 .quota-who small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; font: 400 8.5px/1 var(--mono); color: var(--dim); white-space: nowrap; }
 .quota-who small .iconify { width: 9px; height: 9px; margin-right: 2px; vertical-align: -1px; }
-/* Reading older than an hour: age in ochre, numbers dimmed. Window
-   reset since the reading (100 % assumed): hatched bar. */
+/* Reading older than an hour: age in ochre, numbers dimmed. Window whose value
+   is no longer known (reset since the reading, or read longer ago than it
+   lasts): `?` and a dashed bar in muted tones, same height as a known one. */
 .quota-row.stale .quota-who small { color: var(--ochre); }
 .quota-row.stale .quota-top b { color: var(--muted); }
-.quota.guessed .quota-bar i { background: repeating-linear-gradient(90deg, var(--teal) 0 4px, transparent 4px 7px); }
+.quota.guessed { position: relative; cursor: help; outline: 0; }
+/* Its tooltip: over the row (nothing moves), on hover, keyboard focus or a tap. */
+.quota-tip { display: none; position: absolute; z-index: 5; top: calc(100% + 4px); left: 4px; right: 4px; padding: 5px 8px; border: 1px solid var(--line); background: var(--bg-2); color: var(--text-2); font: 400 10px/1.35 var(--mono); }
+.quota.guessed:hover .quota-tip, .quota.guessed:focus-visible .quota-tip, .quota.guessed.open .quota-tip { display: block; }
+.quota.guessed .quota-top b { color: var(--muted); }
+.quota.guessed .quota-bar i { background: repeating-linear-gradient(90deg, var(--dim) 0 4px, transparent 4px 7px); }
 .quota-who .avatar { width: 18px; height: 18px; border: 0; background: none; }
 .quota-who .avatar .iconify { width: 14px; height: 14px; }
 .quota-who .avatar.codex .iconify { width: 17px; height: 17px; }
@@ -465,9 +472,8 @@ body.short-bottom { --safe-bottom: 0px; }
 .quota-row.quota-api { grid-template-columns: 44px 1fr; min-height: 34px; }
 .quota-api-label { margin: 0; padding: 4px 10px; align-self: center; min-width: 0; font: 400 10px/1.3 var(--mono); letter-spacing: .04em; color: var(--dim); overflow-wrap: anywhere; }
 .quota-limited { color: var(--danger); }
-/* Credits, and how to refresh an old reading: one line across the row. */
+/* Credits: one line across the row. */
 .quota-note { grid-column: 1 / -1; margin: 0; padding: 3px 8px; border-top: 1px solid var(--line); font: 400 9.5px/1.3 var(--mono); color: var(--dim); overflow-wrap: anywhere; }
-.quota-row.stale .quota-note { color: var(--ochre); }
 
 .agent-group { margin-bottom: 26px; }
 .group-title {
@@ -580,9 +586,10 @@ body.short-bottom { --safe-bottom: 0px; }
 .state-machine-dot { width: 6px; height: 6px; flex: none; background: var(--green); }
 .state-machine-name { min-width: 0; max-width: 18ch; overflow: hidden; text-overflow: ellipsis; }
 .state-machine-quotas { margin: -6px 0 18px; }
-.state-machine-quotas-label { margin: 0 0 6px; font: 500 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.state-machine-quotas-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 6px; }
+.state-machine-quotas-label { margin: 0; font: 500 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
 .state-machine-quotas .quotas { margin: 0; }
-.state-machine-quotas-machines { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 8px; padding: 0; list-style: none; }
+.state-machine-quotas-machines { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
 .state-machine-quotas-machines li { padding: 2px 6px; border: 1px solid var(--line); font: 500 10px/1.3 var(--mono); color: var(--text-2); }
 .machine-empty.state-empty { margin-left: 0; }
 .state-away {
@@ -621,11 +628,17 @@ body.short-bottom { --safe-bottom: 0px; }
   background: var(--bg-2);
   transition: background .12s ease;
 }
-.card, .card :where(*) {
+/* Home list rows and cards (agent cards, Alfred, coordinators, Tasks to
+   review): a long press opens their menu, without iOS's text selection,
+   callout or icon drag. */
+.card, .press-row, :is(.card, .press-row) :where(*) {
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
 }
+:is(.card, .press-row) :where(img, svg) { -webkit-user-drag: none; }
+/* The inline rename field stays editable. */
+:is(.card, .press-row) :where(input, textarea) { -webkit-user-select: text; user-select: text; }
 .card + .card { border-top: 1px solid var(--line-soft); }
 .card::before { content: ''; position: absolute; left: -1px; top: -1px; bottom: -1px; width: 2px; background: transparent; }
 .card:active { background: var(--surface-2); }
@@ -1397,6 +1410,10 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
 .thumb-missing { display: grid; place-items: center; width: 92px; height: 92px; border: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent); color: var(--muted); background: var(--surface-2); }
 .thumb-missing .iconify { width: 22px; height: 22px; }
 @media (max-width: 700px) { .thumb-missing { width: 72px; height: 72px; } }
+/* Image that failed twice: the same tile, a tap loads it again. */
+.thumb-reload { gap: 4px; align-content: center; padding: 4px; cursor: pointer; font: 500 10px/1.2 var(--mono); letter-spacing: .06em; text-transform: uppercase; text-align: center; }
+.thumb-reload:hover { border-color: var(--accent); color: var(--text-2); }
+.thumbs .msg-img.thumb-wait { visibility: hidden; }
 .queued-tag { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; font: 400 11px/1.3 var(--mono); color: var(--muted); text-align: right; }
 .queued-tag > span { max-width: calc(100% - 18px); min-width: 0; overflow-wrap: anywhere; }
 .queued-tag .iconify { width: 12px; height: 12px; flex: none; color: var(--mauve); }
@@ -3586,6 +3603,10 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
 /* ------------------------------------------------------------ skeletons
    Shown only with nothing kept on this device, after 300 ms (useDelayedFlag): the
    shapes of what loads, at its size, square, static (no shimmer, no pulse). */
+/* A loading block (SettingsSkeleton, HomeSkeleton): muted, square, a gentle pulse, none with reduced motion. */
+.skel { display: block; background: var(--line-soft); animation: skel-pulse 1.6s ease-in-out infinite; }
+@keyframes skel-pulse { 50% { opacity: .5; } }
+@media (prefers-reduced-motion: reduce) { .skel { animation: none; } }
 .chat-skel i { display: block; height: 11px; margin: 3px 0; background: var(--line-soft); }
 /* The conversation's: at the bottom, as the messages will be. */
 .chat-list.skeleton { flex: 1; justify-content: flex-end; }

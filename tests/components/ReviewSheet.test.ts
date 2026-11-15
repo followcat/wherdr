@@ -11,6 +11,7 @@ import { coordinators } from '~/composables/useCoordinators'
 import { machineBarSaved, machineGroups } from '~/composables/useMachineBar'
 import { reviewFilter, reviewOpen } from '~/composables/useReview'
 import { lightboxSrc } from '~/composables/useUi'
+import { taskSheetTick } from '~/composables/useTaskSheet'
 import { toHandle, type Card } from '#shared/pm/board'
 
 const plan = [{ id: 'work', holder: 'worker', ends: 'report' }, { id: 'review', holder: 'reviewer', ends: 'verdict' }, { id: 'merge', holder: 'user', ends: 'user', action: { kind: 'github.merge' } }]
@@ -27,6 +28,7 @@ registerEndpoint('/api/pm/handle', () => toHandle(cards))
 registerEndpoint('/api/pm/step-user', { method: 'POST', handler: async (e) => {
   const { id } = await readBody(e) as { id: string }
   if (id === 'HO-X') throw createError({ statusCode: 409, statusMessage: 'The PR has conflicts' })
+  if (id === 'HO-R') return { task: { id, step: { yourTurn: { reason: 'action', badge: 'Merge refused: conflict' } } } }
   accepted.push(id)
   cards = cards.filter(c => c.id !== id)
   return { task: { id } }
@@ -149,4 +151,50 @@ it('confirms Approve, then slides to the next task; a failure stays put; reduced
     await expect.poll(() => q('review-stage')?.dataset.motion).toBe('fade')
     r.unmount()
   } finally { mm.mockRestore() }
+})
+
+it('keeps its order while open: a new task goes at the end, the one on screen stays, handled elsewhere with a muted line', async () => {
+  cards = [card('HO-1', 'home'), card('HO-2', 'home'), card('HO-3', 'home')]
+  reviewOpen.value = true
+  const w = await mountSuspended(ReviewCard)
+  await expect.poll(shown).toBe('HO-1')
+  q('review-next')!.click()
+  await expect.poll(shown).toBe('HO-2')
+  // A task ready meanwhile, first on the board: appended, the task on screen stays.
+  cards = [card('HO-0', 'home'), ...cards]
+  taskSheetTick.value++
+  await expect.poll(progress).toBe('2 of 4')
+  expect(shown()).toBe('HO-2')
+  // A screenshot opened and closed: the same task.
+  lightboxSrc.value = '/shot.png'
+  lightboxSrc.value = null
+  taskSheetTick.value++
+  await new Promise(r => setTimeout(r, 50))
+  expect([shown(), progress()]).toEqual(['HO-2', '2 of 4'])
+  // Merged elsewhere: it stays with what happened; another one just drops out.
+  cards = cards.filter(c => c.id !== 'HO-3').map(c => (c.id === 'HO-2' ? { ...c, yourTurn: undefined, state: { ...c.state!, done: true } } : c))
+  taskSheetTick.value++
+  await expect.poll(() => q('review-gone')?.textContent).toBe('Handled elsewhere: done')
+  expect([shown(), progress(), q('review-approve')]).toEqual(['HO-2', '2 of 3', null])
+  q('review-next')!.click() // moved on: it leaves the list
+  await expect.poll(shown).toBe('HO-0')
+  expect([progress(), q('review-gone')]).toEqual(['2 of 2', null])
+  // A merge refused here, then handled elsewhere: still kept, with its line.
+  cards = [...cards, card('HO-R', 'home')]
+  taskSheetTick.value++
+  await expect.poll(progress).toBe('2 of 3')
+  q('review-next')!.click()
+  await expect.poll(shown).toBe('HO-R')
+  q('review-approve')!.click()
+  await expect.poll(() => !!q('review-refused')).toBe(true)
+  cards = cards.filter(c => c.id !== 'HO-R')
+  taskSheetTick.value++
+  await expect.poll(() => q('review-gone')?.textContent).toBe('Handled elsewhere: removed from the board')
+  expect(shown()).toBe('HO-R')
+  w.unmount()
+  // Closed and opened again: the board's order.
+  const again = await mountSuspended(ReviewCard)
+  await expect.poll(shown).toBe('HO-0')
+  expect(progress()).toBe('1 of 2')
+  again.unmount()
 })

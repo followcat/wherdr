@@ -9,7 +9,7 @@ vi.mock('../server/utils/coreQuotaMachines', () => ({ coreQuotaMachines: async (
 vi.mock('../server/utils/coreAdminDeps', () => ({ coreAdminDeps: () => ({}) }))
 import { forgetQuotas, readQuotas } from '../server/utils/quotas'
 
-it('discards the previous Codex account when a machine read fails after a login change', async () => {
+it('keeps the machine\'s last good Codex reading while its read fails, then takes the new account', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-read-failure-'))
   const now = new Date()
   const dir = path.join(home, '.codex/sessions', String(now.getFullYear()), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0'))
@@ -32,7 +32,8 @@ it('discards the previous Codex account when a machine read fails after a login 
     expect((await readQuotas(true)).codex!.five!.used).toBe(52)
     write('account-b', 8)
     fail = true
-    expect((await readQuotas(true)).codex).toBeNull()
+    // The read failed: the last good reading stays, with its own age (WHR-337).
+    expect((await readQuotas(true)).codex!.five!.used).toBe(52)
     fail = false
     expect((await readQuotas(true)).codex!.five!.used).toBe(8)
   } finally {

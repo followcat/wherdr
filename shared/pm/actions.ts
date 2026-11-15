@@ -53,12 +53,38 @@ const AFTER_MERGE = `a=$(git config --get wherdr.afterMerge) && { sh -c "$a" >/d
 // The files that change the interface, at any depth (app/components, pages…).
 const UI_FILES = ['components', 'assets', 'pages', 'layouts'].map(d => `':(glob)**/${d}/**'`).join(' ')
 
-// A script: "same" when the task's own change (in `files`) is the same at commits $2 and $3, base $1.
-const ownChange = (files: string) => `${IN} git fetch -q origin "$1" 2>/dev/null; b="origin/$1"
+// A file's text without its comments, for the types whose comments the
+// interface never shows; others as they are. Strings, tags with their
+// attributes, {{ }} and Markdown code are kept whole, and so is every space:
+// only a comment goes, with its own line when it had one. Without perl, as they are: a comment then counts as a change.
+// No single quote in it (\x27): it goes into the script between single quotes.
+const STRIP_PL = String.raw`my $m = shift; local $/; my $t = <STDIN>; $t = "" unless defined $t; my $Z = "\0";
+my $S = qr{"(?:\\.|[^"\\\n])*"|\x27(?:\\.|[^\x27\\\n])*\x27|\x60(?:\\.|[^\x60\\])*\x60};
+sub code { my ($s, $line) = @_; my $c = $line ? qr{/\*.*?\*/|(?<![:\w\\])//[^\n]*}s : qr{/\*.*?\*/}s;
+  $s =~ s{($S)|[ \t]*(?<!\\)(?:$c)}{defined $1 ? $1 : $Z}gse; return $s }
+sub block { my ($o, $in, $c) = $_[0] =~ m{^(<[^>]*>)(.*)(</\w+>)$}s; return $o . code($in, $o =~ m{^<script|lang=["\x27]?(?:scss|less)}i ? 1 : 0) . $c }
+if ($m eq "css") { $t = code($t, 0) } elsif ($m eq "js") { $t = code($t, 1) }
+elsif ($m eq "html") { $t =~ s{(<(script|style)\b[^>]*>.*?</\2>)|(\{\{.*?\}\}|<[A-Za-z][^>"\x27]*(?:(?:"[^"]*"|\x27[^\x27]*\x27)[^>"\x27]*)*>)|[ \t]*<!--.*?-->}{defined $1 ? block($1) : defined $3 ? $3 : $Z}gsei }
+elsif ($m eq "md") { $t =~ s{(\x60\x60\x60.*?\x60\x60\x60|\x60[^\x60\n]*\x60)|[ \t]*<!--.*?-->}{defined $1 ? $1 : $Z}gse }
+$t =~ s{^[ \t]*$Z[$Z \t]*\n}{}gm; $t =~ s{$Z}{}g; print $t;`
+const STRIP = `P='${STRIP_PL}'
+strip() { case "$1" in *.css) k=css ;; *.scss|*.less|*.js|*.mjs|*.cjs|*.ts|*.mts|*.cts|*.jsx|*.tsx) k=js ;; *.vue|*.html|*.htm) k=html ;; *.md) k=md ;; *) cat; return ;; esac
+  command -v perl >/dev/null 2>&1 || { cat; return; }
+  perl -e "$P" "$k"; }`
+
+// A script: is the task's own change (in `files`) the same at commits $2 and
+// $3, base $1? "same"; "comments" when only comments moved (STRIP);
+// else the files whose change moved, then "changed".
+const ownChange = (files: string) => `${IN} git fetch -q origin "$1" 2>/dev/null; b="origin/$1"; _b=$(mktemp) && _c=$(mktemp) || exit 1; trap 'rm -f "$_e" "$_b" "$_c"' EXIT
 for c in "$2" "$3"; do git cat-file -e "$c^{commit}" 2>/dev/null || git fetch -q origin "$c" 2>/dev/null; done
-own() { m=$(git merge-base "$b" "$1") && git diff -U0 --no-color --no-ext-diff "$m" "$1" -- ${files} | sed '/^index /d; /^@@/d'; }
-x=$(own "$2") && y=$(own "$3") || exit 1
-[ "$x" = "$y" ] && echo same || echo changed`
+m2=$(git merge-base "$b" "$2") && m3=$(git merge-base "$b" "$3") || exit 1
+own() { git diff -U0 --no-color --no-ext-diff "$1" "$2" -- ${files} | sed '/^index /d; /^@@/d'; }
+[ "$(own "$m2" "$2")" = "$(own "$m3" "$3")" ] && { echo same; exit 0; }
+${STRIP}
+one() { git show "$1:$3" 2>/dev/null | strip "$3" >"$_b"; git show "$2:$3" 2>/dev/null | strip "$3" >"$_c"; diff "$_b" "$_c" | sed '/^[0-9]/d'; }
+moved=$({ git diff --name-only --no-renames "$m2" "$2" -- ${files}; git diff --name-only --no-renames "$m3" "$3" -- ${files}; } | sort -u | while IFS= read -r f; do
+  [ "$(one "$m2" "$2" "$f")" = "$(one "$m3" "$3" "$f")" ] || printf '%s\\n' "$f"; done)
+[ -z "$moved" ] && echo comments || printf '%s\\nchanged\\n' "$moved"`
 export const SCRIPT = {
   // Catch up with the target, then push the task branch onto it. A repository
   // without origin lands locally: the clone's branch $t (made when missing)
@@ -200,7 +226,7 @@ gh run view "$1" --log-failed 2>&1 | tail -n 20`,
   failedLog: `${IN} for i in $(gh run list --commit "$1" --json databaseId,conclusion -q '.[] | select(.conclusion == "failure") | .databaseId' 2>/dev/null); do gh run view "$i" --log-failed 2>/dev/null | tail -n 400; done`,
   // Did the task's own interface change move from commit $2 to $3? Each one's
   // diff from where it left base $1, interface files only, line numbers left
-  // out: what a merge of the base brought does not count. "same" or "changed".
+  // out: what a merge of the base brought does not count (ownChange's answers).
   uiChanged: ownChange(UI_FILES),
   // The same over all its files: a commit that only merges the base is not reviewed again.
   ownChanged: ownChange('.'),
@@ -364,6 +390,8 @@ export function leaks(g: ResolvedGuards, remoteBranches: string[], allowed: stri
 // proof. detail: what a failed watch printed, for the log and the coordinator.
 // catchUp: the PR's base, when the merge is refused because the PR conflicts with or is behind it.
 // base: the branch a merge went to (the PR's base on its host).
-export interface ActionResult { ok: boolean, later?: boolean, report?: string, detail?: string, error?: string, toAgent?: boolean, review?: { since: string, head: string }, catchUp?: string, unapproved?: true, link?: string, commit?: string, alert?: string, note?: string, base?: string }
+// A merge found the task's own interface changed since the user's approval: between which commits, in which files.
+export interface Unapproved { since: string, head: string, files: string[] }
+export interface ActionResult { ok: boolean, later?: boolean, report?: string, detail?: string, error?: string, toAgent?: boolean, review?: { since: string, head: string }, catchUp?: string, unapproved?: Unapproved, link?: string, commit?: string, alert?: string, note?: string, base?: string }
 export interface Receipt { id: string, task: string, step: string, action: StepAction, state: 'pending' | 'done' | 'uncertain' | 'later', result?: ActionResult, at: number, by?: MergeBy, resumes?: number }
 export const receiptId = (task: string, step: string, attempt: number) => `${task}.${attempt}.${encodeURIComponent(step)}`

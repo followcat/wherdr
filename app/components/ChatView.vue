@@ -23,6 +23,7 @@ import { findReplyOrigin, parseReply, type ReplyTarget } from '#shared/replyQuot
 import { messageId, messageOf, messageRef, pointRef, refLine, refsIn, sameRef, type Reference } from '#shared/reference'
 import { WAKE_LABEL, wakeKindOf, type WakeKind } from '#shared/pm/wakes'
 import { cardNoteOf } from '#shared/uiActions'
+import { isStartPrompt } from '#shared/pm/alfred'
 import type { ProposalAnswer } from '#shared/pm/coordinator'
 import type { AutomationProposal } from '#shared/pm/automations'
 import { proposalSpot, type PlacedBlock } from '~/utils/proposalPlace'
@@ -730,6 +731,8 @@ const pendingPrompt = computed(() => Boolean(props.pane.pendingPrompt))
 // Read by the template instead of `pane.*`: the conversation sits in one slot,
 // and a read of the pane there re-renders every message on every push.
 const agent = computed(() => props.pane.agent)
+// Alfred's conversation: its replies are headed with its name, not the agent's.
+const alfredHere = computed(() => isAlfredPane(props.pane))
 const hasDraft = computed(() => Boolean(props.pane.draft || props.pane.queueSendNow))
 const unsentPane = computed<Pane>(old => (old && old.id === props.pane.id && old.queueSendNow === props.pane.queueSendNow && JSON.stringify(old.draft) === JSON.stringify(props.pane.draft) ? old : props.pane))
 const waitFor = computed(() => waitingOn(props.pane))
@@ -867,6 +870,8 @@ const blocks = computed<Block[]>(() => {
       // file), then photos stored on the server whose path stayed as text.
       const { text, srcs, files } = userMessageParts(it.text, itemImageSrcs(it))
       // Reply to a specific message: the marker becomes a quote linking to the original.
+      // Alfred's start message is wherdr's: a collapsed system line.
+      if (isStartPrompt(text)) { out.push({ k: 'system', key, text: tl('Start instructions sent by wherdr'), full: text }); return }
       const card = cardNoteOf(text)
       if (card !== null) { out.push({ k: 'card', key, text: card, time: it.ts ? fmtTime(it.ts) : null, at: it.ts ? fmtDateTime(it.ts) : null }); return }
       const parsed = parseReply(text)
@@ -1778,7 +1783,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
               <div v-if="b.k === 'day'" class="day-sep"><span>{{ b.label }}</span></div>
 
               <div v-else-if="b.k === 'who'" class="msg-who" :class="agent || ''">
-                <UIcon :name="agentIcon(agent) || 'i-lucide-bot'" /><span>{{ kindLabel(agent) }}</span>
+                <UIcon :name="agentIcon(agent) || 'i-lucide-bot'" /><span>{{ alfredHere ? alfred?.name || 'Alfred' : kindLabel(agent) }}</span>
               </div>
 
 

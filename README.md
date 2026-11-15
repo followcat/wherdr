@@ -1,5 +1,7 @@
 # wherdr v3
 
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/ky36WYmtVE)
+
 wherdr is an unofficial, self-hosted web client for coding agents. **v3 runs on
 [herdr-core](https://github.com/herdrdev/herdr-core)** (`hc`): start Claude Code, Codex or a plain
 terminal on your machines, follow their work and reply from your phone or browser. Nothing is
@@ -79,6 +81,8 @@ remote access.
 - **[Security](docs/security.md)** — Remote-shell access, passkeys and network restrictions.
 - **[Development and tests](docs/development.md)** — Run from source, test the core build.
 - **[Troubleshooting](docs/troubleshooting.md)** — herdr-core connection, conversations, machines, network.
+
+Questions and feedback: [Discord](https://discord.gg/ky36WYmtVE); bugs: [GitHub issues](https://github.com/afloury/wherdr/issues).
 
 [All documentation](docs/README.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
 

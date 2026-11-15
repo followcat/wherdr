@@ -24,7 +24,7 @@ it.each([
   { code: 124, failure: 'timeout', persistent: false },
   { code: 255, failure: 'refused session', persistent: true },
   { code: 124, failure: 'timeout', persistent: true },
-])('does not display cached 19/5 remaining over a fresh 98/98 file after a $failure (persistent: $persistent)', async ({ code, persistent }) => {
+])('a $failure: a retry reads the fresh 98/98 file; failing for good, the machine keeps its last good 19/5 with its own age (persistent: $persistent)', async ({ code, persistent }) => {
   const now = Date.parse('2026-10-11T14:50:39Z')
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(now - 5 * 3600000)
@@ -88,17 +88,19 @@ it.each([
   const fresh = await readQuotas()
   // This proves that the new file was actually read before the account read failed.
   expect(observed.at(-1)).toEqual([98, 98])
-  expect(displayed(fresh, primary.key)).toEqual(persistent ? [] : [[2, 2]])
+  // Failing for good: the last good reading stays, with its own reading time
+  // (the app shows `?` once it is past its window; WHR-337).
+  expect(displayed(fresh, primary.key)).toEqual(persistent ? [[19, 5]] : [[2, 2]])
+  if (persistent) expect(machineQuotaRows(fresh, primary.key)[0]!.q.at).toBe(now - 6 * 60000)
   expect(observed.slice(-2)).toEqual([[98, 98], [98, 98]])
   expect(console.warn).toHaveBeenCalledWith(expect.any(String), 'Claude quota read failed', {
     machine: primary.key, code: 'unreachable', attempt: 1, action: 'retry',
   })
   expect(displayed(fresh, other.key)).toEqual([[89, 75]])
   if (persistent) {
-    // Expiring the 30-second response cache never expired the old lastRead cache.
     for (const elapsed of [60000, 120000]) {
       vi.setSystemTime(now + elapsed)
-      expect(displayed(await readQuotas(), primary.key)).toEqual([])
+      expect(displayed(await readQuotas(), primary.key)).toEqual([[19, 5]])
     }
   } else {
     expect(displayed(fresh, shared.key)).toEqual([[2, 2]])

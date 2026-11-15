@@ -194,7 +194,7 @@ const unknown = (r: PaceRow) => !r.account || (r.verdict.go && r.verdict.unknown
                 <b>{{ t('End-of-week burn') }}</b>
                 <small data-testid="pace-burn-hint">{{ burnText(r) || (r.week ? t('Until the weekly reset, automatic work runs with no pace limit; it turns off at the reset.') : t('Needs a quota reading to know the weekly reset.')) }}</small>
               </span>
-              <USwitch :model-value="burnOn(r)" color="success" size="xl" :disabled="busy !== '' || (!r.week && !burnOn(r))" data-testid="pace-burn" @update:model-value="v => toggleBurn(r, v)" />
+              <USwitch :model-value="burnOn(r)" size="xl" :disabled="busy !== '' || (!r.week && !burnOn(r))" data-testid="pace-burn" @update:model-value="v => toggleBurn(r, v)" />
             </label>
             <p v-if="invalid?.key === r.account.key" class="pace-error" data-testid="pace-invalid">{{ invalidText(invalid.field) }}</p>
             <p v-if="r.policy.mode === 'workdays'" class="muted pace-hint">{{ tl('At least one day stays chosen. Days not chosen add nothing to the line.', 'Au moins un jour reste choisi. Les jours non choisis n’ajoutent rien à la ligne.') }}</p>

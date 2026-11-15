@@ -60,7 +60,7 @@ const coarse = { base: 'pointer-coarse:text-[16px]' }
         <b>{{ tl('Rewrite with a cheap model', 'Reformuler avec un modèle bon marché') }}</b>
         <small>{{ tl('After the transcript, a chat model on OpenRouter removes filler words and false starts and fixes punctuation. The text goes into the field as usual. If it fails, the raw transcript is kept.', 'Après la transcription, un modèle de chat sur OpenRouter retire les hésitations et faux départs et corrige la ponctuation. Le texte va dans le champ comme d’habitude. En cas d’échec, la transcription brute est gardée.') }}</small>
       </span>
-      <USwitch v-model="opts.on" color="success" size="xl" data-testid="dictation-rewrite-on" />
+      <USwitch v-model="opts.on" size="xl" data-testid="dictation-rewrite-on" />
     </label>
     <p v-if="keySet === false" class="dictation-rewrite-note muted" data-testid="dictation-rewrite-nokey">
       {{ tl('Needs an OpenRouter key: save it under Online above, then come back to your engine.', 'Il faut une clé OpenRouter : enregistre-la sous En ligne ci-dessus, puis reviens à ton moteur.') }}

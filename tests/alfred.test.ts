@@ -1,6 +1,6 @@
 // WHR-403: Alfred's home files, the name read from its identity.md, and its start message.
 import { describe, expect, it } from 'vitest'
-import { ALFRED, FIRST_MESSAGE, OWN_FILES, alfredFiles, alfredName, startPrompt, type AlfredContext } from '../shared/pm/alfred'
+import { ALFRED, FIRST_MESSAGE, GREETING, OWN_FILES, alfredFiles, alfredName, isStartPrompt, startPrompt, type AlfredContext } from '../shared/pm/alfred'
 
 const ctx: AlfredContext = { home: '/data/alfred', version: '3.0.0', docs: '/opt/wherdr/docs', docFiles: ['overview.md', 'quick-start.md'], pm: false, projects: [], address: { local: 'http://127.0.0.1:7684' } }
 
@@ -66,18 +66,27 @@ it('greets with the rename question on the first start only', () => {
   expect(startPrompt(false, 'Jeeves')).toMatch(/as Jeeves\.$/)
   expect(startPrompt(false, 'Jeeves')).not.toContain(FIRST_MESSAGE)
   expect(startPrompt(true, ALFRED)).not.toContain('v2')
-  expect(startPrompt(true, ALFRED, true)).toMatch(new RegExp(`run \`wherdr alfred v2\` and say exactly: "${FIRST_MESSAGE.replace(/[?]/g, '\\?')}" .*set up those projects`))
   expect(startPrompt(false, 'Jeeves', true)).not.toContain('v2')
+  expect(isStartPrompt(startPrompt(true, ALFRED, true))).toBe(true)
+  expect(isStartPrompt('Follow the docs')).toBe(false)
 })
 
 // WHR-243: a new user with no project is offered the first one's setup.
-it('offers to set up the first project when there is none, the v2 offer first', () => {
+// WHR-349: one question per message: with an offer, the name question waits for its own message.
+it('offers the v2 projects or the first project alone, the name question in a later message', () => {
   const offer = /no project yet.*set up the first one.*setup window/
-  expect(startPrompt(true, ALFRED, false, true)).toContain(FIRST_MESSAGE)
+  const later = `Once this offer is answered (done or declined), ask in a message of its own: "Would you like to give me another name?"`
+  const v2 = startPrompt(true, ALFRED, true)
+  expect(v2).toMatch(new RegExp(`run \`wherdr alfred v2\` and say exactly: "${GREETING}" .*set up those projects.*its own choices block`))
+  expect(v2).not.toContain(FIRST_MESSAGE)
+  expect(v2).toContain(later)
   expect(startPrompt(true, ALFRED, false, true)).toMatch(offer)
+  expect(startPrompt(true, ALFRED, false, true)).not.toContain(FIRST_MESSAGE)
+  expect(startPrompt(true, ALFRED, false, true)).toContain(later)
   expect(startPrompt(true, ALFRED, false, false)).not.toMatch(offer)
   expect(startPrompt(true, ALFRED, true, true)).not.toMatch(offer)
   expect(startPrompt(true, ALFRED, true, true)).toContain('set up those projects')
   expect(startPrompt(false, 'Jeeves', false, true)).not.toMatch(offer)
+  expect(alfredFiles(ctx, [])['AGENTS.md']).toContain('One question per message, and at most one choices block')
 })
 

@@ -192,8 +192,10 @@ describe('mechanical moves', () => {
       const passed = onEvent(visual, review, { kind: 'verdict', from: 'reviewer', findings: [{ id: 'f1', severity: 'minor', title: 'a name' }], head: 'fff0000' }, 13).state
       expect(passed).toMatchObject({ at: 3, approved: { at: 10 }, yourTurn: undefined })
       // The merge finds the task's interface files changed since the approval: the user looks again.
-      const ui = onEvent(visual, { ...passed, acting: true }, { kind: 'action-result', ok: false, error: 'merge: the interface changed', unapproved: true }, 14).state
+      const ui = onEvent(visual, { ...passed, acting: true }, { kind: 'action-result', ok: false, error: 'merge: the interface changed', unapproved: { since: 'fff0000', head: 'abc9999', files: ['app/assets/main.css'] } }, 14).state
       expect(ui).toMatchObject({ at: 3, acting: undefined, approved: undefined, yourTurn: { reason: 'user', badge: 'Look again, then merge: the interface changed' } })
+      expect(ui.lookAgain).toEqual({ why: 'the interface changed since your approval (fff0000..abc9999) in app/assets/main.css', at: 14, since: 'fff0000', head: 'abc9999', files: ['app/assets/main.css'] })
+      expect(onEvent(visual, ui, { kind: 'user' }, 15).state).toMatchObject({ approved: { at: 15 }, lookAgain: undefined })
       // A Send back after the click drops the approval: the reworked task waits for the user again.
       const failed = onEvent(visual, clicked, { kind: 'action-result', ok: false, error: 'merge: 1 check(s) failed' }, 14).state
       const sentBack = onEvent(visual, failed, { kind: 'back', note: 'make the button blue' }, 15)

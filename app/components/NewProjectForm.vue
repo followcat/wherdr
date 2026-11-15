@@ -132,7 +132,7 @@ const notes = {
       </p>
       <label v-if="kind && canGitInit(kind)" class="toggle-row">
         <span><b>{{ tl('Start a git repository', 'Créer un dépôt git') }}</b><small>git init</small></span>
-        <USwitch v-model="draft.gitInit" color="success" size="xl" data-testid="project-git-init" />
+        <USwitch v-model="draft.gitInit" size="xl" data-testid="project-git-init" />
       </label>
 
       <div class="name-key">

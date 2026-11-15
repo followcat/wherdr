@@ -111,7 +111,7 @@ const remove = (k: string) => run(`rm:${k}`, async () => {
       <span>{{ labelOf(p.machine) }} <small class="mono-label">{{ tl('Home') }}</small></span>
       <small class="pm-clone">{{ ltr(shortPath(p.path)) }}</small>
       <span v-if="others.length || isPaused(p, p.machine)" class="pm-machine-actions">
-        <USwitch :model-value="!isPaused(p, p.machine)" color="success" size="lg" :disabled="busy !== ''" :aria-label="tl(`Take tasks on ${labelOf(p.machine)}`)" data-testid="pm-machine-on" @update:model-value="setOn(p.machine, $event)" />
+        <USwitch :model-value="!isPaused(p, p.machine)" size="lg" :disabled="busy !== ''" :aria-label="tl(`Take tasks on ${labelOf(p.machine)}`)" data-testid="pm-machine-on" @update:model-value="setOn(p.machine, $event)" />
         <i class="pm-slot" /><i class="pm-slot" />
       </span>
       <small v-if="memOf(p.machine) && !nowOf(p.machine)" class="pm-ready" data-testid="pm-machine-memory">{{ memOf(p.machine) }}</small>
@@ -122,7 +122,7 @@ const remove = (k: string) => run(`rm:${k}`, async () => {
       <span>{{ labelOf(k) }}</span>
       <small class="pm-clone">{{ ltr(p.clones?.[k] ?? '') }}</small>
       <span class="pm-machine-actions">
-        <USwitch :model-value="!isPaused(p, k)" color="success" size="lg" :disabled="busy !== ''" :aria-label="tl(`Take tasks on ${labelOf(k)}`)" data-testid="pm-machine-on" @update:model-value="setOn(k, $event)" />
+        <USwitch :model-value="!isPaused(p, k)" size="lg" :disabled="busy !== ''" :aria-label="tl(`Take tasks on ${labelOf(k)}`)" data-testid="pm-machine-on" @update:model-value="setOn(k, $event)" />
         <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-refresh-cw" :aria-label="tl(`Check ${labelOf(k)}`)" :disabled="!!checks[k] && 'checking' in checks[k]!" data-testid="pm-machine-check" @click="check(k)" />
         <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-x" :aria-label="tl(`Remove ${labelOf(k)}`)" :loading="busy === `rm:${k}`" :disabled="busy !== ''" data-testid="pm-machine-remove" @click="remove(k)" />
       </span>

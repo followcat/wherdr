@@ -39,6 +39,18 @@ describe('settings file', () => {
     await fs.writeFile(file, '{not json')
     expect(await readSettings(file)).toEqual({})
   })
+  it('never writes over an unreadable or damaged file; a missing one starts empty', async () => {
+    await patchSettings({ theme: 'nord' }, { file })
+    expect(JSON.parse(await fs.readFile(file, 'utf8')).settings).toEqual({ theme: 'nord' })
+    await fs.writeFile(file, '{not json')
+    await expect(patchSettings({ compactListV2: '1' }, { file })).rejects.toMatchObject({ code: 'settings_damaged' })
+    expect(await fs.readFile(file, 'utf8')).toBe('{not json')
+    await fs.rm(file)
+    await fs.mkdir(file) // reading a folder fails with EISDIR, like EIO or EACCES would
+    await expect(patchSettings({ theme: 'paper' }, { file })).rejects.toMatchObject({ code: 'settings_unreadable' })
+    expect((await fs.stat(file)).isDirectory()).toBe(true)
+    expect(await readSettings(file)).toEqual({})
+  })
   it('writes atomically, private, and leaves no temporary file', async () => {
     await patchSettings({ theme: 'nord' }, { file })
     expect(JSON.parse(await fs.readFile(file, 'utf8'))).toEqual({ v: 1, settings: { theme: 'nord' } })

@@ -204,8 +204,12 @@ prompt Claude puts back after an interrupt) shows at the end of the conversation
 **Not sent** once it has stayed unchanged for two seconds and the colored screen (the first
 paint of a passive `terminal.attach`) confirms it is typed text, not Claude's gray suggestion, with **Send now** (Enter, then a
 check that the box emptied and a turn started) and **Clear**. When Claude's queue offers
-"ctrl+enter to send now", the conversation offers **Send now** too. Each action re-reads the
-screen first and refuses a box that changed (`server/utils/coreDraft.ts`).
+"ctrl+enter to send now", the conversation offers **Send now** too (ctrl+enter, then a check
+that Claude took its queue). Each action re-reads the screen first and refuses a box that
+changed (`server/utils/coreDraft.ts`). **Send now** spins and disables the row's buttons from
+the tap until the message leaves the screen; a failure says why under it (*Not sent: … Try
+again*). One action runs at a time per terminal: the same one asked again, from a second tap
+or device, joins the one in flight, so a message is never sent twice.
 A message sent from wherdr that Claude left in that box (a photo message is pasted, and
 Claude may keep a paste there; a large photo is read and resized before its `[Image #N]`
 shows, and an Enter pressed before that is lost) is submitted by wherdr: it waits up to

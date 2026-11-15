@@ -7,12 +7,13 @@ import type { PlannedStep } from './steps'
 import { chainState } from './advance'
 import { resumeWait } from './recovery'
 import { escalated, recovering } from './incident'
-import { parseSchedule } from './schedule'
+import { due, parseSchedule } from './schedule'
 import type { PaceVerdict } from './pacing'
 import { pacedStart, paceRefusal } from './pace'
-import { engineOwns } from './selfFix'
 
-// Routine events: off by default, the user turns them on in the Autopilot tab.
+// Routine events, each switched in the Autopilot tab: a new project starts
+// with done and stuck on (NEW_AUTOPILOT), so the coordinator chains the next
+// work and acts on a block before the engine gives up.
 export const AUTOPILOT_EVENTS = ['added', 'done', 'stuck', 'ready'] as const
 export type AutopilotEvent = typeof AUTOPILOT_EVENTS[number]
 // What needs judgment wakes the coordinator whatever its events: an agent's
@@ -22,8 +23,9 @@ export type JudgmentEvent = 'question' | 'decide'
 export interface Autopilot {
   on: boolean
   goal: string
-  every?: string // duration (30m, 2h): a wake with the goal, in hours
-  at?: string // fixed times (daily 08:00, mon,thu 09:00, a cron): a wake with the goal, too
+  every?: string // duration (30m, 2h): a wake with the goal and the health lines, in hours; unset: off
+  at?: string // before routines: one fixed time with the goal, read as one routine (routinesOf)
+  routines?: Routine[] // fixed times, each a wake with its own goal
   events: AutopilotEvent[]
   perDay: number | null // tasks started per day; null: no daily limit
   atOnce: number | null // tasks working at once (waiting and ready ones take no slot); null: Auto, as many as the machines take
@@ -31,7 +33,30 @@ export interface Autopilot {
   lookForWork?: true // keep the scheduled wakes when there is nothing to do (goals that add their own tasks)
   lookPerDay?: number // with lookForWork: tasks those wakes may add a day (LOOK_PER_DAY when unset)
   keepBusy?: false // Keep the board busy, on unless turned off: the engine starts the next to-do task itself (busyQueue)
-  health?: string // the health check's interval (30m, 3h), or 'off'; HEALTH_EVERY when unset (health.ts)
+}
+
+// A routine: at its fixed times (daily 08:00, mon,thu 09:00, a cron), a wake
+// `Routine: <goal>` with the health lines, within the hours and the pace.
+export interface Routine { id: string, when: string, goal: string, on: boolean }
+export const MAX_ROUTINES = 20
+
+// The routines, an older `at` read as one with the autopilot's goal (its last run: atRan, id 'at').
+export const routinesOf = (ap: Autopilot | undefined): Routine[] =>
+  ap?.routines ?? (ap?.at ? [{ id: 'at', when: ap.at, goal: ap.goal, on: true }] : [])
+
+// The routines whose time came since their last run (`ran`, by id; unknown:
+// from now): `wake` those to send, `ran` their new last runs. A slot that comes
+// with the autopilot or the routine off, or outside the hours, is skipped:
+// counted as run, it never fires later.
+export function routinesDue(ap: Autopilot | undefined, ran: Record<string, number>, now: number) {
+  const wake: Routine[] = [], next: Record<string, number> = {}
+  for (const r of routinesOf(ap)) {
+    const s = parseSchedule(r.when), last = ran[r.id] ?? now
+    const hit = !('error' in s) && !('every' in s) && due(s, last, now)
+    next[r.id] = hit ? now : last
+    if (hit && r.on && ap!.on && inHours(ap!.hours, new Date(now))) wake.push(r)
+  }
+  return { wake, ran: next }
 }
 
 export const LOOK_PER_DAY = 3
@@ -41,9 +66,10 @@ export const MAX_PER_DAY = 1000
 // 2 at once; a new one is saved with no daily limit and Auto: the account's pace
 // and the machines' room still hold its automatic work.
 export const DEFAULT_AUTOPILOT: Autopilot = { on: false, goal: '', events: [], perDay: 10, atOnce: 2 }
-export const NEW_AUTOPILOT: Autopilot = { ...DEFAULT_AUTOPILOT, perDay: null, atOnce: null }
+export const NEW_AUTOPILOT: Autopilot = { ...DEFAULT_AUTOPILOT, events: ['done', 'stuck'], perDay: null, atOnce: null }
 // Saved before routine events went off by default (WHR-161): the old default
-// events, done and stuck, are dropped once (CoordinatorRecord.quiet marks it).
+// events, done and stuck, are dropped once (CoordinatorRecord.quiet marks it;
+// a new project's record is saved with it, keeping NEW_AUTOPILOT's).
 export const OLD_DEFAULT_EVENTS: AutopilotEvent[] = ['done', 'stuck']
 export const quietEvents = (ap: Autopilot): Autopilot =>
   ap.events.length === OLD_DEFAULT_EVENTS.length && OLD_DEFAULT_EVENTS.every(e => ap.events.includes(e)) ? { ...ap, events: [] } : ap
@@ -57,12 +83,22 @@ export function cleanAutopilot(raw: unknown): { autopilot: Autopilot } | { error
   const goal = typeof o.goal === 'string' ? o.goal.trim() : ''
   if (goal.length > 2000) return { error: 'goal: 2000 characters at most' }
   const duration = (v: unknown) => typeof v === 'string' && /^\d{1,4}[mh]$/.test(v) && Number.parseInt(v) > 0
-  if (o.every !== undefined && o.every !== '' && !duration(o.every)) return { error: 'every: a duration like 30m or 2h' }
-  const health = typeof o.health === 'string' ? o.health.trim() : ''
-  if (o.health !== undefined && health !== '' && health !== 'off' && !duration(health)) return { error: 'health: a duration like 3h, or off' }
+  // Every off (or empty): no interval wake.
+  const every = typeof o.every === 'string' && o.every.trim() !== 'off' ? o.every.trim() : ''
+  if (o.every !== undefined && o.every !== '' && o.every !== 'off' && !duration(every)) return { error: 'every: a duration like 30m or 2h, or off' }
+  // Routines; an older `at` alone becomes one with the goal.
   const at = typeof o.at === 'string' ? o.at.trim() : ''
-  const s = at ? parseSchedule(at) : null
-  if (s && ('error' in s || 'every' in s)) return { error: 'at: fixed times like daily 08:00, mon,thu 09:00 or a cron' }
+  const list = Array.isArray(o.routines) ? o.routines as Record<string, unknown>[] : at ? [{ id: 'at', when: at, goal, on: true }] : []
+  if (list.length > MAX_ROUTINES) return { error: `routines: ${MAX_ROUTINES} at most` }
+  const routines: Routine[] = []
+  for (const r of list) {
+    const id = typeof r?.id === 'string' ? r.id : '', when = typeof r?.when === 'string' ? r.when.trim() : '', rg = typeof r?.goal === 'string' ? r.goal.trim() : ''
+    const s = parseSchedule(when)
+    if (!/^[\w-]{1,40}$/.test(id) || routines.some(x => x.id === id)) return { error: 'routines: each needs its own id' }
+    if ('error' in s || 'every' in s) return { error: `routines: ${when || 'a time'}: fixed times like daily 08:00, mon,thu 09:00 or a cron` }
+    if (rg.length > 500) return { error: 'routines: a goal of 500 characters at most' }
+    routines.push({ id, when, goal: rg, on: r.on !== false })
+  }
   const events = Array.isArray(o.events) ? o.events : []
   if (!events.every(e => (AUTOPILOT_EVENTS as readonly unknown[]).includes(e))) return { error: `events: ${AUTOPILOT_EVENTS.join(', ')}` }
   // Tasks / day left empty: no daily limit (null).
@@ -74,12 +110,11 @@ export function cleanAutopilot(raw: unknown): { autopilot: Autopilot } | { error
   if (h !== undefined && h !== null && (int(h.from, 23) === null || int(h.to, 24) === null || h.from === h.to)) return { error: 'hours: from 0-23, to 0-24, not equal' }
   return { autopilot: {
     on: o.on === true, goal, events: [...new Set(events as AutopilotEvent[])], perDay, atOnce,
-    ...(typeof o.every === 'string' && o.every ? { every: o.every } : {}),
-    ...(at ? { at } : {}),
+    ...(every ? { every } : {}),
+    ...(routines.length ? { routines } : {}),
     ...(h ? { hours: { from: h.from as number, to: h.to as number } } : {}),
     ...(o.lookForWork === true ? { lookForWork: true as const, lookPerDay: lookPerDay ?? LOOK_PER_DAY } : {}),
     ...(o.keepBusy === false ? { keepBusy: false as const } : {}),
-    ...(health ? { health } : {}),
   } }
 }
 
@@ -261,7 +296,8 @@ export const addedBySelf = (t: Pick<Task, 'addedBy' | 'log'>, key: string, by: s
 // failing) or ready, among those the autopilot wakes for; and, always, an
 // agent's question or a choice after N send-backs (JudgmentEvent).
 // `seen`: each task's last status. A stopped task is not stuck: someone chose to stop it.
-// Nor is a block the engine fixes itself (selfFix.ts): it wakes the coordinator once it gives up;
+// A block the engine fixes itself (selfFix.ts) is stuck too, once, as it starts: with the
+// event on, the coordinator acts before the engine's failed fixes (its give-up still wakes it, as Engine);
 // nor a task stopped again right after the engine resumed it: the engine woke the coordinator for it (recovery.ts).
 // skipped: questions not woken for, already answered by a tell (Task.answered).
 export function autopilotEvents(ap: Autopilot, tasks: Task[], seen: Record<string, TaskStatus>, self?: { key: string, by: string }) {
@@ -276,7 +312,7 @@ export function autopilotEvents(ap: Autopilot, tasks: Task[], seen: Record<strin
     const judgment: JudgmentEvent | undefined = !moved || t.stopped || again ? undefined
       : s === 'waiting' && t.waitKind === 'question' ? 'question' : s === 'ready' && t.step?.yourTurn?.reason === 'rounds' ? 'decide' : undefined
     const ev: AutopilotEvent | undefined = !(t.id in seen) ? (self && addedBySelf(t, self.key, self.by) ? undefined : 'added') : !moved || judgment ? undefined
-      : s === 'waiting' || s === 'stalled' || failed ? (t.stopped || engineOwns(t) || escalated(t) ? undefined : 'stuck') : s === 'done' || s === 'ready' ? s : undefined
+      : s === 'waiting' || s === 'stalled' || failed ? (t.stopped || escalated(t) ? undefined : 'stuck') : s === 'done' || s === 'ready' ? s : undefined
     const why = s === 'stalled' ? t.stall?.reason : failed || judgment === 'decide' ? t.step?.yourTurn?.badge : t.waiting
     const kind = judgment ?? (ev && ap.events.includes(ev) ? ev : undefined)
     if (kind) reasons.push(`${t.id} (${t.title}): ${kind}${kind !== 'added' && kind !== 'done' && kind !== 'ready' && why ? `: ${why.split('\n')[0]}` : ''}`)

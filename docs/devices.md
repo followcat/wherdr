@@ -28,7 +28,8 @@
     without Shift too, outside the message field), and `↑` `↓` `Enter` `Esc` go to the terminal
     while the same question is on screen.
 - In the message field, `↑` on the first line recalls previous messages and slash commands;
-  `↓` on the last line returns to newer entries, then restores your draft. History keeps the
+  `↓` on the last line returns to newer entries, then restores your draft. A long line wrapped
+  by the field counts as several lines: elsewhere the arrows move the caret. History keeps the
   last 100 texts sent from this device per agent, without attachments or quoted references.
 - **Settings** in a sidebar, with desktop-only options such as the content width
   and the interface size. Computers default to **Interface size › Large**: the

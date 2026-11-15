@@ -109,11 +109,11 @@ async function test() {
     </label>
     <label class="settings-toggle">
       <span><b>{{ tl('Zero data retention (ZDR)', 'Aucune conservation (ZDR)') }}</b><small>{{ tl('Only providers that keep nothing. A model without one fails: Test shows it.', 'Seulement les fournisseurs qui ne gardent rien. Un modèle sans eux échoue : Tester le montre.') }}</small></span>
-      <USwitch v-model="opts.zdr" color="success" size="xl" />
+      <USwitch v-model="opts.zdr" size="xl" />
     </label>
     <label class="settings-toggle">
       <span><b>{{ tl('Send pane terms', 'Envoyer les termes du panneau') }}</b><small>{{ tl('Agent, machine and folder names, to recognise them better.', 'Noms d’agent, de machine et de dossier, pour mieux les reconnaître.') }}</small></span>
-      <USwitch v-model="opts.terms" color="success" size="xl" />
+      <USwitch v-model="opts.terms" size="xl" />
     </label>
     <div class="dictation-cloud-actions">
       <UButton color="neutral" variant="outline" size="lg" icon="i-lucide-audio-lines" :label="tl('Test', 'Tester')" :loading="busy" :disabled="!status?.set" data-testid="dictation-test" @click="test" />

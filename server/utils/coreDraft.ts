@@ -69,7 +69,22 @@ type Body = { pane_id?: unknown, action?: unknown, text?: unknown }
 
 const changed = () => new HerdrError('stale', 'Claude’s input has changed — check the current screen.')
 
-export async function coreDraft(deps: CoreDraftDeps, b: Body): Promise<{ ok: true, started?: boolean }> {
+// One action at a time per pane: the same one asked again (a second tap, a
+// second device) shares the run in flight, so nothing is ever sent twice;
+// another one (Clear during Send now) is refused.
+const inFlight = new Map<string, { key: string, run: Promise<{ ok: true, started?: boolean }> }>()
+
+export function coreDraft(deps: CoreDraftDeps, b: Body): Promise<{ ok: true, started?: boolean }> {
+  const id = typeof b.pane_id === 'string' ? b.pane_id : ''
+  const key = `${String(b.action)}\n${typeof b.text === 'string' ? b.text : ''}`
+  const now = inFlight.get(id)
+  if (now) return now.key === key ? now.run : Promise.reject(new HerdrError('busy', 'Another action on this message is still running.'))
+  const run = draftAction(deps, b).finally(() => inFlight.delete(id))
+  inFlight.set(id, { key, run })
+  return run
+}
+
+async function draftAction(deps: CoreDraftDeps, b: Body): Promise<{ ok: true, started?: boolean }> {
   const p = typeof b.pane_id === 'string' ? deps.pane(b.pane_id) : undefined
   if (!p?.coreAddress) throw new HerdrError('bad_pane', 'Pane not found')
   if (p.agent !== 'claude') throw new HerdrError('unsupported', 'Only for Claude Code')
@@ -84,7 +99,12 @@ export async function coreDraft(deps: CoreDraftDeps, b: Body): Promise<{ ok: tru
     if (action === 'send-queued') {
       if (!queueSendNow(await deps.read(p), p.agent)) throw new HerdrError('stale', 'The screen has changed — check the current screen.')
       await keys(['ctrl+enter'])
-      return { ok: true }
+      // Done once Claude no longer offers it: its queue was taken.
+      for (let i = 0; i < 8; i++) {
+        await sleep(400)
+        if (!queueSendNow(await deps.read(p).catch(() => ''), p.agent)) return { ok: true }
+      }
+      throw new HerdrError('not_submitted', 'Claude still holds the queued message — check the terminal.')
     }
     const draft = await field()
     if (!draft || typeof b.text !== 'string' || !sameText(draft.text, b.text)) throw changed()

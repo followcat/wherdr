@@ -6,6 +6,10 @@ Read only the page relevant to your task. Start with [herdr-core](core.md) for w
 [Installation and updates](installation.md) for setup, [Security](security.md) for remote access,
 or [Development and tests](development.md) for repository changes.
 
+## Community
+
+Questions and feedback: [Discord](https://discord.gg/ky36WYmtVE); bugs: [GitHub issues](https://github.com/afloury/wherdr/issues).
+
 ## v3
 
 - [herdr-core](core.md) — How v3 uses hc: inventory, terminals, conversations, creating agents, machines. The reference for what v3 supports.

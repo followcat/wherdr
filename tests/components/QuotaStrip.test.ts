@@ -1,7 +1,7 @@
 // Home quota strip: one row per provider. The compact layout (main.css) puts
 // each window's label and percentage together, then a thin bar, then the
 // reset time; every piece must still be there, with the urgency and
-// old-reading states.
+// unknown-value states.
 import { afterEach, describe, expect, it } from 'vitest'
 import { mountSuspended } from '@nuxt/test-utils/runtime'
 import QuotaStrip from '~/components/QuotaStrip.vue'
@@ -56,9 +56,26 @@ describe('QuotaStrip', () => {
     const [five, week] = codex.findAll('.quota')
     expect(five!.classes()).toContain('hi')
     expect(five!.find('.quota-top b').text()).toBe('10%')
+    expect(five!.classes()).not.toContain('guessed')
+    // Reset since the reading: value unknown, `?` on a dashed bar, how to
+    // refresh in its tooltip; no sentence under the row.
     expect(week!.classes()).toContain('guessed')
-    expect(week!.find('.quota-top b').text()).toBe('100%')
+    expect(week!.find('.quota-top b').text()).toBe('?')
+    expect(week!.attributes('aria-label')).toBe('Last read 2 h ago: send a message to a Codex agent to refresh')
+    await week!.trigger('click')
+    expect(week!.classes()).toContain('open')
+    expect(week!.find('[role="tooltip"]').text()).toBe('Last read 2 h ago: send a message to a Codex agent to refresh')
     expect(week!.find('.quota-reset').text().toLowerCase()).toBe('reset')
+    expect(codex.find('[data-testid="quota-note"]').exists()).toBe(false)
+  })
+
+  it('a window read longer ago than it lasts shows `?`, the other window its value', async () => {
+    quotaNow.value = now
+    const q = { five: { used: 20, resetsAt: null, minutes: 300 }, week: win(30, 3 * 1440, 10080), at: now - 2 * 86400000 }
+    const w = await mountSuspended(QuotaStrip, { props: { rows: [{ key: 'codex', agent: 'codex', q }] } })
+    const [five, week] = w.findAll('.quota')
+    expect([five!.find('.quota-top b').text(), week!.find('.quota-top b').text()]).toEqual(['?', '70%'])
+    expect(five!.attributes('aria-label')).toBe('Last read 2 d ago: send a message to a Codex agent to refresh')
   })
 
   it('a missing window keeps its empty cell so the columns stay aligned', async () => {
@@ -72,13 +89,14 @@ describe('QuotaStrip', () => {
 describe('QuotaStrip with a Codex limit', () => {
   const limited = (q: Partial<QuotaRow['q']>): QuotaRow[] => [{ key: 'codex', agent: 'codex', q: { five: null, week: null, at: now - 60000, limited: { resetsAt: now + 3600000 }, ...q } }]
 
-  it('an expired limit no longer reads as blocked, and an old reading says how to refresh', async () => {
+  it('an expired limit no longer reads as blocked, and an old reading says how to refresh on hover', async () => {
     quotaNow.value = now
     const w = await mountSuspended(QuotaStrip, { props: { rows: limited({ at: now - 3 * 86400000, limited: { resetsAt: now - 2 * 86400000 } }) } })
     const label = w.find('[data-testid="quota-limited"]')
     expect(label.text()).toMatch(/^Reset since the last reading/)
     expect(label.classes()).not.toContain('quota-limited')
-    expect(w.find('[data-testid="quota-note"]').text()).toBe('Last read 3 d ago: send a message to a Codex agent to refresh')
+    expect(label.attributes('title')).toBe('Last read 3 d ago: send a message to a Codex agent to refresh')
+    expect(w.find('[data-testid="quota-note"]').exists()).toBe(false)
   })
 
   it('with credits left, says work goes on with them; credits also show beside the gauges', async () => {

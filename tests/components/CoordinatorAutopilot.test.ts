@@ -39,6 +39,7 @@ it('shows today\'s counters against the limits, and the switch saves the autopil
   expect(b.text()).toContain('Autopilot · Off')
   expect(b.find('[data-testid="autopilot-old-defaults"]').text()).toBe('Older defaults: clear the fields for unlimited and Auto')
   expect((b.find('textarea#ap-goal-CO').element as HTMLTextAreaElement).value).toBe('Ship 2.1')
+  expect(b.find('.ap-events').text()).toContain('Task doneStart what follows, tell you, update the notes.')
   await b.find('[data-testid="autopilot-on"]').trigger('click')
   await vi.waitFor(() => expect(posts).toEqual([{ project: 'CO', autopilot: { ...autopilot, on: true } }]))
 })
@@ -47,12 +48,17 @@ it('saves the goal, interval, events and limits edited', async () => {
   const b = await mount()
   await b.find('textarea#ap-goal-CO').setValue('  Fix the board first ')
   await b.find('input#ap-every-CO').setValue('30m')
-  await b.find('input#ap-at-CO').setValue(' daily 08:00 ')
+  // A routine: weekdays, its time and its own goal.
+  await b.find('[data-testid="autopilot-add-routine"]').trigger('click')
+  await b.find('[data-testid="routine-day-sat"]').trigger('click')
+  await b.find('[data-testid="routine-day-sun"]').trigger('click')
+  await b.find('input[data-testid="routine-time"]').setValue('08:30')
+  await b.find('textarea[data-testid="routine-goal"]').setValue('Summarise the night')
   await b.find('input#ap-day-CO').setValue('4')
   await b.find('[data-testid="autopilot-event-ready"]').trigger('click')
   await b.find('[data-testid="autopilot-event-stuck"]').trigger('click')
   await b.find('[data-testid="autopilot-save"]').trigger('submit')
-  await vi.waitFor(() => expect(posts).toEqual([{ project: 'CO', autopilot: { ...autopilot, goal: '  Fix the board first ', every: '30m', at: 'daily 08:00', perDay: 4, events: ['done', 'ready'] } }]))
+  await vi.waitFor(() => expect(posts).toEqual([{ project: 'CO', autopilot: { ...autopilot, goal: '  Fix the board first ', every: '30m', routines: [{ id: expect.any(String), when: 'mon,tue,wed,thu,fri 08:30', goal: 'Summarise the night', on: true }], perDay: 4, events: ['done', 'ready'] } }]))
 })
 
 it('with Tasks / day empty, has no daily limit: counts today alone and saves no cap', async () => {
@@ -60,7 +66,7 @@ it('with Tasks / day empty, has no daily limit: counts today alone and saves no 
   expect(b.find('[data-testid="autopilot-counters"]').text()).toBe('12 today · 1/2 at once')
   await b.find('input#ap-day-CO').setValue('')
   await b.find('[data-testid="autopilot-save"]').trigger('submit')
-  await vi.waitFor(() => expect(posts).toEqual([{ project: 'CO', autopilot: { ...autopilot, perDay: null, at: '', events: [...autopilot.events] } }]))
+  await vi.waitFor(() => expect(posts).toEqual([{ project: 'CO', autopilot: { ...autopilot, perDay: null, routines: [], events: [...autopilot.events] } }]))
   b.unmount()
   expect((await mount(view({ autopilot: { ...autopilot, events: [], perDay: null, atOnce: null } }))).find('[data-testid="autopilot-old-defaults"]').exists()).toBe(false)
 })
@@ -103,7 +109,7 @@ it('saves the hours, and a pace that waits says what for', async () => {
   await b.find('input#ap-from-CO').setValue('22')
   await b.find('input#ap-to-CO').setValue('6')
   await b.find('[data-testid="autopilot-save"]').trigger('submit')
-  await vi.waitFor(() => expect(posts).toEqual([{ project: 'CO', autopilot: { ...autopilot, at: '', events: [...autopilot.events], hours: { from: 22, to: 6 } } }]))
+  await vi.waitFor(() => expect(posts).toEqual([{ project: 'CO', autopilot: { ...autopilot, routines: [], events: [...autopilot.events], hours: { from: 22, to: 6 } } }]))
 })
 
 it('cannot run a coordinator that is not started', async () => {
@@ -139,7 +145,7 @@ it('saves "look for new work" only when on, with its daily limit', async () => {
   expect((b.find('input#ap-look-CO').element as HTMLInputElement).value).toBe('3')
   await b.find('input#ap-look-CO').setValue('5')
   await b.find('[data-testid="autopilot-save"]').trigger('submit')
-  await vi.waitFor(() => expect(posts).toEqual([{ project: 'CO', autopilot: { ...autopilot, at: '', lookForWork: true, lookPerDay: 5 } }]))
+  await vi.waitFor(() => expect(posts).toEqual([{ project: 'CO', autopilot: { ...autopilot, routines: [], lookForWork: true, lookPerDay: 5 } }]))
 })
 
 it('keeps unsaved edits across reloads, takes changes saved elsewhere, and shows the save state', async () => {

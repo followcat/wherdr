@@ -2,6 +2,7 @@
 // its filter, kept on the server like the Board's project picker: Follow group
 // tab, All, a project (`p:KEY`) or a machine group (its id); null until the
 // user picks (then Follow once machine groups exist, else All).
+import type { Card } from '#shared/pm/board'
 import { syncedRef } from './useSyncedSettings'
 
 export const REVIEW_FOLLOW = 'follow'
@@ -23,4 +24,16 @@ export function reviewShows(pick: string, project: string) {
   if (pick.startsWith('p:')) return pick.slice(2) === project
   const group = machineGroups.value.find(g => g.id === pick)
   return !group || projectOnTab(projectTabPlaces.value.get(project) ?? null, group.machines)
+}
+
+// What happened to a task that left the open list elsewhere (`was` as last shown,
+// `now` as the board reads it, undefined once off the board): the muted
+// *Handled elsewhere* line that keeps it on screen.
+export function handledElsewhere(was: Card, now: Card | undefined) {
+  if (!now) return 'removed from the board'
+  if (now.state?.done) return 'done'
+  if (now.stopped) return 'stopped'
+  if (now.yourTurn) return 'no longer under this filter'
+  if (was.asks?.kind === 'question') return 'question answered'
+  return `moved on to ${now.column}`
 }

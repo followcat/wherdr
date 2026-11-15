@@ -72,5 +72,5 @@ export function addShot(plan: PlannedStep[], state: StepState | undefined, shot:
     }
   }
   if (list.length >= MAX_SHOTS) return { refused: `Step "${step.id}" has ${MAX_SHOTS} screenshots already` }
-  return { state: { ...state, shots: { ...state.shots, [step.id]: [...list, shot] }, ...(earlier ? { earlierShots: earlier } : {}), approved: undefined } }
+  return { state: { ...state, shots: { ...state.shots, [step.id]: [...list, shot] }, ...(earlier ? { earlierShots: earlier } : {}), approved: undefined, ...(state.approved ? { lookAgain: { why: 'new screenshots since your approval', at: shot.at } } : {}) } }
 }

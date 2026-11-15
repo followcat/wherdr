@@ -9,7 +9,9 @@
 // proposed project change (kind 'change'): the lines of its dry run instead;
 // several projects (`v2 import`, change.picks): a checkbox per project (on as
 // the command asked, none for one that cannot be added) and one to start their
-// coordinators; the outcome then lists each project.
+// coordinators; the outcome then lists each project. Proposed while project
+// management was off (change.pm): a "Turn on project management" checkbox,
+// on, that the Apply needs.
 import { defaultChoice, type UiCard } from '#shared/uiActions'
 import { appRoute } from '#shared/appLinks'
 import { uiTargetLink } from '#shared/uiTargets'
@@ -29,7 +31,8 @@ const error = ref('')
 // The checkboxes of a several-projects card: the keys to add, and whether to start their coordinators.
 const picked = ref<string[]>([])
 const start = ref(true)
-watch(() => card.value?.change?.picks, () => { const c = defaultChoice(card.value?.change ?? {}); picked.value = c.picks; start.value = c.start }, { immediate: true })
+const pm = ref(true)
+watch(() => card.value?.change?.picks, () => { const c = defaultChoice(card.value?.change ?? {}); picked.value = c.picks; start.value = c.start; pm.value = c.pm }, { immediate: true })
 
 async function load() {
   try { card.value = (await api<{ card: UiCard }>(`/api/ui/card?id=${encodeURIComponent(props.id)}`)).card }
@@ -46,7 +49,7 @@ async function act(cancel = false) {
   busy.value = cancel ? 'cancel' : 'run'
   error.value = ''
   try {
-    const choice = c.change?.picks && !cancel ? { picks: picked.value, start: start.value } : {}
+    const choice = c.change?.picks && !cancel ? { picks: picked.value, start: start.value, pm: pm.value } : {}
     card.value = (await api<{ card: UiCard }>('/api/ui/act', { id: c.id, ...(cancel ? { cancel } : {}), ...choice })).card
     if (!c.setting && !c.change) taskChanged()
   }
@@ -70,6 +73,7 @@ async function act(cancel = false) {
           <span>{{ l }}</span>
         </label>
         <label class="action-pick action-start"><input v-model="start" type="checkbox" data-testid="change-start"><span>{{ t('Start their coordinators') }}</span></label>
+        <label v-if="card.change!.pm" class="action-pick action-start"><input v-model="pm" type="checkbox" data-testid="change-pm"><span>{{ tl('Turn on project management') }}</span></label>
       </div>
       <ul v-else class="action-lines" data-testid="change-lines"><li v-for="(l, i) in card.change!.lines" :key="i">{{ l }}</li></ul>
       <p v-if="proposal.said" class="action-line">{{ t('After your message:') }} “{{ proposal.said }}”</p>
@@ -77,7 +81,7 @@ async function act(cancel = false) {
         <UButton v-if="card.setting || proposal.target" color="neutral" variant="ghost" size="lg" icon="i-lucide-locate-fixed" data-testid="setting-show" @click="showMe">{{ t('Show me') }}</UButton>
         <span class="action-gap" />
         <UButton color="neutral" variant="outline" size="lg" :loading="busy === 'cancel'" :disabled="busy !== ''" data-testid="setting-cancel" @click="act(true)">{{ t('Cancel') }}</UButton>
-        <UButton color="primary" size="lg" :loading="busy === 'run'" :disabled="busy !== '' || (!!card.change?.picks && !picked.length)" data-testid="setting-apply" @click="act()">{{ t('Apply') }}</UButton>
+        <UButton color="primary" size="lg" :loading="busy === 'run'" :disabled="busy !== '' || (!!card.change?.picks && (!picked.length || (!!card.change.pm && !pm)))" data-testid="setting-apply" @click="act()">{{ t('Apply') }}</UButton>
       </div>
       <p v-else-if="card.state === 'stale'" class="action-line" data-testid="action-stale">{{ card.setting ? t('This setting changed since: nothing was applied') : t('This changed since: nothing was applied') }}</p>
       <p v-else class="action-outcome" :class="{ no: card.state === 'dismissed' }" :title="fmtDateTime(card.outcome?.at ?? card.at)" data-testid="action-outcome">

@@ -7,7 +7,7 @@ import { machineQuotaRows, quotaRows, tabQuotaRows } from '../app/utils/quotas'
 import type { Quota } from '../shared/types'
 import { type CodexScreenWeekly, weekFromScreen } from '../shared/codexStatus'
 import { createShellFs, localFs } from '../server/utils/fsx'
-import { applyCodexKnown, claudeQuota, claudeSetupState, codexAccount, codexMemo, codexQuota, codexSessionStart, machineCodexQuota, readCodexMachine, lastCodexLimits, latestCodexQuota, mergeQuotas, readClaude, readCodex, sameAccount } from '../server/utils/quotas'
+import { applyCodexKnown, claudeQuota, claudeSetupState, codexAccount, codexMemo, codexQuota, codexSessionStart, machineCodexQuota, readCodexMachine, lastCodexLimits, lastGoodRead, latestCodexQuota, mergeQuotas, readClaude, readCodex, sameAccount } from '../server/utils/quotas'
 
 describe('quotas', () => {
   it('reads the quotas from Claude Code\'s status line', () => {
@@ -364,6 +364,36 @@ describe('quotas Codex par compte', () => {
       expect(machineQuotaRows(out, 'host-c')).toEqual([])
       expect(machineQuotaRows(out, 'host-a').map(x => x.q.five!.used)).toEqual([92])
     }
+  })
+
+  // WHR-337: a refused remote listing used to read as "no Codex here", so another
+  // machine's old reading showed for one refresh, then the fresh one came back.
+  it('a failed listing is a failed read, never a machine without Codex', async () => {
+    const down = { ...localFs, readdir: () => Promise.reject(Object.assign(new Error('timeout'), { code: 'unreachable' })) }
+    await expect(readCodexMachine(down, '/nowhere')).rejects.toThrow('timeout')
+  })
+
+  it('a failed read keeps the machine\'s last good reading for as long as it fails', () => {
+    const memo = new Map()
+    const good = { q: null, seen: true }
+    const late = { q: null, seen: false }
+    expect(lastGoodRead(memo, 'host-a', good, 2)).toBe(good)
+    expect(lastGoodRead(memo, 'host-a', null, 3)).toBe(good)
+    // A slower older poll finishing late does not replace it.
+    expect(lastGoodRead(memo, 'host-a', late, 1)).toBe(late)
+    expect(lastGoodRead(memo, 'host-a', null, 4)).toBe(good)
+    expect(lastGoodRead(memo, 'host-b', null, 4)).toBeNull()
+  })
+
+  it('a file read failed by the session fails the machine read instead of emptying it', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-file-down-'))
+    const now = new Date()
+    const dir = path.join(home, '.codex/sessions', String(now.getFullYear()), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0'))
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'rollout-a.jsonl'), JSON.stringify({ timestamp: now.toISOString(), payload: { rate_limits: { primary: { used_percent: 8, window_minutes: 300 } } } }) + '\n')
+    const down = { ...localFs, read: () => Promise.reject(Object.assign(new Error('timeout'), { code: 'unreachable' })) }
+    try { await expect(readCodexMachine(down, home)).rejects.toThrow('timeout') }
+    finally { fs.rmSync(home, { recursive: true, force: true }) }
   })
 
   it('tells a machine without Codex conversations from one waiting for its first limits', async () => {
