@@ -18,6 +18,8 @@ import { createActivity } from '../../shared/integrations'
 import { createDevinTranscripts } from './devinTranscripts'
 import { devinSession } from './devinSessions'
 import { createOpencodeTranscripts } from './opencodeTranscripts'
+import { createAgyTranscripts } from './agyTranscripts'
+import { agySession } from './agySessions'
 
 // Backward reading by windows until there are enough messages: Claude's
 // transcripts embed images in base64, a few screenshots
@@ -1446,6 +1448,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   // read-only, fingerprint-bound to the server generation (see
   // opencodeTranscripts.ts). Without an exec there is no reader.
   const oc = ocExec ? createOpencodeTranscripts({ exec: ocExec, home, fs }) : null
+  const agy = createAgyTranscripts({ home, fs, now })
   // File -> state (size, generation) and when this server first saw it, for
   // whole-second mtimes (see SETTLE_MS); `file|size|gen` -> checksum of the
   // file at first sight (null: could not be taken).
@@ -1533,11 +1536,14 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   }
 
   // ------------------------------------------------------------ localisation
+  // Antigravity's binary and core's agent label use several names.
+  const PROCESS_NAMES: Record<string, string[]> = { agy: ['agy', 'antigravity', 'antigravity-cli'] }
   async function paneProcess(paneId: string, kind: string) {
     const r = await herdr('pane.process_info', { pane_id: paneId }, 4000)
     const procs: Json[] = (r.process_info && r.process_info.foreground_processes) || []
-    const match = procs.find(p => p.name === kind || path.basename((p.argv && p.argv[0]) || '') === kind)
-    return match || (kind === 'devin' ? null : procs[0]) || null
+    const names = PROCESS_NAMES[kind] || [kind]
+    const match = procs.find(p => names.includes(p.name) || names.includes(path.basename((p.argv && p.argv[0]) || '')))
+    return match || (kind === 'devin' || kind === 'agy' ? null : procs[0]) || null
   }
 
   const encodeCwd = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g, '-')
@@ -1671,11 +1677,16 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
 
   // Codex panes of the machine (kept up to date by the state): for the claims.
   const codexPeers = new Map<string, TranscriptPane>()
+  // Live agy panes: a summaries fallback is only unambiguous when no peer
+  // shares the pane's folder on this machine.
+  const agyPeers = new Map<string, TranscriptPane>()
   // Agents seen at work: they have a conversation (see shared/integrations.ts).
   const activity = createActivity()
   function observe(panes: TranscriptPane[]) {
     codexPeers.clear()
     for (const p of panes) if (p.agent === 'codex') codexPeers.set(p.id, p)
+    agyPeers.clear()
+    for (const p of panes) if (p.agent === 'agy') agyPeers.set(p.id, p)
     const live = new Set(panes.map(p => p.id))
     activity.prune(id => live.has(id))
     for (const p of panes) activity.observe({ id: p.id, agent: p.agent, status: p.status ?? null })
@@ -1758,6 +1769,16 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
         const proc = await paneProcess(pane.id, 'devin')
         const id = proc ? await devinSession(fs, home, proc, fs === localFs) : pane.agentSession
         const file = id && devin.pathOf(id)
+        if (file) loc = { file, session: id! }
+      } else if (pane.agent === 'agy') {
+        const proc = await paneProcess(pane.id, 'agy')
+        const guess = proc ? await agySession(fs, home, proc, fs === localFs) : null
+        let id = guess ? guess.id : pane.agentSession
+        if (!id && proc && guess && !guess.ambiguous) {
+          const competing = [...agyPeers.values()].some(o => o.id !== pane.id && o.cwd === pane.cwd)
+          id = await agy.summariesSession(pane, competing)
+        }
+        const file = id && agy.pathOf(id)
         if (file) loc = { file, session: id! }
       } else if (pane.agent === 'codex') loc = await locateCodexPane(pane)
       else if (pane.agentSession) {
@@ -2144,6 +2165,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     const loc = await locate(pane)
     if (!loc || Date.now() >= deadline) return { hits: [], limited: Date.now() >= deadline, kind: null }
     if (pane.agent === 'devin') return devin.search({ ...pane, agentSession: loc.session }, query, deadline)
+    if (pane.agent === 'agy') return agy.search({ ...pane, agentSession: loc.session }, query, deadline)
     if (pane.agent === 'opencode') {
       const r = oc ? await oc.search(pane, loc, query, deadline) : { hits: [], limited: false, kind: 'opencode' }
       // The known-selection veto: hits of a selection observed moving or
@@ -2208,6 +2230,11 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     if (pane.agent === 'devin') {
       const r = await devin.chat({ ...pane, agentSession: loc.session }, opts)
       for (const item of r.items || []) if (item.role === 'assistant' && item.ref) replyKeys.set(item, `devin:${r.session}:${item.ref}`)
+      return r
+    }
+    if (pane.agent === 'agy') {
+      const r = await agy.chat({ ...pane, agentSession: loc.session }, opts)
+      for (const item of r.items || []) if (item.role === 'assistant' && item.ref) replyKeys.set(item, `agy:${r.session}:${item.ref}`)
       return r
     }
     // OpenCode answers from its fingerprint-verified reader; the reply is
@@ -2389,6 +2416,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     // short-preview path carries generation evidence (4d-3). OpenCode has
     // no file tail: previews come from the same verified chat.
     if (pane.agent === 'cmd' || pane.agent === 'opencode') return null
+    if (pane.agent === 'agy') return null // Antigravity conversations are a SQLite database, not JSONL.
     if (!hasTranscript(pane.agent)) return null
     const loc = await locate(pane)
     if (!loc) return null
@@ -2438,6 +2466,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     const loc = await locate(pane)
     if (!loc || path.basename(loc.file) !== fileId) return null
     if (pane.agent === 'devin') return devin.image({ ...pane, agentSession: loc.session }, fileId, ref, index)
+    if (pane.agent === 'agy') return agy.image({ ...pane, agentSession: loc.session }, fileId, ref, index)
     const m = /^(\d+):(\d+)$/.exec(String(ref || ''))
     if (!m) return null
     const off = Number(m[1])
@@ -2502,6 +2531,10 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     if (pane.agent === 'devin') {
       const loc = await locate(pane)
       return loc ? devin.model({ ...pane, agentSession: loc.session }) : null
+    }
+    if (pane.agent === 'agy') {
+      const loc = await locate(pane)
+      return loc ? agy.model({ ...pane, agentSession: loc.session }) : null
     }
     if (pane.agent === 'opencode') {
       const loc = await locate(pane)

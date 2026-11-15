@@ -17,18 +17,20 @@ export function paneAgentKind(raw: Json, entry?: Json | null): string | null {
 // Agents whose transcript wherdr reads ("Conversation" view, previews, search).
 // OpenCode has no transcript file: its pane's service session is read
 // through the OpenCode transport (server/utils/opencodeTranscripts.ts).
-export const TRANSCRIPT_AGENTS = ['claude', 'codex', 'omp', 'devin', 'cmd', 'opencode'] as const
+export const TRANSCRIPT_AGENTS = ['claude', 'codex', 'omp', 'devin', 'cmd', 'opencode', 'agy'] as const
 export type TranscriptAgent = typeof TRANSCRIPT_AGENTS[number]
 export const hasTranscript = (kind: string | null | undefined): kind is TranscriptAgent =>
   (TRANSCRIPT_AGENTS as readonly string[]).includes(kind || '')
 
 // Kind from the transcript path (~/.claude/projects, ~/.codex/sessions,
-// ~/.omp/agent/sessions, ~/.commandcode/projects).
+// ~/.omp/agent/sessions, ~/.commandcode/projects,
+// ~/.gemini/antigravity-cli/conversations).
 export function transcriptKind(file: string): TranscriptAgent | null {
   if (/\/\.claude\/projects\//.test(file)) return 'claude'
   if (/\/\.codex\/(?:archived_)?sessions\//.test(file)) return 'codex'
   if (/\/\.omp\/agent\/sessions\//.test(file)) return 'omp'
   if (/\/devin\/cli\/transcripts\//.test(file)) return 'devin'
   if (/\/\.commandcode\/projects\//.test(file)) return 'cmd'
+  if (/\/\.gemini\/antigravity-cli\/conversations\//.test(file)) return 'agy'
   return null
 }

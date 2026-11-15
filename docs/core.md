@@ -76,7 +76,7 @@ after each reply and have a three-second deadline and a 16 MiB reply limit.
 
 ## Conversations
 
-Claude Code, Codex and Devin terminals open in conversation mode, as in v2, with the same
+Claude Code, Codex, Devin and Antigravity terminals open in conversation mode, as in v2, with the same
 conversation view, search, queued messages and quotas. The conversation file is found
 the way v2 does for Herdr panes, from what core gives: `terminal.get` supplies the
 foreground process and pid (Claude Code's `~/.claude/sessions/<pid>.json` names its
@@ -198,6 +198,24 @@ a session-scoped model switch: `PATCH /api/session/<id>` with a fixed
 `{model:{id,providerID,variant}}` body, re-read for verification. Sends,
 queued messages, permissions and shell actions stay with the OpenCode
 terminal.
+
+Antigravity CLI (`agy`, tested with 1.5.8) is read through its saved
+conversations at `~/.gemini/antigravity-cli/conversations/<uuid>.db` (SQLite,
+WAL mode; the database and its `-wal` sidecar are copied to a snapshot before
+`node:sqlite` opens them, so remote machines read a consistent view through
+`machine.exec`, and 256 MiB is the snapshot limit). Step payloads are protobuf
+blobs decoded by a small bounds-checked reader (`server/utils/agyProtobuf.ts`).
+The session is resolved fail-closed from what the `agy` process holds open —
+`conversations/<uuid>.db`, its WAL/SHM sidecars or `presence/<uuid>.lock` —
+checked on Linux through `/proc/<pid>/fd` and elsewhere through `lsof`, with the
+exact `--conversation <uuid>` launch argument as fallback. Descriptors naming
+two conversations resolve to nothing rather than a wrong conversation; the
+`conversation_summaries.db` index only stands in for an unmatched process when
+one top-level live conversation claims the pane's folder. Local
+`ANTIGRAVITY_APP_DATA_DIR` is honored; remote machines use their home and the
+default path. Checkpoints and internal system steps are not rendered; a tool
+result stored in a later step invalidates the pages that held the call, and
+model metadata comes from `gen_metadata`.
 
 Text left unsent in Claude Code's own input box (a draft or paste never submitted, or the
 prompt Claude puts back after an interrupt) shows at the end of the conversation as
