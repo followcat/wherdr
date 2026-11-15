@@ -6,6 +6,11 @@ import core16 from './fixtures/core-0.1.16.json'
 import core17 from './fixtures/core-0.1.17.json'
 
 const b64 = (s: string) => Buffer.from(s).toString('base64')
+// The launch line of an interactive agent (shared/codexLaunch.ts's exit tail):
+// a failure in its first 3 s still ends the terminal; any other exit drops
+// back into an interactive shell instead of closing the pane.
+const agentLaunch = (argv: string) => `t0=$(date +%s 2>/dev/null || echo 0); ${argv}; s=$?; `
+  + 'if [ "$s" != 0 ] && [ $(($(date +%s 2>/dev/null || echo 9) - t0)) -lt 3 ]; then exit "$s"; fi; exec "${SHELL:-bash}" -i'
 const machines: MachineInfo[] = [
   { key: '', label: 'Local', local: true, status: 'online', error: null },
   { key: '7667', label: 'vps', local: false, status: 'online', error: null },
@@ -76,16 +81,21 @@ describe('core creation', () => {
     await expect(coreCreate(t.deps, { kind: 'claude', cwd: '/home/u' })).rejects.toMatchObject({
       code: 'launch_failed', message: 'claude stopped right after starting (exit code 127). Last output:\none\nclaude: command not found',
     })
+    // No dead `finished` entry left in herdr-core for a launch that never started.
+    expect(t.calls.filter(c => c[0].startsWith('terminal.'))).toEqual([
+      ['terminal.run', expect.anything()], ['terminal.get', { terminal: 't3' }], ['terminal.read', { terminal: 't3', lines: 20 }], ['terminal.rm', { terminal: 't3' }],
+    ])
   })
   it('does not call a clean exit a failure', async () => {
     const t = setup((method) => method === 'terminal.run' ? { address: 't3' } : method === 'terminal.get' ? { state: 'finished', exit_code: 0 } : {})
     expect(await coreCreate(t.deps, { kind: 'claude', cwd: '/home/u' })).toMatchObject({ pane_id: 'w2:p2' })
+    expect(t.calls.some(c => c[0] === 'terminal.rm')).toBe(false)
   })
   it('runs a terminal without parent, with a correlation label, on a machine', async () => {
     const t = setup(() => ({ address: 'vps/t7' }))
     const r = await coreCreate(t.deps, { kind: 'shell', machine: '7667', cwd: '/home/u/app', name: 'My Shell' })
     const p = t.runs()[0]![1]
-    expect(p).toMatchObject({ cwd: '/home/u/app', on: 'vps', name: 'my-shell', no_parent: true, wait: false })
+    expect(p).toMatchObject({ cwd: '/home/u/app', on: 'vps', name: 'my-shell', no_parent: true, wait: false, rm: true })
     expect(p.line).toBeUndefined()
     expect(p.labels['wherdr-request']).toMatch(/^[0-9a-f]{16}$/)
     expect(r).toMatchObject({ pane_id: 'w1:p1', workspace_id: 'w1', name: null })
@@ -93,7 +103,7 @@ describe('core creation', () => {
   it('starts an installed agent CLI through the machine shell, not an uninstalled one', async () => {
     const t = setup(() => ({ address: 't3' }))
     expect(await coreCreate(t.deps, { kind: 'claude', cwd: '/home/u' })).toMatchObject({ pane_id: 'w2:p2', name: 'claude' })
-    expect(t.runs()[0]![1].line).toMatch(/exec claude$/)
+    expect(t.runs()[0]![1].line).toContain(agentLaunch(`'claude'`))
     expect(t.runs()[0]![1].on).toBeUndefined()
     await expect(coreCreate(t.deps, { kind: 'gemini', cwd: '/home/u' })).rejects.toMatchObject({ code: 'not_installed' })
     expect(t.runs()).toHaveLength(1)
@@ -185,14 +195,14 @@ describe('resume and first message', () => {
   it('resumes through the CLI argv, only for the agents that have one and only when asked', async () => {
     let t = setup(() => ({ address: 't3' }))
     await coreCreate(t.deps, { kind: 'claude', cwd: '/home/u', resume: true })
-    expect(t.runs()[0]![1].line).toMatch(/exec claude --continue$/)
+    expect(t.runs()[0]![1].line).toContain(agentLaunch(`'claude' '--continue'`))
     t = setup(() => ({ address: 't3' }))
     await coreCreate(t.deps, { kind: 'codex', cwd: '/home/u', resume: true })
     // Codex: its update check off, and a line that keeps the terminal when an update ends it.
     expect(t.runs()[0]![1].line).toContain(`'codex' '-c' 'check_for_update_on_startup=false' 'resume' '--last'; s=$?;`)
     t = setup(() => ({ address: 't3' }))
     await coreCreate(t.deps, { kind: 'claude', cwd: '/home/u' })
-    expect(t.runs()[0]![1].line).toMatch(/exec claude$/)
+    expect(t.runs()[0]![1].line).toContain(agentLaunch(`'claude'`))
   })
   it('sends the first message once, after the answer, when the agent is idle', async () => {
     const t = setup(idle())
