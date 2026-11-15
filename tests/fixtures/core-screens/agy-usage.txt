@@ -1,0 +1,46 @@
+      ▄▀▀▄        Antigravity CLI 1.5.9
+     ▀▀▀▀▀▀       alice@example.com (Google AI Ultra)
+    ▀▀▀▀▀▀▀▀      Orchestrator (Carbon)
+   ▄▀▀    ▀▀▄     /home/user/acme-shop
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+└ Models & Quota
+
+  Account: alice@example.com
+
+GEMINI MODELS
+  Models within this group: Gemini 4 Carbon, Gemini 4 Argon, Gemini 4 Hydrogen, Orchestrator (Carbon), Orchestrator (Argon), Gemini 3.8 Flash
+
+  Weekly Limit Remaining
+    [████████████████████████████████████░░░░░░░░░░░░░░] 71.88%
+    Refreshes in 135h 20m
+
+  Five Hour Limit Remaining
+    [██████████████████████████████████████████░░░░░░░░] 84.21%
+    Refreshes in 2h 52m
+
+
+CLAUDE AND GPT MODELS
+  Models within this group: Claude Opus 5.5, Claude Sonnet 5.5, GPT-OSS 120B
+
+  Weekly Limit Remaining
+    [██████████████████████████████████████████████████] 100.00%
+    Quota available
+
+  Five Hour Limit Remaining
+    [██████████████████████████████████████████████████] 100.00%
+    Quota available
+
+
+  │Within each group, models share a weekly limit and a 5-hour limit. Quota is
+  │consumed proportionally to the cost of the tokens. Thus, limits will last
+  │longer with shorter tasks or using more cost-effective models. The 5-hour
+  │limit smooths out aggregate demand to fairly distribute global capacity
+  │across all users, while your weekly limit is tied directly to your individual
+  │tier.
+
+  ↑/↓ Scroll · pgup/pgdown Page · ctrl+end Bottom · ctrl+home Top · esc Close
+                                                                                                                                                                            auto · Orchestrator (Carbon)

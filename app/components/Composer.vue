@@ -602,6 +602,9 @@ const SLASH: Record<string, [string, string][]> = {
     ['/model', 'Change model'], ['/review', 'Code review'], ['/diff', 'View diff']],
   omp: [['/compact', 'Summarize context'], ['/new', 'New conversation'], ['/plan', 'Plan mode'],
     ['/model', 'Change model'], ['/fast', 'Priority service tier']],
+  // Antigravity CLI: its panels and model picker open the interactive terminal.
+  agy: [['/compact', 'Summarize context'], ['/clear', 'New conversation'], ['/context', 'Context usage'],
+    ['/usage', 'Plan usage'], ['/model', 'Change model'], ['/diff', 'View diff']],
 }
 // Images first, then interruption and the agent's commands.
 function openPlus() {

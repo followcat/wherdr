@@ -1,0 +1,6 @@
+ Diff  All Changes  Per Turn  Commit Tree
+
+   ⚠ no supported VCS found in /home/user/acme-shop
+
+   ←/→ switch view · esc dismiss
+                                                                                                                                                                            auto · Orchestrator (Carbon)

@@ -14,13 +14,10 @@ All notable changes to this project are documented here. The format follows
 - **Saved proxies for new sessions.** Settings › Agents › Proxies keeps named `http(s)`/`socks5` proxies on the server (passwords never leave it: the list shows `user:•••@host:port` and an edit that leaves the mask keeps the stored one). The New sheet offers them on the chosen machine — each entry may name its machines — preselects the machine's last choice, and the launch gets it as `*_PROXY` environment, never in the command line.
 - **Conversations open on their last read.** After a reload, an update or a network cut, the conversation kept on the device shows at once (the home state no longer waits for the server's first answer), then the server's answer merges in without moving what is on screen; replies that arrived meanwhile come in at the bottom like live ones. The startup background is the theme last shown on the device, so a reload no longer flashes another colour.
 - **Devin conversations on herdr-core.** Read saved ATIF transcripts from the running process, locally or on a core machine, with tools, inline images, search and previews. Updates arrive when Devin saves a turn; only history retained after compaction is available.
+- **Antigravity CLI (`agy`) conversations** open on their saved transcript, locally or on another machine.
+- **Antigravity commands in the + menu.** An `agy` conversation's + menu offers `/compact`, `/clear`, `/context`, `/usage`, `/model` and `/diff`, as for Claude Code, Codex and omp. A command that opens a panel or the model picker shows the interactive terminal over the conversation; Esc there brings the message field back.
 
 ## [3.0.0] — 2026-11-14
-### New
-
-- **Antigravity CLI (`agy`) conversations** open on their saved transcript, locally or on another machine.
-
-## [3.0.0]
 
 wherdr 3 runs on herdr-core (`hc`) instead of Herdr and adds built-in project management: you talk to a project's coordinator, agents carry its tasks through your workflow on a board, and Alfred helps you set it up. It installs from source beside wherdr v2, imports v2's machines and settings, and leaves v2 untouched. Release notes: [docs/release-notes-3.0.0.md](docs/release-notes-3.0.0.md).
 
