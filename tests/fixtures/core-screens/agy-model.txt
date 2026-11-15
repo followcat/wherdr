@@ -1,0 +1,30 @@
+      ▄▀▀▄        Antigravity CLI 1.5.9
+     ▀▀▀▀▀▀       alice@example.com (Google AI Ultra)
+    ▀▀▀▀▀▀▀▀      Orchestrator (Carbon)
+   ▄▀▀    ▀▀▄     /home/user/acme-shop
+  ▄▀▀      ▀▀▄
+
+> /diff
+  ⎿  Exited /diff command
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Switch Model
+
+  Search:
+          ────────────────────
+
+  Gemini 4 Carbon
+  Gemini 4 Argon
+  Gemini 4 Hydrogen
+> Orchestrator (Carbon) (current)
+  Orchestrator (Argon)
+  Gemini 3.8 Flash
+  Claude Opus 5.5
+  Claude Sonnet 5.5
+  GPT-OSS 120B (Medium)
+
+Keyboard: ↑/↓ Navigate  enter Select  esc Go Back
+
+                                                                                                                                                                            auto · Orchestrator (Carbon)
