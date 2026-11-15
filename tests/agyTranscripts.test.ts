@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -171,6 +171,163 @@ it('returns not_found for a missing database and fails open on transient errors'
   mkdirSync(dir, { recursive: true })
   writeFileSync(path.join(dir, `${AGY_SESSION}.db`), 'not sqlite')
   await expect(reader.chat(pane)).rejects.toThrow()
+})
+
+// A remote filesystem over an in-memory store: `read` bytes are counted like
+// data transferred over SSH, `sync` reloads a fixture file's real bytes after
+// the remote moved (the store mtime is bumped so a rewrite is another
+// generation), and `setHook` can move the store in the middle of a copy.
+function remoteMachine() {
+  const store = new Map<string, { buf: Buffer, mtimeMs: number, ino: number }>()
+  const bytes = new Map<string, number>()
+  let clock = 1000
+  let ino = 100
+  let hook: ((p: string) => void) | null = null
+  const enoent = (p: string) => Object.assign(new Error(`not found: ${p}`), { code: 'ENOENT' })
+  const fs: MachineFs = {
+    async stat(p) {
+      const f = store.get(p)
+      if (!f) throw enoent(p)
+      return { size: f.buf.length, mtimeMs: f.mtimeMs, isFile: true, isDir: false, ino: f.ino }
+    },
+    statMany: ps => Promise.all(ps.map(p => fs.stat(p).catch(() => null))),
+    readdir: async () => [],
+    readFile: async () => '',
+    async read(p, start, len) {
+      const f = store.get(p)
+      if (!f) throw enoent(p)
+      bytes.set(p, (bytes.get(p) ?? 0) + len)
+      const out = Buffer.from(f.buf.subarray(start, start + len))
+      hook?.(p)
+      return out
+    },
+  }
+  return {
+    fs, bytes, store,
+    sizeOf: (p: string) => store.get(p)?.buf.length ?? 0,
+    sync: (p: string) => {
+      if (!existsSync(p)) return store.delete(p)
+      store.set(p, { buf: readFileSync(p), mtimeMs: clock += 10, ino: store.get(p)?.ino ?? (ino += 7) })
+    },
+    setHook: (h: typeof hook) => { hook = h },
+  }
+}
+
+it('copies only the grown WAL tail when a remote conversation changes', async () => {
+  const { home } = fixture()
+  const live = openAgyFixture(home, { wal: true, rows: [
+    { role: 'user', text: 'First request' },
+    { role: 'agent', text: 'First reply' },
+    { role: 'user', text: 'Another request' },
+    { role: 'agent', text: 'Another reply' },
+  ] })
+  keepers.push(live)
+  const remote = remoteMachine()
+  remote.sync(live.file)
+  const walPath = `${live.file}-wal`
+  remote.sync(walPath)
+  const agy = createAgyTranscripts({ home, fs: remote.fs })
+  expect((await agy.chat(pane)).items?.map(i => i.text)).toEqual(['First request', 'First reply', 'Another request', 'Another reply'])
+  expect(remote.bytes.get(live.file)).toBeGreaterThan(0)
+  const walSize1 = remote.sizeOf(walPath)
+
+  remote.bytes.clear()
+  live.append([{ role: 'agent', text: 'Late reply' }])
+  remote.sync(walPath)
+  const tail = remote.sizeOf(walPath) - walSize1
+  expect(tail).toBeGreaterThan(0)
+  const r = await agy.chat(pane)
+  expect(r.items?.map(i => i.text)).toEqual(['First request', 'First reply', 'Another request', 'Another reply', 'Late reply'])
+  expect(remote.bytes.get(live.file) ?? 0).toBe(0) // the database is not recopied
+  expect(remote.bytes.get(walPath) ?? 0).toBeLessThanOrEqual(tail + 128) // tail + header checks only
+})
+
+it('copies the remote database again when its identity changes', async () => {
+  const { home } = fixture()
+  const live = openAgyFixture(home, { wal: true, rows: [
+    { role: 'user', text: 'First request' },
+    { role: 'agent', text: 'First reply' },
+  ] })
+  keepers.push(live)
+  const remote = remoteMachine()
+  remote.sync(live.file)
+  const walPath = `${live.file}-wal`
+  remote.sync(walPath)
+  const agy = createAgyTranscripts({ home, fs: remote.fs })
+  expect((await agy.chat(pane)).items?.length).toBe(2)
+
+  remote.bytes.clear()
+  live.append([{ role: 'agent', text: 'Checkpointed reply' }])
+  live.db.exec('PRAGMA wal_checkpoint(FULL)') // the main file moves, the WAL keeps its generation
+  remote.sync(live.file)
+  remote.sync(walPath)
+  const r = await agy.chat(pane)
+  expect(r.items?.map(i => i.text)).toEqual(['First request', 'First reply', 'Checkpointed reply'])
+  expect(remote.bytes.get(live.file)).toBe(remote.sizeOf(live.file)) // recopied in full
+})
+
+it('copies the whole remote WAL after a restart', async () => {
+  const { home } = fixture()
+  const live = openAgyFixture(home, { wal: true, rows: [
+    { role: 'user', text: 'First request' },
+    { role: 'agent', text: 'First reply' },
+  ] })
+  keepers.push(live)
+  const remote = remoteMachine()
+  remote.sync(live.file)
+  const walPath = `${live.file}-wal`
+  remote.sync(walPath)
+  const agy = createAgyTranscripts({ home, fs: remote.fs })
+  expect((await agy.chat(pane)).items?.length).toBe(2)
+
+  // A restart gives the WAL another header (checkpoint sequence and salts):
+  // even grown back past the kept size, the kept prefix is from another
+  // generation and the whole file has to be copied again.
+  remote.bytes.clear()
+  live.db.exec('PRAGMA wal_checkpoint(RESTART)')
+  live.append([
+    { role: 'user', text: 'Second request after the restart' },
+    { role: 'agent', text: 'Second reply after the restart' },
+    { role: 'user', text: 'Third request after the restart' },
+    { role: 'agent', text: 'Third reply after the restart' },
+  ])
+  remote.sync(live.file)
+  remote.sync(walPath)
+  const r = await agy.chat(pane)
+  expect(r.items?.map(i => i.text)).toEqual([
+    'First request', 'First reply',
+    'Second request after the restart', 'Second reply after the restart',
+    'Third request after the restart', 'Third reply after the restart',
+  ])
+  expect(remote.bytes.get(walPath) ?? 0).toBeGreaterThanOrEqual(remote.sizeOf(walPath))
+})
+
+it('retries a remote read that moved under the copy', async () => {
+  const { home } = fixture()
+  const live = openAgyFixture(home, { wal: true, rows: [
+    { role: 'user', text: 'First request' },
+    { role: 'agent', text: 'First reply' },
+  ] })
+  keepers.push(live)
+  const remote = remoteMachine()
+  remote.sync(live.file)
+  remote.sync(`${live.file}-wal`)
+  const agy = createAgyTranscripts({ home, fs: remote.fs })
+
+  // The main file is checkpointed (and the WAL grows) right after the first
+  // chunk of the copy: the read restarts and returns the final state.
+  let swapped = false
+  remote.setHook(p => {
+    if (p !== live.file || swapped) return
+    swapped = true
+    live.append([{ role: 'agent', text: 'Second reply' }])
+    live.db.exec('PRAGMA wal_checkpoint(FULL)')
+    remote.sync(live.file)
+    remote.sync(`${live.file}-wal`)
+  })
+  const r = await agy.chat(pane)
+  expect(r.items?.map(i => i.text)).toEqual(['First request', 'First reply', 'Second reply'])
+  expect(remote.bytes.get(live.file) ?? 0).toBeGreaterThan(remote.sizeOf(live.file)) // copied again after the move
 })
 
 it('summaries fallback only resolves a unique live match for the pane folder', async () => {

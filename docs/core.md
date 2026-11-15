@@ -201,9 +201,11 @@ terminal.
 
 Antigravity CLI (`agy`, tested with 1.5.8) is read through its saved
 conversations at `~/.gemini/antigravity-cli/conversations/<uuid>.db` (SQLite,
-WAL mode; the database and its `-wal` sidecar are copied to a snapshot before
-`node:sqlite` opens them, so remote machines read a consistent view through
-`machine.exec`, and 256 MiB is the snapshot limit). Step payloads are protobuf
+WAL mode; remote machines open a local copy kept between reads — the database
+goes back through `machine.exec` only when its own identity moves, a matching
+WAL generation only ships its grown tail, a pair that moved under the copy is
+retried so `node:sqlite` always opens one generation, and 256 MiB is the
+snapshot limit; locally the live file opens read-only first). Step payloads are protobuf
 blobs decoded by a small bounds-checked reader (`server/utils/agyProtobuf.ts`).
 The session is resolved fail-closed from what the `agy` process holds open —
 `conversations/<uuid>.db`, its WAL/SHM sidecars or `presence/<uuid>.lock` —
