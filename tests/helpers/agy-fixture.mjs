@@ -43,7 +43,7 @@ const at = idx => new Date(BASE + idx * 1000).toISOString()
 // thinking?, calls?: [{ id, name, args }], status? }, obs { role:'obs',
 // resultOf, out, error? }, error { role:'error', text }, hidden
 // { role:'hidden', type } — an internal step the chat must not render.
-function stepBlobs(row, idx) {
+export function stepBlobs(row, idx) {
   const meta = [ts(1, at(idx)), ts(6, at(idx))]
   if (row.role === 'obs') meta.push(msg(4, str(1, row.resultOf), str(2, row.name || 'run_command'), str(3, '{}')))
   meta.push(ts(8, at(idx)))
@@ -86,9 +86,14 @@ function insertRows(db, rows, offset = 0) {
   })
 }
 
+// gen_metadata.data blob for a model id and its display label.
+export function agyModelBlob(model, label) {
+  return Buffer.concat([msg(1, str(19, model), str(21, label || model)), msg(3, str(28, model))])
+}
+
 function insertModel(db, model, label) {
   if (!model) return
-  const data = Buffer.concat([msg(1, str(19, model), str(21, label || model)), msg(3, str(28, model))])
+  const data = agyModelBlob(model, label)
   db.prepare('INSERT INTO gen_metadata (idx, data, size) VALUES (1, ?, ?)').run(data, data.length)
 }
 

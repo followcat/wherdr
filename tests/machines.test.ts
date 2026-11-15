@@ -81,6 +81,20 @@ describe('files of a remote machine (shell)', () => {
     expect((await rfs.readdir(path.join(home, 'projets'))).sort()).toEqual(['.cache', 'app', 'fichier.txt', "l'apostrophe et espaces", 'node_modules', 'notes'])
   })
 
+  it('stat { fresh: true } bypasses the 700 ms stat cache', async () => {
+    const f = path.join(home, 'projets/fresh.txt')
+    writeFileSync(f, '0123456789')
+    const cached = createShellFs(localSh, { statTtlMs: 60_000 })
+    expect((await cached.stat(f)).size).toBe(10)
+    writeFileSync(f, '0123456789abcdef')
+    // A plain stat keeps answering the cached size within the TTL…
+    expect((await cached.stat(f)).size).toBe(10)
+    // …but a post-copy check must see the file as it is now.
+    expect((await cached.stat(f, { fresh: true })).size).toBe(16)
+    // The fresh answer replaces the cached one for the next plain stats.
+    expect((await cached.stat(f)).size).toBe(16)
+  })
+
   it('lists subfolders (Git repositories marked, hidden ones and node_modules excluded)', async () => {
     const r = await localSh(LIST_DIRS_SCRIPT, [path.join(home, 'projets')])
     const dirs = parseDirList(r.stdout.toString())
@@ -96,6 +110,37 @@ describe('files of a remote machine (shell)', () => {
     const r = await localSh(`printf %s "$1"`, [evil])
     expect(r.stdout.toString()).toBe(evil)
     expect(shq("it's")).toBe(`'it'\\''s'`)
+  })
+
+  it('lists the open files of a live process', async () => {
+    // /proc fd targets like "socket:[1]" or "pipe:[2]" are not paths: filtered out.
+    const files = await rfs.readProcessFiles!(process.pid)
+    expect(files).not.toBeNull()
+    expect(files!.length).toBeGreaterThan(0)
+    expect(files!.every(f => f.startsWith('/'))).toBe(true)
+  })
+
+  it('readProcessFiles: an empty answer means "scanned, no matching files"', async () => {
+    const fs = createShellFs(async () => ({ code: 0, stdout: Buffer.alloc(0), stderr: '' }))
+    expect(await fs.readProcessFiles!(1)).toEqual([])
+  })
+
+  it('readProcessFiles: a machine without /proc nor lsof answers null, never []', async () => {
+    // A dead pid has no /proc/<pid>/fd, and this env hides lsof: nothing to scan
+    // with → the "!" marker, reported as an unavailable scan.
+    const noScanSh: ShellExec = (script, args = []) => new Promise((resolve) => {
+      const child = spawn('env', ['-i', 'PATH=/nonexistent', '/bin/sh', '-c', script, 'sh', ...args], { stdio: ['pipe', 'pipe', 'pipe'] })
+      const out: Buffer[] = []
+      let err = ''
+      child.stdout.on('data', (b: Buffer) => out.push(b))
+      child.stderr.on('data', (b: Buffer) => { err += b.toString() })
+      child.on('close', code => resolve({ code, stdout: Buffer.concat(out), stderr: err }))
+      child.stdin.end()
+    })
+    expect(await createShellFs(noScanSh).readProcessFiles!(4194303)).toBeNull()
+    // Same contract when the marker comes from a distant shell verbatim.
+    const fs = createShellFs(async () => ({ code: 0, stdout: Buffer.from('!\n'), stderr: '' }))
+    expect(await fs.readProcessFiles!(1)).toBeNull()
   })
 
   it('re-reads a remote transcript like a local one', async () => {

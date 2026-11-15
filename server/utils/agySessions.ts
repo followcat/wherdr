@@ -46,7 +46,7 @@ export function agyFdsSessions(paths: string[], home: string, honorEnv: boolean)
 
 export async function agySession(fs: MachineFs, home: string, proc: AgyProcess, honorEnv: boolean): Promise<AgySessionGuess> {
   if (Number.isSafeInteger(proc.pid) && proc.pid! > 0 && fs.readProcessFiles) {
-    const files = await fs.readProcessFiles(proc.pid!)
+    const files = await fs.readProcessFiles(proc.pid!).catch(() => null)
     if (files) {
       const ids = agyFdsSessions(files, home, honorEnv)
       // An ambiguous descriptor set (two conversations held open) resolves to nothing.
