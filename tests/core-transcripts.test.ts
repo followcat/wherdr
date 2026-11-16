@@ -178,6 +178,34 @@ describe('Devin core transcripts', () => {
     for (const [method, params] of call.mock.calls) if (method === 'machine.exec') expect(params.on).toBe('host-a')
   })
 
+  it('resolves the lock held by the engine child when the Devin launcher is the foreground', async () => {
+    // Devin 3000.12 runs as a launcher (the foreground) with its engine
+    // `devin acp` as a child; the session lock names the engine's PID.
+    const home = mkdtempSync(path.join(tmpdir(), 'hw-remote-devin-engine-'))
+    const root = path.join(home, '.local/share/devin/cli')
+    mkdirSync(path.join(root, 'session_locks'), { recursive: true })
+    mkdirSync(path.join(root, 'transcripts'))
+    const doc = JSON.parse(fx('devin-atif-v1.7-real.json'))
+    writeFileSync(path.join(root, 'session_locks', `${doc.session_id}.lock`), '51\n')
+    writeFileSync(path.join(root, 'transcripts', `${doc.session_id}.json`), JSON.stringify(doc))
+    const core = fakeCore({ 'host-a/t1': { pid: 10, argv: ['sh'], foreground: { pid: 50, name: 'devin', argv: ['devin', '--prompt-file', 'brief.md'] } } })
+    const snap = (pid: string, argv: string[]) => `${pid} 100 100 1767225600 100.00 1767225700.001 ${Buffer.from(argv.join('\0') + '\0').toString('base64')}`
+    const call = vi.fn(async (method: string, params: any): Promise<any> => {
+      if (params.argv?.[0] === 'ps') return { stdout: Buffer.from('10 1 sh\n50 10 devin --prompt-file brief.md\n51 50 /opt/devin acp\n52 51 npm exec server\n').toString('base64') }
+      if (params.argv?.[2] === DEVIN_PROCESS_SCRIPT) {
+        const lines = params.argv.slice(4).map((pid: string) => snap(pid, pid === '51' ? ['/opt/devin', 'acp'] : ['devin', '--prompt-file', 'brief.md']))
+        return { stdout: Buffer.from(lines.join('\n') + '\n').toString('base64') }
+      }
+      if (params.argv?.[2] === 'printf %s "$HOME"') return { code: 0, stdout: Buffer.from(home).toString('base64') }
+      return core.call(method, params)
+    })
+    const p = pane('devin', 'host-a/t1', 'devin', '/work/proj')
+    const t = createCoreTranscripts({ call, pane: () => p, localHome: '/unrelated' })
+    const r = await t.chat(p)
+    expect(r.session).toBe(doc.session_id)
+    expect(r.items?.at(-1)?.text).toContain('all 12 tests pass')
+  })
+
   it('reads a resumed Devin transcript from the foreground process without hooks', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'hw-core-devin-'))
     const dir = path.join(home, '.local/share/devin/cli/transcripts')

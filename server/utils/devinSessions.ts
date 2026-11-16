@@ -8,6 +8,9 @@ export interface DevinProcess {
   argvExact?: boolean
   // Upper bound on process birth; a lock must be strictly later.
   startedAt?: number
+  // Devin processes under this one. Devin 3000.12 runs a launcher (the
+  // terminal's foreground) whose engine child (`devin acp`) holds the lock.
+  childPids?: number[]
 }
 
 // Flags are only identity hints: a current PID lock wins after /resume.
@@ -31,9 +34,10 @@ export async function devinSession(fs: MachineFs, home: string, proc: DevinProce
     })
     // Never select an identity from a truncated or ambiguous scan.
     if (!entries) return null
+    const pids = new Set([proc.pid!, ...(proc.childPids || []).filter(p => Number.isSafeInteger(p) && p > 0)])
     const matches: string[] = []
     for (const { name, stat: st, pid } of entries) {
-      if (!st.isFile || st.size > 32 || st.mtimeMs <= proc.startedAt || !Number.isSafeInteger(pid) || pid !== proc.pid) continue
+      if (!st.isFile || st.size > 32 || st.mtimeMs <= proc.startedAt || !Number.isSafeInteger(pid) || !pids.has(pid)) continue
       if (name.endsWith('.lock') && transcriptPath(home, name.slice(0, -5), honorEnv)) matches.push(name.slice(0, -5))
     }
     if (matches.length) return matches.length === 1 ? matches[0]! : null

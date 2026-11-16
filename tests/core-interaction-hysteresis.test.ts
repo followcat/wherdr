@@ -1,10 +1,11 @@
 // The interactive-terminal overlay opens on 'terminal' sustained 500 ms —
-// about one read at the viewed pace. A TUI redraws constantly, so any single
-// read can lose the input field mid-paint (the quota footer, a rule) and
+// about one read at the viewed pace. Devin redraws constantly, so a single
+// read can lose its input field mid-paint (the footer, a rule) and
 // classifyScreen falls through to 'terminal'. Publishing that one-off read
-// flaps the overlay: open on the bad read, closed by the next good one. The
-// pane's interaction must therefore publish 'terminal' only after two
-// consecutive terminal reads; every other value publishes at once.
+// flaps the overlay: open on the bad read, closed by the next good one. A
+// Devin pane's interaction therefore publishes 'terminal' only after two
+// consecutive terminal reads; every other value, and every other agent,
+// publishes at once.
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { createCoreScreens } from '../server/utils/coreScreen'
@@ -64,6 +65,29 @@ describe('enrich: interaction hysteresis on terminal', () => {
     // After the work break the streak starts over: one read is still unconfirmed.
     expect((await enr(2000)).interaction).not.toBe('terminal')
     expect((await enr(3000)).interaction).toBe('terminal')
+  })
+  it('keeps the last published interaction after a working period, not unknown', async () => {
+    let t = 0
+    let status: Pane['status'] = 'idle'
+    let text = idle
+    const s = createCoreScreens({ call: async () => ({ text }), viewed: () => true, now: () => t })
+    const enr = async (ms: number) => { t = ms; const p: Pane = { ...pane, status }; await s.enrich([p]); return p }
+    expect((await enr(0)).interaction).toBe('input')
+    status = 'working'
+    await enr(1000)
+    status = 'idle'
+    text = midRedraw
+    // The work break resets the streak only: the first terminal read keeps 'input'.
+    expect((await enr(2000)).interaction).toBe('input')
+    expect((await enr(3000)).interaction).toBe('terminal')
+  })
+  it.each(['codex', 'claude', 'omp'])('publishes terminal at once for %s: the two-read rule is Devin only', async agent => {
+    const wakes: number[] = []
+    const s = createCoreScreens({ call: async () => ({ text: 'Command Center\n\n  1 task running\n' }), viewed: () => true, now: () => 0, wake: ms => wakes.push(ms) })
+    const p: Pane = { ...pane, agent }
+    await s.enrich([p])
+    expect(p.interaction).toBe('terminal')
+    expect(wakes).toEqual([])
   })
   it('keeps the last published interaction while a terminal read is unconfirmed', async () => {
     let text = idle
