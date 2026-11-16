@@ -42,7 +42,7 @@ export interface CoordinatorAgent { program: CoordinatorProgram, model?: string 
 // The harnesses that can carry a coordinator or Alfred: each reads its role
 // from AGENTS.md in its folder, or from its own file that imports it
 // (ROLE_POINTERS). Others (no known instructions file) are not offered there.
-export const COORDINATOR_PROGRAMS = ['claude', 'codex', 'omp', 'pi', 'opencode', 'kimi', 'gemini', 'qwen', 'copilot', 'amp', 'droid'] as const
+export const COORDINATOR_PROGRAMS = ['claude', 'codex', 'omp', 'pi', 'opencode', 'kimi', 'gemini', 'qwen', 'copilot', 'amp', 'droid', 'devin'] as const
 export type CoordinatorProgram = typeof COORDINATOR_PROGRAMS[number]
 export const isCoordinatorProgram = (v: unknown): v is CoordinatorProgram => COORDINATOR_PROGRAMS.includes(v as CoordinatorProgram)
 // A project's coordinator must not change the project's repository: only
@@ -474,19 +474,28 @@ export const specChangedText = (what: string) => `The task's spec changed: ${wha
 // `wherdr pm` needs: a permission profile given only by -c (nothing in
 // ~/.codex) extends :workspace (reads everywhere, writes in its folder and
 // temp folders) with the network on. The others start bare in the folder.
+// Devin answers its workspace-trust check itself with --respect-workspace-trust
+// (its home is wherdr's own folder, made by wherdr).
 // works: the project's folder is the coordinator's to change (a folder without git).
 // resume: its last conversation again, the last one started in its own folder
-// (Claude and Codex only, see canResume), with the same options.
+// (the programs of canResume), with the same options.
 export function coordinatorArgs(program: CoordinatorProgram, folder: string, repo?: string, works = false, resume = false, model?: string): string[] {
   const m = model ? ['--model', model] : []
   if (program === 'claude') return ['claude', ...m, ...(resume ? ['--continue'] : []), ...(repo ? ['--add-dir', repo] : [])]
   if (program === 'codex') return ['codex', ...CODEX_NO_UPDATE, ...m, '-C', folder, ...(repo && works ? ['--add-dir', repo] : []), '-c', 'default_permissions="wherdr"', '-c', 'permissions.wherdr.extends=":workspace"', '-c', 'permissions.wherdr.network.enabled=true', ...(resume ? ['resume', '--last'] : [])]
+  if (program === 'devin') return ['devin', '--respect-workspace-trust', 'false', ...(resume ? ['-c'] : [])]
   return [program]
 }
-export const canResume = (program: CoordinatorProgram) => program === 'claude' || program === 'codex'
-// Claude and Codex take the first message as an argument; the others get it
-// typed once they are ready.
-export const promptAsArg = (program: CoordinatorProgram) => program === 'claude' || program === 'codex'
+export const canResume = (program: CoordinatorProgram) => program === 'claude' || program === 'codex' || program === 'devin'
+// Claude, Codex and Devin take the first message as an argument; the others get
+// it typed once they are ready.
+export const promptAsArg = (program: CoordinatorProgram) => program === 'claude' || program === 'codex' || program === 'devin'
+// The flag a program's command-line first message follows (Devin's `--`).
+export const PROMPT_ARG_FLAG: Partial<Record<CoordinatorProgram, string>> = { devin: '--' }
+// On a resume a bare word is not a prompt — Claude's --continue and Codex's
+// resume --last would read it as something else: theirs are typed. Devin's
+// takes one after `--` on its resume line too.
+export const promptArgOnResume = (program: CoordinatorProgram) => program === 'devin'
 
 // `wherdr` in the coordinator's folder (bin/, first in its PATH): the project's
 // machine may have no wherdr installed, and a build ships none. sh, base64 and

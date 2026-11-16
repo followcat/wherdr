@@ -7,7 +7,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { projectPlace } from '../../shared/pm/places'
 import { notesStore, runNotes, type NotesStore } from './notesStore'
-import { FIRST_REPLY, MAIN, canResume, canRunCoordinator, coordinatorBy, commandList, coordinatorArgs, updateNotice, isCoordinatorProgram, promptAsArg, mainRoleFiles, OWN_ROLE_FILES, parseCommand, roleFiles, citedSpecChange, specChangeRefusal, specChangedText, specDiff, tellTarget, stepDoneEvent, templateDiff, templateEditRefusal, type CoordinatorAgent, type CoordinatorProgram, type CoordinatorView, type Proposal, type ProposalAnswer, type ProposalOutcome, type Turn, PROPOSAL_ANSWERS } from '../../shared/pm/coordinator'
+import { FIRST_REPLY, MAIN, canResume, canRunCoordinator, coordinatorBy, commandList, coordinatorArgs, updateNotice, isCoordinatorProgram, promptAsArg, promptArgOnResume, PROMPT_ARG_FLAG, mainRoleFiles, OWN_ROLE_FILES, parseCommand, roleFiles, citedSpecChange, specChangeRefusal, specChangedText, specDiff, tellTarget, stepDoneEvent, templateDiff, templateEditRefusal, type CoordinatorAgent, type CoordinatorProgram, type CoordinatorView, type Proposal, type ProposalAnswer, type ProposalOutcome, type Turn, PROPOSAL_ANSWERS } from '../../shared/pm/coordinator'
 import { FEATURE, coordinatorKey, handledBy, isWorkspace, membersOf, ownWorkflow } from '../../shared/pm/workspace'
 import { initialState, onEvent, planSteps, currentStep, durationMs, waitStep } from '../../shared/pm/steps'
 import { templateChanges } from '../../shared/pm/templateText'
@@ -56,7 +56,7 @@ import { STRATEGY_LABELS } from '../../shared/pm/placement'
 import { projectPace } from './pmPace'
 import { sameFilesText } from '../../shared/pm/files'
 import type { CoordinatorRecord, PmStore } from './pmStore'
-import { ALFRED, OWN_FILES, alfredFiles, alfredName, isAlfredProgram, startPrompt } from '../../shared/pm/alfred'
+import { ALFRED, ALFRED_PROGRAM_FILES, OWN_FILES, alfredFiles, alfredName, isAlfredProgram, startPrompt } from '../../shared/pm/alfred'
 import { APP_URL_FILE, DATA_DIR, ENV_APP_URL, HOME } from './env'
 import { findDocsDir } from './wherdrDocs'
 import { projectsDataDir, projectsHome } from '../../bin/lib/userpath.mjs'
@@ -757,9 +757,10 @@ export async function coordinatorsView(store: PmStore): Promise<CoordinatorView[
 // ~/.wherdr/pm/coordinators/<KEY> on the project's machine; never ~/.claude
 // or ~/.codex.
 // The main coordinator's: Alfred's home (writeAlfredHome).
-export async function writeRoleFiles(deps: Deps, key: string) {
+// program: the harness that runs it — its own files land there too (alfred.ts).
+export async function writeRoleFiles(deps: Deps, key: string, program?: CoordinatorProgram) {
   const { store } = deps
-  if (key === MAIN) return { p: undefined, local: true, on: undefined, ...await writeAlfredHome(deps) }
+  if (key === MAIN) return { p: undefined, local: true, on: undefined, ...await writeAlfredHome(deps, program) }
   const projects = await store.projects()
   const found = projects.find(x => x.key === key)
   const p = found && await ensureVisibility(deps, found)
@@ -799,7 +800,7 @@ const docsDir = () => findDocsDir()
 // one learns of an update on its next command (takeUpdateNotice).
 export async function rewriteRoleFiles(deps: Deps) {
   for (const c of await deps.store.coordinators())
-    if (c.terminal) await writeRoleFiles(deps, c.project).catch(() => {})
+    if (c.terminal) await writeRoleFiles(deps, c.project, (c.ran ?? c.agent)?.program).catch(() => {})
 }
 
 // The line the coordinator's next command starts with, once, when wherdr was
@@ -824,14 +825,14 @@ export async function v2Projects(store: PmStore, hpDir?: string): Promise<V2Cand
 // start (an update ships new ones), its own files created once.
 // first: identity.md was just created, so this is its very first start.
 // v2: the user comes from wherdr v2: its herdr-projects board has projects.
-export async function writeAlfredHome(deps: Deps) {
+export async function writeAlfredHome(deps: Deps, program?: CoordinatorProgram) {
   const folder = homeOfAlfred(deps)
   const projects = await deps.store.projects()
   const docs = docsDir()
   const docFiles = (await fs.readdir(docs).catch(() => [] as string[])).filter(n => n.endsWith('.md')).sort()
   const main = mainRoleFiles(projects)
   const v2 = (await v2Projects(deps.store)).length > 0
-  const files = { ...main, ...alfredFiles({ home: folder, version: wherdrVersion(), docs, docFiles, address: coordinatorUrls(new URL('http://127.0.0.1')), pm: await deps.store.enabled(), projects, v2 }, main['AGENTS.md']!.split('\n')) }
+  const files = { ...main, ...alfredFiles({ home: folder, version: wherdrVersion(), docs, docFiles, address: coordinatorUrls(new URL('http://127.0.0.1')), pm: await deps.store.enabled(), projects, v2 }, main['AGENTS.md']!.split('\n')), ...(program ? ALFRED_PROGRAM_FILES[program] : undefined) }
   for (const [file, text] of Object.entries(files)) {
     await fs.mkdir(path.dirname(path.join(folder, file)), { recursive: true, mode: 0o700 })
     await fs.writeFile(path.join(folder, file), text, { mode: 0o600 })
@@ -874,7 +875,7 @@ export function coordinatorUrls(here: URL): CoordinatorUrls {
 
 // When a project coordinator starts: its files, a new token, how to start it.
 export async function prepareCoordinator(deps: Deps, key: string, program: CoordinatorProgram, urls: CoordinatorUrls, resume = false, model?: string) {
-  const { p, local, on, folder, first, v2, none } = await writeRoleFiles(deps, key)
+  const { p, local, on, folder, first, v2, none } = await writeRoleFiles(deps, key, program)
   const url = local ? urls.local : urls.remote
   if (!url) throw new HerdrError('unreachable', 'The project\'s machine cannot reach this wherdr: publish it on your tailnet first (Settings › Phone)')
   const token = await issueToken(deps.store, key)
@@ -903,7 +904,7 @@ export async function startCoordinator(deps: Deps, key: unknown, agent: { progra
   if (!a) throw new HerdrError('bad_input', BAD_AGENT)
   if (!canRunCoordinator(a.program, key)) throw new HerdrError('bad_input', BAD_PROJECT_AGENT)
   const { program } = a
-  if (resume && !canResume(program)) throw new HerdrError('bad_input', 'Only a Claude or Codex conversation can be resumed: start a new one')
+  if (resume && !canResume(program)) throw new HerdrError('bad_input', 'Only a Claude, Codex or Devin conversation can be resumed: start a new one')
   const c = await prepareCoordinator(deps, key, program, urls, resume, a.model)
   // What the user applied on its cards while it did not run, said once (a resume too).
   const notes = cardNotesMessage(before)
@@ -914,11 +915,15 @@ export async function startCoordinator(deps: Deps, key: unknown, agent: { progra
   // Alfred's start prompt is made anew at each start: an old one is not given again.
   const pending = c.prompt.length ? [] : (before?.undelivered?.texts ?? []).filter(x => !c.prompt.includes(x) && !first.includes(x) && !proposes.includes(x))
   const prompt = [...c.prompt, ...first, ...proposes, ...pending, ...notes]
-  // A resumed Codex reads a word after `resume --last` as a session: its messages are typed.
-  const asArg = promptAsArg(program) && !resume
+  // A resumed Codex reads a word after `resume --last` as a session: its messages are
+  // typed. Devin's go on the resume line too, after `--` (PROMPT_ARG_FLAG).
+  const asArg = promptAsArg(program) && (!resume || promptArgOnResume(program))
   // Codex takes one [PROMPT] argument: its messages go as one.
-  const argv = [...c.argv, ...(asArg && prompt.length ? [prompt.join('\n\n')] : [])]
+  const argv = [...c.argv, ...(asArg && prompt.length ? [...(PROMPT_ARG_FLAG[program] ? [PROMPT_ARG_FLAG[program]!] : []), prompt.join('\n\n')] : [])]
   const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
+  // A resumed Devin refuses to start while its old session lives ("already open
+  // in another process"): it is ended before the new one runs, not after.
+  if (resume && program === 'devin' && before?.terminal) await deps.call('terminal.kill', { terminal: before.terminal }, 15000).catch(() => {})
   // One start at a time (coordinatorFirst.ts): the one before is up first.
   const up = await startTurn(deps)
   let address: string
@@ -957,7 +962,7 @@ export async function answerOwnTrust(deps: CoreAdminDeps, address: string, folde
   while (Date.now() < end) {
     const t = await deps.call<{ state?: string, status?: string | { state?: string } | null }>('terminal.get', { terminal: address }, 3000).catch(() => null)
     const state = typeof t?.status === 'string' ? t.status : t?.status?.state
-    if (!t?.state || t.state === 'finished' || state === 'idle' || state === 'working') return false
+    if (!t?.state || t.state === 'finished' || state === 'idle' || state === 'working' || state === 'done') return false
     const screen = String((await deps.call<{ text?: string }>('terminal.read', { terminal: address, lines: 30 }, 3000).catch(() => null))?.text || '')
     const keys = trustKeys(screen, folder)
     if (keys) return deps.call('terminal.keys', { terminal: address, keys }, 10000).then(() => true)

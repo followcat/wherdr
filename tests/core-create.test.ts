@@ -210,6 +210,11 @@ describe('resume and first message', () => {
     expect(r.first_message).toBe('sent')
     expect(t.calls.filter(c => c[0] === 'terminal.send')).toEqual([['terminal.send', { terminal: 't3', text: 'hello' }]])
   })
+  it('types into a program that reports done at rest (Devin, Antigravity)', async () => {
+    const t = setup((m: string) => m === 'terminal.get' ? { state: 'live', status: { state: 'done' } } : m === 'terminal.read' ? { text: '> ' } : {})
+    expect(await sendFirstMessage({ ...t.deps, pollMs: 1, readyWatchMs: 200 }, 't3', 'x')).toBe('sent')
+    expect(t.calls.filter(c => c[0] === 'terminal.send')).toEqual([['terminal.send', { terminal: 't3', text: 'x' }]])
+  })
   it('never types into a blocked program, a dialog or a finished terminal', async () => {
     for (const [reply, out] of [[{ state: 'live', status: { state: 'blocked' } }, 'dialog'], [{ state: 'finished' }, 'skipped']] as const) {
       const t = setup(() => ({}))

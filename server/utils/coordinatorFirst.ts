@@ -42,7 +42,9 @@ export async function deliverFirst(deps: FirstDeps, key: string, address: string
       if (!t?.state || t.state === 'finished') { why = 'its session ended before it was ready'; break }
       if (inArgv) {
         const s = statusOf(t)
-        if (s === 'idle' || s === 'working') break
+        // done is a rest state (Devin, Antigravity): the argv prompt was taken
+        // and answered — the session is up.
+        if (s === 'idle' || s === 'working' || s === 'done') break
         r = s === 'blocked' ? 'dialog' : 'skipped'
       } else {
         r = await sendFirstMessage(deps, address, texts[i]!).catch(() => 'skipped' as const)

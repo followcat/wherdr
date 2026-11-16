@@ -332,6 +332,42 @@ describe('the main coordinator (WHR-398)', () => {
     await vi.waitFor(() => expect(sent).toEqual([expect.stringContaining('give me another name?')]))
   })
 
+  it('runs Alfred with Devin: trust flag, wherdr allowed in its home, first message after --, resume with -c after the old session ended', async () => {
+    const lines: string[] = [], calls: string[] = []
+    const call = async (method: string, params: Record<string, unknown>) => {
+      if (method === 'terminal.run') { calls.push(`run${lines.length + 1}`); lines.push(params.line as string); return { address: `host/t${lines.length}` } }
+      if (method === 'terminal.kill') { calls.push(`kill${(params as { terminal: string }).terminal}`); return {} }
+      // A resting Devin reports done: its argv prompt counts as delivered.
+      if (method === 'terminal.get') return { state: 'live', status: { state: 'done' } }
+      if (method === 'terminal.read') return { text: 'devin ready' }
+      return {}
+    }
+    const home = path.join(dir, 'alfred')
+    // queueWatchMs small: a 'done' rest state misread as "not ready" would leave the
+    // message undelivered on its record — it must count as up.
+    const d = { store, call, machines: () => [], alfredHome: home, pollMs: 1, queueWatchMs: 50 } as never
+    await startCoordinator(d, MAIN, { program: 'devin', model: 'ignored' }, { local: 'http://127.0.0.1:7690' })
+    expect(lines[0]).toMatch(/exec 'devin' '--respect-workspace-trust' 'false' '--' 'Follow .*give me another name\?"'$/)
+    expect(lines[0]).not.toContain('--model')
+    // The folder's own .devin/config.json allows the wherdr command and nothing else.
+    expect(JSON.parse(await fs.readFile(path.join(home, '.devin/config.json'), 'utf8')))
+      .toEqual({ permissions: { allow: ['Exec(wherdr)', 'Exec(./bin/wherdr)'], deny: [] } })
+    await vi.waitFor(async () => expect(Object.keys(await store.coordinator(MAIN) ?? {})).toContain('ran'))
+    await new Promise(r => setTimeout(r, 120))
+    expect((await store.coordinator(MAIN))!.undelivered).toBeUndefined()
+    // Its resume line keeps the flag and -c, still with the message after --; the
+    // old session is ended first or Devin refuses it ("already open in another process").
+    await startCoordinator(d, MAIN, { resume: true }, { local: 'http://127.0.0.1:7690' }, ['Back again'])
+    expect(lines[1]).toMatch(/exec 'devin' '--respect-workspace-trust' 'false' '-c' '--' 'Back again'$/)
+    expect(calls).toEqual(['run1', 'killhost/t1', 'run2', 'killhost/t1'])
+    expect(await store.coordinator(MAIN)).toMatchObject({ ran: { program: 'devin' } })
+    // A program without a folder-scoped resume cannot be resumed.
+    await store.saveCoordinator({ ...(await store.coordinator(MAIN))!, ran: { program: 'omp' } })
+    await expect(startCoordinator(d, MAIN, { resume: true }, { local: 'http://127.0.0.1:7690' })).rejects.toThrow('Only a Claude, Codex or Devin conversation can be resumed')
+    expect(coordinatorArgs('devin', '/h/c')).toEqual(['devin', '--respect-workspace-trust', 'false'])
+    expect(coordinatorArgs('devin', '/h/c', undefined, false, true)).toEqual(['devin', '--respect-workspace-trust', 'false', '-c'])
+  })
+
   it('runs Alfred with projects off: its record is saved, its instructions say how to switch them on', async () => {
     await store.setEnabled(false)
     const home = path.join(dir, 'alfred')

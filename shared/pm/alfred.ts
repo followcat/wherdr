@@ -21,6 +21,13 @@ export const OWN_FILES: Record<string, string> = {
   'memory.md': MEMORY_FILE,
 }
 
+// A harness's own files in Alfred's home, rewritten at each start like
+// AGENTS.md: the folder-local permission that lets it run `wherdr` without
+// asking, and nothing else. Antigravity knows no such mechanism (W1 report).
+export const ALFRED_PROGRAM_FILES: Partial<Record<CoordinatorProgram, Record<string, string>>> = {
+  devin: { '.devin/config.json': `${JSON.stringify({ permissions: { allow: ['Exec(wherdr)', 'Exec(./bin/wherdr)'], deny: [] } }, null, 2)}\n` },
+}
+
 // The name on identity.md's "Name:" line (the sidebar shows it).
 export function alfredName(identity: string | null | undefined): string {
   const m = /^[\s*_-]*name[*_]*\s*:\s*(.+)$/im.exec(identity ?? '')

@@ -56,6 +56,14 @@ describe('first messages of coordinators', () => {
     await expect(resendFirst(g.deps, 'D', restarted)).rejects.toThrow('No first message')
   })
 
+  it('a command-line first message counts as up when the program rests in done (Devin, Antigravity)', async () => {
+    const f = fake({ G: 0 })
+    const doneDeps = { ...f.deps, call: (async (m: string) => (m === 'terminal.get' ? { state: 'live', status: { state: 'done' } } : {})) as never }
+    expect(await deliverFirst(doneDeps, 'G', 'G', ['hi'], () => {}, true)).toBe('sent')
+    expect(f.sent).toEqual([])
+    expect(f.recs.get('G')!.undelivered).toBeUndefined()
+  })
+
   it('a fresh start with its messages on its command line: watched until up, a failed status query retried', async () => {
     const f = fake({ E: 30 }, ['F'], true)
     let up = 0

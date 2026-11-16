@@ -172,7 +172,8 @@ export async function sendFirstMessage(deps: CoreAdminDeps, address: string, tex
     if (DIALOG_RE.test(screen)) return 'dialog'
     stable = screen.trim() && screen === last ? stable + 1 : 0
     last = screen
-    if (state === 'idle' ? stable >= 2 : !sawStatus && stable >= STILL_POLLS) {
+    // done is a rest state too (Devin, Antigravity): at rest it accepts input.
+    if (state === 'idle' || state === 'done' ? stable >= 2 : !sawStatus && stable >= STILL_POLLS) {
       try { await deps.call('terminal.send', { terminal: address, text }, 30000); return 'sent' } catch { return 'skipped' }
     }
     await new Promise(r => setTimeout(r, step))
