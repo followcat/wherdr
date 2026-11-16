@@ -87,9 +87,21 @@ machine. A terminal that is not an agent shows only its terminal. Claude Code mu
 saving transcripts: a core started from inside a Claude Code session inherits
 `CLAUDE_CODE_CHILD_SESSION`, which turns saving off; start core from a plain shell.
 
-Devin CLI (tested with 3000.11.234) is read through its saved ATIF-v1.7 files at
-`~/.local/share/devin/cli/transcripts/<session>.json` (24 MiB maximum, transferred
-in chunks of at most 4 MiB so remote replies stay below core's transport limit). The reader
+Devin CLI (tested with 3000.11.234) is read store-first: its own
+`sessions.db` (`~/.local/share/devin/cli/sessions.db`) holds every message as
+it is written, while the ATIF transcript only lands when a turn ends. A small
+python3 script on the machine running Devin walks the session's message chain
+read-only (`?mode=ro`, `query_only`), with per-session bounded queries
+guarded by the schema version recorded in the store — an unknown version is
+never interpreted, the database is never copied and no table is scanned
+whole. Locally the script is spawned; on a remote core machine it runs
+through `machine.exec` there, bounded in bytes and time. When the store
+cannot be read — missing database, no python3, unknown schema, unknown
+session or a failed query — the saved ATIF-v1.7 files at
+`~/.local/share/devin/cli/transcripts/<session>.json` answer unchanged (24
+MiB maximum, transferred in chunks of at most 4 MiB so remote replies stay
+below core's transport limit), and a switch between the two sources resets
+the view once rather than mixing items. The reader
 matches the process PID to `session_locks/<session>.lock` only when the lock is
 strictly newer than a proven upper bound on process birth. Linux process metadata
 provides that bound; if it is unavailable, the reader requires an explicit `-r <session>` / `--resume <session>` launch
@@ -101,12 +113,14 @@ the conversation reader cannot resolve that case. Local `DEVIN_SESSIONS_DIR` and
 default path. No database, hook or agent configuration is modified.
 If a transcript exceeds 24 MiB, use Terminal; Conversation cannot read that checkpoint.
 
-ATIF updates once per turn: while Devin works, Conversation retains the last
-saved checkpoint. The current prompt, tools and reply appear after the next save.
-Compaction can remove earlier history from ATIF, so scrollback and search cover
-only what Devin retained. A tool observation saved in a later step invalidates
-older pages that held the call, so reloaded history includes its result. Only
-inline image data is shown; image paths in ATIF are never opened. Model metadata comes from that checkpoint too; model
+The store is what shows a turn in progress — the current prompt, tools and
+reply appear as Devin writes them — and history Devin compacted out of the
+transcript is recovered: the earlier thread is stitched back in behind a
+"Conversation compacted" note. When the store cannot be read, ATIF's
+once-per-turn checkpoints apply as before. A tool observation saved in a
+later step invalidates older pages that held the call, so reloaded history
+includes its result. Only inline image data is shown; image paths are never
+opened. Model metadata comes from the same source as the page; model
 pickers remain v2 only.
 
 Command Code (`cmd`) terminals open in the same conversation mode: wherdr reads its
