@@ -149,6 +149,36 @@ describe('Antigravity slash-command panels', () => {
   })
 })
 
+// Devin reports its own status (idle under this panel). A slash command from
+// the conversation (+ menu or typed) that opens a panel shows the interactive
+// terminal over the conversation; Esc there brings the field back. Devin's
+// /shortcuts replaces the message field with a searchable accordion: its ❭/▸
+// markers are not a prompt cursor, so nothing is offered as choices.
+describe('Devin slash-command panels', () => {
+  const PANELS = ['devin-shortcuts']
+
+  it.each(PANELS)('%s opens the terminal', (name) => {
+    expect(readCoreScreen(screen(name), 'devin', 'idle')).toEqual({ status: null, choices: null, interaction: 'terminal' })
+    expect(readCoreScreen(screen(name), 'devin', 'blocked').choices).toBeNull()
+  })
+
+  it.each(PANELS)('%s: confirmed on its second read, closed by Esc', async (name) => {
+    let text = screen(name)
+    let t = 0
+    const screens = createCoreScreens({ call: async () => ({ text }), viewed: () => true, now: () => t })
+    const p = { id: name, agent: 'devin', status: 'idle', coreAddress: 'host-a/t2' } as Pane
+    await screens.enrich([p])
+    expect(p.interaction).toBe('unknown')
+    t += 300
+    await screens.enrich([p])
+    expect(p.interaction).toBe('terminal')
+    text = screen('devin-idle')
+    t += 300
+    await screens.enrich([p])
+    expect(p.interaction).toBe('input')
+  })
+})
+
 describe('enrich + card preview on recorded screens', () => {
   it('keeps an idle Devin at its input without opening the terminal window', async () => {
     const text = screen('devin-idle')

@@ -1,0 +1,27 @@
+⠀⣴⣾⣶⡄⠀⠀⠀⠀
+⠀⠛⠿⠟⠻⣶⣾⣶⡄  Devin CLI
+⠀⣤⣶⣦⣴⠿⢿⠿⠃  v3000.12.57
+⠀⠻⢿⠿⠃⠀⠀⠀⠀
+
+ Pro · 89% remaining (resets in 10h 53m)
+
+❭ /shortcuts
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/ Search                                                                                                                                                                                            1/10
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❭ ▸ Input                           11 shortcuts
+  ▸ Mode & model                    14 shortcuts
+  ▸ During agent run                2 shortcuts
+  ▸ Feedback                        2 shortcuts
+  ▸ Text editing                    23 shortcuts
+  ▸ Lists & pickers                 31 shortcuts
+  ▸ Completion                      9 shortcuts
+  ▸ Prompts & panels                22 shortcuts
+  ▸ Config editor                   13 shortcuts
+  ▸ Vim mode                        53 shortcuts
+
+
+
+
+↑↓ select · ←→ collapse/expand · ↵␣ expand · type search · esc close
