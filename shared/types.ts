@@ -357,6 +357,9 @@ export interface ChatResponse {
   // whole bottom of the conversation.
   keep?: number
   start?: number
+  // Devin's store reader: nodes the query had to walk for this reply
+  // (diagnostics and tests only).
+  visited?: number
   // The transcript was rewritten above the client's cursor (same size or
   // shorter): the reply is a fresh bottom, the client starts again from it.
   rewritten?: boolean

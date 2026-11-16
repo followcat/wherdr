@@ -94,6 +94,25 @@ export interface ExecResult { code: number | null, stdout: Buffer, stderr: strin
 // `maxBytes`: past that much output the command is stopped and nothing of it is kept.
 export type ShellExec = (script: string, args?: string[], opts?: { input?: Buffer, timeoutMs?: number, maxBytes?: number }) => Promise<ExecResult>
 
+// A command's output, kept up to `max` bytes: past it, `push` says so and lets
+// go of what it held, so a long answer never sits in memory whole.
+export function boundedOutput(max = Infinity) {
+  let parts: Buffer[] = []
+  let size = 0
+  let over = false
+  return {
+    push(b: Buffer): boolean {
+      if (over) return false
+      size += b.length
+      if (size > max) { over = true; parts = []; return false }
+      parts.push(b)
+      return true
+    },
+    get over() { return over },
+    take: () => Buffer.concat(parts),
+  }
+}
+
 export class FsError extends Error {
   code: string
   constructor(code: string, message: string) {

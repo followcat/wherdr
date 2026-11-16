@@ -1442,7 +1442,10 @@ export function isMissing(e: unknown): boolean {
 }
 
 export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, locateCommandCode, locateOpencode, ocExec }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number, locateCommandCode?: (pane: TranscriptPane) => Promise<Loc | null>, locateOpencode?: (pane: TranscriptPane) => Promise<Loc | null>, ocExec?: ShellExec }) {
-  const devin = createDevinTranscripts({ home, fs, now })
+  // Devin's store reader runs its python3 query on the machine owning the
+  // store: spawned locally, or through the machine's shell channel (the one
+  // createShellFs is built on) for a remote core machine.
+  const devin = createDevinTranscripts({ home, fs, now, exec: fs === localFs ? undefined : ocExec })
   // Command Code file generations of this machine (see commandCodeState):
   // cross-page outcomes, result-record watches, the trusted stat, the
   // invalidation stamps and the reader nonce client tokens carry.
@@ -2479,8 +2482,12 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       return img && selections.get(pane.id)?.file === loc.file ? img : null
     }
     const loc = await locate(pane)
-    if (!loc || path.basename(loc.file) !== fileId) return null
+    if (!loc) return null
+    // Devin goes before the basename check: a store page's file id is its
+    // `devin-<hash>` identity, not the ATIF name loc.file carries. Each
+    // reader still verifies the id against its own source.
     if (pane.agent === 'devin') return devin.image({ ...pane, agentSession: loc.session }, fileId, ref, index)
+    if (path.basename(loc.file) !== fileId) return null
     if (pane.agent === 'agy') return agy.image({ ...pane, agentSession: loc.session }, fileId, ref, index)
     const m = /^(\d+):(\d+)$/.exec(String(ref || ''))
     if (!m) return null
