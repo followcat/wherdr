@@ -31,6 +31,7 @@ export interface Card {
   title: string
   description: string
   specNotes?: SpecNote[] // spec changes after the description, newest last
+  wsFiles?: string[] // the workspace instructions files its agents got last (names only)
   column: string // the step's column in its project's view
   phase: Phase // the column in the all-projects view
   step?: string // the current step's id, once started
@@ -66,6 +67,10 @@ export interface Card {
   tldrWaits?: true // a new TL;DR waits for the pace: the notes show instead
   times?: Times // time per step, waits for the user, rounds, CI fixes (times.ts), once started
   archived?: number // when it was archived: off the board, in the Done column's archived list (archive.ts)
+  kind?: 'feature' // a workspace's feature: its sub-tasks fold into its card (featureCard.ts)
+  feature?: string // the feature this sub-task belongs to
+  order?: string // a feature's merge order line (plan.order)
+  closed?: true // a feature its coordinator closed: done
 }
 
 // A machine a project allows, for "Start on…": unready, the last check's failures ('' ready, none never checked).
@@ -74,7 +79,8 @@ export interface BoardMachine { key: string, label: string, online: boolean, unr
 // and the weight its tasks get when none is set ("heavy (screenshots)").
 // machines: only for a project that allows more than its own, home first.
 // base: the project's working branch, to tell a task that goes elsewhere.
-export interface BoardProject { base?: string, key: string, label?: string, aliases?: string[], color?: string, name: string, columns: string[], types: { id: string, plan: string, weight?: string }[], machines?: BoardMachine[] }
+// kind and workspace: a workspace, and a member's workspace key (workspaces.md).
+export interface BoardProject { kind?: 'workspace', workspace?: string, base?: string, key: string, label?: string, aliases?: string[], color?: string, name: string, columns: string[], types: { id: string, plan: string, weight?: string }[], machines?: BoardMachine[] }
 // GET /api/pm/board
 // archived: each project's count of archived tasks, left out of cards (GET /api/pm/archived lists them).
 export interface Board { projects: BoardProject[], cards: Card[], archived?: Record<string, number> }
@@ -125,6 +131,7 @@ export function cardOf(task: Task, plan: PlannedStep[], runs: Run[], now = Date.
   return {
     id: task.id, shown: task.id, project: task.project, title: task.title, description: task.description,
     ...(task.specNotes?.length ? { specNotes: task.specNotes } : {}),
+    ...(task.wsFiles?.names.length ? { wsFiles: task.wsFiles.names } : {}),
     column: plan.length ? columnOf((s?.done ? plan.at(-1) : step) ?? plan[0]!) : 'To do',
     phase: s?.done ? 'done' : started || running ? 'working' : 'todo',
     ...(step ? { step: step.id } : {}),
@@ -160,6 +167,10 @@ export function cardOf(task: Task, plan: PlannedStep[], runs: Run[], now = Date.
     ...(task.mergeAfter ? { mergeAfter: mergeAfterIds(task) } : {}),
     ...(s?.started ? { times: timesOf(task, plan, runs, now) } : {}),
     ...(task.archived ? { archived: task.archived } : {}),
+    ...(task.kind ? { kind: task.kind } : {}),
+    ...(task.feature ? { feature: task.feature } : {}),
+    ...(task.plan?.order ? { order: task.plan.order } : {}),
+    ...(task.closed ? { closed: true as const } : {}),
   }
 }
 

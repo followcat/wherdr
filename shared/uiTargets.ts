@@ -27,6 +27,7 @@ export const UI_TARGETS = {
   'projects.setup': { link: '#/settings?section=projects', label: 'Projects › Set up a project' },
   // A project's sheet (project: true): the link names the project too.
   'project.machines': { link: '#/settings?section=projects&tab=general', label: 'Project › Machines', project: true },
+  'project.instructions': { link: '#/settings?section=projects&tab=general', label: 'Project › Workspace instructions files', project: true },
   'project.workflow': { link: '#/settings?section=projects&tab=workflow', label: 'Project › Workflow', project: true },
   'project.guards': { link: '#/settings?section=projects&tab=guards', label: 'Project › Guards', project: true },
   'project.autopilot': { link: '#/settings?section=projects&tab=autopilot', label: 'Project › Autopilot', project: true },

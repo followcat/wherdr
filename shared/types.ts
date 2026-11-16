@@ -348,6 +348,10 @@ export interface ChatResponse {
   token?: string
   unchanged?: boolean
   older?: boolean
+  // Absent for JSONL byte offsets; daemon pagination tokens are unordered.
+  cursorKind?: 'opaque'
+  // Temporary daemon failure: retain the current conversation and paging state.
+  stale?: boolean
   items?: ChatItem[]
   // Command Code: results appended after a tool page was loaded, matched by
   // `toolId`, so the client can update items already on screen.
@@ -363,6 +367,8 @@ export interface ChatResponse {
   // The transcript was rewritten above the client's cursor (same size or
   // shorter): the reply is a fresh bottom, the client starts again from it.
   rewritten?: boolean
+  // A daemon cursor expired: discard the old paging state and read a fresh tail.
+  reload?: boolean
   queue?: ClaudeQueueEntry[]
   // Claude: entries of the most recent window pulled back out of its queue
   // into the input field and not queued again.

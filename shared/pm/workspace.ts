@@ -23,11 +23,14 @@ export interface WorkspaceShared {
   worktree?: WorktreeSetup
   archiveAfter?: number
   deleteBranch?: false
+  // Files under the root whose text every member task's worker and reviewer
+  // get (workspaceInstructions); missing: AGENTS.md, else CLAUDE.md; []: none.
+  instructionsFiles?: string[]
 }
 
 // The fields a member may set itself (`overrides`); 'machines' covers its
 // machines, clones and paused ones.
-export const SHARED_FIELDS = ['machines', 'placement', 'base', 'branchName', 'prefs', 'worktree', 'archiveAfter', 'deleteBranch'] as const
+export const SHARED_FIELDS = ['machines', 'placement', 'base', 'branchName', 'prefs', 'worktree', 'archiveAfter', 'deleteBranch', 'instructionsFiles'] as const
 export type SharedField = typeof SHARED_FIELDS[number]
 const isSharedField = (f: unknown): f is SharedField => (SHARED_FIELDS as readonly unknown[]).includes(f)
 
@@ -50,6 +53,20 @@ export function workspaceInput(f: WorkspaceForm) {
     key: f.key, ...(f.name ? { name: f.name } : {}), machine, path, kind: 'workspace' as const, ...(f.group ? { group: f.group } : {}),
     ...(others.length ? { shared: { machines: others.map(([m]) => m), clones: Object.fromEntries(others) } } : {}),
   }
+}
+
+// The workspace instructions files a member's tasks take, read from the
+// workspace's root on its home machine: the member's own list when it
+// overrides them, else the workspace's; `first`: the default, only the first
+// one found counts and a missing one says nothing. None: not a member, or turned off.
+export const DEFAULT_INSTRUCTIONS = ['AGENTS.md', 'CLAUDE.md']
+export const INSTRUCTIONS_CAP = 16000 // characters kept of each file
+export function workspaceInstructions(member: Project, list: Project[]): { machine: string, root: string, paths: string[], first?: true } | undefined {
+  const ws = workspaceOf(member, list)
+  if (!ws) return undefined
+  const own = (member.overrides ?? []).includes('instructionsFiles'), set = own ? member.instructionsFiles ?? [] : ws.shared?.instructionsFiles
+  if (set && !set.length) return undefined
+  return { machine: ws.machine, root: ws.path, paths: set ?? DEFAULT_INSTRUCTIONS, ...(set ? {} : { first: true as const }) }
 }
 
 // A workspace's members (none for any other project).
@@ -135,6 +152,8 @@ export function memberOverrides(member: Project, update: ProjectUpdate): Pick<Pr
   if (update.machines || update.clones || update.paused) set('machines', true)
   for (const f of ['placement', 'archiveAfter', 'deleteBranch'] as const) if (update[f] !== undefined) set(f, true)
   for (const f of ['base', 'branchName'] as const) if (update[f] !== undefined) set(f, update[f] !== '')
+  // null: the workspace's again; [] turns them off; a list replaces them.
+  if (update.instructionsFiles !== undefined) set('instructionsFiles', update.instructionsFiles !== null)
   return own.size ? { overrides: SHARED_FIELDS.filter(f => own.has(f)) } : {}
 }
 
@@ -179,8 +198,8 @@ export function cleanShared(raw: unknown): { shared?: WorkspaceShared, errors: W
   checkPrefs(prefs, 'prefs', errors)
   checkSetup(worktree, errors)
   if (errors.length || !update) return { errors: errors.map(e => ({ ...e, path: `shared.${e.path}` })) }
-  const { deleteBranch, base, branchName, ...kept } = update
-  return { errors, shared: defined({ ...kept, base: base || undefined, branchName: branchName || undefined, deleteBranch: deleteBranch === false ? false as const : undefined, prefs: prefs as Prefs | undefined, worktree: worktree as WorktreeSetup | undefined }) }
+  const { deleteBranch, base, branchName, instructionsFiles, ...kept } = update
+  return { errors, shared: defined({ ...kept, instructionsFiles: instructionsFiles ?? undefined, base: base || undefined, branchName: branchName || undefined, deleteBranch: deleteBranch === false ? false as const : undefined, prefs: prefs as Prefs | undefined, worktree: worktree as WorktreeSetup | undefined }) }
 }
 
 // A new project's workspace fields: { kind: 'workspace', group?, shared? } or

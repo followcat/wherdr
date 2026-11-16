@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { Project } from '../shared/pm/project'
-import { WORKSPACE_FIRST, workspaceInput, cleanWorkspaceFields, effectiveProject, effectiveWorkflow, memberOverrides, workflowOverrides, workspaceErrors, workspaceTaskError } from '../shared/pm/workspace'
+import { WORKSPACE_FIRST, workspaceInput, workspaceInstructions, cleanWorkspaceFields, effectiveProject, effectiveWorkflow, memberOverrides, workflowOverrides, workspaceErrors, workspaceTaskError } from '../shared/pm/workspace'
 import { defaultWorkflow, type Template } from '../shared/pm/workflow'
 import { taskGuards } from '../shared/pm/actions'
+import { cleanProjectUpdate } from '../shared/pm/project'
+import { instructionsText, parseWsFiles, wsFilesSection } from '../shared/pm/run'
+import { reviewFile } from '../shared/pm/advance'
 
 const ws: Project = {
   key: 'WS', name: 'Work', machine: 'home', path: '~/work', git: false, kind: 'workspace', group: 'g1', addedAt: 1,
@@ -84,5 +87,41 @@ describe('workspaces', () => {
     expect(workspaceErrors([ws, { ...ws, key: 'W2', workspace: 'WS' }])).toEqual(['Workspace W2 cannot be in a workspace'])
     expect(workspaceErrors([ws, { ...member, overrides: ['name' as never] }])).toEqual(['PAY overrides an unknown field'])
     expect(cleanWorkspaceFields({ kind: 'workspace', shared: { base: 'a..b', prefs: { agent: 3 } } }).errors.map(e => e.path)).toEqual(['shared.base', 'shared.prefs.agent'])
+  })
+})
+
+describe('workspace instructions files', () => {
+  const list = (m: Project, w: Project = ws) => [w, m]
+  it('a member inherits the default (first of AGENTS.md, CLAUDE.md) or the workspace\'s list, turns them off or replaces them', () => {
+    expect(workspaceInstructions(member, list(member))).toEqual({ machine: 'home', root: '~/work', paths: ['AGENTS.md', 'CLAUDE.md'], first: true })
+    const set = { ...ws, shared: { ...ws.shared, instructionsFiles: ['docs/rules.md'] } }
+    expect(workspaceInstructions(member, list(member, set))).toEqual({ machine: 'home', root: '~/work', paths: ['docs/rules.md'] })
+    expect(workspaceInstructions(member, list(member, { ...ws, shared: { instructionsFiles: [] } }))).toBeUndefined()
+    expect(workspaceInstructions({ ...member, overrides: ['instructionsFiles'], instructionsFiles: [] }, list(member, set))).toBeUndefined()
+    expect(workspaceInstructions({ ...member, overrides: ['instructionsFiles'], instructionsFiles: ['OWN.md'] }, list(member, set))?.paths).toEqual(['OWN.md'])
+    expect(workspaceInstructions({ ...member, workspace: undefined }, list(member))).toBeUndefined()
+    // [] turns them off, null gives the workspace's back; paths stay under the root.
+    expect(memberOverrides(member, { instructionsFiles: [] })).toEqual({ overrides: ['instructionsFiles'] })
+    expect(memberOverrides({ ...member, overrides: ['instructionsFiles'] }, { instructionsFiles: null })).toEqual({})
+    for (const bad of [['../x.md'], ['/etc/x'], ['*.md']]) expect(cleanProjectUpdate({ instructionsFiles: bad }).errors[0]?.path).toBe('instructionsFiles')
+  })
+
+  it('read: a missing file skipped with a log line, a long one cut at the cap; the default takes the first found', () => {
+    const out = '--wherdr-missing-- RULES.md\n--wherdr-file-- AGENTS.md\nUse psql.\n--wherdr-file-- CLAUDE.md\n0123456789'
+    expect(parseWsFiles(out, 5)).toEqual({
+      files: [{ path: 'AGENTS.md', text: 'Use p' }, { path: 'CLAUDE.md', text: '01234' }],
+      log: ['Workspace instructions: RULES.md not found at the workspace\'s root, skipped', 'Workspace instructions: AGENTS.md is longer than 5 characters, cut there', 'Workspace instructions: CLAUDE.md is longer than 5 characters, cut there'],
+    })
+    expect(parseWsFiles(out, 100, true)).toEqual({ files: [{ path: 'AGENTS.md', text: 'Use psql.' }], log: [] })
+  })
+
+  it('the worker\'s and the reviewer\'s instructions give them after the workflow\'s', () => {
+    const lines = wsFilesSection([{ path: 'AGENTS.md', text: 'Use psql.' }])
+    const task = { id: 'PAY-1', project: 'PAY', title: 'T', description: 'D', type: 'feature', state: 'todo' as const, createdAt: 0 }
+    const run = { worktree: '/w', branch: 'task/PAY-1' }
+    const worker = instructionsText(member, defaultWorkflow('PAY'), task, run, undefined, undefined, lines)
+    expect(worker).toContain('## Workspace instructions (AGENTS.md)\n\nUse psql.')
+    expect(worker.indexOf('## Instructions')).toBeLessThan(worker.indexOf('## Workspace instructions'))
+    expect(reviewFile(task, run, 'Review it.', '/v.json', false, lines)).toMatch(/Review it\.\n\n## Workspace instructions \(AGENTS\.md\)\n\nUse psql\./)
   })
 })

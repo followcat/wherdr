@@ -20,10 +20,21 @@ describe('quotas', () => {
     expect(claudeQuota({ cwd: '/x' }, 5)).toBeNull()
   })
 
-  it('5-hour window missing (it just restarted): 100 % remaining, new window', () => {
-    const q = claudeQuota({ rate_limits: { seven_day: { used_percentage: 69, resets_at: 1790600400 } } }, 1790390000000)!
-    expect(q.five).toEqual({ used: 0, resetsAt: null, minutes: 300, fresh: true })
-    expect(q.week!.used).toBe(69)
+  it('5-hour window missing: new window on Pro/Max, none on Ultra, by evidence when the plan is unknown', () => {
+    const at = 1790390000000
+    const weekOnly = (w?: object) => ({ rate_limits: { seven_day: { used_percentage: 69, resets_at: 1790600400 } }, ...(w ? { _wherdr: { version: 1, ...w } } : {}) })
+    const fresh = { used: 0, resetsAt: null, minutes: 300, fresh: true }
+    for (const plan of [{ plan: 'claude_max', tier: 'default_claude_max_5x' }, { plan: 'claude_pro' }]) {
+      const q = claudeQuota(weekOnly(plan), at)!
+      expect(q.five).toEqual(fresh)
+      expect(q.week!.used).toBe(69)
+    }
+    expect(claudeQuota(weekOnly({ plan: 'claude_ultra' }), at)!.five).toBeNull()
+    expect(claudeQuota(weekOnly({ plan: 'claude_max', tier: 'default_claude_ultra' }), at, at - 60000)!.five).toBeNull()
+    // Unknown plan (older status line): a 5-hour window reported in the last 5 h is kept, else none.
+    expect(claudeQuota(weekOnly(), at, at - 4 * 3600000)!.five).toEqual(fresh)
+    expect(claudeQuota(weekOnly({ plan: 'something_new' }), at, at - 6 * 3600000)!.five).toBeNull()
+    expect(claudeQuota(weekOnly(), at)!.five).toBeNull()
     expect(claudeQuota({ rate_limits: {} }, 5)).toBeNull()
   })
 

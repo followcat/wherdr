@@ -23,6 +23,47 @@ All notable changes to this project are documented here. The format follows
 - **Antigravity CLI (`agy`) terminals** are recognized: their label, icon and live state.
 - **Antigravity CLI (`agy`) conversations** open on their saved transcript, locally or on another machine (Node 22.13 or later).
 - **Antigravity commands in the + menu.** An `agy` conversation's + menu offers `/compact`, `/clear`, `/context`, `/usage`, `/model` and `/diff`, as for Claude Code, Codex and omp. A command that opens a panel or the model picker shows the interactive terminal over the conversation; Esc there brings the message field back.
+## [3.1.0] — 2026-11-16
+
+wherdr 3.1 adds workspaces (one coordinator for several repositories), lets Alfred pass your requests to the right project's coordinator and give briefs, and brings themes with Dark, Light and System modes, custom themes and keyboard shortcuts you can change. It also fixes several conversation and engine problems, including two that users reported. Release notes: [docs/release-notes-3.1.0.md](docs/release-notes-3.1.0.md).
+
+### New
+
+- **Workspaces.** One coordinator for several repositories: create one from Settings › Projects or with Alfred, see it as a row in the sidebar under its tab group, and follow a feature as one card on the board, with its sub-tasks, their order and what they wait for. The workspace's root `AGENTS.md` / `CLAUDE.md` reach every member task's worker and reviewer; each member inherits, ignores or replaces them. The workspace's coordinator sends code changes in member repositories through tasks instead of editing them ([Workspaces](docs/workspaces.md)).
+- **Alfred routes your requests.** Ask Alfred for something in a project and it passes the request to that project's coordinator, then tells you which task it created ([Alfred](docs/alfred.md)).
+- **Briefs from Alfred.** Alfred knows your home tab groups and the open tab, and gives a brief for this group, another one or all of them, and a daily brief: what merged, what waits for you, what is stuck.
+- **Themes.** Each theme now has a dark and a light palette, and Settings › Appearance picks Dark, Light or System (which follows the device). The wherdr themes (without Neon Purple), the agent themes, Vesper, Gruvbox and Kanagawa stay; the separate light themes (Catppuccin Latte, omp Light) open as Titanium and omp in Light mode.
+- **Custom themes.** *Create theme* starts from any theme, with a live preview and a contrast check; export a custom theme as JSON and import one, on every device.
+- **Keyboard shortcuts you can change.** Settings › Shortcuts gives any shortcut new keys, refuses keys already in use, and resets one or all.
+- **Pages and images shown by agents.** An HTML page an agent shows renders beside the conversation in a sandboxed frame, with *Preview* and *Source*; a shown image opens in the zoomable viewer.
+- **A login incident instead of a permission per task.** An expired Claude or Codex login is one notice per machine and account on Home; once you log in again, the stuck agents restart and are told to continue where they stopped.
+- **Browser demo and launch film.** A v3 browser demo with Alfred, coordinators, the board, Tasks to review and Notes, all with made-up data; the README animation and launch film are recorded from it.
+
+### Improved
+
+- **Folded routine checks** in a coordinator's conversation get a summary (merged, waits for you, quiet) and one readable line per wake.
+- **'!' commands** run from a reply show at once as a live card with a *Running* line, and every '!' block gets *Run*.
+- **Project sheet saves by itself.** Every field saves after typing or on leaving it, with a discreet *Saved*; no Save button.
+- **Settings.** Section names in the side panel when it has room, an icon rail otherwise; previews fold under *Show me*; *Add machine* opens a sheet with a confirmation.
+- **Tasks to review filter** shows how many tasks wait under each group and project.
+- **Task agents stay while you talk to them.** An agent you are writing to is kept 30 minutes after your last message, and writing to a released agent brings it back.
+- **Visual tasks.** Screenshots of the result are tied to the task's final commit; a send-back asks the worker to retake only the screens its changes affect.
+- **Step back.** A coordinator's step back sends a task waiting for you back to its worker with your words.
+- **Task base.** With no working branch set, a task starts from, and is compared to, the branch its workflow opens PRs to.
+- **Claude quotas.** Claude Ultra accounts no longer show a 5-hour window, which they do not have; Pro and Max keep it.
+- **Workflow proposals.** A coordinator's workflow proposal no longer opens Settings by itself: accept it from the card in the conversation, or from the proposal row on the project's Workflow tab.
+- **A second v3 install** keeps its own project-management folders, and its uninstall removes them.
+
+### Fixed
+
+- **Blank home list with the old *Compact list* setting** (reported in [#857](https://github.com/afloury/wherdr/issues/857)). The *Compact list* and *Show terminals* settings are gone, and their stored values are cleared, so every home row shows its default look.
+- **Codex conversations on the shared daemon** (reported in [#810](https://github.com/afloury/wherdr/issues/810)). A local Codex attached to the shared app-server no longer shows *No conversation* on an older thread: wherdr reads that daemon's history page by page. Thanks to [@Ovalene2333](https://github.com/Ovalene2333) for the fix (#813, ported in #864).
+- A remote agent's turn no longer disappears after a very long line, such as a large screenshot.
+- A message with several photos sent to Claude, working or idle, is submitted instead of staying in its input (even while Claude still shows *Pasting…*, and after a wherdr restart mid-send), and is not shown twice.
+- A '!' command run while Claude works runs once and shows once.
+- A run's task badges wrap inside the row, and the conversation never scrolls sideways.
+- A refused remote read keeps herdr-core's reason in the logs, and transcript caches of agents that are gone are dropped.
+- **Search reaches past large transcript records.** A conversation search no longer stops at the first line larger than its read window, such as a screenshot: older messages are searched too. Thanks to [@followcat](https://github.com/followcat) for the fix (#861).
 
 ## [3.0.0] — 2026-11-14
 

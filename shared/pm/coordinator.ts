@@ -204,7 +204,7 @@ export const COMMANDS: { usage: string, does: string }[] = [
   { usage: 'ui open \'<in-app link>\' | --target <id> [--project <KEY>]', does: 'show one of your project\'s places (its board, a task, its sheet) or a global Settings section (or one setting of it highlighted: --target) in the user\'s open wherdr, beside your conversation (a card on a phone), quoted; only in a turn that comes from the user, only to the wherdr the user is on now (the answer says which: phone or computer). It changes nothing' },
   { usage: 'ui targets', does: 'the settings ui open --target can highlight: id and where it is' },
   { usage: 'ui action resume|step|open <task>', does: 'a button in your reply that the user clicks: resume (continue a stopped task), step (the button of the step that waits for the user: "Merge", "Approve screenshots"), open (its sheet); only in a turn that comes from the user. Only their click runs it, through the task sheet\'s own action, and only if the task still waits the same way; end your reply with the block the answer gives, and never say it is done before the card shows it' },
-  { usage: 'ui show file <path> | shots <task>', does: 'show a file of your folder (a path relative to it), or a task\'s screenshots (before and after side by side, toggled on a phone), beside your conversation (a card on a phone); only in a turn that comes from the user. It only shows: for the user\'s approval, add ui action step <task>; end your reply with the block the answer gives' },
+  { usage: 'ui show file <path> | shots <task>', does: 'show a file of your folder (a path relative to it; an .html page runs as a page, self-contained only: inline its CSS, scripts and images, https CDN links load, files next to it do not), or a task\'s screenshots (before and after side by side, toggled on a phone), beside your conversation (a card on a phone); only in a turn that comes from the user. It only shows: for the user\'s approval, add ui action step <task>; end your reply with the block the answer gives' },
   { usage: 'help', does: 'this list: the commands of the wherdr that runs now' },
   ...MAP_COMMANDS,
   ...REPO_COMMANDS,
@@ -511,7 +511,9 @@ export const specChangedText = (what: string) => `The task's spec changed: ${wha
 // cursor-agent; --trust skips its workspace-trust box (its MCP approval box, a
 // user's own choice, is never answered: the start ends as a waiting dialog).
 // Antigravity's bare `agy` asks to trust its folder: answered here (trustKeys).
-// works: the project's folder is the coordinator's to change (a folder without git).
+// works: the project's folder is the coordinator's to change (a plain folder
+// without git, not a workspace: Codex keeps a workspace's root read-only, since a
+// writable --add-dir would open its members too).
 // resume: its last conversation again, the last one started in its own folder
 // (the programs of canResume), with the same options.
 export function coordinatorArgs(program: CoordinatorProgram, folder: string, repo?: string, works = false, resume = false, model?: string): string[] {
@@ -652,13 +654,16 @@ export const FIRST_REPLY = 'You were just started on a project with no accepted 
 // files: OWN_ROLE_FILES). Nothing outside it.
 // docs: wherdr's docs folder, when the coordinator runs on wherdr's machine.
 // shown: a project's shown key from its fixed one, for the other projects it may act on.
-// members: a workspace's member projects (shown keys), whose tasks are its coordinator's.
-export function roleFiles(p: Project, t: Template | null, examples: Template[], docs?: string, shown?: (key: string) => string | undefined, members: string[] = []): Record<string, string> {
-  // A folder without git: no task worktree, the coordinator does the work there itself.
-  const plain = p.git === false
+// ws, for a workspace: its member projects (shown keys and folders), whose tasks are
+// its coordinator's and whose folders it never changes; rules: the root's own
+// AGENTS.md / CLAUDE.md, read on its machine, copied into the role file.
+export function roleFiles(p: Project, t: Template | null, examples: Template[], docs?: string, shown?: (key: string) => string | undefined, ws: WorkspaceRole = {}): Record<string, string> {
+  const members = ws.members ?? [], rules = rootRules(ws.rules ?? [])
+  // A folder without git (not a workspace): no task worktree, the coordinator does the work there itself.
+  const plain = isPlainFolder(p), workspace = p.kind === 'workspace'
   const plans = t ? Object.entries(t.taskTypes).flatMap(([type]) => [`### ${type}`, ...planSteps(t, { type }, p.base).map(stepLine), '']) : ['(no template yet)']
   // No accepted workflow yet: the coordinator's first conversation sets one up.
-  const firstTalk = !plain && isDefaultWorkflow(t) ? ['## Your first conversation', '',
+  const firstTalk = p.git !== false && isDefaultWorkflow(t) ? ['## Your first conversation', '',
     `This project has no accepted workflow yet: its tasks follow a minimal default (one type \`task\`: todo → work → done). Your first reply proposes one:`,
     '1. Before it, look at the repository: README, docs, stack, tests, CI files, branches, recent commits, and where its PRs go (GitHub, Bitbucket, none: `git remote -v` shows no origin).',
     `2. Introduce yourself as the coordinator of project ${p.key} and say in a few lines what you understood of the project. An empty or nearly empty repository: say so, and ask what the user wants to build after your proposal.`,
@@ -670,6 +675,8 @@ export function roleFiles(p: Project, t: Template | null, examples: Template[], 
     `# Coordinator of project ${p.name} (${p.key})`, '',
     plain
       ? `You coordinate project ${p.key} only. Its folder is ${p.path}, without git: its tasks cannot start (a task needs git for its own worktree), so you do the work yourself, directly in that folder: read and change its files as the user asks. Add no task for that work.`
+      : workspace
+      ? `You coordinate workspace ${p.key} and its member projects. Its root is ${p.path}, without git: read any repository under it; plan there (specs, notes), outside the members' folders (in your own folder when your harness keeps the root read-only). Never change a member's repository yourself: every code change in a member goes through tasks (\`feature split\` of a feature, \`task add --feature\`), done by task agents in their own worktrees.`
       : `You coordinate project ${p.key} only. Its repository is ${p.path}: read it, never change it; task agents do the work in their own worktrees.`,
     'Wakes are messages sent by wherdr, not the user; the first line names who sends it. The server knows which, and refuses what a wake may not do:',
     '- "Autopilot:": your autopilot (an agent\'s question, a choice after N send-backs, the routine events the user turned on, the user\'s "run now"). "Autopilot: scheduled wake" is its schedule (Every, At): your goal, then a short summary of your project (tasks done since the last one, waiting for the user, stuck for long, machines idle while to-do tasks wait). When nothing in it needs you, ack at once with no further work: look into a line only when it needs you;',
@@ -680,7 +687,7 @@ export function roleFiles(p: Project, t: Template | null, examples: Template[], 
     ...firstTalk,
     '## Your memory', '',
     `\`memory.md\` in your folder is yours: wherdr creates it once and never rewrites it, so it outlives a restart and a change of program. Read it first, at each start, and follow it: the user's decisions and preferences there come before your defaults. Note there, as you go, each decision or preference the user gives you, one fact per line; nothing a command or the board already says. Keep it clean: merge duplicates, drop stale lines, stay under ${MEMORY_CAP} characters.`, '',
-    ...(members.length ? ['## Members', '', `This workspace's member projects: ${members.join(', ')}. They have no coordinator: you act on each (Act level: \`--project <KEY>\`), their tasks count in your autopilot's limits, and their wakes come to you.`, ''] : []),
+    ...(members.length ? ['## Members', '', `This workspace's member projects: ${members.map(m => m.key).join(', ')}. They have no coordinator: you act on each (Act level: \`--project <KEY>\`), their tasks count in your autopilot's limits, and their wakes come to you.`, ''] : []),
     ...(p.kind === 'workspace' ? ['## The workspace map', '',
       `\`map.md\` in your folder is the workspace's map: what each repository under ${p.path} does, what it talks to and what uses it. wherdr writes it from \`wherdr pm map set\`; read it at each start, like your memory. Nobody reads every repository up front: the map fills as tasks touch them.`,
       '- The first time a task touches a repository not on the map, write its line: `map set <repo> --does "<one line>" [--talks a,b] [--used-by c]`. Correct a line that turns out wrong.',
@@ -709,12 +716,13 @@ export function roleFiles(p: Project, t: Template | null, examples: Template[], 
     'The engine places each start on one of the machines the project allows (the user allows them in its settings), by the project\'s placement strategy, which the user sets (by default heavy work on the strongest that has room, light and standard work on the project\'s own machine when it has room). `autopilot show` gives the strategy, each machine and what it takes now. Leave placement to the engine; `task start <task> --on <machine>` picks one by its name when the user asks or a task needs that machine. A started task always stays on its machine (`show` gives it).',
     'A task\'s weight says what it needs of a machine: light (docs, a study), standard (tests and typecheck), heavy (a build, e2e, screenshots). It comes from its task type and steps; set `task add --weight` only when the task differs from its type (a docs-only change in a type that takes screenshots: light).', '',
     '## Plans of this project\'s task types', '', `Workflow: ${isDefaultWorkflow(t) ? 'the minimal default, none accepted yet' : t ? `v${t.version ?? 1}${p.from ? `, copied from template ${p.from.template} v${p.from.version} (the template library never changes it)` : ''}` : 'none'}`, `Working branch: ${p.base || 'none set'}`, '', ...plans]),
+    ...rules,
     '## Turning a workflow request into steps', '',
     'You are the one who writes this project\'s workflow: wherdr only shows it to the user, who asks you for every change and accepts or refuses your proposal.',
     'wherdr imposes no workflow: it knows ordered steps, who holds each (worker, reviewer, coordinator, none), how it ends (report, verdict, user, action), the proofs it needs (evidence) and the user\'s guards. What an agent must do is plain text in `instructions`.',
     `The project's working branch (set by the user in ${projectPlace(p.key, 'general', true)}) is where tasks start; a \`github.pr\`, \`git.land\` or \`git.verify-merged\` step without its own branch uses it, and \`{base}\` in any instructions becomes its name. Prefer these to a branch written in the workflow.`,
     'When the user says "after each task, create the PR with my Bitbucket tool, then wait until I say it is merged", write a worker step with that instruction and `evidence: ["link"]`, then a step `{ holder: "none", ends: "user", action: { kind: "git.verify-merged", target } }` (its badge and button say the user merges on their Git host, then presses "I merged it"). To have wherdr merge it on Bitbucket Cloud instead, the step is `{ holder: "none", ends: "action", action: { kind: "bitbucket.merge" } }` (a merge commit, once the builds of the PR are green; a protected base waits for the user; the machine needs BITBUCKET_TOKEN, or BITBUCKET_USERNAME and BITBUCKET_APP_PASSWORD). "Watch the deploy": when the pipeline can be polled, use the engine\'s `pipeline.watch` action (GitHub, or `source: "command"` for any CI with a CLI); it costs no model turn. Keep a step you hold (`holder: "coordinator", ends: "report", recheck: "5m"`) only for what needs judgment.',
-    'Read the project\'s workflow (`template show`), write the new one and run `template edit`: wherdr shows the user its diff, to accept or refuse; `template show` tells you which. Examples to copy from:', '',
+    'Read the project\'s workflow (`template show`), write the new one and run `template edit`: wherdr shows the user its diff as a card at the end of your reply, to accept or refuse there; `template show` tells you which. That card is enough: never open the Workflow tab (`ui open`) after a `template edit`, only when the user asks to see the current workflow. Examples to copy from:', '',
     ...examples.map(e => `\`\`\`json\n${JSON.stringify(e)}\n\`\`\``), '',
     '## A problem the user reports', '',
     'A message that starts with "The user reports a problem on task" comes from the user, from the task\'s sheet: their text, the screenshots concerned (open them), the PR and the review. Decide yourself: `tell` the agent precise fixes, `report back` to send the step back to the worker, or add a follow-up task; then `report close` with what you did. Never ask the user to pass it on to the agent: you act on it. While it is open, the task stays in Your turn, and its merge is blocked when the user said so.', '',
@@ -726,7 +734,8 @@ export function roleFiles(p: Project, t: Template | null, examples: Template[], 
   const skill = ['---', 'name: wherdr-pm', `description: Act on project ${p.key}'s board with the wherdr pm command (tasks, steps, tags, links, workflow).`, '---', '',
     '# wherdr pm', '', 'Your token is in WHERDR_PM_TOKEN; the server checks every right.', '', ...commandList(t), ''].join('\n')
   // Claude's Edit rule covers every file-writing tool.
-  const deny = plain ? [] : [`Edit(/${p.path.replace(/\/$/, '')}/**)`]
+  // A workspace's coordinator: none on its root, one per member.
+  const deny = plain ? [] : (workspace ? members.map(m => m.path) : [p.path]).map(path => `Edit(/${path.replace(/\/$/, '')}/**)`)
   return {
     'AGENTS.md': agents,
     ...ROLE_POINTERS,
@@ -734,6 +743,23 @@ export function roleFiles(p: Project, t: Template | null, examples: Template[], 
     '.claude/settings.json': `${JSON.stringify({ permissions: { deny } }, null, 2)}\n`,
     'bin/wherdr': WHERDR_SCRIPT,
   }
+}
+
+// A folder without git that is not a workspace: its coordinator works in it.
+export const isPlainFolder = (p: Pick<Project, 'git' | 'kind'> | undefined) => p?.git === false && p.kind !== 'workspace'
+export interface WorkspaceRole { members?: { key: string, path: string }[], rules?: { file: string, text: string }[] }
+// The files a workspace's root may hold for every agent working there.
+export const ROOT_RULE_FILES = ['AGENTS.md', 'CLAUDE.md'] as const
+const RULES_CAP = 16000
+// The root's instructions, as a section of the role file. A CLAUDE.md that only
+// imports AGENTS.md (`@AGENTS.md`) adds nothing; other imports stay as written.
+function rootRules(rules: { file: string, text: string }[]): string[] {
+  const kept = rules.map(r => ({ ...r, text: r.text.split('\n').filter(l => !/^@(\.\/)?AGENTS\.md\s*$/.test(l.trim()) || !rules.some(x => x.file === 'AGENTS.md')).join('\n').trim() }))
+    .filter(r => r.text)
+  if (!kept.length) return []
+  return ['## The workspace\'s own instructions', '',
+    'The root\'s instructions, for every agent working under it, copied here at your start. Follow them; this file\'s rules come first where they differ.', '',
+    ...kept.flatMap(r => [`### ${r.file}`, '', r.text.length > RULES_CAP ? `${r.text.slice(0, RULES_CAP)}\n\n(cut: read the rest in the root's ${r.file})` : r.text, ''])]
 }
 
 // The main coordinator's part of Alfred's home (shared/pm/alfred.ts): every

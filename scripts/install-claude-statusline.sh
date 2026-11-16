@@ -38,9 +38,12 @@ from pathlib import Path
 cache = Path(sys.argv[1])
 config = Path(os.environ.get("CLAUDE_CONFIG_DIR", os.environ["HOME"])) / ".claude.json"
 try:
-    account_id = json.loads(config.read_text()).get("oauthAccount", {}).get("accountUuid")
+    oauth = json.loads(config.read_text()).get("oauthAccount") or {}
+    account_id = oauth.get("accountUuid")
+    # The plan only (does it have a 5-hour window?), never a credential.
+    plan = {k: oauth.get(src) for k, src in (("plan", "organizationType"), ("tier", "organizationRateLimitTier")) if isinstance(oauth.get(src), str)}
 except (OSError, ValueError, AttributeError):
-    account_id = None
+    account_id, plan = None, {}
 account = hashlib.sha256(("wherdr:" + account_id).encode()).hexdigest()[:16] if isinstance(account_id, str) and account_id else None
 status = json.load(sys.stdin)
 if not isinstance(status, dict):
@@ -58,7 +61,7 @@ if "rate_limits" not in status:
             sys.exit(0)
     except (OSError, ValueError, AttributeError):
         pass
-status["_wherdr"] = {"version": 1, "account": account, "at": int(time.time() * 1000)}
+status["_wherdr"] = {"version": 1, "account": account, "at": int(time.time() * 1000), **plan}
 def atomic(name, text):
     fd, temp = tempfile.mkstemp(prefix=name + ".", dir=cache)
     try:

@@ -188,6 +188,7 @@ const remove = () => run(async () => { const yes = await removeTaskApi(props.car
             <span class="mono-label">{{ tl('Spec changes · the latest overrides the description') }}</span>
             <p v-for="n in card.specNotes" :key="n.at" class="task-spec-note"><span class="mono-label">{{ fmtDateTime(n.at) }}</span> {{ n.text }}</p>
           </section>
+          <p v-if="card.wsFiles" class="muted task-ws-files" data-testid="task-ws-files"><span class="mono-label">{{ tl('Workspace instructions') }}</span> {{ card.wsFiles.join(', ') }}</p>
           <div v-if="card.tags.length || otherLinks.length" class="board-tags" data-testid="task-links">
             <span v-for="tag in card.tags" :key="tag" class="board-chip">{{ tag }}</span>
             <a v-for="l in otherLinks" :key="l.url" :href="l.url" target="_blank" rel="noopener" class="board-chip">{{ linkLabel(l) }}</a>
@@ -244,6 +245,7 @@ const remove = () => run(async () => { const yes = await removeTaskApi(props.car
 .task-md :deep(:is(h1, h2, h3, h4, h5, h6)) { font-size: 15px; margin: 1em 0 .4em; }
 .task-sheet .task-md :deep(p) { margin: 0 0 .75em; }
 .task-spec-notes { display: grid; gap: 6px; }
+.task-ws-files { display: grid; gap: 4px; overflow-wrap: anywhere; }
 .task-spec-note { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; color: var(--text-2); }
 .task-sheet-actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
 .task-sheet-actions:empty { display: none; }

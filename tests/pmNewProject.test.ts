@@ -10,7 +10,7 @@ import { draftBody, folderKind, needsRemote, proposeKey, proposeName, shortHome,
 import { findRepos, parseRepos } from '../server/utils/pmRepos'
 import { pmFolderCheck, probeFolder } from '../server/utils/pmFolder'
 import { createPmStore } from '../server/utils/pmStore'
-import { coordinatorArgs, roleFiles } from '../shared/pm/coordinator'
+import { coordinatorArgs, isPlainFolder, roleFiles } from '../shared/pm/coordinator'
 import { EXAMPLES } from '../shared/pm/examples'
 import type { CoreAdminDeps } from '../server/utils/coreCreate'
 
@@ -138,5 +138,24 @@ describe('coordinator of a folder without git', () => {
     expect(coordinatorArgs('codex', '/c', '/home/user/clients', true)).toContain('--add-dir')
     expect(coordinatorArgs('codex', '/c', '/home/user/clients')).not.toContain('--add-dir')
     expect(coordinatorArgs('claude', '/c', '/home/user/clients', true)).toEqual(['claude', '--add-dir', '/home/user/clients'])
+  })
+
+  it('a workspace is no plain folder: members denied, root writable, work through tasks, the root\'s rules copied', () => {
+    const ws = { ...project, git: false as const, kind: 'workspace' as const, path: '/home/user/work/' }
+    expect(isPlainFolder(ws)).toBe(false)
+    const files = roleFiles(ws, null, [], undefined, k => k, {
+      members: [{ key: 'PAY', path: '/home/user/work/pay' }, { key: 'APP', path: '/home/user/work/app/' }],
+      rules: [{ file: 'AGENTS.md', text: 'Use pnpm everywhere.' }, { file: 'CLAUDE.md', text: '@AGENTS.md' }],
+    })
+    expect(JSON.parse(files['.claude/settings.json']!).permissions.deny).toEqual(['Edit(//home/user/work/pay/**)', 'Edit(//home/user/work/app/**)'])
+    const agents = files['AGENTS.md']!
+    expect(agents).toContain('Never change a member\'s repository yourself')
+    expect(agents).toContain('`feature split`')
+    expect(agents).not.toContain('you do the work yourself')
+    expect(agents).toContain('## Machines')
+    expect(agents).toContain('## Plans of this project\'s task types')
+    expect(agents).toContain('### AGENTS.md\n\nUse pnpm everywhere.')
+    expect(agents).not.toContain('### CLAUDE.md')
+    expect(coordinatorArgs('codex', '/c', ws.path, isPlainFolder(ws))).not.toContain('--add-dir')
   })
 })

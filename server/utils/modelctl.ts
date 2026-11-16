@@ -88,11 +88,12 @@ export function createModelCtl(deps: ModelCtlDeps) {
     ompScreens.delete(paneId)
   }
 
-  async function currentModel(p: Pane): Promise<ModelInfo | null> {
+  // historyModel: the model a daemon-backed history already read (codexDaemon.ts).
+  async function currentModel(p: Pane, historyModel?: ModelInfo | null): Promise<ModelInfo | null> {
     if (p.agent === 'opencode' || p.agent === 'cmd') return deps.transcript(p)
     if (!hasTranscript(p.agent)) return null
     // A failed read throws: the state keeps the model it showed (refreshModel).
-    let fromFile = await deps.transcript(p)
+    let fromFile = historyModel || await deps.transcript(p)
     if (p.agent === 'devin') {
       // The status line is authoritative for the session's pick: the
       // transcript only names the model that generated the last turn (under

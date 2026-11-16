@@ -51,6 +51,17 @@ describe('auto-archive', () => {
     expect((await cardById(store, [], old.id)).card).toMatchObject({ id: old.id, archived: expect.any(Number) })
   })
 
+  it('keeps a feature\'s done sub-task until the feature is closed', async () => {
+    const sub = await task('Sub', 8), feature = await store.addTask({ project: 'CO', title: 'Feature', type: 'study' })
+    await store.saveTask({ ...feature, kind: 'feature' })
+    await store.saveTask({ ...(await store.task(sub.id))!, feature: feature.id })
+    await archiveDone(store)
+    expect((await store.task(sub.id))!.archived).toBeUndefined()
+    await store.saveTask({ ...(await store.task(feature.id))!, closed: { at: 1, by: 'coordinator' } })
+    await archiveDone(store)
+    expect((await store.task(sub.id))!.archived).toBeTypeOf('number')
+  })
+
   it('lists done tasks newest done first', async () => {
     const older = await task('Older', 3), newer = await task('Newer', 1)
     expect((await board(store)).cards.map(c => c.id)).toEqual([newer.id, older.id])

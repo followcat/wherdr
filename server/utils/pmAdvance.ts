@@ -17,7 +17,7 @@ import { reviewAccount, reviewCap, reviewTurn, reviewerOut, runningReviews } fro
 import { policyIn, readPolicies } from './pacingPolicies'
 import { showIds } from '../../shared/pm/projectKey'
 import { PATH_SETUP, launchFailure } from './coreCreate'
-import { WRITE_SCRIPT, exec, oneStart, prepareTmp, runOn, type PmLaunchDeps } from './pmLaunch'
+import { WRITE_SCRIPT, exec, oneStart, prepareTmp, runOn, workspaceFiles, type PmLaunchDeps } from './pmLaunch'
 import { HerdrError } from './herdr'
 import { startAction } from './pmBoard'
 import { cleanTask } from './pmCleanup'
@@ -242,8 +242,11 @@ async function advance(deps: PmLaunchDeps, id: string, alive: (r?: Run) => Label
   await clearSignal(deps, worker!.terminal!)
   // A new note for this step: the last one's link must not pass as this step's proof.
   await exec(deps, c.on, 'rm -f "$1"', [runFiles(worker!.instructions).note])
-  await deps.call('terminal.send', { terminal: worker!.terminal, text: showIds([c.p], due.text) }, 30000)
-  await deps.store.logTask({ ...task, step: told, run: worker!.id }, 'engine', `${plan[s.at]!.id}: sent to the worker`)
+  // The workspace's instructions files changed since the worker read them: the step gives them again.
+  const ws = await workspaceFiles(deps, task, c.p, true)
+  const again = ws.changed ? ['', '', 'The workspace\'s instructions files changed: follow them from now on.', '', ...ws.lines].join('\n') : ''
+  await deps.call('terminal.send', { terminal: worker!.terminal, text: showIds([c.p], due.text + again) }, 30000)
+  await deps.store.logTask({ ...ws.task, step: told, run: worker!.id }, 'engine', `${plan[s.at]!.id}: sent to the worker`)
 }
 
 // The reviewer's turn: its file written, then the running reviewer told, or a
@@ -289,8 +292,10 @@ async function reviewer(deps: PmLaunchDeps, { task, p, t, on }: Ctx, text: strin
     }
   }
   task = { ...task, held: undefined, reviewWait: undefined }
+  const ws = await workspaceFiles(deps, task, p)
+  task = ws.task
   const files = runFiles(worker.instructions)
-  if ((await exec(deps, on, `rm -f "$2" && ${WRITE_SCRIPT}`, [files.review, files.verdict], showIds([p], reviewFile(task, worker, text, files.verdict, isPublic(p))))).code !== 0)
+  if ((await exec(deps, on, `rm -f "$2" && ${WRITE_SCRIPT}`, [files.review, files.verdict], showIds([p], reviewFile(task, worker, text, files.verdict, isPublic(p), ws.lines)))).code !== 0)
     return void await waitFor(deps, task.id, 'Could not write the review file')
   const told = { ...task.step!, told: task.step!.since }
   if (live) {

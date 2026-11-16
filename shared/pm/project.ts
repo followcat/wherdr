@@ -1,6 +1,6 @@
 // A managed project: a folder (git, unless git: false) on a machine reached through herdr-core,
 // and its own workflow (DATA_DIR/projects/workflows/<KEY>.json), which its tasks follow. Stored in DATA_DIR/projects/projects.json.
-import type { WorkflowError } from './workflow'
+import { isRelPath, type WorkflowError } from './workflow'
 import type { Task } from './run'
 import type { RepoVisibility } from './visibility'
 import { isProjectColor, type ProjectColor } from './projectKey'
@@ -47,6 +47,7 @@ export interface Project {
   shared?: WorkspaceShared
   workspace?: string
   overrides?: SharedField[]
+  instructionsFiles?: string[] // a member's own workspace instructions files, when it overrides them ([]: none)
   addedAt: number
 }
 
@@ -69,7 +70,7 @@ export const isGitBranch = (b: string) => b !== '' && b !== '@' && !/[\x00-\x20\
 export const isTemplateId = (id: unknown): id is string => typeof id === 'string' && ID_RE.test(id)
 
 const KEY_HINT = '2 to 10 letters or digits, starting with a letter'
-export interface ProjectUpdate { name?: string, coordinatorName?: string, base?: string, key?: string, color?: ProjectColor, machines?: string[], clones?: Record<string, string>, paused?: string[], placement?: Strategy, branchName?: string, archiveAfter?: number, deleteBranch?: boolean, reach?: Reach[] }
+export interface ProjectUpdate { name?: string, coordinatorName?: string, base?: string, key?: string, color?: ProjectColor, machines?: string[], clones?: Record<string, string>, paused?: string[], placement?: Strategy, branchName?: string, archiveAfter?: number, deleteBranch?: boolean, reach?: Reach[], instructionsFiles?: string[] | null }
 
 // A project's coordinator is named after the project unless the user named it.
 export const projectCoordinatorName = (p: { name: string, coordinatorName?: string }) => p.coordinatorName || p.name
@@ -186,6 +187,12 @@ export function cleanProjectUpdate(raw: unknown): { update?: ProjectUpdate, erro
   if (o.deleteBranch !== undefined) {
     if (typeof o.deleteBranch !== 'boolean') errors.push({ path: 'deleteBranch', message: 'true or false' })
     else update.deleteBranch = o.deleteBranch
+  }
+  // Workspace instructions files (workspace.ts): paths under the root; null: the default, or the workspace's.
+  if (o.instructionsFiles !== undefined) {
+    const v = o.instructionsFiles
+    if (v !== null && !(Array.isArray(v) && v.length <= 10 && v.every(isRelPath))) errors.push({ path: 'instructionsFiles', message: 'up to 10 paths under the workspace\'s root (no *, no .., not absolute)' })
+    else update.instructionsFiles = v === null ? null : [...new Set(v as string[])]
   }
   if (o.reach !== undefined) {
     const r = cleanReach(o.reach)

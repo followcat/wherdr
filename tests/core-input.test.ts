@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { CoreError } from '../server/utils/core'
-import { coreInput, coreInterrupt, coreKeepGet, coreKeepSet, coreKill, coreSend, type CoreInputDeps } from '../server/utils/coreInput'
+import { coreInput, coreInterrupt, coreKeepGet, coreKeepSet, coreKill, coreSend, resumeSubmitting, type CoreInputDeps } from '../server/utils/coreInput'
 import { isBareBang } from '../shared/queuedMatch'
 import { takingTurns } from '../server/utils/terminalTurns'
+import { HerdrError } from '../server/utils/herdr'
 import type { Pane } from '../shared/types'
 
 const pane = (id: string, extra: Partial<Pane> = {}) => ({ id, workspace: 'w1', coreAddress: `m/${id}`, agent: 'claude', ...extra }) as Pane
@@ -173,10 +174,10 @@ describe('core input routes', () => {
     const dropped = await run({ started: false }, (n, e) => (n === 0 ? null : n < 3 ? path : e < 3 ? tag : null))
     expect(dropped.r).toEqual({ ok: true, started: null })
     expect(dropped.seen).toEqual([tag, tag, tag])
-    // Never taken: at most four Enters, then the field's own "Not sent".
-    expect((await run({ started: false }, n => (n ? tag : null))).seen).toHaveLength(4)
-    // A large photo whose placeholder shows after about 10 s (25 looks): still submitted, once.
-    expect((await run({ started: false }, (n, e) => (n === 0 ? null : n < 25 ? path : e ? null : tag))).seen).toEqual([tag])
+    // Never taken: at most ten Enters, then the field's own "Not sent".
+    expect((await run({ started: false }, n => (n ? tag : null))).seen).toHaveLength(10)
+    // A large photo whose placeholder shows after about 20 s (50 looks): still submitted, once.
+    expect((await run({ started: false }, (n, e) => (n === 0 ? null : n < 50 ? path : e ? null : tag))).seen).toEqual([tag])
   })
 
   it('sent while Claude works: core says started, yet its Enter came before the placeholder; it is submitted once', async () => {
@@ -189,12 +190,78 @@ describe('core input routes', () => {
     t.d.field = async () => (looks++ === 0 ? null : looks < 4 ? msg.replace('\n', ' ') : enters ? null : '[Image #2]second picture, describe it')
     expect(await coreSend(t.d, { pane_id: 't1', text: msg })).toEqual({ ok: true, started: null })
     expect(enters).toBe(1)
-    // Taken at once from an idle agent: a turn started, the field is not looked at.
+    // Taken at once from an idle agent: one look at the empty field, no Enter.
     const idle = deps(m => (m === 'terminal.send' ? { started: true, status: 'idle' } : {}))
+    idle.d.settleMs = 1
     let read = 0
     idle.d.field = async () => { read++; return null }
     expect(await coreSend(idle.d, { pane_id: 't1', text: msg })).toEqual({ ok: true, started: true })
-    expect(read).toBe(1) // the busy check before typing only
+    expect(read).toBe(2)
+    expect(idle.calls.map(c => c[0])).toEqual(['terminal.send'])
+  })
+
+  it('idle agent: core says started, yet the message stays in the input and Enter is ignored twice; it is submitted once', async () => {
+    const msg = '/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.jpg\nwhat is on this screenshot?'
+    let looks = 0
+    let enters = 0
+    const t = deps((m) => { if (m === 'terminal.keys') enters++; return m === 'terminal.send' ? { started: true, status: 'idle' } : {} })
+    t.d.settleMs = 1
+    // A failed read in between is not an empty field.
+    t.d.field = async () => { looks++; if (looks === 2) throw new Error('paint'); return looks === 1 || enters >= 3 ? null : '[Image #8] what is on this screenshot?' }
+    expect(await coreSend(t.d, { pane_id: 't1', text: msg })).toEqual({ ok: true, started: null })
+    expect(enters).toBe(3)
+  })
+
+  // WHR-419, reproduced on Claude Code 2.1.319: three large photos and a
+  // multi-line text to an idle Claude. Its field stays empty under "Pasting…"
+  // for seconds (the photos are read), then shows them renumbered with the
+  // text collapsed; the send's own Enter is lost.
+  const three = ['/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c1.jpg', '/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c2.jpg', '/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.jpg',
+    'Three screenshots of the settings page.', '', 'The header overlaps the menu.', 'The list loses its scroll.', '', 'Thanks!'].join('\n')
+  const collapsed = '[Image #9] [Image #10] [Image #11][Pasted text #12 +6 lines]'
+
+  it('three photos and a multi-line text: an empty field under "Pasting…" is not taken; submitted once it shows', async () => {
+    let looks = 0
+    let enters = 0
+    const noted: string[] = []
+    let notedAtSend = 0
+    const t = deps((m) => { if (m === 'terminal.keys') enters++; if (m === 'terminal.send') notedAtSend = noted.length; return m === 'terminal.send' ? { started: false, status: 'idle' } : {} })
+    t.d.settleMs = 1
+    t.d.submitting = (_terminal, text) => { noted.push(text); return () => { noted.splice(noted.indexOf(text), 1) } }
+    t.d.field = async () => {
+      looks++
+      if (looks === 1 || enters) return null
+      if (looks < 20) throw new HerdrError('pasting', 'Claude is still pasting')
+      return collapsed
+    }
+    expect(await coreSend(t.d, { pane_id: 't1', text: three })).toEqual({ ok: true, started: null })
+    expect(notedAtSend).toBe(1)
+    expect(enters).toBe(1)
+    expect(noted).toEqual([])
+  })
+
+  it('a restart mid-send: resumed, Enter only while the field holds that message; a log line with sizes, never text', async () => {
+    let enters = 0
+    const t = deps((m) => { if (m === 'terminal.keys') enters++; return {} })
+    t.d.settleMs = 1
+    t.d.field = async () => (enters ? null : collapsed)
+    await resumeSubmitting(t.d, [{ id: 'a', terminal: 'm/t1', text: three, at: Date.now() }])
+    expect(enters).toBe(1)
+    // Already taken before the restart: nothing pressed. Other text there: nothing pressed, and why is logged.
+    const logs: string[] = []
+    const warn = console.warn
+    console.warn = (l: string) => { logs.push(l) }
+    try {
+      for (const now of [null, '[Image #9] something else']) {
+        const o = deps()
+        o.d.settleMs = 1
+        o.d.field = async () => now
+        await resumeSubmitting(o.d, [{ id: 'b', terminal: 'm/t1', text: three, at: Date.now() }])
+        expect(o.calls.filter(c => c[0] === 'terminal.keys')).toEqual([])
+      }
+    } finally { console.warn = warn }
+    expect(logs.at(-1)).toMatch(/never held the message alone: field held 20 chars, 1 images; expected 109 chars, 3 images, 9 lines$/)
+    expect(logs.join('\n')).not.toMatch(/settings|something/)
   })
 
   it('sends a multi-line "!" command as it is, in one terminal.send', async () => {

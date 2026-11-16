@@ -18,6 +18,7 @@ Questions and feedback: [Discord](https://discord.gg/ky36WYmtVE); bugs: [GitHub 
 - [Installation and updates](installation.md) — Requirements, running as a service, updating.
 - [Install with an agent](install-with-an-agent.md) — Ready-to-paste agent prompts: new install, v3 beside v2 with import, update.
 - [Update with an agent](update-with-an-agent.md) — The steps Alfred (or any agent) follows to update v3: plan and your yes, backup, update, health check, rollback; the release's Upgrade notes.
+- [Release notes 3.1.0](release-notes-3.1.0.md) — Workspaces, Alfred routing and briefs, dark/light themes and custom themes, changeable shortcuts, and fixes.
 - [Release notes 3.0.0](release-notes-3.0.0.md) — What v3 brings to a v2 user, what changed, what is gone, how to move.
 - [Migrate from v2](migrate-from-v2.md) — Install v3 next to a running v2, import machines and settings, set up v2 projects with Alfred, auto-deploy from a build machine, fall back, uninstall.
 - [Project management](project-management.md) — Getting started, project settings (workflow, guards, automations), autopilot, the board, the task sheet and reporting a problem on a task.

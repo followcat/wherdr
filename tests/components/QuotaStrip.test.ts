@@ -78,11 +78,13 @@ describe('QuotaStrip', () => {
     expect(five!.attributes('aria-label')).toBe('Last read 2 d ago: send a message to a Codex agent to refresh')
   })
 
-  it('a missing window keeps its empty cell so the columns stay aligned', async () => {
+  it('a row with one window shows a single bar across the row, no empty cell', async () => {
     quotaNow.value = now
-    const w = await mountSuspended(QuotaStrip, { props: { rows: [{ key: 'claude', agent: 'claude', q: { five: win(10, 30, 300), week: null, at: now } }] } })
-    expect(w.findAll('.quota')).toHaveLength(2)
-    expect(w.find('.quota.empty').exists()).toBe(true)
+    const w = await mountSuspended(QuotaStrip, { props: { rows: [{ key: 'claude', agent: 'claude', q: { five: null, week: win(10, 3 * 1440, 10080), at: now } }] } })
+    const cells = w.findAll('.quota')
+    expect(cells).toHaveLength(1)
+    expect(cells[0]!.classes()).toContain('quota-wide')
+    expect(cells[0]!.find('.quota-label').text()).toBe('Week')
   })
 })
 

@@ -6,7 +6,7 @@
 // finds it again by its labels (reconcileRuns).
 import { Holds } from './pmHold'
 import { projectPlace } from '../../shared/pm/places'
-import { randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { CoreError } from './core'
 import { HerdrError } from './herdr'
 import { PATH_SETUP, homeOf, kindsOf, launchFailure, machineOn, type CoreAdminDeps } from './coreCreate'
@@ -22,11 +22,13 @@ import { ensureReady } from './pmReady'
 import { fileConflict, filesSection, pastAgents } from '../../shared/pm/files'
 import { branchFor } from '../../shared/pm/branchName'
 import { showIds, shownTaskId } from '../../shared/pm/projectKey'
-import { LABEL, TMP_DIR, agentEnv, agentLine, isAuthFailure, instructionsText, shotStep, startBase, taskPlan, workflowBaseNote, reconcile, runLabels, taskPaths, tmpRefusal, workerPlan, type Run, type Task } from '../../shared/pm/run'
+import { LABEL, TMP_DIR, WS_FILES_SCRIPT, parseWsFiles, wsFilesSection, agentEnv, agentLine, isAuthFailure, instructionsText, shotStep, startBase, taskPlan, workflowBaseNote, reconcile, runLabels, taskPaths, tmpRefusal, workerPlan, type Run, type Task } from '../../shared/pm/run'
 import { isOpen, type Incident, type Recovery } from '../../shared/pm/incident'
 import { recordGone, type CoreList } from './pmIncidents'
 import { interruptTask } from './pmRecovery'
 import { pmDir } from './pmHome'
+import { INSTRUCTIONS_CAP, workspaceInstructions } from '../../shared/pm/workspace'
+import type { Project } from '../../shared/pm/project'
 
 // Reuses the worktree of an earlier attempt; else a new branch from the base,
 // origin's as fetched now when origin has it (a local one may be stale: a
@@ -95,6 +97,32 @@ export async function exec(deps: Pick<CoreAdminDeps, 'call'>, on: string | undef
   }, (timeout + 10) * 1000)
   const text = (b?: string) => Buffer.from(b || '', 'base64').toString('utf8').trim()
   return { code: r.timed_out ? null : r.code, out: text(r.stdout), err: text(r.stderr) }
+}
+
+// A member task's workspace instructions files, read again at each use (a
+// worker's start or step, each review round), so an edit reaches the next one.
+// What they gave is kept on the task (Task.wsFiles), a change logged once with
+// its missing or cut files. worker: the worker gets them (wsFiles.worker
+// records what it got); changed: they differ from what it got last.
+export async function workspaceFiles(deps: PmLaunchDeps, task: Task, p: Project, worker = false) {
+  const src = workspaceInstructions(p, await deps.store.projects())
+  let r: ReturnType<typeof parseWsFiles> = { files: [], log: [] }
+  if (src) {
+    try {
+      const out = await exec(deps, machineOn(deps, src.machine).on, WS_FILES_SCRIPT, [src.root, String(INSTRUCTIONS_CAP * 4 + 1), ...src.paths])
+      r = out.code === 0 ? parseWsFiles(out.out, INSTRUCTIONS_CAP, src.first) : { files: [], log: ['Workspace instructions: could not read them at the workspace\'s root'] }
+    } catch (e) { r.log.push(`Workspace instructions: not read (${(e as Error).message})`) }
+  }
+  const lines = wsFilesSection(r.files), names = r.files.map(f => f.path), was = task.wsFiles
+  const hash = r.files.length || r.log.length ? createHash('sha1').update(JSON.stringify(r)).digest('hex').slice(0, 16) : ''
+  const changed = worker && hash !== (was?.worker ?? '')
+  if (hash === (was?.hash ?? '') && !changed) return { lines, task, changed }
+  const { wsFiles: _old, ...rest } = task
+  const kept = { names, hash, ...(worker ? (hash ? { worker: hash } : {}) : was?.worker ? { worker: was.worker } : {}) }
+  const next = { ...rest, ...(hash || kept.worker ? { wsFiles: kept } : {}) }
+  if (hash === (was?.hash ?? '')) return { lines, task: await deps.store.saveTask(next), changed }
+  const said = [names.length ? `Workspace instructions: ${names.join(', ')}` : 'Workspace instructions: none', ...r.log].join('; ')
+  return { lines, task: await deps.store.logTask(next, 'engine', said), changed }
 }
 
 // origin: the address the user reached wherdr at (the start request's).
@@ -273,7 +301,9 @@ async function startOnce(deps: PmLaunchDeps, id: unknown, { handover, revive, on
   // A visual task: the worker's key to upload its screenshots, kept with the task.
   const shotToken = shotStep(t, task.type) ? task.shotToken || randomBytes(16).toString('hex') : undefined
   const leakCheck = isPublic(p) ? (await readLeakCheck(deps, on, paths).catch(() => ({ check: undefined }))).check : undefined
-  const text = showIds([p], instructionsText(p, t, task, paths, shotToken ? { base: wherdrBase(machine, deps.origin), token: shotToken } : undefined, leakCheck)
+  const ws = await workspaceFiles(deps, task, p, true)
+  task = ws.task
+  const text = showIds([p], instructionsText(p, t, task, paths, shotToken ? { base: wherdrBase(machine, deps.origin), token: shotToken } : undefined, leakCheck, ws.lines)
     + ['', ...filesSection(runFiles(paths.instructions).files, task.files), ...(depsLine ? [depsLine, ''] : []), ...(contLine ? [contLine, ''] : []), ...(handover ? [handover] : []), ...doneSection(runFiles(paths.instructions).note)].join('\n'))
   if ((await exec(deps, on, WRITE_SCRIPT, [paths.instructions], text)).code !== 0) return wait(store, task, 'Could not write the instructions file')
 

@@ -29,13 +29,15 @@ export const doneSection = (note: string) => [
   `If you need the user's answer to go on, ask in your last message, then run \`${ASK_CMD}\`.`, '',
 ]
 
-// The reviewer's instructions file: the task, what to review, how to answer.
-export function reviewFile(task: Pick<Task, 'id' | 'title' | 'description' | 'specNotes'>, run: Pick<Run, 'worktree' | 'branch'>, text: string, verdict: string, publicRepo = false) {
+// The reviewer's instructions file: the task, what to review, the workspace's
+// instructions files (ws, wsFilesSection), how to answer.
+export function reviewFile(task: Pick<Task, 'id' | 'title' | 'description' | 'specNotes'>, run: Pick<Run, 'worktree' | 'branch'>, text: string, verdict: string, publicRepo = false, ws: string[] = []) {
   return [
     `# Review of ${task.id}: ${task.title}`, '', specText(task), '',
     `The work is on branch ${run.branch}, in ${run.worktree}. Its changes: \`git diff $(git config branch.${run.branch}.wherdrstart)..HEAD\`.`,
     'Read and run what you need, but change nothing: no edit, no commit, no push.', '',
     '## Instructions', '', text, '',
+    ...ws,
     ...(publicRepo ? publicReviewSection() : []),
     '## When you are done', '',
     `Write the verdict JSON (only the {"findings":[…]} object) to ${verdict}, then run:`, '', `    ${DONE_CMD}`, '',

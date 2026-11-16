@@ -4,7 +4,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createAuth } from '../server/utils/auth'
 import { allowedHosts, crossSiteRequest, tailnetDomainHosts, hostAllowed, hostRefusalIsHtml, hostRefusedPage, networkRefusedPage, phoneFixCommand, tailnetName } from '../server/utils/hosts'
-import { CSP_DICTATION_WORKER, CSP_TTS_WORKER, CSP_WEBGPU_WORKER, cspForHtml, tailnetImageSources } from '../server/utils/csp'
+import { CSP_DICTATION_WORKER, PAGE_CSP, CSP_TTS_WORKER, CSP_WEBGPU_WORKER, cspForHtml, tailnetImageSources } from '../server/utils/csp'
 
 const req = (cookie = '') => ({ headers: { origin: 'http://localhost:7683', cookie } })
 const auth = (log = () => {}) => createAuth({ dataDir: mkdtempSync(path.join(tmpdir(), 'hw-release-')), log })
@@ -123,6 +123,16 @@ it('only allows the exact inline scripts of the Nuxt HTML', () => {
   expect(policy.match(/script-src ([^;]+)/)?.[1]).not.toContain('unsafe-inline')
   expect(policy).toContain("frame-ancestors 'none'")
   expect(policy).toContain("connect-src 'self' ws://localhost:7690 wss://localhost:7690")
+})
+
+it('runs an agent\'s HTML page in an opaque origin that reaches nothing of wherdr', () => {
+  expect(PAGE_CSP.split('; ')[0]).toBe('sandbox allow-scripts')
+  expect(PAGE_CSP).not.toMatch(/allow-same-origin|allow-top|allow-popups|allow-forms/)
+  // wherdr itself only as the page's parent.
+  expect(PAGE_CSP.match(/'self'/g)).toEqual(["'self'"])
+  expect(PAGE_CSP).toContain("frame-ancestors 'self'")
+  expect(PAGE_CSP).toContain("connect-src 'none'")
+  expect(PAGE_CSP).toContain("form-action 'none'")
 })
 
 describe('images allowed in replies', () => {

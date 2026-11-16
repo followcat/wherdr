@@ -406,3 +406,36 @@ it('the Done column\'s footer counts archived tasks and opens their sheet, which
   await vi.waitFor(() => expect(rows()).toEqual(['CO-8']))
   expect(asked.at(-1)).toBe('docs')
 })
+
+it('a workspace picked: each feature is one card with its sub-tasks as chips, folded out of the columns unless the switch shows them', async () => {
+  const sub = (id: string, step: StepState, more: Partial<Task> = {}) => coTask(task(id, step, { feature: 'WS-1', ...more }))
+  board.projects.push({ key: 'WS', name: 'Payroll', kind: 'workspace', columns: [], types: [] }, ...['PAY', 'WEB', 'MOB'].map(key => ({ key, name: key, workspace: 'WS', columns: columns(company), types: types(company) })))
+  board.cards.push(
+    cardOf(task('WS-1', initialState(), { title: 'Payslips as PDF', kind: 'feature', state: 'todo', plan: { order: 'The API first: the app calls it' } }), [], []),
+    sub('MOB-1', initialState(), { state: 'todo', after: 'WEB-1' }),
+    sub('WEB-1', at(4, { yourTurn: { reason: 'user', badge: 'Merge the PR' } }), { after: 'PAY-1' }),
+    sub('PAY-1', at(4, { done: true })),
+  )
+  const w = await mountSuspended(BoardView)
+  mounted = w
+  await vi.waitFor(() => expect(w.find('[data-testid="feature-card"]').exists()).toBe(true))
+  await pick(w, 'board-project', 'WS')
+  // Only the workspace's tasks, the sub-tasks folded into the feature, in Your turn while WEB-1 waits for the user.
+  expect(w.findAll('[data-testid="board-card"]')).toHaveLength(0)
+  const f = card(w, 'WS-1')
+  expect(laneOf(w, 'WS-1')).toBe('your-turn')
+  expect(f.find('[data-testid="board-badge"]').text()).toBe('WEB-1: Merge the PR')
+  expect(f.find('[data-testid="feature-progress"]').text()).toBe('1/3 merged')
+  expect(f.findAll('[data-testid="feature-chip"]').map(c => c.attributes('data-state'))).toEqual(['done', 'waiting', 'todo'])
+  expect(f.findAll('[data-testid="feature-chip"] .project-badge').map(b => b.text())).toEqual(['PAY-1', 'WEB-1', 'MOB-1'])
+  expect(f.find('[data-testid="feature-order"]').text()).toBe('Order: The API first: the app calls it')
+  expect(f.find('[data-testid="feature-waits"]').text()).toBe('MOB-1 waits for WEB-1')
+  // A chip opens its sub-task's sheet.
+  await f.findAll('[data-testid="feature-chip"]')[1]!.trigger('click')
+  await vi.waitFor(() => expect((w.findComponent({ name: 'TaskSheet' }).props('card') as { id: string }).id).toBe('WEB-1'))
+  // The switch puts the sub-tasks back in their columns, tagged with the feature.
+  await w.findComponent({ name: 'USwitch' }).vm.$emit('update:modelValue', true)
+  await nextTick()
+  expect(w.findAll('[data-testid="board-card"]').map(c => c.attributes('data-task'))).toEqual(['WEB-1', 'MOB-1', 'PAY-1'])
+  expect(card(w, 'MOB-1').find('.board-chip').text()).toBe('WS-1')
+})

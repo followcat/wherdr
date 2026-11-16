@@ -63,7 +63,7 @@ export function machineView(rows: MachineRow[] | null, arg: string): StatusView 
   }
 }
 
-const left = (w: Quota['five'], now: number) => (!w || (w.resetsAt && w.resetsAt <= now) ? 100 : Math.max(0, Math.round(100 - w.used)))
+const left = (w: NonNullable<Quota['five']>, now: number) => (w.resetsAt && w.resetsAt <= now ? 100 : Math.max(0, Math.round(100 - w.used)))
 export function quotaView(q: Quotas | null, arg: string, now: number): StatusView | null {
   const provider = arg.toLowerCase() as 'claude' | 'codex'
   const r = q?.[provider]
@@ -73,7 +73,9 @@ export function quotaView(q: Quotas | null, arg: string, now: number): StatusVie
   if (limit === 'reached') return { title, state: 'limit reached', tone: 'bad', lines: [] }
   if (limit === 'credits') return { title, state: 'limit reached, on credits', tone: 'wait', lines: [] }
   if (limit === 'expired') return { title, state: 'reset since the last reading', tone: 'ok', lines: [] }
-  const bars = [{ label: '5 h', left: left(r.five, now) }, { label: 'week', left: left(r.week, now) }]
+  // A window the account does not have (Claude Ultra, Codex Plus: no 5 h) gets no bar.
+  const bars = ([['5 h', r.five], ['week', r.week]] as const).flatMap(([label, w]) => (w ? [{ label, left: left(w, now) }] : []))
+  if (!bars.length) return null
   const low = Math.min(...bars.map(b => b.left))
   return { title, state: `${low} % left`, tone: low < 10 ? 'bad' : low < 30 ? 'wait' : 'ok', lines: [], bars }
 }
