@@ -6,7 +6,8 @@ import type { TranscriptPane } from './transcripts'
 import { excerpt, matchAt } from '../../shared/searchText'
 import { ompModelLabel } from './models'
 import { HerdrError } from './herdr'
-import { type MachineFs, localFs } from './fsx'
+import { type MachineFs, type ShellExec, localFs } from './fsx'
+import { createDevinStore, type DevinStoreOptions } from './devinStore'
 
 // JSON saved by Devin is versioned independently of wherdr (ATIF-v1.7).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -297,7 +298,7 @@ function hasStep(steps: Step[], id: number): boolean {
   return id === 0 || steps.some(s => Number(s.step_id) === id)
 }
 
-export function createDevinTranscripts({
+function createAtifTranscripts({
   home, fs = localFs, now = Date.now, failQuietMs = FAIL_QUIET_MS,
 }: {
   home: string
@@ -432,8 +433,10 @@ export function createDevinTranscripts({
       const at = anchorOf(sent)
       const before = opts.before
       const sentHead = headOf(sent)
+      // A token in neither of this reader's shapes is another source's: never
+      // splice its cursor into this file's pages (store tokens parse neither).
       let invalid = Boolean(sentHead && sentHead.file !== fileId) || (before != null && !hasStep(doc.steps, before)) || (from != null && !hasStep(doc.steps, from))
-        || (from != null && Boolean(sent) && !headOf(sent))
+        || (from != null && Boolean(sent) && !headOf(sent)) || (before != null && Boolean(sent) && !sentHead && !at)
       if (!invalid && at && (before != null || from === at.start) && prefixOf(doc, at.start) !== at.hash) invalid = true
       if (!invalid && from != null && from > 0 && prev && prev.file === fileId && st.size < prev.size) invalid = true
       if (invalid && before != null) {
@@ -546,4 +549,71 @@ export function createDevinTranscripts({
   }
 
   return { chat, image, search, model, pathOf }
+}
+
+// Store-first reading: the CLI's own sessions.db sees every message as it is
+// written (the ATIF transcript only lands when a turn ends). The store is the
+// source while it stays usable — database present, python3 on the machine, a
+// guarded schema version, the session known — and anything else falls back to
+// the ATIF reader above, unchanged. A source switch is a rewritten reset via
+// the token's source prefix, never a mix.
+export function createDevinTranscripts({
+  home, fs = localFs, exec, now = Date.now, failQuietMs = FAIL_QUIET_MS, spawnProcess,
+}: {
+  home: string
+  fs?: MachineFs
+  exec?: ShellExec
+  now?: () => number
+  failQuietMs?: number
+  spawnProcess?: DevinStoreOptions['spawnProcess']
+}) {
+  const atif = createAtifTranscripts({ home, fs, now, failQuietMs })
+  const store = createDevinStore({ home, fs, exec, now, failQuietMs, ...(spawnProcess ? { spawnProcess } : {}) })
+  const picks = new Map<string, { use: boolean, at: number }>()
+  const PICK_RETRY_MS = 60 * 1000
+  async function useStore(session: string): Promise<boolean> {
+    const p = picks.get(session)
+    if (p && (p.use || now() - p.at < PICK_RETRY_MS)) return p.use
+    const use = await store.probe()
+    picks.set(session, { use, at: now() })
+    if (picks.size > 64) picks.delete(picks.keys().next().value!)
+    return use
+  }
+  return {
+    async chat(pane: TranscriptPane, opts: DevinOptions = {}) {
+      if (pane.agentSession && await useStore(pane.agentSession)) {
+        // A thrown read error falls back the same way an unavailable store
+        // does: ATIF answers this poll and the pick rests for the retry
+        // window, so a broken reader never freezes the conversation.
+        const r = await store.chat(pane, opts).catch(() => null)
+        if (r?.available) return r
+        picks.set(pane.agentSession, { use: false, at: now() })
+      }
+      return atif.chat(pane, opts)
+    },
+    async image(pane: TranscriptPane, fileId: string | null, ref: string | null, index: number) {
+      if (pane.agentSession && await useStore(pane.agentSession)) {
+        const img = await store.image(pane, fileId, ref, index).catch(() => null)
+        if (img) return img
+      }
+      return atif.image(pane, fileId, ref, index)
+    },
+    async search(pane: TranscriptPane, text: string, deadline: number) {
+      if (pane.agentSession && await useStore(pane.agentSession)) {
+        const r = await store.search(pane, text, deadline).catch(() => null)
+        if (r) return r
+      }
+      return atif.search(pane, text, deadline)
+    },
+    async model(pane: TranscriptPane): Promise<ModelInfo | null> {
+      if (pane.agentSession && await useStore(pane.agentSession)) {
+        const m = await store.model(pane).catch(() => null)
+        if (m) return m
+      }
+      return atif.model(pane)
+    },
+    // The locator names the ATIF path (its basename is the file id of ATIF
+    // pages; store pages carry their own `devin-<hash>` id instead).
+    pathOf: (session: string) => atif.pathOf(session),
+  }
 }
