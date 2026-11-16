@@ -201,12 +201,25 @@ terminal.
 
 Antigravity CLI (`agy`, tested with 1.5.8) is read through its saved
 conversations at `~/.gemini/antigravity-cli/conversations/<uuid>.db` (SQLite,
-WAL mode; remote machines open a local copy kept between reads — the database
-goes back through `machine.exec` only when its own identity moves, a matching
-WAL generation only ships its grown tail, a pair that moved under the copy is
-retried so `node:sqlite` always opens one generation, and 256 MiB is the
-snapshot limit; locally the live file opens read-only first). Step payloads are protobuf
-blobs decoded by a small bounds-checked reader (`server/utils/agyProtobuf.ts`).
+WAL mode; the database and its `-wal` sidecar are copied to a snapshot before
+`node:sqlite` opens them, so remote machines read a consistent view through
+`machine.exec`, and 256 MiB is the snapshot limit). A remote conversation keeps
+one local base copy between reads: the main file ships over again only when
+its own identity moves, a WAL still under the same 32-byte header ships only
+its grown tail and is appended to the kept copy — but only after the last
+frame that copy holds is re-read unchanged, since a rewound savepoint can
+rewrite a spilled frame's header in place inside one generation; a restart or
+a stale kept frame rewrites the file once. A copy that ends mid-frame is cut
+back to the last whole frame (a frame's 24-byte header and its page are
+separate writes), so a partial frame is never trusted across reads — and both
+files are stat'ed fresh after the copy so a move under it retries rather than
+opening a torn pair.
+A WAL-mode checkpoint rewrites the database file, so the next read ships it
+in full again; a page-level delta would need a page-hash helper on the remote
+machine (no such primitive exists on `MachineFs` today), which is why the
+copy stays whole — bounded by the snapshot limit — until one lands. Step
+payloads are protobuf blobs decoded by a small bounds-checked reader
+(`server/utils/agyProtobuf.ts`).
 The session is resolved fail-closed from what the `agy` process holds open —
 `conversations/<uuid>.db`, its WAL/SHM sidecars or `presence/<uuid>.lock` —
 checked on Linux through `/proc/<pid>/fd` and elsewhere through `lsof`, with the
@@ -217,7 +230,10 @@ one top-level live conversation claims the pane's folder. Local
 `ANTIGRAVITY_APP_DATA_DIR` is honored; remote machines use their home and the
 default path. Checkpoints and internal system steps are not rendered; a tool
 result stored in a later step invalidates the pages that held the call, and
-model metadata comes from `gen_metadata`.
+model metadata comes from `gen_metadata`. `node:sqlite` needs Node 22.13 or
+later and is loaded only when an Antigravity conversation is read: on an older
+Node the pane stays in Terminal mode (Conversation unavailable), and no other
+agent loads or warns about it.
 
 Text left unsent in Claude Code's own input box (a draft or paste never submitted, or the
 prompt Claude puts back after an interrupt) shows at the end of the conversation as

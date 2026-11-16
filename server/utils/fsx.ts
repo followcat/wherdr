@@ -14,7 +14,10 @@ export interface FsStat { size: number, mtimeMs: number, isFile: boolean, isDir:
 export interface PidLock { name: string, pid: number, stat: FsStat }
 
 export interface MachineFs {
-  stat: (p: string) => Promise<FsStat> // rejette si absent
+  // `fresh` bypasses any stat cache: for the checks that verify a copy
+  // against the file's state *now*, never for plain reads (the cache is
+  // what keeps per-second polls cheap). Rejects when missing.
+  stat: (p: string, opts?: { fresh?: boolean }) => Promise<FsStat>
   statMany: (ps: string[]) => Promise<(FsStat | null)[]>
   readdir: (p: string) => Promise<string[]>
   readFile: (p: string) => Promise<string>
@@ -153,7 +156,8 @@ for f; do
 done`
 
 // Open files of a process: /proc/<pid>/fd targets on Linux, `lsof -Fn` on
-// macOS (its `n` lines hold the paths). Nothing on stdout when neither exists.
+// macOS (its `n` lines hold the paths). `!` alone when the machine has neither:
+// an unavailable scan must never pass for "no files".
 const PROCESS_FILES_SCRIPT = `if [ -d "/proc/$1/fd" ]; then
   for f in "/proc/$1/fd"/*; do
     [ -e "$f" ] || continue
@@ -161,6 +165,8 @@ const PROCESS_FILES_SCRIPT = `if [ -d "/proc/$1/fd" ]; then
   done
 elif command -v lsof >/dev/null 2>&1; then
   lsof -Fn -p "$1" 2>/dev/null | sed -n 's/^n//p' | sed -n '/^\\//p'
+else
+  echo '!'
 fi`
 
 export function parseStatLine(line: string): FsStat | null {
@@ -233,7 +239,8 @@ export function createShellFs(exec: ShellExec, opts: { statTtlMs?: number, chunk
   }
 
   return {
-    async stat(p) {
+    async stat(p, o) {
+      if (o?.fresh) statCache.delete(p)
       const [s] = await statMany([p])
       if (!s) throw new FsError('ENOENT', `not found: ${p}`)
       return s
@@ -258,8 +265,9 @@ export function createShellFs(exec: ShellExec, opts: { statTtlMs?: number, chunk
       return b.toString('utf8').split('\n').filter(Boolean)
     },
     async readProcessFiles(pid) {
-      const b = await run(PROCESS_FILES_SCRIPT, [String(pid)], 10000)
-      return b.toString('utf8').split('\n').filter(l => l.startsWith('/'))
+      const raw = (await run(PROCESS_FILES_SCRIPT, [String(pid)], 10000)).toString('utf8')
+      if (raw.trim() === '!') return null
+      return raw.split('\n').filter(l => l.startsWith('/'))
     },
     async readFile(p) {
       return (await run(REQUIRE_PATH + 'cat "$1"', [p])).toString('utf8')

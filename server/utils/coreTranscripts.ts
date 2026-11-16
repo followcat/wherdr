@@ -122,16 +122,17 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
       procs.unshift(...agentDescendants(Buffer.from(ps?.stdout || '', 'base64').toString('utf8'), d.pid))
     }
     const snapshotNames = new Set(['devin', 'agy', 'antigravity', 'antigravity-cli'])
-    const devin = procs.filter(p => [baseName(p.name), ...(p.argv?.slice(0, 2).map(baseName) || [])].some(n => snapshotNames.has(n)) && Number.isSafeInteger(p.pid) && p.pid! > 0)
-    if (devin.length) {
-      // Exact argv and a conservative birth bound, read together on the agent's machine.
+    const snapshotted = procs.filter(p => [baseName(p.name), ...(p.argv?.slice(0, 2).map(baseName) || [])].some(n => snapshotNames.has(n)) && Number.isSafeInteger(p.pid) && p.pid! > 0)
+    if (snapshotted.length) {
+      // Exact argv and a conservative birth bound for Devin and Antigravity
+      // processes, read together on the agent's machine.
       const on = machineOfAddress(address)
       const r = await deps.call<{ stdout?: string }>('machine.exec', {
-        argv: ['sh', '-c', DEVIN_PROCESS_SCRIPT, 'sh', ...devin.map(p => String(p.pid))],
+        argv: ['sh', '-c', DEVIN_PROCESS_SCRIPT, 'sh', ...snapshotted.map(p => String(p.pid))],
         ...(on ? { on } : {}), timeout: 5,
       }, 8000).catch(() => null)
       const snapshot = devinProcesses(Buffer.from(r?.stdout || '', 'base64').toString('utf8'))
-      for (const p of devin) Object.assign(p, snapshot.get(p.pid!))
+      for (const p of snapshotted) Object.assign(p, snapshot.get(p.pid!))
     }
     return info
   }
