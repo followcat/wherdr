@@ -332,6 +332,118 @@ describe('the main coordinator (WHR-398)', () => {
     await vi.waitFor(() => expect(sent).toEqual([expect.stringContaining('give me another name?')]))
   })
 
+  it('runs Alfred with Devin: trust flag, wherdr allowed in its home, first message after --, resume with -c after the old session ended', async () => {
+    const lines: string[] = [], calls: string[] = []
+    const call = async (method: string, params: Record<string, unknown>) => {
+      if (method === 'terminal.run') { calls.push(`run${lines.length + 1}`); lines.push(params.line as string); return { address: `host/t${lines.length}` } }
+      if (method === 'terminal.kill') { calls.push(`kill${(params as { terminal: string }).terminal}`); return {} }
+      // A resting Devin reports done: its argv prompt counts as delivered.
+      if (method === 'terminal.get') return { state: 'live', status: { state: 'done' } }
+      if (method === 'terminal.read') return { text: 'devin ready' }
+      return {}
+    }
+    const home = path.join(dir, 'alfred')
+    // queueWatchMs small: a 'done' rest state misread as "not ready" would leave the
+    // message undelivered on its record — it must count as up.
+    const d = { store, call, machines: () => [], alfredHome: home, pollMs: 1, queueWatchMs: 50 } as never
+    await startCoordinator(d, MAIN, { program: 'devin', model: 'ignored' }, { local: 'http://127.0.0.1:7690' })
+    expect(lines[0]).toMatch(/exec 'devin' '--respect-workspace-trust' 'false' '--' 'Follow .*give me another name\?"'$/)
+    expect(lines[0]).not.toContain('--model')
+    // The folder's own .devin/config.json allows the wherdr command and nothing else.
+    expect(JSON.parse(await fs.readFile(path.join(home, '.devin/config.json'), 'utf8')))
+      .toEqual({ permissions: { allow: ['Exec(wherdr)', 'Exec(./bin/wherdr)'], deny: [] } })
+    await vi.waitFor(async () => expect(Object.keys(await store.coordinator(MAIN) ?? {})).toContain('ran'))
+    await new Promise(r => setTimeout(r, 120))
+    expect((await store.coordinator(MAIN))!.undelivered).toBeUndefined()
+    // Its resume line keeps the flag and -c, still with the message after --; the
+    // old session is ended first or Devin refuses it ("already open in another process").
+    await startCoordinator(d, MAIN, { resume: true }, { local: 'http://127.0.0.1:7690' }, ['Back again'])
+    expect(lines[1]).toMatch(/exec 'devin' '--respect-workspace-trust' 'false' '-c' '--' 'Back again'$/)
+    expect(calls).toEqual(['run1', 'killhost/t1', 'run2', 'killhost/t1'])
+    expect(await store.coordinator(MAIN)).toMatchObject({ ran: { program: 'devin' } })
+    // A program without a folder-scoped resume cannot be resumed.
+    await store.saveCoordinator({ ...(await store.coordinator(MAIN))!, ran: { program: 'omp' } })
+    await expect(startCoordinator(d, MAIN, { resume: true }, { local: 'http://127.0.0.1:7690' })).rejects.toThrow('Only a Claude, Codex, Devin, Cursor or Antigravity conversation can be resumed')
+    expect(coordinatorArgs('devin', '/h/c')).toEqual(['devin', '--respect-workspace-trust', 'false'])
+    expect(coordinatorArgs('devin', '/h/c', undefined, false, true)).toEqual(['devin', '--respect-workspace-trust', 'false', '-c'])
+  })
+
+  it('runs Alfred with Cursor Agent: cursor-agent --trust, wherdr allowlisted in its home, greeting typed once ready', async () => {
+    const lines: string[] = [], sent: unknown[] = []
+    const call = async (method: string, params: Record<string, unknown>) => {
+      if (method === 'terminal.run') { lines.push(params.line as string); return { address: `host/t${lines.length}` } }
+      // Cursor reports no status: its ready field is a still screen.
+      if (method === 'terminal.get') return { state: 'live', status: null }
+      if (method === 'terminal.read') return { text: 'Cursor Agent\n→ Add a follow-up' }
+      if (method === 'terminal.send') sent.push(params.text)
+      return {}
+    }
+    const home = path.join(dir, 'alfred')
+    const d = { store, call, machines: () => [], alfredHome: home, pollMs: 1 } as never
+    await startCoordinator(d, MAIN, { program: 'cursor' }, { local: 'http://127.0.0.1:7690' })
+    expect(lines[0]).toMatch(/exec 'cursor-agent' '--trust'$/)
+    expect(JSON.parse(await fs.readFile(path.join(home, '.cursor/cli.json'), 'utf8')))
+      .toEqual({ permissions: { allow: ['Shell(wherdr*)', 'Shell(./bin/wherdr*)'], deny: [] } })
+    await vi.waitFor(() => expect(sent).toEqual([expect.stringContaining('give me another name?')]))
+    // Its resume keeps --trust and adds --continue; the message is typed.
+    sent.length = 0
+    await startCoordinator(d, MAIN, { resume: true }, { local: 'http://127.0.0.1:7690' }, ['Back again'])
+    expect(lines[1]).toMatch(/exec 'cursor-agent' '--trust' '--continue'$/)
+    await vi.waitFor(() => expect(sent).toEqual(['Back again']))
+    expect(coordinatorArgs('cursor', '/h/c')).toEqual(['cursor-agent', '--trust'])
+    expect(coordinatorArgs('cursor', '/h/c', undefined, false, true)).toEqual(['cursor-agent', '--trust', '--continue'])
+  })
+
+  it('a Cursor MCP approval box ends as a waiting dialog: never typed into, never answered', async () => {
+    const mcp = await fs.readFile(new URL('./fixtures/cursor-mcp-approval.txt', import.meta.url), 'utf8')
+    const call = async (method: string, params: Record<string, unknown>) => {
+      if (method === 'terminal.run') return { address: 'host/t1' }
+      if (method === 'terminal.get') return { state: 'live', status: null }
+      if (method === 'terminal.read') return { text: mcp }
+      return {}
+    }
+    const d = { store, call, machines: () => [], alfredHome: path.join(dir, 'alfred'), pollMs: 1, queueWatchMs: 50 } as never
+    await startCoordinator(d, MAIN, { program: 'cursor' }, { local: 'http://127.0.0.1:7690' })
+    await vi.waitFor(async () => expect((await store.coordinator(MAIN))!.undelivered).toMatchObject({ why: expect.stringContaining('not ready') }))
+    // The dialog is never answered either (the user's MCP servers are theirs).
+    expect(trustKeys(mcp, path.join(dir, 'alfred'))).toBeUndefined()
+  })
+
+  it('runs Alfred with Antigravity: its trust box answered, AGENTS.md told by the prompt, -i message, -c resume after the old session ended', async () => {
+    const trust = await fs.readFile(new URL('./fixtures/agy-trust.txt', import.meta.url), 'utf8')
+    const calls: string[] = [], lines: string[] = [], keys: unknown[] = []
+    let answered = false
+    const call = async (method: string, params: Record<string, unknown>) => {
+      if (method === 'terminal.run') { calls.push(`run${lines.length + 1}`); lines.push(params.line as string); return { address: `host/t${lines.length}` } }
+      if (method === 'terminal.kill') { calls.push(`kill${params.terminal}`); return {} }
+      // Antigravity reports `done` at rest — and on its trust box too.
+      if (method === 'terminal.get') return { state: 'live', status: { state: 'done' } }
+      if (method === 'terminal.read') return { text: answered ? 'Orchestrator (Carbon)' : trust.replaceAll('/home/user/acme-shop', path.join(dir, 'alfred')) }
+      if (method === 'terminal.keys') { answered = true; keys.push(params.keys) }
+      return {}
+    }
+    const home = path.join(dir, 'alfred')
+    const d = { store, call, machines: () => [], alfredHome: home, pollMs: 1 } as never
+    await startCoordinator(d, MAIN, { program: 'agy' }, { local: 'http://127.0.0.1:7690' })
+    expect(keys).toEqual([['enter']])
+    expect(lines[0]).toContain(`exec 'agy' '-i'`)
+    expect(lines[0]).toContain('AGENTS.md: it is your role file')
+    expect(lines[0]).toContain('give me another name?')
+    // No permission file exists for it: AGENTS.md alone is written for it.
+    await expect(fs.stat(path.join(home, 'AGENTS.md'))).resolves.toBeTruthy()
+    // A second conversation needs the first ended, like Devin's.
+    answered = true
+    await startCoordinator(d, MAIN, { resume: true }, { local: 'http://127.0.0.1:7690' }, ['Back again'])
+    expect(lines[1]).toContain(`exec 'agy' '-c' '-i'`)
+    expect(lines[1]).toContain('Back again')
+    expect(calls[1]).toBe('killhost/t1')
+    expect(calls.indexOf('killhost/t1')).toBeLessThan(calls.indexOf('run2'))
+    expect(await store.coordinator(MAIN)).toMatchObject({ ran: { program: 'agy' } })
+    expect(trustKeys(trust, '/home/user/acme-shop')).toEqual(['enter'])
+    expect(coordinatorArgs('agy', '/h/c')).toEqual(['agy'])
+    expect(coordinatorArgs('agy', '/h/c', undefined, false, true)).toEqual(['agy', '-c'])
+  })
+
   it('runs Alfred with projects off: its record is saved, its instructions say how to switch them on', async () => {
     await store.setEnabled(false)
     const home = path.join(dir, 'alfred')

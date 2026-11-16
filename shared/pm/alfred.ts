@@ -21,6 +21,14 @@ export const OWN_FILES: Record<string, string> = {
   'memory.md': MEMORY_FILE,
 }
 
+// A harness's own files in Alfred's home, rewritten at each start like
+// AGENTS.md: the folder-local permission that lets it run `wherdr` without
+// asking, and nothing else. Antigravity knows no such mechanism (W1 report).
+export const ALFRED_PROGRAM_FILES: Partial<Record<CoordinatorProgram, Record<string, string>>> = {
+  devin: { '.devin/config.json': `${JSON.stringify({ permissions: { allow: ['Exec(wherdr)', 'Exec(./bin/wherdr)'], deny: [] } }, null, 2)}\n` },
+  cursor: { '.cursor/cli.json': `${JSON.stringify({ permissions: { allow: ['Shell(wherdr*)', 'Shell(./bin/wherdr*)'], deny: [] } }, null, 2)}\n` },
+}
+
 // The name on identity.md's "Name:" line (the sidebar shows it).
 export function alfredName(identity: string | null | undefined): string {
   const m = /^[\s*_-]*name[*_]*\s*:\s*(.+)$/im.exec(identity ?? '')
@@ -47,8 +55,9 @@ export const startPrompt = (first: boolean, name: string, v2 = false, none = fal
     : `Follow "At start" in AGENTS.md, then say exactly: "${FIRST_MESSAGE}"`)
 
 // Its start message, as the chat reads it back: wherdr's, not the user's (a
-// collapsed system line, never the conversation's title).
-export const isStartPrompt = (text: string) => /^\s*Follow "At start" in AGENTS\.md\b/.test(text)
+// collapsed system line, never the conversation's title). Antigravity's copy
+// leads with the one line that tells it to read AGENTS.md (PROMPT_LEAD).
+export const isStartPrompt = (text: string) => /^\s*(?:First read this folder's AGENTS\.md[^\n]*\n+)?Follow "At start" in AGENTS\.md\b/.test(text)
 
 export interface AlfredContext {
   home: string, version: string, docs: string, docFiles: string[], pm: boolean

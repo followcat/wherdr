@@ -210,6 +210,40 @@ describe('resume and first message', () => {
     expect(r.first_message).toBe('sent')
     expect(t.calls.filter(c => c[0] === 'terminal.send')).toEqual([['terminal.send', { terminal: 't3', text: 'hello' }]])
   })
+  it('types into a program that reports done at rest (Devin, Antigravity)', async () => {
+    const t = setup((m: string) => m === 'terminal.get' ? { state: 'live', status: { state: 'done' } } : m === 'terminal.read' ? { text: '> ' } : {})
+    expect(await sendFirstMessage({ ...t.deps, pollMs: 1, readyWatchMs: 200 }, 't3', 'x')).toBe('sent')
+    expect(t.calls.filter(c => c[0] === 'terminal.send')).toEqual([['terminal.send', { terminal: 't3', text: 'x' }]])
+  })
+  it('probes and launches Cursor through its real binary, cursor-agent', async () => {
+    const t = setup(() => ({ address: 't3' }))
+    const d = { ...t.deps, call: (async (m: string, p: any) => {
+      t.calls.push([m, p])
+      if (m === 'machine.exec') {
+        const script: string = p.argv[2]
+        if (script.includes('command -v')) return { code: 0, stdout: b64('cursor-agent') }
+        if (script.startsWith('test')) return { code: 0, stdout: '' }
+        return { code: 0, stdout: b64('/home/u') }
+      }
+      return m === 'terminal.run' ? { address: 't3' } : m === 'terminal.get' ? { state: 'live', status: null } : m === 'terminal.read' ? { text: '→ Add a follow-up' } : {}
+    }) as never }
+    expect(await coreCreate(d, { kind: 'cursor', cwd: '/home/u', machine: '7667' })).toMatchObject({ pane_id: 'w2:p2', name: 'cursor' })
+    const probe = t.calls.find(c => c[0] === 'machine.exec' && String(c[1].argv[2]).includes('command -v'))![1].argv as string[]
+    expect(probe).toContain('cursor-agent')
+    expect(probe).not.toContain('cursor')
+    expect(t.runs()[0]![1].line).toContain(agentLaunch(`'cursor-agent'`))
+    expect(t.runs()[0]![1].line).not.toContain(`'cursor'`)
+  })
+  it('never types into Cursor\'s MCP approval or command-permission box', async () => {
+    const fs = await import('node:fs/promises')
+    for (const fixture of ['cursor-mcp-approval', 'cursor-permission-command']) {
+      const text = await fs.readFile(new URL(`./fixtures/${fixture}.txt`, import.meta.url), 'utf8')
+      const t = setup()
+      const d = { ...t.deps, call: (async (m: string, p: object) => { t.calls.push([m, p]); return m === 'terminal.read' ? { text } : { state: 'live', status: null } }) as never, pollMs: 1, readyWatchMs: 60 }
+      expect(await sendFirstMessage(d, 't3', 'x')).toBe('dialog')
+      expect(t.calls.some(c => c[0] === 'terminal.send')).toBe(false)
+    }
+  })
   it('never types into a blocked program, a dialog or a finished terminal', async () => {
     for (const [reply, out] of [[{ state: 'live', status: { state: 'blocked' } }, 'dialog'], [{ state: 'finished' }, 'skipped']] as const) {
       const t = setup(() => ({}))

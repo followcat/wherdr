@@ -1,0 +1,8 @@
+ $ cd /home/user/acme-shop && ./bin/wherdr pm help in .
+
+ Run this command?
+ Not in allowlist: cd
+  → Run (once) (y)
+    Add Shell(cd) to allowlist? (tab)
+    Run Everything (shift+tab)
+    Skip & tell the agent what to do instead (esc or n)

@@ -7,7 +7,7 @@ import { CoreError } from './core'
 import { HerdrError } from './herdr'
 import { failure } from './coreInput'
 import { AGENT_KINDS, RESUME_ARGS } from './env'
-import { HERDR_AGENT_KINDS, availableAgentKinds } from '../../shared/launchableAgents'
+import { HERDR_AGENT_KINDS, agentBinary, availableAgentKinds, binaryKind } from '../../shared/launchableAgents'
 import { KIND_PROBE_SCRIPT, USER_PATH_SETUP } from './agentAvailability'
 import { LIST_DIRS_SCRIPT, dirDeniedFromCode, parseDirList } from './fsx'
 import { toAgentName } from '../../shared/ids'
@@ -77,8 +77,8 @@ export async function kindsOf(deps: CoreAdminDeps, on?: string) {
   const old = kindsCache.get(on || '')
   if (old && Date.now() - old.at < 30_000) return old.kinds
   const candidates = HERDR_AGENT_KINDS.filter(k => AGENT_KINDS.includes(k))
-  const r = await exec(deps, on, KIND_PROBE_SCRIPT, candidates)
-  const found = r.code === 0 ? r.stdout.split('\n').filter(Boolean) : []
+  const r = await exec(deps, on, KIND_PROBE_SCRIPT, candidates.map(agentBinary))
+  const found = r.code === 0 ? r.stdout.split('\n').filter(Boolean).map(binaryKind) : []
   const kinds = availableAgentKinds(found, AGENT_KINDS)
   kindsCache.set(on || '', { at: Date.now(), kinds })
   return kinds
@@ -146,7 +146,7 @@ export async function launchFailure(deps: CoreAdminDeps, address: string, ms: nu
 
 const MAX_FIRST = 64 * 1024
 // A dialog the program waits on (trust a folder, confirm, a numbered menu): nothing is typed into it.
-const DIALOG_RE = /Enter to confirm|Esc to cancel|\(y\/n\)|\[y\/N\]|enter continue|esc back|trust (this|the) folder|^\s*[›>❯]\s*1\.\s/im
+const DIALOG_RE = /Enter to confirm|Esc to cancel|\(y\/n\)|\[y\/N\]|enter continue|esc back|trust (this|the) folder|MCP Server Approval|Run this command\?|^\s*[›>❯]\s*1\.\s/im
 // A program that reports no status at all is trusted once its screen has been still this long.
 const STILL_POLLS = 6
 
@@ -172,7 +172,8 @@ export async function sendFirstMessage(deps: CoreAdminDeps, address: string, tex
     if (DIALOG_RE.test(screen)) return 'dialog'
     stable = screen.trim() && screen === last ? stable + 1 : 0
     last = screen
-    if (state === 'idle' ? stable >= 2 : !sawStatus && stable >= STILL_POLLS) {
+    // done is a rest state too (Devin, Antigravity): at rest it accepts input.
+    if (state === 'idle' || state === 'done' ? stable >= 2 : !sawStatus && stable >= STILL_POLLS) {
       try { await deps.call('terminal.send', { terminal: address, text }, 30000); return 'sent' } catch { return 'skipped' }
     }
     await new Promise(r => setTimeout(r, step))
@@ -199,7 +200,7 @@ export async function sendAfterDialog(deps: CoreAdminDeps, address: string, text
 // seconds still ends the terminal (launchFailure reports it); on exit the pane
 // returns to an interactive shell instead of closing.
 const launchLine = (kind: string, args: string[]) => (kind === 'codex' ? codexLine(args)
-  : `t0=$(date +%s 2>/dev/null || echo 0); ${[kind, ...args].map(quote).join(' ')}; s=$?; ${EXIT_OR_BASH}`)
+  : `t0=$(date +%s 2>/dev/null || echo 0); ${[agentBinary(kind), ...args].map(quote).join(' ')}; s=$?; ${EXIT_OR_BASH}`)
 
 export interface CreateBody { kind?: unknown, machine?: unknown, cwd?: unknown, name?: unknown, workspace?: unknown, prompt?: unknown, resume?: unknown, proxy?: unknown }
 
