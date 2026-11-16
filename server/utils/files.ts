@@ -26,7 +26,7 @@ import { HerdrError } from './herdr'
 import type { Machine } from './machines'
 
 const MAX_ENTRIES = 2000
-const TEXT_BYTES = 256 * 1024
+export const TEXT_BYTES = 256 * 1024
 const IMAGE_BYTES = 2 * 1024 * 1024
 export const DOWNLOAD_BYTES = 50 * 1024 * 1024
 const IMAGE_TYPES: Record<string, string> = {
@@ -36,6 +36,8 @@ const IMAGE_TYPES: Record<string, string> = {
 // A PDF: its extension, and its signature in the first kilobyte (where
 // readers look for it). Shown by the browser's own viewer, up to DOWNLOAD_BYTES.
 const PDF_HEAD = 1024
+// An agent's HTML page, shown as a page (sandboxed: fileDownload.ts) up to TEXT_BYTES.
+export const isHtmlPage = (name: string) => /\.html?$/i.test(name)
 export const isPdf = (name: string, head: Buffer) =>
   path.posix.extname(name).toLowerCase() === '.pdf' && head.subarray(0, PDF_HEAD).includes('%PDF-')
 

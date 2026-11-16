@@ -12,6 +12,9 @@ describe('pasted message', () => {
     expect(unwrapPasted('\n\n<pasted_content id="1">\nA\nB\n</pasted_content id="1">\n\n')).toBe('A\nB')
     expect(unwrapPasted('voici :\n<pasted_content>\nA\n</pasted_content>')).toBe('voici :\nA')
     expect(unwrapPasted('<task-notification>x')).toBe('<task-notification>x')
+    // Sent with `hc send` from another terminal: the photo path is a line of its own again.
+    expect(unwrapPasted('[Image #1]\n<pasted_content id="a">\n<hc from="t7">/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.png\nlook\n</hc>\n</pasted_content id="a">'))
+      .toBe('[Image #1]\n/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.png\nlook')
   })
 
   it('shows the message as a user message, reply in its place', () => {

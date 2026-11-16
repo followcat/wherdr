@@ -11,14 +11,15 @@
 // coordinator window (both read the shared coordinators, so a save in one
 // shows in the other), and a link to the pace of every account. A
 // coordinator's proposed workflow change: a badge on Workflow, its first row
-// there opens the review (ProposalReview), at once when the URL asks (`review=1`).
+// there with Accept / Refuse (as the chat's card) and See all changes, the
+// review (ProposalReview), opened at once when the URL asks (`review=1`).
 // Workflow and Autopilot start with their name, what each is and a link to the
 // other (PartHead).
 import type { Project, TemplateInfo } from '#shared/pm/project'
 import { PROJECT_COLORS, shownKey } from '#shared/pm/projectKey'
 import { ARCHIVE_DAYS, archiveDays } from '#shared/pm/archive'
 import type { LogEntry } from '#shared/pm/templateText'
-import { SETUP_TIMEOUT, checkSetup, type Prefs, type Template, type WorkflowError, type WorktreeSetup } from '#shared/pm/workflow'
+import { SETUP_TIMEOUT, checkSetup, isRelPath, type Prefs, type Template, type WorkflowError, type WorktreeSetup } from '#shared/pm/workflow'
 import { workflowBase } from '#shared/pm/run'
 import ProjectWorkflow from '~/components/ProjectWorkflow.vue'
 import type { RepoVisibility } from '#shared/pm/visibility'
@@ -61,6 +62,7 @@ async function load() {
   filling = true
   fill(p.value, workflow.value?.prefs ?? {})
   fillSetup(workflow.value?.worktree)
+  fillInstr(p.value)
   filling = false
   keyInput.value = form.key
   loaded.value = true
@@ -72,11 +74,28 @@ const setup = reactive({ copy: '', share: '', noShare: false, lockfile: '', comm
 const fillSetup = (w: WorktreeSetup = {}) => Object.assign(setup, { copy: (w.copy ?? []).join('\n'), share: (w.share ?? []).join('\n'), noShare: !!w.share && !w.share.length, lockfile: w.lockfile ?? '', command: w.command ?? '', timeout: w.timeout ?? '' })
 const paths = (v: string) => v.split(/[\n,]/).map(x => x.trim()).filter(Boolean)
 const setupBody = () => ({ copy: paths(setup.copy), share: setup.noShare ? [] : paths(setup.share).length ? paths(setup.share) : undefined, lockfile: setup.lockfile.trim(), command: setup.command.trim(), timeout: setup.timeout.trim() })
+// Workspace instructions files (workspace.ts), on a workspace or a member:
+// inherit (the workspace's, or on a workspace the default), off ([]), or these files.
+const wsKind = computed(() => (p.value.kind === 'workspace' ? 'workspace' : p.value.workspace ? 'member' : ''))
+const instr = reactive({ instrMode: 'inherit', instrFiles: '' })
+const fillInstr = (x: Project) => {
+  const list = x.workspace ? ((x.overrides ?? []).includes('instructionsFiles') ? x.instructionsFiles ?? [] : undefined) : x.shared?.instructionsFiles
+  Object.assign(instr, { instrMode: !list ? 'inherit' : list.length ? 'files' : 'off', instrFiles: (list ?? []).join('\n') })
+}
+const instrBody = () => (instr.instrMode === 'off' ? [] : instr.instrMode === 'files' && paths(instr.instrFiles).length ? paths(instr.instrFiles) : null)
+const instrItems = computed(() => [
+  { label: wsKind.value === 'workspace' ? tl('Default: AGENTS.md, else CLAUDE.md') : tl(`Workspace ${p.value.workspace}'s`), value: 'inherit' },
+  { label: tl('These files'), value: 'files' },
+  { label: tl('None'), value: 'off' },
+])
 // The server's own rules on the setup (empty fields dropped), each error under its field.
 const invalid = (): Record<string, string> => {
   const errs: WorkflowError[] = []
   checkSetup(Object.fromEntries(Object.entries(setupBody()).filter(([, v]) => v !== '' && v !== undefined)), errs)
-  return Object.fromEntries(errs.map(e => [e.path.replace('worktree.', ''), tl(`${e.message[0]!.toUpperCase()}${e.message.slice(1)}.`)]))
+  const out = Object.fromEntries(errs.map(e => [e.path.replace('worktree.', ''), tl(`${e.message[0]!.toUpperCase()}${e.message.slice(1)}.`)]))
+  const files = instr.instrMode === 'files' ? paths(instr.instrFiles) : []
+  if (files.length > 10 || !files.every(isRelPath)) out.instrFiles = tl('Up to 10 paths under the workspace\'s root (no *, no .., not absolute).')
+  return out
 }
 
 // Every field saves by itself (useAutosave): the whole form in one call, each
@@ -84,7 +103,7 @@ const invalid = (): Record<string, string> => {
 const send = async () => {
   const { name, coordinatorName, key, color, base, branchName, archiveAfter, deleteBranch, reach, ...prefs } = form
   const was = last.value
-  const r = await api<{ project: Project }>('/api/pm/project-update', { key: was.key, name, coordinatorName, base, branchName, archiveAfter: Number(archiveAfter), deleteBranch, reach: Object.entries(reach).map(([project, level]) => ({ project, level })), ...(color && color !== was.color ? { color } : {}), ...(key.toUpperCase() !== shownKey(was) ? { newKey: key } : {}), ...(workflow.value ? { prefs, worktree: setupBody() } : {}) })
+  const r = await api<{ project: Project }>('/api/pm/project-update', { key: was.key, name, coordinatorName, base, branchName, archiveAfter: Number(archiveAfter), deleteBranch, reach: Object.entries(reach).map(([project, level]) => ({ project, level })), ...(color && color !== was.color ? { color } : {}), ...(key.toUpperCase() !== shownKey(was) ? { newKey: key } : {}), ...(workflow.value ? { prefs, worktree: setupBody() } : {}), ...(wsKind.value ? { instructionsFiles: instrBody() } : {}) })
   // The form keeps what was typed; the shared lists that show its key, color and agents are read again.
   last.value = r.project
   emit('changed')
@@ -93,14 +112,14 @@ const send = async () => {
   loadTaskAgents()
 }
 const auto = useAutosave(send, invalid)
-const GROUP: Record<string, string> = { color: 'key', agent: 'worker', model: 'worker', reviewAgent: 'reviewer', reviewModel: 'reviewer', reviewFallbackAgent: 'fallback', reviewFallbackModel: 'fallback', noShare: 'share' }
+const GROUP: Record<string, string> = { instrFiles: 'instrMode', color: 'key', agent: 'worker', model: 'worker', reviewAgent: 'reviewer', reviewModel: 'reviewer', reviewFallbackAgent: 'fallback', reviewFallbackModel: 'fallback', noShare: 'share' }
 // The key is typed in keyInput and saved only on blur or Enter (commitKey): a
 // pause mid-rename would make a partial key a real rename and a former key for good.
 const keyInput = ref('')
 const commitKey = () => { form.key = keyInput.value }
-const TYPED = ['name', 'coordinatorName', 'branchName', 'model', 'reviewModel', 'reviewFallbackModel', 'copy', 'share', 'lockfile', 'command', 'timeout']
+const TYPED = ['name', 'coordinatorName', 'branchName', 'model', 'reviewModel', 'reviewFallbackModel', 'copy', 'share', 'lockfile', 'command', 'timeout', 'instrFiles']
 let filling = false
-for (const [o, keys] of [[form, Object.keys(form)], [setup, Object.keys(setup)]] as const)
+for (const [o, keys] of [[form, Object.keys(form)], [setup, Object.keys(setup)], [instr, Object.keys(instr)]] as const)
   for (const k of keys) watch(() => JSON.stringify((o as Record<string, unknown>)[k]), () => { if (!filling) auto.change(GROUP[k] ?? k, !TYPED.includes(k)) }, { flush: 'sync' })
 onMounted(() => { load().catch((e) => { error.value = (e as Error).message }); loadCoordinators() })
 
@@ -173,6 +192,8 @@ watch(() => `${props.tab}|${route.query.target}|${!!sheet.value}`, async () => {
 }, { immediate: true })
 onBeforeUnmount(() => endHalo())
 const reviewed = (accepted: boolean) => { if (accepted) workflowChanged() }
+// Accept / Refuse on the Workflow tab's proposal row, as on its card in the chat.
+const { busy: answerBusy, error: answerError, answer } = useProposalAnswer(() => p.value.key, reviewed)
 const menu = (): MenuItem[] => [
   ...(props.tab === 'workflow' && workflowTab.value ? [...workflowTab.value.menu(), { kind: 'separator' as const }] : []),
   { label: tl(`Remove ${p.value.name}`), icon: 'i-lucide-trash-2', danger: true, run: remove },
@@ -266,6 +287,16 @@ async function remove() {
             <small v-if="auto.errors.archiveAfter" class="form-error pm-field-error" role="alert">{{ t(auto.errors.archiveAfter) }}</small>
             <small class="muted">{{ tl('A done task leaves the Done column after this time; the column\'s footer lists archived tasks. Its branch, PR and log stay.') }}</small>
           </span>
+
+          <template v-if="wsKind">
+            <span class="field-label" data-ui-target="project.instructions">{{ tl('Workspace instructions files') }}<SavedMark :s="auto.state.instrMode" /></span>
+            <span class="pm-field">
+              <USelect v-model="instr.instrMode" :items="instrItems" size="lg" class="pm-base-pick" :aria-label="tl('Workspace instructions files')" data-testid="pm-ws-files-mode" />
+              <UTextarea v-if="instr.instrMode === 'files'" v-model="instr.instrFiles" :rows="2" autoresize size="lg" class="w-full mono" placeholder="AGENTS.md" :aria-label="tl('Paths under the workspace\'s root, one per line')" maxlength="2000" data-testid="pm-ws-files" />
+              <small v-if="auto.errors.instrFiles" class="form-error pm-field-error" role="alert">{{ t(auto.errors.instrFiles) }}</small>
+              <small class="muted">{{ wsKind === 'workspace' ? tl('Files at the workspace\'s root that the worker and the reviewer of every member\'s task get after the workflow\'s instructions, read again at each step.') : tl('Files at the workspace\'s root that this project\'s workers and reviewers get after the workflow\'s instructions.') }}</small>
+            </span>
+          </template>
 
           <span class="field-label">{{ tl('Delete the task\'s branch after its merge') }}<SavedMark :s="auto.state.deleteBranch" /></span>
           <span class="pm-field">
@@ -361,12 +392,19 @@ async function remove() {
         <template v-if="tab === 'workflow'">
           <PartHead part="workflow" :project="p.key" class="pm-part" />
         </template>
-        <button v-if="tab === 'workflow' && coordinator?.proposal" type="button" class="settings-card pm-proposal" data-testid="workflow-proposal" @click="reviewOpen = true">
-          <span class="card-state blocked" aria-hidden="true"><i /></span>
-          <span class="pm-proposal-text">{{ tl('Change proposed by the coordinator') }}</span>
-          <span class="mono-label">{{ tl('Review') }}</span>
-          <UIcon name="i-lucide-chevron-right" />
-        </button>
+        <div v-if="tab === 'workflow' && coordinator?.proposal" class="settings-card pm-proposal" data-testid="workflow-proposal">
+          <span class="pm-proposal-head">
+            <span class="card-state blocked" aria-hidden="true"><i /></span>
+            <span class="pm-proposal-text">{{ tl('Change proposed by the coordinator') }}</span>
+          </span>
+          <span class="pm-proposal-actions">
+            <UButton color="neutral" variant="ghost" size="lg" data-testid="workflow-proposal-review" @click="reviewOpen = true">{{ tl('See all changes') }}</UButton>
+            <span class="pm-proposal-gap" />
+            <UButton color="neutral" variant="outline" size="lg" :loading="answerBusy === 'refuse'" :disabled="answerBusy !== ''" data-testid="workflow-proposal-refuse" @click="answer(false)">{{ tl('Refuse') }}</UButton>
+            <UButton color="primary" size="lg" :loading="answerBusy === 'accept'" :disabled="answerBusy !== ''" data-testid="workflow-proposal-accept" @click="answer(true)">{{ tl('Accept') }}</UButton>
+          </span>
+          <p v-if="answerError" class="form-error" role="alert">{{ t(answerError) }}</p>
+        </div>
         <p v-if="(tab === 'workflow' || tab === 'guards') && loaded && inherited" class="muted settings-hint" data-testid="pm-inherited">{{ tl(`Runs the workflow of workspace ${inherited}, whose guards apply too. A change saved here gives this project its own.`) }}</p>
         <ProjectWorkflow v-if="tab === 'workflow' && loaded" ref="workflowTab" data-ui-target="project.workflow" :project="p" :workflow="workflow" :log="log" :templates="templates" @changed="workflowChanged" @templates="emit('changed')" />
         <template v-else-if="tab === 'guards' && loaded">
@@ -422,7 +460,11 @@ async function remove() {
 .pm-agent .field-label { margin-bottom: 0; }
 .pm-part { margin-bottom: 12px; }
 .project-tab-badge { margin-left: 6px; }
-.pm-proposal { display: flex; align-items: center; gap: 10px; width: 100%; margin-bottom: 12px; padding: 12px 16px; text-align: left; color: var(--blocked); }
+.pm-proposal { display: grid; gap: 8px; width: 100%; margin-bottom: 12px; padding: 12px 16px; }
+.pm-proposal-head { display: flex; align-items: center; gap: 10px; color: var(--blocked); }
 .pm-proposal-text { flex: 1; min-width: 0; color: var(--text); }
+.pm-proposal-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pm-proposal-gap { flex: 1 1 0; }
+@media (max-width: 599px) { .pm-proposal-actions > :not(.pm-proposal-gap) { flex: 1 1 auto; } .pm-proposal-gap { display: none; } }
 .pm-vis { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 </style>

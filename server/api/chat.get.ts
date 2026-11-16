@@ -39,7 +39,7 @@ export default defineApi(async (event) => {
     }
     // Current model ("Opus 5.5", "GPT-6-Sol"): cached by transcript state. Not read
     // for an unchanged reply (most polls): the client keeps what it has.
-    const model = r.available && !r.unchanged ? await currentModel(p).catch(() => null) : undefined
+    const model = r.available && !r.unchanged ? await currentModel(p, r.model).catch(() => r.model ?? null) : undefined
     // The selection check is a real awaited lookup; the generation check
     // after it is the reply's own origin-bound predicate, synchronous, so
     // nothing can interleave before the delta registration and the return.

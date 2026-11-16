@@ -479,7 +479,7 @@ async function loadStep(current: () => boolean): Promise<boolean> {
     // shown until that read replaces it. A full reset: the older request
     // still in flight belongs to the old generation — its finally will not
     // free our busy flag, so resetChat releases it.
-    if (restartsTail(chat.value, r)) {
+    if (r.reload || restartsTail(chat.value, r)) {
       const kept = items.value
       const queue = chat.value.queue
       const wasRendered = rendered.value
@@ -590,6 +590,14 @@ async function loadOlder() {
       return
     }
     if (pane !== props.pane.id || r.file !== file || chat.value.olderCursor !== before) return
+    if (r.stale) return
+    if (r.reload) {
+      // An expired daemon cursor: read a fresh tail, keeping what is shown until then.
+      chat.value = { ...fresh(), tail: items.value, queue: chat.value.queue, held: true }
+      synced = false
+      await loadChat()
+      return
+    }
     const b = box.value
     const fromBottom = b ? b.scrollHeight - b.scrollTop : 0
     // A result remembered while this page was in flight rides along with the
@@ -602,8 +610,9 @@ async function loadOlder() {
         ...chat.value,
         older: applyToolUpdates((r.items || []).concat(chat.value.older), updates),
         tail: applyToolUpdates(chat.value.tail, updates),
-        // no progress: stop there
-        olderCursor: (r.start ?? 0) < before ? (r.start ?? 0) : 0,
+        // No progress (a rewritten JSONL may return a later byte offset, an
+        // opaque cursor that did not move): stop there.
+        olderCursor: (r.cursorKind === 'opaque' ? (r.start ?? 0) !== before : (r.start ?? 0) < before) ? (r.start ?? 0) : 0,
       }
     }, true)
     if (staleGen(gen)) return
@@ -1287,10 +1296,14 @@ async function runCommand(cmd: string) {
   if (queued === null) addRun(props.pane.id, cmd)
   emit('sent', queued)
 }
-// Runs of this pane, marked done as their entries land in the transcript.
+// Runs of this pane, held while in Claude's queue, marked done as their
+// entries land in the transcript.
 const runsHere = computed(() => codeRuns.value[props.pane.id] || [])
-watch([runsHere, items], ([runs, list]) => {
-  const next = settleRuns(runs, list, Date.now())
+// Claude's queue, as queuedNow reads it: empty once the agent is idle.
+const claudeQueued = computed(() => (waitFor.value === 'sending' ? '' : (chat.value.queue || []).map(q => q.text || '').join('\0')))
+watch([runsHere, items, claudeQueued], ([runs, list, queued]) => {
+  const now = Date.now()
+  const next = settleRuns(holdRuns(runs, queued ? queued.split('\0') : [], now), list, now)
   if (next.some((r, i) => r !== runs[i])) codeRuns.value = { ...codeRuns.value, [props.pane.id]: next }
 }, { immediate: true })
 const runButtons = computed(() => runMarks(runsHere.value))
@@ -1298,12 +1311,12 @@ const runButtons = computed(() => runMarks(runsHere.value))
 // screen reads (Claude: its output so far), or else the command just sent
 // with Run, timed from the click.
 const liveRun = computed<(ChatItem & { omp: OmpToolView }) | null>(() => {
-  const run = runsHere.value.findLast(r => r.doneAt === undefined)
+  const run = runsHere.value.findLast(r => r.doneAt === undefined && !r.held)
   // The screen a moment behind a transcript that already has it: shown once.
   const landed = (cmd: string) => runsHere.value.some(r => r.doneAt !== undefined && Date.now() - r.doneAt < 10_000 && sameCmd(r.cmd, cmd))
   const s = liveShell.value && !(run && sameCmd(run.cmd, liveShell.value.command)) && landed(liveShell.value.command) ? null : liveShell.value
   if (!s && !run) return null
-  const since = s?.since ?? run?.at ?? Date.now()
+  const since = s?.since ?? (run ? run.startedAt ?? run.at : Date.now())
   const omp = s ? { ...shellView({ text: s.command, out: s.lines.join('\n') }, s.hidden), ...(s.python ? { title: 'Python' } : {}) } : shellView({ text: run!.cmd })
   return { role: 'bash', text: omp.target || '', ts: new Date(since).toISOString(), omp: { ...omp, intent: tl('Running…') } }
 })
@@ -1796,7 +1809,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                   <span class="wake-head">{{ tl(`${b.n} checks`) }}</span>
                 </button>
                 <span v-for="p in b.sum.parts" :key="p.tone" class="wake-part" :data-tone="p.tone" data-testid="wake-part">
-                  <UIcon :name="TONE_ICON[p.tone]" class="wake-icon" />{{ tl(p.text) }}
+                  <UIcon :name="TONE_ICON[p.tone]" class="wake-icon" /><span class="wake-count">{{ tl(p.text) }}</span>
                   <button v-for="c in p.chips" :key="c.id" type="button" class="wake-chip" :title="c.id" :aria-label="c.id" @click.stop="openTaskSheet(c.id)">{{ c.text }}</button>
                 </span>
                 <span v-if="b.from" class="wake-time">{{ b.from === b.to ? b.from : `${b.from}–${b.to}` }}</span>
@@ -1820,7 +1833,9 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                 <!-- A routine one: its kind's icon, its tasks, a short label and the reply's first sentence. -->
                 <div v-if="b.answer && !b.loud" class="wake-row wake-line" :class="{ quiet: b.sum.quiet }" @click="setOpen(b.key, !isOpen(b.key))">
                   <UIcon :name="TONE_ICON[b.sum.tone]" class="wake-icon" :data-tone="b.sum.tone" />
-                  <button v-for="id in b.sum.tasks" :key="id" type="button" class="wake-chip" @click.stop="openTaskSheet(id)">{{ id }}</button>
+                  <span v-if="b.sum.tasks.length" class="wake-chips">
+                    <button v-for="id in b.sum.tasks" :key="id" type="button" class="wake-chip" @click.stop="openTaskSheet(id)">{{ id }}</button>
+                  </span>
                   <button type="button" class="wake-toggle wake-head" :aria-expanded="isOpen(b.key)" @click.stop="setOpen(b.key, !isOpen(b.key))">
                     <span class="wake-label">{{ tl(b.sum.label) }}</span> {{ firstSentence(b.answer) }}
                   </button>

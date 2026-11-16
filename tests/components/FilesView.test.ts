@@ -53,6 +53,7 @@ const DOCS: Record<string, string> = {
   'README.md': 'Sample.\n\n# Demo\n\nSee the [guide](docs/guide.md).\n',
   '/home/user/notes/plan.md': 'Sample.\n\n# Plan\n\nSee [todo](todo.md).\n',
   '/home/user/notes/todo.md': 'Sample.\n\n# Todo\n',
+  'mockup.html': '<h1>Mockup</h1>\n<script>document.title = "x"</script>\n',
 }
 const PNG = 'data:image/png;base64,iVBORw0KGgo='
 let hold: Promise<void> | null = null
@@ -181,6 +182,20 @@ describe('FilesView', () => {
     expect(reads.at(-1)).toEqual({ pane: 'w1:p1', path: '~/exports/report.csv', from: 'chat' })
     expect(w.find('.files-text').text()).toBe('export const x = 1\nlet y')
     expect(asked).toHaveLength(listed)
+  })
+
+  it('runs an HTML page in a frame sandboxed without same origin, with its source a toggle away', async () => {
+    const w = await mountSuspended(FilesView, { props: { paneId: 'w1:p1', file: 'mockup.html', inFolder: true } })
+    await flushPromises()
+    const url = '/api/files/download?pane=w1%3Ap1&path=mockup.html&inline=1'
+    const frame = w.find('iframe.files-page')
+    expect(frame.attributes('src')).toBe(url)
+    expect(frame.attributes('sandbox')).toBe('allow-scripts')
+    expect(w.find('a[aria-label="Open"]').attributes('href')).toBe(url)
+    expect(w.find('.files-page-note').text()).toContain('Self-contained pages only')
+    await w.findAll('.files-md-mode button')[1]!.trigger('click')
+    expect(w.find('iframe').exists()).toBe(false)
+    expect(w.find('.files-text').text()).toContain('<h1>Mockup</h1>')
   })
 
   it('opens an image an agent shows in the zoomable viewer', async () => {

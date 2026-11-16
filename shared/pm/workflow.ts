@@ -235,7 +235,7 @@ function checkWatch(a: Record<string, unknown>, s: Record<string, unknown>, err:
 }
 
 // A path inside the worktree, as typed: no glob, no .., not absolute.
-const isRelPath = (v: unknown) => isStr(v) && (v as string).length <= 200 && !/^[/~]|[*?[\]\0\n]|(^|\/)\.\.(\/|$)/.test(v as string)
+export const isRelPath = (v: unknown) => isStr(v) && (v as string).length <= 200 && !/^[/~]|[*?[\]\0\n]|(^|\/)\.\.(\/|$)/.test(v as string)
 export function checkSetup(w: unknown, errs: WorkflowError[]) {
   if (w === undefined) return
   if (!isObj(w)) return void errs.push({ path: 'worktree', message: 'must be an object' })

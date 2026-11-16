@@ -10,6 +10,7 @@ import { DEVIN_PROCESS_SCRIPT, devinProcesses } from './devinProcesses'
 import { createCmdCore } from './commandCodeCore'
 import { createOpencodeCore } from './opencodeCore'
 import { ocFile } from './opencodeTranscripts'
+import type { CodexHistory } from './codexDaemon'
 
 type Call = <T>(method: string, params: object, timeout: number) => Promise<T>
 export interface CoreTranscriptDeps {
@@ -17,6 +18,8 @@ export interface CoreTranscriptDeps {
   pane: (id: string) => Pane | undefined
   localHome: string
   now?: () => number // injected clock for the Command Code evidence TTL (tests)
+  // This machine's shared Codex app-server (codexDaemon.ts): paginated history read first.
+  codexHistory?: CodexHistory
 }
 
 interface CoreProcess { pid?: number, name?: string, argv?: string[], cwd?: string, startedAt?: number, argvExact?: boolean, childPids?: number[] }
@@ -201,7 +204,7 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
           })
           return 'session' in r ? { file: ocFile(r.server, r.session), session: r.session, guessed: true } : null
         }
-        return createTranscripts({ home, herdr, fs, locateCommandCode, locateOpencode, ocExec: shell })
+        return createTranscripts({ home, herdr, fs, locateCommandCode, locateOpencode, ocExec: shell, codexHistory: name ? undefined : deps.codexHistory })
       })()
       machines.set(name, t)
       // One derived promise, both branches handled — a failed build is

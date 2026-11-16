@@ -54,6 +54,7 @@ export interface Task {
   shotToken?: string // the agent's key for POST /api/pm/shot (never sent to the browser)
   log?: TaskLogEntry[] // who changed what, newest last
   specNotes?: SpecNote[] // spec changes added after its description (task note, tell --spec), newest last
+  wsFiles?: { names: string[], hash: string, worker?: string } // the workspace instructions files its agents got last (WS_FILES_SCRIPT); worker: the hash its worker got
   specPass?: { at: number, step: string, reason: string } // the coordinator's last pass on a spec change, shown in Decisions for a day
   marks?: Mark[] // when its step or turn changed, added by the store (times.ts)
   after?: string // tasks of the same project or workspace, comma-separated: this one starts once they are done
@@ -308,16 +309,38 @@ export function shotsSection(step: Step, task: Pick<Task, 'id'>, shots: { base: 
   ]
 }
 
+// The workspace instructions files (workspace.ts workspaceInstructions), read
+// at the root: each one found after a marker line with its path, each missing one named.
+export const WS_FILES_SCRIPT = 'root=$1; max=$2; shift 2; for f do if [ -f "$root/$f" ]; then printf "%s\\n" "--wherdr-file-- $f"; head -c "$max" "$root/$f"; printf "\\n"; else printf "%s\\n" "--wherdr-missing-- $f"; fi; done'
+export interface WsFiles { files: { path: string, text: string }[], log: string[] }
+// first: the default list, where only the first file found counts and a missing one is no news.
+export function parseWsFiles(out: string, cap: number, first = false): WsFiles {
+  const r: WsFiles = { files: [], log: [] }
+  for (const part of out.split(/^(?=--wherdr-(?:file|missing)-- )/m)) {
+    const m = /^--wherdr-(file|missing)-- ([^\n]*)\n?([\s\S]*)$/.exec(part)
+    if (!m || (first && r.files.length)) continue
+    const [, kind, path, body] = m as unknown as [string, string, string, string]
+    if (kind === 'missing') { if (!first) r.log.push(`Workspace instructions: ${path} not found at the workspace's root, skipped`); continue }
+    const cut = body.length > cap
+    if (cut) r.log.push(`Workspace instructions: ${path} is longer than ${cap} characters, cut there`)
+    r.files.push({ path, text: (cut ? body.slice(0, cap) : body).trim() })
+  }
+  return r
+}
+// Each file under a heading naming it, after the workflow's own instructions.
+export const wsFilesSection = (files: WsFiles['files']) => files.flatMap(f => [`## Workspace instructions (${f.path})`, '', f.text || '(empty)', ''])
+
 // The instructions file: the task, then every level's instructions, broadest
-// first, then how to upload screenshots when a worker step asks for them, then
+// first, then the workspace's instructions files (ws), then how to upload screenshots when a worker step asks for them, then
 // a public repository's rule (leakCheck: its own check, see ownLeakCheck).
-export function instructionsText(p: Project, t: Template, task: Task, run: Pick<Run, 'worktree' | 'branch'>, shots?: { base: string, token: string }, leakCheck?: string) {
+export function instructionsText(p: Project, t: Template, task: Task, run: Pick<Run, 'worktree' | 'branch'>, shots?: { base: string, token: string }, leakCheck?: string, ws: string[] = []) {
   const step = typeSteps(t, task.type).find(s => s.holder === 'worker')
   const parts = [t.instructions, t.taskTypes[task.type]?.instructions, step?.instructions].map(s => s?.trim()).filter(Boolean).map(s => fillBase(s!, taskBase(task, p)))
   const visual = shotStep(t, task.type)
   return [
     `# ${task.id}: ${task.title}`, '', specText(task), '',
     '## Instructions', '', ...(parts.length ? parts : ['(none)']), '',
+    ...ws,
     ...(visual && shots ? shotsSection(visual, task, shots) : []),
     ...uiGuide('task', { key: p.key }),
     ...(isPublic(p) ? publicWorkerSection(leakCheck) : []),

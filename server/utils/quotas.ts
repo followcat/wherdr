@@ -65,16 +65,37 @@ function plausible(w: QuotaWindow | null, at: number): QuotaWindow | null {
 const quota = (five: QuotaWindow | null, week: QuotaWindow | null, at: number): Quota | null =>
   five || week ? { five: plausible(five, at), week: plausible(week, at), at } : null
 
-export function claudeQuota(status: Json, at: number): Quota | null {
+// Does the account's plan have a 5-hour window? From the plan the status line
+// copies out of Claude Code's own account record (~/.claude.json ›
+// oauthAccount: `organizationType`, `organizationRateLimitTier`; never a
+// credential): Pro, Max, Team and Enterprise have one, Ultra has none. null:
+// plan unknown (older status line, API key, a plan name not listed here).
+const FIVE_HOUR_PLANS = /^claude_(pro|max|team|enterprise)/
+export function claudePlanHasFive(w: Json | null | undefined): boolean | null {
+  const plan = typeof w?.plan === 'string' ? w.plan : ''
+  const tier = typeof w?.tier === 'string' ? w.tier : ''
+  if (/ultra/i.test(plan) || /ultra/i.test(tier)) return false
+  return FIVE_HOUR_PLANS.test(plan) ? true : null
+}
+
+// `fiveSeenAt`: when this account last reported a 5-hour window (readClaude),
+// the evidence used when its plan is unknown.
+export function claudeQuota(status: Json, at: number, fiveSeenAt: number | null = null): Quota | null {
   const r = status && status.rate_limits
   if (!r) return null
   // Right after a window ends (5 h or week), Claude only passes
-  // the other one: a new window starts, nothing is used in it yet.
+  // the other one: a new window starts, nothing is used in it yet. A plan
+  // without a 5-hour window (Ultra) never gets one invented; with the plan
+  // unknown, only an account that reported one within its last 5 hours does.
   const five = r.five_hour ? win(r.five_hour.used_percentage, r.five_hour.resets_at, 300) : null
   const week = r.seven_day ? win(r.seven_day.used_percentage, r.seven_day.resets_at, 10080) : null
   const fresh = (minutes: number): QuotaWindow => ({ used: 0, resetsAt: null, minutes, fresh: true })
   if (five && !week) return quota(five, fresh(10080), at)
-  if (week && !five) return quota(fresh(300), week, at)
+  if (week && !five) {
+    const has = claudePlanHasFive(status._wherdr)
+    const recent = fiveSeenAt !== null && at - fiveSeenAt <= (300 + 10) * 60000
+    return quota(has ?? recent ? fresh(300) : null, week, at)
+  }
   return quota(five, week, at)
 }
 
@@ -252,9 +273,16 @@ export async function readClaude(fs: MachineFs, home: string): Promise<ClaudeMac
     const script = await text(path.posix.join(home, '.claude/wherdr-statusline.sh'))
     if (!script?.includes('_wherdr')) setup = 'outdated'
   }
-  const q = status ? claudeQuota(status, at) : null
+  const seenKey = account || home
+  if (status?.rate_limits?.five_hour) fiveSeen.set(seenKey, Math.max(at, fiveSeen.get(seenKey) ?? 0))
+  const q = status ? claudeQuota(status, at, fiveSeen.get(seenKey) ?? null) : null
   return { q: q ? { ...q, account } : null, setup }
 }
+// Last time each account (fingerprint, else home folder) reported a 5-hour
+// window, for claudeQuota when the plan is unknown. In memory: after a restart,
+// a Pro/Max account on an older status line shows its week alone until its
+// next exchange, rather than an Ultra account ever showing an invented 5 h.
+const fiveSeen = new Map<string, number>()
 
 // Same account? Known fingerprints never merge with unknown identities. Otherwise the weekly
 // reset time, fixed for an account (compared modulo one

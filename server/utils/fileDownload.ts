@@ -2,17 +2,19 @@
 // checks as its preview (files/read.get.ts), up to DOWNLOAD_BYTES.
 // `inline=1`: PDF bytes for the canvas preview and Open's native viewer, or a
 // video streamed for the <video> preview and Open, at any size (200 whole,
-// 206 for a Range); any other file is still only an attachment.
+// 206 for a Range), or an HTML page run in a sandbox (PAGE_CSP); any other
+// file is still only an attachment.
 // GET and HEAD (files/download.get.ts, download.head.ts).
 import type { H3Event } from 'h3'
 import { getQuery, getRequestHeader, setResponseHeader, setResponseStatus } from 'h3'
-import { attachmentHeader, isPdf, readFileBytes, readWrittenBytes, videoType } from './files'
+import { TEXT_BYTES, attachmentHeader, isHtmlPage, isPdf, readFileBytes, readWrittenBytes, videoType } from './files'
 import { HerdrError } from './herdr'
 import { coreFilesMachine } from './coreFilesMachine'
 import { defineApi } from './http'
 import { findPane } from './state'
 import { chatFilesPolicy } from './chatFiles'
 import { answer, cutOnError, openVideo, openWrittenVideo } from './videoStream'
+import { PAGE_CSP } from './csp'
 
 import type { Pane } from '../../shared/types'
 
@@ -72,6 +74,14 @@ export const fileDownload = defineApi(async (event) => {
     ? await readWrittenBytes(await coreFilesMachine(p.machine), p.cwd, q.path, await chatFilesPolicy())
     : await readFileBytes(await coreFilesMachine(p.machine), p.cwd!, q.path)
   setResponseHeader(event, 'x-content-type-options', 'nosniff')
+  if (q.inline === '1' && isHtmlPage(f.name)) {
+    if (f.body.length > TEXT_BYTES) throw new HerdrError('too_large', 'Page too large to preview (256 KB max).')
+    setResponseHeader(event, 'content-type', 'text/html; charset=utf-8')
+    setResponseHeader(event, 'content-security-policy', PAGE_CSP)
+    setResponseHeader(event, 'cache-control', 'private, no-store')
+    setResponseHeader(event, 'referrer-policy', 'no-referrer')
+    return f.body
+  }
   if (q.inline === '1' && isPdf(f.name, f.body)) {
     // Only ever a PDF (nosniff): the browser hands it to its PDF viewer, which
     // runs nothing in this origin. No `sandbox`: Chrome and Safari refuse to

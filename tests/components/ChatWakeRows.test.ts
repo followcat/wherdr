@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import ChatView from '~/components/ChatView.vue'
@@ -147,7 +149,7 @@ describe('a run of routine wakes, opened', () => {
     try {
       await expect.poll(() => w.find('[data-testid="wake-run"]').exists()).toBe(true)
       const run = w.find('[data-testid="wake-run"]')
-      expect(run.findAll('[data-testid="wake-part"]').map(p => p.text())).toEqual(['1 merged DEMO-5', '2 quiet'])
+      expect(run.findAll('[data-testid="wake-part"]').map(p => p.text())).toEqual(['1 mergedDEMO-5', '2 quiet'])
       await run.trigger('click')
       expect(w.find('[data-testid="wake-quiet"]').text()).toContain('2 quiet checks')
       expect(w.findAll('[data-testid="wake"]')).toHaveLength(1)
@@ -155,6 +157,38 @@ describe('a run of routine wakes, opened', () => {
       await w.find('[data-testid="wake-quiet"]').trigger('click')
       expect(w.findAll('[data-testid="wake"]')).toHaveLength(3)
     } finally { w.unmount() }
+  })
+})
+
+describe('a run with many tasks on a phone', () => {
+  afterEach(() => { herdrState.value = { ok: false, workspaces: [], panes: [] } })
+
+  it('wraps its task badges inside the row, and no chat row can widen the conversation', async () => {
+    herdrState.value = { ok: true, workspaces: [], panes: [pane] }
+    const done = (from: number) => [0, 1, 2, 3].map(i => `DEMO-${from + i} (Task ${from + i}): done`).join('\n')
+    items = [
+      ...wake('Autopilot: wake a1', done(10), 'Merged.', 8),
+      ...wake('Autopilot: wake a2', done(20), 'Merged.', 9),
+      ...wake('Autopilot: wake a3', done(30), 'Merged.', 10),
+    ]
+    const w = await mountSuspended(ChatView, { props: { pane, localQueued: [] }, global: { stubs: { UTooltip: { template: '<slot />' } } } })
+    try {
+      await expect.poll(() => w.find('[data-testid="wake-run"]').exists()).toBe(true)
+      const part = w.find('[data-testid="wake-part"]')
+      expect(part.find('.wake-count').text()).toBe('12 merged')
+      expect(part.findAll('.wake-chip')).toHaveLength(12)
+      // The time range stays on the row, outside the badges.
+      expect(w.find('[data-testid="wake-run"] > .wake-time').exists()).toBe(true)
+    } finally { w.unmount() }
+    // The styles that make it so (the test DOM does no layout).
+    const css = readFileSync(resolve(__dirname, '../../app/assets/css/main.css'), 'utf8')
+    const rule = (sel: string) => new RegExp(`^${sel.replace(/[.*>]/g, m => `\\${m}`)} \\{([^}]*)\\}`, 'm').exec(css)?.[1] ?? ''
+    expect(rule('.wake-part')).toMatch(/flex-wrap: wrap/)
+    expect(rule('.wake-part')).toMatch(/min-width: 0/)
+    expect(rule('.wake-part')).not.toMatch(/nowrap/)
+    expect(rule('.wake-chips')).toMatch(/flex-wrap: wrap/)
+    expect(rule('.chat')).toMatch(/overflow-x: hidden/)
+    expect(rule('.chat-msgs, .chat-list > *')).toMatch(/min-width: 0/)
   })
 })
 

@@ -31,6 +31,18 @@ export function readDraft(text: string, agent: string | null | undefined): CoreD
   return { text: box, lines: box.split('\n').length }
 }
 
+/**
+ * Pure: Claude is still taking in a paste ("Pasting…" under its field). Its
+ * field stays empty meanwhile: photos are read and resized first, several
+ * seconds for three large ones (WHR-419). Plain screen (terminal.read).
+ */
+export function pasting(text: string): boolean {
+  const lines = String(text || '').split('\n')
+  const at = lines.findLastIndex(l => l.startsWith('❯'))
+  const end = at < 0 ? -1 : lines.findIndex((l, i) => i > at && /^\s*─{3,}/.test(l))
+  return end > 0 && lines.slice(end + 1).some(l => l.trim().startsWith('Pasting…'))
+}
+
 const norm = (t: string) => t.replace(/\s+/g, '')
 export const sameText = (a: string, b: string) => norm(a) === norm(b)
 
@@ -120,14 +132,21 @@ async function draftAction(deps: CoreDraftDeps, b: Body): Promise<{ ok: true, st
       throw new HerdrError('clear_failed', 'Claude’s input could not be emptied — check the terminal.')
     }
     // Send now: Enter, then the box must empty and a turn start (spinner,
-    // core's working status or a new turn number).
+    // core's working status or a new turn number). Claude may ignore an Enter
+    // for a few seconds (after a long idle, WHR-413): pressed again while the
+    // box still holds that text alone, never on anything else.
     const before = (await turn())?.turn
     await keys(['enter'])
     let emptied = false
     let started = false
-    for (let i = 0; i < 8 && !(emptied && started); i++) {
+    for (let i = 0; i < 12 && !(emptied && started); i++) {
       await sleep(400)
-      if (!emptied) emptied = await field().then(d => !d || !sameText(d.text, draft.text), () => false)
+      if (!emptied) {
+        const d = await field().catch(() => undefined) // undefined: not read
+        const same = Boolean(d && sameText(d.text, draft.text))
+        if (d !== undefined) emptied = !same
+        if (same && i % 3 === 2) await keys(['enter'])
+      }
       const now = await deps.read(p).catch(() => '')
       const t = await turn()
       const state = typeof t?.status === 'string' ? t.status : t?.status?.state

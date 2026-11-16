@@ -68,7 +68,7 @@ export async function board(store: PmStore, known: MachineInfo[] = []): Promise<
     projects: projects.map((p) => {
       const t = templates.get(p.key), machines = machinesOf(p, known)
       const plans = t ? Object.keys(t.taskTypes).map(type => ({ id: type, steps: planSteps(t, { type }, p.base) })) : []
-      return { key: p.key, ...(p.base ? { base: p.base } : {}), ...(p.label ? { label: p.label } : {}), ...(p.aliases ? { aliases: p.aliases } : {}), ...(p.color ? { color: p.color } : {}), name: p.name, columns: boardColumns(plans.map(x => x.steps)), types: plans.map(x => ({ id: x.id, plan: x.steps.map(s => s.id).join(' → '), weight: weightText(weightOf(t, { type: x.id })) })), ...(machines ? { machines } : {}) }
+      return { key: p.key, ...(p.kind ? { kind: p.kind } : {}), ...(p.workspace ? { workspace: p.workspace } : {}), ...(p.base ? { base: p.base } : {}), ...(p.label ? { label: p.label } : {}), ...(p.aliases ? { aliases: p.aliases } : {}), ...(p.color ? { color: p.color } : {}), name: p.name, columns: boardColumns(plans.map(x => x.steps)), types: plans.map(x => ({ id: x.id, plan: x.steps.map(s => s.id).join(' → '), weight: weightText(weightOf(t, { type: x.id })) })), ...(machines ? { machines } : {}) }
     }),
     // Done ones last, newest done first; the others in board order.
     cards: await cardsOf(store, [...all.filter(t => !t.step?.done), ...all.filter(t => t.step?.done && !t.archived).sort((a, b) => doneAt(b) - doneAt(a))], known),
@@ -104,10 +104,13 @@ export async function unarchiveTask(store: PmStore, id: unknown) {
 }
 
 // The engine's pass: archives each done task past its project's delay, once at
-// start (older done tasks too) then with the other periodic sweeps.
+// start (older done tasks too) then with the other periodic sweeps. A feature's
+// sub-task waits for its feature to be closed: its card counts it (featureCard.ts).
 export async function archiveDone(store: Pick<PmStore, 'projects' | 'tasks' | 'logTask'>, now = Date.now()) {
-  const projects = await store.projects()
-  for (const t of await store.tasks()) {
+  const projects = await store.projects(), tasks = await store.tasks()
+  const open = new Set(tasks.filter(t => t.kind === 'feature' && !t.closed).map(t => t.id))
+  for (const t of tasks) {
+    if (t.feature && open.has(t.feature)) continue
     const days = archiveDays(projects.find(p => p.key === t.project))
     if (archiveDue(t, days, now)) await store.logTask({ ...t, archived: now }, 'engine', archivedText(days))
   }

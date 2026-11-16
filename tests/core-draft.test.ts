@@ -5,7 +5,7 @@
 // screen re-checked.
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { coreDraft, queueSendNow, readDraft, type CoreDraftDeps } from '../server/utils/coreDraft'
+import { coreDraft, pasting, queueSendNow, readDraft, type CoreDraftDeps } from '../server/utils/coreDraft'
 import { createCoreScreens } from '../server/utils/coreScreen'
 import { HerdrError } from '../server/utils/herdr'
 import type { Pane } from '../shared/types'
@@ -48,6 +48,14 @@ describe('readDraft', () => {
   })
   it('only for Claude', () => {
     expect(readDraft(TYPED, 'codex')).toBeNull()
+  })
+})
+
+describe('pasting', () => {
+  it('Claude 2.1.319 taking in three large photos: empty field, "Pasting…" under it', () => {
+    expect(pasting(['● OK', '', RULE, '❯ ', RULE, '  Pasting…'].join('\n'))).toBe(true)
+    expect(pasting(field('❯ [Image #9] [Image #10] [Image #11][Pasted text #12 +6 lines]'))).toBe(false)
+    expect(pasting(['  Pasting… was slow', RULE, '❯ ', RULE, '  ? for shortcuts'].join('\n'))).toBe(false)
   })
 })
 
@@ -96,9 +104,13 @@ describe('coreDraft', () => {
     const f = fake([TYPED, EMPTY], { turns: [3] })
     await expect(coreDraft(f.deps, { pane_id: pane.id, action: 'send', text: 'hello there' })).resolves.toEqual({ ok: true, started: false })
   })
-  it('Send now: text still in the field is an error', async () => {
-    const f = fake([TYPED])
-    expect(await code(coreDraft(f.deps, { pane_id: pane.id, action: 'send', text: 'hello there' }))).toBe('not_submitted')
+  it('Send now: Enter ignored by Claude is pressed again while the field holds that text; still there is an error', async () => {
+    const f = fake([TYPED], { colors: [TYPED, TYPED, TYPED, TYPED, EMPTY] })
+    await expect(coreDraft(f.deps, { pane_id: pane.id, action: 'send', text: 'hello there' })).resolves.toEqual({ ok: true, started: true })
+    expect(f.keys).toEqual([['enter'], ['enter']])
+    const g = fake([TYPED])
+    expect(await code(coreDraft(g.deps, { pane_id: pane.id, action: 'send', text: 'hello there' }))).toBe('not_submitted')
+    expect(g.keys).toHaveLength(5)
   })
   it('a field that changed since it was shown is refused, nothing pressed', async () => {
     const f = fake([TYPED])

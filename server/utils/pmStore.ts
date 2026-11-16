@@ -571,12 +571,17 @@ export function createPmStore(dir = path.join(DATA_DIR, 'projects')) {
       const next = update.key ?? shownKey(list[i]!)
       const clash = keyClash(list, next, rest.key)
       if (clash) throw new HerdrError('exists', `Project ${clash.name} already has the key ${next}`)
-      const { machines: _m, clones: _c, paused: _p, placement: _s, overrides: _o, ...kept } = rest
+      const { machines: _m, clones: _c, paused: _p, placement: _s, overrides: _o, instructionsFiles: oldFiles, ...kept } = rest
+      // Workspace instructions files: a member's own list (null: the workspace's again), a workspace's shared one (null: the default).
+      const files = update.instructionsFiles === undefined ? oldFiles : update.instructionsFiles
+      const { instructionsFiles: _sf, ...sharedRest } = rest.shared ?? {}
+      const instr = rest.workspace && files ? { instructionsFiles: files }
+        : isWorkspace(rest) && update.instructionsFiles !== undefined ? { shared: { ...sharedRest, ...(update.instructionsFiles ? { instructionsFiles: update.instructionsFiles } : {}) } } : {}
       const placement = update.placement ?? rest.placement
       const allowed = machinesOf(rest, update)
       if (allowed.errors.length) throw badInput(allowed.errors)
       const overrides = memberOverrides(list[i]!, update)
-      list[i] = { ...kept, ...overrides, ...renamed(list[i]!, next), ...(update.name ? { name: update.name } : {}), ...ownName, ...(base ? { base } : {}), ...(branchName ? { branchName } : {}), ...(update.color ? { color: update.color } : {}), ...(allowed.machines ? { machines: allowed.machines, clones: allowed.clones } : {}), ...(allowed.paused ? { paused: allowed.paused } : {}), ...(placement && placement !== 'strongest' ? { placement } : {}), ...(update.archiveAfter !== undefined ? { archiveAfter: update.archiveAfter } : {}), ...(keepBranch ? { deleteBranch: false as const } : {}), ...(reach.length ? { reach } : {}) }
+      list[i] = { ...kept, ...overrides, ...renamed(list[i]!, next), ...(update.name ? { name: update.name } : {}), ...ownName, ...(base ? { base } : {}), ...(branchName ? { branchName } : {}), ...(update.color ? { color: update.color } : {}), ...(allowed.machines ? { machines: allowed.machines, clones: allowed.clones } : {}), ...(allowed.paused ? { paused: allowed.paused } : {}), ...(placement && placement !== 'strongest' ? { placement } : {}), ...(update.archiveAfter !== undefined ? { archiveAfter: update.archiveAfter } : {}), ...(keepBranch ? { deleteBranch: false as const } : {}), ...(reach.length ? { reach } : {}), ...instr }
       await saveProjects(list)
       return list[i]!
     }),

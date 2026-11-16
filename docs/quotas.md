@@ -11,7 +11,11 @@ An account shared by every online machine shows once at the top. Otherwise the m
 come as one block per account (Claude or Codex): its name and the machines that share it as small
 chips on the same line (`Codex a0fa` `machine-a` `machine-b`, the chips wrapping only when the line
 is full), then its 5-hour and weekly bars with their reset times, or
-**Limit reached · resets …**. A machine whose account is unknown (Claude on API billing, an older
+**Limit reached · resets …**. Right after a Claude 5-hour window ends, Claude reports only the
+week: the 5-hour bar then reads **new window**. A Claude Ultra account has no 5-hour window, so it
+shows its week alone, one bar across the row (and Pace counts only the week). The plan comes from Claude Code's own
+account record, copied by wherdr's status line (the plan name only); with an older status line,
+a 5-hour bar is only kept for an account that reported one within its last 5 hours. A machine whose account is unknown (Claude on API billing, an older
 reading without an account key) keeps a block of its own, titled with the machine's name.
 
 - **Codex**: nothing to do, Codex writes its limits in its session files. Machines on different

@@ -9,6 +9,8 @@
 // the window lasts, windowStale): dashed bar and `?` for the number, same
 // height as any row; hovering or tapping it says how to refresh it. Window
 // (5 h or week) missing from Claude's reading (it just restarted): "new window".
+// A window the account does not have (Claude Ultra, Codex Plus: no 5 h): the
+// other one spans the whole row, one long bar, no empty cell.
 // `api`: Claude Code runs on API billing there (no rate limits): a muted
 // label in place of the gauges, never a warning colour.
 // Codex "limit reached" (shared/quotaLimit.ts): blocked until its reset; with
@@ -84,7 +86,7 @@ function ago(at: number) {
       <template v-else>
       <template v-for="(w, k) in { five: r.q.five, week: r.q.week }" :key="k">
         <div
-          v-if="w && unknown(w, r)" class="quota guessed" :class="{ open: tipOpen === `${r.key}-${k}` }" tabindex="0"
+          v-if="w && unknown(w, r)" class="quota guessed" :class="{ open: tipOpen === `${r.key}-${k}`, 'quota-wide': !(r.q.five && r.q.week) }" tabindex="0"
           :aria-label="refreshTip(r)" data-testid="quota-unknown" @click="tipOpen = tipOpen === `${r.key}-${k}` ? null : `${r.key}-${k}`" @blur="tipOpen = null"
         >
           <div class="quota-top">
@@ -95,7 +97,7 @@ function ago(at: number) {
           <div class="quota-reset"><UIcon name="i-lucide-rotate-cw" />{{ resetLabel(w) }}</div>
           <span class="quota-tip" role="tooltip">{{ refreshTip(r) }}</span>
         </div>
-        <div v-else-if="w" class="quota" :class="level(w)">
+        <div v-else-if="w" class="quota" :class="[level(w), { 'quota-wide': !(r.q.five && r.q.week) }]">
           <div class="quota-top">
             <span class="quota-label">{{ k === 'five' ? '5 h' : t('Week') }}</span>
             <b>{{ shown(w) }}<small>%</small></b>
@@ -103,7 +105,6 @@ function ago(at: number) {
           <div class="quota-bar"><i :style="{ width: `${shown(w)}%` }" /></div>
           <div class="quota-reset"><UIcon name="i-lucide-rotate-cw" />{{ resetLabel(w) }}</div>
         </div>
-        <div v-else class="quota empty" />
       </template>
       </template>
       <p v-if="note(r)" class="quota-note" data-testid="quota-note">{{ note(r) }}</p>

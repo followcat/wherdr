@@ -15,6 +15,16 @@ export const CSP_WEBGPU_WORKER = CSP_DICTATION_WORKER
 export const TTS_WORKER_PATH = '/workers/tts-worker.js'
 export const CSP_TTS_WORKER = CSP_DICTATION_WORKER
 
+// An agent's page (FilesView's Preview iframe, and Open in a tab): `sandbox`
+// without allow-same-origin gives it an opaque origin, so it never reads
+// wherdr's cookies, storage or API, even opened alone in a tab; no popups,
+// forms or top navigation. Its inline scripts and styles run, and https
+// scripts, styles, images and fonts (a CDN) load; it fetches nothing
+// (connect-src 'none'). wherdr's own CSP would block its inline scripts in a
+// srcdoc iframe (inherited), hence its own route (utils/fileDownload.ts,
+// inline=1). Framed by the app only.
+export const PAGE_CSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' https:; style-src 'unsafe-inline' https:; img-src data: blob: https:; font-src data: https:; media-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'"
+
 const LABEL = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?'
 // A machine of a tailnet: <machine>.<tailnet>.ts.net (MagicDNS), and nothing else.
 const TAILNET_MACHINE = new RegExp(`^${LABEL}\\.(${LABEL}\\.ts\\.net)$`)

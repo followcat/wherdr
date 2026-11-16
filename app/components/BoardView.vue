@@ -4,6 +4,7 @@
 // card's indicator is the live state of the agent holding its step.
 import { canCheckGithub } from '#shared/pm/ghCheck'
 import { turnText } from '#shared/pm/refusal'
+import { featureView, withFeatures } from '#shared/pm/featureCard'
 import { asker, boardLanes, boardTags, branchLine, canStart, canStop, cardStatus, linkLabel, mainLink, mergeGoesNow, mergeStuck, mergeWaits, statusText, waitsFor, type Board, type BoardMachine, type Card } from '#shared/pm/board'
 import type { Task } from '#shared/pm/run'
 import { RESUMES } from '#shared/pm/stop'
@@ -30,9 +31,10 @@ const boardPick = computed(() => {
   return saved && (saved === BOARD_FOLLOW || saved === BOARD_ALL || known(saved)) ? saved : machineGroups.value.length ? BOARD_FOLLOW : BOARD_ALL
 })
 const project = computed(() => (boardPick.value === BOARD_FOLLOW || boardPick.value === BOARD_ALL ? '' : boardPick.value)) // '' = several projects
-// A workspace shows its members' tasks too.
-const members = computed(() => coordinators.value.find(c => c.project === project.value)?.workspace?.members.map(m => m.key) ?? [])
-const shownProject = (key: string) => (project.value ? key === project.value || members.value.includes(key) : boardPick.value !== BOARD_FOLLOW || projectOnBar(key))
+// A workspace picked: its features and all its members' tasks, in the phases' columns.
+const workspace = computed(() => (data.value?.projects.find(p => p.key === project.value)?.kind === 'workspace' ? project.value : ''))
+const inWorkspace = (key: string) => key === workspace.value || data.value?.projects.find(p => p.key === key)?.workspace === workspace.value
+const shownProject = (key: string) => (workspace.value ? inWorkspace(key) : project.value ? key === project.value : boardPick.value !== BOARD_FOLLOW || projectOnBar(key))
 const projectPick = computed({ get: () => boardPick.value, set: (v: string) => { linked.value = ''; boardProject.value = v } })
 const tag = ref(queried(route.query.tag)) // '' = every tag
 watch(() => queried(route.query.tag), (g) => { tag.value = g })
@@ -53,9 +55,14 @@ watch(taskSheetTick, load) // an action in a task's sheet, also read by Tasks to
 
 // An agent asking a question or a permission puts its card in Your turn too.
 const waitsForYou = (c: Card) => { const p = paneOf(c); return !!p && hasAgent(c) && statusKey(p) === 'blocked' }
-const cards = computed(() => (data.value?.cards ?? [])
+const shownCards = computed(() => (data.value?.cards ?? [])
   .filter(c => shownProject(c.project) && (!tag.value || c.tags.includes(tag.value)))
   .map(c => (!c.yourTurn && waitsForYou(c) ? { ...c, yourTurn: tl('Answer the agent', 'Réponds à l’agent') } : c)))
+// Each feature placed by its sub-tasks; with a workspace picked, its sub-tasks
+// fold into its card unless the switch shows them in their columns too.
+const unfold = ref(false)
+const cards = computed(() => withFeatures(shownCards.value, !!workspace.value && !unfold.value))
+const featureOf = (c: Card) => featureView(c, shownCards.value)
 const tagPick = noneModel(tag)
 const projectItems = computed(() => [{ label: tl('Follow machine tab'), value: BOARD_FOLLOW }, { label: tl('All projects', 'Tous les projets'), value: BOARD_ALL }, ...(data.value?.projects ?? []).map(p => projectOption(p))])
 const tagItems = computed(() => [{ label: tl('Tags', 'Étiquettes'), value: NONE }, ...tags.value.map(x => ({ label: x, value: x }))])
@@ -64,8 +71,7 @@ const tags = computed(() => boardTags((data.value?.cards ?? []).filter(c => show
 const coordinator = computed(() => (project.value ? coordinators.value.find(c => c.project === project.value) : undefined))
 // The project's Machines view (its sheet, General tab); with several projects, the list.
 const machinesLink = computed(() => (project.value ? `/settings?section=projects&project=${encodeURIComponent(project.value)}&tab=general&target=project.machines` : '/settings?section=projects'))
-// A workspace's tasks run several workflows: the phases, as with several projects.
-const columns = computed(() => (project.value && !members.value.length ? data.value?.projects.find(p => p.key === project.value)?.columns ?? [] : null))
+const columns = computed(() => (project.value && !workspace.value ? data.value?.projects.find(p => p.key === project.value)?.columns ?? [] : null))
 const lanes = computed(() => boardLanes(cards.value, columns.value))
 // Before the first read: lanes of shapes, not empty lanes counting 0 (nor the
 // default lanes before a project's own columns); none for a short read.
@@ -105,7 +111,7 @@ const askingPane = (c: Card) => (c.yourTurn && (asker(c) || waitsForYou(c)) ? pa
 const reporting = ref(false)
 const show = (id: string, stop = false, check = false, report = false) => { stopping.value = stop; checking.value = check; reporting.value = report; open.value = id }
 const act = (fn: () => Promise<unknown>) => fn().then(load, (e: Error) => { error.value = e.message })
-const menuOf = (c: Card): MenuItem[] => [
+const menuOf = (c: Card): MenuItem[] => (c.kind === 'feature' ? [] : [
   ...(askingPane(c) ? [{ label: c.holder === 'reviewer' ? tl('Open the reviewer', 'Ouvrir le relecteur') : tl('Open the agent', 'Ouvrir l’agent'), icon: 'i-lucide-terminal', run: () => navigateTo(panePath(askingPane(c)!.id)) }] : []),
   { label: askingPane(c) ? tl('Open the task') : tl('Open', 'Ouvrir'), icon: 'i-lucide-panel-right-open', run: () => show(c.id) },
   ...(canStart(c) && !waiting(c).length ? [{ label: c.sameFiles ? tl('Start anyway') : tl('Start', 'Lancer'), icon: 'i-lucide-play', run: () => act(() => startTaskApi(c.id, undefined, c.sameFiles ? true : undefined)) }] : []),
@@ -115,7 +121,7 @@ const menuOf = (c: Card): MenuItem[] => [
   ...(canCheckGithub(c) ? [{ label: tl('Check on GitHub'), icon: 'i-lucide-refresh-cw', run: () => show(c.id, false, true) }] : []),
   ...(c.stopped ? RESUMES.map(how => ({ label: tl(...RESUME_LABEL[how]), danger: how === 'archive', run: () => act(() => resumeTaskApi(c.id, how)) })) : []),
   ...(c.removable ? [{ label: tl('Delete…', 'Supprimer…'), icon: 'i-lucide-trash-2', danger: true, run: () => act(() => removeTaskApi(c.id)) }] : []),
-]
+])
 // A project that allows other machines: Start on one of them (Start alone: its own).
 const machinesOf = (c: Card) => data.value?.projects.find(p => p.key === c.project)?.machines
 const machineNote = (m: BoardMachine, home: boolean) => (!m.online ? tl('Offline') : home ? tl('The project\'s own machine') : m.unready ? `${tl('Not ready')}: ${m.unready}` : m.unready === '' ? tl('Ready') : tl('Checked when the task starts'))
@@ -163,6 +169,7 @@ const openArchived = (c: Card) => { keepArchivedCard(c); show(c.id) }
       <CoordinatorButton v-if="coordinator" :c="coordinator" open />
     </header>
     <div class="board-body">
+    <label v-if="workspace" class="board-unfold muted"><USwitch v-model="unfold" size="lg" data-testid="board-unfold" />{{ tl('Sub-tasks in their columns too') }}</label>
     <p v-if="error" class="error board-note">{{ error }}</p>
     <p v-else-if="data && !data.cards.length" class="muted board-note">{{ tl('No task yet.', 'Aucune tâche pour l’instant.') }}</p>
     <div v-if="!data && skeleton" class="board-lanes" role="status" :aria-label="tl('Loading')" aria-busy="true" data-testid="board-skeleton">
@@ -175,7 +182,8 @@ const openArchived = (c: Card) => { keepArchivedCard(c); show(c.id) }
       <section v-for="l in lanes" :key="l.id" class="board-lane" :class="{ mine: l.id === 'your-turn' }" :data-lane="l.id" data-testid="board-lane">
         <h2 class="mono-label">{{ laneLabel(l.id) }} <span>{{ l.cards.length }}</span></h2>
         <div v-for="c in l.cards" :key="c.id" class="board-card-wrap" :class="{ 'has-menu': menuOf(c).length > 1 }">
-        <UContextMenu :disabled="sheetMenus" :items="cardMenu.dropdown(() => menuOf(c))" :press-open-delay="700" :ui="{ content: 'hw-dropdown' }" @update:open="cardMenu.opened">
+        <FeatureCard v-if="c.kind === 'feature'" :card="c" :view="featureOf(c)" @open="show" />
+        <UContextMenu v-else :disabled="sheetMenus" :items="cardMenu.dropdown(() => menuOf(c))" :press-open-delay="700" :ui="{ content: 'hw-dropdown' }" @update:open="cardMenu.opened">
         <button type="button" class="board-card" data-testid="board-card" :data-task="c.id" v-on="cardMenu.on(() => menuOf(c), c.title)" @click="tap(c)">
           <span class="board-card-head">
             <span v-if="hasAgent(c)" class="card-state" :class="live(c).key" role="img" :aria-label="live(c).label" :title="live(c).label" data-testid="holder-state"><i /></span>
@@ -236,6 +244,7 @@ const openArchived = (c: Card) => { keepArchivedCard(c); show(c.id) }
 }
 .board-top :deep(.board-select) { min-width: 0; flex: 0 1 auto; }
 .board-note { padding: 12px 16px; }
+.board-unfold { flex: none; display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; border-bottom: 1px solid var(--line); font-size: 13px; cursor: pointer; }
 .board-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; }
 .board-lanes { flex: 1 0 auto; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; padding-bottom: var(--safe-bottom, 0px); }
 .board-lane { flex: none; border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }

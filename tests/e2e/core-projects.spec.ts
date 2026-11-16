@@ -67,7 +67,7 @@ test('project settings: added from an example, a branch protected, a proposal ac
     await mkdir(join(data, 'projects', 'coordinators'), { recursive: true })
     await writeFile(join(data, 'projects', 'coordinators', 'WEB.json'), JSON.stringify({ project: 'WEB', tokenHash: '', proposal }))
     await sheet('workflow')
-    await page.getByTestId('workflow-proposal').click()
+    await page.getByTestId('workflow-proposal-review').click()
     await expect(page.getByTestId('proposal-review')).toBeVisible()
     for (const size of sizes) {
       await page.setViewportSize(size)

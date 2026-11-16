@@ -93,7 +93,9 @@ export async function copyCode(text: string) {
 // written from the run's start on and not taken by another run: never by its
 // place in the loaded list, which grows at the top (older messages) or
 // restarts. `entry`: the entry taken (its time and command). `doneAt`: when it finished.
-export interface CodeRun { cmd: string, at: number, entry?: string, doneAt?: number }
+// `held`: in Claude's own queue, not started; `startedAt`: when Claude took it
+// from there, the card's clock (see holdRuns). `at` stays the click, for matching.
+export interface CodeRun { cmd: string, at: number, entry?: string, doneAt?: number, held?: boolean, startedAt?: number }
 type RunEntry = Pick<ChatItem, 'role' | 'text' | 'ts' | 'ms' | 'out' | 'omp'>
 // Past this, a run the transcript never wrote (lost, cleared) stops showing as running.
 export const RUN_MAX_MS = 3_600_000
@@ -122,7 +124,29 @@ export function settleRuns(runs: readonly CodeRun[], items: readonly RunEntry[],
       const end = hit.t + (hit.it.ms || 0)
       return { ...r, entry: entryKey(hit.it), doneAt: end >= r.at ? end : now }
     }
-    return now - r.at > RUN_MAX_MS ? { ...r, doneAt: now } : r
+    return now - (r.startedAt ?? r.at) > RUN_MAX_MS && !r.held ? { ...r, doneAt: now } : r
+  })
+}
+
+// Sent while Claude works, a "!" command waits in Claude's own queue and runs
+// once, when its turn ends (Claude Code 2.1.3xx; its transcript queues it
+// without the "!"). Held there, it shows as that queued bubble only, not as a
+// live card; once Claude takes it, its card starts, timed from then. Its
+// entry is still matched from the click: seen late, the queue empties as the
+// entry lands, and that entry settles it.
+// `queued`: the texts in Claude's queue now (none while it is idle).
+export function holdRuns(runs: readonly CodeRun[], queued: readonly string[], now: number): CodeRun[] {
+  // Each queued entry holds one run of its command, the latest sent.
+  const left = queued.map(q => q.replace(/^\s*!/, ''))
+  const holds = new Set<CodeRun>()
+  for (const r of [...runs].reverse()) {
+    const i = r.doneAt === undefined ? left.findIndex(q => sameCmd(q, r.cmd)) : -1
+    if (i >= 0) { holds.add(r); left.splice(i, 1) }
+  }
+  return runs.map((r) => {
+    const held = holds.has(r)
+    if (held === Boolean(r.held)) return r
+    return held ? { ...r, held: true } : { ...r, held: false, ...(r.doneAt === undefined ? { startedAt: now } : {}) }
   })
 }
 

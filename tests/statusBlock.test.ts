@@ -32,6 +32,8 @@ it('shows a machine and a quota from what the app reads, unavailable when gone',
   const q = { claude: { at: 0, five: { used: 22, resetsAt: 5000, minutes: 300 }, week: { used: 80, resetsAt: 500, minutes: 10080 } }, codex: null }
   // A window reset since the reading counts as full.
   expect(quotaView(q, 'claude', now)).toMatchObject({ state: '78 % left', tone: 'ok', bars: [{ label: '5 h', left: 78 }, { label: 'week', left: 100 }] })
+  // No 5-hour window (Claude Ultra): the week bar alone, no invented 5 h.
+  expect(quotaView({ ...q, claude: { ...q.claude, five: null } }, 'claude', now)).toMatchObject({ state: '100 % left', bars: [{ label: 'week', left: 100 }] })
   expect(quotaView(q, 'codex', now)).toBeNull()
   expect(quotaView(null, 'claude', now)).toBeNull()
 })

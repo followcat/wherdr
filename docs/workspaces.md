@@ -39,6 +39,20 @@ commands that name a project take `--project <member>`). A member's guards,
 merges, settings and workflow stay with you. Its instructions (`AGENTS.md`)
 list the members.
 
+### What the workspace's coordinator may change
+
+The workspace's coordinator **never changes a member's repository**: every code
+change in a member goes through tasks (`feature split` of a feature,
+`task add --feature`), done by task agents in their own worktrees. On Claude,
+its settings deny edits inside each member's folder (rewritten at each start,
+so a newly adopted member is covered from the coordinator's next start); it may
+still write elsewhere under the root, such as specs and notes. On Codex, the
+root is read-only: it reads every repository and writes only in its own folder.
+
+The root's own `AGENTS.md` and `CLAUDE.md`, when present, are copied into its
+instructions at each start (a `CLAUDE.md` that only imports `AGENTS.md` adds
+nothing), so the rules shared by every repository apply to it too.
+
 A member has **no coordinator**: none is started for it, and none shows in the
 sidebar: the workspace's **row** does, under its tab group, with its
 coordinator's state, its members' tasks working and waiting for you, and its
@@ -64,6 +78,7 @@ A workspace holds the settings its members take:
 - the base branch and the branch name template;
 - the agents, models and [reviewer fallback](project-management.md#reviewer-fallback);
 - the worktree setup;
+- the [workspace instructions files](#workspace-instructions-files);
 - *Archive done tasks after* and *Delete the task's branch after its merge*.
 
 A member stores only its key, name, color, machine, folder, workspace and
@@ -73,6 +88,30 @@ in its `overrides`). Clearing the member's base branch or branch name template
 gives the workspace's back. Everything that reads a project's settings, the
 engine and the coordinator's commands included, reads them with the overrides
 applied.
+
+## Workspace instructions files
+
+A member's task runs in a worktree outside the workspace's root, so its agents
+never see the root's own rules. **Workspace instructions files** (the General
+tab of the workspace's sheet) are files under the root whose text the worker
+and the reviewer of every member's task get, after the workflow's own
+instructions, each under a heading naming it (`## Workspace instructions (AGENTS.md)`):
+
+- *Default*: the root's `AGENTS.md`, else its `CLAUDE.md`, when one is there;
+- *These files*: up to 10 paths under the root, one per line, checked like the
+  worktree setup's (relative, no `..`, no `*`);
+- *None*.
+
+They are read again, on the workspace's home machine, at each worker start,
+each step sent to the worker and each review round, so an edit reaches the
+next one: a worker whose files changed gets them again with its next step.
+Each file is cut at 16,000 characters; a cut file, and a listed file that is
+missing (skipped), get a line in the task's log. The task sheet's Description
+tab names the files its agents got.
+
+A member **inherits** them (*Workspace WS's*), turns them off (*None*) or
+replaces them with its own paths under the root (*These files*), in its own
+General tab.
 
 ## Adopting a repository
 
@@ -165,6 +204,25 @@ The workspace's coordinator runs them with no question to you:
 A task of a member may start after tasks of the workspace's other members
 (`after`), never after a task outside the workspace or a feature, and never
 in a cycle. A task others wait for cannot be removed.
+
+### Features on the board
+
+A feature shows on the board as **one card**: its title and id, its progress
+(*2/3 merged*), one chip per sub-task (its id badge, its step and a square for
+its state: to do, working, waits for you, merged, abandoned), its merge order
+line (the plan's `order`) and what its sub-tasks still wait for (*MOB-1 waits
+for WEB-1*). A tap on a chip opens that sub-task's sheet; a tap elsewhere opens
+the feature's.
+
+The card sits in the column of the feature's state: *To do*, *Working*, *Done*
+once closed, and **Your turn** while a sub-task waits for you, with that
+sub-task's badge (*WEB-1: Merge the PR*). A merged sub-task is not archived
+while its feature is open, so the card keeps counting it.
+
+Pick the workspace in the board's project picker to see the features and the
+tasks of all its members together. Its sub-tasks then fold into their feature's
+card; the switch *Sub-tasks in their columns too* shows them in their columns
+as well, each tagged with its feature's id.
 
 ### Merge order
 

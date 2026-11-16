@@ -161,7 +161,7 @@ describe('workspaces (WHR-314)', () => {
     await refused(cli(['show', st.id]), 'project WS only')
     await refused(cli(['template', 'show', '--project', 'PA']), 'stays with its own coordinator and the user')
     // Its instructions list its members.
-    expect(roleFiles((await store.projects()).find(x => x.key === 'WS')!, null, [], undefined, k => k, ['PA', 'QA'])['AGENTS.md']).toContain('member projects: PA, QA')
+    expect(roleFiles((await store.projects()).find(x => x.key === 'WS')!, null, [], undefined, k => k, { members: [{ key: 'PA', path: '/w/pa' }, { key: 'QA', path: '/w/qa' }] })['AGENTS.md']).toContain('member projects: PA, QA')
   })
 
   it('one autopilot: a member\'s start in a wake counts the other members\' tasks', async () => {

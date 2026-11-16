@@ -87,6 +87,18 @@ machine. A terminal that is not an agent shows only its terminal. Claude Code mu
 saving transcripts: a core started from inside a Claude Code session inherits
 `CLAUDE_CODE_CHILD_SESSION`, which turns saving off; start core from a plain shell.
 
+A local Codex attached to the shared app-server (`~/.codex/app-server-control/`) is read
+from that daemon's paginated history first, so an older thread selected there shows its
+whole conversation. wherdr only reads (`thread/list`, `thread/read`, `thread/items/list`):
+it never starts the daemon, resumes a thread or types in the terminal. The terminal title
+must match exactly one thread name in the same folder; repeated names are not guessed. A
+missing or ambiguous match, another folder, or a failed first read falls back to the
+rollout lookup above. Once a terminal has read a daemon thread, a failed read keeps that
+thread and its last known messages until the daemon recovers or the conversation changes.
+Each read has 1.5 s, a whole request 3 s, and a refused connection is retried after 5 s.
+An expired paging cursor reloads the conversation's end. Daemon image attachments are not
+shown yet; remote machines keep the rollout reader.
+
 Devin CLI (tested with 3000.11.234) is read store-first: its own
 `sessions.db` (`~/.local/share/devin/cli/sessions.db`) holds every message as
 it is written, while the ATIF transcript only lands when a turn ends. A small
@@ -252,8 +264,8 @@ agent loads or warns about it.
 Text left unsent in Claude Code's own input box (a draft or paste never submitted, or the
 prompt Claude puts back after an interrupt) shows at the end of the conversation as
 **Not sent** once it has stayed unchanged for two seconds and the colored screen (the first
-paint of a passive `terminal.attach`) confirms it is typed text, not Claude's gray suggestion, with **Send now** (Enter, then a
-check that the box emptied and a turn started) and **Clear**. When Claude's queue offers
+paint of a passive `terminal.attach`) confirms it is typed text, not Claude's gray suggestion, with **Send now** (Enter, pressed
+again every ~1 s while the box still holds that text alone, then a check that the box emptied and a turn started) and **Clear**. When Claude's queue offers
 "ctrl+enter to send now", the conversation offers **Send now** too (ctrl+enter, then a check
 that Claude took its queue). Each action re-reads the screen first and refuses a box that
 changed (`server/utils/coreDraft.ts`). **Send now** spins and disables the row's buttons from
@@ -262,12 +274,22 @@ again*). One action runs at a time per terminal: the same one asked again, from 
 or device, joins the one in flight, so a message is never sent twice.
 A message sent from wherdr that Claude left in that box (a photo message is pasted, and
 Claude may keep a paste there; a large photo is read and resized before its `[Image #N]`
-shows, and an Enter pressed before that is lost) is submitted by wherdr: it waits up to
-about twelve seconds for the box to hold that message alone, each photo as its placeholder,
-presses Enter, and presses it again while the message is still there (up to four times,
-waiting longer each time). This also holds for a message sent while Claude works or ends
-its turn: Enter then puts it in Claude's own queue. Enter is only pressed on a box that
-holds that message alone, so it is never sent twice.
+shows, and an Enter pressed before that is lost; after a long idle, Claude may also ignore
+Enter for a few seconds with the placeholder already shown) is submitted by wherdr. After
+every send to Claude, idle or busy, whatever core reports, wherdr looks at the box: empty,
+the message was taken (but an empty box with *Pasting…* under it is Claude still reading
+the photos, several seconds for three large ones: wherdr keeps waiting); otherwise it waits up to about 24 seconds for the box to hold that
+message alone, each photo as its placeholder, presses Enter, and presses it again while the
+message is still there (up to ten times over about 16 seconds). This also holds for a
+message sent while Claude works or ends its turn: Enter then puts it in Claude's own queue.
+Enter is only pressed on a box that holds that message alone, so it is never sent twice. A
+send that needed more than one Enter, or stayed in the box, leaves one line in the server
+log (terminal and Enter count; when it failed, the sizes of what the box held and of what
+was expected: characters, images, lines, never the text). A send in progress is noted in
+`data/submitting.json` until it ends: if wherdr restarts meanwhile (an update), it resumes
+it at startup, the same way and only on a box that holds that message alone.
+A message another terminal sent with `hc send` (wrapped in `<hc from="…">`) is shown
+without that wrapper, its photos as photos.
 Until the send answers, the bubble reads **sending…**, not **Not sent**. While it stays there, its bubble reads **Not sent yet · waiting in
 the agent's input**, never **Read by the agent**, and the box's own bubble is not shown
 twice: the box is matched to the message by its text alone, whitespace, `[Image #N]`

@@ -10,6 +10,13 @@
 - **Markdown** files show formatted (**Rendered**) or as their source with line numbers
   (**Source**). A link to another file of the folder opens its preview, at the heading it names;
   **Back** returns to the previous file. A link that leads outside the folder is refused.
+- <a id="html-pages"></a>**HTML pages** (`.html`, `.htm`, up to 256 KB: an agent's mockup or demo)
+  run as a page (**Preview**, the default) or show their source (**Source**). The page runs in a
+  sandboxed frame with its own origin, apart from wherdr: it cannot read wherdr's cookies or
+  storage, call its API, open windows, send forms or navigate the app. Self-contained pages only:
+  its inline CSS, scripts and images work, as do `https` links to a CDN; files next to it are not
+  loaded, and it makes no network requests (`fetch`). **Open** shows it alone in a new tab, under
+  the same sandbox.
 - <a id="paths-in-a-conversation"></a>**Paths in a conversation**: a file path an agent writes
   in its reply (relative, `~/…` or absolute, `/tmp/…` included) opens the same preview. Which files
   it may open is set in Settings › Security › **Files shown from conversations**:

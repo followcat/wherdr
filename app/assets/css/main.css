@@ -458,6 +458,8 @@ body.short-bottom { --safe-bottom: 0px; }
    time under them. On a very narrow sidebar the bar wraps to its own line. */
 .quota { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; padding: 4px 8px 4px; min-width: 0; }
 .quota + .quota { border-left: 1px solid var(--line); }
+/* Only one window (Claude Ultra, Codex Plus: no 5 h): one bar across the row. */
+.quota.quota-wide { grid-column: span 2; }
 .quota-top { flex: none; display: flex; align-items: baseline; gap: 6px; }
 .quota-label { flex: none; font: 500 9.5px/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .quota-top b { flex: none; font: 850 13px/1 var(--display); letter-spacing: -.02em; color: var(--text); }
@@ -915,6 +917,9 @@ body.short-bottom { --safe-bottom: 0px; }
 .files-pdf { width: 100%; min-width: 0; }
 .pdf-page { width: 100%; background: white; margin-bottom: 12px; overflow: hidden; }
 .pdf-page canvas { display: block; width: 100%; height: 100%; }
+/* An agent's HTML page: the panel's height, white like a browser tab. */
+.files-page { display: block; width: 100%; height: max(360px, calc(100dvh - 265px)); margin: 12px 0 0; background: white; border: 1px solid var(--line); }
+.files-page-note { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
 /* The browser's own player: the view's width, never taller than most of the screen. */
 .files-video { display: block; width: 100%; max-height: 70vh; margin: 12px 0; background: #000; border: 1px solid var(--line); }
 @media (max-width: 520px) {
@@ -1023,9 +1028,11 @@ body.short-bottom { --safe-bottom: 0px; }
    Conversation (UChatMessages, UChatMessage, UChatTool, UChatShimmer)
    ================================================================ */
 .chat-wrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.chat { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.chat { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 .chat-msgs { padding: 0; gap: 0; min-height: 100%; }
-.chat-list { padding: 18px 16px 8px; display: flex; flex-direction: column; gap: 14px; }
+.chat-list { padding: 18px 16px 8px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+/* Never wider than its column: a row that cannot shrink must not make the whole conversation scroll sideways (code blocks and tables keep their own scroll). */
+.chat-msgs, .chat-list > * { min-width: 0; max-width: 100%; }
 .chat-note {
   align-self: center; font: 500 10.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--dim);
   padding: 6px 0;
@@ -3090,7 +3097,10 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
 .wake-run .wake-time { margin-left: auto; }
 .wake-run.ask { padding-left: 8px; border-left: 2px solid var(--accent); color: var(--text-2); }
 .wake-toggle { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; text-align: left; cursor: pointer; }
-.wake-part { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+/* A part's task badges wrap under it instead of widening the row (10+ merged tasks on a phone). */
+.wake-part { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; max-width: 100%; }
+.wake-count { white-space: nowrap; }
+.wake-chips { display: flex; flex-wrap: wrap; gap: 4px; flex: 0 1 auto; min-width: 0; max-width: 60%; }
 .wake-icon { flex: none; width: 13px; height: 13px; }
 [data-tone="done"] > .wake-icon, .wake-icon[data-tone="done"] { color: var(--done); }
 [data-tone="ready"] > .wake-icon, .wake-icon[data-tone="ready"], [data-tone="question"] > .wake-icon, .wake-icon[data-tone="question"] { color: var(--accent); }

@@ -4,8 +4,9 @@
 import { coreCall, CoreError } from './core'
 import { HerdrError } from './herdr'
 import { keepPastes } from './pastes'
-import { fieldHolds, isBareBang, isSlashCommand } from '../../shared/queuedMatch'
-import { corePaint, readDraft, sameText } from './coreDraft'
+import { fieldGap, fieldHolds, isBareBang, isSlashCommand } from '../../shared/queuedMatch'
+import { corePaint, pasting, readDraft, sameText } from './coreDraft'
+import { noteSubmitting, type Submitting } from './submitting'
 import { inTurn, typingInto } from './terminalTurns'
 import type { Pane } from '../../shared/types'
 
@@ -19,6 +20,8 @@ export interface CoreInputDeps {
   takeBack?: (p: Pane) => Promise<{ text: string, lost: number } | null>
   /** Claude: text in its input field now (its gray suggestion left out), null when empty. */
   field?: (p: Pane) => Promise<string | null>
+  /** Notes a message to Claude being submitted, for a restart to resume it (submitting.ts); returns what forgets it. */
+  submitting?: (terminal: string, text: string) => () => void
   settleMs?: number
   /** Quiet time after a send before the next writer of the terminal (see terminalTurns.ts). */
   turnSettleMs?: number
@@ -41,11 +44,14 @@ export function coreInputDeps(): CoreInputDeps {
       const endpoint = process.env.HC_SOCKET || ''
       const plain = String(((await coreCall(endpoint, 'terminal.read', { terminal: p.coreAddress, lines: 0 }, 4000)) as { text?: string }).text || '')
       const seen = readDraft(plain, p.agent)
-      if (!seen) return null
       // The plain screen draws Claude's gray suggestion like typed text: the colored one tells them apart.
-      const typed = readDraft(await corePaint(endpoint, p.coreAddress || ''), p.agent)
-      return typed && sameText(typed.text, seen.text) ? typed.text : null
+      const typed = seen && readDraft(await corePaint(endpoint, p.coreAddress || ''), p.agent)
+      if (typed && sameText(typed.text, seen.text)) return typed.text
+      // Empty while Claude takes in a paste: not read yet, the text is coming.
+      if (pasting(plain)) throw new HerdrError('pasting', 'Claude is still pasting')
+      return null
     },
+    submitting: noteSubmitting,
     takeBack: (p) => {
       const call = (method: string, params: object, t: number) => coreCall(process.env.HC_SOCKET || '', method, params, t)
       return takeBackFromClaude(p, {
@@ -104,6 +110,8 @@ async function typeIn(deps: CoreInputDeps, p: Pane, text: string, pastes: unknow
     await new Promise(res => setTimeout(res, deps.settleMs ?? 400))
   }
   if (!isSlashCommand(text)) keepPastes(text, pastes)
+  // Noted before the send: a restart during it or during the Enters resumes it.
+  const forget = field && deps.submitting ? deps.submitting(p.coreAddress!, text) : () => {}
   try {
     const r = await deps.call<{ started?: boolean | null, status?: string | null }>('terminal.send', { terminal: p.coreAddress, text }, 30000)
     let started = r?.started ?? null
@@ -114,8 +122,9 @@ async function typeIn(deps: CoreInputDeps, p: Pane, text: string, pastes: unknow
     // during a turn, where Enter queues it): Enter, again while it stays.
     // `started` is "went working within a few seconds": sent while Claude was
     // already working (or ending its turn), it is true whether or not Claude
-    // took the message, so it proves nothing then (WHR-398).
-    if (field && (started !== true || r?.status === 'working')) {
+    // took the message (WHR-398). So the field is always looked at: empty, the
+    // message was taken; holding it, it is submitted (WHR-413).
+    if (field) {
       const enters = await submitLeftInput(deps, p, field, text)
       if (enters) started = null // unconfirmed: Enter pressed, no turn observed yet
     } else if (p.agent === 'claude' && started === false && text.includes('\n')) {
@@ -130,15 +139,36 @@ async function typeIn(deps: CoreInputDeps, p: Pane, text: string, pastes: unknow
       }
     }
     return { ok: true, started }
-  } catch (e) { failure(e) } finally { deps.refresh() }
+  } catch (e) { failure(e) } finally { forget(); deps.refresh() }
 }
 
-// Looks at Claude's field after a send it did not start: up to this many,
-// settleMs apart (about 12 s by default), for the photos to show.
-const SUBMIT_LOOKS = 30
+// After a restart: the sends it interrupted are submitted the same way, only
+// if Claude's field holds that message alone (never twice). One at a time per
+// terminal, in the order they were sent.
+export async function resumeSubmitting(deps: CoreInputDeps, list: Submitting[]) {
+  const field = deps.field
+  if (!field) return
+  const terminals = [...new Set(list.map(s => s.terminal))]
+  await Promise.all(terminals.map(async (terminal) => {
+    for (const s of list.filter(x => x.terminal === terminal)) {
+      const p = { id: terminal, coreAddress: terminal, agent: 'claude' } as Pane
+      const forget = deps.submitting ? deps.submitting(terminal, s.text) : () => {}
+      try {
+        console.warn(`[wherdr] message to ${terminal}: resumed after a restart`)
+        await submitLeftInput(deps, p, field, s.text)
+      } catch { /* the field's own "Not sent" remains */ } finally { forget(); deps.refresh() }
+    }
+  }))
+}
+
+// Looks at Claude's field after a send: up to this many, settleMs apart
+// (about 24 s by default), for the photos to show.
+const SUBMIT_LOOKS = 60
 // After each Enter, the look that decides on the next one, in settleMs: the
 // field may still be drawing, or Claude switching turns, and drop an Enter.
-const RESUBMIT_AFTER = [1, 2, 4, 8]
+// After a long idle, Claude ignored Enter for 2-3 s with "[Image #N]" already
+// shown (WHR-413): Enters keep coming for about 16 s.
+const RESUBMIT_AFTER = [1, 2, 3, 4, 5, 5, 5, 5, 5, 5]
 
 // Our message left in Claude's field: waits (bounded) until the field holds
 // it whole, placeholders included, then presses Enter, and again (backing
@@ -146,26 +176,39 @@ const RESUBMIT_AFTER = [1, 2, 4, 8]
 // The field was empty before the send, so other text there is ours still
 // being drawn (a photo path not yet an "[Image #N]"); Enter is never pressed
 // on it. Never sent twice: the field holds one copy, and an empty field (the
-// message taken, or queued during a turn) ends it. Returns the Enters pressed.
+// message taken, or queued during a turn) ends it; an empty field under
+// "Pasting…" is not read yet (WHR-419). Returns the Enters pressed.
 async function submitLeftInput(deps: CoreInputDeps, p: Pane, field: (p: Pane) => Promise<string | null>, text: string): Promise<number> {
   const settle = deps.settleMs ?? 400
+  let last: string | undefined
   const holds = async (times = 1) => {
     await new Promise(res => setTimeout(res, settle * times))
-    const now = await field(p).catch(() => null)
-    return now ? fieldHolds(now, text, true) : null
+    // A failed read is no empty field: not taken, no Enter on it either.
+    const now = await field(p).catch(() => undefined)
+    if (now) last = now
+    return now === undefined ? false : now ? fieldHolds(now, text, true) : null
   }
+  // Evidence for the next report: sizes, never the text.
+  const why = () => (last === undefined ? 'field never read with text' : `field held ${fieldGap(last, text)}`)
   // Wait for it whole (null: the field emptied, the message was taken).
   for (let i = 0; ; i++) {
     const seen = await holds()
-    if (seen === null || (!seen && i + 1 >= SUBMIT_LOOKS)) return 0
+    if (seen === null) return 0
     if (seen) break
+    if (i + 1 >= SUBMIT_LOOKS) {
+      console.warn(`[wherdr] message to ${p.coreAddress}: not submitted, never held the message alone: ${why()}`)
+      return 0
+    }
   }
   let enters = 0
+  let left = true
   for (const after of RESUBMIT_AFTER) {
     await deps.call('terminal.keys', { terminal: p.coreAddress, keys: ['enter'] }, 10000)
     enters++
-    if (!await holds(after)) break
+    if (!await holds(after)) { left = false; break }
   }
+  // Evidence for the next report, no message text.
+  if (left || enters > 1) console.warn(`[wherdr] message to ${p.coreAddress}: ${left ? `still in input after ${enters} Enters: ${why()}` : `submitted after ${enters} Enters`}`)
   return enters
 }
 

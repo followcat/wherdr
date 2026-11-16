@@ -44,11 +44,15 @@ const fieldForm = (t: string) => String(t || '').replace(IMAGE_TAG, '[Image]').r
 const PHOTO_PATH = /(?:~|\/)\S*\/(?:\.cache\/herdr-web\/uploads\/\S+|\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-f]{6}\.(?:jpg|png|webp|gif|heic))/g
 const looseForm = (t: string) => String(t || '').replace(IMAGE_TAG, '').replace(PHOTO_PATH, '').replace(/\s+/g, '')
 const PASTE_TAG = /\[Pasted text #\d+(?: \+\d+ lines)?\]/
+const messageForm = (text: string) => fieldForm(String(text || '').split('\n').map(l => (isUploadLine(l) ? '[Image]' : l)).join('\n'))
+// Why a field does not hold a message, for the server log: sizes, never text.
+export const fieldGap = (field: string, text: string) =>
+  `${fieldForm(field).length} chars, ${imageTagCount(field)} images${PASTE_TAG.test(field) ? ', a paste stand-in' : ''}; expected ${messageForm(text).length} chars, ${uploadNames(text).length} images, ${text.split('\n').length} lines`
 export function fieldHolds(field: string | null | undefined, text: string, exact = false, loose = false): boolean {
   // Photos alone: only their tags tell them apart, so they are counted.
   const free = loose && Boolean(withoutUploads(text))
   const form = free ? looseForm : fieldForm
-  const m = free ? looseForm(withoutUploads(text)) : fieldForm(String(text || '').split('\n').map(l => (isUploadLine(l) ? '[Image]' : l)).join('\n'))
+  const m = free ? looseForm(withoutUploads(text)) : messageForm(text)
   const parts = String(field || '').split(PASTE_TAG).map(form)
   if (!m || !form(field || '')) return false
   if (parts.length === 1) return exact ? parts[0] === m : m.length > 0 && parts[0]!.startsWith(m)

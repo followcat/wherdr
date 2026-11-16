@@ -47,10 +47,18 @@ function openFile(path: string) {
 // loaded, and the files to come back to (Back) when there is no folder around.
 let pendingAnchor: string | null = null
 const trail = ref<string[]>([])
+// An HTML page (an agent's mockup or demo) runs in a sandboxed frame
+// (Preview), served with its own policy (server/utils/fileDownload.ts): an
+// opaque origin, away from wherdr's cookies, storage and API. Or its source.
+// A page cut at the text limit stays source only.
+const htmlView = ref<'preview' | 'source'>('preview')
+const isHtml = computed(() => preview.value?.kind === 'text' && /\.html?$/i.test(preview.value.path))
+const isPage = computed(() => isHtml.value && !preview.value!.truncated)
+const pageShown = computed(() => isPage.value && htmlView.value === 'preview')
 // Preview and Open share the authenticated inline download path.
 // Each refresh reloads it.
 const reloads = ref(0)
-const inlineUrl = computed(() => preview.value?.kind === 'pdf' || preview.value?.kind === 'video' ? `/api/files/download?${fileQuery(preview.value.path)}&inline=1` : '')
+const inlineUrl = computed(() => preview.value?.kind === 'pdf' || preview.value?.kind === 'video' || isPage.value ? `/api/files/download?${fileQuery(preview.value!.path)}&inline=1` : '')
 // A video the browser cannot decode (codec, or a .mov outside Safari): say so,
 // Open and Download stay.
 const videoFailed = ref(false)
@@ -244,8 +252,18 @@ function icon(e: FileEntry) {
             <span>{{ v === 'rendered' ? t('Rendered') : t('Source') }}</span>
           </button>
         </div>
+        <div v-else-if="isPage" class="segmented files-md-mode" role="group" :aria-label="t('Page view')" style="--segment-count: 2">
+          <button v-for="v in (['preview', 'source'] as const)" :key="v" type="button" :class="{ on: htmlView === v }" :aria-pressed="htmlView === v" @click="htmlView = v">
+            <span>{{ v === 'preview' ? t('Preview') : t('Source') }}</span>
+          </button>
+        </div>
         <p v-if="preview.truncated && preview.kind === 'text'" class="changes-limit">{{ t('File truncated to keep this view responsive.') }}</p>
-        <button v-if="preview.kind === 'image'" type="button" class="files-image-open" :aria-label="t('Enlarge image')" @click="preview.dataUrl && openLightbox([preview.dataUrl])">
+        <template v-if="pageShown">
+          <!-- Never allow-same-origin, popups, forms or top navigation. -->
+          <iframe :key="`${inlineUrl}:${reloads}`" class="files-page" :src="inlineUrl" sandbox="allow-scripts" referrerpolicy="no-referrer" :title="preview.path" />
+          <p class="files-page-note">{{ t('Self-contained pages only: files next to it are not loaded; https scripts, styles and images are.') }}</p>
+        </template>
+        <button v-else-if="preview.kind === 'image'" type="button" class="files-image-open" :aria-label="t('Enlarge image')" @click="preview.dataUrl && openLightbox([preview.dataUrl])">
           <img class="files-image" :src="preview.dataUrl" :alt="preview.path">
         </button>
         <PdfPreview v-else-if="preview.kind === 'pdf'" :key="`${inlineUrl}:${reloads}`" :src="inlineUrl" :title="preview.path" />
