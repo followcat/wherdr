@@ -18,7 +18,8 @@ import type { Project, TemplateInfo } from '#shared/pm/project'
 import { PROJECT_COLORS, shownKey } from '#shared/pm/projectKey'
 import { ARCHIVE_DAYS, archiveDays } from '#shared/pm/archive'
 import type { LogEntry } from '#shared/pm/templateText'
-import { SETUP_TIMEOUT, type Prefs, type Template, type WorktreeSetup } from '#shared/pm/workflow'
+import { SETUP_TIMEOUT, checkSetup, type Prefs, type Template, type WorkflowError, type WorktreeSetup } from '#shared/pm/workflow'
+import { workflowBase } from '#shared/pm/run'
 import ProjectWorkflow from '~/components/ProjectWorkflow.vue'
 import type { RepoVisibility } from '#shared/pm/visibility'
 import { PROJECT_TABS, PROJECT_TAB_LABEL as TAB_LABEL, type ProjectTab } from '~/utils/projectTabs'
@@ -45,21 +46,25 @@ const error = ref('')
 const busy = ref('')
 const form = reactive({ name: '', coordinatorName: '', key: '', color: '', base: '', branchName: '', archiveAfter: '', deleteBranch: true, agent: '', model: '', reviewAgent: '', reviewModel: '', reviewFallbackAgent: '', reviewFallbackModel: '', reach: {} as Record<string, string> })
 const others = computed(() => (props.projects ?? []).filter(x => x.key !== p.value.key))
-async function load() {
+// The sheet's latest copy of the project (a save answers before the prop follows).
+const last = shallowRef(props.project)
+watch(() => props.project, (v) => { last.value = v })
+async function read() {
   const r = await api<{ workflow: Template | null, inherited?: string, log: LogEntry[], ready?: Record<string, string> }>(`/api/pm/project?key=${encodeURIComponent(p.value.key)}`)
   workflow.value = r.workflow
   inherited.value = r.inherited ?? ''
   log.value = r.log
   ready.value = r.ready ?? {}
-  fill(p.value, r.workflow?.prefs ?? {})
-  fillSetup(r.workflow?.worktree)
-  loaded.value = true
-  saved.value = snapshot()
 }
-// Save is enabled only once a field differs from what was loaded or saved.
-const snapshot = () => JSON.stringify([form, setup])
-const saved = ref('')
-const dirty = computed(() => loaded.value && snapshot() !== saved.value)
+async function load() {
+  await read()
+  filling = true
+  fill(p.value, workflow.value?.prefs ?? {})
+  fillSetup(workflow.value?.worktree)
+  filling = false
+  keyInput.value = form.key
+  loaded.value = true
+}
 const fill = (x: Project, prefs: Prefs) => Object.assign(form, { name: x.name, coordinatorName: x.coordinatorName ?? '', key: shownKey(x), color: x.color ?? '', base: x.base ?? '', branchName: x.branchName ?? '', archiveAfter: String(archiveDays(x)), deleteBranch: x.deleteBranch !== false, agent: prefs.agent ?? '', model: prefs.model ?? '', reviewAgent: prefs.reviewAgent ?? '', reviewModel: prefs.reviewModel ?? '', reviewFallbackAgent: prefs.reviewFallbackAgent ?? '', reviewFallbackModel: prefs.reviewFallbackModel ?? '', reach: Object.fromEntries((x.reach ?? []).map(r => [r.project, r.level])) })
 // The worktree setup: paths one per line (or comma separated). Folders to
 // share: empty is node_modules (no `share`), noShare is none (`share: []`).
@@ -67,6 +72,36 @@ const setup = reactive({ copy: '', share: '', noShare: false, lockfile: '', comm
 const fillSetup = (w: WorktreeSetup = {}) => Object.assign(setup, { copy: (w.copy ?? []).join('\n'), share: (w.share ?? []).join('\n'), noShare: !!w.share && !w.share.length, lockfile: w.lockfile ?? '', command: w.command ?? '', timeout: w.timeout ?? '' })
 const paths = (v: string) => v.split(/[\n,]/).map(x => x.trim()).filter(Boolean)
 const setupBody = () => ({ copy: paths(setup.copy), share: setup.noShare ? [] : paths(setup.share).length ? paths(setup.share) : undefined, lockfile: setup.lockfile.trim(), command: setup.command.trim(), timeout: setup.timeout.trim() })
+// The server's own rules on the setup (empty fields dropped), each error under its field.
+const invalid = (): Record<string, string> => {
+  const errs: WorkflowError[] = []
+  checkSetup(Object.fromEntries(Object.entries(setupBody()).filter(([, v]) => v !== '' && v !== undefined)), errs)
+  return Object.fromEntries(errs.map(e => [e.path.replace('worktree.', ''), tl(`${e.message[0]!.toUpperCase()}${e.message.slice(1)}.`)]))
+}
+
+// Every field saves by itself (useAutosave): the whole form in one call, each
+// field's Saved mark on its group (agent and model together, key and color).
+const send = async () => {
+  const { name, coordinatorName, key, color, base, branchName, archiveAfter, deleteBranch, reach, ...prefs } = form
+  const was = last.value
+  const r = await api<{ project: Project }>('/api/pm/project-update', { key: was.key, name, coordinatorName, base, branchName, archiveAfter: Number(archiveAfter), deleteBranch, reach: Object.entries(reach).map(([project, level]) => ({ project, level })), ...(color && color !== was.color ? { color } : {}), ...(key.toUpperCase() !== shownKey(was) ? { newKey: key } : {}), ...(workflow.value ? { prefs, worktree: setupBody() } : {}) })
+  // The form keeps what was typed; the shared lists that show its key, color and agents are read again.
+  last.value = r.project
+  emit('changed')
+  await read()
+  loadCoordinators()
+  loadTaskAgents()
+}
+const auto = useAutosave(send, invalid)
+const GROUP: Record<string, string> = { color: 'key', agent: 'worker', model: 'worker', reviewAgent: 'reviewer', reviewModel: 'reviewer', reviewFallbackAgent: 'fallback', reviewFallbackModel: 'fallback', noShare: 'share' }
+// The key is typed in keyInput and saved only on blur or Enter (commitKey): a
+// pause mid-rename would make a partial key a real rename and a former key for good.
+const keyInput = ref('')
+const commitKey = () => { form.key = keyInput.value }
+const TYPED = ['name', 'coordinatorName', 'branchName', 'model', 'reviewModel', 'reviewFallbackModel', 'copy', 'share', 'lockfile', 'command', 'timeout']
+let filling = false
+for (const [o, keys] of [[form, Object.keys(form)], [setup, Object.keys(setup)]] as const)
+  for (const k of keys) watch(() => JSON.stringify((o as Record<string, unknown>)[k]), () => { if (!filling) auto.change(GROUP[k] ?? k, !TYPED.includes(k)) }, { flush: 'sync' })
 onMounted(() => { load().catch((e) => { error.value = (e as Error).message }); loadCoordinators() })
 
 async function run(what: string, fn: () => Promise<unknown>) {
@@ -77,19 +112,6 @@ async function run(what: string, fn: () => Promise<unknown>) {
   catch (e) { error.value = (e as Error).message }
   finally { busy.value = '' }
 }
-const save = () => run('save', async () => {
-  const { name, coordinatorName, key, color, base, branchName, archiveAfter, deleteBranch, reach, ...prefs } = form
-  const r = await api<{ project: Project }>('/api/pm/project-update', { key: p.value.key, name, coordinatorName, base, branchName, archiveAfter: Number(archiveAfter), deleteBranch, reach: Object.entries(reach).map(([project, level]) => ({ project, level })), ...(color && color !== p.value.color ? { color } : {}), ...(key.toUpperCase() !== shownKey(p.value) ? { newKey: key } : {}), ...(workflow.value ? { prefs, worktree: setupBody() } : {}) })
-  // The prop is refreshed only after `changed`: the form takes the saved
-  // project, and the shared lists that show its key and color are read again.
-  await load()
-  fill(r.project, workflow.value?.prefs ?? {})
-  saved.value = snapshot()
-  loadCoordinators()
-  loadTaskAgents()
-  toast(tl('Saved'))
-})
-
 // How long a done task stays in Done before it is archived.
 const archiveItems = ARCHIVE_DAYS.map(d => ({ label: d ? tl(`${d} day${d > 1 ? 's' : ''}`) : tl('Never'), value: String(d) }))
 
@@ -127,6 +149,8 @@ const agentModel = (k: 'agent' | 'reviewAgent' | 'reviewFallbackAgent') => compu
 const agent = agentModel('agent')
 const reviewAgent = agentModel('reviewAgent')
 const fallbackAgent = agentModel('reviewFallbackAgent')
+// No working branch set: the branch its workflow opens PRs to, where tasks then start.
+const fromWorkflow = computed(() => (form.base ? undefined : Object.keys(workflow.value?.taskTypes ?? {}).map(k => workflowBase(workflow.value, k)).find(Boolean)))
 const base = computed({ get: () => orNone(form.base), set: (v: string) => { form.base = fromNone(String(v)) } })
 
 // The workflow changed (saved, started over): reload it here and the list.
@@ -175,18 +199,19 @@ async function remove() {
       </div>
 
       <div class="project-panel" role="tabpanel" :aria-labelledby="`project-tab-${tab}`" data-testid="project-panel">
-        <form v-if="tab === 'general'" class="sheet-form" :aria-busy="busy !== ''" data-testid="pm-general" @submit.prevent="save">
+        <form v-if="tab === 'general'" class="sheet-form" :aria-busy="busy !== '' || auto.busy.value" data-testid="pm-general" @submit.prevent="commitKey(); auto.flush()" @focusout="commitKey(); auto.flush()">
           <div class="pm-cols">
             <span class="pm-col">
-              <label class="field-label" for="pmName">{{ t('Name') }}</label>
+              <label class="field-label" for="pmName">{{ t('Name') }}<SavedMark :s="auto.state.name" /></label>
               <UInput id="pmName" v-model="form.name" size="xl" class="w-full" maxlength="80" data-testid="pm-name" />
+              <small v-if="auto.errors.name" class="form-error pm-field-error" role="alert">{{ t(auto.errors.name) }}</small>
             </span>
             <span class="pm-col">
-              <label class="field-label" for="pmKey">{{ tl('Key') }}</label>
+              <label class="field-label" for="pmKey">{{ tl('Key') }}<SavedMark :s="auto.state.key" /></label>
               <span class="pm-field">
                 <span class="pm-key-row">
-                  <UInput id="pmKey" v-model="form.key" size="lg" class="pm-key mono" maxlength="10" autocomplete="off" data-testid="pm-key" @update:model-value="v => (form.key = String(v).toUpperCase())" />
-                  <ProjectBadge :text="form.key || shownKey(p)" :color="form.color" />
+                  <UInput id="pmKey" v-model="keyInput" size="lg" class="pm-key mono" maxlength="10" autocomplete="off" data-testid="pm-key" @update:model-value="v => (keyInput = String(v).toUpperCase())" />
+                  <ProjectBadge :text="keyInput || shownKey(p)" :color="form.color" />
                 </span>
                 <span class="pm-colors" role="radiogroup" :aria-label="tl('Color')" data-testid="pm-colors">
                   <button
@@ -194,69 +219,80 @@ async function remove() {
                     :style="{ '--key-c': projectColorVar(c) }" :data-color="c" @click="form.color = c"
                   ><i /></button>
                 </span>
+                <small v-if="auto.errors.key" class="form-error pm-field-error" role="alert">{{ t(auto.errors.key) }}</small>
                 <small class="muted">{{ tl('Task ids start with it. Every task, old ones too, shows the new key; links and commands with a former key still work.') }}</small>
               </span>
             </span>
           </div>
 
-          <label class="field-label" for="pmCoordName">{{ tl('Coordinator name') }}</label>
+          <label class="field-label" for="pmCoordName">{{ tl('Coordinator name') }}<SavedMark :s="auto.state.coordinatorName" /></label>
           <span class="pm-field">
             <UInput id="pmCoordName" v-model="form.coordinatorName" size="lg" class="w-full" maxlength="80" :placeholder="form.name" data-testid="pm-coordinator-name" />
+            <small v-if="auto.errors.coordinatorName" class="form-error pm-field-error" role="alert">{{ t(auto.errors.coordinatorName) }}</small>
             <small class="muted">{{ tl('Shown after the key badge in the sidebar and its conversation. Empty: the project’s name.') }}</small>
           </span>
 
           <template v-if="others.length">
-            <span class="field-label">{{ tl('Other projects this coordinator may act on') }}</span>
+            <span class="field-label">{{ tl('Other projects this coordinator may act on') }}<SavedMark :s="auto.state.reach" /></span>
             <span class="pm-field">
               <ProjectReach v-model="form.reach" :projects="others" />
+              <small v-if="auto.errors.reach" class="form-error pm-field-error" role="alert">{{ t(auto.errors.reach) }}</small>
               <small class="muted">{{ tl('Read: it lists and reads their tasks. Act: it also adds, starts, stops and edits them, and tells their agents. Their guards, merges, approvals, settings and autopilot stay with their own coordinator and you. Each action is in their log, and their coordinator is told.') }}</small>
             </span>
           </template>
 
-          <span class="field-label">{{ tl('Base branch') }}</span>
+          <span class="field-label">{{ tl('Base branch') }}<SavedMark :s="auto.state.base" /></span>
           <span class="pm-field">
             <USelectMenu
             v-model="base" :items="branchItems" value-key="value" size="lg" class="pm-base-pick mono" create-item
             :search-input="{ placeholder: tl('Branch name', 'Nom de branche'), autocomplete: 'off', ui: { base: 'pointer-coarse:text-[16px]' } }"
             :aria-label="tl('Base branch')" data-testid="pm-base" @update:open="o => o && loadBranches()" @create="v => (form.base = v.trim())"
           />
-          <small class="muted">{{ tl('New tasks start their worktree from it, and a step that names no branch opens its PR to it or merges into it. Unset: the repo\'s current branch. Running tasks keep theirs.') }}</small>
+          <small v-if="auto.errors.base" class="form-error pm-field-error" role="alert">{{ t(auto.errors.base) }}</small>
+          <small class="muted">{{ tl('New tasks start their worktree from it, and a step that names no branch opens its PR to it or merges into it. Unset: the branch the workflow opens its PRs to, else the repo\'s default branch. Running tasks keep theirs.') }}</small>
+          <small v-if="fromWorkflow" class="muted" data-testid="pm-base-workflow">{{ tl(`No working branch set: using ${fromWorkflow} from the workflow.`) }}</small>
           </span>
 
-          <span class="field-label">{{ tl('Branch name') }}</span>
+          <span class="field-label">{{ tl('Branch name') }}<SavedMark :s="auto.state.branchName" /></span>
           <span class="pm-field">
             <UInput v-model="form.branchName" size="lg" class="pm-base-pick mono" placeholder="task/{id}" :aria-label="tl('Branch name')" maxlength="80" data-testid="pm-branch-name" />
+            <small v-if="auto.errors.branchName" class="form-error pm-field-error" role="alert">{{ t(auto.errors.branchName) }}</small>
             <small class="muted">{{ tl('Each new task\'s branch. Fields: {id}, {tag} (the card\'s ticket key, else the task id), {type} (bugfix or feature), {slug} (from the title). Example: {type}/{tag}-{slug}.') }}</small>
           </span>
 
-          <span class="field-label">{{ tl('Archive done tasks after') }}</span>
+          <span class="field-label">{{ tl('Archive done tasks after') }}<SavedMark :s="auto.state.archiveAfter" /></span>
           <span class="pm-field">
             <USelect v-model="form.archiveAfter" :items="archiveItems" size="lg" class="pm-base-pick" :aria-label="tl('Archive done tasks after')" data-testid="pm-archive-after" />
+            <small v-if="auto.errors.archiveAfter" class="form-error pm-field-error" role="alert">{{ t(auto.errors.archiveAfter) }}</small>
             <small class="muted">{{ tl('A done task leaves the Done column after this time; the column\'s footer lists archived tasks. Its branch, PR and log stay.') }}</small>
           </span>
 
-          <span class="field-label">{{ tl('Delete the task\'s branch after its merge') }}</span>
+          <span class="field-label">{{ tl('Delete the task\'s branch after its merge') }}<SavedMark :s="auto.state.deleteBranch" /></span>
           <span class="pm-field">
             <USwitch v-model="form.deleteBranch" size="lg" :aria-label="tl('Delete the task\'s branch after its merge')" data-testid="pm-delete-branch" />
+            <small v-if="auto.errors.deleteBranch" class="form-error pm-field-error" role="alert">{{ t(auto.errors.deleteBranch) }}</small>
             <small class="muted">{{ tl('Once its PR is merged, wherdr deletes the task\'s remote branch, unless a commit came after the merge, another open PR uses it, or it is protected or a base. Off: branches stay.') }}</small>
           </span>
 
           <template v-if="workflow">
             <div class="pm-cols">
               <span class="pm-col pm-agent">
-                <span class="field-label">{{ tl('Worker') }}</span>
+                <span class="field-label">{{ tl('Worker') }}<SavedMark :s="auto.state.worker" /></span>
                 <USelect v-model="agent" :items="agentItems" size="lg" class="w-full" :aria-label="tl('Worker agent')" data-testid="pm-agent" />
                 <UInput v-model="form.model" size="lg" class="w-full mono" :placeholder="tl('default model')" :aria-label="tl('Worker model')" maxlength="80" />
+                <small v-if="auto.errors.worker" class="form-error pm-field-error" role="alert">{{ t(auto.errors.worker) }}</small>
               </span>
               <span class="pm-col pm-agent">
-                <span class="field-label">{{ tl('Reviewer') }}</span>
+                <span class="field-label">{{ tl('Reviewer') }}<SavedMark :s="auto.state.reviewer" /></span>
                 <USelect v-model="reviewAgent" :items="agentItems" size="lg" class="w-full" :aria-label="tl('Reviewer agent')" />
                 <UInput v-model="form.reviewModel" size="lg" class="w-full mono" :placeholder="tl('default model')" :aria-label="tl('Reviewer model')" maxlength="80" />
+                <small v-if="auto.errors.reviewer" class="form-error pm-field-error" role="alert">{{ t(auto.errors.reviewer) }}</small>
               </span>
               <span class="pm-col pm-agent">
-                <span class="field-label">{{ tl('Fallback') }}</span>
+                <span class="field-label">{{ tl('Fallback') }}<SavedMark :s="auto.state.fallback" /></span>
                 <USelect v-model="fallbackAgent" :items="fallbackItems" size="lg" class="w-full" :aria-label="tl('Reviewer fallback agent')" data-testid="pm-fallback-agent" />
                 <UInput v-model="form.reviewFallbackModel" size="lg" class="w-full mono" :placeholder="tl('model, or same')" :aria-label="tl('Reviewer fallback model')" maxlength="80" />
+                <small v-if="auto.errors.fallback" class="form-error pm-field-error" role="alert">{{ t(auto.errors.fallback) }}</small>
               </span>
             </div>
           </template>
@@ -272,35 +308,37 @@ async function remove() {
             </span>
             <div class="pm-setup">
               <span class="pm-col pm-agent">
-                <label class="field-label" for="pmCopy">{{ tl('Files to copy') }}</label>
+                <label class="field-label" for="pmCopy">{{ tl('Files to copy') }}<SavedMark :s="auto.state.copy" /></label>
                 <UTextarea id="pmCopy" v-model="setup.copy" :rows="2" autoresize size="lg" class="w-full mono" placeholder=".env" maxlength="4000" data-testid="pm-setup-copy" />
+                <small v-if="auto.errors.copy" class="form-error pm-field-error" role="alert">{{ t(auto.errors.copy) }}</small>
               </span>
               <span class="pm-col pm-agent">
-                <label class="field-label" for="pmShare">{{ tl('Folders to share') }}</label>
+                <label class="field-label" for="pmShare">{{ tl('Folders to share') }}<SavedMark :s="auto.state.share" /></label>
                 <UTextarea id="pmShare" v-model="setup.share" :rows="2" autoresize size="lg" class="w-full mono" placeholder="node_modules" maxlength="4000" :disabled="setup.noShare" data-testid="pm-setup-share" />
+                <small v-if="auto.errors.share" class="form-error pm-field-error" role="alert">{{ t(auto.errors.share) }}</small>
               </span>
               <label class="toggle-row pm-wide">
                 <span><b>{{ tl('Share no folder') }}</b><small>{{ tl('The setup command always runs') }}</small></span>
                 <USwitch v-model="setup.noShare" size="xl" data-testid="pm-setup-no-share" />
               </label>
               <span class="pm-col pm-agent">
-                <label class="field-label" for="pmCommand">{{ tl('Setup command') }}</label>
+                <label class="field-label" for="pmCommand">{{ tl('Setup command') }}<SavedMark :s="auto.state.command" /></label>
                 <UInput id="pmCommand" v-model="setup.command" size="lg" class="w-full mono" placeholder="npm ci --prefer-offline" maxlength="500" data-testid="pm-setup-command" />
+                <small v-if="auto.errors.command" class="form-error pm-field-error" role="alert">{{ t(auto.errors.command) }}</small>
               </span>
               <span class="pm-col pm-agent">
-                <label class="field-label" for="pmLock">{{ tl('Lockfile') }}</label>
-                <UInput id="pmLock" v-model="setup.lockfile" size="lg" class="w-full mono" placeholder="package-lock.json" maxlength="200" />
+                <label class="field-label" for="pmLock">{{ tl('Lockfile') }}<SavedMark :s="auto.state.lockfile" /></label>
+                <UInput id="pmLock" v-model="setup.lockfile" size="lg" class="w-full mono" placeholder="package-lock.json" maxlength="200" data-testid="pm-setup-lockfile" />
+                <small v-if="auto.errors.lockfile" class="form-error pm-field-error" role="alert">{{ t(auto.errors.lockfile) }}</small>
               </span>
               <span class="pm-col pm-agent">
-                <label class="field-label" for="pmTimeout">{{ tl('Time limit') }}</label>
-                <UInput id="pmTimeout" v-model="setup.timeout" size="lg" class="w-full mono" :placeholder="SETUP_TIMEOUT" maxlength="4" />
+                <label class="field-label" for="pmTimeout">{{ tl('Time limit') }}<SavedMark :s="auto.state.timeout" /></label>
+                <UInput id="pmTimeout" v-model="setup.timeout" size="lg" class="w-full mono" :placeholder="SETUP_TIMEOUT" maxlength="4" data-testid="pm-setup-timeout" />
+                <small v-if="auto.errors.timeout" class="form-error pm-field-error" role="alert">{{ t(auto.errors.timeout) }}</small>
               </span>
             </div>
           </template>
           <p v-else-if="loaded" class="muted settings-hint">{{ tl('No workflow chosen yet: tasks follow a minimal one (to do, work, done). Ask the project’s coordinator to propose one, or start from a template.') }}</p>
-          <div class="pm-save">
-            <UButton type="submit" size="xl" color="primary" variant="solid" class="hw-cta" :loading="busy === 'save'" :disabled="!dirty || busy !== ''" data-testid="pm-save">{{ tl('Save') }}</UButton>
-          </div>
 
           <span class="field-label pm-later">{{ tl('Repository') }}</span>
           <span class="pm-vis">
@@ -368,8 +406,8 @@ async function remove() {
 .pm-color:focus-visible { outline: 1px solid var(--accent); outline-offset: -4px; }
 .pm-path { color: var(--muted); font-family: var(--font-mono, 'JetBrains Mono', monospace); font-size: 12px; overflow-wrap: anywhere; }
 .pm-later { margin-top: 18px; }
-/* Save: its own row under the fields, never inline in a text. */
-.pm-save { display: flex; margin-top: 16px; }
+/* A field's save error, right under it. */
+.pm-field-error { display: block; margin: 4px 2px 0; font-size: 13px; }
 /* The worktree setup: short help lines, then two columns at most (one on the
    phone, under 540 px) filled in order; a .pm-wide item takes a whole row. */
 .pm-help { display: grid; gap: 2px; margin-bottom: 10px; }

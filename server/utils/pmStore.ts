@@ -67,6 +67,8 @@ export interface CoordinatorRecord {
   cardNotes?: string[] // what the user did with its cards while it did not run, said at its next start (cardOutcome.ts)
   visits?: { at: number, by: string, what: string }[] // what other coordinators did on its project since its last wake (reach.ts)
   undelivered?: { texts: string[], why: string, at: number } // first messages its session never got (coordinatorFirst.ts)
+  openTab?: string // Alfred's: the home tab the user had open at their last message (a note scope: all, *group:…, machine:…)
+  briefs?: Record<string, number> // Alfred's: when it last ran `brief` for each scope
 }
 
 export interface AutomationsFile { automations: Automation[], seen?: Record<string, Mark>, proposals?: AutomationProposal[] }
@@ -438,9 +440,16 @@ export function createPmStore(dir = path.join(DATA_DIR, 'projects')) {
       return added
     }),
     // A task the incident also holds (its start found the machine out of reach): in its tasks, once.
-    linkIncident: (id: string, task: string) => write(async () => {
+    // run: an agent it also took (a login incident's next one).
+    linkIncident: (id: string, task: string, run?: string) => write(async () => {
       const old = (await readJson<{ incidents?: Incident[] }>(files.incidents))?.incidents ?? []
-      await writeJson(files.incidents, { v: 1, incidents: old.map(i => (i.id === id && !i.tasks.includes(task) ? { ...i, tasks: [...i.tasks, task] } : i)) })
+      const add = (xs: string[], x?: string) => (x && !xs.includes(x) ? [...xs, x] : xs)
+      await writeJson(files.incidents, { v: 1, incidents: old.map(i => (i.id === id ? { ...i, tasks: add(i.tasks, task), runs: add(i.runs, run) } : i)) })
+    }),
+    // A login incident's login renewed at this time (its credentials file, or the user's word).
+    renewIncident: (id: string, at: number) => write(async () => {
+      const old = (await readJson<{ incidents?: Incident[] }>(files.incidents))?.incidents ?? []
+      await writeJson(files.incidents, { v: 1, incidents: old.map(i => (i.id === id ? { ...i, renewed: at } : i)) })
     }),
     // Their Incident wake queued: never again.
     toldIncidents: (ids: string[], at: number) => write(async () => {

@@ -21,7 +21,7 @@ describe('values kept across live pushes', () => {
     let built = 0
     const ui = keyedMemo((root: string) => { built++; return { root } })
     expect(ui('msg')).toBe(ui('msg'))
-    expect(ui('msg q-picking')).not.toBe(ui('msg'))
+    expect(ui('msg can-run')).not.toBe(ui('msg'))
     expect(built).toBe(2)
     const parts = weakMemo((b: { text: string }) => [{ type: 'text', text: b.text }])
     const block = { text: 'Hi' }

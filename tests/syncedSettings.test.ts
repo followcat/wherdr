@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applySettingsPatch, type SettingsMap, type SettingsPatch } from '../shared/settings'
 import { createSettingsSync, type LocalStore } from '../app/utils/syncedSettings'
-import { COMPACT_LIST_KEY, LEGACY_COMPACT_LIST_KEY, readCompactList } from '../app/utils/compactCard'
 
 // One fake server (its map), and devices each with their own localStorage.
 function fakeServer(initial: SettingsMap = {}) {
@@ -32,10 +31,10 @@ function fakeServer(initial: SettingsMap = {}) {
 describe('settings kept on the server', () => {
   it('migration: an empty server takes this browser’s values, device-only keys excluded', async () => {
     const { server, device } = fakeServer()
-    const a = device({ theme: 'nord', compactListV2: '1', contentWidth: 'wide', listWidth: '320' })
+    const a = device({ theme: 'nord', showCounters: '1', contentWidth: 'wide', listWidth: '320' })
     await a.sync.load()
-    expect(server.posts).toEqual([{ patch: { theme: 'nord', compactListV2: '1' }, migrate: true }])
-    expect(server.map).toEqual({ theme: 'nord', compactListV2: '1' })
+    expect(server.posts).toEqual([{ patch: { theme: 'nord', showCounters: '1' }, migrate: true }])
+    expect(server.map).toEqual({ theme: 'nord', showCounters: '1' })
     expect(a.data.get('contentWidth')).toBe('wide')
   })
 
@@ -44,9 +43,9 @@ describe('settings kept on the server', () => {
     const { server, device } = fakeServer()
     const phone = device({ theme: 'nord', typewriterSpeed: 'medium' })
     await phone.sync.load()
-    const ipad = device({ theme: 'paper', typewriterSpeed: 'fast', machineGroups: groups, compactListV2: '1', collapsedMachines: '["laptop"]' })
+    const ipad = device({ theme: 'paper', typewriterSpeed: 'fast', machineGroups: groups, showCounters: '1', collapsedMachines: '["laptop"]' })
     await ipad.sync.load()
-    expect(server.map).toEqual({ theme: 'nord', typewriterSpeed: 'medium', machineGroups: groups, compactListV2: '1', collapsedMachines: '["laptop"]' })
+    expect(server.map).toEqual({ theme: 'nord', typewriterSpeed: 'medium', machineGroups: groups, showCounters: '1', collapsedMachines: '["laptop"]' })
     expect(ipad.data.get('machineGroups')).toBe(groups)
     expect(ipad.data.get('theme')).toBe('nord')
     // The phone gets the iPad's groups at once (/ws/events).
@@ -58,7 +57,7 @@ describe('settings kept on the server', () => {
 
   it('afterwards the server is the reference: a migrated device takes its values', async () => {
     const { server, device } = fakeServer({ theme: 'nord', homeGrouping: 'state' })
-    const b = device({ theme: 'paper', compactListV2: '1', syncedSettingsMigrated: '1' })
+    const b = device({ theme: 'paper', showCounters: '1', syncedSettingsMigrated: '1' })
     const applied: (string | null)[] = []
     b.sync.bind('theme', raw => applied.push(raw))
     await b.sync.load()
@@ -66,7 +65,7 @@ describe('settings kept on the server', () => {
     expect(b.data.get('theme')).toBe('nord')
     expect(b.data.get('homeGrouping')).toBe('state')
     // A key the server lacks goes back to its default.
-    expect(b.data.has('compactListV2')).toBe(false)
+    expect(b.data.has('showCounters')).toBe(false)
     expect(applied).toEqual(['nord'])
   })
 
@@ -92,13 +91,13 @@ describe('settings kept on the server', () => {
     const b = device()
     await Promise.all([a.sync.load(), b.sync.load()])
     a.sync.write('theme', 'paper')
-    a.sync.write('compactListV2', '1')
+    a.sync.write('showCounters', '1')
     b.sync.write('theme', 'mono')
     await a.sync.flush()
     await b.sync.flush()
-    expect(server.map).toEqual({ theme: 'mono', compactListV2: '1' })
+    expect(server.map).toEqual({ theme: 'mono', showCounters: '1' })
     expect(a.data.get('theme')).toBe('mono')
-    expect(b.data.get('compactListV2')).toBe('1')
+    expect(b.data.get('showCounters')).toBe('1')
   })
 
   it('offline: the change stays local and goes out on reconnection', async () => {
@@ -153,60 +152,8 @@ describe('changes left by the previous page', () => {
 
   it('a migration still sends every value when a change was pending', async () => {
     const { server, device } = fakeServer()
-    const a = device({ compactListV2: '1', syncedSettingsPending: JSON.stringify({ theme: 'paper' }), theme: 'paper' })
+    const a = device({ showCounters: '1', syncedSettingsPending: JSON.stringify({ theme: 'paper' }), theme: 'paper' })
     await a.sync.load()
-    expect(server.map).toEqual({ compactListV2: '1', theme: 'paper' })
-  })
-})
-
-// 2.0: the normal list is the default; a 1.x compact list goes back to normal once.
-describe('compact list in 2.0', () => {
-  const compact = (d: { data: Map<string, string> }) => readCompactList(d.data.get(COMPACT_LIST_KEY) ?? null)
-
-  it('a new install shows the normal list', async () => {
-    const { server, device } = fakeServer()
-    const a = device()
-    await a.sync.load()
-    expect(compact(a)).toBe(false)
-    expect(server.map).toEqual({})
-  })
-
-  it('a 1.x compact list (saved, or the 1.x default) goes back to normal on the first 2.0 load', async () => {
-    for (const legacy of [{ [LEGACY_COMPACT_LIST_KEY]: '1' }, {}]) {
-      const { server, device } = fakeServer()
-      const a = device({ ...legacy, theme: 'nord' })
-      expect(compact(a)).toBe(false)
-      await a.sync.load()
-      expect(compact(a)).toBe(false)
-      // The 1.x key is not sent to the server.
-      expect(server.map).toEqual({ theme: 'nord' })
-    }
-  })
-
-  it('compact turned on again in 2.0 is kept, on this device and the next ones', async () => {
-    const { server, device } = fakeServer()
-    const phone = device({ [LEGACY_COMPACT_LIST_KEY]: '1' })
-    await phone.sync.load()
-    expect(compact(phone)).toBe(false)
-    phone.sync.write(COMPACT_LIST_KEY, '1')
-    await phone.sync.flush()
-    expect(server.map).toEqual({ [COMPACT_LIST_KEY]: '1' })
-    // Reload: no new reset.
-    const reloaded = device(Object.fromEntries(phone.data))
-    await reloaded.sync.load()
-    expect(compact(reloaded)).toBe(true)
-    // A second 1.x browser opening 2.0 for the first time takes the 2.0 choice,
-    // whatever its old value.
-    const ipad = device({ [LEGACY_COMPACT_LIST_KEY]: '0' })
-    await ipad.sync.load()
-    expect(compact(ipad)).toBe(true)
-    expect(server.map).toEqual({ [COMPACT_LIST_KEY]: '1' })
-  })
-
-  it('normal chosen in 2.0 stays normal', async () => {
-    const { device } = fakeServer({ [COMPACT_LIST_KEY]: '0' })
-    const a = device({ [LEGACY_COMPACT_LIST_KEY]: '1', syncedSettingsMigrated: '1' })
-    await a.sync.load()
-    expect(compact(a)).toBe(false)
+    expect(server.map).toEqual({ showCounters: '1', theme: 'paper' })
   })
 })

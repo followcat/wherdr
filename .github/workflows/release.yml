@@ -3,8 +3,10 @@ name: release
 # v3 (3.x tags) is published as a GitHub release with its notes, and nothing else: no
 # package archive, no npm, no Homebrew formula. v2 installs update through those three
 # channels, so a v3 release must never reach them. v3 is installed beside v2, from git
-# (docs/RELEASING.md). 2.x releases are tagged on the `2.x` branch and run that branch's
-# release.yml, which still publishes to npm and Homebrew.
+# (docs/RELEASING.md). A 3.x release is published as the repository's *latest* release.
+# 2.x releases are tagged on the `2.x` branch and run that branch's release.yml, which
+# still publishes to npm and Homebrew, always with latest=false: a 2.x fix never takes
+# latest back from 3.x.
 
 on:
   push:
@@ -31,7 +33,8 @@ jobs:
           node-version: 22
       - name: Check version
         run: test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
-      # latest=false: the legacy update channel of v2 installs follows releases/latest.
+      # latest=true: 3.x is the main line. Legacy 1.3.x apps that read releases/latest
+      # see it but cannot install it (no package archive), which is accepted.
       - name: Publish the GitHub release only
         env:
           GH_TOKEN: ${{ github.token }}
@@ -39,4 +42,4 @@ jobs:
           set -o pipefail
           test "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
           gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json body --jq .body | node scripts/check-release-notes.mjs
-          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest=true

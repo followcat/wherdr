@@ -195,6 +195,13 @@ export function installDemoNetwork(base: string, server = new DemoServer()) {
       super(String(url), server)
     }
   } as unknown as typeof WebSocket
+  // A task's screenshots (<img src="/api/pm/shot?…">, never fetched): the made-up
+  // images of the demo's own files (app/demo/public/shots).
+  const src = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src')!
+  Object.defineProperty(HTMLImageElement.prototype, 'src', {
+    ...src,
+    set(v: string) { src.set!.call(this, String(v).replace(/^\/api\/pm\/shot\?.*file=([\w.]+).*$/, `${base}shots/$1`)) },
+  })
   // No service worker, push subscription or install prompt in the demo.
   if ('serviceWorker' in navigator) {
     Object.defineProperty(navigator.serviceWorker, 'register', { value: () => Promise.reject(new Error('No service worker in the demo')) })

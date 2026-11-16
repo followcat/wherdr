@@ -143,6 +143,16 @@ takes the workspace's settings unless it sets its own.
 
 ### General
 
+There is no *Save* button: every field saves by itself. A switch, a pick or a
+color saves at once; typed text (name, models, branch name, the worktree
+setup's fields) once you pause typing for a moment or leave the field. The key
+saves only when you leave its field or press Enter, never on a pause: a
+half-typed key would become a real rename. A
+discreet *Saved ✓* shows next to the field's label, then fades; a small spinner
+while it saves. An invalid value (a time limit over 10m) says why under the
+field and nothing is saved until it is fixed; a save the server refuses shows
+its message under the field and keeps what you typed.
+
 - **Name**, **Key** and **Color**. Task ids start with the key. Change it and every task,
   old ones too, shows the new key: on the board, and in what wherdr writes for you
   and its agents (wakes, notifications, task logs, PR titles, `wherdr pm` outputs,
@@ -157,8 +167,11 @@ takes the workspace's settings unless it sets its own.
   (the default), Read or Act. See [Coordinators on other projects](#coordinators-on-other-projects).
 - **Base branch**: the project's working branch. New tasks start their worktree
   from it, and a step that names no branch opens its PR to it or merges into it.
-  Pick one of the repository's branches or type a name; unset, the repository's
-  current branch. A running task keeps the branch it started with.
+  Pick one of the repository's branches or type a name. Unset: the branch the
+  workflow opens its PRs to or merges into (a `github.pr` base, a `git.land` or
+  `git.verify-merged` target), which the tab names (*No working branch set: using
+  v3 from the workflow*, also written once in the project's log); with none, the
+  repository's default branch. A running task keeps the branch it started with.
 - **Branch name**: the template each new task's branch is named from, for
   repositories that require names such as `feature/PROJ-12-fix-login`. Fields:
   `{id}` (the task id), `{tag}` (the card's ticket key, such as `PROJ-12`, else
@@ -186,8 +199,8 @@ takes the workspace's settings unless it sets its own.
 - **Worktree setup**: what wherdr prepares in a new task's worktree before its
   worker first starts, so the worker does not rebuild it. Short help lines sit
   above its fields, laid out in two columns on a computer and one on the phone.
-  Saved with *Save*, on its own row under the fields and enabled once a field of
-  the General tab changed, in the workflow's `worktree` block (shown in Workflow › JSON):
+  Saved by itself, like every General field, in the workflow's `worktree` block
+  (shown in Workflow › JSON):
   - *Files to copy*: ignored files taken from the project's clone, such as `.env`
     or a local config, one path per line. Literal paths only; a file git tracks
     (it is already there) or the clone does not have is skipped, and the log says so.
@@ -422,7 +435,7 @@ the task's machine. Any pair works, and nothing is picked for you:
 
 or a Claude reviewer with a Codex fallback:
 `"reviewModel": "claude-sonnet-5-5", "reviewFallbackAgent": "codex", "reviewFallbackModel": "gpt-6.1-sol"`.
-The fallback follows the reviewer's rules; *Save* refuses one that breaks them,
+The fallback follows the reviewer's rules; saving refuses one that breaks them,
 or one of the two prefs without the other.
 
 Before it starts a reviewer, wherdr reads the review agent's account (the
@@ -485,7 +498,10 @@ In the **Guards** tab:
   runs again, at most twice, then waits for you. A restart waits up to 20 s
   for a merge that runs.
 - **Effect**: what each task type adds and, for each step that merges, whether
-  it is left to you. It follows your changes before you save.
+  it is left to you.
+
+Each change saves at once (no *Save* button), with a discreet *Saved ✓* next to
+its heading; a refused save shows the server's message under it.
 
 Only you, or Alfred (with [`wherdr alfred project guards`](alfred.md) after
 your yes), can change guards: a project coordinator never can.
@@ -651,10 +667,12 @@ reason (*Scheduled wake*, *WHR-9: stuck: …*) and its time; a tap opens the
 full text and the coordinator's whole turn. That turn ends at its own end,
 at your next message or `!`/`/` command, or where the coordinator speaks on
 its own (a background task it ran finished), which all show as usual below it.
-Once that turn is over, the coordinator's last answer in it sits under the row, smaller and muted, two lines at
-most. Consecutive routine wakes (no incident, nothing changed: no file edit
+Once that turn is over, a routine one-line answer (*Nothing new, …*) sits under the row, smaller and muted.
+Any other answer is a message to you and shows in full, under the row, like any
+message: one with a `wherdr` block (choices, task, status, action), a link,
+more than one line, or a question is never folded. Consecutive routine wakes (no incident, nothing changed: no file edit
 nor `wherdr pm` command beyond `ack`, `read`, `list`, `show`, `incidents`,
-`help`; an answer that asks nothing) fold into one row, *3 routine checks ·
+`help`; a one-line answer that asks nothing) fold into one row, *3 routine checks ·
 last: "WHR-12 merged"*, 08:00–11:00, with the first line of the last answer in
 it, that opens on tap. The fold holds only the wakes and their own turns. An incident, or a wake whose answer asks you
 something, keeps its row (in its stronger colour); an answer that asks you
@@ -913,8 +931,9 @@ its work, the worker writes the files or folders it plans to change to
 `files.txt` beside its instructions file (a folder covers what is in it); the
 coordinator can name them ahead with `task add … --files app,docs/board.md`.
 Every 5 minutes wherdr reads, for each started task not done yet, those
-declared paths and the files its branch changed (`git diff` since the branch
-started, new files included). Only a task whose work or review is still ahead
+declared paths and the files its branch changed since its fork from its base
+(the base as on the remote now, so merging the base in never counts; new files
+included). Only a task whose work or review is still ahead
 or under way (stopped too) holds its files: once it only waits for its merge,
 the tasks behind it start. `docs/llms.txt`, whose conflicts wherdr solves
 itself, never makes a task wait.
@@ -1017,7 +1036,8 @@ agent that is not on screen here opens the sheet instead.
 
 <a id="tasks-to-review"></a>**Tasks to review.** To clear a morning's work in a
 few minutes, tap Home's **Tasks to review** card: it shows what waits for you
-one at a time. A task to approve shows its key, title and project, its
+one at a time. A task to approve shows its key (a tap copies it, as on the task
+sheet), title and project, its
 [TL;DR](#tldr), its newest screenshots (the sheet's viewer, before and after
 side by side), its PR and the review's verdict in one line, then:
 
@@ -1026,7 +1046,12 @@ side by side), its PR and the review's verdict in one line, then:
 - **Reject**: say what to change, tap the screenshots that are wrong, and add
   your own (pick a file, or paste one); *Send back* returns it to its worker
   with your note, and each picked screenshot as a download with the task's key.
-  It leaves the list too.
+  It leaves the list too. The screenshots stay: the worker redoes the ones you
+  picked (and any screen its new commits change) in place, so the next look
+  shows the same screens, each in its latest version. Above them, **Since your
+  last look** quotes your note and shows each screenshot taken since, beside
+  the version it redoes (*Before* / *Redone*; a screen added since is *New
+  screen*); a tap opens the pair full size. The To do tab shows the same.
 
 An agent's question shows its [summary](#tldr), the options of the agent's
 `choices` line as buttons and *Another answer* with *Send*: either goes to the
@@ -1046,7 +1071,11 @@ takes the board's order.
 
 Anything else that waits (a failure, a decision, another
 step of yours such as *Create these tasks*) shows the answers of its To do tab
-(its choices, *Try again* for a failed action), and *Open the task*. Every
+(its choices, *Try again* for a failed action), and *Open the task*. A block its
+worker could fix has **Ask the agent to fix it** first (*Try again* then
+secondary): *The agent is fixing it* for a moment, then it leaves the list, back
+at its end only with the agent's question or the fix's new failure; *Open the
+agent* works again once its worker runs. Every
 task, whatever its step, also has *Open the agent*, as on the [task
 sheet](#task-sheet): its agent's conversation, *Worker* or *Reviewer* when both
 run, disabled with *Agent is terminated* once it ended. *3 of 12* with previous and next: a task you pass over stays in the list.
@@ -1058,22 +1087,37 @@ motion); a failed action keeps the task with its error. After the last one:
 the middle (on a computer the window shrinks to them). On a computer it is a large window (960 px wide, up to 90 % of the
 screen's height, screenshots two per row): only the task's content scrolls, the
 filter, its title and the buttons stay. The filter at the top picks *Follow group tab* (the projects of the
-home tab), *All*, a group or a project (its key badge, then its name); it follows you across devices like the
-Board's picker.
+home tab), *All*, a group or a project (its key badge, then its name); each option shows right after its name, in a
+muted grey-bordered chip, how many tasks wait under it (none at 0; groups and projects with tasks listed first), the closed picker too;
+it follows you across devices like the Board's picker.
 
 - <a id="notes-on-a-task-waiting-for-you"></a>**A visual change to merge**: its [TL;DR](#tldr); then its screenshots large (swipe between them on
   the phone, a grid on a computer; tap one to zoom; each is labelled phone or desktop),
   *Full reports in Comments*, then *Merge* and *Open the PR*, or *Send back* with a note: the agent gets your note as what to fix.
+  Telling the coordinator what to change does the same: it runs
+  `wherdr pm step back <task> "<what to change>" --user-said "<your words>"`
+  (only in a turn that comes from you, never in a wake, and only on a step
+  that waits for you). The step goes back to the worker, the approval drops,
+  the screenshots follow the same rules as *Send back*, and the task leaves
+  Tasks to review at once, back when its next review is done; the log keeps
+  your words.
   With no TL;DR yet, the **Worker's note** (its closing report: what
   was done, why it is done, what was tested) and the **Reviewer's note** (the
   verdict, what it sent back and was fixed during the rounds, what it left as
   minor) show in its place, each in Markdown, folded to a few lines with *Show more*, full
   width, one above the other (on a phone, *Worker* / *Reviewer* tabs above one note).
   A step you end (*Deployed*, …) shows the same under its badge.
-  When the agent reworks the task after its review (new commits since the
-  review), its new screenshots replace the shown ones, marked *after rework*;
-  the earlier set stays in the Plan tab under *Earlier screenshots*. The merge
-  step then sends the task back to review, which sees the new set.
+  Screenshots of the result are taken last, on the finished, committed code;
+  each records the commit it shows. One taken before the step's last commit
+  stays shown, marked *Earlier commit*: the worker retakes only the screens its
+  new commits change. A redone screenshot takes the place of the one it redoes
+  (the upload's `&replaces=<file>`), the old version going to the Plan tab under
+  *Earlier screenshots*; a send-back keeps the set and lists for the worker the
+  ones you picked to redo. A round never ends with fewer screenshots of the
+  result than the last one unless the worker's note says why (*Fewer
+  screenshots because: …*, in the log). When the agent reworks the task after
+  its review (new commits since the review), its new screenshots are marked
+  *after rework*, and the merge step sends the task back to review.
 - **A review to settle** after several send-backs: each choice the engine offers,
   with what it does.
 - **A stopped task**: who stopped it and why, then *Continue*, *Take it as it is*
@@ -1119,6 +1163,17 @@ Board's picker.
   same way. PR details that come back unreadable are read again (1, 2, 4 and
   8 minutes later), then the error ends with the last lines of the output,
   private parts masked.
+- **Ask the agent to fix it**: on a block the task's worker could fix (a
+  failed step action such as a conflict, red checks or an unreadable PR, a
+  stalled or ended worker, a step past its time limit), this is the first
+  button; *Try again* stays, secondary. The worker gets the block's exact
+  reason (started again in its worktree if it ended, as a coordinator's
+  `tell --fix` does): fix it if it can (merge the base and solve the conflict,
+  fix the CI, push), then say it is done; if it needs a decision or access only
+  you have, ask you one clear question with choices. The task leaves *Your turn*
+  at once (*the agent is fixing it*) and comes back only with its question, or
+  with the new reason if the fix fails. It is your own action, not limited like
+  a coordinator's wake, written to History as *asked the agent to fix: <reason>*.
 
 On a phone, the To do buttons (*Merge*, the step's button, *Open the PR*,
 *Start*, *Open the agent*) stay pinned at the bottom of the sheet while its
@@ -1362,6 +1417,13 @@ engine decides the cause from facts it reads, never a guess:
   signal; **out of memory** when its last output says so;
 - **account limit reached**: only when the account's reading at that time
   says it was at its limit ([Quotas](quotas.md));
+- **login expired**: a running agent shows its program's login prompt
+  (Claude's *Login reached its time limit · Please run /login*, Codex's *log
+  out and sign in again*): not a permission, and its task leaves Tasks to
+  review. Every agent of that account and machine stopped on it joins **one**
+  incident, and Home shows one notice for them all (*Claude login expired on
+  host-b*), with *Open a terminal there* (a stuck agent's, to run `/login`
+  once) and *I logged in*;
 - **unknown**, said as such, when the facts do not decide (an agent that
   exited with 0, a terminal missing on a core older than it).
 
@@ -1385,13 +1447,19 @@ Once the cause is gone, the engine resumes it by itself, every minute:
 
 - **when**: a restart, a crash or an unknown cause at once; a machine offline
   once it is back (still offline, its tasks keep waiting); an account limit
-  once the account's reading says it reset;
+  once the account's reading says it reset; a login once it is renewed (the
+  account's credentials file on that machine changed, or you tapped *I logged
+  in*): each stuck agent ends and starts again, one per machine and minute,
+  its card meanwhile *Waiting for login*;
 - **how**: its worker starts again in its worktree. A Claude worker takes its
   conversation up again (`--resume`, its session id kept from its start) with
   *You were interrupted (…): check git status and continue*; Codex, or a
   conversation that cannot be resumed, gets a new agent that reads its
   instructions with a handover note saying the same. A task stopped at the
-  review gets its reviewer again;
+  review gets its reviewer again. After a login incident, the restarted agent
+  is told once, in its Log too: *Your login was renewed and you were
+  restarted. Continue where you stopped: finish the step you were on, then
+  report as usual* (a reviewer: *finish your review and write your verdict*);
 - **in order**: the tasks before it (`after`) first. A task that starts after
   one being resumed stays to do and *Waits for WEB-1 to resume*, never
   *stopped*; it starts once that one is done;
@@ -1495,6 +1563,17 @@ commits need a review), wherdr starts the worker or the reviewer again in the
 same worktree, with a note on where the work stands. The task's log says when
 its agents were ended and started again.
 
+An agent you talk to stays: your last message to one of the task's agents
+(from its chat or its terminal) keeps them for 30 minutes after it instead of
+10, and while you have that conversation open in wherdr they are not ended at
+all. Only a machine short of memory for a task waiting to start cuts that
+grace (the plain 10 minutes then apply), and the log says so. Once the worker
+is released, *Open the agent* stays on the task, with one muted line under it
+(*Released at 12:43 to free memory: opening it starts it again.*): opening it
+starts the worker again in its worktree with its conversation taken up again,
+whose first line says *Restarted: it was released to free memory at 12:43*,
+and you write to it as before.
+
 The same goes when you answer and the task moves on: a review decision (*pass*,
 say), *Send back*, *Try again* or a merge you confirm hands the next step to
 its worker or reviewer, which wherdr starts again at once, also a worker that
@@ -1507,7 +1586,9 @@ status says why (*Waits for its machine (offline)*, *Waits for its machine
 (paused)*, no room on the machine), wherdr tries again every 3 minutes, and at
 the second failure the project's coordinator is woken once (its autopilot on).
 A start wherdr refuses (the agent's program missing, say) puts the task in
-*Your turn* with the reason.
+*Your turn* with the reason. An agent stopped on its login prompt is not
+waiting for you: it waits for the login, as an
+[incident](#why-agents-are-gone), and wherdr starts it again once the login is renewed.
 
 When wherdr hands the worker work of its own (a catch-up with the base branch,
 a CI fix), the task leaves *Your turn* and its card says *the agent is

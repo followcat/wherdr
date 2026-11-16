@@ -110,13 +110,20 @@ export interface NotesWriter { by: string, project?: Pick<Project, 'key' | 'mach
 
 // machines: Herdr's machines, for the machines shown as their own home tab
 // (the bar's items the user has not taken off it).
-export async function runNotes(store: NotesStore, cmd: NotesCommand, input: unknown, who: NotesWriter, settingsFile?: string, machines: readonly MachineInfo[] = []) {
+// The home tabs (tab groups, machines shown as their own tab), in the bar's
+// order: what a note's scope and Alfred's brief name.
+export async function homeTabs(settingsFile?: string, machines: readonly MachineInfo[] = []) {
   const s = await readSettings(settingsFile)
   const groups = readMachineGroups(s.machineGroups ?? null)
   const bases = [...new Set(machines.map(m => m.baseKey ?? m.key))]
   const label = (key: string) => machines.find(m => m.key === key)?.label || key || 'this machine'
   const hidden = readBarList(s.machineBarHidden)
   const tabs = noteTabs(groupedBarItems(readBarList(s.machineBarOrder), bases, groups).filter(id => !hidden.includes(id)), groups, label)
+  return { s, groups, label, tabs }
+}
+
+export async function runNotes(store: NotesStore, cmd: NotesCommand, input: unknown, who: NotesWriter, settingsFile?: string, machines: readonly MachineInfo[] = []) {
+  const { s, groups, label, tabs } = await homeTabs(settingsFile, machines)
   const name = (scope: string) => scopeName(scope, tabs, label)
   const scopeOf = (raw: string) => {
     const r = resolveScope(raw, tabs)

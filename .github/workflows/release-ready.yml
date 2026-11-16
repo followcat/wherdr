@@ -1,5 +1,6 @@
 # npm moderation can outlive a workflow. Recheck without republishing anything.
-# Only 2.x releases (the npm line) are promoted to latest; 3.x is skipped (release-ready.mjs).
+# Once a stable 3.x exists, latest stays on the newest 3.x and never goes back to a 2.x
+# (release-ready.mjs). Runs the script of the default branch (`v3`).
 name: release readiness
 on:
   schedule:
@@ -19,8 +20,6 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: main
       - uses: actions/setup-node@v7
         with:
           node-version: 22

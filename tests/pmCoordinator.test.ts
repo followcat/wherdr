@@ -10,6 +10,7 @@ import { CREATE_SCRIPT, launched } from '../server/utils/pmLaunch'
 import { execFileSync } from 'node:child_process'
 import { trustKeys } from '../shared/pm/run'
 import { coordinatorStart, setupDone } from '../shared/pm/setup'
+import { WORKSPACE_FIRST } from '../shared/pm/workspace'
 import { FIRST_REPLY, MAIN, parseCommand, roleFiles, coordinatorArgs, tellTarget, updateNotice } from '../shared/pm/coordinator'
 import pkg from '../package.json'
 import { EXAMPLES, common, company as example, github } from '../shared/pm/examples'
@@ -20,6 +21,7 @@ import { defaultWorkflow, isDefaultWorkflow, type Template } from '../shared/pm/
 import type { CoreAdminDeps } from '../server/utils/coreCreate'
 import { runNow, wakeCoordinators, wakeTick } from '../server/utils/pmWakes'
 import { askCoordinator } from '../server/utils/pmReport'
+import { userSendBack } from '../server/utils/pmBoard'
 import { answerQuestion } from '../server/utils/pmAnswer'
 import { cardOf, toHandle } from '../shared/pm/board'
 import { WAKE } from '../shared/pm/wakes'
@@ -275,6 +277,8 @@ describe('the main coordinator (WHR-398)', () => {
     const runs: Record<string, unknown>[] = [], killed: unknown[] = []
     const call = async (method: string, params: Record<string, unknown>) => {
       if (method === 'terminal.kill') return killed.push(params.terminal), {}
+      // Each session up at once: no background "not delivered" write races the records saved below.
+      if (method === 'terminal.get') return { state: 'running', status: 'idle' }
       if (method !== 'terminal.run') return {}
       runs.push(params)
       return { address: `host/t${runs.length}` }
@@ -580,6 +584,28 @@ describe('step done', () => {
     expect(saved.log!.at(-1)).toMatchObject({ by: 'coordinator ST', text: 'pick: done on the user\'s message "Yes, create them"' })
   })
 
+  it('step back: the sheet\'s Send back on the user\'s words, only in a user turn and on a step that waits for them', async () => {
+    expect(parseCommand(['step', 'back', 'ST-1', 'Bigger', 'button'])).toEqual({ error: '--user-said needs the user\'s words' })
+    const task = await store.addTask({ project: 'ST', title: 'Split', type: 'feature-split' })
+    const waiting = { ...task, state: 'working' as const, step: state(1, { approved: true, yourTurn: { reason: 'user' as const, badge: 'Create these tasks' } }) }
+    await store.saveTask(waiting)
+    const st = await issueToken(store, 'ST')
+    const back = ['step', 'back', task.id, 'Split the API part', '--user-said', 'Make it two tasks']
+    await noteTurn(store, 'ST', 'wake')
+    await refused(cli(back, undefined, st), 'not a wake')
+    await noteTurn(store, 'ST', 'user', 'Make it two tasks')
+    await cli(back, undefined, st)
+    const saved = (await store.task(task.id))!
+    // The same state as the sheet's Send back (userSendBack without screenshots).
+    await store.saveTask(waiting)
+    const sheet = await userSendBack(store, task.id, 'Split the API part')
+    expect(saved.step).toEqual({ ...sheet.step, since: saved.step!.since, lastBack: { ...sheet.step!.lastBack!, at: saved.step!.lastBack!.at } })
+    expect(saved.step).toMatchObject({ at: 0 })
+    expect(saved.step!.approved).toBeUndefined()
+    expect(saved.log!.at(-1)).toMatchObject({ by: 'coordinator ST', text: expect.stringContaining('on the user\'s message "Make it two tasks"') })
+    await refused(cli(back, undefined, st), 'does not wait for the user')
+  })
+
   it('ends only a step the coordinator holds; its recheck reminds it', async () => {
     const task = await store.addTask({ project: 'CO', title: 'Fix', type: 'feature' })
     await store.saveTask({ ...task, state: 'working', step: state(1) })
@@ -829,6 +855,17 @@ describe('role files', () => {
     expect(runs.filter(r => r.method === 'terminal.run')[1]!.line).not.toContain(FIRST_REPLY)
     await startCoordinator(deps, 'NW', { program: 'codex' }, urls)
     expect(runs.filter(r => r.method === 'terminal.run')[2]!.line).not.toContain(FIRST_REPLY)
+  })
+
+  it('first start of a new workspace: its first reply offers to build the map; not again', async () => {
+    const { runs, deps } = fakeCore()
+    const projects = JSON.parse(await fs.readFile(store.files.projects, 'utf8'))
+    await fs.writeFile(store.files.projects, JSON.stringify({ ...projects, projects: [...projects.projects, { key: 'WS', name: 'Work', machine: '', path: '/src/work', kind: 'workspace', git: false, addedAt: 1 }] }))
+    await startCoordinator(deps, 'WS', { program: 'codex' }, urls)
+    expect(runs[0]!.line).toContain(WORKSPACE_FIRST)
+    expect(runs[0]!.line).not.toContain(FIRST_REPLY)
+    await startCoordinator(deps, 'WS', { program: 'codex' }, urls)
+    expect(runs.filter(r => r.method === 'terminal.run')[1]!.line).not.toContain(WORKSPACE_FIRST)
   })
 
   it('a fresh start whose session never comes up: its first message is logged as not delivered, and the next start gives it again', async () => {

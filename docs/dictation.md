@@ -473,7 +473,8 @@ memory reported in the pull request; a device without WebGPU or `shader-f16` get
 
 The other direction: **Play** under each agent reply reads it aloud, chosen in **Settings ›
 Conversation › Read aloud** (per device: Off, the device's voices, or **Voice of wherdr (on this
-device)**; the device's voices by default where the browser has `speechSynthesis`).
+device)**; Off by default, so no **Play** shows until a voice is chosen; a choice made earlier on the device
+is kept).
 
 | File | Role |
 | --- | --- |

@@ -1,26 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { BACKDROP_CELL, nextPacketDelay, parseBackdrop, planPacket } from '../app/utils/backdrop'
+import { BACKDROP_CELL, nextPacketDelay, planPacket } from '../app/utils/backdrop'
 
 // Deterministic source cycling through the given values.
 function seq(...v: number[]) {
   let i = 0
   return () => v[i++ % v.length]!
 }
-
-describe('parseBackdrop', () => {
-  it('keeps a saved choice', () => {
-    expect(parseBackdrop('wherdr')).toBe('wherdr')
-    expect(parseBackdrop('herdr')).toBe('herdr')
-  })
-  it('maps the first version of the setting: "plain" was the flat herdr grid', () => {
-    expect(parseBackdrop('plain')).toBe('herdr')
-    expect(parseBackdrop('grid')).toBe('wherdr')
-  })
-  it('defaults to the wherdr grid', () => {
-    expect(parseBackdrop(null)).toBe('wherdr')
-    expect(parseBackdrop('dots')).toBe('wherdr')
-  })
-})
 
 describe('planPacket', () => {
   it('starts every packet on a grid line of a centred grid', () => {

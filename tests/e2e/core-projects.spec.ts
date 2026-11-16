@@ -57,10 +57,9 @@ test('project settings: added from an example, a branch protected, a proposal ac
     await page.locator('[data-tab="guards"]').click()
     await page.getByLabel('Branch to protect').fill('release')
     await page.getByTestId('guard-add-button').click()
-    await page.getByTestId('guard-save').click()
     await expect(page.getByTestId('guard-chip').filter({ hasText: 'release' })).toBeVisible()
+    await expect.poll(async () => (await api(page, '/api/pm/project?key=WEB')).workflow.guards.protected).toEqual(['main', 'release']) // saved at once
     const { workflow } = await api(page, '/api/pm/project?key=WEB')
-    expect(workflow.guards.protected).toEqual(['main', 'release'])
     await page.screenshot({ path: `.shots/project-guards-${test.info().project.name}.png` })
 
     // The coordinator's `template edit`, as it is stored: the diff against this version.

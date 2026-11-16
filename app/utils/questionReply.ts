@@ -10,8 +10,8 @@
 // The draft text is the only state: the quotes shown above the field, the
 // "quoted" state of the buttons and their removal are all read from it.
 // A point that asks nothing (a list item, a paragraph without a question) can
-// be quoted the same way, to discuss it. How the two show is a setting
-// (ReplyStyle): the markup below is the same for every style, main.css draws it.
+// be quoted the same way, to discuss it: a small "↳" after a question, a grey
+// one after a point (on hover on a computer), drawn by main.css.
 import { type Reference, type TextRef, decisionRef, pointRef, isRefLine, refLine, refsIn, sameRef, tableId } from '../../shared/reference'
 import { createRenderCache } from './renderCache'
 
@@ -313,15 +313,6 @@ function ownText(el: Element) {
   return { parts, raw, masked }
 }
 
-// How the reply targets show in a conversation (Settings › Conversation):
-// `icon`, a small "↳" after each question and each point; `text`, the words of
-// the question are the button and a point is clicked; `list`, a number after
-// each question and the questions listed under the message.
-export const REPLY_STYLES = ['icon', 'text', 'list'] as const
-export type ReplyStyle = typeof REPLY_STYLES[number]
-export const parseReplyStyle = (v: string | null | undefined): ReplyStyle =>
-  (REPLY_STYLES as readonly string[]).includes(v || '') ? v as ReplyStyle : 'icon'
-
 export interface ReplyLabels { reply: string, quoted: string, discuss: string, yes: string, no: string, okAll: string, decisions: string }
 
 // A point worth discussing: a few words that ask nothing and do not merely
@@ -513,14 +504,10 @@ export function forgetReply(html: string) {
 }
 export const replyCacheStats = () => ({ marked: marked.stats(), targets: targets.stats() })
 
-// What a reply offers to answer: its questions in order, the rows of its
-// decision tables, and for the "list" style how many
-// points it has, and whether "+ Quote a point" is worth offering (`pick`):
-// only when there is a choice to make, that is a point in a list, or two
-// points or more. A reply of plain prose in one paragraph is a single point:
-// the whole message is the thing to reply to.
+// What a reply offers to answer: its questions in order and the rows of its
+// decision tables.
 // Read from the marked HTML, cached with it.
-export interface ReplyTargets { questions: { n: string, text: string, closed: boolean }[], rows: DecisionRow[], points: number, pick: boolean }
+export interface ReplyTargets { questions: { n: string, text: string, closed: boolean }[], rows: DecisionRow[] }
 // A row of the panel under a decision table, read back from its markup.
 export const tableRank = (el: HTMLElement) => Number(el.closest<HTMLElement>('.q-table')?.dataset.t) || 1
 export function rowOf(el: HTMLElement): DecisionRow {
@@ -531,15 +518,12 @@ const targets = createRenderCache<ReplyTargets>(REPLY_CACHE_ENTRIES, TARGETS_CAC
 export function replyTargets(html: string): ReplyTargets {
   let out = targets.get(html)
   if (!out) {
-    out = { questions: [], rows: [], points: 0, pick: false }
+    out = { questions: [], rows: [] }
     if (typeof document !== 'undefined' && html.includes('class="q-')) {
       const tpl = document.createElement('template')
       tpl.innerHTML = html
       out.questions = [...tpl.content.querySelectorAll<HTMLElement>('.q-reply')].map(b => ({ n: b.dataset.n || '', text: b.dataset.q || '', closed: b.dataset.c === '1' }))
       out.rows = [...tpl.content.querySelectorAll<HTMLElement>('.q-trow')].map(rowOf)
-      const points = [...tpl.content.querySelectorAll('.q-point')]
-      out.points = points.length
-      out.pick = points.length > 1 || points.some(b => b.closest('li'))
     }
     targets.set(html, out, html.length)
   }

@@ -6,7 +6,7 @@ import type { Run, Task } from './run'
 import type { Quota } from '../types'
 import { limitState } from '../quotaLimit'
 
-export type Cause = 'offline' | 'restart' | 'killed' | 'out-of-memory' | 'limit' | 'unknown'
+export type Cause = 'offline' | 'restart' | 'killed' | 'out-of-memory' | 'limit' | 'login' | 'unknown'
 
 // A terminal as herdr-core gives it (terminal.list), and the last lines it printed when read.
 export interface TerminalFacts { state?: string, exit_code?: number | null, signal?: number | null, reason?: string | null, finished_ms?: number | null, lastLines?: string }
@@ -29,12 +29,15 @@ export interface Incident {
   tasks: string[]
   runs: string[]
   told?: number // its Incident wake queued (incidentWake.ts)
+  program?: string // login: the account's program
+  renewed?: number // login: when the credentials file changed, or the user said they logged in
 }
 
 // A task whose agent an incident took (recovery.ts): waits (the engine resumes
 // it once the cause is gone) while `run` is still its run; n: times in a row
 // for this cause; resumedAt: the engine's last resume.
-export interface Recovery { incident: string, cause: Cause, machine: string, label: string, run?: string, at: number, n: number, waits?: true, resumedAt?: number }
+export interface Recovery { incident: string, cause: Cause, machine: string, label: string, run?: string, at: number, n: number, waits?: true, resumedAt?: number, say?: true }
+// say: a reviewer restarted after a login incident, not yet told to go on (loginRestartText).
 // Waiting for the engine to resume it, not for the user.
 export const recovering = (t: Pick<Task, 'state' | 'run' | 'recovery' | 'stopped' | 'waitKind'>) =>
   t.state === 'waiting' && !t.waitKind && !t.stopped && !!t.recovery?.waits && t.recovery.run === t.run
@@ -49,6 +52,7 @@ export const CAUSE_TEXT: Record<Cause, string> = {
   'killed': 'the agent was killed or crashed',
   'out-of-memory': 'the agent was killed: out of memory',
   'limit': 'the account reached its limit',
+  'login': 'the account\'s login expired (/login once on that machine renews it)',
   'unknown': 'unknown: the facts read do not decide',
 }
 
@@ -117,7 +121,13 @@ export const isOpen = (i: Incident, tasks: TaskState[]) =>
   i.tasks.some((id) => { const t = tasks.find(x => x.id === id); return !!t && !t.step?.done && !!t.run && i.runs.includes(t.run) })
 
 // The line a task waits with.
-export const incidentLine = (i: Pick<Incident, 'cause' | 'label'>) => `The agent's terminal is gone: ${CAUSE_TEXT[i.cause]} (${i.label})`
+export const incidentLine = (i: Pick<Incident, 'cause' | 'label'> & { program?: string }) =>
+  i.cause === 'login' ? `Waiting for login: ${programName(i.program)} login expired on ${i.label}` : `The agent's terminal is gone: ${CAUSE_TEXT[i.cause]} (${i.label})`
+const programName = (p?: string) => (p === 'codex' ? 'Codex' : 'Claude')
+
+// The login incidents still holding tasks, for the home's one notice per machine and account.
+export const openLogins = (incidents: Incident[], tasks: TaskState[]) =>
+  incidents.filter(i => i.cause === 'login' && isOpen(i, tasks)).map(i => ({ id: i.id, program: programName(i.program), machine: i.label, tasks: i.tasks.length, ...(i.renewed ? { renewed: i.renewed } : {}) }))
 
 // What the coordinator reads.
 export const incidentView = (i: Incident, tasks: TaskState[]) =>

@@ -11,6 +11,7 @@ import { cloneOn } from '../../shared/pm/project'
 import { cleanupOf, cleanupRefusal, factsRefusal, parseFacts } from '../../shared/pm/cleanup'
 import { KILL_UNDER } from '../../shared/pm/procs'
 import { countKilled } from './pmProcs'
+import { pmDir } from './pmHome'
 
 // Prints `exists listed dirty unique` (see Facts).
 export const WORKTREE_PROBE_SCRIPT = `repo=$1 dir=$2 branch=$3
@@ -73,7 +74,7 @@ async function clean(deps: Deps, id: string) {
   const home = await homeOf(deps, on)
   if (!home) return
   const repo = cloneOn(p, run.machine, home)!
-  const root = taskPaths(home, task.id).worktree.replace(/\/[^/]+$/, '')
+  const root = taskPaths(home, task.id, undefined, pmDir()).worktree.replace(/\/[^/]+$/, '')
   const refused = cleanupRefusal(task, runs, run.worktree, root)
   if (refused) return keep(refused)
   const probe = await exec(deps, on, WORKTREE_PROBE_SCRIPT, [repo, run.worktree, run.branch])

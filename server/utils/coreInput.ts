@@ -105,14 +105,17 @@ async function typeIn(deps: CoreInputDeps, p: Pane, text: string, pastes: unknow
   }
   if (!isSlashCommand(text)) keepPastes(text, pastes)
   try {
-    const r = await deps.call<{ started?: boolean | null }>('terminal.send', { terminal: p.coreAddress, text }, 30000)
+    const r = await deps.call<{ started?: boolean | null, status?: string | null }>('terminal.send', { terminal: p.coreAddress, text }, 30000)
     let started = r?.started ?? null
     // Claude takes a multi-line send (photo lines, text + "\n@file") as a paste and
     // may leave it in its input: core reports no turn started. A large photo is
     // read and resized before its "[Image #N]" shows, and an Enter pressed before
     // that is lost. Our text alone there, each photo as its placeholder (also
-    // during a turn, where Enter queues it): Enter, and once more if it stays.
-    if (field && started !== true) {
+    // during a turn, where Enter queues it): Enter, again while it stays.
+    // `started` is "went working within a few seconds": sent while Claude was
+    // already working (or ending its turn), it is true whether or not Claude
+    // took the message, so it proves nothing then (WHR-398).
+    if (field && (started !== true || r?.status === 'working')) {
       const enters = await submitLeftInput(deps, p, field, text)
       if (enters) started = null // unconfirmed: Enter pressed, no turn observed yet
     } else if (p.agent === 'claude' && started === false && text.includes('\n')) {
@@ -131,33 +134,39 @@ async function typeIn(deps: CoreInputDeps, p: Pane, text: string, pastes: unknow
 }
 
 // Looks at Claude's field after a send it did not start: up to this many,
-// settleMs apart (about 6 s by default), for the photos to show.
-const SUBMIT_LOOKS = 15
+// settleMs apart (about 12 s by default), for the photos to show.
+const SUBMIT_LOOKS = 30
+// After each Enter, the look that decides on the next one, in settleMs: the
+// field may still be drawing, or Claude switching turns, and drop an Enter.
+const RESUBMIT_AFTER = [1, 2, 4, 8]
 
 // Our message left in Claude's field: waits (bounded) until the field holds
-// it whole, placeholders included, then presses Enter; if it is still there
-// after that, presses Enter once more. The field was empty before the send,
-// so other text there is ours still being drawn (a photo path not yet an
-// "[Image #N]"); Enter is never pressed on it. Stops at an empty field (the
-// message was taken). Returns the Enters pressed.
+// it whole, placeholders included, then presses Enter, and again (backing
+// off, at most RESUBMIT_AFTER.length times) while it holds our message alone.
+// The field was empty before the send, so other text there is ours still
+// being drawn (a photo path not yet an "[Image #N]"); Enter is never pressed
+// on it. Never sent twice: the field holds one copy, and an empty field (the
+// message taken, or queued during a turn) ends it. Returns the Enters pressed.
 async function submitLeftInput(deps: CoreInputDeps, p: Pane, field: (p: Pane) => Promise<string | null>, text: string): Promise<number> {
-  const holds = async () => {
-    await new Promise(res => setTimeout(res, deps.settleMs ?? 400))
+  const settle = deps.settleMs ?? 400
+  const holds = async (times = 1) => {
+    await new Promise(res => setTimeout(res, settle * times))
     const now = await field(p).catch(() => null)
     return now ? fieldHolds(now, text, true) : null
   }
-  const enter = () => deps.call('terminal.keys', { terminal: p.coreAddress, keys: ['enter'] }, 10000)
   // Wait for it whole (null: the field emptied, the message was taken).
   for (let i = 0; ; i++) {
     const seen = await holds()
     if (seen === null || (!seen && i + 1 >= SUBMIT_LOOKS)) return 0
     if (seen) break
   }
-  await enter()
-  // Its own look, whatever the wait took: still ours alone, one more Enter.
-  if (!await holds()) return 1
-  await enter()
-  return 2
+  let enters = 0
+  for (const after of RESUBMIT_AFTER) {
+    await deps.call('terminal.keys', { terminal: p.coreAddress, keys: ['enter'] }, 10000)
+    enters++
+    if (!await holds(after)) break
+  }
+  return enters
 }
 
 // Raw route: text + Enter is a message, named keys go through terminal.keys.

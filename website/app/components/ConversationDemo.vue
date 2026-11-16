@@ -1,20 +1,19 @@
 <script setup lang="ts">
 // Story 1.1: a Claude Code conversation on a computer, drawn with
 // the app's pieces. Claude's four calls are grouped ("4 actions", UChatTool
-// as in ChatView.vue) and unfold, the effort picker goes from medium to high,
+// as in ChatView.vue) and unfold,
 // the command block of the reply is copied, then run: the view flips to the
 // live terminal, the tests pass, and it flips back. CONVERSATION script.
-import { CONVERSATION, CONVERSATION_TOOLS, EFFORTS, TEST_OUTPUT } from '~/utils/storyDemos'
+import { CONVERSATION, CONVERSATION_TOOLS, TEST_OUTPUT } from '~/utils/storyDemos'
 import type { DemoAgent } from '~/utils/demoScript'
 
 const root = ref<HTMLElement | null>(null)
 const { step, typed } = useDemoClock(CONVERSATION, root)
 
 const terminal = computed(() => step.value >= 7 && step.value < 10)
-const effort = computed(() => (step.value >= 3 ? 'high' : 'medium'))
 const last = CONVERSATION_TOOLS.at(-1)!
 const agents = computed<DemoAgent[]>(() => [
-  { name: 'web-shop', agent: 'claude', model: 'Opus 5.5', effort: effort.value, state: 'idle', line: 'I added a small cart module and three tests. Run them with: npm test' },
+  { name: 'web-shop', agent: 'claude', model: 'Opus 5.5', effort: 'high', state: 'idle', line: 'I added a small cart module and three tests. Run them with: npm test' },
   { name: 'acme-api', agent: 'omp', model: 'GPT-5.5', effort: 'high', state: 'working', line: '❯ edit src/users.js' },
   { name: 'docs-site', agent: 'codex', model: 'gpt-5.5', effort: 'medium', state: 'done', line: 'The changelog for 2.4 is written. Anything else?' },
 ])
@@ -58,7 +57,7 @@ const toolUi = { root: 'tool group', trigger: 'tool-trigger', label: 'tool-label
         <DemoTurnEnd text="✓ 2 min 40 s · 4 actions" />
       </div>
       <template #bottom>
-        <DemoComposer v-if="!terminal" agent="claude" desktop focus model="Opus 5.5" :effort="effort" :menu="step >= 2 && step < 4 ? EFFORTS : undefined" />
+        <DemoComposer v-if="!terminal" agent="claude" desktop focus model="Opus 5.5" effort="high" />
       </template>
     </DemoDesktop>
   </div>

@@ -256,3 +256,31 @@ it('a hidden coordinator that needs the user shows in the main list (WHR-331)', 
   await vi.waitFor(() => expect(names()).toEqual(['aa app', 'cc app']))
   expect(toggle().text()).toBe('Show hidden (1)')
 })
+
+it("a workspace's row: under its tab group, its members' counts, their badges expanding to the list, its own menu (WHR-384)", async () => {
+  herdrState.value = { ok: true, workspaces: [], panes: [pane('w:p1', 'host/t1'), pane('w:p2', 'host/t2')] }
+  const members = [{ key: 'PA', name: 'payroll-api', color: 'teal' as const }, { key: 'WA', name: 'web-app' }]
+  views = [view('WS', { terminal: 'host/t1', machines: ['laptop'], workspace: { group: '*group:work', members, working: 2, waiting: 1 } }), view('HOME', { terminal: 'host/t2', machines: ['laptop'] })]
+  machineGroups.value = [{ id: '*group:personal', name: 'Personal', machines: ['laptop'] }, { id: '*group:work', name: 'Work', machines: ['office'] }]
+  desk.value = true
+  coarse.value = false
+  try {
+    // Its machine is in Personal, but it shows under its own group, Work.
+    machineBarSaved.value = '*group:personal'
+    w = await mountSuspended(CoordinatorsSection, { attachTo: document.body })
+    const names = () => w!.findAll('[data-testid="coordinator-name"]').map(r => r.text())
+    await vi.waitFor(() => expect(names()).toEqual(['home app']))
+    machineBarSaved.value = '*group:work'
+    await vi.waitFor(() => expect(names()).toEqual(['ws app']))
+    expect(w.find('[data-testid="workspace-counts"]').text()).toBe('2 working · 1 waiting for you')
+    // Its members' badges; a tap lists them, each opening its board.
+    const strip = w.find('[data-testid="workspace-members"]')
+    expect(strip.findAll('[data-testid="project-badge"]').map(b => b.text())).toEqual(['PA', 'WA'])
+    expect(w.find('[data-testid="workspace-member-list"]').exists()).toBe(false)
+    await strip.trigger('click')
+    const list = w.find('[data-testid="workspace-member-list"]')
+    expect(list.findAll('a').map(a => [a.text(), a.attributes('href')])).toEqual([['PApayroll-api', '#/board?project=PA'], ['WAweb-app', '#/board?project=WA']])
+    const items = () => w!.findComponent({ name: 'UContextMenu' }).props('items').flat() as { label: string }[]
+    expect(items().map(i => i.label)).toEqual(['Open the board', 'Workspace settings', 'Autopilot', 'Rename…', 'Mute notifications', 'Move to hidden', 'Restart with…', 'Stop the coordinator'])
+  } finally { machineGroups.value = []; machineBarSaved.value = null }
+})

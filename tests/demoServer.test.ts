@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DEMO_REFUSAL, DemoServer } from '../app/demo/server'
 import { CLAUDE_WEB, COORD, CODEX, OMP, scriptFor } from '../app/demo/scenario'
 import type { ChatResponse } from '../shared/types'
+import type { Board, ToHandle } from '../shared/pm/board'
 
 // Manual clock: timers run only when the test advances time.
 function clock() {
@@ -164,6 +165,20 @@ describe('demo server', () => {
     expect(s.handle('POST', '/api/push/test', {})).toEqual({ status: 403, body: { error: DEMO_REFUSAL, code: 'demo' } })
     expect(s.handle('POST', '/api/space', { op: 'split' }).status).toBe(403)
     expect(s.handle('GET', '/api/machine/awake?key=x').status).toBe(404)
+  })
+
+  it('Tasks to review: Approve merges the task, an answer sends its agent back to work', () => {
+    const c = clock()
+    const s = new DemoServer(c)
+    const handle = () => (s.handle('GET', '/api/pm/handle').body as ToHandle[]).map(x => x.id)
+    const card = (id: string) => (s.handle('GET', '/api/pm/board').body as Board).cards.find(x => x.id === id)!
+    expect(handle()).toEqual(['WEB-7', 'WEB-8'])
+    expect(s.handle('POST', '/api/pm/step-user', { id: 'WEB-7' }).status).toBe(200)
+    c.advance(5000)
+    expect(card('WEB-7').phase).toBe('done')
+    expect(s.handle('POST', '/api/pm/answer', { id: 'WEB-8', text: 'Two months free' }).status).toBe(200)
+    expect(handle()).toEqual([])
+    expect(card('WEB-8').asks).toBeUndefined()
   })
 
   it('stops a working agent on interrupt', () => {

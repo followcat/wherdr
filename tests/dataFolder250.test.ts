@@ -108,7 +108,7 @@ describe('2.5.0 data folder on v3', () => {
     const { readSettings, patchSettings } = await import('../server/utils/settings')
     const s = await readSettings()
     expect(s).toEqual({
-      theme: 'herdr-dark', compactListV2: '1', notificationRules: '{"blocked":true,"done":false}',
+      theme: 'herdr-dark', notificationRules: '{"blocked":true,"done":false}',
       boardGrouping: 'status', boardDone: 'hide', boardFolds: '["wherdr/12","wherdr/40"]',
     })
     expect(await patchSettings({ theme: 'herdr-light' })).toMatchObject({ theme: 'herdr-light', boardGrouping: 'status' })

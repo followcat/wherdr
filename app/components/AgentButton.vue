@@ -4,7 +4,9 @@
 // (Card.agents, each role's agent still running, found on screen here). Both the
 // worker and the reviewer running: a small menu, Worker or Reviewer. None: the
 // button stays, disabled, with why (Agent is terminated): a tooltip on hover,
-// a short muted line under it on a tap (a phone has no hover).
+// a short muted line under it on a tap (a phone has no hover). A worker the
+// engine released (Card.released): the button stays, with one muted line
+// saying why; a click starts it again with its conversation, then opens it.
 // primary: an agent's question, the one thing to do (else secondary, never
 // competing with Approve or Merge). opened: the conversation is opening.
 import type { Card } from '#shared/pm/board'
@@ -31,6 +33,26 @@ const items = computed(() => [
 ])
 const hint = ref(false)
 watch(one, () => { hint.value = false })
+
+// The released worker: started again, opened once its pane is on screen.
+const released = computed(() => !one.value && props.card.released !== undefined)
+const releasedLine = computed(() => {
+  const at = props.card.released ? new Date(props.card.released).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
+  return at ? tl(`Released at ${at} to free memory: opening it starts it again.`) : tl('Released to free memory: opening it starts it again.')
+})
+const waking = ref(false)
+const wakeError = ref('')
+const woken = computed(() => herdrState.value?.panes.find(p => p.task === props.card.id && p.role === 'worker'))
+async function wake() {
+  waking.value = true
+  wakeError.value = ''
+  try {
+    await api('/api/pm/worker-wake', { id: props.card.id })
+    taskChanged()
+  }
+  catch (e) { wakeError.value = (e as Error).message; waking.value = false }
+}
+watch(woken, (p) => { if (p && waking.value) { waking.value = false; go(p) } })
 </script>
 
 <template>
@@ -38,6 +60,10 @@ watch(one, () => { hint.value = false })
     <UButton :color="primary ? 'primary' : 'neutral'" :variant="primary ? 'solid' : 'outline'" size="xl" icon="i-lucide-terminal" trailing-icon="i-lucide-chevron-down" data-testid="agent-open-menu">{{ label }}</UButton>
   </UDropdownMenu>
   <UButton v-else-if="one" :color="primary ? 'primary' : 'neutral'" :variant="primary ? 'solid' : 'outline'" size="xl" icon="i-lucide-terminal" data-testid="agent-open" @click="go(one)">{{ label }}</UButton>
+  <div v-else-if="released" class="agent-off" data-testid="agent-released">
+    <UButton color="neutral" variant="outline" size="xl" icon="i-lucide-terminal" :loading="waking" data-testid="agent-wake" @click="wake">{{ label }}</UButton>
+    <small :class="wakeError ? 'form-error' : 'muted'" role="status" data-testid="agent-released-line">{{ wakeError || releasedLine }}</small>
+  </div>
   <div v-else class="agent-off" data-testid="agent-off" @click="hint = !hint">
     <span class="agent-off-trigger" :title="tl('Agent is terminated')">
       <UButton color="neutral" variant="outline" size="xl" icon="i-lucide-terminal" disabled :aria-describedby="hint ? `agent-off-${card.id}` : undefined" data-testid="agent-open">{{ label }}</UButton>

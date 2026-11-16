@@ -1,19 +1,6 @@
-// Background in the margins of the conversation on a computer (Settings › Appearance ›
-// Desktop), kept on the device and applied as `data-backdrop` on <html>. Phones show none.
-// - wherdr: the website's grid, dots at the crossings and travelling packets
-//   (components/GridBackdrop.vue). Default.
-// - herdr: the flat line grid in the style of herdr.dev (main.css, .chat / .composer).
-export const BACKDROPS = ['wherdr', 'herdr'] as const
-export type Backdrop = typeof BACKDROPS[number]
-export const DEFAULT_BACKDROP: Backdrop = 'wherdr'
-
-// Values saved by the first version of the setting: "plain" was the flat grid.
-const LEGACY: Record<string, Backdrop> = { plain: 'herdr', grid: 'wherdr' }
-
-export function parseBackdrop(v: unknown): Backdrop {
-  if (BACKDROPS.includes(v as Backdrop)) return v as Backdrop
-  return (typeof v === 'string' && LEGACY[v]) || DEFAULT_BACKDROP
-}
+// The wherdr grid in the margins of the conversation on a computer
+// (components/GridBackdrop.vue): the website's grid, dots at the crossings and
+// travelling packets. Phones show none.
 
 // Grid cell, in CSS pixels (same as GRID_CELL in website/app/utils/grid.ts).
 export const BACKDROP_CELL = 64

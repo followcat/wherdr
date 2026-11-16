@@ -249,11 +249,16 @@ or device, joins the one in flight, so a message is never sent twice.
 A message sent from wherdr that Claude left in that box (a photo message is pasted, and
 Claude may keep a paste there; a large photo is read and resized before its `[Image #N]`
 shows, and an Enter pressed before that is lost) is submitted by wherdr: it waits up to
-about six seconds for the box to hold that message alone, each photo as its placeholder,
-presses Enter, and presses it once more if the message is still there, also during a turn.
+about twelve seconds for the box to hold that message alone, each photo as its placeholder,
+presses Enter, and presses it again while the message is still there (up to four times,
+waiting longer each time). This also holds for a message sent while Claude works or ends
+its turn: Enter then puts it in Claude's own queue. Enter is only pressed on a box that
+holds that message alone, so it is never sent twice.
 Until the send answers, the bubble reads **sending…**, not **Not sent**. While it stays there, its bubble reads **Not sent yet · waiting in
 the agent's input**, never **Read by the agent**, and the box's own bubble is not shown
-twice. A new message is never typed into a box that holds text: Claude would submit both
+twice: the box is matched to the message by its text alone, whitespace, `[Image #N]`
+placeholders and photo paths left out, since the box may show fewer placeholders than the
+message has photos, or a photo still as its path. A new message is never typed into a box that holds text: Claude would submit both
 as one message. The send is refused ("Not sent", with Retry): send or clear that text
 first (`server/utils/coreInput.ts`).
 

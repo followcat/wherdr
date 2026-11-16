@@ -4,6 +4,7 @@
 import type { ChatItem, HerdrState, Pane, QueuedMessage } from '#shared/types'
 import { applySettingsPatch, cleanSettingsPatch, type SettingsMap } from '../../shared/settings'
 import * as S from './scenario'
+import { DemoPm } from './pm'
 
 export const DEMO_REFUSAL = 'Demo — nothing runs here. Install wherdr to drive your own agents.'
 
@@ -38,6 +39,7 @@ export class DemoServer {
   private seq = 10
   private settings: SettingsMap = {}
   private interactive = new Map<string, { cursor: number, details: boolean }>()
+  private pm: DemoPm
 
   interactiveScreen(id: string): string | null {
     const menu = this.interactive.get(id)
@@ -66,6 +68,7 @@ export class DemoServer {
   constructor(private clock: DemoClock = { now: Date.now, setTimeout: (fn, ms) => setTimeout(fn, ms) }) {
     const now = clock.now()
     this.panes = S.panes(now)
+    this.pm = new DemoPm(clock)
     for (const [id, items] of Object.entries(S.conversations(now))) this.chats.set(id, { items, v: 1 })
     this.finishCodex()
   }
@@ -330,6 +333,8 @@ export class DemoServer {
     const path = u.pathname
     const paneId = String(q.get('pane') || body.pane_id || '')
     const now = this.clock.now()
+    const pm = method === 'GET' ? this.pm.get(path) : this.pm.post(path, body)
+    if (pm) return pm
     if (method === 'GET') {
       switch (path) {
         case '/api/auth/status': return ok({ enabled: false, unlocked: true, devices: [] })

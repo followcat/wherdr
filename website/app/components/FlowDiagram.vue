@@ -1,16 +1,16 @@
 <script setup lang="ts">
-// phone / laptop ⇄ (private network) ⇄ wherdr ⇄ Herdr ⇄ agents.
+// phone / laptop ⇄ (private network) ⇄ wherdr ⇄ herdr-core ⇄ agents.
 // Plain HTML boxes and 1 px links with packets gliding along them (CSS only).
 const agents = [
   { name: 'Claude Code', color: 'var(--claude)' },
   { name: 'Codex', color: 'var(--codex)' },
   { name: 'omp', color: 'var(--omp)' },
-  { name: '+ any Herdr agent', color: 'var(--dim)' },
+  { name: 'Devin, any terminal', color: 'var(--dim)' },
 ]
 </script>
 
 <template>
-  <div class="flow" role="img" aria-label="Your phone or laptop reaches wherdr through your private network (Tailscale). wherdr runs next to Herdr on your server and talks to its local socket; Herdr runs your coding agents.">
+  <div class="flow" role="img" aria-label="Your phone or laptop reaches wherdr through your private network (Tailscale). wherdr runs next to herdr-core (hc) on your server and talks to its local socket; hc runs your coding agents.">
     <div class="node devices">
       <span class="label"><span class="k">01</span> You</span>
       <div class="title">Phone &amp; laptop</div>
@@ -23,16 +23,16 @@ const agents = [
     <div class="node wherdr fx-ring halo">
       <span class="label"><span class="k">02</span> wherdr</span>
       <div class="title">wherdr</div>
-      <ul><li>Nitro · 127.0.0.1:7683</li><li>passkey lock</li></ul>
+      <ul><li>Nitro · 127.0.0.1</li><li>passkey lock</li></ul>
     </div>
     <div class="link">
       <span class="tag">unix socket</span>
       <i class="pkt" style="--d: 3.7s; --o: -1.6s" /><i class="pkt rev" style="--d: 5.3s; --o: -0.9s" />
     </div>
     <div class="node">
-      <span class="label"><span class="k">03</span> Herdr</span>
-      <div class="title">Herdr</div>
-      <ul><li>spaces · tabs · panes</li><li>SSH machines</li></ul>
+      <span class="label"><span class="k">03</span> herdr-core</span>
+      <div class="title">hc</div>
+      <ul><li>spaces · tabs</li><li>SSH machines</li></ul>
     </div>
     <div class="link">
       <span class="tag">PTY</span>

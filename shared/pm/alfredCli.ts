@@ -9,29 +9,27 @@ import { MERGE_BY, type MergeBy, type Template } from './workflow'
 import { MEMORY_CAP, sameGuards, type Turn } from './coordinator'
 import { READY_SORTS } from '../spaces'
 import { NOTES_COMMANDS, NOTES_RULE, parseNotes, type NotesCommand } from '../notes'
-import { THEMES } from '../../app/utils/themes'
-import { FOCUS_BORDERS } from '../../app/utils/focusBorder'
-import { BACKDROPS } from '../../app/utils/backdrop'
+import { THEMES, THEME_MODES } from '../../app/utils/themes'
 
 // The settings Alfred may change, each with the values the app reads (any
 // other value would be ignored by it). Lists (groups, hidden agents, folds…)
 // are changed in wherdr's Settings only.
 const ON_OFF = ['1', '0']
 export const SETTING_VALUES: Partial<Record<SyncedSetting, readonly string[]>> = {
-  'theme': THEMES.map(t => t.id), 'focusBorder': FOCUS_BORDERS, 'backdrop': BACKDROPS, 'backdropPackets': ['on', 'off'],
-  'machineBar': ON_OFF, 'compactListV2': ON_OFF,
-  'showShells': ON_OFF, 'showCounters': ON_OFF, 'showQuotas': ON_OFF, 'quotaDisplay': ['left', 'used'],
+  'theme': THEMES.map(t => t.id), 'themeMode': THEME_MODES,
+  'machineBar': ON_OFF,
+  'showCounters': ON_OFF, 'showQuotas': ON_OFF, 'quotaDisplay': ['left', 'used'],
   'autoReorderReady': ON_OFF, 'readySort': READY_SORTS,
-  'typewriterSpeed': ['off', 'fast', 'medium', 'slow'], 'encryptedText': ON_OFF, 'replyStyle': ['icon', 'text', 'list'], 'defaultViewMode': ['chat', 'term'],
+  'typewriterSpeed': ['off', 'fast', 'medium', 'slow'], 'encryptedText': ON_OFF, 'defaultViewMode': ['chat', 'term'],
   'wherdr.files.hidden': ON_OFF, 'wherdr.files.md': ['rendered', 'source'],
 }
 // Where each one is in Settings: "Show me" on its proposal card highlights it.
 export const SETTING_TARGETS: Partial<Record<SyncedSetting, UiTargetId>> = {
-  theme: 'appearance.theme', machineBar: 'appearance.home-screen', compactListV2: 'appearance.home-screen',
-  showShells: 'appearance.home-screen', showCounters: 'appearance.home-screen', showQuotas: 'appearance.home-screen',
+  theme: 'appearance.theme', themeMode: 'appearance.theme', machineBar: 'appearance.home-screen',
+  showCounters: 'appearance.home-screen', showQuotas: 'appearance.home-screen',
   autoReorderReady: 'appearance.home-screen', quotaDisplay: 'appearance.quotas',
   typewriterSpeed: 'conversation.typewriter', encryptedText: 'conversation.typewriter',
-  replyStyle: 'conversation.reply-style', defaultViewMode: 'conversation.default-pane',
+  defaultViewMode: 'conversation.default-pane',
 }
 const settable = (k: string): k is SyncedSetting => Object.hasOwn(SETTING_VALUES, k)
 
@@ -40,6 +38,9 @@ export type AlfredCommand =
   | { name: 'project', key: string }
   | { name: 'coordinator open' | 'coordinator resend', key: string }
   | { name: 'last', key: string }
+  // The home tabs and their projects; a brief of one tab (none: the open one) or of all.
+  | { name: 'groups' }
+  | { name: 'brief', group?: string, all?: true, since?: number }
   // Show a place of wherdr beside Alfred's conversation (shared/uiOpen.ts).
   | { name: 'ui open', link: string }
   | { name: 'ui targets' }
@@ -51,6 +52,8 @@ export type AlfredCommand =
   | { name: 'project workflow edit', key: string }
   // Changes: a dry run unless apply; propose: a card in the reply, the user clicks Apply.
   | { name: 'project add', apply: boolean, propose?: true, input: { key: string, machine: string, path: string, name?: string, template?: string } }
+  // roots: the clone root on each machine (by key or label), its home first.
+  | { name: 'workspace add', apply: boolean, propose?: true, input: { key: string, name?: string, group?: string, roots: [string, string][] } }
   | { name: 'project template', apply: boolean, propose?: true, key: string, template: string } // '' clears it
   // Lines added to the end of the project coordinator's memory.md (the text comes as
   // the call's input, so no card: the parser refuses --propose).
@@ -76,12 +79,15 @@ export const ALFRED_COMMANDS: { usage: string, does: string }[] = [
   { usage: 'coordinator open <KEY>', does: 'the link that opens a running project coordinator, to give the user' },
   { usage: 'ui open \'<in-app link>\' | --target <id> [--project <KEY>]', does: 'show that place, or the setting of that target id highlighted, in the user\'s open wherdr, beside this conversation (a card on a phone), quoted; only in a turn that comes from the user, only to the wherdr the user is on now (the answer says which: phone or computer). It changes nothing' },
   { usage: 'ui targets', does: 'the settings ui open --target can highlight: id and where it is' },
-  { usage: 'tell <KEY> "<text>"', does: 'send a message to the project\'s coordinator, as from Alfred (started first when it does not run); written to the project\'s log' },
-  { usage: 'last <KEY>', does: 'the last reply of the project\'s coordinator, and whether it is still working' },
+  { usage: 'tell <KEY> "<text>"', does: 'send a message to the project\'s coordinator, as from Alfred ("From Alfred, for the user:" when you relay the user\'s message; started first when it does not run); written to the project\'s log' },
+  { usage: 'last <KEY>', does: 'the last reply of the project\'s coordinator, whether it is still working, and the tasks it added since your last tell (tasks)' },
+  { usage: 'groups', does: 'the home tabs (tab groups, machines shown as their own tab) with their projects, and the one the user has open (open: from their last message)' },
+  { usage: 'brief [--group <name> | --all] [--since <YYYY-MM-DD>]', does: 'facts for a brief, project by project, from the engine: tasks merged since the last brief of that scope (or the date), tasks waiting for the user and for what, tasks stuck, coordinators idle or stopped; then machines offline or full, quotas near their limit, open incidents. Default: the open tab\'s group' },
   { usage: 'v2', does: 'when the user comes from wherdr v2: its projects, read now from the herdr-projects board of this machine (suggested key, name, folder on this machine and whether it is there: here, base branch, v2 settings to redo, open tasks), each with the v3 project made from it, if any, and the migration report' },
   { usage: 'v2 import [--only <KEY,KEY>] [--start no]', does: 'bring over every v2 project not made yet, in one change: each added on this machine with its v2 folder (one whose folder cannot be added is listed with why), then its coordinator started (no workflow needed: it starts with the minimal default and its first reply proposes a workflow). With --propose, one card: a checkbox per project and one for starting their coordinators; --only: the keys to add; --start no: add only. The outcome lists each project' },
   { usage: 'settings', does: 'the synced settings, their values, and the values each one Alfred may change accepts (1 = on, 0 = off)' },
   { usage: 'project add <KEY> --machine <key> --path <folder> [--name <name>] [--template <id>]', does: 'add a project: a git folder on a machine' },
+  { usage: 'workspace add <KEY> --root <folder,folder> [--machine <key,key>] [--name <name>] [--group <tab group>]', does: 'add a workspace (docs/workspaces.md): a project with no git whose coordinator runs the repositories cloned under its root folder (~/work); --machine and --root pair up, the first machine its home (none: this machine); --group: the tab group (id or name) it shows in. Once applied, its coordinator starts and offers to build the map' },
   { usage: 'project template <KEY> <id|none>', does: 'replace the project\'s workflow with a copy of a template or example:<id> (its guards come with it), or none' },
   { usage: 'project workflow edit <KEY> < workflow.json', does: 'propose a new workflow for the project (the whole JSON on stdin, guards unchanged): the user accepts or refuses it in wherdr, like a coordinator\'s proposal. Only in a turn that comes from the user' },
   { usage: 'project memory <KEY> < note.md', does: 'add the lines on stdin (at most 30, blank ones left out) to the end of the project coordinator\'s memory.md, on its machine; it is created when missing. For what the user wants it to know (a v2 handover note, a goal)' },
@@ -89,7 +95,7 @@ export const ALFRED_COMMANDS: { usage: string, does: string }[] = [
   { usage: 'project machine add <KEY> <machine> --clone <folder>', does: 'let the project\'s tasks run on another machine (its key or label), in its clone of the repo there; once applied, the machine\'s readiness check runs and its result is in the answer' },
   { usage: 'project machine remove <KEY> <machine>', does: 'the project\'s tasks no longer start on that machine (tasks already there stay)' },
   { usage: 'coordinator start <KEY> [--program claude|codex] [--resume]', does: 'start the project\'s coordinator, with its harness\'s default model (a new conversation replaces a running one); --resume takes up its last conversation again, with the agent that ran it' },
-  { usage: '<change> --propose', does: 'instead of --apply, any change above (project add, template, guards, machine, coordinator start, v2 import): a card in your reply (the change, Show me, Cancel, Apply) the user applies with one click. Only in a turn that comes from the user' },
+  { usage: '<change> --propose', does: 'instead of --apply, any change above (project add, workspace add, template, guards, machine, coordinator start, v2 import): a card in your reply (the change, Show me, Cancel, Apply) the user applies with one click. Only in a turn that comes from the user' },
   { usage: 'setting set <key> <value> [--propose]', does: 'propose a setting change, to one of the values `settings` lists for it: without --propose it only shows the change; with it, a card in your reply (before → after, Show me, Cancel, Apply) the user applies. Only in a turn that comes from the user; you never apply it yourself' },
 ]
 
@@ -97,14 +103,16 @@ const KEY_RE = /^[A-Za-z][A-Za-z0-9]{1,9}$/
 const ID_RE = /^(example:)?[a-z0-9][a-z0-9-]{0,39}$/
 const FLAGS: Record<string, string[]> = {
   'project add': ['machine', 'path', 'name', 'template'],
+  'workspace add': ['machine', 'root', 'name', 'group'],
   'coordinator start': ['program'],
   'project guards': ['protect', 'merge-protected', 'merge-others', 'contributor-prs'],
   'project machine': ['clone'],
   'ui open': ['target', 'project'],
   'v2 import': ['only', 'start'],
+  'brief ': ['group', 'since'],
 }
 
-export const CHANGES = ['project add', 'project template', 'project memory', 'project guards', 'project machine', 'coordinator start', 'v2 import']
+export const CHANGES = ['project add', 'workspace add', 'project template', 'project memory', 'project guards', 'project machine', 'coordinator start', 'v2 import']
 const usage = (verb: string) => ({ error: `usage: wherdr alfred ${ALFRED_COMMANDS.filter(c => c.usage.startsWith(verb)).map(c => c.usage).join(' | ')}${CHANGES.some(v => verb.startsWith(v)) ? ' [--apply]' : ''}` })
 
 // argv after `wherdr alfred` → a command, or the reason it is not one.
@@ -119,12 +127,13 @@ export function parseAlfredCommand(argv: unknown): AlfredCommand | { error: stri
 function parseWords(argv: unknown): AlfredCommand | { error: string } {
   if (!Array.isArray(argv) || !argv.every(a => typeof a === 'string')) return { error: 'argv must be a list of words' }
   const words: string[] = [], flags: Record<string, string> = {}
-  let apply = false, resume = false, propose = false
+  let apply = false, resume = false, propose = false, all = false
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string
     if (a === '--apply') { apply = true; continue }
     if (a === '--propose') { propose = true; continue }
     if (a === '--resume') { resume = true; continue }
+    if (a === '--all') { all = true; continue }
     if (!a.startsWith('--')) { words.push(a); continue }
     const v = argv[i + 1] as string | undefined
     if (v === undefined || v.startsWith('--')) return { error: `${a} needs a value` }
@@ -133,7 +142,7 @@ function parseWords(argv: unknown): AlfredCommand | { error: string } {
   }
   const [w0 = '', w1 = '', w2, w3, ...rest] = words
   if (w0 === 'notes') {
-    if (apply || propose || resume) return { error: 'notes commands take no --apply, --propose nor --resume' }
+    if (apply || propose || resume || all) return { error: 'notes commands take no --apply, --propose nor --resume' }
     const notes = parseNotes(words.slice(1), flags)
     return 'error' in notes ? notes : { name: 'notes', notes }
   }
@@ -146,10 +155,18 @@ function parseWords(argv: unknown): AlfredCommand | { error: string } {
   if (propose && verb === 'project memory') return { error: 'project memory has no card: show its lines, then --apply after the user\'s yes' }
   if (propose && apply) return { error: '--propose or --apply, not both' }
   if (resume && verb !== 'coordinator start') return { error: '--resume is for coordinator start only' }
+  if (all && w0 !== 'brief') return { error: '--all is for brief only' }
   const key = (k: string | undefined) => (k && KEY_RE.test(k) ? k.toUpperCase() : '')
 
   if (['help', 'projects', 'templates', 'machines', 'coordinators', 'settings', 'v2'].includes(w0) && !w1)
     return { name: w0 as 'help' }
+  if (w0 === 'groups' && !w1) return { name: 'groups' }
+  if (w0 === 'brief') {
+    const { group, since } = flags, at = since === undefined ? undefined : Date.parse(since)
+    if (w1 || (group !== undefined && all)) return usage('brief')
+    if (at !== undefined && (!/^\d{4}-\d{2}-\d{2}/.test(since!) || Number.isNaN(at))) return { error: '--since is a date: YYYY-MM-DD' }
+    return { name: 'brief', ...(group ? { group } : {}), ...(all ? { all: true as const } : {}), ...(at !== undefined ? { since: at } : {}) }
+  }
   if (w0 === 'last') return key(w1) && !w2 ? { name: 'last', key: key(w1) } : usage('last')
   if (w0 === 'tell') {
     const text = words.slice(2).join(' ').trim()
@@ -166,6 +183,13 @@ function parseWords(argv: unknown): AlfredCommand | { error: string } {
     if (!key(w2) || w3 || machine === undefined || !path) return usage(verb)
     if (template !== undefined && !ID_RE.test(template)) return { error: '--template is a template id or example:<id> (see wherdr alfred templates)' }
     return { name: verb, apply, input: { key: key(w2), machine, path, ...(name ? { name } : {}), ...(template ? { template } : {}) } }
+  }
+  if (verb === 'workspace add') {
+    const { machine = '', root, name, group } = flags
+    if (!key(w2) || w3 || !root) return usage(verb)
+    const ms = machine.split(','), roots = root.split(',').map(r => r.trim())
+    if (ms.length !== roots.length || roots.some(r => !r)) return { error: '--machine and --root pair up: one root folder per machine, in the same order' }
+    return { name: verb, apply, input: { key: key(w2), ...(name ? { name } : {}), ...(group ? { group } : {}), roots: ms.map((m, i) => [m.trim(), roots[i]!]) } }
   }
   if (verb === 'project template') {
     if (!key(w2) || !w3 || rest.length) return usage(verb)

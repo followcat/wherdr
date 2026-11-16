@@ -30,7 +30,9 @@ const boardPick = computed(() => {
   return saved && (saved === BOARD_FOLLOW || saved === BOARD_ALL || known(saved)) ? saved : machineGroups.value.length ? BOARD_FOLLOW : BOARD_ALL
 })
 const project = computed(() => (boardPick.value === BOARD_FOLLOW || boardPick.value === BOARD_ALL ? '' : boardPick.value)) // '' = several projects
-const shownProject = (key: string) => (project.value ? key === project.value : boardPick.value !== BOARD_FOLLOW || projectOnBar(key))
+// A workspace shows its members' tasks too.
+const members = computed(() => coordinators.value.find(c => c.project === project.value)?.workspace?.members.map(m => m.key) ?? [])
+const shownProject = (key: string) => (project.value ? key === project.value || members.value.includes(key) : boardPick.value !== BOARD_FOLLOW || projectOnBar(key))
 const projectPick = computed({ get: () => boardPick.value, set: (v: string) => { linked.value = ''; boardProject.value = v } })
 const tag = ref(queried(route.query.tag)) // '' = every tag
 watch(() => queried(route.query.tag), (g) => { tag.value = g })
@@ -62,7 +64,8 @@ const tags = computed(() => boardTags((data.value?.cards ?? []).filter(c => show
 const coordinator = computed(() => (project.value ? coordinators.value.find(c => c.project === project.value) : undefined))
 // The project's Machines view (its sheet, General tab); with several projects, the list.
 const machinesLink = computed(() => (project.value ? `/settings?section=projects&project=${encodeURIComponent(project.value)}&tab=general&target=project.machines` : '/settings?section=projects'))
-const columns = computed(() => (project.value ? data.value?.projects.find(p => p.key === project.value)?.columns ?? [] : null))
+// A workspace's tasks run several workflows: the phases, as with several projects.
+const columns = computed(() => (project.value && !members.value.length ? data.value?.projects.find(p => p.key === project.value)?.columns ?? [] : null))
 const lanes = computed(() => boardLanes(cards.value, columns.value))
 // Before the first read: lanes of shapes, not empty lanes counting 0 (nor the
 // default lanes before a project's own columns); none for a short read.

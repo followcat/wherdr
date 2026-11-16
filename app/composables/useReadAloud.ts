@@ -26,9 +26,14 @@ const synth = (): SpeechSynthesis | null => typeof window !== 'undefined' && 'sp
 export const readAloudSupported = !!synth()
 export const neuralVoice = typeof Worker !== 'undefined' && typeof AudioContext !== 'undefined' ? createNeuralVoice() : null
 void neuralVoice?.refresh()
-// On by default where the browser has voices: the button is the feature.
-const savedEngine = store.get(READ_ALOUD_KEY)
-export const readAloudEngine = ref<ReadAloudEngine>(savedEngine === 'wherdr' && neuralVoice ? 'wherdr' : savedEngine === 'off' || !readAloudSupported ? 'off' : 'device')
+// Off by default: no Play button until the user picks a voice in Settings.
+// A voice chosen earlier on this device stays; the voice of wherdr falls back
+// to the device's voices where it cannot run.
+export function initialEngine(saved: string | null, supported: boolean, neural: boolean): ReadAloudEngine {
+  if (saved === 'wherdr' && neural) return 'wherdr'
+  return (saved === 'device' || saved === 'wherdr') && supported ? 'device' : 'off'
+}
+export const readAloudEngine = ref<ReadAloudEngine>(initialEngine(store.get(READ_ALOUD_KEY), readAloudSupported, !!neuralVoice))
 watch(readAloudEngine, v => store.set(READ_ALOUD_KEY, v))
 // voiceURI of the chosen voice; '' = the system's default voice.
 export const readAloudVoice = ref(store.get(READ_ALOUD_VOICE_KEY) || '')

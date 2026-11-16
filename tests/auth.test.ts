@@ -1,6 +1,6 @@
 // Lock: signed session cookie, generation, data/auth.json format.
 import { createHmac } from 'node:crypto'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -20,7 +20,9 @@ const withKey = (a: ReturnType<typeof createAuth>) => {
 describe('auth', () => {
   it('creates data/auth.json (secret, random generation, no key) on first startup', () => {
     const d = dir()
-    createAuth({ dataDir: d })
+    const logs: string[] = []
+    createAuth({ dataDir: d, log: (...m) => logs.push(m.join(' ')) })
+    expect(logs.some(l => l.startsWith('First passkey: bootstrap token'))).toBe(true)
     const db = JSON.parse(readFileSync(path.join(d, 'auth.json'), 'utf8'))
     expect(db.secret).toMatch(/^[0-9a-f]{64}$/)
     expect(db.generation).toMatch(/^[\w-]{24}$/)
@@ -280,6 +282,42 @@ describe('auth: damaged cookie', () => {
     withKey(a)
     expect(a.isUnlocked(req('hw_session=%E0%A4%A'))).toBe(false)
     expect(a.status(req('hw_session=%E0%A4%A')).unlocked).toBe(false)
+  })
+})
+
+describe('auth: data/auth.json on disk', () => {
+  it('replaces the file in one step (new inode, no temporary file left)', () => {
+    const d = dir()
+    const file = path.join(d, 'auth.json')
+    const a = createAuth({ dataDir: d })
+    withKey(a)
+    const before = statSync(file).ino
+    const generation = a._db().generation
+    a.lockAll(req(cookieValue(a._sessionCookie(req()))))
+    expect(statSync(file).ino).not.toBe(before)
+    expect(statSync(file).mode & 0o777).toBe(0o600)
+    expect(readdirSync(d)).toEqual(['auth.json'])
+    expect(JSON.parse(readFileSync(file, 'utf8')).generation).not.toBe(generation)
+  })
+
+  it('a cut file keeps the lock on and is never written over', async () => {
+    const d = dir()
+    const file = path.join(d, 'auth.json')
+    const cut = '{"secret":"ab12","generation":3,"credentials":[{"id":"k1","publicKey'
+    writeFileSync(file, cut)
+    const logs: string[] = []
+    const a = createAuth({ dataDir: d, log: (...m) => logs.push(m.join(' ')) })
+    expect(a.isEnabled()).toBe(true)
+    expect(a.isUnlocked(req())).toBe(false)
+    expect(a.isUnlocked(req('hw_session=1.0.1.x'))).toBe(false)
+    expect(a.status(req())).toMatchObject({ enabled: true, unlocked: false })
+    expect(logs.join('\n')).toMatch(/cannot be read.*damaged/)
+    expect(logs.join('\n')).not.toMatch(/bootstrap token/)
+    const damaged = expect.objectContaining({ code: 'damaged' })
+    await expect(a.registerOptions(req(), { bootstrapToken: a._bootstrapToken() })).rejects.toThrow(damaged)
+    await expect(a.loginOptions(req())).rejects.toThrow(damaged)
+    expect(() => a.disable(req())).toThrow(damaged)
+    expect(readFileSync(file, 'utf8')).toBe(cut)
   })
 })
 

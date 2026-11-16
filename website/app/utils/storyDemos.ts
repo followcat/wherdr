@@ -3,12 +3,12 @@
 import type { DemoScript } from './demoScript'
 
 /* -------------------------------------------------- 1.1 Conversation · terminal
-   The grouped tool calls unfold, the effort picker switches medium → high,
+   The grouped tool calls unfold,
    the proposed command is copied then run: the view flips to the live
    terminal, the tests run, and it comes back to the conversation. */
 export const CONVERSATION: DemoScript = {
   id: 'conversation',
-  // 1 group open · 2 effort menu · 3 high · 4 menu closed · 5 copied · 6 run
+  // 1 group open · 2–4 the reply is read · 5 copied · 6 run
   // · 7 terminal + typing · 8 test lines · 9 summary · 10 back to the conversation
   timeline: [[1100, 1], [2500, 2], [3300, 3], [4000, 4], [5000, 5], [6300, 6], [6900, 7], [8000, 8], [9000, 9], [11200, 10]],
   loop: 13500,
@@ -22,7 +22,6 @@ export const CONVERSATION_TOOLS = [
   { icon: 'i-lucide-file-plus', tool: 'Write', arg: '~/projects/web-shop/src/cart.test.js' },
   { icon: 'i-lucide-terminal', tool: 'Command', arg: 'Run the cart tests' },
 ] as const
-export const EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const
 export const TEST_OUTPUT = [
   'ok 1 - addToCart adds an item to the cart',
   'ok 2 - removeFromCart removes an item by id',

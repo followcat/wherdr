@@ -12,6 +12,7 @@ import { SVG_THEME_VARS, svgPreview } from '~/utils/svgPreview'
 import type { SvgColors } from '~/utils/svgPreview'
 import { appRoute, isAppLink, linkedTask } from '#shared/appLinks'
 import type { StatusKind } from '#shared/statusBlock'
+import { runKey, type RunMark } from '~/composables/useCodeRun'
 import StatusCard from './StatusCard.vue'
 import UiOpenCard from './UiOpenCard.vue'
 import UiShowCard from './UiShowCard.vue'
@@ -20,7 +21,8 @@ import { h, render } from 'vue'
 
 // `cipher` must default to undefined, not false: Vue casts a missing Boolean
 // prop to false, which would switch the encrypted text off everywhere.
-const props = withDefaults(defineProps<{ html: string, typing: number | null, speed?: TypingSpeed, cipher?: boolean }>(), { speed: undefined, cipher: undefined })
+// `runs`: state of the Run buttons, by command (composables/useCodeRun.ts).
+const props = withDefaults(defineProps<{ html: string, typing: number | null, speed?: TypingSpeed, cipher?: boolean, runs?: Record<string, RunMark> }>(), { speed: undefined, cipher: undefined, runs: undefined })
 const emit = defineEmits<{ done: [] }>()
 // Two roots (the task cards' teleports): a class given to this component goes on the body.
 defineOptions({ inheritAttrs: false })
@@ -242,9 +244,31 @@ function mountCards() {
   }
 }
 
+// Run: "Running…" from the click until the command has finished, then
+// "Ran at 16:42" beside it. It stays a button: a command may be run again.
+function syncRuns() {
+  for (const block of el.value?.querySelectorAll<HTMLElement>('.code-block[data-cmd]') ?? []) {
+    const btn = block.querySelector<HTMLElement>('.code-run')
+    if (!btn) continue
+    const mark = props.runs?.[runKey(block.dataset.cmd || '')]
+    btn.classList.toggle('running', Boolean(mark?.running))
+    btn.textContent = mark?.running ? tl('Running…') : tl('Run', 'Lancer')
+    let ran = block.querySelector<HTMLElement>('.code-ran')
+    if (!mark || mark.running) { ran?.remove(); continue }
+    if (!ran) {
+      ran = document.createElement('span')
+      ran.className = 'code-ran'
+      btn.before(ran)
+    }
+    ran.textContent = tl(`Ran at ${fmtTime(mark.at)}`)
+  }
+}
+watch(() => props.runs, syncRuns)
+
 // First state applied before display: no flash of the full text.
 onMounted(() => {
   mountCards()
+  syncRuns()
   fillTaskSlots()
   syncSvgTheme(true)
   if (props.typing !== null) start(props.typing)
@@ -261,7 +285,7 @@ watch(() => props.html, () => {
   plan = null
   emit('done')
 }, { flush: 'pre' })
-watch(() => props.html, () => { mountCards(); fillTaskSlots(); syncSvgTheme(true) }, { flush: 'post' })
+watch(() => props.html, () => { mountCards(); syncRuns(); fillTaskSlots(); syncSvgTheme(true) }, { flush: 'post' })
 onBeforeUnmount(() => {
   dropCards()
   themeObserver?.disconnect()

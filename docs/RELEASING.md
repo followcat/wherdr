@@ -1,10 +1,11 @@
 # Releasing wherdr
 
 > [!NOTE]
-> Two release channels. **v2** (2.x) is published to npm, Homebrew, GitHub releases and the
-> Herdr plugin, as described from [Publishing a 2.x version](#publishing-a-2x-version) on.
-> **v3** (3.x) is a GitHub release only: see [Releasing v3](#releasing-v3) and the
-> [transition checklist](#transition-from-v2-to-v3).
+> Two release channels. **v3** (3.x) is the main line: the `v3` branch is the repository's
+> default branch, and each 3.x is a GitHub release marked **latest**: see
+> [Releasing v3](#releasing-v3). **v2** (2.x) only gets fixes, from the frozen `2.x` branch,
+> published to npm, Homebrew and GitHub releases but never as latest, as described from
+> [Publishing a 2.x version](#publishing-a-2x-version) on.
 
 ## Releasing v3
 
@@ -13,61 +14,58 @@ v2 installs update from the release archive, npm and Homebrew, so a v3 release m
 of them. On a `v3.*` tag, `release.yml` only publishes the reviewed draft with its notes:
 
 - no `wherdr-X.Y.Z.tgz` asset, no npm dispatch, no Homebrew formula bump;
-- the release is published with `latest=false`: `releases/latest` stays on the newest 2.x,
-  which the legacy v2 update channel reads;
-- `npm.yml` refuses any tag other than 1.x or 2.x, and `release-ready.yml`
-  (`scripts/release-ready.mjs`) only promotes 1.x and 2.x releases.
+- the release is published as **latest** (`latest=true`). 2.6 and later ignore other majors
+  in their update check. Legacy 1.3.x apps, which follow `releases/latest`, may see a 3.x as
+  the latest version: they cannot install it (it has no package archive), which is accepted;
+- `npm.yml` refuses any tag other than 1.x or 2.x. `release-ready.yml`
+  (`scripts/release-ready.mjs`, run from the default branch) keeps latest on the newest 3.x
+  and never moves it back to a 2.x.
 
-Steps: set the version in `package.json` and `package-lock.json`, move the Unreleased
-changelog into a dated entry, create the GitHub release as a **draft** with notes following
-the [checklist](#release-notes-checklist) (with its `## Upgrade notes` when an update needs a
-manual step), then push the `v3.Y.Z` tag. 2.x tags run the
-`release.yml` of the commit they point to (the `2.x` branch), which still publishes to npm
-and Homebrew.
+Steps:
 
-The branch v3 is installed and built from is `config.branch` in `package.json`, read by
+1. On `v3`, set the version (`X.Y.Z`, without `-dev`) in `package.json`,
+   `package-lock.json` and `herdr-plugin.toml`, and move the Unreleased changelog into a
+   dated entry.
+2. Create the GitHub release as a **draft** with notes following the
+   [checklist](#release-notes-checklist) (with its `## Upgrade notes` when an update needs a
+   manual step), then push the `v3.Y.Z` tag. `release.yml` checks that the tag matches
+   `package.json`.
+3. Right after the release, bump `v3` to the next development version
+   (`npm version X.Y.(Z+1)-dev --no-git-tag-version`, e.g. `3.0.1-dev` after `3.0.0`, and the
+   same in `herdr-plugin.toml`) and add
+   an empty `## [Unreleased]` section at the top of `CHANGELOG.md` if it is missing. Installs
+   built from `v3` after the release then read as newer than it, and the next release starts
+   clean.
+
+2.x tags run the `release.yml` of the commit they point to (the `2.x` branch), which still
+publishes to npm and Homebrew, always with `latest=false`: a 2.6.x fix never takes latest
+back from 3.x.
+
+The branch v3 is installed and built from is `config.branch` in `package.json` (`v3`), read by
 `scripts/install-v3-beside-v2.mjs` (and the `update.sh` it writes) and `scripts/v3-builder.sh`.
 
 ## Transition from v2 to v3
 
-The plan: `v3` and `main` stay as they are until v2's last release has reached its installs.
+`v3` stays the main line for good: it is the default branch, v3 installs update from it, and
+it is never deleted. The docs, scripts and installers keep pointing at `-b v3`.
 
-1. Release **2.6.0** from `develop` with the 2.x process below (the version whose update
-   check ignores 3.x releases). Its installer and Herdr plugin must install from `2.x`, not
-   `main` (`WHERDR_REF` and `--ref`): from step 5 on, `main` holds v3's stubs.
-2. Create the frozen **`2.x`** branch at the `v2.6.0` tag: `git push origin v2.6.0^{commit}:refs/heads/2.x`.
-   Later 2.x fixes are tagged on `2.x`.
-3. Wait **2 to 4 weeks**.
-4. Check that v2 installs are on 2.6 (npm downloads per version, Homebrew, issues) before going on.
-5. Merge `v3` into `main`. Keep v2's required `checks` and `e2e` jobs passing on `main`
-   (see the header of `.github/workflows/ci.yml`). `release-ready.yml` and
-   `develop-prerelease.yml` run from `main`: check they still serve 2.x and `develop`.
-6. Tag and publish **3.0.0** from `main` as described in [Releasing v3](#releasing-v3):
-   a GitHub release only.
-7. Move the docs and scripts from `-b v3` to `main`:
-   - `config.branch` in `package.json` to `main`: the default branch of
-     `install-v3-beside-v2.mjs`, the `update.sh` it writes and `v3-builder.sh`
-     (installs made before keep `v3` in their `update.sh` until the installer is run again);
-   - `git clone -b v3` in [README](../README.md), [quick-start](quick-start.md),
-     [installation](installation.md), [development](development.md) (also its
-     `--base origin/v3` and "pull requests for v3 target the `v3` branch"),
-     [migrate-from-v2](migrate-from-v2.md) (also its `origin/v3` builder lines) and
-     [install-with-an-agent](install-with-an-agent.md);
-   - the CI badge (`?branch=v3`) in [overview](overview.md) and the `branches: [v3]`
-     triggers of `ci.yml`;
-   - the "v2 docs" links (`blob/main/…`) to `blob/2.x/…`: [README](../README.md),
-     [installation](installation.md), [troubleshooting](troubleshooting.md) and
-     [command](command.md);
-   - in the v3 stubs, `website/public/install` (also its `git clone -b v3`),
-     `herdr-plugin.toml` and `tests/herdrPlugin.test.ts`: `blob/v3` to `blob/main`;
-   - `grep -rnE -- '-b v3|origin/v3|branch=v3|blob/main|blob/v3' README.md docs scripts .github website/public/install herdr-plugin.toml tests/herdrPlugin.test.ts`
-     must then list nothing left to move.
-8. The site: wherdr.dev stays v2's as it is, because v3's `site.yml` runs by hand only, so
-   merging v3 into `main` deploys nothing (to redeploy v2's site, run `site.yml` on `2.x`).
-   On v3, `website/public/install` and the Herdr plugin (`herdr-plugin.toml`) only print
-   how to install v3 beside v2: a failed plugin build
-   leaves the installed v2 plugin as it was. Update the pages and `agent.md` for v3, point v2
-   readers to `2.x`, then run `site.yml` on `main`.
+1. Done: **2.6.0** released from `develop` (its update check ignores 3.x releases; its
+   installer and Herdr plugin install from `2.x`).
+2. Done: the frozen **`2.x`** branch, created at the `v2.6.0` tag. Later 2.x fixes are tagged
+   on `2.x`, with the 2.x process below.
+3. Done: **3.0.0** released from `v3` as a GitHub release only, marked latest; `v3` made the
+   default branch.
+4. In about **2 to 3 months**, once v2 installs up to 2.5 (the only ones that update from
+   `main`) have faded (npm downloads per version, Homebrew, issues), delete the branch
+   `main`. Nothing on `v3` reads `main` (`release-ready.yml` runs from the default branch).
+   Before deleting, check:
+   `grep -rnE -- 'ref: main|--ref main|blob/main|origin/main' README.md docs scripts .github website/public/install herdr-plugin.toml`
+   and move what is left to `v3` or `2.x`.
+5. The site: wherdr.dev stays v2's as it is, because v3's `site.yml` deploys only when run by hand (to
+   redeploy v2's site, run `site.yml` on `2.x`). On v3, `website/public/install` and the
+   Herdr plugin (`herdr-plugin.toml`) only print how to install v3 beside v2: a failed
+   plugin build leaves the installed v2 plugin as it was. Update the pages and `agent.md`
+   for v3, point v2 readers to `2.x`, then run `site.yml` on `v3`.
 
 ## Publishing a 2.x version
 
@@ -114,9 +112,10 @@ Publishing (`npm.yml`), and the tap uses the existing optional `HOMEBREW_TAP_TOK
    retry a successful `npm publish` merely because moderation is pending. The manual trigger
    (`gh workflow run npm.yml --ref main -f version=vX.Y.Z`) stays only for recovery, e.g.
    after merging a workflow fix; a second run of a published version is a no-op.
-7. `release-ready.yml` checks hourly and after npm/release workflow completion. Once npm's
-   tarball and `latest` tag, and the Homebrew formula are ready, it marks the GitHub release
-   `latest`. Existing 1.3.x apps read this marker and can then safely use their npm updater.
+7. Before 3.0.0, `release-ready.yml` checked hourly and after npm/release workflow
+   completion, and once npm's tarball and `latest` tag, and the Homebrew formula were ready,
+   marked the 2.x release `latest` for 1.3.x apps' npm updater. Since 3.0.0, latest stays on
+   the newest 3.x: a 2.x release is never marked latest.
    New apps read published stable releases directly, checking npm or the formula for their
    own installation mode. No update notice is offered while that channel is unavailable.
 
@@ -260,7 +259,7 @@ when the optional tap secret is absent:
 
 ```sh
 sh scripts/bump-homebrew.sh 2.1.0 "$(gh repo view --json owner -q .owner.login)"
-gh workflow run release-ready.yml --ref main
+gh workflow run release-ready.yml
 ```
 
 Do not manually publish the draft or mark it latest. npm publishes the attached archive

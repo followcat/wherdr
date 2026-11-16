@@ -30,7 +30,7 @@ import { nextRecheck } from '#shared/pm/steps'
 const props = defineProps<{ card: Card, pane?: Pane, stopping?: boolean, reporting?: boolean, checking?: boolean, waitsFor?: string[], projectBase?: string }>()
 const emit = defineEmits<{ closed: [], changed: [] }>()
 const open = ref(true)
-const { busy, error, pressing, refused, run, press, start, resume, decide, sendBack, restartReview, startWorker, askCoordinator } = useTaskActions(() => props.card, () => emit('changed'))
+const { busy, error, pressing, refused, run, press, start, resume, decide, sendBack, restartReview, startWorker, askCoordinator, askFix } = useTaskActions(() => props.card, () => emit('changed'))
 
 const at = computed(() => (props.card.state?.started ? props.card.state.at : -1))
 const done = computed(() => !!props.card.state?.done)
@@ -138,7 +138,7 @@ const remove = () => run(async () => { const yes = await removeTaskApi(props.car
         <p v-if="card.archived" class="muted" data-testid="task-archived">{{ tl('Archived') }} {{ fmtWhen(new Date(card.archived).toISOString()) }}</p>
         <div class="task-sheet-actions">
           <UButton v-if="!todo && canStart(card) && !waitsFor?.length" color="primary" size="xl" icon="i-lucide-play" :loading="busy" data-testid="task-start" @click="start">{{ card.sameFiles ? tl('Start anyway') : tl('Start', 'Lancer') }}</UButton>
-          <UButton v-if="failedAction" color="primary" size="xl" icon="i-lucide-rotate-ccw" :loading="busy" data-testid="task-retry" @click="press">{{ tl('Try again', 'Réessayer') }}</UButton>
+          <UButton v-if="failedAction" :color="fixable(card, todo) ? 'neutral' : 'primary'" :variant="fixable(card, todo) ? 'outline' : 'solid'" size="xl" icon="i-lucide-rotate-ccw" :loading="busy" data-testid="task-retry" @click="press">{{ tl('Try again', 'Réessayer') }}</UButton>
           <UButton v-if="canReport && !reportOpen" color="neutral" variant="outline" size="xl" icon="i-lucide-flag" data-testid="task-report-start" @click="reportOpen = true">{{ tl('Report a problem') }}</UButton>
           <AgentButton v-if="!card.archived" :card="card" :primary="todo === 'ask'" />
           <UButton v-if="canStop(card) && !confirmStop" color="error" variant="outline" size="xl" icon="i-lucide-square" data-testid="task-stop" @click="confirmStop = true">{{ tl('Stop', 'Arrêter') }}</UButton>
@@ -180,7 +180,7 @@ const remove = () => run(async () => { const yes = await removeTaskApi(props.car
 
       <div id="task-panel" class="task-panel" role="tabpanel" :aria-labelledby="`task-tab-${tab}`" data-testid="task-panel">
         <TaskTodo v-if="tab === 'todo' && todo" :card="card" :kind="todo" :pane="pane" :busy="busy" :pressing="pressing" :refused="refused" :waits-for="waitsFor"
-          @press="press" @start="start" @resume="resume" @decide="decide" @back="sendBack" @review="restartReview" @worker="startWorker" @ask="askCoordinator" @comments="picked = 'comments'" />
+          @press="press" @start="start" @resume="resume" @decide="decide" @back="sendBack" @review="restartReview" @worker="startWorker" @ask="askCoordinator" @fix="askFix" @comments="picked = 'comments'" />
         <template v-else-if="tab === 'description'">
           <!-- eslint-disable-next-line vue/no-v-html -- HTML sanitized by DOMPurify (utils/markdown.ts) -->
           <div v-if="descHtml" class="md-body task-md" data-testid="task-description" @click="onDescClick" v-html="descHtml" />
@@ -203,7 +203,7 @@ const remove = () => run(async () => { const yes = await removeTaskApi(props.car
             </details>
             <small v-if="switched && i === switchAt" class="muted" data-testid="review-switch">{{ switched }}</small>
             <TaskProofs :proofs="proofs(s.id)" :links="proofLinks(s.id)" />
-            <TaskShots v-if="shots(s.id).length" :task="card.id" :shots="shots(s.id)" :mode="shotMode(s)" />
+            <TaskShots v-if="shots(s.id).length" :task="card.id" :shots="shots(s.id)" :mode="shotMode(s)" :head="card.state?.shotsHead?.[s.id]" />
             <details v-if="earlier(s.id).length" data-testid="shots-earlier">
               <summary>{{ tl('Earlier screenshots') }}</summary>
               <TaskShots :task="card.id" :shots="earlier(s.id)" :mode="shotMode(s)" />

@@ -27,12 +27,15 @@ import { isStartPrompt } from '#shared/pm/alfred'
 import type { ProposalAnswer } from '#shared/pm/coordinator'
 import type { AutomationProposal } from '#shared/pm/automations'
 import { proposalSpot, type PlacedBlock } from '~/utils/proposalPlace'
-import { OMP_CONSOLE_SHOWN, isOmpGroup, ompConsoleRows, ompTotalMs, ompWall } from '~/utils/ompTool'
+import { OMP_CONSOLE_SHOWN, isOmpGroup, ompConsoleRows, ompTotalMs, ompWall, shellView } from '~/utils/ompTool'
 import { keepIfSame, keyedMemo, weakMemo } from '~/utils/keepIfSame'
 import { duplicateImages } from '#shared/imageDupes'
 import { stripPosition } from '#shared/filePaths'
 import { turnOpens as openCards } from '#shared/uiOpen'
 import { readAloudEngine, stopSpeaking } from '~/composables/useReadAloud'
+import { foldableReply } from '~/utils/wakeReply'
+import { TONE_ICON, firstSentence, quietStreaks, runSum, wakeSum, type RunSum, type WakeSum } from '~/utils/wakeSummary'
+import { openTaskSheet } from '~/composables/useTaskSheet'
 
 const props = defineProps<{ pane: Pane, localQueued: OutboxItem[] }>()
 // A version of a reply replaced while the agent writes takes its question marks with it.
@@ -672,9 +675,9 @@ const NOTICE: Record<string, [string, string]> = {
 type Block = ({ k: 'day', key: string, label: string }
   // `own`: it opens a turn the agent took by itself (a background task finished…).
   | { k: 'who', key: string, own?: boolean }
-  | { k: 'user', key: string, text: string, pasted?: string[], srcs: string[], files: { path: string, name: string }[], time: string | null, at: string | null, reply: ReplyTarget | null, origin: string | null, wake: WakeKind | null, ms?: number }
+  | { k: 'user', key: string, text: string, pasted?: string[], srcs: string[], files: { path: string, name: string }[], time: string | null, at: string | null, ts: string | null, reply: ReplyTarget | null, origin: string | null, wake: WakeKind | null, ms?: number }
   // `rid`: its code in the references to it (shared/reference.ts messageId).
-  | { k: 'assistant', key: string, id: string, rid: string, text: string, html: string, time: string | null, endsTurn: boolean, ms?: number }
+  | { k: 'assistant', key: string, id: string, rid: string, text: string, html: string, time: string | null, ts: string | null, endsTurn: boolean, ms?: number }
   | { k: 'thinking', key: string, id: string, text: string, html: string, ms: number | undefined }
   | { k: 'job', key: string, id: string, tool: string, out: string, ms: number | undefined, error: boolean }
   // `cmd`: a local '/' command the user ran.
@@ -682,16 +685,18 @@ type Block = ({ k: 'day', key: string, label: string }
   | { k: 'notice', key: string, label: string, icon: string, html: string, long: boolean, scheduled?: boolean, ms?: number }
   // The agent's turn failed (omp: usage limit, credit balance, stalled stream…).
   | { k: 'error', key: string, text: string, long: boolean }
-  | { k: 'shell', key: string, bash: boolean, text: string, out: string, err: string, lines: number, long: boolean, ms?: number }
   | { k: 'ompRun', key: string, tool: ChatItem & { omp: OmpToolView }, ms?: number }
   | { k: 'tools', key: string, list: ChatItem[], live: boolean }
-  | { k: 'turn', key: string, text: string, copy: string | null, reply: string | null }
+  | { k: 'turn', key: string, text: string, ts: string | null, copy: string | null, reply: string | null }
   // A wake: one compact row, the coordinator's answer under it (see foldWakes).
   // The user's click on a card, told to the agent (shared/uiActions.ts cardNote): a muted row.
   | { k: 'card', key: string, text: string, time: string | null, at: string | null }
-  | { k: 'wake', key: string, kind: WakeKind, head: string, text: string, time: string | null, at: string | null, answer: string | null, loud: boolean, ms?: number }
-  // `last`: the first line of the last answer in the run.
-  | { k: 'wakes', key: string, n: number, from: string | null, to: string | null, last: string | null }) & { in?: string[] }
+  // `sum`: its kind, tasks and short label, read from its text (utils/wakeSummary.ts).
+  | { k: 'wake', key: string, kind: WakeKind, head: string, text: string, time: string | null, at: string | null, answer: string | null, loud: boolean, sum: WakeSum, ms?: number }
+  // `sum`: the run's counts by kind and their tasks.
+  | { k: 'wakes', key: string, n: number, from: string | null, to: string | null, sum: RunSum }
+  // Consecutive quiet wakes inside an open run: one more fold.
+  | { k: 'quiet', key: string, n: number, from: string | null, to: string | null }) & { in?: string[] }
 
 // Images of a transcript item (a user message, or what a tool returned),
 // re-read on demand from its line (ref = its position in the file).
@@ -825,7 +830,7 @@ const blocks = computed<Block[]>(() => {
       const acts = turn.tools ? ` · ${turn.tools} ${t(turn.tools > 1 ? 'actions' : 'action')}` : ''
       // "Reply" of the last reply: next to "Copy", on the end-of-turn line.
       if (lastReplyBlock) lastReplyBlock.endsTurn = true
-      out.push({ k: 'turn', key: `e:${turn.key}`, text: `✓ ${fmtDuration(s)}${acts}`, copy: lastReply, reply: lastReplyBlock?.key || null })
+      out.push({ k: 'turn', key: `e:${turn.key}`, text: `✓ ${fmtDuration(s)}${acts}`, ts: lastReplyBlock?.ts || turn.end, copy: lastReply, reply: lastReplyBlock?.key || null })
     }
     turn = null
     lastReply = null
@@ -887,24 +892,19 @@ const blocks = computed<Block[]>(() => {
       if (card !== null) { out.push({ k: 'card', key, text: card, time: it.ts ? fmtTime(it.ts) : null, at: it.ts ? fmtDateTime(it.ts) : null }); return }
       const parsed = parseReply(text)
       const origin = parsed ? findReplyOrigin(replies, parsed.reply)?.key || null : null
-      out.push({ k: 'user', key, text: parsed ? parsed.body : text, pasted: it.pasted, srcs, files, time: it.ts ? fmtTime(it.ts) : null, at: it.ts ? fmtDateTime(it.ts) : null, reply: parsed?.reply || null, origin, wake: wakeKindOf(text), ...msOf(it) })
+      out.push({ k: 'user', key, text: parsed ? parsed.body : text, pasted: it.pasted, srcs, files, time: it.ts ? fmtTime(it.ts) : null, at: it.ts ? fmtDateTime(it.ts) : null, ts: it.ts || null, reply: parsed?.reply || null, origin, wake: wakeKindOf(text), ...msOf(it) })
     } else if (it.role === 'assistant') {
       lastReply = it.text
       const time = it.ts ? fmtTime(it.ts) : null
-      lastReplyBlock = lazyHtml({ k: 'assistant' as const, key, id: replyId(it), rid: messageId(it), text: it.text, time, endsTurn: false, ...(it.ts ? { ms: new Date(it.ts).getTime() } : {}) }, () => withQuestions(md(it.text), { reply: t('Reply'), quoted: t('Quoted'), discuss: t('Discuss'), yes: t('Yes'), no: t('No'), okAll: t('OK to all'), decisions: t('Decisions') }))
+      lastReplyBlock = lazyHtml({ k: 'assistant' as const, key, id: replyId(it), rid: messageId(it), text: it.text, time, ts: it.ts || null, endsTurn: false, ...(it.ts ? { ms: new Date(it.ts).getTime() } : {}) }, () => withQuestions(md(it.text), { reply: t('Reply'), quoted: t('Quoted'), discuss: t('Discuss'), yes: t('Yes'), no: t('No'), okAll: t('OK to all'), decisions: t('Decisions') }))
       out.push(lastReplyBlock)
       replies.push({ key, time, text: it.text, rid: lastReplyBlock.rid })
     } else if (it.role === 'thinking') {
       out.push(lazyHtml({ k: 'thinking' as const, key, id: replyId(it), text: it.text, ms: it.ms }, () => md(it.text)))
     } else if (it.role === 'job' && it.job) {
       out.push({ k: 'job', key, id: it.job.id, tool: it.job.tool, out: it.job.out, ms: it.ms, error: Boolean(it.error) })
-    } else if (it.role === 'bash' && it.omp) {
-      out.push({ k: 'ompRun', key: `s:${it.ts}:${it.text.slice(0, 40)}`, tool: { ...it, omp: it.omp }, ...msOf(it) })
     } else if (it.role === 'bash') {
-      const o = it.out || ''
-      const e = it.err || ''
-      const lines = (o ? o.split('\n').length : 0) + (e ? e.split('\n').length : 0)
-      out.push({ k: 'shell', key: `s:${it.ts}:${it.text.slice(0, 40)}`, bash: it.role === 'bash', text: it.text, out: o, err: e, lines, long: lines > SHELL_LINES || o.length + e.length > 1500, ...msOf(it) })
+      out.push({ k: 'ompRun', key: `s:${it.ts}:${it.text.slice(0, 40)}`, tool: { ...it, omp: it.omp || shellView(it) }, ...msOf(it) })
     } else if (it.role === 'notice' && it.name === 'error' && it.error) {
       // The provider's own message (often raw JSON): shown as plain text.
       out.push({ k: 'error', key, text: it.text, long: it.text.split('\n').length > SHELL_LINES || it.text.length > 1200 })
@@ -957,18 +957,19 @@ const changes = (it: ChatItem) => /^(Edit|Write|MultiEdit|NotebookEdit)$/.test(i
 // Its answer asks the user: a question line, or questions the reply bar offers.
 const asks = (b: Block & { k: 'assistant' }) => /\?\s*$/m.test(b.text) || replyTargets(b.html).questions.length > 0
 // A block the user started: it ends a wake's turn.
-const fromUser = (b: Block) => b.k === 'user' || b.k === 'card' || b.k === 'shell' || b.k === 'ompRun' || (b.k === 'notice' && !!b.scheduled) || (b.k === 'system' && !!b.cmd)
+const fromUser = (b: Block) => b.k === 'user' || b.k === 'card' || b.k === 'ompRun' || (b.k === 'notice' && !!b.scheduled) || (b.k === 'system' && !!b.cmd)
 const plainLine = (text: string) => text.replace(/[*_`#>]+/g, '').replace(/\s+/g, ' ').trim()
-const firstLine = (text: string) => plainLine(text.split('\n').find(l => plainLine(l)) || '')
 // Ends a wake's turn: the user's input, or a turn the agent took by itself.
 const endsWakeTurn = (b: Block) => fromUser(b) || (b.k === 'who' && !!b.own)
 
 // A wake (shared/pm/wakes.ts) is not the user's: a compact row with its kind,
 // its first line and time; once its turn is over, the coordinator's last
 // answer sits under it in a lighter style and the rest of the turn opens on
-// tap. An answer that asks the user stays a full reply. Consecutive routine
-// wakes (not an incident, nothing changed, nothing asked) fold into one row,
-// with the first line of the last answer in it. A fold holds only wakes and
+// tap. Any other answer (one that asks, a `wherdr` block, a link, more than
+// one line: see utils/wakeReply.ts) stays a full reply. Consecutive routine
+// wakes (not an incident, nothing changed, nothing asked) fold into one row
+// that counts them by kind with their tasks (utils/wakeSummary.ts); open, each
+// is one line, and two or more quiet ones in a row fold once more. A fold holds only wakes and
 // their own turns: a turn the agent took by itself stays outside.
 // A wake whose turn was seen over stays so: while the agent starts on the
 // user's next message before the transcript has it, its turn has no end yet,
@@ -979,14 +980,22 @@ function foldWakes(out: Block[]): Block[] {
   const res: Block[] = []
   let run: (Block & { k: 'wake' })[] = []
   let runAt = 0
-  let runLast: string | null = null
+  let runIdx: number[] = []
   const endRun = () => {
     if (run.length > 1) {
       const key = `r:${run[0]!.key}`
+      // Quiet streaks (not the whole run): from their first wake to the next wake, folded, latest first.
+      const sums = run.map(w => w.sum)
+      for (const [a, z] of quietStreaks(sums).filter(([a, z]) => z - a + 1 < run.length).reverse()) {
+        const qk = `q:${run[a]!.key}`, end = runIdx[z + 1] ?? res.length
+        for (let j = runIdx[a]!; j < end; j++) res[j]!.in = [qk, ...(res[j]!.in || [])]
+        res.splice(runIdx[a]!, 0, { k: 'quiet', key: qk, n: z - a + 1, from: run[a]!.time, to: run[z]!.time })
+      }
       for (let j = runAt; j < res.length; j++) res[j]!.in = [key, ...(res[j]!.in || [])]
-      res.splice(runAt, 0, { k: 'wakes', key, n: run.length, from: run[0]!.time, to: run.at(-1)!.time, last: runLast })
+      res.splice(runAt, 0, { k: 'wakes', key, n: run.length, from: run[0]!.time, to: run.at(-1)!.time, sum: runSum(sums) })
     }
     run = []
+    runIdx = []
   }
   for (let i = 0; i < out.length; i++) {
     const b = out[i]!
@@ -1001,15 +1010,16 @@ function foldWakes(out: Block[]): Block[] {
     const done = j < out.length || turn.at(-1)?.k === 'turn' || wakesDone.has(b.key)
     if (done) wakesDone.add(b.key)
     const asked = !!last && asks(last)
-    const fold = done && !!last && !asked
+    // Only a routine one-liner folds; any other reply shows in full.
+    const fold = done && !!last && !asked && foldableReply(last.text)
     const changed = turn.some(x => x.k === 'tools' && x.list.some(changes))
     const routine = fold && b.wake !== 'incident' && !changed
     if (!routine) endRun()
     else if (!run.length) runAt = res.length
-    const w: Block & { k: 'wake' } = { k: 'wake', key: b.key, kind: b.wake, head: wakeLine(b.text), text: b.text, time: b.time, at: b.at, answer: fold && last ? plainLine(last.text) : null, loud: b.wake === 'incident' || asked, ...(b.ms ? { ms: b.ms } : {}) }
+    const w: Block & { k: 'wake' } = { k: 'wake', key: b.key, kind: b.wake, head: wakeLine(b.text), text: b.text, time: b.time, at: b.at, answer: fold && last ? plainLine(last.text) : null, loud: b.wake === 'incident' || asked, sum: wakeSum(b.text), ...(b.ms ? { ms: b.ms } : {}) }
     if (routine) {
       run.push(w)
-      runLast = last ? firstLine(last.text) || null : null
+      runIdx.push(res.length)
     }
     res.push(w)
     for (const x of turn) {
@@ -1159,44 +1169,8 @@ function choose(btn: HTMLButtonElement) {
 }
 // The words of a question (`.q-text`) and its button share a number in their message.
 const wordsOf = (btn: HTMLElement) => btn.closest('.md-body')?.querySelectorAll<HTMLElement>(`.q-text[data-n="${btn.dataset.n}"]`) || []
-const buttonOf = (span: HTMLElement) => span.closest('.md-body')?.querySelector<HTMLElement>(`.q-reply[data-n="${span.dataset.n}"]`) || null
-// "Tap the text" style on a touch screen: a tap on a point only arms it (its
-// "↳ Discuss" button shows); a tap anywhere while reading must not quote.
-let armed: HTMLElement | null = null
-function arm(el: HTMLElement | null) {
-  armed?.classList.remove('q-armed')
-  armed = el
-  el?.classList.add('q-armed')
-}
-// "List" style: the message whose points are waiting to be picked.
-const pickKey = ref<string | null>(null)
 const draftText = computed(() => useDraft(props.pane.id).text)
 watch(draftText, (text) => { if (!text) held = false })
-function hotQuestion(key: string, n: string, on: boolean) {
-  for (const span of msgEl(key)?.querySelectorAll<HTMLElement>(`.q-text[data-n="${n}"]`) || []) span.classList.toggle('q-hot', on)
-}
-// A click on a point quotes it at once on a computer; not the first click of
-// a double click, which selects a word.
-let pointTimer: ReturnType<typeof setTimeout> | undefined
-function onPointClick(e: MouseEvent, target: HTMLElement) {
-  const point = target.closest<HTMLElement>('.msg-ai .md-body .q-pt')
-  const btn = point?.querySelector<HTMLElement>(':scope > .q-point')
-  const text = btn?.dataset.q
-  clearTimeout(pointTimer)
-  if (!point || !text || target.closest('a, button, summary, input')) return arm(null)
-  if (replyStyle.value === 'list') {
-    if (pickKey.value && point.closest<HTMLElement>('[data-hit-key]')?.dataset.hitKey === pickKey.value) {
-      pickKey.value = null
-      quote(refOf(btn!))
-    }
-    return
-  }
-  if (replyStyle.value !== 'text' || window.getSelection()?.isCollapsed === false) return arm(null)
-  if (isTouch()) return arm(point === armed ? null : point)
-  if (e.detail > 1) return
-  pointTimer = setTimeout(() => { if (window.getSelection()?.isCollapsed !== false) quote(refOf(btn!)) }, 220)
-}
-onUnmounted(() => clearTimeout(pointTimer))
 watch([() => useDraft(props.pane.id).text, visibleBlocks], () => nextTick(syncQuoted), { flush: 'post' })
 const selReply = ref<{ text: string, time: string | null, id: string | null, sig: string, top: number, left: number } | null>(null)
 const selBtn = ref<HTMLElement | null>(null)
@@ -1275,17 +1249,13 @@ function onListClick(e: MouseEvent) {
   const ans = target.closest?.('.q-ans') as HTMLElement | null
   // `detail` counts the clicks of a pointer; 0 for a button pressed with the keyboard.
   const click = e.detail > 0
-  if (ans?.dataset.q) { e.preventDefault(); arm(null); pickKey.value = null; answer(refOf(ans), ans.dataset.a === 'no' ? 'no' : 'yes', click); return }
+  if (ans?.dataset.q) { e.preventDefault(); answer(refOf(ans), ans.dataset.a === 'no' ? 'no' : 'yes', click); return }
   const rowAns = target.closest?.('.q-tans') as HTMLElement | null
-  if (rowAns?.dataset.n) { e.preventDefault(); arm(null); pickKey.value = null; answer(refOf(rowAns), rowAns.dataset.a === 'no' ? 'no' : 'yes', click); return }
+  if (rowAns?.dataset.n) { e.preventDefault(); answer(refOf(rowAns), rowAns.dataset.a === 'no' ? 'no' : 'yes', click); return }
   const all = target.closest?.('.q-all') as HTMLElement | null
-  if (all) { e.preventDefault(); arm(null); pickKey.value = null; okAll(refOf(all), click); return }
+  if (all) { e.preventDefault(); okAll(refOf(all), click); return }
   const question = target.closest?.('.q-reply, .q-point, .q-tquote') as HTMLElement | null
-  if (question) { e.preventDefault(); arm(null); pickKey.value = null; quote(refOf(question)); return }
-  // "Tap the text" style: the words of a question are its button.
-  const asked = replyStyle.value === 'text' && !noInput.value ? target.closest?.('.q-text') as HTMLElement | null : null
-  const askedBtn = asked && window.getSelection()?.isCollapsed !== false ? buttonOf(asked) : null
-  if (askedBtn) { e.preventDefault(); arm(null); quote(refOf(askedBtn)); return }
+  if (question) { e.preventDefault(); quote(refOf(question)); return }
   const pathEl = target.closest?.('.md-body .md-path') as HTMLElement | null
   if (pathEl) { e.preventDefault(); openPathMenu(pathEl); return }
   const cmdEl = target.closest?.('.md-body .md-cmd') as HTMLElement | null
@@ -1293,7 +1263,6 @@ function onListClick(e: MouseEvent) {
   // Image in an agent reply (markdown): large preview, like ours.
   const img = target.closest?.('.md-body img') as HTMLImageElement | null
   if (img && img.src) { e.preventDefault(); openImage(img.src); return }
-  if (!noInput.value && !target.closest?.('.code-block')) onPointClick(e, target)
   const run = target.closest?.('.can-run .code-run') as HTMLElement | null
   const runCmd = run?.closest<HTMLElement>('.code-block')?.dataset.cmd
   if (runCmd) { void runCommand(runCmd); return }
@@ -1312,8 +1281,32 @@ function onListClick(e: MouseEvent) {
 // Never from a message of the user's (their messages are not markdown) nor on its own.
 async function runCommand(cmd: string) {
   const queued = await runInAgent(props.pane.id, cmd)
-  if (queued !== false) emit('sent', queued)
+  if (queued === false) return
+  // Sent at once: a live card until the transcript writes it. Held by the
+  // server instead: its queued bubble says so.
+  if (queued === null) addRun(props.pane.id, cmd)
+  emit('sent', queued)
 }
+// Runs of this pane, marked done as their entries land in the transcript.
+const runsHere = computed(() => codeRuns.value[props.pane.id] || [])
+watch([runsHere, items], ([runs, list]) => {
+  const next = settleRuns(runs, list, Date.now())
+  if (next.some((r, i) => r !== runs[i])) codeRuns.value = { ...codeRuns.value, [props.pane.id]: next }
+}, { immediate: true })
+const runButtons = computed(() => runMarks(runsHere.value))
+// The "!" command running now, as the card the transcript will show: what the
+// screen reads (Claude: its output so far), or else the command just sent
+// with Run, timed from the click.
+const liveRun = computed<(ChatItem & { omp: OmpToolView }) | null>(() => {
+  const run = runsHere.value.findLast(r => r.doneAt === undefined)
+  // The screen a moment behind a transcript that already has it: shown once.
+  const landed = (cmd: string) => runsHere.value.some(r => r.doneAt !== undefined && Date.now() - r.doneAt < 10_000 && sameCmd(r.cmd, cmd))
+  const s = liveShell.value && !(run && sameCmd(run.cmd, liveShell.value.command)) && landed(liveShell.value.command) ? null : liveShell.value
+  if (!s && !run) return null
+  const since = s?.since ?? run?.at ?? Date.now()
+  const omp = s ? { ...shellView({ text: s.command, out: s.lines.join('\n') }, s.hidden), ...(s.python ? { title: 'Python' } : {}) } : shellView({ text: run!.cmd })
+  return { role: 'bash', text: omp.target || '', ts: new Date(since).toISOString(), omp: { ...omp, intent: tl('Running…') } }
+})
 function cmdMenuItems(cmd: string, runnable: boolean): MenuItem[] {
   const items: MenuItem[] = []
   if (runnable) items.push({ label: tl('Run…', 'Lancer…'), icon: 'i-lucide-play', run: () => runCommand(cmd) })
@@ -1370,7 +1363,6 @@ async function downloadFile(p: string) {
   catch (err) { toast((err as Error).message, true) }
 }
 function onListKey(e: KeyboardEvent) {
-  if (e.key === 'Escape' && (pickKey.value || armed)) { pickKey.value = null; arm(null); return }
   if (e.key !== 'Enter' && e.key !== ' ') return
   const el = (e.target as HTMLElement).closest?.('.md-body .md-path, .md-body .md-cmd') as HTMLElement | null
   if (!el) return
@@ -1463,7 +1455,7 @@ function queuedLabel(q: Pick<PendingMessage, 'phase' | 'state' | 'inAgentQueue' 
   }
 }
 watch(() => queuedList.value.map(q => `${q.id}:${q.phase}`).join(','), () => nextTick(() => scrollToEnd(false)))
-watch(() => liveShell.value && liveShell.value.lines.join('\n'), () => nextTick(() => scrollToEnd(false)))
+watch(() => liveRun.value && `${liveRun.value.text}\n${liveRun.value.omp.out || ''}`, () => nextTick(() => scrollToEnd(false)))
 watch(() => props.pane.draft?.text, () => nextTick(() => scrollToEnd(false)))
 
 // No conversation yet but a waiting screen (key legend):
@@ -1490,7 +1482,7 @@ function statusNow() {
   }
   // Claude: its current verb ("✻ Orbiting…"), read from the screen by the server;
   // the spinning star in front is animated on the app side (ClaudeSpinner).
-  if (liveShell.value) return { typing: true, text: tl('Command running…', 'Commande en cours…') }
+  if (liveRun.value) return { typing: true, text: tl('Command running…', 'Commande en cours…') }
   if (p.status === 'working' && p.agent === 'claude' && p.activity) return { typing: true, verb: true, text: `${p.activity}…` }
   // omp: its running step ("⠧ Finding Fixed section") and the turn's time, read
   // from the screen; braille spinner animated on the app side (OmpSpinner).
@@ -1679,8 +1671,8 @@ function focusSearch() {
 // `asked`: that message, whatever the draft says (the list keeps room for the
 // reminder as long as it may show, so answering moves nothing).
 const asked = computed(() => {
-  if (noInput.value || working.value || blocked.value || queuedList.value.length || liveShell.value) return null
-  const last = blocks.value.findLast(b => b.k === 'assistant' || b.k === 'user' || b.k === 'shell' || b.k === 'ompRun')
+  if (noInput.value || working.value || blocked.value || queuedList.value.length || liveRun.value) return null
+  const last = blocks.value.findLast(b => b.k === 'assistant' || b.k === 'user' || b.k === 'ompRun')
   if (!last || last.k !== 'assistant' || typingAt(last.id) !== null) return null
   const targets = replyTargets(last.html)
   return targets.questions.length + targets.rows.length ? { key: last.key, time: last.time, rid: last.rid, targets } : null
@@ -1743,7 +1735,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
         auto-scroll-icon="i-lucide-arrow-down"
         :ui="MSGS_UI"
       >
-        <div ref="listEl" class="chat-list" :class="[noInput ? 'no-reply' : `rs-${replyStyle}`, { asking: asked, skeleton }]" @click="onListClick" @keydown="onListKey">
+        <div ref="listEl" class="chat-list" :class="[noInput ? 'no-reply' : 'can-reply', { asking: asked, skeleton }]" @click="onListClick" @keydown="onListKey">
           <div v-if="shownUnavailable === 'not_found' && firstPrompt" class="msg-user-wrap" data-testid="first-prompt">
             <UChatMessage
               id="first-prompt" role="user" side="right" variant="soft" :parts="firstParts(firstPrompt)"
@@ -1798,11 +1790,22 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
               </div>
 
 
-              <button v-else-if="b.k === 'wakes'" type="button" class="wake-run" data-testid="wake-run" :aria-expanded="isOpen(b.key)" @click="setOpen(b.key, !isOpen(b.key))">
-                <UIcon :name="isOpen(b.key) ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'" class="wake-chev" />
-                <span class="wake-head">{{ tl(`${b.n} routine checks`) }}</span>
-                <span v-if="b.last" class="wake-last" :title="b.last">· last: “{{ b.last }}”</span>
+              <div v-else-if="b.k === 'wakes'" class="wake-run" :class="{ ask: b.sum.forUser }" data-testid="wake-run" @click="setOpen(b.key, !isOpen(b.key))">
+                <button type="button" class="wake-toggle" :aria-expanded="isOpen(b.key)" @click.stop="setOpen(b.key, !isOpen(b.key))">
+                  <UIcon :name="isOpen(b.key) ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'" class="wake-chev" />
+                  <span class="wake-head">{{ tl(`${b.n} checks`) }}</span>
+                </button>
+                <span v-for="p in b.sum.parts" :key="p.tone" class="wake-part" :data-tone="p.tone" data-testid="wake-part">
+                  <UIcon :name="TONE_ICON[p.tone]" class="wake-icon" />{{ tl(p.text) }}
+                  <button v-for="c in p.chips" :key="c.id" type="button" class="wake-chip" :title="c.id" :aria-label="c.id" @click.stop="openTaskSheet(c.id)">{{ c.text }}</button>
+                </span>
                 <span v-if="b.from" class="wake-time">{{ b.from === b.to ? b.from : `${b.from}–${b.to}` }}</span>
+              </div>
+
+              <button v-else-if="b.k === 'quiet'" type="button" class="wake-row wake-quiet" data-testid="wake-quiet" :aria-expanded="isOpen(b.key)" @click="setOpen(b.key, !isOpen(b.key))">
+                <UIcon :name="isOpen(b.key) ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'" class="wake-chev" />
+                <span class="wake-head">{{ tl(`${b.n} quiet checks`) }}</span>
+                <span v-if="b.from" class="wake-time">{{ `${b.from}–${b.to}` }}</span>
               </button>
 
               <div v-else-if="b.k === 'card'" class="wake card-note" :data-hit-key="b.key" data-testid="card-note">
@@ -1814,13 +1817,22 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
               </div>
 
               <div v-else-if="b.k === 'wake'" class="wake" :class="{ loud: b.loud, open: isOpen(b.key) }" :data-kind="b.kind" :data-hit-key="b.key" data-testid="wake">
-                <button type="button" class="wake-row" :aria-expanded="isOpen(b.key)" @click="setOpen(b.key, !isOpen(b.key))">
+                <!-- A routine one: its kind's icon, its tasks, a short label and the reply's first sentence. -->
+                <div v-if="b.answer && !b.loud" class="wake-row wake-line" :class="{ quiet: b.sum.quiet }" @click="setOpen(b.key, !isOpen(b.key))">
+                  <UIcon :name="TONE_ICON[b.sum.tone]" class="wake-icon" :data-tone="b.sum.tone" />
+                  <button v-for="id in b.sum.tasks" :key="id" type="button" class="wake-chip" @click.stop="openTaskSheet(id)">{{ id }}</button>
+                  <button type="button" class="wake-toggle wake-head" :aria-expanded="isOpen(b.key)" @click.stop="setOpen(b.key, !isOpen(b.key))">
+                    <span class="wake-label">{{ tl(b.sum.label) }}</span> {{ firstSentence(b.answer) }}
+                  </button>
+                  <span v-if="b.time" class="wake-time" :title="b.at || undefined">{{ b.time }}</span>
+                </div>
+                <button v-else type="button" class="wake-row" :aria-expanded="isOpen(b.key)" @click="setOpen(b.key, !isOpen(b.key))">
                   <span class="msg-wake" :data-kind="b.kind">{{ t(WAKE_LABEL[b.kind]) }}</span>
                   <span class="wake-head">{{ b.head }}</span>
                   <span v-if="b.time" class="wake-time" :title="b.at || undefined">{{ b.time }}</span>
                 </button>
                 <pre v-if="isOpen(b.key) || searching" class="wake-text">{{ b.text }}</pre>
-                <p v-else-if="b.answer" class="wake-answer">{{ b.answer }}</p>
+                <p v-else-if="b.answer && b.loud" class="wake-answer">{{ b.answer }}</p>
               </div>
 
               <div v-else-if="b.k === 'user'" class="msg-user-wrap" :data-hit-key="b.key">
@@ -1838,7 +1850,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                     </span><UserText :text="b.text" :pasted="b.pasted" />
                   </template>
                 </UChatMessage>
-                <div v-if="b.time" class="msg-time" :title="b.at || undefined">{{ b.time }}</div>
+                <MsgStamp v-if="b.ts" :ts="b.ts" />
               </div>
 
               <template v-else-if="b.k === 'assistant'">
@@ -1846,22 +1858,18 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                   :id="b.key" role="assistant" side="left" variant="naked"
                   :data-hit-key="b.key"
                   :parts="textParts(b)"
-                  :ui="aiUi(`msg msg-ai tw-${agent || 'agent'}${canRun ? ' can-run' : ''}${pickKey === b.key ? ' q-picking' : ''}`)"
+                  :ui="aiUi(`msg msg-ai tw-${agent || 'agent'}${canRun ? ' can-run' : ''}`)"
                 >
                   <template #content>
-                    <ChatMarkdown :html="b.html" :typing="typingAt(b.id)" @done="typingDone(b.id)" />
+                    <ChatMarkdown :html="b.html" :typing="typingAt(b.id)" :runs="runButtons" @done="typingDone(b.id)" />
                   </template>
                 </UChatMessage>
-                <ChatQuestionBar
-                  v-if="replyStyle === 'list' && !noInput && typingAt(b.id) === null && (replyTargets(b.html).questions.length || replyTargets(b.html).pick)"
-                  :pane-id="paneId" :targets="replyTargets(b.html)" :time="b.time" :rid="b.rid" :picking="pickKey === b.key"
-                  @quote="quote" @answer="answer" @hot="(n, on) => hotQuestion(b.key, n, on)" @pick="pickKey = pickKey === b.key ? null : b.key"
-                />
-                <div v-if="!b.endsTurn && (!noInput || readAloudEngine !== 'off')" class="msg-actions">
+                <div v-if="!b.endsTurn && (b.ts || !noInput || readAloudEngine !== 'off')" class="msg-actions">
                   <button v-if="!noInput" type="button" class="msg-reply" @click="replyTo(b.key)">
                     <UIcon name="i-lucide-reply" /><span>{{ t('Reply') }}</span>
                   </button>
                   <ReadAloudButton :id="`${paneId}:${b.key}`" :text="b.text" />
+                  <MsgStamp v-if="b.ts" :ts="b.ts" />
                 </div>
                 <template v-if="coord"><template v-for="p in proposalCards.get(b.key)" :key="p.key"><AutomationProposalCard v-if="p.auto" :p="p.auto" /><ProposalCard v-else :c="coord" :answer="p.answer" :can-goto="!p.answer && !!proposalSaidKey" @goto="gotoOrigin(proposalSaidKey)" /></template></template>
               </template>
@@ -1886,31 +1894,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                 </div>
               </div>
 
-              <div v-else-if="b.k === 'shell'" class="msg-shell" :class="{ bash: b.bash, long: b.long, open: isOpen(b.key) }">
-                <div class="msg-shell-cmd">
-                  <span class="msg-shell-sign" aria-hidden="true">{{ b.bash ? '!' : '❯' }}</span>
-                  <code>{{ b.text }}</code>
-                  <UTooltip :text="t('Copy command')" :disabled="!desk">
-                    <UButton icon="i-lucide-copy" color="neutral" variant="ghost" size="xs" class="msg-shell-copy" :aria-label="t('Copy command')" @click="copyText(b.bash ? `!${b.text}` : b.text)" />
-                  </UTooltip>
-                </div>
-                <div v-if="b.out || b.err" class="msg-shell-body">
-                  <pre v-if="b.out" class="msg-shell-out">{{ b.out }}</pre>
-                  <pre v-if="b.err" class="msg-shell-out err">{{ b.err }}</pre>
-                </div>
-                <div v-else-if="b.bash" class="msg-shell-empty">{{ t('No output') }}</div>
-                <button v-if="b.long" type="button" class="msg-shell-more" :aria-expanded="isOpen(b.key)" @click="setOpen(b.key, !isOpen(b.key))">
-                  <UIcon :name="isOpen(b.key) ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'" />
-                  <span>{{ isOpen(b.key) ? t('Collapse') : tl(`Show all · ${b.lines} lines`, `Tout afficher · ${b.lines} lignes`) }}</span>
-                </button>
-              </div>
-              <div v-else-if="b.k === 'ompRun'" class="tools omp-console omp-run">
-                <div class="omp-console-head">
-                  <span class="omp-console-title">{{ b.tool.omp.title === 'Python' ? '$' : '!' }}</span>
-                  <span>{{ tl('You ran', 'Lancé par toi') }}</span>
-                </div>
-                <OmpTool :tool="b.tool" run />
-              </div>
+              <ChatShellRun v-else-if="b.k === 'ompRun'" :tool="b.tool" :agent="agent" />
               <div v-else-if="b.k === 'system' && b.full" class="msg-cmd" :class="{ open: isOpen(b.key) }">
                 <button type="button" class="msg-system" :aria-expanded="isOpen(b.key)" :title="isOpen(b.key) ? t('Collapse') : t('Show all')" @click="setOpen(b.key, !isOpen(b.key))">
                   <span>{{ b.text }}</span><UIcon :name="isOpen(b.key) ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'" class="msg-cmd-chev" />
@@ -1943,6 +1927,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                 </button>
                 <ReadAloudButton v-if="b.copy && b.reply" :id="`${paneId}:${b.reply}`" :text="b.copy" />
                 <span>{{ b.text }}</span>
+                <MsgStamp v-if="b.ts" :ts="b.ts" />
               </div>
 
               <!-- omp: a console, "OMP · N ACTIONS · Σ time", one line per call. -->
@@ -2012,7 +1997,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
             <UIcon name="i-lucide-reply" /><span>{{ t('Reply') }}</span>
           </button>
         </Teleport>
-        <div v-if="queuedList.length || liveShell || (!noInput && hasDraft)" class="queued-list">
+        <div v-if="queuedList.length || liveRun || (!noInput && hasDraft)" class="queued-list">
           <!-- Already sent (visible as sent on screen), not yet in the transcript. -->
           <div v-for="q in queuedList.filter(x => x.phase === 'sent')" :key="q.id" class="msg-user-wrap">
             <button v-if="q.reply" type="button" class="msg-quote" :aria-label="t('Show original message')" @click="gotoOrigin(q.origin)">
@@ -2032,22 +2017,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
             <div class="queued-tag sent"><UIcon name="i-lucide-check" /><span>{{ queuedLabel(q) }}</span></div>
           </div>
           <!-- "!" command running: live output read from the screen. -->
-          <div v-if="liveShell" class="msg-user-wrap">
-            <div class="msg-shell bash running">
-              <div class="msg-shell-cmd">
-                <span class="msg-shell-sign" aria-hidden="true">{{ agent !== 'omp' ? '!' : liveShell.python ? '>>>' : '$' }}</span>
-                <code>{{ liveShell.command }}</code>
-              </div>
-              <div v-if="liveShell.lines.length" class="msg-shell-body">
-                <div v-if="liveShell.hidden" class="msg-shell-hidden">{{ tl(`+ ${liveShell.hidden} lines above`, `+ ${liveShell.hidden} lignes au-dessus`) }}</div>
-                <pre class="msg-shell-out">{{ liveShell.lines.join('\n') }}</pre>
-              </div>
-              <div v-else class="msg-shell-empty">{{ t('No output yet') }}</div>
-            </div>
-            <div class="queued-tag running">
-              <UIcon name="i-lucide-loader-circle" class="spin" /><ChatRunningTime :since="liveShell.since" />
-            </div>
-          </div>
+          <ChatShellRun v-if="liveRun" :tool="liveRun" :agent="agent" live />
           <div v-for="q in queuedList.filter(x => x.phase === 'queued')" :key="q.id" class="msg-user-wrap">
             <button v-if="q.reply" type="button" class="msg-quote" :aria-label="t('Show original message')" @click="gotoOrigin(q.origin)">
               <UIcon name="i-lucide-corner-left-up" class="msg-quote-time" /><span class="msg-quote-time">{{ q.reply.time }}</span><span class="msg-quote-text">{{ q.reply.excerpt }}</span>

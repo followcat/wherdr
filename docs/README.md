@@ -34,7 +34,7 @@ Questions and feedback: [Discord](https://discord.gg/ky36WYmtVE); bugs: [GitHub 
 - [Settings and configuration](configuration.md) — Environment variables and in-app settings.
 - [Phone access and private networks](networks.md) — Set up Tailscale or another private network with HTTPS.
 - [Install as an app](phone.md) — Add wherdr to your home screen on a phone or install it in a desktop browser.
-- [Plugins](plugins.md) — [wherdr plugins](plugins.md#wherdr-plugins): optional page plugins and `data-wherdr` markers.
+- [Plugins](plugins.md) — [wherdr plugins](plugins.md#wherdr-plugins): optional page plugins and `data-wherdr` markers. Example: [hello-mic](examples/plugins/hello-mic/README.md), a microphone button.
 - [Security](security.md) — Remote-shell access, passkeys and network restrictions. Read this before enabling remote access.
 - [Read aloud: the voice of wherdr](read-aloud.md) — The on-device neural voices, their licences and attributions, the espeak-ng note, and their measured (for now estimated) phone figures.
 - [Dictation design](dictation.md) — For contributors: the engine interface, capture pipeline, OpenRouter relay, on-device models and how to add one.
@@ -55,7 +55,7 @@ These pages describe wherdr 2.x on Herdr. They do not apply to v3.
 
 Release notes of the 2.x line: [2.5.0](release-notes-2.5.0.md) · [2.4.0](release-notes-2.4.0.md) ·
 [2.3.0](release-notes-2.3.0.md) · [2.2.0](release-notes-2.2.0.md) · [2.1.0](release-notes-2.1.0.md) ·
-[2.0.0](release-notes-2.0.0.md).
+[2.0.0](release-notes-2.0.0.md). Earlier: [1.2.0](release-notes-1.2.0.md).
 
 ## Section reference
 

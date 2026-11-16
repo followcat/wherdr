@@ -1,23 +1,23 @@
 # wherdr
 
-> Self-hosted web app and phone PWA to follow and drive the coding agents (Claude Code, Codex, omp…) running in Herdr on your machines, over localhost or a private network only. Open source, MIT.
+> Self-hosted web app and phone PWA to follow and drive the coding agents (Claude Code, Codex, Devin, omp…) running in herdr-core (hc) on your machines, with built-in project management (a coordinator per project, a board, workflows, tasks to review) and Alfred, its assistant. Over localhost or a private network only. wherdr 3 installs from the v3 branch, beside wherdr 2. Open source, MIT.
 
 ## Docs
 
-- [Setup guide for agents](https://wherdr.dev/agent.md): what to detect before asking, the one install command, the phone over Tailscale, the passkey lock on the tailnet address, safety rules
-- [Installer](https://wherdr.dev/install): `curl -fsSL https://wherdr.dev/install | sh`, the recommended install on macOS and Linux: checks Herdr, offers Node.js 22 when it is missing (no sudo), installs the wherdr Herdr plugin with the verified GitHub release package, runs wherdr natively as the user and starts it at login on macOS (LaunchAgent), or at boot on Linux when lingering is enabled (otherwise at login, with a systemd --user unit); the installer reports the actual startup policy; headless servers get the address and phone steps. Updates: run it again
-- [Herdr plugin](https://raw.githubusercontent.com/afloury/wherdr/main/herdr-plugin.toml): what the installer runs, `herdr plugin install afloury/wherdr` (Node.js 22, native)
-- npm (`npm install -g wherdr`, then `wherdr service install`) and Homebrew (`brew install afloury/tap/wherdr`): alternatives; npm can hold a new release for up to two days
-- [Documentation index](https://raw.githubusercontent.com/afloury/wherdr/main/docs/README.md): choose only the page relevant to the task
-- [Installation and updates](https://raw.githubusercontent.com/afloury/wherdr/main/docs/installation.md): prerequisites, installer, agent PATH and updates
-- [Configuration](https://raw.githubusercontent.com/afloury/wherdr/main/docs/configuration.md): environment variables and preferences
-- [Security](https://raw.githubusercontent.com/afloury/wherdr/main/docs/security.md): network restrictions and passkeys
-- [Troubleshooting](https://raw.githubusercontent.com/afloury/wherdr/main/docs/troubleshooting.md): common failures
-- [Other private networks](https://github.com/afloury/wherdr/blob/main/docs/networks.md#other-private-networks): phone access over Headscale, NetBird, ZeroTier, WireGuard or Cloudflare Tunnel + Access instead of Tailscale (HTTPS with a valid certificate, `APP_URL`)
-- [Security policy](https://raw.githubusercontent.com/afloury/wherdr/main/SECURITY.md): how to report a vulnerability
+- [Setup guide for agents](https://wherdr.dev/agent.md): safety rules, what to detect, the install script's plan then `--yes`, the phone over Tailscale, updates
+- [Install with an agent](https://github.com/afloury/wherdr/blob/v3/docs/install-with-an-agent.md): ready-to-paste prompts: new install, v3 beside an existing v2 with import, update
+- [Installation and updates](https://github.com/afloury/wherdr/blob/v3/docs/installation.md): requirements (hc, Node.js 22, Git), `git clone -b v3` and `scripts/install-v3-beside-v2.sh` on Linux with systemd, by hand on macOS, updating with `update.sh` or Update with Alfred
+- [Update with an agent](https://github.com/afloury/wherdr/blob/v3/docs/update-with-an-agent.md): plan, backup, update, health check, rollback
+- [Release notes 3.0.0](https://github.com/afloury/wherdr/blob/v3/docs/release-notes-3.0.0.md): what v3 brings, what changed, what is gone
+- [Migrate from v2](https://github.com/afloury/wherdr/blob/v3/docs/migrate-from-v2.md): v3 next to a running v2, import, fall back, uninstall
+- [Documentation index](https://github.com/afloury/wherdr/blob/v3/docs/README.md): choose only the page relevant to the task
+- [Security](https://github.com/afloury/wherdr/blob/v3/docs/security.md): network restrictions and passkeys
+- [Troubleshooting](https://github.com/afloury/wherdr/blob/v3/docs/troubleshooting.md): common failures
+- [Security policy](https://github.com/afloury/wherdr/blob/v3/SECURITY.md): how to report a vulnerability
 
 ## Optional
 
-- [Source code](https://github.com/afloury/wherdr)
+- [Source code](https://github.com/afloury/wherdr/tree/v3)
+- [wherdr 2](https://github.com/afloury/wherdr/tree/2.x): the 2.x branch, its docs and installer
 - [Discord](https://discord.gg/ky36WYmtVE): community chat
-- [Herdr](https://herdr.dev): the terminal workspace for coding agents wherdr builds on
+- [herdr-core](https://github.com/herdrdev/herdr-core): the agent runtime wherdr 3 builds on

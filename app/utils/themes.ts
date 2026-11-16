@@ -1,9 +1,10 @@
-
-// App themes: wherdr Titanium (default, defined in main.css), herdr.dev and
-// Herdr's built-in themes (official public palettes of each
-// theme). Each theme gives a few base colors; the surfaces, lines
-// and secondary texts are derived from them (color-mix), to keep the same
-// structure everywhere. Applied through the data-theme attribute of <html>.
+// App themes: wherdr's own (Titanium, the default, whose dark palette is
+// main.css's first paint), themes inspired by the coding agents, and a few
+// classic palettes. Every theme has a dark and a light palette; the mode
+// (Dark, Light, System) picks one. Each palette gives a few base colors; the
+// surfaces, lines and secondary texts are derived from them (color-mix), to
+// keep the same structure everywhere. Applied through the data-theme and
+// data-mode attributes of <html>.
 
 export interface ThemeColors {
   bg: string // background
@@ -33,28 +34,105 @@ export interface ThemeColors {
   done?: string
 }
 // Section of the theme picker: wherdr's own themes, themes inspired by the
-// coding agents, then Herdr's built-in themes (herdr.dev included).
-export const THEME_GROUPS = ['wherdr', 'agents', 'herdr'] as const
-export type ThemeGroup = typeof THEME_GROUPS[number]
+// coding agents, then classic editor palettes.
+// The user's own themes (customThemes.ts) follow, in a Custom section.
+export const THEME_GROUPS = ['wherdr', 'agents', 'classic'] as const
+export type ThemeGroup = typeof THEME_GROUPS[number] | 'custom'
 export interface ThemeDef {
   id: string
   label: string
   group: ThemeGroup
-  light?: boolean
-  c: ThemeColors
+  author?: string
+  c: ThemeColors // dark palette
   // xterm ANSI palette: black, red, green, yellow, blue, magenta, cyan, white, then the bright ones.
+  ansi: string[]
+  light: ThemeColors // light palette; its ANSI colors come from it (lightAnsi)
+}
+// One theme in one mode: what the page and the terminal paint.
+export interface ThemeVariant {
+  id: string
+  label: string
+  light: boolean
+  c: ThemeColors
   ansi: string[]
 }
 
 export const THEMES: ThemeDef[] = [
   {
-    id: 'herdr', label: 'herdr.dev', group: 'herdr',
+    // wherdr Titanium — omp's titanium, calmer: background #12151b, surfaces
+    // #1a1e26, lines #2a3038, an electric blue #1fb2ff as signature (accent
+    // 7.7:1, background text on accent 7.7:1), also the second color of the
+    // gliding focus ring: the agent's color glides to Titanium blue.
+    // Text #e6eaf2 (15.2:1), muted #9da5b4 (7.4:1), dim #828a9a (5.3:1).
+    // States: working violet #a98bff (the gradient's middle), your turn amber
+    // #ffb347, ready green #00f28a.
+    id: 'wherdr-titanium', label: 'wherdr Titanium', group: 'wherdr',
     c: {
-      bg: '#17171a', bg2: '#1b1b1f', surface: '#1f1f24', line: '#35353d', text: '#eae8ee', muted: '#9399b2', dim: '#6c7086',
-      accent: '#cba6f7', green: '#a6e3a1', coral: '#d97757', ochre: '#d9b66b', rose: '#f38ba8', blue: '#89b4fa', teal: '#94e2d5', lav: '#cdd6f4',
+      bg: '#12151b', bg2: '#0d1015', surface: '#1a1e26', line: '#2a3038',
+      text: '#e6eaf2', muted: '#9da5b4', dim: '#828a9a',
+      accent: '#1fb2ff', green: '#00f28a', coral: '#ff7b86', ochre: '#ffb347', rose: '#ff4757', blue: '#1fb2ff', teal: '#00dbe4', lav: '#a98bff',
+      selection: '#1fb2ff', ring: '#1fb2ff', working: '#a98bff', blocked: '#ffb347', done: '#00f28a',
     },
-    ansi: ['#45475a', '#f38ba8', '#a6e3a1', '#f9e2af', '#89b4fa', '#cba6f7', '#94e2d5', '#bac2de',
-      '#6c7086', '#f5a3b9', '#b9ebb4', '#fbe9c1', '#a4c4fb', '#d9bff9', '#abe9df', '#ffffff'],
+    ansi: ['#2f3540', '#ff4757', '#00f28a', '#f0c040', '#1fb2ff', '#d06fed', '#00dbe4', '#c3c9d3',
+      '#6b7280', '#ff7b86', '#6bffb0', '#fddb72', '#6ec9ff', '#e69dfc', '#75efea', '#f7f9fc'],
+    // Light: cool titanium paper, the electric blue deepened to #0b6fb8 for text and focus.
+    light: {
+      bg: '#eef1f5', bg2: '#e5e9ef', surface: '#f6f8fb', line: '#c5ccd7', text: '#1a202b', muted: '#4f5868', dim: '#6a7384',
+      accent: '#0b6fb8', green: '#0a7a4b', coral: '#b8434f', ochre: '#94600a', rose: '#c22d3a', blue: '#0b6fb8', teal: '#077880',
+      lav: '#6447c9', onAccent: '#ffffff', selection: '#1fb2ff', ring: '#0b6fb8', working: '#6447c9', blocked: '#94600a',
+      done: '#0a7a4b',
+    },
+  },
+  {
+    // wherdr Neon — proposal for wherdr's own identity. A cold blue-black
+    // terminal lit by a "volt" chartreuse #c6ff3d (signature: neither Herdr's
+    // mauve nor omp's pink, and far from Claude orange / Codex blue), paired
+    // with an ion cyan #2ee6ff for activity and the gliding focus ring.
+    // Background #0d1117, surfaces #141a22, lines #263040, text #e6edf5
+    // (16:1), muted #9aa7b8 (7.7:1), dim #75839a (4.9:1). States: working cyan,
+    // your turn amber #ff9f1c, ready volt.
+    id: 'wherdr-neon', label: 'wherdr Neon', group: 'wherdr',
+    c: {
+      bg: '#0d1117', bg2: '#090c11', surface: '#141a22', line: '#263040',
+      text: '#e6edf5', muted: '#9aa7b8', dim: '#75839a',
+      accent: '#c6ff3d', green: '#7dff6b', coral: '#ff8a5c', ochre: '#ff9f1c', rose: '#ff4d6d', blue: '#4d9dff', teal: '#2ee6ff', lav: '#a8b8ff',
+      selection: '#2ee6ff', ring: '#2ee6ff', working: '#2ee6ff', blocked: '#ff9f1c', done: '#c6ff3d',
+    },
+    ansi: ['#263040', '#ff4d6d', '#7dff6b', '#ffd23d', '#4d9dff', '#c38bff', '#2ee6ff', '#c9d3df',
+      '#5a6779', '#ff7a90', '#c6ff3d', '#ffe57a', '#80bbff', '#d9b3ff', '#8cf3ff', '#f5f9fc'],
+    // Light: cool gray paper; volt turns olive #4a7300 and ion cyan deep teal #08778c to read on it.
+    light: {
+      bg: '#edf1f3', bg2: '#e4e9ed', surface: '#f5f8f9', line: '#c3cdd6', text: '#131a22', muted: '#4b5766', dim: '#667283',
+      accent: '#4a7300', green: '#2b7d1c', coral: '#b54d26', ochre: '#9a5a00', rose: '#c02a4a', blue: '#2560c4', teal: '#08778c',
+      lav: '#5558c8', onAccent: '#ffffff', selection: '#08778c', ring: '#08778c', working: '#08778c', blocked: '#9a5a00',
+      done: '#4a7300',
+    },
+  },
+  {
+    // wherdr Graphite — Codex / Terminal's neutral graphite (no blue tint in
+    // the background: #141414, surfaces #1c1c1c, lines #333333) lit by an
+    // electric violet #b65cff, with its
+    // cyan duo #2ee6ff for the gliding focus ring and activity. Sober: the
+    // colors live in the accent, the states and the terminal. Text #ececec
+    // (15.6:1), muted #a3a3a3 (7.3:1), dim #8a8a8a (5.3:1), accent 5.2:1,
+    // background text on accent 5.2:1. States: working cyan, your turn amber
+    // #ffa630, ready mint #5af78e. ANSI magenta is pink #ff5fd2, away from the accent.
+    id: 'wherdr-graphite', label: 'wherdr Graphite', group: 'wherdr',
+    c: {
+      bg: '#141414', bg2: '#0f0f0f', surface: '#1c1c1c', line: '#333333',
+      text: '#ececec', muted: '#a3a3a3', dim: '#8a8a8a',
+      accent: '#b65cff', green: '#5af78e', coral: '#ff8a5c', ochre: '#ffa630', rose: '#ff5370', blue: '#4d9dff', teal: '#2ee6ff', lav: '#c9a8ff',
+      selection: '#b65cff', ring: '#2ee6ff', working: '#2ee6ff', blocked: '#ffa630', done: '#5af78e',
+    },
+    ansi: ['#2e2e2e', '#ff5370', '#5af78e', '#f4d35e', '#4d9dff', '#ff5fd2', '#2ee6ff', '#d4d4d4',
+      '#6b6b6b', '#ff7a90', '#8affb0', '#ffe58a', '#80bbff', '#ff9be6', '#8cf3ff', '#ffffff'],
+    // Light: neutral gray paper, the violet deepened to #7f35d1, deep teal focus duo.
+    light: {
+      bg: '#efefef', bg2: '#e6e6e6', surface: '#f7f7f7', line: '#cacaca', text: '#1b1b1b', muted: '#525252', dim: '#6b6b6b',
+      accent: '#7f35d1', green: '#17793f', coral: '#b54d26', ochre: '#985a00', rose: '#bd2747', blue: '#2560c4', teal: '#08778c',
+      lav: '#6c4bc9', onAccent: '#ffffff', selection: '#7f35d1', ring: '#08778c', working: '#08778c', blocked: '#985a00',
+      done: '#17793f',
+    },
   },
   {
     // Claude Code (v2.1.283, dark theme), colors captured in the terminal
@@ -74,6 +152,13 @@ export const THEMES: ThemeDef[] = [
     },
     ansi: ['#3a3a3a', '#dc5a5a', '#50c850', '#e6db74', '#b1b9f9', '#af87ff', '#66d9ef', '#d0d0d0',
       '#707070', '#ff6b80', '#4eba65', '#ffc107', '#b1b9f9', '#fd5db1', '#66d9ef', '#ffffff'],
+    // Light: warm paper, Claude orange deepened to #a94d2d, permission blue-violet #4a52bd.
+    light: {
+      bg: '#f3f1ed', bg2: '#eae7e1', surface: '#f9f8f5', surface2: '#e5e1da', line: '#d0cbc2', inputLine: '#8c867c',
+      text: '#1e1d1b', muted: '#5b5852', dim: '#736f68', accent: '#a94d2d', green: '#25733a', coral: '#a94d2d', ochre: '#8a5d00',
+      rose: '#b8344a', blue: '#4a52bd', teal: '#2b7069', lav: '#4a52bd', onAccent: '#ffffff', working: '#a94d2d',
+      blocked: '#4a52bd', done: '#25733a',
+    },
   },
   {
     // Codex CLI (v0.156.1), captured in the terminal: Codex mostly relies
@@ -93,6 +178,12 @@ export const THEMES: ThemeDef[] = [
     },
     ansi: ['#2a2a2a', '#e5737b', '#8fcf8a', '#e7c787', '#89b4fa', '#c9a0e8', '#63c5d8', '#d4d4d4',
       '#6b6b6b', '#f38b95', '#abdfa7', '#f6e2b7', '#63a8f8', '#d7b4f0', '#8ad6e6', '#ffffff'],
+    // Light: neutral paper, Codex blue deepened to #1a68c9.
+    light: {
+      bg: '#f1f2f4', bg2: '#e8e9ec', surface: '#f8f9fa', line: '#cdd0d6', text: '#1a1c20', muted: '#545860', dim: '#6c7078',
+      accent: '#1a68c9', green: '#29742f', coral: '#ad4456', ochre: '#806210', rose: '#bb3a44', blue: '#1a68c9', teal: '#0a7385',
+      lav: '#4b67c9', onAccent: '#ffffff', working: '#1a68c9', done: '#29742f',
+    },
   },
   {
     // omp / oh-my-pi (v18.4.10), built-in dark theme "titanium" (the
@@ -113,233 +204,104 @@ export const THEMES: ThemeDef[] = [
     },
     ansi: ['#3b424d', '#ff4757', '#00ff88', '#f0c040', '#00b4ff', '#d06fed', '#13d1cd', '#c3c9d3',
       '#6b7280', '#ff7b86', '#6bffb0', '#fddb72', '#6ec9ff', '#e69dfc', '#75efea', '#f7f9fc'],
-  },
-  {
-    // wherdr Neon — proposal for wherdr's own identity. A cold blue-black
-    // terminal lit by a "volt" chartreuse #c6ff3d (signature: neither Herdr's
-    // mauve nor omp's pink, and far from Claude orange / Codex blue), paired
-    // with an ion cyan #2ee6ff for activity and the gliding focus ring.
-    // Background #0d1117, surfaces #141a22, lines #263040, text #e6edf5
-    // (16:1), muted #9aa7b8 (7.7:1), dim #75839a (4.9:1). States: working cyan,
-    // your turn amber #ff9f1c, ready volt.
-    id: 'wherdr-neon', label: 'wherdr Neon', group: 'wherdr',
-    c: {
-      bg: '#0d1117', bg2: '#090c11', surface: '#141a22', line: '#263040',
-      text: '#e6edf5', muted: '#9aa7b8', dim: '#75839a',
-      accent: '#c6ff3d', green: '#7dff6b', coral: '#ff8a5c', ochre: '#ff9f1c', rose: '#ff4d6d', blue: '#4d9dff', teal: '#2ee6ff', lav: '#a8b8ff',
-      selection: '#2ee6ff', ring: '#2ee6ff', working: '#2ee6ff', blocked: '#ff9f1c', done: '#c6ff3d',
+    // Light: omp's light theme (muted teal, blue, green, warm warning), on a softer gray than its
+    // #f8f8f8; the logo pink deepened to #a8287f, violet selection and focus.
+    light: {
+      bg: '#f0f1f4', bg2: '#e7e9ee', surface: '#f7f8fa', surface2: '#e3e5ea', line: '#cbcfd7', text: '#20242d', muted: '#545a66',
+      dim: '#6b717d', accent: '#a8287f', green: '#2f7340', coral: '#a94a54', ochre: '#82621c', rose: '#ad3f3f', blue: '#38689a',
+      teal: '#386b6b', lav: '#7048b8', onAccent: '#ffffff', selection: '#7a4fe0', ring: '#7048b8', working: '#38689a',
+      blocked: '#82621c', done: '#2f7340',
     },
-    ansi: ['#263040', '#ff4d6d', '#7dff6b', '#ffd23d', '#4d9dff', '#c38bff', '#2ee6ff', '#c9d3df',
-      '#5a6779', '#ff7a90', '#c6ff3d', '#ffe57a', '#80bbff', '#d9b3ff', '#8cf3ff', '#f5f9fc'],
   },
   {
-    // wherdr Neon Purple — wherdr Neon's blue-black base with an electric
-    // violet #c45cff as signature: fully saturated and brighter than Herdr's
-    // pastel mauve #cba6f7 and omp's violet #9362f4 (hue 278 vs 260). Its
-    // duo is cyan #2ee6ff, as with omp: the focus ring glides cyan over the
-    // violet. Accent on background 5.7:1, background text on
-    // accent buttons 5.7:1. States stay away from the accent: working cyan,
-    // your turn amber, ready volt. ANSI magenta moves to a pink #ff5fd2 so
-    // terminal magenta never reads as the accent.
-    id: 'wherdr-neon-purple', label: 'wherdr Neon Purple', group: 'wherdr',
-    c: {
-      bg: '#0d1117', bg2: '#090c11', surface: '#141a22', line: '#263040',
-      text: '#e6edf5', muted: '#9aa7b8', dim: '#75839a',
-      accent: '#c45cff', green: '#7dff6b', coral: '#ff8a5c', ochre: '#ff9f1c', rose: '#ff4d6d', blue: '#4d9dff', teal: '#2ee6ff', lav: '#a8b8ff',
-      selection: '#c45cff', ring: '#2ee6ff', working: '#2ee6ff', blocked: '#ff9f1c', done: '#c6ff3d',
-    },
-    ansi: ['#263040', '#ff4d6d', '#7dff6b', '#ffd23d', '#4d9dff', '#ff5fd2', '#2ee6ff', '#c9d3df',
-      '#5a6779', '#ff7a90', '#c6ff3d', '#ffe57a', '#80bbff', '#ff9be6', '#8cf3ff', '#f5f9fc'],
-  },
-  {
-    // wherdr Graphite — Codex / Terminal's neutral graphite (no blue tint in
-    // the background: #141414, surfaces #1c1c1c, lines #333333) lit by an
-    // electric violet #b65cff, the signature of wherdr Neon Purple, with its
-    // cyan duo #2ee6ff for the gliding focus ring and activity. Sober: the
-    // colors live in the accent, the states and the terminal. Text #ececec
-    // (15.6:1), muted #a3a3a3 (7.3:1), dim #8a8a8a (5.3:1), accent 5.2:1,
-    // background text on accent 5.2:1. States: working cyan, your turn amber
-    // #ffa630, ready mint #5af78e. ANSI magenta is pink #ff5fd2, away from the accent.
-    id: 'wherdr-graphite', label: 'wherdr Graphite', group: 'wherdr',
-    c: {
-      bg: '#141414', bg2: '#0f0f0f', surface: '#1c1c1c', line: '#333333',
-      text: '#ececec', muted: '#a3a3a3', dim: '#8a8a8a',
-      accent: '#b65cff', green: '#5af78e', coral: '#ff8a5c', ochre: '#ffa630', rose: '#ff5370', blue: '#4d9dff', teal: '#2ee6ff', lav: '#c9a8ff',
-      selection: '#b65cff', ring: '#2ee6ff', working: '#2ee6ff', blocked: '#ffa630', done: '#5af78e',
-    },
-    ansi: ['#2e2e2e', '#ff5370', '#5af78e', '#f4d35e', '#4d9dff', '#ff5fd2', '#2ee6ff', '#d4d4d4',
-      '#6b6b6b', '#ff7a90', '#8affb0', '#ffe58a', '#80bbff', '#ff9be6', '#8cf3ff', '#ffffff'],
-  },
-  {
-    // wherdr Titanium — omp's titanium, calmer: background #12151b, surfaces
-    // #1a1e26, lines #2a3038, an electric blue #1fb2ff as signature (accent
-    // 7.7:1, background text on accent 7.7:1), also the second color of the
-    // gliding focus ring: the agent's color glides to Titanium blue.
-    // Text #e6eaf2 (15.2:1), muted #9da5b4 (7.4:1), dim #828a9a (5.3:1).
-    // States: working violet #a98bff (the gradient's middle), your turn amber
-    // #ffb347, ready green #00f28a.
-    id: 'wherdr-titanium', label: 'wherdr Titanium', group: 'wherdr',
-    c: {
-      bg: '#12151b', bg2: '#0d1015', surface: '#1a1e26', line: '#2a3038',
-      text: '#e6eaf2', muted: '#9da5b4', dim: '#828a9a',
-      accent: '#1fb2ff', green: '#00f28a', coral: '#ff7b86', ochre: '#ffb347', rose: '#ff4757', blue: '#1fb2ff', teal: '#00dbe4', lav: '#a98bff',
-      selection: '#1fb2ff', ring: '#1fb2ff', working: '#a98bff', blocked: '#ffb347', done: '#00f28a',
-    },
-    ansi: ['#2f3540', '#ff4757', '#00f28a', '#f0c040', '#1fb2ff', '#d06fed', '#00dbe4', '#c3c9d3',
-      '#6b7280', '#ff7b86', '#6bffb0', '#fddb72', '#6ec9ff', '#e69dfc', '#75efea', '#f7f9fc'],
-  },
-  {
-    id: 'catppuccin', label: 'Catppuccin', group: 'herdr',
-    c: {
-      bg: '#1e1e2e', bg2: '#181825', surface: '#262637', line: '#45475a', text: '#cdd6f4', muted: '#9399b2', dim: '#6c7086',
-      accent: '#cba6f7', green: '#a6e3a1', coral: '#fab387', ochre: '#f9e2af', rose: '#f38ba8', blue: '#89b4fa', teal: '#94e2d5', lav: '#b4befe',
-    },
-    ansi: ['#45475a', '#f38ba8', '#a6e3a1', '#f9e2af', '#89b4fa', '#f5c2e7', '#94e2d5', '#bac2de',
-      '#585b70', '#f38ba8', '#a6e3a1', '#f9e2af', '#89b4fa', '#f5c2e7', '#94e2d5', '#a6adc8'],
-  },
-  {
-    // Herdr uses the host terminal's ANSI colors here; here, a neutral gray
-    // and the classic ANSI colors.
-    id: 'terminal', label: 'Terminal', group: 'herdr',
-    c: {
-      bg: '#161616', bg2: '#1a1a1a', surface: '#1f1f1f', line: '#3a3a3a', text: '#e5e5e5', muted: '#a3a3a3', dim: '#737373',
-      accent: '#d670d6', green: '#23d18b', coral: '#e8875b', ochre: '#e5e510', rose: '#f14c4c', blue: '#3b8eea', teal: '#29b8db', lav: '#cfcfcf',
-    },
-    ansi: ['#2e2e2e', '#cd3131', '#0dbc79', '#e5e510', '#2472c8', '#bc3fbc', '#11a8cd', '#e5e5e5',
-      '#666666', '#f14c4c', '#23d18b', '#f5f543', '#3b8eea', '#d670d6', '#29b8db', '#ffffff'],
-  },
-  {
-    id: 'tokyo-night', label: 'Tokyo Night', group: 'herdr',
-    c: {
-      bg: '#1a1b26', bg2: '#16161e', surface: '#1f2335', line: '#3b4261', text: '#c0caf5', muted: '#a9b1d6', dim: '#565f89',
-      accent: '#bb9af7', green: '#9ece6a', coral: '#ff9e64', ochre: '#e0af68', rose: '#f7768e', blue: '#7aa2f7', teal: '#7dcfff', lav: '#b4f9f8',
-    },
-    ansi: ['#15161e', '#f7768e', '#9ece6a', '#e0af68', '#7aa2f7', '#bb9af7', '#7dcfff', '#a9b1d6',
-      '#414868', '#f7768e', '#9ece6a', '#e0af68', '#7aa2f7', '#bb9af7', '#7dcfff', '#c0caf5'],
-  },
-  {
-    id: 'dracula', label: 'Dracula', group: 'herdr',
-    c: {
-      bg: '#282a36', bg2: '#21222c', surface: '#2e3040', line: '#44475a', text: '#f8f8f2', muted: '#b5b8cf', dim: '#6272a4',
-      accent: '#bd93f9', green: '#50fa7b', coral: '#ffb86c', ochre: '#f1fa8c', rose: '#ff5555', blue: '#8be9fd', teal: '#8be9fd', lav: '#ff79c6',
-    },
-    ansi: ['#21222c', '#ff5555', '#50fa7b', '#f1fa8c', '#bd93f9', '#ff79c6', '#8be9fd', '#f8f8f2',
-      '#6272a4', '#ff6e6e', '#69ff94', '#ffffa5', '#d6acff', '#ff92df', '#a4ffff', '#ffffff'],
-  },
-  {
-    id: 'nord', label: 'Nord', group: 'herdr',
-    c: {
-      bg: '#2e3440', bg2: '#292e39', surface: '#343b49', line: '#4c566a', text: '#eceff4', muted: '#d8dee9', dim: '#7b88a1',
-      accent: '#88c0d0', green: '#a3be8c', coral: '#d08770', ochre: '#ebcb8b', rose: '#bf616a', blue: '#81a1c1', teal: '#8fbcbb', lav: '#b48ead',
-    },
-    ansi: ['#3b4252', '#bf616a', '#a3be8c', '#ebcb8b', '#81a1c1', '#b48ead', '#88c0d0', '#e5e9f0',
-      '#4c566a', '#bf616a', '#a3be8c', '#ebcb8b', '#81a1c1', '#b48ead', '#8fbcbb', '#eceff4'],
-  },
-  {
-    id: 'gruvbox', label: 'Gruvbox', group: 'herdr',
-    c: {
-      bg: '#282828', bg2: '#1d2021', surface: '#32302f', line: '#504945', text: '#ebdbb2', muted: '#bdae93', dim: '#928374',
-      accent: '#fabd2f', green: '#b8bb26', coral: '#fe8019', ochre: '#fabd2f', rose: '#fb4934', blue: '#83a598', teal: '#8ec07c', lav: '#d3869b',
-    },
-    ansi: ['#282828', '#cc241d', '#98971a', '#d79921', '#458588', '#b16286', '#689d6a', '#a89984',
-      '#928374', '#fb4934', '#b8bb26', '#fabd2f', '#83a598', '#d3869b', '#8ec07c', '#ebdbb2'],
-  },
-  {
-    id: 'one-dark', label: 'One Dark', group: 'herdr',
-    c: {
-      bg: '#282c34', bg2: '#21252b', surface: '#2c313a', line: '#3e4451', text: '#d7dae0', muted: '#abb2bf', dim: '#5c6370',
-      accent: '#c678dd', green: '#98c379', coral: '#d19a66', ochre: '#e5c07b', rose: '#e06c75', blue: '#61afef', teal: '#56b6c2', lav: '#61afef',
-    },
-    ansi: ['#282c34', '#e06c75', '#98c379', '#e5c07b', '#61afef', '#c678dd', '#56b6c2', '#abb2bf',
-      '#5c6370', '#e06c75', '#98c379', '#e5c07b', '#61afef', '#c678dd', '#56b6c2', '#ffffff'],
-  },
-  {
-    id: 'solarized', label: 'Solarized', group: 'herdr',
-    c: {
-      bg: '#002b36', bg2: '#00252f', surface: '#073642', line: '#2a4f5a', text: '#eee8d5', muted: '#93a1a1', dim: '#657b83',
-      accent: '#6c71c4', green: '#859900', coral: '#cb4b16', ochre: '#b58900', rose: '#dc322f', blue: '#268bd2', teal: '#2aa198', lav: '#93a1a1',
-      onAccent: '#fdf6e3',
-    },
-    ansi: ['#073642', '#dc322f', '#859900', '#b58900', '#268bd2', '#d33682', '#2aa198', '#eee8d5',
-      '#002b36', '#cb4b16', '#586e75', '#657b83', '#839496', '#6c71c4', '#93a1a1', '#fdf6e3'],
-  },
-  {
-    id: 'kanagawa', label: 'Kanagawa', group: 'herdr',
-    c: {
-      bg: '#1f1f28', bg2: '#16161d', surface: '#2a2a37', line: '#54546d', text: '#dcd7ba', muted: '#c8c093', dim: '#727169',
-      accent: '#957fb8', green: '#98bb6c', coral: '#ffa066', ochre: '#e6c384', rose: '#e46876', blue: '#7e9cd8', teal: '#7aa89f', lav: '#7fb4ca',
-    },
-    ansi: ['#090618', '#c34043', '#76946a', '#c0a36e', '#7e9cd8', '#957fb8', '#6a9589', '#c8c093',
-      '#727169', '#e82424', '#98bb6c', '#e6c384', '#7fb4ca', '#938aa9', '#7aa89f', '#dcd7ba'],
-  },
-  {
-    id: 'rose-pine', label: 'Rosé Pine', group: 'herdr',
-    c: {
-      bg: '#191724', bg2: '#1f1d2e', surface: '#21202e', line: '#403d52', text: '#e0def4', muted: '#908caa', dim: '#6e6a86',
-      accent: '#c4a7e7', green: '#9ccfd8', coral: '#ebbcba', ochre: '#f6c177', rose: '#eb6f92', blue: '#31748f', teal: '#9ccfd8', lav: '#ebbcba',
-    },
-    ansi: ['#26233a', '#eb6f92', '#31748f', '#f6c177', '#9ccfd8', '#c4a7e7', '#ebbcba', '#e0def4',
-      '#6e6a86', '#eb6f92', '#31748f', '#f6c177', '#9ccfd8', '#c4a7e7', '#ebbcba', '#e0def4'],
-  },
-  {
-    id: 'vesper', label: 'Vesper', group: 'herdr',
+    id: 'vesper', label: 'Vesper', group: 'classic',
     c: {
       bg: '#101010', bg2: '#141414', surface: '#1a1a1a', line: '#2e2e2e', text: '#ffffff', muted: '#a0a0a0', dim: '#707070',
       accent: '#ffc799', green: '#99ffe4', coral: '#ffc799', ochre: '#e6b99d', rose: '#ff8080', blue: '#aca1cf', teal: '#99ffe4', lav: '#b9aeda',
     },
     ansi: ['#101010', '#f5a191', '#90b99f', '#e6b99d', '#aca1cf', '#e29eca', '#ea83a5', '#a0a0a0',
       '#7e7e7e', '#ff8080', '#99ffe4', '#ffc799', '#b9aeda', '#ecaad6', '#f591b2', '#ffffff'],
+    // Light: warm paper; Vesper's peach becomes burnt orange #a2521b, its mint deep green #1b7563.
+    light: {
+      bg: '#f4f1ed', bg2: '#ebe7e2', surface: '#faf8f5', line: '#d3ccc3', text: '#161616', muted: '#5a5650', dim: '#736e67',
+      accent: '#a2521b', green: '#1b7563', coral: '#a2521b', ochre: '#8a5a33', rose: '#b83636', blue: '#5f4fa0', teal: '#1b7563',
+      lav: '#695aa3', onAccent: '#ffffff',
+    },
   },
   {
-    id: 'catppuccin-latte', label: 'Catppuccin Latte', group: 'herdr', light: true,
+    id: 'gruvbox', label: 'Gruvbox', group: 'classic',
     c: {
-      bg: '#eff1f5', bg2: '#e6e9ef', surface: '#e9ecf2', line: '#bcc0cc', text: '#4c4f69', muted: '#6c6f85', dim: '#8c8fa1',
-      accent: '#8839ef', green: '#40a02b', coral: '#fe640b', ochre: '#df8e1d', rose: '#d20f39', blue: '#1e66f5', teal: '#179299', lav: '#7287fd',
-      onAccent: '#ffffff',
+      bg: '#282828', bg2: '#1d2021', surface: '#32302f', line: '#504945', text: '#ebdbb2', muted: '#bdae93', dim: '#928374',
+      accent: '#fabd2f', green: '#b8bb26', coral: '#fe8019', ochre: '#fabd2f', rose: '#fb4934', blue: '#83a598', teal: '#8ec07c', lav: '#d3869b',
     },
-    ansi: ['#5c5f77', '#d20f39', '#40a02b', '#df8e1d', '#1e66f5', '#ea76cb', '#179299', '#acb0be',
-      '#6c6f85', '#d20f39', '#40a02b', '#df8e1d', '#1e66f5', '#ea76cb', '#179299', '#bcc0cc'],
+    ansi: ['#282828', '#cc241d', '#98971a', '#d79921', '#458588', '#b16286', '#689d6a', '#a89984',
+      '#928374', '#fb4934', '#b8bb26', '#fabd2f', '#83a598', '#d3869b', '#8ec07c', '#ebdbb2'],
+    // Light: Gruvbox's own light palette (bg0_soft, faded accents), yellow deepened to #8a5710.
+    light: {
+      bg: '#f2e5bc', bg2: '#ebdbb2', surface: '#f9f0cc', line: '#d5c4a1', text: '#3c3836', muted: '#5d544c', dim: '#7c6f64',
+      accent: '#8a5710', green: '#6a650b', coral: '#a03702', ochre: '#8a5710', rose: '#9d0006', blue: '#076678', teal: '#3c6f50',
+      lav: '#8f3f71', onAccent: '#fbf1c7',
+    },
   },
   {
-    // omp (v18.4.10), built-in light theme "light" (the default
-    // `theme.light`, packages/tui/src/theme/light.json): background
-    // #f8f8f8, widgets #ffffff, user messages #e8e8e8, borders #b0b0b0,
-    // text #3b3b3b, muted #6c6c6c, teal #5a8080, blue #547da7, success
-    // #588458, error #aa5555, warning #9a7326. The accent is the violet of
-    // the logo gradient (#9362f4): its pink is too pale on a light background.
-    id: 'omp-light', label: 'omp Light', group: 'agents', light: true,
+    id: 'kanagawa', label: 'Kanagawa', group: 'classic',
     c: {
-      bg: '#f8f8f8', bg2: '#efefef', surface: '#ffffff', surface2: '#e8e8e8', line: '#b0b0b0',
-      text: '#3b3b3b', muted: '#6c6c6c', dim: '#767676',
-      accent: '#9362f4', green: '#588458', coral: '#af5f00', ochre: '#9a7326', rose: '#aa5555', blue: '#547da7', teal: '#5a8080', lav: '#7e57c2',
-      onAccent: '#ffffff', working: '#547da7', blocked: '#9a7326', done: '#588458',
+      bg: '#1f1f28', bg2: '#16161d', surface: '#2a2a37', line: '#54546d', text: '#dcd7ba', muted: '#c8c093', dim: '#727169',
+      accent: '#957fb8', green: '#98bb6c', coral: '#ffa066', ochre: '#e6c384', rose: '#e46876', blue: '#7e9cd8', teal: '#7aa89f', lav: '#7fb4ca',
     },
-    ansi: ['#000000', '#cd3131', '#107c10', '#919514', '#0451a5', '#bc05bc', '#0598bc', '#555555',
-      '#666666', '#f14c4c', '#09a60a', '#919516', '#3b8eea', '#ce68ce', '#1a9cba', '#a5a5a5'],
+    ansi: ['#090618', '#c34043', '#76946a', '#c0a36e', '#7e9cd8', '#957fb8', '#6a9589', '#c8c093',
+      '#727169', '#e82424', '#98bb6c', '#e6c384', '#7fb4ca', '#938aa9', '#7aa89f', '#dcd7ba'],
+    // Light: Kanagawa Lotus (lotusWhite, lotusInk, lotusViolet), muted tones deepened for 4.5:1.
+    light: {
+      bg: '#f2ecbc', bg2: '#e7dba0', surface: '#f6f1cc', line: '#d7cc96', text: '#43436c', muted: '#5d5c66', dim: '#77766d',
+      accent: '#624c83', green: '#56703a', coral: '#9a5200', ochre: '#6c6638', rose: '#b6354a', blue: '#4d699b', teal: '#4b6f68',
+      lav: '#4f6a77', onAccent: '#f2ecbc',
+    },
   },
 ]
 
 export const DEFAULT_THEME = 'wherdr-titanium'
 export const themeById = (id: string | null | undefined) => THEMES.find(t => t.id === id)
 
-// Picker sections in THEME_GROUPS order; the default theme leads its section,
-// the others keep their THEMES order.
-export const themeSections = () => THEME_GROUPS.map(group => ({
-  group,
-  themes: THEMES.filter(t => t.group === group)
-    .sort((a, b) => Number(b.id === DEFAULT_THEME) - Number(a.id === DEFAULT_THEME)),
-}))
+// Picker sections in THEME_GROUPS order (the default theme leads THEMES), then the custom themes.
+export const themeSections = (custom: ThemeDef[] = []) => [
+  ...THEME_GROUPS.map(group => ({ group: group as ThemeGroup, themes: THEMES.filter(t => t.group === group) })),
+  ...(custom.length ? [{ group: 'custom' as ThemeGroup, themes: custom }] : []),
+]
+
+// The 2.x light themes, now the Light mode of a kept theme.
+const LIGHT_THEMES: Record<string, string> = { 'catppuccin-latte': DEFAULT_THEME, 'omp-light': 'omp' }
+export const legacyLightTheme = (v: string | null | undefined) => (v ? LIGHT_THEMES[v] : undefined)
 
 // Theme choice read from the device: an id that no longer exists (removed
 // theme) falls back to the default instead of showing a raw id in Settings.
+// A custom theme's id is kept: the list of custom themes may load later.
 export const storedThemeChoice = (v: string | null | undefined) =>
-  v && themeById(v) ? v : DEFAULT_THEME
+  themeById(v)?.id ?? legacyLightTheme(v) ?? (v?.startsWith('custom-') ? v : DEFAULT_THEME)
+
+export const THEME_MODES = ['dark', 'light', 'system'] as const
+export type ThemeMode = typeof THEME_MODES[number]
+export const storedThemeMode = (v: string | null | undefined): ThemeMode =>
+  (THEME_MODES as readonly string[]).includes(v ?? '') ? v as ThemeMode : 'dark'
+export const modeIsLight = (mode: ThemeMode, systemLight: boolean) => mode === 'light' || (mode === 'system' && systemLight)
+
+// Light terminals: the dark text first, the palette's own state colors, pale
+// grays for "white" (rarely used as text on a light background).
+export const lightAnsi = (c: ThemeColors) => {
+  const magenta = c.lav || c.accent
+  return [c.text, c.rose, c.green, c.ochre, c.blue, magenta, c.teal, c.dim,
+    c.muted, c.coral, c.green, c.ochre, c.accent, magenta, c.teal, c.line]
+}
+
+export const themeVariant = (th: ThemeDef, light: boolean): ThemeVariant =>
+  ({ id: th.id, label: th.label, light, c: light ? th.light : th.c, ansi: light ? lightAnsi(th.light) : th.ansi })
 
 // CSS variables for the selected palette; main.css holds Titanium's first paint.
-export function themeVars(th: ThemeDef): Record<string, string> {
+// Every variable is set, so a light palette never keeps one of its dark one's.
+export function themeVars(th: ThemeVariant): Record<string, string> {
   const c = th.c
   const mix = (a: string, p: number, b = 'var(--bg)') => `color-mix(in srgb, ${a} ${p}%, ${b})`
-  const vars = {
+  return {
     '--bg': c.bg, '--bg-2': c.bg2, '--surface': c.surface,
     '--surface-2': c.surface2 || mix('var(--text)', th.light ? 9 : 7),
     '--surface-3': mix('var(--text)', th.light ? 14 : 11),
@@ -358,33 +320,29 @@ export function themeVars(th: ThemeDef): Record<string, string> {
     // orange of the Claude Code crab, blue-violet of the Codex icon, magenta of the omp pi.
     '--claude': '#d77757', '--codex': '#7a9dff', '--omp': '#c467e0',
     '--selection': `color-mix(in srgb, ${c.selection || 'var(--accent)'} ${th.light ? 22 : 32}%, transparent)`,
-    ...(c.ring ? { '--ring-2': c.ring } : {}),
+    '--ring-2': c.ring || 'var(--accent)',
     '--shadow': th.light ? 'rgba(60, 60, 80, .16)' : 'rgba(0, 0, 0, .5)',
     'color-scheme': th.light ? 'light' : 'dark',
-    ...(c.inputLine ? { '--input-line': c.inputLine } : {}),
+    '--input-line': c.inputLine || 'var(--line)',
     '--working': c.working || c.blue,
     '--blocked': c.blocked || c.rose,
     '--done': c.done || c.teal,
     '--idle': c.done || c.teal,
   }
-  // Preserve the original herdr.dev palette for devices that explicitly chose it.
-  if (th.id === 'herdr') Object.assign(vars, {
-    '--surface-2': '#26262b', '--surface-3': '#2f2f36', '--line-soft': '#2a2a31',
-    '--line-strong': '#4a4a55', '--text-2': '#cdccd2', '--text-3': '#b0afb6',
-    '--text-strong': '#ffffff', '--code-bg': '#131316',
-  })
-  return vars
 }
 
-// Stylesheet of all themes: [data-theme="…"] { --bg: … }.
-export function themesCss(): string {
-  return THEMES.filter(t => t.id !== DEFAULT_THEME)
-    .map(t => `:root[data-theme="${t.id}"]{${Object.entries(themeVars(t)).map(([k, v]) => `${k}:${v}`).join(';')}}`)
-    .join('\n')
+// Stylesheet of all themes: [data-theme="…"] { --bg: … } for the dark palette,
+// [data-theme="…"][data-mode="light"] for the light one.
+export function themesCss(themes = THEMES): string {
+  const rule = (sel: string, v: ThemeVariant) => `:root${sel}{${Object.entries(themeVars(v)).map(([k, x]) => `${k}:${x}`).join(';')}}`
+  return themes.flatMap(t => [
+    ...(t.id === DEFAULT_THEME ? [] : [rule(`[data-theme="${t.id}"]`, themeVariant(t, false))]),
+    rule(`[data-theme="${t.id}"][data-mode="light"]`, themeVariant(t, true)),
+  ]).join('\n')
 }
 
 // xterm theme: theme background and text, ANSI palette.
-export function xtermTheme(th: ThemeDef) {
+export function xtermTheme(th: ThemeVariant) {
   const a = th.ansi
   const names = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white']
   const out: Record<string, string> = {
@@ -400,4 +358,30 @@ export function xtermTheme(th: ThemeDef) {
 function hexAlpha(hex: string, alpha: number) {
   const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
   return m ? `rgba(${parseInt(m[1]!, 16)},${parseInt(m[2]!, 16)},${parseInt(m[3]!, 16)},${alpha})` : hex
+}
+
+// WCAG relative luminance and contrast ratio of two #rrggbb colors.
+const luminance = (hex: string) => {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map(c => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+  return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!
+}
+export const contrast = (a: string, b: string) => {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (hi! + 0.05) / (lo! + 0.05)
+}
+// A palette's contrast below WCAG AA: body and muted text 4.5:1 on every
+// background, the accent and focus ring 3:1 (non-text), borders a visible step.
+export function contrastIssues(c: ThemeColors): string[] {
+  const found: string[] = []
+  const need = (what: string, ratio: number, min: number) => { if (ratio < min) found.push(`${what} ${ratio.toFixed(2)} < ${min}`) }
+  for (const bg of ['bg', 'bg2', 'surface'] as const) {
+    need(`text on ${bg}`, contrast(c.text, c[bg]), 4.5)
+    need(`muted on ${bg}`, contrast(c.muted, c[bg]), 4.5)
+  }
+  need('line on bg', contrast(c.line, c.bg), 1.3)
+  need('line on surface', contrast(c.line, c.surface), 1.2)
+  need('focus ring', contrast(c.ring || c.accent, c.bg), 3)
+  need('accent', contrast(c.accent, c.bg), 3)
+  return found
 }

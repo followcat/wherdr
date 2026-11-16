@@ -49,7 +49,7 @@ wherdr 3 is a new install, not an in-place update of v2. What changes, what v2 a
 
 - Herdr sessions, the Herdr plugin and its actions, and the relay of Herdr notifications.
 - The herdr-projects board: v3 has its own projects and board.
-- The npm and Homebrew packages, the curl installer, Docker and the one-tap update.
+- The npm and Homebrew packages, the Herdr plugin install (`herdr plugin install`), the curl installer, Docker and the one-tap update: v3 installs from source beside v2 (see *Install*), and updates with *Update with Alfred*.
 - Worktree management and the Changes view.
 - The model and effort pickers and the slash-command list.
 - Split panes: with hc, every terminal of a space is a tab; split and move stay in herdr-app.

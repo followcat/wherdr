@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { agentDescendants, coreShell, createCoreTranscripts, machineOfAddress, processInfo } from '../server/utils/coreTranscripts'
+import { agentDescendants, coreFailureKind, coreShell, createCoreTranscripts, machineOfAddress, processInfo } from '../server/utils/coreTranscripts'
+import { createShellFs } from '../server/utils/fsx'
 import { DEVIN_PROCESS_SCRIPT } from '../server/utils/devinProcesses'
 import { CoreError } from '../server/utils/core'
 import type { Pane } from '../shared/types'
@@ -99,6 +100,27 @@ describe('conversations of core terminals', () => {
     expect(await t2.chat({ id: 'p1', agent: 'claude', cwd }, {})).toEqual({ available: false, reason: 'not_found' })
   })
 
+  it('forgets what it kept for an agent once its terminal is gone (no growth with every run)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      let down = false
+      const flaky = fakeCore({ t9: { pid: 4242, argv: ['claude'], foreground: { pid: 4242, name: 'claude', argv: ['claude'], cwd } } })
+      const call: typeof flaky.call = (m, p) => (down ? Promise.reject(new CoreError('unavailable', 'x')) : flaky.call(m, p))
+      const p9 = pane('p9', 't9', 'claude', cwd)
+      const t9 = createCoreTranscripts({ call, pane: () => p9, localHome: home })
+      expect((await t9.locate(p9))?.session).toBe(SESSION)
+      down = true
+      vi.setSystemTime(Date.now() + 10_000)
+      // A failed lookup keeps the last file while the agent is there…
+      expect((await t9.locate(p9))?.session).toBe(SESSION)
+      // …and nothing once its terminal left the state.
+      await t9.observe([])
+      await new Promise(r => setTimeout(r, 0))
+      vi.setSystemTime(Date.now() + 10_000)
+      expect(await t9.locate(p9)).toBeNull()
+    } finally { vi.useRealTimers() }
+  })
+
   it('searches a conversation', async () => {
     const r = await t.search({ id: 'p1', agent: 'claude', cwd }, 'pong', Date.now() + 5000)
     expect(r.hits.length).toBeGreaterThan(0)
@@ -124,6 +146,10 @@ describe('remote shell', () => {
     expect((await slow('true')).code).toBe(124)
     const big = coreShell(async () => ({ code: 0, stdout: Buffer.from('abcdef').toString('base64'), truncated: true }), 'box')
     expect((await big('true', [], { maxBytes: 3 })).code).not.toBe(0)
+    // Core's reason survives (its message alone is generic): logs say why an online machine failed.
+    const refused = createShellFs(coreShell(async () => { throw new CoreError('unavailable', 'herdr-core rejected the request') }, 'box'))
+    const e = await refused.readFile('/x').catch((x: unknown) => x)
+    expect([(e as { code?: string }).code, coreFailureKind(e)]).toEqual(['unreachable', 'unavailable'])
   })
 })
 

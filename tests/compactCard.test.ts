@@ -1,15 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { CHOICE_GUARD_MS, choicesArmed, compactMeta, compactOpen, createListShown, readCompactList } from '../app/utils/compactCard'
-
-describe('compact list setting', () => {
-  it('is off when nothing was chosen in 2.0', () => {
-    expect(readCompactList(null)).toBe(false)
-  })
-  it('keeps a saved choice, off included', () => {
-    expect(readCompactList('1')).toBe(true)
-    expect(readCompactList('0')).toBe(false)
-  })
-})
+import { CHOICE_GUARD_MS, choicesArmed, compactMeta, compactOpen, createListShown } from '../app/utils/compactCard'
 
 describe('compact list card', () => {
   it('several tabs: dots per tab, no pane count', () => {

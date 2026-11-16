@@ -210,5 +210,9 @@ sh ~/wherdr-v3/src/scripts/install-v3-beside-v2.sh --uninstall --yes    # remove
 It removes only what the installer created, as listed in `~/wherdr-v3/install-manifest.json`:
 its `tailscale serve` entry, the `wherdr-v3` and `wherdr-v3-hc` services (stopping the hc session
 it started, and its state when the installer created it), the machines it added to an hc session
-it did not start, and the `~/wherdr-v3` folder. `--keep-data` keeps `~/wherdr-v3/data`. Pass the
-same `--dir` and `--name` as for the install. v2 is not touched.
+it did not start, and the `~/wherdr-v3` folder. An install with its own pm folders (another
+`--name`, see [A second v3 on one computer](installation.md#a-second-v3-on-one-computer)) also
+lists them with what they hold (*1 coordinators, 3 worktrees, 3 tasks*) and removes them, after
+`git worktree prune` in their clones; the default `~/.wherdr/pm` is never removed. `--keep-data`
+keeps `~/wherdr-v3/data` and those pm folders. Pass the same `--dir` and `--name` as for the
+install. v2 is not touched.

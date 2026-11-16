@@ -52,9 +52,10 @@ export function resetMachineBar() {
 export const projectTabs = syncedRef('projectTabs', readProjectTabs, v => JSON.stringify(v), { deep: true })
 
 // Each project's tab machines (utils/projectTabs.ts), by its fixed key.
-// Alfred is not in it: it shows on every tab.
+// Alfred is not in it: it shows on every tab. A workspace not pinned shows
+// under its tab group.
 export const projectTabPlaces = computed(() => new Map(projectCoordinators.value.map(c =>
-  [c.project, projectTabMachines({ machines: c.machines ?? [], paused: c.paused, busy: c.busy }, projectTabs.value[c.project], machineGroups.value)])))
+  [c.project, projectTabMachines({ machines: c.machines ?? [], paused: c.paused, busy: c.busy }, projectTabs.value[c.project] ?? c.workspace?.group, machineGroups.value)])))
 // The home tab picked shows this project (a project not loaded yet shows).
 export const projectOnBar = (project: string) => {
   const m = projectTabPlaces.value.get(project)

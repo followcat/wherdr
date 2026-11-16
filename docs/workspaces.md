@@ -13,6 +13,22 @@ project, with its own key, tasks and board, but **no coordinator of its own**.
 The workspace's coordinator handles it. A repository belongs to one workspace
 at most, and a workspace is never itself in a workspace.
 
+## Creating a workspace
+
+In Settings › Projects, *Add workspace* (next to *Add project*) asks for:
+
+- its **name** and **key** (proposed from the name, as for a project);
+- its **tab group** (optional): the home tab group it belongs to;
+- its **machines and root folders**: each machine it runs on, with the root
+  folder there under which the repositories are cloned (`~/work`). The first
+  one checked is its home; its root must exist there. Nothing is cloned for you.
+
+*Create* adds it and starts its coordinator, whose first reply runs
+`wherdr pm map list` and offers to build the [map](#the-workspace-map) from
+the repositories it found. A coordinator that does not start is said in the
+window; the workspace stays added. Alfred adds one too:
+`wherdr alfred workspace add` ([Alfred's command](alfred.md)).
+
 ## The workspace's coordinator
 
 The workspace's coordinator handles its members as its own projects: its
@@ -24,7 +40,9 @@ merges, settings and workflow stay with you. Its instructions (`AGENTS.md`)
 list the members.
 
 A member has **no coordinator**: none is started for it, and none shows in the
-sidebar. Every wake about a member's task goes to the workspace's coordinator,
+sidebar: the workspace's **row** does, under its tab group, with its
+coordinator's state, its members' tasks working and waiting for you, and its
+members' key badges ([Coordinators](home.md#coordinators)). Every wake about a member's task goes to the workspace's coordinator,
 its first line naming the task (`PAY-3: stuck: …`), and *Ask the coordinator*
 on a member's task asks it too. Its scheduled wakes' health summaries cover all the members' tasks.
 

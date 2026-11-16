@@ -158,8 +158,28 @@ The composer blurs itself on Esc. After a stop it gets the focus back.
 
 ### C6. Shortcuts are discoverable
 
-- Tooltips, menus and the help sheet read their key labels from the table (`shortcutKbds`).
+- Tooltips, menus and the help sheet read their key labels from the table with the user's
+  changes applied (`shortcutKbds` in `useShortcuts.ts`).
 - Nuxt UI's `UKbd` renders them per platform (⌘ ⌥ or Ctrl Alt).
+
+### C6b. Changing a shortcut (Settings › Shortcuts)
+
+> 2026-11-16: every shortcut of the table can be changed, per user.
+
+- Each row of the table has **Change**: the next keys pressed become its keys (Escape cancels;
+  no other shortcut fires while recording). A changed row shows its default, with **Reset**;
+  **Reset all** appears once something is changed.
+- The keys must include Ctrl, Alt or ⌘ (otherwise they would type), and cannot be a browser
+  essential (Mod+N, T, W, Q, R, L, C, V, X, Z, A, Mod+Shift+T or N, Mod+Tab, F5, F11, F12) nor
+  Escape, Tab or Enter. Keys already used by another shortcut are refused with its name: change
+  that one first. Outside macOS, Ctrl and Mod are the same key.
+- Reserved rows say so: Stop (Escape belongs to the agent and to windows), `?` for the help (kept
+  next to the changeable Mod+/), and the keys a component owns (composer, cards, terminal, panes).
+- Stored in the synced setting `shortcutBindings` (`{ id: { mods, key } }`), applied at once on
+  every device. A changed key is matched by name (letters by position when ⌥ or the layout types
+  another character); a chord on a shortcut that works from the terminal is caught before it.
+- Code: `parseBindings`, `applyBindings`, `bindingFromEvent`, `reservedReason`, `findConflict` in
+  `app/utils/shortcuts.ts`; the UI in `ShortcutsReference.vue` (`editable`).
 
 ### C7. One table, one matching function
 

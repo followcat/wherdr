@@ -256,13 +256,16 @@ describe('mechanical moves', () => {
 
 describe('what a task waits for', () => {
   it('reads the agent\'s report label, else a permission prompt; a login failure is told apart', async () => {
-    const { waitOf, isAuthFailure } = await import('../shared/pm/run')
+    const { waitOf, isAuthFailure, isLoginPrompt } = await import('../shared/pm/run')
     expect(waitOf({ labels: { 'wherdr.report': 'blocked:question' }, status: { state: 'idle' } })).toBe('question')
     expect(waitOf({ labels: { 'wherdr.report': 'blocked:auth' } })).toBe('auth')
     expect(waitOf({ status: { state: 'blocked' } })).toBe('permission')
     expect(waitOf({ labels: { 'wherdr.report': 'done' }, status: 'working' })).toBeUndefined()
     expect(isAuthFailure('Invalid API key · Please run /login')).toBe(true)
     expect(isAuthFailure('Error: ENOENT')).toBe(false)
+    expect(isLoginPrompt('Login reached its time limit · Please run /login')).toBe(true)
+    expect(isLoginPrompt('Your access token could not be refreshed. Please log out and sign in again.')).toBe(true)
+    expect(isLoginPrompt('Do you want to proceed? 1. Yes 2. No')).toBe(false)
   })
 
   it('syncWaits: a task waits with the kind its terminal shows, and works again once it is gone', async () => {

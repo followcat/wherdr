@@ -9,6 +9,7 @@ import { READY_SCRIPT, readyOf, readyRefusal, type Readiness } from '../../share
 import { reviewerPlan, shotStep, taskBase, taskPlan, workerPlan, type Task } from '../../shared/pm/run'
 import { cloneOn, type Project } from '../../shared/pm/project'
 import type { Template } from '../../shared/pm/workflow'
+import { pmDir } from './pmHome'
 
 const FRESH_MS = 10 * 60_000
 const last = new Map<string, Readiness & { refused?: string }>() // project|machine|visual → its last check
@@ -31,7 +32,7 @@ async function runCheck(deps: PmLaunchDeps, p: Project, t: Template | null, task
   const gh = !!t && !!as && taskPlan(t, as, p).some(s => s.action?.kind.startsWith('github.'))
   const base = as ? taskBase(as, p) ?? '' : p.base ?? ''
   const args = [clone, base, visual ? wherdrBase(machine, deps.origin) : '', gh ? '1' : '0', visual ? '1' : '0', ...programs]
-  const r = await exec(deps, on, `${PATH_SETUP}\n${READY_SCRIPT}`, args, undefined, 90).catch(() => ({ out: '' }))
+  const r = await exec(deps, on, `${PATH_SETUP}\nWHERDR_PM_DIR=${pmDir()}\n${READY_SCRIPT}`, args, undefined, 90).catch(() => ({ out: '' }))
   const ready = readyOf(r.out, origin.out.trim())
   const refused = readyRefusal(ready)
   last.set(`${p.key}|${machine}|${visual ? 1 : 0}`, { ...ready, ...(refused ? { refused } : {}) })

@@ -38,6 +38,20 @@ export const isWorkspace = (p: Pick<Project, 'kind'> | undefined) => p?.kind ===
 export const workspaceOf = (member: Pick<Project, 'workspace'>, list: Project[]) =>
   member.workspace ? list.find(p => p.key === member.workspace && isWorkspace(p)) : undefined
 
+// The first message of a new workspace's coordinator: it offers to build the map.
+export const WORKSPACE_FIRST = 'You were just started on a new workspace. Run `wherdr pm map list` now, then in this first reply offer the user to build the map from it: list the repositories it found, and write a line (`map set`) for each one they confirm.'
+
+// A new workspace (Settings › Projects › Add workspace, `wherdr alfred workspace
+// add`): roots, the clone root on each machine, its home machine first.
+export interface WorkspaceForm { key: string, name?: string, group?: string, roots: [machine: string, root: string][] }
+export function workspaceInput(f: WorkspaceForm) {
+  const [[machine, path] = ['', ''], ...others] = f.roots
+  return {
+    key: f.key, ...(f.name ? { name: f.name } : {}), machine, path, kind: 'workspace' as const, ...(f.group ? { group: f.group } : {}),
+    ...(others.length ? { shared: { machines: others.map(([m]) => m), clones: Object.fromEntries(others) } } : {}),
+  }
+}
+
 // A workspace's members (none for any other project).
 export const membersOf = (key: string, list: Project[]) =>
   isWorkspace(list.find(p => p.key === key)) ? list.filter(p => p.workspace === key) : []

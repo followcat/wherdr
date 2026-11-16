@@ -13,6 +13,7 @@ import { dueText } from '../shared/pm/advance'
 import { startFileWaits } from '../server/utils/pmFiles'
 import { startHeld } from '../server/utils/pmMechanic'
 import { resumeInterrupted } from '../server/utils/pmRecovery'
+import { loginRestartText } from '../shared/pm/recovery'
 import { CoreError } from '../server/utils/core'
 
 const template: Template = {
@@ -302,6 +303,34 @@ describe('startTask', () => {
     expect([t.held, t.waiting]).toEqual([undefined, undefined])
     expect(t.log!.at(-1)!.text).toBe(`started after incident ${i!.id}: ${machine} is back`)
     expect(runs).toHaveLength(1)
+    expect(runs[0]!.line).not.toContain('Your login was renewed')
+  })
+
+  it('agents on the login prompt: one login incident, not a permission; restarted one by one once the credentials file changes', async () => {
+    let mtime = 0
+    const { store, deps, runs } = await setup({ screen: 'Login reached its time limit · Please run /login', exec: s => (s.includes('.credentials.json') ? String(mtime) : undefined) })
+    const { syncWaits } = await import('../server/utils/pmMechanic')
+    await store.addTask({ project: 'WEB', title: 'Other', type: 'simple' })
+    await startTask(deps, 'WEB-1')
+    await startTask(deps, 'WEB-2')
+    const call = deps.call
+    deps.call = (async (m: string, p: Record<string, unknown>) => (m === 'terminal.list' ? { terminals: (await store.runs()).map(r => ({ address: r.terminal, status: { state: 'blocked' } })) } : m === 'terminal.kill' ? {} : call(m, p))) as never
+    await syncWaits(deps)
+    const [i, more] = await store.incidents()
+    expect(more).toBeUndefined()
+    expect(i).toMatchObject({ cause: 'login', program: 'claude', tasks: ['WEB-1', 'WEB-2'] })
+    for (const id of ['WEB-1', 'WEB-2']) expect(await store.task(id)).toMatchObject({ state: 'waiting', waiting: expect.stringMatching(/^Waiting for login: Claude login expired on m\d+: wherdr resumes it once the login is renewed$/), recovery: { cause: 'login', waits: true } })
+    expect((await store.task('WEB-1'))!.waitKind).toBeUndefined()
+    expect((await resumeInterrupted(deps)).resumed).toEqual([])
+    mtime = Math.ceil(Date.now() / 1000) + 1
+    expect((await resumeInterrupted(deps)).resumed).toEqual(['WEB-1'])
+    expect((await resumeInterrupted(deps)).resumed).toEqual(['WEB-2'])
+    expect((await resumeInterrupted(deps)).resumed).toEqual([])
+    expect(runs).toHaveLength(4)
+    // Each restarted worker is told once to go on: its resumed conversation's first message, in its log too.
+    const said = loginRestartText('worker')
+    for (const r of runs.slice(2)) expect(r.line).toMatch(new RegExp(`'--resume' '[^']+' '${said}'$`))
+    expect((await store.task('WEB-2'))!.log!.at(-1)!.text).toMatch(new RegExp(`^resumed after incident ${i!.id} \\(login\\).*; told it: ${said}$`))
   })
 
   it('a start once its files are free, its machine out of reach midway (herdr-core answers unreachable): held, started by the next tick once it is back', async () => {

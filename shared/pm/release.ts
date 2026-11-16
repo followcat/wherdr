@@ -1,11 +1,14 @@
 // A task that waits for the user, or waits in the merge queue with no work
 // handed to its agent, lets its agents go: once they have been idle
-// RELEASE_IDLE_MS, the engine ends them (worktree, branch and files stay) and
+// RELEASE_IDLE_MS (RELEASE_TALK_MS after the user's last message to one of
+// them, never while its conversation is open), the engine ends them (worktree, branch and files stay) and
 // starts the worker (or the reviewer) again in the same worktree when the task
 // needs it. Only agents that hold a step under way count against a machine's
 // cap. Pure: server/utils/pmRelease.ts reads the terminals and ends the agents.
 import type { Run, Task } from './run'
-import type { AgentWork, PlannedStep, StepState } from './steps'
+import { durationMs, type AgentWork, type PlannedStep, type StepState } from './steps'
+import { DONE_CMD } from './advance'
+import { stallTurn, type Stall } from './blocked'
 import { isRoomHold, roomShort } from './placement'
 
 export const RELEASE_IDLE_MS = 10 * 60_000
@@ -31,7 +34,28 @@ export const waitsInQueue = (t: Task) => !!t.queue && !!t.step?.started && !t.st
 export const idleSince = (prev: number | undefined, task: Task, busy: boolean, now: number) =>
   !(waitsForUser(task) || waitsInQueue(task)) || busy ? undefined : prev ?? now
 
-export const releaseDue = (since: number | undefined, now: number) => since !== undefined && now - since >= RELEASE_IDLE_MS
+// The user's conversation with one of the task's agents (in memory, pmTalk.ts):
+// their last message to it, from the chat or its terminal; open: on screen in wherdr now.
+export interface Talk { at?: number, open?: boolean }
+export const RELEASE_TALK_MS = 30 * 60_000
+
+// Released now? 'idle': idle long enough; 'cut': only because a task waiting
+// to start is short of memory on the agents' machine (short), which cuts the
+// grace of a conversation. false: kept.
+export function releaseDue(since: number | undefined, now: number, talk: Talk = {}, short = false): false | 'idle' | 'cut' {
+  if (since === undefined || now - since < RELEASE_IDLE_MS) return false
+  const kept = !!talk.open || (talk.at !== undefined && now - talk.at < RELEASE_TALK_MS)
+  return !kept ? 'idle' : short ? 'cut' : false
+}
+
+// A task to do that waits for room (placement.ts) on that machine, or on any:
+// memory goes to it before a conversation's grace.
+export const roomWanted = (tasks: Pick<Task, 'state' | 'held' | 'machine'>[], machine: string) =>
+  tasks.some(t => t.state === 'todo' && !!t.held && isRoomHold(t.held) && (t.machine === undefined || t.machine === machine))
+
+// The first message of a released worker's conversation, taken up again when
+// the user opens it (at: when it was released, as the user's clock says it).
+export const restartedLine = (at: string) => `Restarted: it was released to free memory at ${at}. Wait for the user's next message.`
 
 // The worker the engine released: started again when the task needs it.
 export const wasReleased = (r?: Pick<Run, 'state' | 'endedBy'>) => r?.state === 'ended' && r.endedBy === 'released'
@@ -116,6 +140,33 @@ export const retriesAction = (plan: PlannedStep[], s: StepState) =>
 export function handFix(plan: PlannedStep[], s: StepState | undefined, kind: string, now: number): StepState | undefined {
   if (!s?.started || s.done || s.acting || plan[s.at]?.ends !== 'action' || s.yourTurn?.reason !== 'action') return
   return handToAgent(s, `fix ${kind}`, undefined, now)
+}
+
+// Ask the agent to fix it (the user's button): what blocks a started task that its
+// worker could fix, the block's exact reason; a failed step action, a step past its
+// time limit, a stalled or ended worker, red CI with no new push (stall: stallOf,
+// as the board reads it). Undefined: nothing for it (a question, a step of the
+// user's, a decision, a stop, work already handed to it).
+export function fixableBlock(t: Pick<Task, 'state' | 'waiting' | 'waitKind' | 'step' | 'stopped'>, stall?: Stall): string | undefined {
+  const s = t.step
+  if (t.stopped || !s?.started || s.done || s.acting || s.agent) return
+  if (s.yourTurn) return s.yourTurn.reason === 'action' ? s.yourTurn.error || s.yourTurn.badge : s.yourTurn.reason === 'timeout' ? s.yourTurn.badge : undefined
+  if (t.state === 'waiting' && !t.waitKind) return t.waiting || 'Waiting'
+  if (stall) return stallTurn(stall)
+}
+
+// What the worker is told: the block's reason, fix it or ask the user one question.
+export const fixAskText = (reason: string) => `The user asks you to fix what blocks this task: ${reason}
+
+Fix it yourself if you can (merge the base and solve the conflict, fix the CI, push), then say you are done: ${DONE_CMD}
+If it needs a decision or access only the user has, ask the user one clear question with choices.`
+
+// The step once the fix is asked: a failed action handed over (tried again once fixed,
+// back to the user if not, fixWatch); a step past its time limit gets its time again.
+export function fixAskedStep(plan: PlannedStep[], s: StepState, now: number): StepState {
+  const timeout = plan[s.at]?.timeout
+  return handFix(plan, s, 'block', now)
+    ?? (s.yourTurn?.reason === 'timeout' ? { ...s, yourTurn: undefined, deadline: timeout ? now + durationMs(timeout) : undefined } : s)
 }
 
 // How long the agent fixing a failed action may sit idle, its report not in,

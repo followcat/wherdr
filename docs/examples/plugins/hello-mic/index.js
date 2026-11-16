@@ -1,4 +1,4 @@
-// examples/plugins/hello-mic/src/index.ts
+// docs/examples/plugins/hello-mic/src/index.ts
 var SAMPLE = "This is a sample dictated text.";
 var STYLE_ID = "hello-mic-style";
 var SELECTOR = '[data-wherdr="composer-actions"]';

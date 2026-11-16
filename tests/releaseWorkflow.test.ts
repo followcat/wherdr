@@ -46,7 +46,7 @@ esac
         let mutations = ''
         try { mutations = readFileSync(path.join(home, 'mutations'), 'utf8') } catch {}
         if (!scenario.ok) expect(mutations).toBe('')
-        else expect(mutations).toBe('release edit v3.0.0 --repo example/wherdr --draft=false --latest=false\n')
+        else expect(mutations).toBe('release edit v3.0.0 --repo example/wherdr --draft=false --latest=true\n')
         expect(mutations).not.toMatch(/release create|generate-notes/)
       }
     } finally { rmSync(home, { recursive: true, force: true }) }
@@ -84,7 +84,7 @@ it('publishes a 3.x tag as a GitHub release only: no archive, npm or Homebrew', 
   expect(workflow).toContain("if: startsWith(github.ref, 'refs/tags/v3.')")
   const code = workflow.split('\n').filter(line => !line.trim().startsWith('#')).join('\n')
   expect(code).not.toMatch(/npm (ci|pack|publish)|\.tgz|release upload|workflow run|npm\.yml|homebrew/i)
-  expect(workflow).toContain('--latest=false')
+  expect(workflow).toContain('--latest=true')
   // npm.yml stays for 2.x recovery runs, started by hand only.
   const on = npmWorkflow.split('\non:\n')[1]!.split('\nenv:\n')[0]!
   expect(on.split('\n')[0]).toBe('  workflow_dispatch:')

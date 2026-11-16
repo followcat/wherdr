@@ -17,8 +17,10 @@ const fake = vi.hoisted(() => {
   return synth
 })
 
-const { readAloudEngine, readAloudVoice, speakingId } = await import('~/composables/useReadAloud')
+const { initialEngine, readAloudEngine, readAloudVoice, speakingId } = await import('~/composables/useReadAloud')
 const ReadAloudButton = (await import('~/components/ReadAloudButton.vue')).default
+// Loaded with nothing saved: read aloud starts off.
+const engineAtLoad = readAloudEngine.value
 
 beforeEach(() => {
   fake.cancel()
@@ -56,8 +58,13 @@ describe('ReadAloudButton', () => {
     expect(b.text()).toContain('Play')
   })
 
-  it('is hidden when read aloud is off', async () => {
-    readAloudEngine.value = 'off'
+  it('is off with no saved choice, so no Play shows; a saved voice stays on', async () => {
+    expect(engineAtLoad).toBe('off')
+    expect(initialEngine(null, true, true)).toBe('off')
+    expect(initialEngine('device', true, true)).toBe('device')
+    expect(initialEngine('wherdr', true, true)).toBe('wherdr')
+    expect(initialEngine('device', false, true)).toBe('off')
+    readAloudEngine.value = engineAtLoad
     const w = await mountSuspended(ReadAloudButton, { props: { id: 'p1:a1', text: 'Hi' } })
     expect(w.find('[data-testid="read-aloud"]').exists()).toBe(false)
   })

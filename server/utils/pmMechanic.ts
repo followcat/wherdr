@@ -12,7 +12,7 @@ import { MAIN } from '../../shared/pm/coordinator'
 import { inMergeQueue, mergeAfterWake, mergeOrder, ordinal, queueOut } from '../../shared/pm/mergeQueue'
 import { awaitsHolder } from '../../shared/pm/blocked'
 import { caughtUpSettled, onEvent, reviewedCommit, waitsToMerge, type PlannedStep, type StepEvent } from '../../shared/pm/steps'
-import { LABEL, linkedPr, prLink, taskPlan, trustKeys, waitOf, type LabelledTerminal, type Run, type Task } from '../../shared/pm/run'
+import { LABEL, isLoginPrompt, linkedPr, prLink, taskPlan, trustKeys, waitOf, type LabelledTerminal, type Run, type Task } from '../../shared/pm/run'
 import { PATH_SETUP } from './coreCreate'
 import { HerdrError } from './herdr'
 import { CoreError } from './core'
@@ -27,7 +27,7 @@ import { paceOf, pilotOf, placeFor, slotsOf } from './pmPlace'
 import { coordinatorKey } from '../../shared/pm/workspace'
 import { CHAIN_WAIT, chainState } from '../../shared/pm/advance'
 import { isResumeWait, resumeWait } from '../../shared/pm/recovery'
-import { resumeInterrupted, wakeIncidents } from './pmRecovery'
+import { loginExpired, resumeInterrupted, wakeIncidents } from './pmRecovery'
 import { advanceTick } from './pmAdvance'
 import { forgetMemory } from './pmMemory'
 import { samplePeaks } from './pmPeaks'
@@ -75,6 +75,11 @@ export async function syncWaits(deps: PmLaunchDeps) {
     const term = run?.terminal && run.state !== 'ended' ? terminals.find(x => x.address === run.terminal) : undefined
     if (!term || term.state === 'finished') continue
     const kind = waitOf(term)
+    // A login prompt, not a permission: one login incident for the machine's account, the task waits for the engine.
+    if (kind === 'permission' && (task.state === 'working' || task.waitKind === 'permission')) {
+      const screen = String((await deps.call<{ text?: string }>('terminal.read', { terminal: run!.terminal, lines: 10 }, 3000).catch(() => null))?.text || '')
+      if (isLoginPrompt(`${term.status && typeof term.status === 'object' ? term.status.msg ?? '' : ''}\n${screen}`)) { await loginExpired(deps, task, run!); continue }
+    }
     // What herdr-core says is asked ("approve Bash: npm test"), else the kind.
     const msg = typeof term.status === 'object' ? term.status?.msg?.trim().slice(0, 300) : undefined
     // A question carries its text, for the board and the coordinator's wake.

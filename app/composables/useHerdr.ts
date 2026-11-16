@@ -23,12 +23,8 @@ import { keepIfSame } from '~/utils/keepIfSame'
 import { migrateContentWidth } from '~/utils/contentWidth'
 import { readUiScale, type UiScale } from '~/utils/uiScale'
 import { readQuotaDisplay } from '~/utils/quotas'
-import { readShowShells } from '~/utils/terminalVisibility'
-import { COMPACT_LIST_KEY, LEGACY_COMPACT_LIST_KEY, readCompactList } from '~/utils/compactCard'
 import { paneFallback } from '~/utils/viewMode'
 import { menuAsSheet } from '~/utils/menuRoute'
-import { DEFAULT_QUOTE_MODE, QUOTE_MODE_KEY, migrateQuoteMode, type QuoteMode } from '~/utils/quoteTokens'
-import { parseReplyStyle } from '~/utils/questionReply'
 import { DICTATION_KEY, parseDictationChoice } from '~/utils/dictation/compose'
 import { ENGINES } from '~/utils/dictation/registry'
 import { flag, settingsSync, syncedRef } from './useSyncedSettings'
@@ -80,18 +76,15 @@ export const socketWake = ref(0)
 // Display preferences without anything specific to the device are kept on the
 // server and follow the user (shared/settings.ts, useSyncedSettings.ts); the
 // others stay on this device.
-export const showShells = syncedRef('showShells', readShowShells, flag.write)
 export const showCounters = syncedRef('showCounters', flag.read(true), flag.write)
 export const showQuotas = syncedRef('showQuotas', flag.read(true), flag.write)
 
-// Compact list: one line per card (sidebar on a computer, home list on the phone).
-// Read before the first render, so the list never changes density after it.
-// Off by default; the 1.x value is dropped (see utils/compactCard.ts).
-export const compactList = syncedRef(COMPACT_LIST_KEY, readCompactList, flag.write)
 if (import.meta.client) {
-  try { localStorage.removeItem(LEGACY_COMPACT_LIST_KEY) } catch { /* storage unavailable */ }
-  // Leftover of the removed paste journal.
-  try { localStorage.removeItem('pasteJournalEnabled') } catch { /* storage unavailable */ }
+  // Leftovers of removed settings: the paste journal, the compact list
+  // (1.x and 2.x keys) and Show terminals.
+  for (const key of ['pasteJournalEnabled', 'compactList', 'compactListV2', 'showShells']) {
+    try { localStorage.removeItem(key) } catch { /* storage unavailable */ }
+  }
 }
 export const autoReorderReady = syncedRef('autoReorderReady', flag.read(true), flag.write)
 // Sorting of Ready (see shared/spaces.ts sortReady).
@@ -134,18 +127,6 @@ if (import.meta.client) {
 export const typingSpeed = computed(() => effectiveTypingSpeed(typewriterSpeed.value, reducedMotion.value))
 export const typewriterActive = computed(() => typingSpeed.value !== 'off')
 export const encryptedActive = computed(() => encryptedTextActive(typewriterSpeed.value, encryptedText.value, reducedMotion.value))
-// Quoted replies (utils/quoteTokens.ts): one mode for this device, tokens in
-// the native field by default.
-function savedQuoteMode(): QuoteMode {
-  if (!import.meta.client) return DEFAULT_QUOTE_MODE
-  try { return migrateQuoteMode(localStorage) }
-  catch { return DEFAULT_QUOTE_MODE }
-}
-export const quoteMode = ref(savedQuoteMode())
-watch(quoteMode, v => ls.set(QUOTE_MODE_KEY, v))
-// How the questions and the points of an agent reply offer to be quoted
-// (utils/questionReply.ts): an icon by default.
-export const replyStyle = syncedRef('replyStyle', parseReplyStyle, v => v)
 // Dictation engine of this device (Settings › Conversation): off by default.
 export const dictationEngine = ref(parseDictationChoice(ls.get(DICTATION_KEY), Object.keys(ENGINES)))
 watch(dictationEngine, v => ls.set(DICTATION_KEY, v))

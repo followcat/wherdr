@@ -162,6 +162,55 @@ describe('files of a remote machine (shell)', () => {
   })
 })
 
+// herdr-core's machine.exec keeps only the first part of a command's output
+// (8 MB), flagged `truncated`; with `maxBytes` the reader refuses a cut output
+// (server/utils/coreTranscripts.ts). Here the cap is 4 KB.
+describe('remote transcript larger than one exec output', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'hw-capped-'))
+  afterAll(() => rmSync(home, { recursive: true, force: true }))
+  const CAP = 4096
+  const cappedSh: ShellExec = async (script, args = [], opts = {}) => {
+    const r = await localSh(script, args, opts)
+    const truncated = r.stdout.length > CAP
+    if (opts.maxBytes && truncated) return { code: 125, stdout: Buffer.alloc(0), stderr: 'output too large' }
+    return { ...r, stdout: r.stdout.subarray(0, CAP) }
+  }
+
+  it('keeps the whole turn after a screenshot line bigger than the cap', async () => {
+    // A turn as Claude Code writes it: a reply, a screenshot whose result is a
+    // multi-KB line, then a narration (thinking block, shown "· summary" in the
+    // terminal), more tool calls and the final answer.
+    let n = 0
+    const at = () => new Date(Date.UTC(2026, 0, 1, 13, 37, n++)).toISOString()
+    const say = (part: object) => JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [part] }, timestamp: at() })
+    const result = (id: string, content: unknown) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] }, timestamp: at() })
+    const shot = [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A'.repeat(6000) } }]
+    const lines = [
+      JSON.stringify({ type: 'user', message: { role: 'user', content: 'Make the background move' }, timestamp: at() }),
+      say({ type: 'text', text: 'I check that the background really moves.' }),
+      say({ type: 'tool_use', id: 't1', name: 'mcp__chrome__screenshot', input: {} }),
+      result('t1', shot),
+      say({ type: 'thinking', thinking: 'The background looks right. I add a reduced-motion test.', signature: 'sig' }),
+      say({ type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'npm test' } }),
+      result('t2', 'ok'),
+      say({ type: 'text', text: 'All pass. Committing and pushing.' }),
+      say({ type: 'text', text: 'Done: the background moves.' }),
+    ]
+    const dir = path.join(home, '.claude/projects/-x')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(path.join(dir, 'cap-1.jsonl'), lines.join('\n') + '\n')
+    const t = createTranscripts({ home, herdr: async () => { throw new Error('no Herdr') }, fs: createShellFs(cappedSh, { statTtlMs: 0, readChunk: 1000 }) })
+    const pane = { id: '12345678~w1:p1', agent: 'claude', cwd: '/x', agentSession: 'cap-1' }
+    const want = ['Make the background move', 'I check that the background really moves.', 'mcp__chrome__screenshot',
+      'The background looks right. I add a reduced-motion test.', 'npm test', 'All pass. Committing and pushing.', 'Done: the background moves.']
+    // First load, then the next poll from its start: the same whole turn.
+    const first = await t.chat(pane, {})
+    expect(first.items!.map(i => i.role === 'tool' ? i.name === 'Bash' ? i.text : i.name : i.text)).toEqual(want)
+    const next = await t.chat(pane, { from: first.start })
+    expect(next.items!.map(i => i.role === 'tool' ? i.name === 'Bash' ? i.text : i.name : i.text)).toEqual(want)
+  })
+})
+
 describe('remote missing paths without shell diagnostic matching', () => {
   const home = mkdtempSync(path.join(tmpdir(), 'hw-missing-'))
   afterAll(() => rmSync(home, { recursive: true, force: true }))

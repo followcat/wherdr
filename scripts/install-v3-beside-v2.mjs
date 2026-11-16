@@ -32,7 +32,8 @@ const HELP = `Usage: install-v3-beside-v2.sh [--yes] [options]
 
 Without --yes, prints the plan and changes nothing (--dry-run says so explicitly).
   --yes                 apply the plan
-  --uninstall           remove what this installer created (with --yes; --keep-data keeps <dir>/data)
+  --uninstall           remove what this installer created (with --yes; --keep-data keeps <dir>/data
+                        and the install's pm folders)
   --json                one JSON summary on stdout
   --dir <dir>           v3 folder (default ~/wherdr-v3: src/, data/, update.sh)
   --name <name>         service name (default wherdr-v3; the hc service is <name>-hc)
@@ -48,7 +49,7 @@ Without --yes, prints the plan and changes nothing (--dry-run says so explicitly
                         v3's service gets it: Alfred offers the projects of that board at its first start.`
 
 export function parseArgs(argv, home = os.homedir()) {
-  const o = { dir: path.join(home, 'wherdr-v3'), name: 'wherdr-v3', port: '7684', httpsPort: null, hcSession: 'default', repo: REPO, branch: BRANCH }
+  const o = { dir: path.join(home, DEFAULT_NAME), name: DEFAULT_NAME, port: '7684', httpsPort: null, hcSession: 'default', repo: REPO, branch: BRANCH }
   const flags = { '--yes': 'yes', '--dry-run': 'dryRun', '--json': 'json', '--uninstall': 'uninstall', '--keep-data': 'keepData', '--no-tailscale': 'noTailscale', '--skip-import': 'skipImport', '--help': 'help', '-h': 'help' }
   const values = { '--dir': 'dir', '--name': 'name', '--port': 'port', '--https-port': 'httpsPort', '--hc-session': 'hcSession', '--hc-bin': 'hcBin', '--repo': 'repo', '--branch': 'branch', '--v2-dir': 'v2Dir', '--v2-unit': 'unit', '--herdr-projects': 'herdrProjects', '--herdr-bin': 'herdrBin', '--auto-deploy': 'deploySource' }
   for (let i = 0; i < argv.length; i++) {
@@ -152,7 +153,15 @@ export function v2Board({ home, given = null, kept = null, v2 = {} }) {
   return { dir, dataDir, env, projects, from: given ? '--herdr-projects' : kept ? 'the previous run' : Object.keys(env).length ? "v2's service" : null }
 }
 
-export function v3Unit({ node, dir, socket, port, hcService, appUrl = null, protect = PROTECT_DEFAULTS, board = {} }) {
+// The pm folders (coordinators/, worktrees/, tasks/) under each machine's home,
+// relative to it (server/utils/pmHome.ts): null keeps ~/.wherdr/pm, the default
+// install's. Another --name gets its own, so a test install beside the real one
+// never rewrites its coordinators' role files. A previous run's choice is kept
+// (an install made before this has none: it keeps ~/.wherdr/pm, nothing moves).
+export const DEFAULT_NAME = 'wherdr-v3'
+export const installPmDir = (name, manifest) => manifest ? manifest.pmDir ?? null : name === DEFAULT_NAME ? null : `.wherdr/pm-${name}`
+
+export function v3Unit({ node, dir, socket, port, hcService, appUrl = null, protect = PROTECT_DEFAULTS, board = {}, pmDir = null }) {
   return `# wherdr v3 beside v2 (install-v3-beside-v2). Remove with: install-v3-beside-v2.sh --uninstall --yes
 [Unit]
 Description=wherdr v3 (herdr-core), beside wherdr v2
@@ -161,7 +170,7 @@ ${hcService ? `Wants=${hcService}\n` : ''}
 [Service]
 Type=simple
 WorkingDirectory=${dir}/src
-${['NODE_ENV=production', `HC_SOCKET=${socket}`, 'HOST=127.0.0.1', `PORT=${port}`, `DATA_DIR=${dir}/data`, ...(appUrl ? [`APP_URL=${appUrl}`] : []), ...Object.entries(board).map(([k, v]) => `${k}=${v}`)].map(e => `Environment=${sq(e)}`).join('\n')}
+${['NODE_ENV=production', `HC_SOCKET=${socket}`, 'HOST=127.0.0.1', `PORT=${port}`, `DATA_DIR=${dir}/data`, ...(appUrl ? [`APP_URL=${appUrl}`] : []), ...(pmDir ? [`WHERDR_PM_DIR=${pmDir}`] : []), ...Object.entries(board).map(([k, v]) => `${k}=${v}`)].map(e => `Environment=${sq(e)}`).join('\n')}
 ${UNSET}
 ExecStart=${sq(node)} .output/server/index.mjs
 ${Object.keys(PROTECT_DEFAULTS).map(k => `${k}=${protect[k]}`).join('\n')}
@@ -376,6 +385,8 @@ export async function main(argv = process.argv.slice(2), io = {}) {
     const protect = unitProtections(v2.unit && !v2.unit.endsWith('.plist') ? fs.readFileSync(v2.unit, 'utf8') : '')
     const protectText = Object.keys(PROTECT_DEFAULTS).map(k => `${k}=${protect[k]}`).join(' ')
     const board = v2Board({ home, given: o.herdrProjects, kept: mine.board, v2: v2.herdrProjects })
+    const pmDir = installPmDir(name, manifest)
+    summary.pmDir = pmDir
     summary.board = { dir: board.dir, dataDir: board.dataDir, env: board.env, projects: board.projects }
 
     // 4. The plan.
@@ -391,6 +402,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
       o.skipImport || !v2.found ? 'no import' : `import from v2 into ${o.dir}/data (v2 is only read)`,
       `${running ? 'restart' : 'start'} ${name}.service on ${target} (DATA_DIR ${o.dir}/data${appUrl ? `, APP_URL ${appUrl}` : ''}; ${protectText} from ${protect.from})`,
       !ts ? 'no tailscale serve (tailscale not found or --no-tailscale)' : serveDone ? `keep tailscale serve https:${httpsPort}` : `tailscale serve --bg --https=${httpsPort} ${target} (added beside the existing entries${v2.tailscale.entries.length ? `, which use ${[...new Set(v2.tailscale.entries.map(e => e.https))].join(', ')}` : ''})`,
+      pmDir ? `pm folders (coordinators, worktrees, tasks): ~/${pmDir} on each machine, this install's own (WHERDR_PM_DIR)` : 'pm folders (coordinators, worktrees, tasks): ~/.wherdr/pm on each machine',
       `write ${o.dir}/update.sh`,
       ...(autoDeploy ? [`auto-deploy: ${name}-deploy.timer runs ${o.dir}/${DEPLOY_SCRIPT} every 3 min (log: ${o.dir}/deploy/deploy.log)`] : []),
     ]
@@ -413,7 +425,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
     if (!o.yes) { say('Dry run: nothing changed. Run again with --yes to apply.'); return EXIT.ok }
 
     // 5. Apply. The manifest is saved after each step, so --uninstall always knows what to remove.
-    const m = { v: 1, createdDir: mine.createdDir ?? !fs.existsSync(o.dir), name, port: o.port, units: mine.units || [], machines: mine.machines || [], hcSession: o.hcSession, ...mine, board: board.env }
+    const m = { v: 1, createdDir: mine.createdDir ?? !fs.existsSync(o.dir), name, port: o.port, units: mine.units || [], machines: mine.machines || [], hcSession: o.hcSession, ...mine, board: board.env, pmDir }
     save(m)
     if (ownHc) {
       if (m.hcStateCreated === undefined) m.hcStateCreated = !fs.existsSync(hcState(o.hcSession))
@@ -468,7 +480,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
     }
 
     fs.mkdirSync(path.join(o.dir, 'data'), { recursive: true, mode: 0o700 })
-    fs.writeFileSync(path.join(unitDir, `${name}.service`), v3Unit({ node: process.execPath, dir: o.dir, socket, port: o.port, hcService: ownHc ? `${hcName}.service` : null, appUrl, protect, board: board.env }))
+    fs.writeFileSync(path.join(unitDir, `${name}.service`), v3Unit({ node: process.execPath, dir: o.dir, socket, port: o.port, hcService: ownHc ? `${hcName}.service` : null, appUrl, protect, board: board.env, pmDir }))
     if (!m.units.includes(name)) m.units.push(name)
     save(m)
     sctl('daemon-reload')
@@ -522,11 +534,14 @@ export async function main(argv = process.argv.slice(2), io = {}) {
   async function uninstall() {
     if (!manifest) { step('SKIP', `nothing to remove: no ${manifestFile}`); return }
     const m = manifest
+    const pm = /^\.wherdr\/pm-[\w.-]+$/.test(m.pmDir || '') && !o.keepData ? path.join(home, m.pmDir) : null
+    const pmHas = pm && fs.existsSync(pm) ? ['coordinators', 'worktrees', 'tasks'].map(d => { try { return `${fs.readdirSync(path.join(pm, d)).length} ${d}` } catch { return null } }).filter(Boolean) : []
     const plan = [
       ...(m.tailscale ? [`tailscale serve --https=${m.tailscale} off`] : []),
       ...[...(m.units || [])].reverse().map(u => `stop, disable and remove ${u}.service`),
       ...((m.units || []).includes(`${m.name}-hc`) ? [] : (m.machines || []).map(x => `hc machine rm ${x} (session ${m.hcSession})`)),
       ...(m.hcStateCreated && (m.units || []).includes(`${m.name}-hc`) ? [`remove herdr-core's state of session ${m.hcSession} (${hcState(m.hcSession)})`] : []),
+      ...(pm && fs.existsSync(pm) ? [`remove this install's pm folders, ${pm}${pmHas.length ? ` (${pmHas.join(', ')})` : ''}; git worktree prune in their clones`] : []),
       o.keepData ? `remove what is in ${o.dir} except data/` : m.createdDir ? `remove ${o.dir}` : `empty ${o.dir} (it existed, empty, before)`,
     ]
     summary.plan = plan
@@ -547,9 +562,22 @@ export async function main(argv = process.argv.slice(2), io = {}) {
     }
     sctl('daemon-reload')
     if (ownHc && m.hcStateCreated) { fs.rmSync(hcState(m.hcSession), { recursive: true, force: true }); step('OK', `removed ${hcState(m.hcSession)}`) }
+    if (pm && fs.existsSync(pm)) removePm(pm)
+    if (pm && (m.machines || []).length) next(`on the other machines this install used (${m.machines.join(', ')}), remove ~/${m.pmDir} by hand`)
     for (const f of fs.readdirSync(o.dir)) if (!(o.keepData && f === 'data')) fs.rmSync(path.join(o.dir, f), { recursive: true, force: true })
     if (m.createdDir && !o.keepData) fs.rmdirSync(o.dir)
     step('OK', o.keepData ? `emptied ${o.dir} (kept data/)` : m.createdDir ? `removed ${o.dir}` : `emptied ${o.dir}`)
+  }
+
+  // The worktrees' clones forget them (git worktree prune) once their folders are gone.
+  function removePm(pm) {
+    const wt = path.join(pm, 'worktrees')
+    const clones = new Set((fs.existsSync(wt) ? fs.readdirSync(wt) : []).map(d => {
+      try { return path.resolve(path.join(wt, d), fs.readFileSync(path.join(wt, d, '.git'), 'utf8').match(/^gitdir: (.+)$/m)[1].trim(), '..', '..') } catch { return null }
+    }).filter(Boolean))
+    fs.rmSync(pm, { recursive: true, force: true })
+    for (const c of clones) run('git', ['--git-dir', c, 'worktree', 'prune'])
+    step('OK', `removed ${pm}${clones.size ? ` (git worktree prune in ${clones.size} clone${clones.size > 1 ? 's' : ''})` : ''}`)
   }
 }
 

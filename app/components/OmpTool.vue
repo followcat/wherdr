@@ -23,6 +23,8 @@ const wall = computed(() => (props.live || v.value.ms === undefined ? '' : ompWa
 const since = computed(() => (props.live && props.tool.ts ? Date.parse(props.tool.ts) || null : null))
 const intent = computed(() => v.value.intent || v.value.title)
 const canOpen = computed(() => Boolean(v.value.out))
+// A running command shows its output so far; once done it is folded.
+const shown = computed(() => canOpen.value && (open.value || Boolean(props.live)))
 const head = computed(() => ompOutHead(v.value, err.value))
 const outLines = computed(() => (v.value.out || '').split('\n').map(l => ({
   text: l,
@@ -31,17 +33,17 @@ const outLines = computed(() => (v.value.out || '').split('\n').map(l => ({
 </script>
 
 <template>
-  <div class="omp-tool" :class="{ err, live, open }">
+  <div class="omp-tool" :class="{ err, live, open: shown }">
     <component
       :is="canOpen ? 'button' : 'div'" class="omp-tool-head" :type="canOpen ? 'button' : undefined"
-      :aria-expanded="canOpen ? open : undefined" @click="canOpen && (open = !open)"
+      :aria-expanded="canOpen ? shown : undefined" @click="canOpen && (open = !shown)"
     >
       <span class="omp-tool-line">
         <span class="omp-tool-glyph" aria-hidden="true"><OmpSpinner v-if="live" /><template v-else>{{ err ? '✗' : '❯' }}</template></span>
         <code class="omp-tool-cmd">{{ ompCommandLine(v) }}</code>
         <span v-if="since" class="omp-tool-wall"><OmpElapsed :since="since" /></span>
         <span v-else-if="wall" class="omp-tool-wall">{{ wall }}</span>
-        <UIcon v-if="run && canOpen" :name="open ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'" class="omp-tool-chev" aria-hidden="true" />
+        <UIcon v-if="run && canOpen" :name="shown ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'" class="omp-tool-chev" aria-hidden="true" />
       </span>
       <span class="omp-tool-sub">
         <UChatShimmer v-if="live" :text="`# ${intent}`" :duration="2.4" class="omp-tool-intent" />
@@ -49,7 +51,7 @@ const outLines = computed(() => (v.value.out || '').split('\n').map(l => ({
         <span v-if="meta || exit" class="omp-tool-result">→ {{ meta }}<template v-if="exit"><template v-if="meta"> · </template><span class="omp-tool-exit">exit {{ exit }}</span></template></span>
       </span>
     </component>
-    <div v-if="canOpen && open" class="omp-tool-out">
+    <div v-if="shown" class="omp-tool-out">
       <div class="omp-tool-out-head">
         <span class="omp-tool-out-label">{{ head.label }}</span>
         <span v-if="head.earlier" class="omp-tool-out-earlier">{{ head.earlier }}</span>

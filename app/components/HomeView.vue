@@ -433,7 +433,7 @@ function resetListWidth() {
 </script>
 
 <template>
-  <section ref="homeRoot" id="home" data-wherdr="home-list" class="view" :class="{ resizing: listDrag, rail, drawer, 'list-compact': compactList }" @click.capture="onDrawerPick">
+  <section ref="homeRoot" id="home" data-wherdr="home-list" class="view" :class="{ resizing: listDrag, rail, drawer }" @click.capture="onDrawerPick">
     <HomePollers v-if="homeShown" />
     <!-- Collapsed list (computer): narrow column, the rest of the list is hidden. -->
     <nav v-if="rail" class="home-rail" :aria-label="t('Agents')">
@@ -540,6 +540,7 @@ function resetListWidth() {
       <ReviewCard v-if="st.ok" />
       <CoordinatorsSection v-if="st.ok" />
 
+      <LoginIncidentBanner v-if="st.ok" />
       <OpenNetworkBanner />
       <UpdateBanner v-if="updateBanner" :info="updateBanner" dismissible />
 

@@ -10,6 +10,7 @@ import { userDecide } from '../server/utils/pmBoard'
 import { MACHINE_OFFLINE, MACHINE_PAUSED, RELEASE_IDLE_MS } from '../shared/pm/release'
 import { restartReview, watchAgents } from '../server/utils/pmWatchdog'
 import { AGENTLESS_MS, reviewRestarted } from '../shared/pm/watchdog'
+import { loginRestartText } from '../shared/pm/recovery'
 import type { Task } from '../shared/pm/run'
 import type { Template } from '../shared/pm/workflow'
 
@@ -103,6 +104,16 @@ describe('released agents start again', () => {
     expect(starts()).toBe(2)
     expect((await store.runs()).filter(r => r.role === 'reviewer' && r.state !== 'ended')).toHaveLength(1)
     expect(await log()).toContain('restarted the review')
+    // Only a restart after a login incident tells the new reviewer to go on, once.
+    const line = () => String(env.calls.filter(c => c[0] === 'terminal.run').at(-1)![1].line)
+    expect(line()).not.toContain('Your login was renewed')
+    const t = (await store.task('WH-1'))!
+    await store.saveTask({ ...t, recovery: { incident: 'i1', cause: 'login', machine: 'm1', label: 'm1', at: 1, n: 1, resumedAt: 2, say: true } })
+    await restartReview(deps, 'WH-1', 'engine', 'the login is renewed')
+    await advanceTick(deps)
+    expect(line()).toMatch(new RegExp(`and follow it\\. ${loginRestartText('reviewer')}'$`))
+    expect((await store.task('WH-1'))!.recovery!.say).toBeUndefined()
+    expect(await log()).toContain(`review: started the reviewer (claude opus); told it: ${loginRestartText('reviewer')}`)
   })
 
   it('a restart gives the review a fresh time limit, and recovers a reviewer that exited right after starting', () => {

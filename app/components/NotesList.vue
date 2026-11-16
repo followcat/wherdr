@@ -77,6 +77,17 @@ async function openFile(path: string) {
   await nextTick()
   view.value?.scrollIntoView({ block: 'start' })
 }
+// Kept on the device (useNotes.ts): after a reload, the file shown reopens if
+// it still exists, else the list.
+watch(file, (f) => { notesFile.value = f?.path ?? null })
+onMounted(async () => {
+  const path = notesFile.value
+  if (!path) return
+  const text = await loadNoteFile(path)
+  if (text != null && !file.value) file.value = { path, text }
+  else if (!file.value) notesFile.value = null
+})
+onBeforeUnmount(() => { notesFile.value = null })
 // Why a link from here (the list: '', or a file's path) leads nowhere, or ''.
 const from = () => file.value?.path ?? ''
 function missing(href: string, here = from()): string {

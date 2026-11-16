@@ -9,6 +9,7 @@ import { HerdrError } from './herdr'
 import { WRITE_SCRIPT, exec } from './pmLaunch'
 import { listRepos } from './pmRepos'
 import type { PmStore } from './pmStore'
+import { pmDir } from './pmHome'
 
 type Deps = CoreAdminDeps & { store: PmStore }
 
@@ -17,7 +18,7 @@ export async function writeMapFile(deps: Deps, ws: Project, text: string) {
   const { on } = machineOn(deps, ws.machine)
   const home = await homeOf(deps, on)
   if (!home) throw new HerdrError('core', 'Home folder not found on the workspace\'s machine')
-  if ((await exec(deps, on, WRITE_SCRIPT, [`${home}/.wherdr/pm/coordinators/${ws.key}/map.md`], text)).code !== 0) throw new HerdrError('core', 'Could not write map.md')
+  if ((await exec(deps, on, WRITE_SCRIPT, [`${home}/${pmDir()}/coordinators/${ws.key}/map.md`], text)).code !== 0) throw new HerdrError('core', 'Could not write map.md')
 }
 
 export async function runMap(deps: Deps, ws: Project | undefined, projects: Project[], cmd: MapCommand, now = Date.now()) {

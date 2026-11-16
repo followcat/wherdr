@@ -113,6 +113,12 @@ em {
   width: 952px;
   height: 595px;
 }
+/* Zooms into the captures and their outlines together. */
+.zoom {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+}
 .capture {
   position: absolute;
   inset: 0;
@@ -132,7 +138,13 @@ em {
     0 30px 85px #0009,
     0 0 0 1px #647184;
 }
-.phone .capture {
+.phone /* Zooms into the captures and their outlines together. */
+.zoom {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+}
+.capture {
   object-fit: fill;
 }
 .hidden {
@@ -154,15 +166,30 @@ em {
   color: var(--accent);
   padding: 0 16px;
 }
-#button-glow {
+/* Marketing outline around the real control the next capture shows used. */
+.glow {
   position: absolute;
-  left: 3%;
-  top: 69.2%;
-  width: 94%;
-  height: 5.2%;
   border: 2px solid #1fb2ff;
   box-shadow: 0 0 18px #1fb2ff55;
   pointer-events: none;
+}
+#approve-glow {
+  left: 19.3%;
+  top: 83%;
+  width: 8.5%;
+  height: 4.1%;
+}
+#done-glow {
+  left: 81.9%;
+  top: 9.8%;
+  width: 17%;
+  height: 11.6%;
+}
+#answer-glow {
+  left: 8.2%;
+  top: 43%;
+  width: 83.6%;
+  height: 4.4%;
 }
 #end {
   position: absolute;

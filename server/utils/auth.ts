@@ -22,6 +22,9 @@
 // cookie forged by someone who once read this file. Earlier versions kept a
 // numeric counter: it is replaced by a nonce at startup (those sessions end once).
 // Lost key: deleting data/auth.json on the server reopens the app.
+// Written atomically. A file that exists but cannot be read or parsed (cut
+// write, full disk) never means "no key yet": the lock stays on, every request
+// but the auth routes is refused, and the file is left as it is.
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
@@ -78,32 +81,62 @@ export function createAuth({ dataDir, log = () => {}, passkeyUser = 'herdr' }: {
   const FILE = path.join(dataDir, 'auth.json')
   const nonce = () => crypto.randomBytes(18).toString('base64url')
   let db: AuthDb = { secret: null, generation: '', credentials: [] }
-  try { db = { ...db, ...JSON.parse(fs.readFileSync(FILE, 'utf8')) } }
-  catch { /* no file yet */ }
-  const save = () => {
-    fs.mkdirSync(dataDir, { recursive: true })
-    fs.writeFileSync(FILE, JSON.stringify(db, null, 2) + '\n', { mode: 0o600 })
+  // Only a missing file means "no passkey yet".
+  let damaged = false
+  try {
+    const raw = JSON.parse(fs.readFileSync(FILE, 'utf8'))
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !Array.isArray(raw.credentials ?? [])) throw new Error('not an auth file')
+    db = { ...db, ...raw }
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') damaged = true
   }
+  const DAMAGED_MESSAGE = 'The lock file data/auth.json is damaged: the app stays locked. On the server, restore it from a backup, or delete it to start over (every passkey will have to be registered again), then restart wherdr'
+  const assertIntact = () => {
+    if (damaged) throw new AuthError('damaged', DAMAGED_MESSAGE)
+  }
+  const save = () => {
+    assertIntact()
+    fs.mkdirSync(dataDir, { recursive: true })
+    // Temporary file in the same folder, flushed, then renamed over: a cut
+    // write leaves the previous complete file.
+    const temp = `${FILE}.${crypto.randomUUID()}.tmp`
+    try {
+      const fd = fs.openSync(temp, 'w', 0o600)
+      try {
+        fs.writeFileSync(fd, JSON.stringify(db, null, 2) + '\n')
+        fs.fsyncSync(fd)
+      } finally { fs.closeSync(fd) }
+      fs.renameSync(temp, FILE)
+    } catch (error) {
+      fs.rmSync(temp, { force: true })
+      throw error
+    }
+    const dir = fs.openSync(dataDir, 'r')
+    try { fs.fsyncSync(dir) } finally { fs.closeSync(dir) }
+  }
+  if (damaged) log(`lock: ${FILE} cannot be read. ${DAMAGED_MESSAGE}`)
   // New secret and generation: every cookie signed before is worthless.
   const rotate = () => {
     db.secret = crypto.randomBytes(32).toString('hex')
     db.generation = nonce()
   }
-  if (!db.secret) {
+  // A damaged file is never rotated nor saved over.
+  if (!damaged && !db.secret) {
     rotate()
     save()
   }
   // Earlier versions: a predictable counter, replaced by a nonce.
-  if (typeof db.generation !== 'string' || !/^[\w-]{16,}$/.test(db.generation)) {
+  if (!damaged && (typeof db.generation !== 'string' || !/^[\w-]{16,}$/.test(db.generation))) {
     db.generation = nonce()
     save()
   }
 
   // Temporary token, renewed at each startup and only visible in the logs.
   const bootstrapToken = crypto.randomBytes(24).toString('base64url')
-  if (!db.credentials.length) log(`First passkey: bootstrap token ${bootstrapToken}`)
+  if (!damaged && !db.credentials.length) log(`First passkey: bootstrap token ${bootstrapToken}`)
 
-  const enabled = () => db.credentials.length > 0
+  // A damaged file counts as a registered key nobody can use: locked.
+  const enabled = () => damaged || db.credentials.length > 0
   const sign = (v: string) => crypto.createHmac('sha256', db.secret!).update(v).digest('base64url')
   const safeEq = (a: string, b: string) => {
     const x = Buffer.from(String(a))
@@ -135,6 +168,7 @@ export function createAuth({ dataDir, log = () => {}, passkeyUser = 'herdr' }: {
   // Cookies from before the unlock time was recorded (exp.gen.mac) count from
   // their last renewal.
   function session(req: ReqLike, now = Date.now()): { exp: number, since: number } | null {
+    if (damaged) return null
     const v = readCookie(req)
     if (!v) return null
     const parts = v.split('.')
@@ -200,6 +234,7 @@ export function createAuth({ dataDir, log = () => {}, passkeyUser = 'herdr' }: {
   }
 
   async function registerOptions(req: ReqLike, body: Json = {}) {
+    assertIntact()
     if (enabled() && !isUnlocked(req)) throw new AuthError('locked', 'Unlock first')
     checkBootstrap(body)
     const { rpID } = relying(req)
@@ -214,6 +249,7 @@ export function createAuth({ dataDir, log = () => {}, passkeyUser = 'herdr' }: {
   }
 
   async function registerVerify(req: ReqLike, body: Json) {
+    assertIntact()
     if (enabled() && !isUnlocked(req)) throw new AuthError('locked', 'Unlock first')
     checkBootstrap(body)
     const { origin, rpID } = relying(req)
@@ -240,6 +276,7 @@ export function createAuth({ dataDir, log = () => {}, passkeyUser = 'herdr' }: {
   // offers its own passkey for this site (discoverable credential).
   const attempts = createRateLimit(LOGIN_PER_MINUTE, 60_000)
   async function loginOptions(req: ReqLike, client = '', now = Date.now()) {
+    assertIntact()
     if (!attempts.take(client, now)) throw new AuthError('rate_limited', 'Too many attempts, wait a minute')
     const { rpID } = relying(req)
     const opts = await generateAuthenticationOptions({ rpID, userVerification: 'required' })
@@ -247,6 +284,7 @@ export function createAuth({ dataDir, log = () => {}, passkeyUser = 'herdr' }: {
   }
 
   async function loginVerify(req: ReqLike, body: Json) {
+    assertIntact()
     const { origin, rpID } = relying(req)
     const cred = db.credentials.find(c => c.id === (body.response && body.response.id))
     if (!cred) throw new AuthError('unknown_key', 'Key unknown on this server')
@@ -263,6 +301,7 @@ export function createAuth({ dataDir, log = () => {}, passkeyUser = 'herdr' }: {
   }
 
   function disable(req: ReqLike) {
+    assertIntact()
     if (!isUnlocked(req)) throw new AuthError('locked', 'Unlock first')
     db.credentials = []
     rotate()
@@ -273,6 +312,7 @@ export function createAuth({ dataDir, log = () => {}, passkeyUser = 'herdr' }: {
 
   // Lost or stolen device: every session ends (this one included), the keys stay.
   function lockAll(req: ReqLike) {
+    assertIntact()
     if (!enabled() || !isUnlocked(req)) throw new AuthError('locked', 'Unlock first')
     rotate()
     save()
@@ -281,6 +321,7 @@ export function createAuth({ dataDir, log = () => {}, passkeyUser = 'herdr' }: {
   }
 
   function setMaxSession(req: ReqLike, days: unknown, now = Date.now()) {
+    assertIntact()
     if (!enabled() || !isUnlocked(req)) throw new AuthError('locked', 'Unlock first')
     if (!isMaxSessionDays(days)) throw new AuthError('invalid', 'Invalid duration')
     if (days !== (db.maxSessionDays ?? DEFAULT_MAX_SESSION_DAYS)) db.maxSessionChangedAt = now

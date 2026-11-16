@@ -108,7 +108,7 @@ describe('ui open', () => {
     expect(out.note).toMatch(/Terminal › Phone key bar highlighted once the user taps the card/)
     await expect(openUi(phone.deps, { ...web, raw: link, turn: 'wake' })).rejects.toThrow(/never in a wake/)
     // Unknown, or held by another section or tab.
-    for (const raw of ['#/settings?section=terminal&target=nope', '#/settings?section=phone&target=terminal.key-order', '#/settings?section=conversation&tab=dictation&target=conversation.reply-style', '#/board?target=agents.pace'])
+    for (const raw of ['#/settings?section=terminal&target=nope', '#/settings?section=phone&target=terminal.key-order', '#/settings?section=conversation&tab=dictation&target=conversation.typewriter', '#/board?target=agents.pace'])
       await expect(openUi(phone.deps, { ...web, raw, turn: 'user' })).rejects.toThrow(/Unknown target/)
     expect(phone.got[0]!.msgs).toHaveLength(1)
     // A part of a project's sheet needs the project; a coordinator only its own.

@@ -47,7 +47,7 @@ onMounted(() => refreshPushDevices())
 </template>
 
 <style scoped>
-.push-devices { margin-top: 10px; padding-top: 12px; }
+.push-devices { margin-top: 10px; }
 .push-devices p { margin: 0 0 4px; font-size: 13px; }
 .push-devices ul { list-style: none; margin: 0; padding: 0; }
 .push-devices li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line-soft); }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { type KeyInput, type ShortcutContext, type ShortcutFocus, matchShortcut } from '../app/utils/shortcuts'
+import { type KeyInput, type ShortcutContext, type ShortcutFocus, SHORTCUTS, applyBindings, bindingFromEvent, findConflict, matchShortcut, parseBindings, reservedReason, tableKbds } from '../app/utils/shortcuts'
 
 const body: ShortcutFocus = { editable: false, empty: true, overlay: false, terminal: false }
 const field = (text: string): ShortcutFocus => ({ ...body, editable: true, empty: !text })
@@ -139,5 +139,45 @@ describe('matchShortcut', () => {
     expect(match({ key: 'f', metaKey: true }, body, phone)).toBeNull()
     expect(match({ key: 'ArrowDown', altKey: true }, body, cap)).toBeNull()
     expect(match({ key: 'ArrowRight', altKey: true }, body, cap)).toBeNull()
+  })
+})
+
+describe('user bindings', () => {
+  it('parses only known, changeable shortcuts and keeps the modifiers in order', () => {
+    expect(parseBindings('{"notes":{"mods":["shift","alt"],"key":"J"},"stop":{"mods":["alt"],"key":"s"},"nope":{"mods":[],"key":"x"},"help":{"mods":["hyper"],"key":"h"}}'))
+      .toEqual({ notes: { mods: ['alt', 'shift'], key: 'j' } })
+    expect(parseBindings('not json')).toEqual({})
+  })
+
+  it('replaces the first row of its id: matched, shown, caught before the terminal', () => {
+    const table = applyBindings({ notes: { mods: ['mod'], key: 'j' }, help: { mods: ['alt'], key: 'h' } })
+    expect(tableKbds(table, 'notes')).toEqual(['meta', 'J'])
+    const cap = { ...linux, phase: 'capture' as const }
+    expect(matchShortcut({ key: 'j', ctrlKey: true }, term, cap, table)).toBe('notes')
+    expect(matchShortcut({ key: 'p', code: 'KeyP', ctrlKey: true, altKey: true }, term, cap, table)).toBeNull()
+    // `?` stays as the second way to the help.
+    expect(matchShortcut({ key: '?', shiftKey: true }, body, mac, table)).toBe('help')
+    expect(matchShortcut({ key: '˙', code: 'KeyH', altKey: true }, term, { ...mac, phase: 'capture' }, table)).toBe('help')
+  })
+
+  it('records the keys pressed: Mod per platform, ⌥ letters by position, lone modifiers ignored', () => {
+    expect(bindingFromEvent({ key: 'Control', code: 'ControlLeft', ctrlKey: true }, false)).toBeNull()
+    expect(bindingFromEvent({ key: 'j', code: 'KeyJ', ctrlKey: true }, false)).toEqual({ mods: ['mod'], key: 'j' })
+    expect(bindingFromEvent({ key: '∆', code: 'KeyJ', metaKey: true, altKey: true }, true)).toEqual({ mods: ['mod', 'alt'], key: 'j' })
+    expect(bindingFromEvent({ key: 'j', code: 'KeyJ', ctrlKey: true }, true)).toEqual({ mods: ['ctrl'], key: 'j' })
+  })
+
+  it('refuses keys that would type or that the browser keeps', () => {
+    expect(reservedReason({ mods: ['shift'], key: 'j' })).toBe('modifier')
+    expect(reservedReason({ mods: ['mod'], key: 'w' })).toBe('browser')
+    expect(reservedReason({ mods: ['alt'], key: 'escape' })).toBe('browser')
+    expect(reservedReason({ mods: ['mod', 'alt'], key: 'j' })).toBeNull()
+  })
+
+  it('finds the other shortcut on the same keys; Ctrl and Mod are one key outside macOS', () => {
+    expect(findConflict(SHORTCUTS, 'notes', ['meta', 'F'], true)).toBe('search-chat')
+    expect(findConflict(SHORTCUTS, 'search-chat', ['meta', 'F'], true)).toBeNull()
+    expect(findConflict(SHORTCUTS, 'notes', ['ctrl', 'F'], true)).toBeNull()
+    expect(findConflict(SHORTCUTS, 'notes', ['ctrl', 'F'], false)).toBe('search-chat')
   })
 })

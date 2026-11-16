@@ -27,8 +27,9 @@ export default defineNuxtConfig({
   modules: demo ? ['@nuxt/ui'] : ['@nuxt/ui', '@vite-pwa/nuxt'],
   plugins: demo ? ['~/demo/plugin.client'] : [],
   // No server code in the demo build (nothing to prerender against, nothing that
-  // could run), and none of public/ (the install manifests: the demo is not installable).
-  ...(demo ? { serverDir: 'demo-without-server', dir: { public: 'demo-without-public' } } : {}),
+  // could run), and none of public/ (the install manifests: the demo is not installable):
+  // its own instead (made-up screenshots).
+  ...(demo ? { serverDir: 'demo-without-server', dir: { public: 'app/demo/public' } } : {}),
   css: ['~/assets/css/main.css'],
   typescript: { strict: true },
   devtools: { enabled: false },

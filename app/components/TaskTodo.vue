@@ -14,7 +14,7 @@ import { adviceChoices } from '#shared/pm/decisions'
 import { canStart, coordinatorWait, mayAccept, mergeGoesNow, mergeStuck, mergeWaits, prLink, prUpdating, type Card } from '#shared/pm/board'
 import { stepLabels } from '#shared/pm/steps'
 import { RESUMES, stoppedText, type Resume } from '#shared/pm/stop'
-import { shotUrl } from '#shared/pm/shots'
+import { earlierCommit, shotUrl } from '#shared/pm/shots'
 import { reviewNote, workerNote } from '#shared/pm/report'
 import { agentCatchingUp } from '#shared/pm/refusal'
 import type { Choice } from '#shared/pm/verdict'
@@ -23,7 +23,7 @@ import type { WaitKind } from '#shared/pm/run'
 import type { TodoKind } from '~/utils/taskTodo'
 
 const props = defineProps<{ card: Card, kind: TodoKind, pane?: Pane, busy: boolean, pressing: boolean, refused: string, waitsFor?: string[] }>()
-const emit = defineEmits<{ press: [], start: [], resume: [how: Resume], decide: [choice: Choice], back: [note: string], review: [], worker: [], ask: [], comments: [] }>()
+const emit = defineEmits<{ press: [], start: [], resume: [how: Resume], decide: [choice: Choice], back: [note: string], review: [], worker: [], ask: [], fix: [], comments: [] }>()
 
 // Where the engine's catch-up of a conflict stands: the agent on it, or done.
 const told = computed(() => agentCatchingUp(props.card))
@@ -44,6 +44,8 @@ const choices = computed(() => (advice.value ? adviceChoices(advice.value) : { o
 // Visual merge: the newest step's screenshots of the result (after a rework, its new set).
 const latest = computed(() => { const s = shotSteps(props.card)[0]; return s ? props.card.state!.shots![s.id]!.filter(x => x.phase === 'after') : [] })
 const shots = computed(() => latest.value.map(x => shotUrl(props.card.id, x.file)))
+// Shots of the result taken before the step's newest commit: marked, not hidden.
+const older = computed(() => { const s = shotSteps(props.card)[0]; const head = s && props.card.state!.shotsHead?.[s.id]; return latest.value.map(x => earlierCommit(x, head)) })
 const reworked = computed(() => latest.value.some(x => x.rework))
 // Phone or desktop, from the image's shape once loaded.
 const shape = ref<Record<string, 'phone' | 'desktop'>>({})
@@ -63,6 +65,9 @@ const reviewSay = computed(() => (props.card.terminal
 const coord = computed(() => (props.kind === 'coordinator' ? coordinatorWait(props.card) : undefined))
 const coordFor = computed(() => (coord.value ? fmtDuration(Math.floor((Date.now() - coord.value.since) / 60_000) * 60) : ''))
 
+// A block its worker could fix: Ask the agent to fix it, the step's first button.
+const fixes = computed(() => fixable(props.card, props.kind))
+
 const ASK_LABEL: Record<WaitKind, [string, string]> = { question: ['Its agent asks a question', 'Son agent pose une question'], permission: ['Its agent asks for a permission', 'Son agent demande une autorisation'], auth: ['Its agent needs its login again', 'Son agent doit se reconnecter'] }
 </script>
 
@@ -72,6 +77,7 @@ const ASK_LABEL: Record<WaitKind, [string, string]> = { question: ['Its agent as
       <LookAgainBanner v-if="card.state?.lookAgain" :look="card.state.lookAgain" />
       <p class="todo-say" data-testid="task-badge">{{ badge }}</p>
       <TaskTldr :card="card" :worker="notes.worker" :review="notes.review" @comments="emit('comments')">
+        <ShotsSince v-if="shotSteps(card)[0]" :task="card.id" :state="card.state" :step="shotSteps(card)[0]!.id" />
         <span v-if="reworked" class="mono-label muted" data-testid="todo-rework">{{ tl('Screenshots after rework') }}</span>
         <ul class="todo-shots" data-testid="todo-shots">
           <li v-for="(src, i) in shots" :key="src">
@@ -79,6 +85,7 @@ const ASK_LABEL: Record<WaitKind, [string, string]> = { question: ['Its agent as
               <img :src="src" alt="" decoding="async" @load="loaded(src, $event)">
             </button>
             <span v-if="shape[src]" class="mono-label muted">{{ shape[src] === 'phone' ? tl('Phone', 'Téléphone') : tl('Desktop', 'Ordinateur') }}</span>
+            <span v-if="older[i]" class="mono-label muted" data-testid="todo-earlier">{{ tl('Earlier commit') }}</span>
           </li>
         </ul>
       </TaskTldr>
@@ -126,6 +133,7 @@ const ASK_LABEL: Record<WaitKind, [string, string]> = { question: ['Its agent as
       </template>
       <div v-else class="task-sheet-actions todo-buttons">
         <!-- A refused action is tried again from the sheet's top (Try again). -->
+        <UButton v-if="fixes" color="primary" size="xl" icon="i-lucide-wrench" :loading="busy" data-testid="todo-fix" @click="emit('fix')">{{ tl('Ask the agent to fix it') }}</UButton>
         <UButton v-if="card.userLabel && kind !== 'refused'" color="primary" size="xl" :loading="busy || goes" :disabled="!open && (!!stuck || (waits !== undefined && !goes))" data-testid="step-user" @click="emit('press')">{{ waits !== undefined && !stuck ? tl('Merging') : card.userLabel }}</UButton>
         <UButton v-if="pr" color="neutral" variant="outline" size="xl" icon="i-lucide-square-arrow-out-up-right" :to="pr.url" target="_blank" data-testid="todo-pr">{{ tl('Open the PR') }}</UButton>
         <UButton v-if="stuck" color="primary" size="xl" icon="i-lucide-play" :loading="busy" data-testid="todo-worker-start" @click="emit('worker')">{{ tl('Start the worker') }}</UButton>

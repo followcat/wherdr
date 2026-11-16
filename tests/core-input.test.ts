@@ -154,26 +154,47 @@ describe('core input routes', () => {
     }
   })
 
-  it('a photo message: Enter only once Claude shows its placeholder, and once more if it stays (never a third)', async () => {
+  it('a photo message: Enter only once Claude shows its placeholder, again while it stays (bounded)', async () => {
     const msg = '/home/user/.cache/herdr-web/uploads/a.jpg\nwhat is wrong here?'
-    // Claude still reading the photo: its path is in the field, then "[Image #3]".
-    const screens = [null, '/home/user/.cache/herdr-web/uploads/a.jpg what is wrong here?', '/home/user/.cache/herdr-web/uploads/a.jpg what is wrong here?', '[Image #3] what is wrong here?']
-    const seen: (string | null)[] = []
-    let reads = 0
-    let last: string | null = null
-    const t = deps((m) => { if (m === 'terminal.keys') seen.push(last); return m === 'terminal.send' ? { started: false } : {} })
+    const path = '/home/user/.cache/herdr-web/uploads/a.jpg what is wrong here?'
+    const tag = '[Image #3] what is wrong here?'
+    // Claude still reading the photo: its path is in the field, then "[Image #3]";
+    // the first two Enters are dropped (Claude switching turns), the third takes it.
+    const run = async (send: object, screen: (look: number, enters: number) => string | null) => {
+      const seen: (string | null)[] = []
+      let looks = 0
+      let enters = 0
+      let last: string | null = null
+      const t = deps((m) => { if (m === 'terminal.keys') { seen.push(last); enters++ } return m === 'terminal.send' ? send : {} })
+      t.d.settleMs = 1
+      t.d.field = async () => (last = screen(looks++, enters))
+      return { r: await coreSend(t.d, { pane_id: 't1', text: msg }), seen, looks: () => looks }
+    }
+    const dropped = await run({ started: false }, (n, e) => (n === 0 ? null : n < 3 ? path : e < 3 ? tag : null))
+    expect(dropped.r).toEqual({ ok: true, started: null })
+    expect(dropped.seen).toEqual([tag, tag, tag])
+    // Never taken: at most four Enters, then the field's own "Not sent".
+    expect((await run({ started: false }, n => (n ? tag : null))).seen).toHaveLength(4)
+    // A large photo whose placeholder shows after about 10 s (25 looks): still submitted, once.
+    expect((await run({ started: false }, (n, e) => (n === 0 ? null : n < 25 ? path : e ? null : tag))).seen).toEqual([tag])
+  })
+
+  it('sent while Claude works: core says started, yet its Enter came before the placeholder; it is submitted once', async () => {
+    const msg = '/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.png\nsecond picture, describe it'
+    let looks = 0
+    let enters = 0
+    // herdr-core 0.1.16 answers `started: true, status: "working"` for a send during a turn.
+    const t = deps((m) => { if (m === 'terminal.keys') enters++; return m === 'terminal.send' ? { started: true, status: 'working' } : {} })
     t.d.settleMs = 1
-    t.d.field = async () => (last = screens[Math.min(reads++, screens.length - 1)]!)
+    t.d.field = async () => (looks++ === 0 ? null : looks < 4 ? msg.replace('\n', ' ') : enters ? null : '[Image #2]second picture, describe it')
     expect(await coreSend(t.d, { pane_id: 't1', text: msg })).toEqual({ ok: true, started: null })
-    // The first Enter after the placeholder; the message stayed: one automatic resubmit.
-    expect(seen).toEqual(['[Image #3] what is wrong here?', '[Image #3] what is wrong here?'])
-    // The placeholder on the last look of the wait: the resubmit still gets its own look.
-    let late = 0
-    const l = deps(m => (m === 'terminal.send' ? { started: false } : {}))
-    l.d.settleMs = 1
-    l.d.field = async () => (late++ === 0 ? null : late <= 15 ? '/home/user/.cache/herdr-web/uploads/a.jpg what is wrong here?' : '[Image #3] what is wrong here?')
-    await coreSend(l.d, { pane_id: 't1', text: msg })
-    expect(l.calls.filter(c => c[0] === 'terminal.keys')).toHaveLength(2)
+    expect(enters).toBe(1)
+    // Taken at once from an idle agent: a turn started, the field is not looked at.
+    const idle = deps(m => (m === 'terminal.send' ? { started: true, status: 'idle' } : {}))
+    let read = 0
+    idle.d.field = async () => { read++; return null }
+    expect(await coreSend(idle.d, { pane_id: 't1', text: msg })).toEqual({ ok: true, started: true })
+    expect(read).toBe(1) // the busy check before typing only
   })
 
   it('sends a multi-line "!" command as it is, in one terminal.send', async () => {

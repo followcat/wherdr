@@ -1,7 +1,8 @@
 // What each started task touches (shared/pm/files.ts), read from its worktree:
 // the paths its worker declared in its files marker, and the files it changed
 // (committed or not, new ones included) since its fork from its base as of now:
-// origin's base, fetched now (origin's default branch when the task names none,
+// origin's base, fetched now (the task's base, else its workflow's PR base, else
+// origin's default branch when neither names one,
 // asked of origin when origin/HEAD is unset), else the local one when origin has
 // no such branch or there is no origin, else where its branch started. When
 // origin cannot be reached, nothing is read (exit 1): a stale origin/<base>, a
@@ -10,9 +11,10 @@
 // their files (it is done or only waits for its merge, or its files moved on).
 import { beyond, fileConflict, parseFiles } from '../../shared/pm/files'
 import { runFiles } from '../../shared/pm/advance'
-import type { Task } from '../../shared/pm/run'
+import { startBase, type Task } from '../../shared/pm/run'
+import type { Template } from '../../shared/pm/workflow'
 import { HerdrError } from './herdr'
-import { exec, mergingOf, runOn, startTask, type PmLaunchDeps } from './pmLaunch'
+import { exec, mergingOf, noteWorkflowBase, runOn, startTask, type PmLaunchDeps } from './pmLaunch'
 
 const SEP = '--wherdr-files--'
 export const FILES_SCRIPT = `wt=$1 b=$2 base=$4
@@ -43,6 +45,8 @@ const same = (a: string[] = [], b: string[] = []) => a.length === b.length && a.
 export async function syncFiles(deps: PmLaunchDeps, now = Date.now()) {
   const { store } = deps
   const runs = await store.runs()
+  const projects = await store.projects(), workflows = new Map<string, Promise<Template | null>>()
+  const workflow = (key: string) => workflows.get(key) ?? workflows.set(key, store.workflow(key).catch(() => null)).get(key)!
   for (const task of await store.tasks()) {
     if (!task.step?.started || task.step.done || now - (readAt.get(task.id) ?? 0) < READ_EVERY_MS) continue
     const run = runs.filter(r => r.task === task.id && r.role === 'worker').sort((a, b) => b.startedAt - a.startedAt)[0]
@@ -50,7 +54,14 @@ export async function syncFiles(deps: PmLaunchDeps, now = Date.now()) {
     readAt.set(task.id, now)
     let on: string | undefined
     try { on = runOn(deps, run) } catch { continue }
-    const r = await exec(deps, on, FILES_SCRIPT, [run.worktree, run.branch, runFiles(run.instructions).files, task.base ?? '']).catch(() => null)
+    // A task started with no base (none set then): its workflow's PR base, as a new start would take.
+    let base = task.base
+    if (!base) {
+      const b = startBase(await workflow(task.project), { ...task, base: '' }, projects.find(p => p.key === task.project))
+      if (b.fromWorkflow) await noteWorkflowBase(store, task.project, b.base!).catch(() => {})
+      base = b.base
+    }
+    const r = await exec(deps, on, FILES_SCRIPT, [run.worktree, run.branch, runFiles(run.instructions).files, base ?? '']).catch(() => null)
     if (r?.code !== 0) continue
     const read = parseFilesRead(r.out)
     const files = read.files.length ? read.files : task.files

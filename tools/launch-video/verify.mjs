@@ -8,16 +8,20 @@ const assets = fileURLToPath(new URL("../../assets/", import.meta.url));
 const capture = JSON.parse(
   readFileSync(new URL("./capture.json", import.meta.url), "utf8"),
 );
-assert.equal(capture.frames.length, 225);
-assert.equal(capture.fps, 15);
+// The stage's length, as the renders and the WebP must have it.
+const seconds = Number(
+  readFileSync(new URL("./index.html", import.meta.url), "utf8").match(
+    /data-duration="(\d+)"/,
+  )[1],
+);
 assert.equal(capture.uiChanges, false);
 assert.equal(capture.overlaysInsideApp, false);
-for (const [index, frame] of capture.frames.entries()) {
-  assert.equal(frame.at, index / 15);
-  assert.match(frame.sha256, /^[a-f0-9]{64}$/);
+assert.ok(capture.shots.length >= 8, "every scene has its capture");
+for (const shot of capture.shots) {
+  assert.match(shot.sha256, /^[a-f0-9]{64}$/);
   assert.deepEqual(
-    frame.viewport,
-    index >= 36 && index < 180
+    shot.viewport,
+    shot.file.startsWith("phone-")
       ? { width: 390, height: 844 }
       : { width: 1440, height: 900 },
   );
@@ -50,10 +54,10 @@ for (const [name, width] of [
   assert.equal(video.width, width);
   assert.equal(video.height, 1080);
   assert.equal(video.r_frame_rate, "30/1");
-  assert.equal(Number(video.nb_frames), 450);
+  assert.equal(Number(video.nb_frames), seconds * 30);
   assert.ok(
-    Math.abs(Number(info.format.duration) - 15) < 0.05,
-    `${name}: 15 seconds`,
+    Math.abs(Number(info.format.duration) - seconds) < 0.05,
+    `${name}: ${seconds} seconds`,
   );
   assert.ok(statSync(path).size < 8 * 1024 * 1024, `${name}: below 8 MiB`);
   const bytes = readFileSync(path);
@@ -61,7 +65,9 @@ for (const [name, width] of [
     bytes.indexOf("moov") < bytes.indexOf("mdat"),
     `${name}: fast-start metadata`,
   );
-  console.log(`${name}: silent H.264, ${width}×1080, 450 frames, fast start`);
+  console.log(
+    `${name}: silent H.264, ${width}×1080, ${seconds * 30} frames, fast start`,
+  );
 }
 const webp = readFileSync(assets + "wherdr-launch.webp");
 assert.equal(webp.toString("ascii", 0, 4), "RIFF");
@@ -91,10 +97,13 @@ for (let offset = 12; offset + 8 <= webp.length;) {
 }
 assert.ok(canvas && loop, "720 px animated WebP loops forever");
 assert.ok(
-  frames >= 8 && frames <= 225,
+  frames >= 8 && frames <= seconds * 15,
   "WebP: 15 fps input with identical holds coalesced",
 );
-assert.ok(Math.abs(duration - 15000) < 100, `WebP: duration ${duration} ms`);
+assert.ok(
+  Math.abs(duration - seconds * 1000) < 100,
+  `WebP: duration ${duration} ms`,
+);
 assert.ok(webp.length < 5 * 1024 * 1024, "WebP: below 5 MiB");
 console.log(
   `wherdr-launch.webp: 720×720, ${frames} frames, ${duration} ms, infinite loop`,

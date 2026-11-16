@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
-  cp,
   copyFile,
   mkdir,
   readFile,
@@ -60,7 +59,7 @@ await copyFile(
 if (!process.argv.includes("--reuse-captures")) {
   run(
     "git",
-    ["diff", "--exit-code", process.env.WHERDR_FILM_BASE || "origin/main", "--", "app", "nuxt.config.ts"],
+    ["diff", "--exit-code", process.env.WHERDR_FILM_BASE || "origin/v3", "--", "app", "nuxt.config.ts"],
     root,
   );
   if (!process.argv.includes("--skip-build"))
@@ -70,12 +69,12 @@ if (!process.argv.includes("--reuse-captures")) {
 const evidence = JSON.parse(
   await readFile(join(here, ".generated/capture.json"), "utf8"),
 );
-for (const frame of evidence.frames) {
-  const bytes = await readFile(join(here, ".generated", frame.file));
+for (const shot of evidence.shots) {
+  const bytes = await readFile(join(here, ".generated", shot.file));
   assert.equal(
     createHash("sha256").update(bytes).digest("hex"),
-    frame.sha256,
-    frame.file,
+    shot.sha256,
+    shot.file,
   );
 }
 await copyFile(
@@ -95,7 +94,7 @@ try {
       "snapshot",
       ".",
       "--at",
-      "0.8,1.4,2.8,4.5,5.5,6.9,8.8,11.4,13.5",
+      "2,6.5,11.5,16.5,17.8,22.8,25.5,29.5,31,34",
       "--no-end",
       "--describe",
       "false",
@@ -125,18 +124,16 @@ try {
       await mkdir(dirname(join(preview, file)), { recursive: true });
       await copyFile(join(here, file), join(preview, file));
     }
-    for (const folder of ["desktop", "mobile", "board"]) {
-      await cp(
-        join(here, ".generated", folder),
-        join(preview, ".generated", folder),
-        { recursive: true },
+    for (const shot of evidence.shots)
+      await copyFile(
+        join(here, ".generated", shot.file),
+        join(preview, ".generated", shot.file),
       );
-    }
     run(cli, [
       "snapshot",
       preview,
       "--at",
-      "0.8,2.8,4.5,8.8,11.4,13.5",
+      "2,11.5,17.8,22.8,25.5,31,34",
       "--no-end",
       "--describe",
       "false",
@@ -196,8 +193,9 @@ try {
       "fps=15,scale=720:720:flags=lanczos",
       "-c:v",
       "libwebp_anim",
+      // Decoded H.264 compresses worse than clean captures: 75 keeps it under 5 MiB.
       "-quality",
-      "90",
+      "75",
       "-compression_level",
       "4",
       "-loop",

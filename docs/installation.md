@@ -71,6 +71,16 @@ fails, or you open the other one without noticing. Start v3 on another port (`PO
 start`, or `Environment=PORT=7684` in its unit). The [install script](migrate-from-v2.md#by-hand)
 does it for you (`7684`).
 
+### A second v3 on one computer
+
+A v3 keeps its project management folders (coordinators, task worktrees and task files) in
+`~/.wherdr/pm` on each machine. A second v3 beside the first (a test install) must not share
+them: a project key in common would rewrite the first one's coordinator files. Set
+`WHERDR_PM_DIR` in its service, a path relative to the home (`Environment=WHERDR_PM_DIR=.wherdr/pm-test`).
+The [install script](migrate-from-v2.md#by-hand) does it for any `--name` other than `wherdr-v3`
+(`.wherdr/pm-<name>`), and its [uninstall](migrate-from-v2.md#uninstall-v3) removes them. An
+install made before keeps `~/.wherdr/pm`.
+
 ### On macOS
 
 The script needs `systemd --user`, so on macOS install by hand: the steps above, with the macOS

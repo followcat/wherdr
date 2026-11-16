@@ -74,7 +74,7 @@ wherdr 3 runs on herdr-core (`hc`) instead of Herdr and adds built-in project ma
 
 - Herdr sessions, the Herdr plugin and its actions, and the relay of Herdr notifications.
 - The herdr-projects board, replaced by v3's own projects and board.
-- The npm and Homebrew packages, the curl installer, Docker and the one-tap update.
+- The npm and Homebrew packages, the Herdr plugin install (`herdr plugin install`), the curl installer, Docker and the one-tap update: v3 installs from source beside v2 (see *Install*), and updates with *Update with Alfred*.
 - Worktree management and the Changes view.
 - The model and effort pickers and the slash-command list.
 - Split panes: with hc every terminal of a space is a tab.

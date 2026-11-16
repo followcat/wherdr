@@ -131,8 +131,6 @@ function chooseDir(d: string) {
 }
 
 function resetForm() {
-  // A terminal created here must stay visible in the list.
-  if (shell.value) showShells.value = true
   resume.value = false
   name.value = ''
   prompt.value = ''

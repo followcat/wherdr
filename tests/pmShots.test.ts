@@ -2,8 +2,9 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { addShot, isImage, shotRows, shotsMissing, type Shot } from '../shared/pm/shots'
+import { addShot, earlierCommit, sinceLastLook, isImage, shotRows, shotsMissing, type Shot } from '../shared/pm/shots'
 import { initialState, onEvent, planSteps, type StepState } from '../shared/pm/steps'
+import { shotsForReview } from '../shared/pm/advance'
 import { validateTemplate, type Template } from '../shared/pm/workflow'
 import { createPmStore } from '../server/utils/pmStore'
 import { uploadShot, userSendBack, userShot } from '../server/utils/pmBoard'
@@ -61,6 +62,47 @@ describe('screenshots evidence', () => {
     expect(shotsMissing({ evidence: ['link'] })).toEqual([])
   })
 
+  it('a redone screenshot replaces only the one it redoes; the others stay shown', () => {
+    const plan = planSteps(visual(), { type: 'ui' })
+    const four = [1, 2, 3, 4].map(n => ({ ...shot('after', n), commit: 'a'.repeat(40) }))
+    const redone = { ...shot('after', 5), commit: 'b'.repeat(40) }
+    const r = addShot(plan, { ...working(), shots: { work: four } }, redone, undefined, four[1]!.file)
+    if ('refused' in r) throw new Error(r.refused)
+    expect(r.state.shots?.work).toEqual([four[0], { ...redone, replaced: four[1]!.file }, four[2], four[3]])
+    expect(r.state.earlierShots).toEqual({ work: [four[1]] })
+    // The others, from the earlier commit, stay shown with a mark.
+    expect(r.state.shots!.work!.map(s => earlierCommit(s, r.state.shotsHead?.work))).toEqual([true, false, true, true])
+    // Since the user's last look: their note, the redone shot beside the version it redoes.
+    const looked = { ...r.state, lastBack: { note: 'The button is cut off', at: 4 } }
+    expect(sinceLastLook(looked, 'work')).toEqual({ note: 'The button is cut off', pairs: [{ before: four[1], after: { ...redone, replaced: four[1]!.file } }] })
+    expect(sinceLastLook(r.state, 'work')).toBeUndefined()
+    expect(addShot(plan, working(), shot('after', 6), undefined, 'ffffffffffff.png')).toEqual({ refused: 'Step "work" has no after screenshot ffffffffffff.png to replace' })
+  })
+
+  it('the reviewer gets the shots of the result with their commits, and flags a screen missing at the final commit', () => {
+    const t = visual()
+    t.taskTypes.ui!.steps.splice(2, 0, { id: 'review', holder: 'reviewer', ends: 'verdict', sendBack: 'work' })
+    const plan = planSteps(t, { type: 'ui' })
+    const s = { ...working(), at: 2, shotsHead: { work: 'b'.repeat(40) }, shots: { work: [{ ...shot('after', 1), commit: 'a'.repeat(40) }, { ...shot('after', 2), commit: 'b'.repeat(40) }] } }
+    expect(shotsForReview(plan, s)).toBe([
+      'Screenshots of the result (final commit bbbbbbb):', '- 000000000001.png: aaaaaaa (earlier commit)', '- 000000000002.png: bbbbbbb',
+      'If the spec or the user\'s note asks for a screen that has no screenshot at the final commit, report it as a major finding.',
+    ].join('\n'))
+    expect(shotsForReview(planSteps(visual(), { type: 'ui' }), working())).toBe('')
+  })
+
+  it('the set does not shrink silently from one round to the next', () => {
+    const plan = planSteps(visual(), { type: 'ui' })
+    const two = { ...working(), shots: { work: [shot('after', 1), shot('after', 2)] } }
+    const ended = onEvent(plan, two, report, 0)
+    expect(ended.state.shotsShown).toEqual({ work: 2 })
+    const fewer = { ...working(), shotsShown: { work: 2 }, shots: { work: [shot('after', 1)] } }
+    expect(onEvent(plan, fewer, report, 0).refused).toContain('shows 1 screenshots of the result, the last round 2')
+    const why = onEvent(plan, fewer, { ...report, evidence: { ...report.evidence, report: 'Done.\nFewer screenshots because: the dialog is gone' } }, 0)
+    expect(why.refused).toBeUndefined()
+    expect(why.effects).toContainEqual({ kind: 'log', text: 'work: 1 screenshots of the result instead of 2, because: the dialog is gone' })
+  })
+
   it('takes a screenshot only for an open step that asks for one of that phase', () => {
     const plan = planSteps(visual(), { type: 'ui' })
     expect(addShot(plan, initialState(), shot('after'))).toEqual({ refused: 'The task has no open step' })
@@ -116,7 +158,7 @@ describe('screenshot upload', () => {
     expect(await store.shot(task.id, '../tasks/UI-1.json')).toBeNull()
   })
 
-  it('after new commits since the review, replaces the worker\'s screenshots at the merge step', async () => {
+  it('after new commits since the review, the worker\'s new screenshots join the set at the merge step, each with its commit', async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-shots-'))
     const store = createPmStore(dir)
     await store.setEnabled(true)
@@ -132,13 +174,14 @@ describe('screenshot upload', () => {
     const up = (head: string) => uploadShot(store, task.id, 'after', png, 'image/png', key, async () => head)
     // The head is the reviewed commit: the merge step takes no screenshots.
     await expect(up(reviewed)).rejects.toMatchObject({ code: 'refused', message: 'Step "merge" asks for no screenshots' })
-    // New commits: the first shot replaces the shown set, the next ones join it.
+    // New commits: the new shots join the set; the old one stays, marked as from an earlier commit.
     const a = await up(reworked), b = await up(reworked)
-    expect(a.rework).toBe(reviewed)
+    expect(a).toMatchObject({ rework: reviewed, commit: reworked })
     const step = (await store.task(task.id))!.step!
     expect(step.at).toBe(3)
-    expect(step.shots?.work?.map(s => s.file)).toEqual([a.file, b.file])
-    expect(step.earlierShots).toEqual({ work: [old] })
+    expect(step.shots?.work?.map(s => s.file)).toEqual([old.file, a.file, b.file])
+    expect(step.shotsHead).toEqual({ work: reworked })
+    expect(step.earlierShots).toBeUndefined()
     // An approval dropped: the worker's new shots carry its reason for the banner, even at the reviewed commit (WHR-333).
     await store.saveTask({ ...(await store.task(task.id))!, step: { ...step, lookAgain: { why: 'the interface changed', at: 5, since: reviewed } } })
     await uploadShot(store, task.id, 'after', png, 'image/png', key, async () => reviewed, 'Back to review because: the merge with  UI-9 moved the button')

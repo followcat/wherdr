@@ -30,7 +30,7 @@ for p in "$@"; do
   if ! command -v "$p" >/dev/null 2>&1; then say "agent:$p" fail "$p is not installed"
   else case $p in claude) check "agent:$p" claude auth status;; codex) check "agent:$p" codex login status;; *) say "agent:$p" ok "";; esac; fi
 done
-pm=$HOME/.wherdr/pm
+pm=$HOME/\${WHERDR_PM_DIR:-.wherdr/pm}
 check pm sh -c 'mkdir -p "$1/worktrees" "$1/tasks" && : > "$1/tasks/.ready-check" && rm -f "$1/tasks/.ready-check"' sh "$pm"
 say disk ok "$(df -Pk "$pm" 2>/dev/null | awk 'NR==2 { print $4 }')"
 [ -n "$wherdr" ] && check reach curl -fsS -m 5 -o /dev/null "$wherdr/api/health"

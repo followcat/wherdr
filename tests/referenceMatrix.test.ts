@@ -3,7 +3,6 @@ import { decisionRef, messageRef, pointRef, refLine, parseRef, refSegments, refs
 import { addAnswer, addQuote, answerOf, removeQuote } from '../app/utils/questionReply'
 import { messageBody } from '../shared/pastedText'
 import { restoreDraft } from '../app/utils/queuedCancel'
-import { migrateQuoteMode } from '../app/utils/quoteTokens'
 
 const samples = [
   'The cache — server side — is ready : continue?',
@@ -58,13 +57,6 @@ describe('reference round trip matrix', () => {
     expect(draft.text).toBe('> Keep the cache?\nYes')
     expect(refSegments(messageBody(draft.text, [], []))[0]).toEqual({ kind: 'quote', text: 'Keep the cache?' })
   })
-  for (const saved of [null, 'rich', 'native', 'lines']) {
-    it(`loads the quote mode saved as ${saved}`, () => {
-      const values: Record<string, string> = saved ? { quoteMode: saved } : {}
-      const store = { getItem: (key: string) => values[key] ?? null, setItem: (key: string, value: string) => { values[key] = value }, removeItem: (key: string) => { delete values[key] } }
-      expect(migrateQuoteMode(store)).toBe(saved === 'lines' ? 'lines' : 'native')
-    })
-  }
   it('preserves lookalikes outside the recognized syntax', () => {
     for (const s of ['↳ note —', '↳ Quote point 11:37 : words — answer', '> manually typed', ' ↳ Quote point 11:37 : words —', '\\↳ Quote point 11:37 : words —']) {
       expect(refsIn(s)).toEqual([])

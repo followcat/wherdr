@@ -3,7 +3,7 @@ import { EXAMPLES, common, company, github, vibe, wherdr } from '../shared/pm/ex
 import { currentStep, initialState, nextRecheck, type News, onEvent, pauseClock, planSteps, recheckNews, waitStep, stepLabels, withBase, type Effect, type StepEvent, type StepState } from '../shared/pm/steps'
 import { validateTemplate, type Template } from '../shared/pm/workflow'
 import type { Finding } from '../shared/pm/verdict'
-import { taskBase } from '../shared/pm/run'
+import { startBase, taskBase } from '../shared/pm/run'
 import { guardAction } from '../shared/pm/actions'
 import { runsNow } from '../shared/pm/advance'
 import { coordinatorWake } from '../shared/pm/coordinator'
@@ -54,11 +54,12 @@ describe('the user sends a visual merge back', () => {
   it('goes back to the work step with the note as what to fix; refused with no note or off a user step', () => {
     const plan = planSteps(wherdr, { type: 'visual' })
     const merge: StepState = { ...initialState(), started: true, at: 4, yourTurn: { reason: 'user', badge: 'Look at the screenshots, then merge' }, shots: { work: [{ file: 'aaaaaaaaaaaa.png', phase: 'after', at: 1 }] } }
-    const r = onEvent(plan, merge, { kind: 'back', note: 'The button is cut on the phone' }, 0)
+    const r = onEvent(plan, merge, { kind: 'back', note: 'The button is cut on the phone', redo: ['aaaaaaaaaaaa.png'] }, 0)
     expect(r.state).toMatchObject({ at: 1, yourTurn: undefined, fix: expect.stringContaining('The button is cut on the phone') })
-    // The screens sent back are dropped: the work step needs new ones before it can report.
-    expect(r.state.shots?.work).toBeUndefined()
-    expect(onEvent(plan, r.state, { kind: 'report', from: 'worker' }, 1).refused).toMatch(/screenshot/i)
+    // The screens stay; the worker is told which to redo in place, and that the others stay.
+    expect(r.state.shots?.work).toEqual(merge.shots!.work)
+    expect(r.state.lastBack).toEqual({ note: 'The button is cut on the phone', at: 0 })
+    expect(r.state.fix).toContain('each uploaded with &replaces=<its file>: aaaaaaaaaaaa.png. Your other screenshots stay shown')
     expect(r.effects).toMatchObject([{ kind: 'instruct', step: 'work', holder: 'worker' }, { kind: 'log' }])
     expect(onEvent(plan, merge, { kind: 'back', note: ' ' }, 0).refused).toBe('Say what to change')
     expect(onEvent(plan, { ...merge, at: 3 }, { kind: 'back', note: 'x' }, 0).refused).toContain('does not wait for you')
@@ -242,6 +243,16 @@ describe('working branch', () => {
     expect(taskBase({}, { base: 'v3' })).toBe('v3')
     expect(taskBase({ base: 'main' }, { base: 'v3' })).toBe('main')
     expect(taskBase({ base: '' }, { base: 'v3' })).toBeUndefined()
+  })
+
+  it('with no working branch, starts from and compares to the workflow\'s PR base, else origin\'s default', () => {
+    const wf = (action: Record<string, string>) => ({ taskTypes: { task: { steps: [{ id: 'work', holder: 'worker' }, { id: 'pr', ends: 'action', action }] } } }) as unknown as Template
+    const pr = wf({ kind: 'github.pr', base: 'v3' })
+    expect(startBase(pr, { type: 'task' }, { base: 'develop' })).toEqual({ base: 'develop' })
+    expect(startBase(pr, { type: 'task' }, {})).toEqual({ base: 'v3', fromWorkflow: true })
+    expect(startBase(wf({ kind: 'git.verify-merged', target: 'next' }), { type: 'task', base: '' }, { base: 'v3' })).toEqual({ base: 'next', fromWorkflow: true })
+    expect(startBase(wf({ kind: 'github.pr' }), { type: 'task' }, {})).toEqual({})
+    expect(startBase(null, { type: 'task' })).toEqual({})
   })
 })
 

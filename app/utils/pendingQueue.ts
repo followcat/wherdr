@@ -122,7 +122,7 @@ export function pendingQueue(o: {
     const inAgentQueue = held(q)
     // Sent from here and still in Claude's field: the send left it there (a
     // paste Claude did not submit). Waiting there, whatever the agent's state.
-    const inInput = !q.id.startsWith('cc-') && (!q.state || q.state === 'held') && fieldHolds(o.input, q.text)
+    const inInput = !q.id.startsWith('cc-') && (!q.state || q.state === 'held') && fieldHolds(o.input, q.text, false, true)
     return {
       id: q.id,
       raw: q.text,
@@ -144,11 +144,12 @@ export function pendingQueue(o: {
 
 // Claude's field holds exactly messages already shown as waiting there: its
 // own "Not sent" bubble would show the same message twice (Send now / Clear stay).
+// Matched without its photos: the field's "[Image #N]" tags may not count them.
 // A message still being sent counts too: the server waits for Claude to show
 // its photos, then submits it (once more if it stays), so it is "sending",
 // not "Not sent", until the server answers.
 export const inputShown = (list: Pick<PendingMessage, 'raw' | 'inInput' | 'state'>[], input: string | null | undefined) =>
-  Boolean(input) && list.some(q => (q.inInput || q.state === 'sending') && fieldHolds(input, q.raw, true))
+  Boolean(input) && list.some(q => (q.inInput || q.state === 'sending') && fieldHolds(input, q.raw, true, true))
 
 // What a waiting message is waiting on (see waitingOn in ChatView.vue).
 export type WaitingOn = 'stopped' | 'question' | 'working' | 'sending' | 'installing'

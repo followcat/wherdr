@@ -1,6 +1,6 @@
 // Leak check in a linked worktree: patterns of the main checkout, warning otherwise.
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -43,7 +43,8 @@ const hasGit = spawnSync('git', ['--version']).status === 0
 describe.skipIf(!hasGit)('check-leaks in a worktree', () => {
   it('passes the repository gitleaks config when scanning an exported index', () => {
     const { wt } = repoWithWorktree()
-    const config = path.join(wt, '.gitleaks.toml')
+    const config = path.join(wt, '.github', 'gitleaks.toml')
+    mkdirSync(path.dirname(config), { recursive: true })
     writeFileSync(config, '[extend]\nuseDefault = true\n')
     const binary = path.join(wt, 'gitleaks')
     writeFileSync(binary, '#!/usr/bin/env node\nif (process.argv[2] !== "version" && !process.argv.includes(process.env.EXPECTED_CONFIG)) process.exit(1)\n')

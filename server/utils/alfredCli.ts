@@ -23,14 +23,16 @@ import { addChangeCard, addSettingCard } from './uiActions'
 import { CHANGE_PLACES, choiceArgv, type CardChoice } from '../../shared/uiActions'
 import { UI_TARGETS } from '../../shared/uiTargets'
 import { saveProjectGuards } from './pmProject'
+import { workspaceInput } from '../../shared/pm/workspace'
 import { checkMachine } from './pmReady'
 import { projectPlace } from '../../shared/pm/places'
 import { EXAMPLES } from '../../shared/pm/examples'
 import { DATA_DIR } from './env'
 import { openUi, uiTargetsList, type UiOpenDeps } from './uiOpen'
 import { notesStore, runNotes, type NotesStore } from './notesStore'
+import { alfredBrief, alfredGroups, type BriefDeps } from './alfredBrief'
 
-type Deps = CoreAdminDeps & { store: PmStore, check: FolderCheck, urls: CoordinatorUrls, settingsFile?: string, dataDir?: string, notes?: NotesStore, herdrProjects?: string, clients?: UiOpenDeps['clients'] }
+type Deps = CoreAdminDeps & { store: PmStore, check: FolderCheck, urls: CoordinatorUrls, settingsFile?: string, dataDir?: string, notes?: NotesStore, herdrProjects?: string, clients?: UiOpenDeps['clients'], quotas?: BriefDeps['quotas'] }
 
 // The command a card keeps: without --propose; a card with checkboxes, without --only and --start too.
 function cardArgv(argv: string[], picks: boolean) {
@@ -111,7 +113,7 @@ async function alfredCommand(deps: Deps, argv: unknown, input: unknown, card?: s
     if ('apply' in cmd && cmd.apply) return { applied: true, change: plan.change, result: await make() }
     if (!('propose' in cmd && cmd.propose)) return dryRun(argv as string[], plan)
     const key = 'input' in cmd ? cmd.input.key : 'key' in cmd ? cmd.key : '', place = CHANGE_PLACES[cmd.name]!, turn = await alfredTurn()
-    const target = cmd.name === 'project add' ? undefined : place.target
+    const target = cmd.name === 'project add' || cmd.name === 'workspace add' ? undefined : place.target
     return addChangeCard(store, { turn: turn?.kind ?? 'none', by: ALFRED, label: place.label(key), change: { argv: cardArgv(argv as string[], !!plan.picks), lines: plan.change, project: key, ...(plan.picks ? { picks: plan.picks, ...(plan.on ? { on: plan.on } : {}), start: plan.start, ...(plan.pm ? { pm: plan.pm } : {}) } : {}), ...(turn?.said ? { said: turn.said } : {}), ...(target ? { target } : {}) } })
   }
 
@@ -178,6 +180,8 @@ async function alfredCommand(deps: Deps, argv: unknown, input: unknown, card?: s
       return { link: `${deps.urls.remote ?? deps.urls.local}/#/a/${encodeURIComponent(pane.id)}`, note: 'Give the user this link; the sidebar shows it too' }
     }
     case 'ui targets': return uiTargetsList()
+    case 'groups': return alfredGroups(deps)
+    case 'brief': return alfredBrief(deps, cmd)
     case 'notes': return runNotes(deps.notes ?? notesStore(path.join(deps.dataDir ?? DATA_DIR, 'notes')), cmd.notes, input, { by: ALFRED }, deps.settingsFile, machines)
     case 'ui open': return openUi({ ...deps, clients: deps.clients ?? (() => []) }, { scope: MAIN, main: true, raw: cmd.link, turn: (await alfredTurn())?.kind ?? 'none', by: ALFRED })
     case 'settings': return { settings: await readSettings(deps.settingsFile), values: SETTING_VALUES, note: 'Alfred changes only the settings listed in values, to one of their values (1 = on, 0 = off)' }
@@ -212,6 +216,34 @@ async function alfredCommand(deps: Deps, argv: unknown, input: unknown, card?: s
           `template ${project.template ?? 'none'}`],
         remote,
       }, () => store.addProject(project, deps.check))
+    }
+    case 'workspace add': {
+      await needPm()
+      const roots = cmd.input.roots.map(([name, root]): [string, string] => {
+        const m = machines.find(x => x.key === name) ?? machines.find(x => x.label === name)
+        if (!m && name) throw new HerdrError('not_found', `Unknown machine ${name} (see wherdr alfred machines)`)
+        return [m?.key ?? '', root]
+      })
+      // The tab group by its id or its name (Settings › Machines › Groups).
+      let groups: { id: string, name: string }[] = []
+      try { groups = JSON.parse(String((await readSettings(deps.settingsFile)).machineGroups ?? '[]')) } catch {}
+      const g = cmd.input.group && (groups.find(x => x.id === cmd.input.group) ?? groups.find(x => x.name === cmd.input.group))
+      if (cmd.input.group && !g) throw new HerdrError('not_found', `No tab group ${cmd.input.group}: ${groups.map(x => x.name).join(', ') || 'none yet'}`)
+      const raw = workspaceInput({ ...cmd.input, roots, ...(g ? { group: g.id } : {}) })
+      const { project, errors } = cleanProjectInput(raw)
+      if (!project) throw new HerdrError('bad_input', errors.map(e => `${e.path}: ${e.message}`).join('; '))
+      if (keyClash(projects, project.key)) throw new HerdrError('exists', 'A project already has this key')
+      const remote = roots.map(([m]) => remoteOf(m)).find(Boolean)
+      return change({
+        change: [`add workspace ${project.key} "${project.name}"${g ? ` in tab group ${g.name}` : ''}`,
+          ...roots.map(([m, root], i) => `${i ? 'clone root' : 'root folder'} ${root} on ${machineName(m)}${i ? '' : ' (its home: checked when applied, it must exist)'}`),
+          'then its coordinator starts and offers to build the map of the repositories under the root'],
+        remote,
+      }, async () => {
+        const added = await store.addProject(raw, deps.check, { plain: true })
+        try { await startCoordinator(deps, added.key, await projectAgent(added.key), deps.urls); return { project: added, outcome: [`${added.key}: added, coordinator started (it offers to build the map)`] } }
+        catch (e) { return { project: added, outcome: [`${added.key}: added; coordinator not started: ${(e as Error).message}`] } }
+      })
     }
     case 'project template': {
       await needPm()
@@ -256,13 +288,12 @@ async function alfredCommand(deps: Deps, argv: unknown, input: unknown, card?: s
       const p = projectOf(cmd.key)
       const pane = await coordinatorPane(p.key)
       const started = !pane
-      // Alfred's text may already start with it: never "From Alfred: From Alfred:".
-      const said = cmd.text.replace(new RegExp(`^\\s*From ${ALFRED}:\\s*`, 'i'), '')
-      const text = `From ${ALFRED}: ${said}`
-      // Not running: started with the message, typed once it is ready (coordinatorFirst.ts).
-      const terminal = pane?.coreAddress ?? (await startCoordinator(deps, p.key, await projectAgent(p.key), deps.urls, [text])).terminal
       // The coordinator's turn is the user's when Alfred relays the user's message; a wake's otherwise.
       const turn = await alfredTurn()
+      const said = tellText(cmd.text)
+      const text = `From ${ALFRED}${turn?.kind === 'user' ? ', for the user' : ''}: ${said}`
+      // Not running: started with the message, typed once it is ready (coordinatorFirst.ts).
+      const terminal = pane?.coreAddress ?? (await startCoordinator(deps, p.key, await projectAgent(p.key), deps.urls, [text])).terminal
       await noteTurn(store, p.key, turn?.kind === 'user' ? 'user' : 'wake', turn?.said)
       if (!started) await deps.call('terminal.send', { terminal, text }, 30000)
       await store.logProject(p.key, { by: ALFRED, text: `told the coordinator: ${said.slice(0, 300)}`, ...(turn?.said ? { said: turn.said } : {}) })
@@ -274,7 +305,10 @@ async function alfredCommand(deps: Deps, argv: unknown, input: unknown, card?: s
       if (!pane) throw new HerdrError('not_found', `The coordinator of ${p.key} is not running: wherdr alfred tell ${p.key} "<text>" starts it`)
       const said = await lastWords(deps, pane.coreAddress!)
       if (!said) throw new HerdrError('unreachable', `Nothing to read from the coordinator of ${p.key}: its conversation and its terminal are out of reach`)
-      return { project: p.key, working: pane.status === 'working', ...said }
+      // The tasks its coordinator added since Alfred last told it: the reply names them.
+      const told = (await store.projectLog(p.key)).findLast(e => e.by === ALFRED && e.text.startsWith('told the coordinator'))
+      const tasks = told ? (await store.tasks()).filter(t => t.project === p.key && (t.createdAt ?? 0) >= told.at).map(t => ({ id: t.id, title: t.title })) : []
+      return { project: p.key, working: pane.status === 'working', ...said, ...(tasks.length ? { tasks, next: 'Name each in your reply as a task line of a ```wherdr block' } : {}) }
     }
     case 'project guards': {
       await needPm()
@@ -331,3 +365,6 @@ async function alfredCommand(deps: Deps, argv: unknown, input: unknown, card?: s
     }
   }
 }
+
+// Alfred's text may already carry the prefix: never "From Alfred: From Alfred:".
+export const tellText = (text: string) => text.replace(new RegExp(`^\\s*From ${ALFRED}(?:, for the user)?:\\s*`, 'i'), '')

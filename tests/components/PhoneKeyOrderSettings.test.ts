@@ -12,6 +12,9 @@ it('hides and shows keys in the preview without losing their place', async () =>
   const w = await mountSuspended(PhoneKeyOrderSettings)
   const preview = () => w.findAll('.key-order-preview [data-key]').map(el => el.attributes('data-key'))
   const check = (id: string) => w.find(`[data-key-row="${id}"] input[type="checkbox"]`)
+  // The preview is folded under "Show me".
+  expect(w.find('.key-order-preview').exists()).toBe(false)
+  await w.find('[data-testid="settings-preview-toggle"]').trigger('click')
   expect(preview()).toEqual([...PHONE_KEY_IDS])
   expect(w.find('.bar-pref-reset').attributes('disabled')).toBeDefined()
 

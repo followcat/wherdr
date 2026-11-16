@@ -8,9 +8,9 @@ export type ShortcutId = 'search-all' | 'search-chat' | 'toggle-term' | 'stop' |
   | 'prev-tab' | 'next-tab'
   | 'new-space' | 'new-tab' | 'close-pane' | 'open-editor' | 'settings' | 'notes' | 'help'
 
-type Mod = 'mod' | 'ctrl' | 'alt' | 'shift'
+export type Mod = 'mod' | 'ctrl' | 'alt' | 'shift'
 
-interface Shortcut {
+export interface Shortcut {
   id: ShortcutId
   // Exact modifiers (Shift ignored with `anyShift`: punctuation that needs it on AZERTY).
   mods: Mod[]
@@ -72,8 +72,78 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: 'help', mods: [], anyShift: true, key: '?', fields: 'none', terminal: false, overlay: true, kbds: ['?'] },
 ]
 
-export function shortcutKbds(id: ShortcutId): string[] {
-  return SHORTCUTS.find(s => s.id === id)!.kbds
+export function tableKbds(table: readonly Shortcut[], id: ShortcutId): string[] {
+  return table.find(s => s.id === id)!.kbds
+}
+
+// User bindings (Settings › Shortcuts, synced setting `shortcutBindings`): a key by
+// name with exact modifiers, replacing the first row of its id. Escape (Stop) and `?`
+// stay fixed.
+export interface Binding { mods: Mod[], key: string }
+export type Bindings = Partial<Record<ShortcutId, Binding>>
+export const FIXED_SHORTCUTS: readonly ShortcutId[] = ['stop']
+const MODS: Mod[] = ['mod', 'ctrl', 'alt', 'shift']
+
+export function parseBindings(raw: string | null): Bindings {
+  const out: Bindings = {}
+  try {
+    const v: unknown = JSON.parse(raw || '{}')
+    for (const [id, b] of Object.entries(v && typeof v === 'object' ? v : {})) {
+      const ok = SHORTCUTS.some(s => s.id === id) && !FIXED_SHORTCUTS.includes(id as ShortcutId)
+        && typeof b?.key === 'string' && b.key && Array.isArray(b.mods) && b.mods.every((m: unknown) => MODS.includes(m as Mod))
+      if (ok) out[id as ShortcutId] = { mods: MODS.filter(m => b.mods.includes(m)), key: b.key.toLowerCase() }
+    }
+  } catch { /* defaults */ }
+  return out
+}
+
+export function bindingKbds(b: Binding): string[] {
+  const names: Record<Mod, string> = { mod: 'meta', ctrl: 'ctrl', alt: 'alt', shift: 'shift' }
+  return [...MODS.filter(m => b.mods.includes(m)).map(m => names[m]), LETTER.test(b.key) ? b.key.toUpperCase() : b.key]
+}
+
+export function applyBindings(bindings: Bindings): Shortcut[] {
+  const done = new Set<ShortcutId>()
+  return SHORTCUTS.map((s) => {
+    const b = bindings[s.id]
+    if (!b || done.has(s.id)) return s
+    done.add(s.id)
+    // A chord the terminal would send to its program is caught before it.
+    const capture = s.terminal && b.mods.some(m => m !== 'shift')
+    return { ...s, mods: b.mods, key: b.key, codes: undefined, macCodes: undefined, either: false, anyShift: false, capture, kbds: bindingKbds(b) }
+  })
+}
+
+// The keys pressed while recording; null for a lone modifier (keep listening).
+export function bindingFromEvent(e: KeyInput, mac: boolean): Binding | null {
+  if (!e.key || ['control', 'alt', 'shift', 'meta', 'altgraph', 'dead', 'unidentified'].includes(e.key.toLowerCase()) && !/^Key[A-Z]$/.test(e.code || '')) return null
+  if (!mac && e.metaKey) return null
+  const mods: Mod[] = []
+  if (e.metaKey || (!mac && e.ctrlKey)) mods.push('mod')
+  if (mac && e.ctrlKey) mods.push('ctrl')
+  if (e.altKey) mods.push('alt')
+  if (e.shiftKey) mods.push('shift')
+  // ⌥ or another layout types another character: the letter by position.
+  const letter = /^Key([A-Z])$/.exec(e.code || '')
+  const key = letter && !LETTER.test(e.key.toLowerCase()) ? letter[1]!.toLowerCase() : e.key.toLowerCase()
+  return { mods, key }
+}
+
+// Why a binding cannot be used: no Ctrl/Alt/⌘ (it would type), or the browser's own.
+const BROWSER = new Set(['mod+n', 'mod+t', 'mod+w', 'mod+q', 'mod+r', 'mod+l', 'mod+c', 'mod+v', 'mod+x', 'mod+z', 'mod+a', 'mod+shift+t', 'mod+shift+n', 'mod+tab', 'f5', 'f11', 'f12'])
+export function reservedReason(b: Binding): 'modifier' | 'browser' | null {
+  const sig = [...b.mods, b.key].join('+')
+  if (BROWSER.has(sig) || ['escape', 'tab', 'enter'].includes(b.key)) return 'browser'
+  return b.mods.some(m => m !== 'shift') || /^f\d+$/.test(b.key) ? null : 'modifier'
+}
+
+// The other shortcut already on these keys (Ctrl and Mod are one key outside macOS).
+export function sameKeys(a: string[], b: string[], mac: boolean): boolean {
+  const sig = (k: string[]) => k.map(x => (!mac && x === 'meta' ? 'ctrl' : x.toLowerCase())).sort().join('+')
+  return sig(a) === sig(b)
+}
+export function findConflict(table: readonly Shortcut[], id: ShortcutId, kbds: string[], mac: boolean): ShortcutId | null {
+  return table.find(s => s.id !== id && sameKeys(s.kbds, kbds, mac))?.id ?? null
 }
 
 // `keyCode` 229: the key that ends an IME composition in Safari (isComposing already false).
@@ -118,10 +188,10 @@ function keysMatch(s: Shortcut, e: KeyInput, key: string, c: ShortcutContext): b
   return printed && LETTER.test(printed) ? printed === s.key : e.code === `Key${s.key!.toUpperCase()}`
 }
 
-export function matchShortcut(e: KeyInput, f: ShortcutFocus, c: ShortcutContext): ShortcutId | null {
+export function matchShortcut(e: KeyInput, f: ShortcutFocus, c: ShortcutContext, table: readonly Shortcut[] = SHORTCUTS): ShortcutId | null {
   if (typeof e.key !== 'string' || e.isComposing || e.keyCode === 229 || (c.phase === 'bubble' && e.defaultPrevented)) return null
   const key = e.key.toLowerCase()
-  const s = SHORTCUTS.find(x => Boolean(x.capture) === (c.phase === 'capture') && keysMatch(x, e, key, c))
+  const s = table.find(x => Boolean(x.capture) === (c.phase === 'capture') && keysMatch(x, e, key, c))
   if (!s) return null
   if (!c.desk && !s.anyLayout) return null
   if (e.repeat && !s.repeat) return null

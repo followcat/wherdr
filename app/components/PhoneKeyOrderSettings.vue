@@ -117,12 +117,13 @@ function onGrab(id: PhoneKeyId, e: PointerEvent) {
   <div class="settings-group phone-key-order">
     <h3>{{ tl('Phone key bar', 'Barre de touches du téléphone') }}</h3>
     <p class="muted settings-lead">{{ t('One row that scrolls sideways, in the Conversation and the Terminal: only the first keys show at once. Put the ones you use most first, and uncheck the ones you never use.') }}</p>
-    <p class="bar-pref-head">{{ tl('Preview', 'Aperçu') }}</p>
-    <div class="key-order-preview" aria-hidden="true">
-      <span v-for="k in preview" :key="k.id" class="key-order-cap" :class="{ danger: k.danger }" :data-key="k.id">
-        <UIcon v-if="k.icon" :name="k.icon" mode="svg" /><template v-else>{{ k.cap!() }}</template>
-      </span>
-    </div>
+    <SettingsPreview>
+      <div class="key-order-preview" aria-hidden="true">
+        <span v-for="k in preview" :key="k.id" class="key-order-cap" :class="{ danger: k.danger }" :data-key="k.id">
+          <UIcon v-if="k.icon" :name="k.icon" mode="svg" /><template v-else>{{ k.cap!() }}</template>
+        </span>
+      </div>
+    </SettingsPreview>
     <p class="bar-pref-head">{{ tl('Order', 'Ordre') }}</p>
     <ul ref="list" class="bar-pref-list key-order-list" :class="{ dragging: drag }" :aria-label="tl('Order of the phone keys', 'Ordre des touches du téléphone')">
       <li

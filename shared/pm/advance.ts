@@ -7,6 +7,7 @@ import { LABEL, specText, type Run, type Task } from './run'
 import { parseFindings, reviewText, sendBackText } from './verdict'
 import { rereviewText } from './steps'
 import { publicReviewSection } from './visibility'
+import { earlierCommit, needsShots } from './shots'
 import { recovering } from './incident'
 import type { PlannedStep, StepEvent, StepState } from './steps'
 
@@ -83,13 +84,25 @@ export function signalEvent(step: PlannedStep | undefined, role: Run['role'], r:
   return { kind: 'verdict', from: 'reviewer', findings, ...(r.diffLines !== undefined ? { diffLines: r.diffLines } : {}), ...(r.head ? { head: r.head } : {}) }
 }
 
+// The reviewer of a visual task gets the worker's screenshots of the result
+// (file and the commit each shows) and flags a screen the spec or the user's
+// note asks for that has none at the final commit.
+export function shotsForReview(plan: PlannedStep[], s: StepState) {
+  const work = plan.slice(0, s.at).findLast(p => p.holder === 'worker' && needsShots(p))
+  if (!work) return ''
+  const shots = s.shots?.[work.id]?.filter(x => x.phase === 'after') ?? [], head = s.shotsHead?.[work.id]
+  const list = shots.map(x => `- ${x.file}: ${x.commit ? x.commit.slice(0, 7) : 'commit unknown'}${earlierCommit(x, head) ? ' (earlier commit)' : ''}`)
+  return [`Screenshots of the result${head ? ` (final commit ${head.slice(0, 7)})` : ''}:`, ...(list.length ? list : ['- none']),
+    'If the spec or the user\'s note asks for a screen that has no screenshot at the final commit, report it as a major finding.'].join('\n')
+}
+
 // What the agent that holds the current step is told, once per step start
 // (`told`): undefined when nothing is due. The worker's first step is in its
 // instructions file; a send-back gives what to fix, not the step again.
 export function dueText(plan: PlannedStep[], s: StepState | undefined): { holder: 'worker' | 'reviewer', text: string } | undefined {
   const step = s?.started && !s.done ? plan[s.at] : undefined
   if (!step || s!.told === s!.since || (step.holder !== 'worker' && step.holder !== 'reviewer') || s!.yourTurn) return
-  if (step.holder === 'reviewer') return { holder: 'reviewer', text: s!.rereview ? rereviewText(s!.rereview) : reviewText(step.text, s!.reviews?.[step.id]?.at(-1)) }
+  if (step.holder === 'reviewer') return { holder: 'reviewer', text: [s!.rereview ? rereviewText(s!.rereview) : reviewText(step.text, s!.reviews?.[step.id]?.at(-1)), shotsForReview(plan, s!)].filter(Boolean).join('\n\n') }
   const back = s!.backFrom ? s!.reviews?.[s!.backFrom]?.at(-1) : undefined
   const text = s!.fix ?? (back ? sendBackText(s!.backFrom!, back.findings) : step.text)
   return { holder: 'worker', text: `${text}\n\nWhen done: ${DONE_CMD}` }

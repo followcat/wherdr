@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { marked } from 'marked'
 import { md } from '../app/utils/markdown'
-import { parseReplyStyle, replyTargets, rowOf, withQuestions } from '../app/utils/questionReply'
+import { replyTargets, rowOf, withQuestions } from '../app/utils/questionReply'
 
 // Nuxt auto-imports t() (app/utils/i18n.ts); English is the active language.
 ;(globalThis as { t?: (s: string) => string }).t = s => s
@@ -175,34 +175,14 @@ describe('points of an agent reply', () => {
   })
 })
 
-describe('what the list style shows under a reply', () => {
-  it('lists the questions in order and counts the points', () => {
-    const r = reply('Shall I push now? The build is green. Or do you want a review first?\n\n- The cache is cleared on deploy.\n- The export keeps its column order.')
+describe('what a reply offers to answer', () => {
+  it('lists the questions in order', () => {
+    const r = reply('Shall I push now? The build is green. Or do you want a review first?\n\n- The cache is cleared on deploy.')
     expect(replyTargets(r.html)).toEqual({
       questions: [{ n: '1', text: 'Shall I push now?', closed: true }, { n: '2', text: 'Or do you want a review first?', closed: false }],
       rows: [],
-      points: 2,
-      pick: true,
     })
-  })
-
-  it('is empty for a reply with nothing to quote', () => {
-    expect(replyTargets(reply('Done.').html)).toEqual({ questions: [], rows: [], points: 0, pick: false })
-  })
-
-  it('does not offer to pick a point in a reply of plain prose', () => {
-    const prose = replyTargets(reply('Nothing is blocked, the state is unchanged. I am still waiting for your answers.').html)
-    expect(prose).toEqual({ questions: [], rows: [], points: 1, pick: false })
-    // A question next to a single paragraph: the question is listed, no pick.
-    const asked = replyTargets(reply('The build is green on every platform.\n\nShall I push now?').html)
-    expect(asked.questions).toHaveLength(1)
-    expect(asked).toMatchObject({ points: 1, pick: false })
-  })
-
-  it('offers to pick a point when there is a choice: a list item, or several points', () => {
-    expect(replyTargets(reply('Here is what changed:\n\n- The cache is cleared on deploy.').html)).toMatchObject({ points: 1, pick: true })
-    expect(replyTargets(reply('1. The cache is cleared on deploy.\n2. The export keeps its column order.').html)).toMatchObject({ points: 2, pick: true })
-    expect(replyTargets(reply('The cache is cleared on deploy.\n\nThe export keeps its column order.').html)).toMatchObject({ points: 2, pick: true })
+    expect(replyTargets(reply('Done.').html)).toEqual({ questions: [], rows: [] })
   })
 })
 
@@ -318,13 +298,6 @@ describe('the panel under a decision table', () => {
       expect(r.host.querySelector('.q-table')).toBeNull()
       expect(replyTargets(r.html).rows).toEqual([])
     }
-  })
-})
-
-describe('the reply style setting', () => {
-  it('reads the three styles and falls back to the icon', () => {
-    expect(['icon', 'text', 'list'].map(parseReplyStyle)).toEqual(['icon', 'text', 'list'])
-    expect([null, undefined, '', 'tag'].map(parseReplyStyle)).toEqual(['icon', 'icon', 'icon', 'icon'])
   })
 })
 

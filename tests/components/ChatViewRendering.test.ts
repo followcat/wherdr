@@ -8,6 +8,7 @@ import { parseLines } from '../../server/utils/transcripts'
 import ompErrors from '../fixtures/omp-errors.jsonl?raw'
 import devinAtif from '../fixtures/devin-atif-v1.7-real.json'
 import { parseDevin } from '../../server/utils/devinTranscripts'
+import { fmtDateTime, fmtTime } from '~/utils/format'
 
 const pane: Pane = { id: 'w1:p1', workspace: 'w1', tab: 'w1:t1', tabLabel: null, agent: 'omp', name: null, label: null, status: 'blocked', title: null, cwd: '/tmp/demo', agentSession: null }
 let items: ChatItem[] = []
@@ -156,6 +157,38 @@ describe('conversation rendering', () => {
       // Order: each error right after the check-in that hit it.
       const order = [...w.find('.chat').element.querySelectorAll('.msg-user, .msg-error')].map(el => el.classList.contains('msg-error') ? 'E' : 'A')
       expect(order.join('')).toBe('AEAEAEAAE')
+    } finally { w.unmount() }
+  })
+
+  it('shows the time under agent replies, with the day for an earlier one', async () => {
+    const idle = { ...pane, agent: 'claude' as const, status: 'idle' as const }
+    herdrState.value = { ok: true, workspaces: [], panes: [idle] }
+    const y = new Date()
+    y.setDate(y.getDate() - 1)
+    y.setHours(21, 39, 0, 0)
+    const now = new Date().toISOString()
+    items = [
+      { role: 'user', text: 'Is the build green?', ts: y.toISOString() },
+      { role: 'assistant', text: 'Checking.', ts: y.toISOString() },
+      { role: 'assistant', text: 'Yes, all green.', ts: y.toISOString() },
+      { role: 'user', text: 'Ship it.', ts: now },
+      { role: 'assistant', text: 'Shipped.', ts: now },
+    ]
+    const w = await mountSuspended(ChatView, {
+      props: { pane: idle, localQueued: [] },
+      global: { stubs: { UTooltip: { template: '<slot />' } } },
+    })
+    try {
+      await expect.poll(() => w.find('.chat').text()).toContain('Shipped.')
+      // A reply mid-turn: its time in its action row, with the day.
+      const mid = w.find('.msg-actions .msg-stamp')
+      expect(mid.text()).toBe(`Yesterday ${fmtTime(y.toISOString())}`)
+      expect(mid.attributes('title')).toBe(fmtDateTime(y.toISOString()))
+      // The last reply: its time on the end-of-turn line; tapped, the full date.
+      const last = w.findAll('.turn-end .msg-stamp').at(-1)!
+      expect(last.text()).toBe(fmtTime(now))
+      await last.trigger('click')
+      expect(last.text()).toBe(fmtDateTime(now))
     } finally { w.unmount() }
   })
 })

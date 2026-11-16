@@ -13,9 +13,9 @@ copied and nothing runs in the cloud: wherdr talks to the hc session on your com
 > [Migrate from a 1.x Docker install](docs/migrate-from-1.x-docker.md) for old v1 containers.
 
 <p align="center">
-  <img src="assets/wherdr-readme.webp" width="720" alt="Animated demonstration of wherdr v2 on Herdr: launch an agent on desktop, continue on a phone, approve its request and view v2-only screens. Real app, fictional demo data. v3 keeps the same home, conversation and phone screens.">
+  <img src="assets/wherdr-readme.webp" width="720" alt="Animated demonstration of wherdr v3: on a computer, Home, Alfred listing what waits, a project coordinator planning two tasks, Tasks to review approving a task from its screenshots, and the board moving it to Done; then the same session on a phone, answering an agent's question with one tap. Real app, fictional demo data.">
 </p>
-<p align="center"><sub>The demo shows wherdr v2 on Herdr.</sub></p>
+<p align="center"><sub>wherdr v3 from its browser demo: Alfred, a coordinator, Tasks to review and the board, then a phone.</sub></p>
 
 ## What v3 does
 

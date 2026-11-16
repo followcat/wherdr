@@ -29,7 +29,7 @@ const choices = OPTIONS.map(o => o.title)
 <template>
   <div ref="root" class="al app-ui" aria-hidden="true">
     <div class="home-top">
-      <div class="eyebrow home-brand"><PixelMark class="home-logo" :boot="false" :glow="false" />wherdr 2.0.0 · herdr 0.9.1</div>
+      <div class="eyebrow home-brand"><PixelMark class="home-logo" :boot="false" :glow="false" />wherdr 3.0.0 · hc</div>
       <div class="home-title-row">
         <h3 class="home-title">Agents</h3>
         <div class="home-actions">

@@ -164,11 +164,10 @@ const expanded = computed(() => fieldFocused.value || kbOpen.value || text.value
 // What the text refers to ("↳ … —" lines, see shared/reference.ts): one chip
 // each above the field, to remove it.
 const quotes = computed(() => quotesIn(text.value))
-// "native" mode (Settings › Conversation, utils/quoteTokens.ts): the
-// reference lines of the field drawn as tokens by a mirror behind it, while
-// the text holds one.
+// The reference lines of the field drawn as tokens by a mirror behind it
+// (utils/quoteMirror.ts), while the text holds one.
 let mirror: ReturnType<typeof attachQuoteMirror> | null = null
-watch([() => quoteMode.value === 'native' && quotes.value.length > 0, ta], ([on, el]) => {
+watch([() => quotes.value.length > 0, ta], ([on, el]) => {
   if (mirror && (!on || !el)) { mirror.destroy(); mirror = null }
   if (on && el && !mirror) mirror = attachQuoteMirror(el)
 }, { immediate: true, flush: 'post' })
@@ -751,7 +750,7 @@ defineExpose({
         </div>
       </template>
       <template #footer>
-        <!-- The focused field's ring (main.css, "Focus border"): out of the footer's flow, over
+        <!-- The focused field's ring (main.css, focused field): out of the footer's flow, over
              the field's border; a turning square under a fixed mask, so only the compositor works. -->
         <span class="fx-ring" aria-hidden="true"><span class="fx-spin" /></span>
         <span class="fx-halo" aria-hidden="true"><span class="fx-spin" /></span>
