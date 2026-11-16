@@ -10,3 +10,10 @@ export function availableAgentKinds(found: Iterable<string>, allowed: readonly s
   const installed = new Set(found)
   return HERDR_AGENT_KINDS.filter(k => allowed.includes(k) && installed.has(k))
 }
+
+// The command an agent kind runs (when it is not the kind's own name):
+// cursor-agent is Cursor's agent CLI; `cursor` alone is its editor's wrapper.
+export const AGENT_BINARY: Record<string, string> = { cursor: 'cursor-agent' }
+const BINARY_KIND = Object.fromEntries(Object.entries(AGENT_BINARY).map(([k, b]) => [b, k]))
+export const agentBinary = (kind: string) => AGENT_BINARY[kind] ?? kind
+export const binaryKind = (binary: string) => BINARY_KIND[binary] ?? binary

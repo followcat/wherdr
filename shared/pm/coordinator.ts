@@ -42,7 +42,7 @@ export interface CoordinatorAgent { program: CoordinatorProgram, model?: string 
 // The harnesses that can carry a coordinator or Alfred: each reads its role
 // from AGENTS.md in its folder, or from its own file that imports it
 // (ROLE_POINTERS). Others (no known instructions file) are not offered there.
-export const COORDINATOR_PROGRAMS = ['claude', 'codex', 'omp', 'pi', 'opencode', 'kimi', 'gemini', 'qwen', 'copilot', 'amp', 'droid', 'devin'] as const
+export const COORDINATOR_PROGRAMS = ['claude', 'codex', 'omp', 'pi', 'opencode', 'kimi', 'gemini', 'qwen', 'copilot', 'amp', 'droid', 'devin', 'cursor'] as const
 export type CoordinatorProgram = typeof COORDINATOR_PROGRAMS[number]
 export const isCoordinatorProgram = (v: unknown): v is CoordinatorProgram => COORDINATOR_PROGRAMS.includes(v as CoordinatorProgram)
 // A project's coordinator must not change the project's repository: only
@@ -475,7 +475,9 @@ export const specChangedText = (what: string) => `The task's spec changed: ${wha
 // ~/.codex) extends :workspace (reads everywhere, writes in its folder and
 // temp folders) with the network on. The others start bare in the folder.
 // Devin answers its workspace-trust check itself with --respect-workspace-trust
-// (its home is wherdr's own folder, made by wherdr).
+// (its home is wherdr's own folder, made by wherdr). Cursor Agent's binary is
+// cursor-agent; --trust skips its workspace-trust box (its MCP approval box, a
+// user's own choice, is never answered: the start ends as a waiting dialog).
 // works: the project's folder is the coordinator's to change (a folder without git).
 // resume: its last conversation again, the last one started in its own folder
 // (the programs of canResume), with the same options.
@@ -484,9 +486,10 @@ export function coordinatorArgs(program: CoordinatorProgram, folder: string, rep
   if (program === 'claude') return ['claude', ...m, ...(resume ? ['--continue'] : []), ...(repo ? ['--add-dir', repo] : [])]
   if (program === 'codex') return ['codex', ...CODEX_NO_UPDATE, ...m, '-C', folder, ...(repo && works ? ['--add-dir', repo] : []), '-c', 'default_permissions="wherdr"', '-c', 'permissions.wherdr.extends=":workspace"', '-c', 'permissions.wherdr.network.enabled=true', ...(resume ? ['resume', '--last'] : [])]
   if (program === 'devin') return ['devin', '--respect-workspace-trust', 'false', ...(resume ? ['-c'] : [])]
+  if (program === 'cursor') return ['cursor-agent', '--trust', ...(resume ? ['--continue'] : [])]
   return [program]
 }
-export const canResume = (program: CoordinatorProgram) => program === 'claude' || program === 'codex' || program === 'devin'
+export const canResume = (program: CoordinatorProgram) => program === 'claude' || program === 'codex' || program === 'devin' || program === 'cursor'
 // Claude, Codex and Devin take the first message as an argument; the others get
 // it typed once they are ready.
 export const promptAsArg = (program: CoordinatorProgram) => program === 'claude' || program === 'codex' || program === 'devin'

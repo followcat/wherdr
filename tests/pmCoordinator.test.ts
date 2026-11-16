@@ -363,9 +363,50 @@ describe('the main coordinator (WHR-398)', () => {
     expect(await store.coordinator(MAIN)).toMatchObject({ ran: { program: 'devin' } })
     // A program without a folder-scoped resume cannot be resumed.
     await store.saveCoordinator({ ...(await store.coordinator(MAIN))!, ran: { program: 'omp' } })
-    await expect(startCoordinator(d, MAIN, { resume: true }, { local: 'http://127.0.0.1:7690' })).rejects.toThrow('Only a Claude, Codex or Devin conversation can be resumed')
+    await expect(startCoordinator(d, MAIN, { resume: true }, { local: 'http://127.0.0.1:7690' })).rejects.toThrow('Only a Claude, Codex, Devin or Cursor conversation can be resumed')
     expect(coordinatorArgs('devin', '/h/c')).toEqual(['devin', '--respect-workspace-trust', 'false'])
     expect(coordinatorArgs('devin', '/h/c', undefined, false, true)).toEqual(['devin', '--respect-workspace-trust', 'false', '-c'])
+  })
+
+  it('runs Alfred with Cursor Agent: cursor-agent --trust, wherdr allowlisted in its home, greeting typed once ready', async () => {
+    const lines: string[] = [], sent: unknown[] = []
+    const call = async (method: string, params: Record<string, unknown>) => {
+      if (method === 'terminal.run') { lines.push(params.line as string); return { address: `host/t${lines.length}` } }
+      // Cursor reports no status: its ready field is a still screen.
+      if (method === 'terminal.get') return { state: 'live', status: null }
+      if (method === 'terminal.read') return { text: 'Cursor Agent\n→ Add a follow-up' }
+      if (method === 'terminal.send') sent.push(params.text)
+      return {}
+    }
+    const home = path.join(dir, 'alfred')
+    const d = { store, call, machines: () => [], alfredHome: home, pollMs: 1 } as never
+    await startCoordinator(d, MAIN, { program: 'cursor' }, { local: 'http://127.0.0.1:7690' })
+    expect(lines[0]).toMatch(/exec 'cursor-agent' '--trust'$/)
+    expect(JSON.parse(await fs.readFile(path.join(home, '.cursor/cli.json'), 'utf8')))
+      .toEqual({ permissions: { allow: ['Shell(wherdr*)', 'Shell(./bin/wherdr*)'], deny: [] } })
+    await vi.waitFor(() => expect(sent).toEqual([expect.stringContaining('give me another name?')]))
+    // Its resume keeps --trust and adds --continue; the message is typed.
+    sent.length = 0
+    await startCoordinator(d, MAIN, { resume: true }, { local: 'http://127.0.0.1:7690' }, ['Back again'])
+    expect(lines[1]).toMatch(/exec 'cursor-agent' '--trust' '--continue'$/)
+    await vi.waitFor(() => expect(sent).toEqual(['Back again']))
+    expect(coordinatorArgs('cursor', '/h/c')).toEqual(['cursor-agent', '--trust'])
+    expect(coordinatorArgs('cursor', '/h/c', undefined, false, true)).toEqual(['cursor-agent', '--trust', '--continue'])
+  })
+
+  it('a Cursor MCP approval box ends as a waiting dialog: never typed into, never answered', async () => {
+    const mcp = await fs.readFile(new URL('./fixtures/cursor-mcp-approval.txt', import.meta.url), 'utf8')
+    const call = async (method: string, params: Record<string, unknown>) => {
+      if (method === 'terminal.run') return { address: 'host/t1' }
+      if (method === 'terminal.get') return { state: 'live', status: null }
+      if (method === 'terminal.read') return { text: mcp }
+      return {}
+    }
+    const d = { store, call, machines: () => [], alfredHome: path.join(dir, 'alfred'), pollMs: 1, queueWatchMs: 50 } as never
+    await startCoordinator(d, MAIN, { program: 'cursor' }, { local: 'http://127.0.0.1:7690' })
+    await vi.waitFor(async () => expect((await store.coordinator(MAIN))!.undelivered).toMatchObject({ why: expect.stringContaining('not ready') }))
+    // The dialog is never answered either (the user's MCP servers are theirs).
+    expect(trustKeys(mcp, path.join(dir, 'alfred'))).toBeUndefined()
   })
 
   it('runs Alfred with projects off: its record is saved, its instructions say how to switch them on', async () => {

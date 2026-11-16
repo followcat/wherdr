@@ -26,6 +26,7 @@ export const OWN_FILES: Record<string, string> = {
 // asking, and nothing else. Antigravity knows no such mechanism (W1 report).
 export const ALFRED_PROGRAM_FILES: Partial<Record<CoordinatorProgram, Record<string, string>>> = {
   devin: { '.devin/config.json': `${JSON.stringify({ permissions: { allow: ['Exec(wherdr)', 'Exec(./bin/wherdr)'], deny: [] } }, null, 2)}\n` },
+  cursor: { '.cursor/cli.json': `${JSON.stringify({ permissions: { allow: ['Shell(wherdr*)', 'Shell(./bin/wherdr*)'], deny: [] } }, null, 2)}\n` },
 }
 
 // The name on identity.md's "Name:" line (the sidebar shows it).

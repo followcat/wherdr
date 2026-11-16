@@ -904,7 +904,7 @@ export async function startCoordinator(deps: Deps, key: unknown, agent: { progra
   if (!a) throw new HerdrError('bad_input', BAD_AGENT)
   if (!canRunCoordinator(a.program, key)) throw new HerdrError('bad_input', BAD_PROJECT_AGENT)
   const { program } = a
-  if (resume && !canResume(program)) throw new HerdrError('bad_input', 'Only a Claude, Codex or Devin conversation can be resumed: start a new one')
+  if (resume && !canResume(program)) throw new HerdrError('bad_input', 'Only a Claude, Codex, Devin or Cursor conversation can be resumed: start a new one')
   const c = await prepareCoordinator(deps, key, program, urls, resume, a.model)
   // What the user applied on its cards while it did not run, said once (a resume too).
   const notes = cardNotesMessage(before)

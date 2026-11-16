@@ -17,6 +17,7 @@ All notable changes to this project are documented here. The format follows
 ### New
 
 - **Alfred runs with Devin.** The Devin CLI (`devin`) joins the programs Alfred can run with: started in its home with `--respect-workspace-trust false`, its `wherdr` command pre-allowed in the home's own `.devin/config.json`, its last conversation resumed with `-c`, and its first message passed on the command line after `--`.
+- **Alfred runs with Cursor Agent.** `cursor-agent --trust` starts Alfred's home skipping the workspace-trust box (its MCP approval box is never answered: the start waits as a dialog, the user's MCP servers stay their choice); `wherdr` is allowlisted in the home's own `.cursor/cli.json`, the first message is typed once the field is still, and `--continue` resumes the folder's last chat.
 - **Antigravity CLI (`agy`) terminals** are recognized: their label, icon and live state.
 - **Antigravity CLI (`agy`) conversations** open on their saved transcript, locally or on another machine (Node 22.13 or later).
 - **Antigravity commands in the + menu.** An `agy` conversation's + menu offers `/compact`, `/clear`, `/context`, `/usage`, `/model` and `/diff`, as for Claude Code, Codex and omp. A command that opens a panel or the model picker shows the interactive terminal over the conversation; Esc there brings the message field back.
