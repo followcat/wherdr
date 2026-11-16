@@ -37,6 +37,16 @@ it('resolves two processes in the same folder independently by PID', async () =>
   expect(await devinSession(localFs, home, { pid: 300, startedAt: birth }, false)).toBeNull()
 })
 
+it('matches a lock held by the engine child of a Devin launcher, ahead of its resume flag', async () => {
+  const { home, lock } = fixture()
+  lock('session-a', 101)
+  expect(await devinSession(localFs, home, { pid: 100, startedAt: birth }, false)).toBeNull()
+  expect(await devinSession(localFs, home, { pid: 100, childPids: [101], startedAt: birth }, false)).toBe('session-a')
+  const resumed = { pid: 100, childPids: [101], startedAt: birth, argv: ['devin', '-r', 'session-old'], argvExact: true }
+  expect(await devinSession(localFs, home, resumed, false)).toBe('session-a')
+  expect(await devinSession(localFs, home, { pid: 100, childPids: [102], startedAt: birth }, false)).toBeNull()
+})
+
 it('rejects stale PID reuse, oversized locks and unknown process start time', async () => {
   const { home, lock, root } = fixture()
   lock('stale', 100, birth - 10000)
