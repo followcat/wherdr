@@ -231,7 +231,8 @@ describe('resume and first message', () => {
     const probe = t.calls.find(c => c[0] === 'machine.exec' && String(c[1].argv[2]).includes('command -v'))![1].argv as string[]
     expect(probe).toContain('cursor-agent')
     expect(probe).not.toContain('cursor')
-    expect(t.runs()[0]![1].line).toMatch(/exec cursor-agent$/)
+    expect(t.runs()[0]![1].line).toContain(agentLaunch(`'cursor-agent'`))
+    expect(t.runs()[0]![1].line).not.toContain(`'cursor'`)
   })
   it('never types into Cursor\'s MCP approval or command-permission box', async () => {
     const fs = await import('node:fs/promises')
