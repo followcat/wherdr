@@ -2,7 +2,30 @@
 
 [Documentation](README.md) · [Project](../README.md)
 
-- **Themes**: wherdr Titanium (default), herdr.dev and Herdr's built-in themes. English interface.
+- <a id="appearance"></a>**Appearance** (Settings › Appearance › Theme): the theme, from wherdr's own
+  (Titanium, the default, Neon, Graphite), the coding agents' (Claude Code, Codex, omp) and three
+  classics (Vesper, Gruvbox, Kanagawa), and its mode: **Dark** (default), **Light**, or **System**,
+  which follows the device's light or dark setting live. Every theme has a dark and a light palette,
+  both checked for WCAG AA text contrast; the terminal follows them too. Theme and mode follow you
+  across devices; a removed theme falls back to Titanium, and a former light theme (Catppuccin
+  Latte, omp Light) opens as its theme in Light mode. English interface.
+- <a id="custom-themes"></a>**Custom themes** (Settings › Appearance › Theme › **Create theme**): start
+  from any theme and change its colors (background, sidebar, surface, borders, text, muted text,
+  accent, success, warning, danger, and the 16 terminal colors) for Dark and Light, with a live
+  preview and the WCAG AA contrast check. Custom themes form a **Custom** group (up to 10), follow
+  you across devices, and are edited, duplicated, exported or deleted from their pencil button.
+  **Export** downloads a JSON file or copies it; **Import theme** takes a pasted or picked file
+  (8 KB at most), refused with the reason if invalid. There is no sharing service: share the file.
+  The format, every color `#rrggbb`:
+  ```json
+  { "wherdr": "theme", "version": 1, "name": "My theme", "author": "optional",
+    "dark": { "bg": "#12151b", "bg2": "…", "surface": "…", "line": "…", "text": "…", "muted": "…",
+      "dim": "…", "accent": "…", "green": "…", "coral": "…", "ochre": "…", "rose": "…",
+      "blue": "…", "teal": "…", "ansi": ["16 terminal colors"] },
+    "light": { "same keys as dark, without ansi": "…" } }
+  ```
+  Optional keys: `lav`, `onAccent`, `surface2`, `inputLine`, `selection`, `ring`, `working`,
+  `blocked`, `done`. The light terminal palette is derived from the light colors.
 
 ## Configuration
 
@@ -57,8 +80,13 @@ conversation keeps at least 480 px. With the edge focused, the left and right ar
 is kept on this device and comes back the next time the panel opens; places an agent opens beside
 its conversation use the same panel and width.
 
+The section menu follows the panel's own width: at least 560 px wide, it shows each section's
+icon and name; narrower, icons only, each naming its section on hover. The button under the icons
+shows the names anyway (a second click hides them), a choice kept on this device. The current
+section stays highlighted either way.
+
 A Settings link can also point at one setting with `&target=<id>` (for example
-`#/settings?section=conversation&tab=display&target=conversation.reply-style`): Settings
+`#/settings?section=conversation&tab=display&target=conversation.typewriter`): Settings
 opens the section and tab, scrolls to that setting and outlines it. The outline pulses twice
 and fades within 4 s, or goes at once on a click or a key press; with reduced motion it stays
 still and fades. A setting that is not shown (a feature off) gets a highlighted line saying so

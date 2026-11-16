@@ -1,6 +1,6 @@
 {
   "name": "wherdr",
-  "version": "3.0.0",
+  "version": "3.0.1-dev",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -40,7 +40,7 @@
     "check:leaks": "node scripts/check-leaks.mjs",
     "hooks:install": "git config core.hooksPath .githooks",
     "test:affected": "node scripts/test-affected.mjs",
-    "build:example-plugin": "esbuild examples/plugins/hello-mic/src/index.ts --bundle --format=esm --target=es2020 --outfile=examples/plugins/hello-mic/index.js"
+    "build:example-plugin": "esbuild docs/examples/plugins/hello-mic/src/index.ts --bundle --format=esm --target=es2020 --outfile=docs/examples/plugins/hello-mic/index.js"
   },
   "dependencies": {
     "qrcode-terminal": "^0.12.0",

@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>wherdr — step away, stay in control</title>
+    <title>wherdr v3 — your agents, your projects, everywhere</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
@@ -11,7 +11,7 @@
       data-composition-id="wherdr"
       data-width="1080"
       data-height="1080"
-      data-duration="15"
+      data-duration="36"
       data-fps="30"
     >
       <div class="halo"></div>
@@ -19,78 +19,53 @@
         <img src=".generated/logo.png" alt="" /><b>wherdr</b
         ><span>YOUR AGENTS. EVERYWHERE.</span>
       </header>
-      <section id="desktop-title" class="headline">
-        <h1>Start on PC.<br /><em>Keep going.</em></h1>
+      <section id="home-title" class="headline">
+        <h1>Open wherdr.<br /><em>All your agents.</em></h1>
       </section>
-      <div id="desktop" class="screen desktop">
-        <img
-          class="capture"
-          src=".generated/desktop/000.png"
-          alt="Actual wherdr New agent dialog"
-        />
-        <img
-          id="pc-working"
-          class="capture hidden"
-          src=".generated/desktop/035.png"
-          alt="Actual Test suite conversation after launch"
-        />
-      </div>
-      <section id="mobile-title" class="headline side hidden">
-        <h1>
-          Step away.<br /><em>Stay in<br />control.</em>
-        </h1>
-        <p>SAME AGENT.<br />SAME CONVERSATION.</p>
+      <section id="alfred-title" class="headline hidden">
+        <h1>Ask Alfred<br /><em>what needs you.</em></h1>
       </section>
-      <div id="phone" class="screen phone hidden">
-        <img
-          class="capture"
-          src=".generated/mobile/000.png"
-          alt="The same Test suite conversation on mobile"
-        />
-        <img
-          id="permission"
-          class="capture hidden"
-          src=".generated/mobile/030.png"
-          alt="Actual Claude permission request for npm test"
-        />
-        <img
-          id="accepted"
-          class="capture hidden"
-          src=".generated/mobile/085.png"
-          alt="Actual agent result after approval"
-        />
-        <img
-          id="project"
-          class="capture hidden"
-          src=".generated/mobile/130.png"
-          alt="Actual wherdr compact agent list with project tasks"
-        />
-        <div id="button-glow" class="hidden"></div>
-      </div>
-      <div id="handoff" class="stamp hidden">PC <span>→</span> PHONE</div>
-      <section id="reply-title" class="headline side hidden">
-        <h1>Your turn?<br /><em>One tap.</em></h1>
-        <p>KEEP WORK MOVING.</p>
+      <section id="coord-title" class="headline hidden">
+        <h1>A coordinator<br /><em>plans the work.</em></h1>
       </section>
-      <section id="project-title" class="headline side hidden">
-        <h1>
-          Your project.<br /><em>In your<br />pocket.</em>
-        </h1>
+      <section id="review-title" class="headline hidden">
+        <h1>Review with proof.<br /><em>Approve.</em></h1>
       </section>
       <section id="board-title" class="headline hidden">
-        <h1>All your work.<br /><em>One view.</em></h1>
+        <h1>The board<br /><em>keeps up.</em></h1>
       </section>
-      <div id="board" class="screen desktop hidden">
-        <img
-          class="capture"
-          src=".generated/board/025.png"
-          alt="Actual wherdr Board and agent sidebar"
-        />
+      <div id="desktop" class="screen desktop">
+        <div id="zoom" class="zoom">
+        <img class="capture" src=".generated/home.png" alt="wherdr Home with Alfred, Tasks to review and coordinators" />
+        <img id="alfred" class="capture hidden" src=".generated/alfred.png" alt="Alfred lists what waits for the user" />
+        <img id="coord" class="capture hidden" src=".generated/coordinator.png" alt="The acme-api coordinator plans two tasks" />
+        <img id="review" class="capture hidden" src=".generated/review.png" alt="Tasks to review: WEB-7 with its screenshots" />
+        <img id="approved" class="capture hidden" src=".generated/approved.png" alt="WEB-7 approved" />
+        <img id="board" class="capture hidden" src=".generated/board.png" alt="The Board" />
+        <img id="board-after" class="capture hidden" src=".generated/board-after.png" alt="The Board with WEB-7 merged and done" />
+        <div id="approve-glow" class="glow hidden"></div>
+        <div id="done-glow" class="glow hidden"></div>
+        </div>
       </div>
+      <section id="phone-title" class="headline side hidden">
+        <h1>Step away.<br /><em>Stay in<br />control.</em></h1>
+        <p>SAME SESSION.<br />NOW ON YOUR PHONE.</p>
+      </section>
+      <section id="answer-title" class="headline side hidden">
+        <h1>An agent asks?<br /><em>One tap.</em></h1>
+        <p>IT GOES BACK TO WORK.</p>
+      </section>
+      <div id="phone" class="screen phone hidden">
+        <img class="capture" src=".generated/phone-home.png" alt="Home on a phone: one task to review" />
+        <img id="question" class="capture hidden" src=".generated/phone-question.png" alt="Tasks to review: the agent of WEB-8 asks a question" />
+        <img id="answered" class="capture hidden" src=".generated/phone-answered.png" alt="Answered: Two months free" />
+        <div id="answer-glow" class="glow hidden"></div>
+      </div>
+      <div id="handoff" class="stamp hidden">PC <span>→</span> PHONE</div>
       <section id="end" class="hidden">
-        <span class="eyebrow">TAKE YOUR AGENTS WITH YOU</span>
+        <span class="eyebrow">WHERDR V3 · TAKE YOUR AGENTS WITH YOU</span>
         <h1>wherdr<span>_</span></h1>
-        <p>Step away. Stay in control.</p>
+        <p>Your agents and projects, everywhere.</p>
         <div class="cta">wherdr.dev <span>↗</span></div>
         <small>SELF-HOSTED / PRIVATE / OPEN SOURCE</small>
       </section>

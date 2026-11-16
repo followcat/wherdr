@@ -40,7 +40,8 @@ describe('wakes in a conversation', () => {
 
       // Three routine wakes: one row, folded.
       const run = w.find('[data-testid="wake-run"]')
-      expect(run.text()).toContain('3 routine checks')
+      expect(run.text()).toContain('3 checks')
+      expect(run.findAll('[data-testid="wake-part"]').map(p => p.text())).toEqual(['1 health check', '2 quiet'])
       expect(run.text()).toContain('–')
 
       // The incident stays visible with its answer, compact and loud.
@@ -60,7 +61,8 @@ describe('wakes in a conversation', () => {
       expect(w.find('.chat').text()).not.toContain('All good.')
       await w.setProps({ search: true })
       await w.find('.search-bar input').setValue('all good')
-      await expect.poll(() => w.find('.search-count').text()).toBe('1/1')
+      // Its first sentence on its row, and the reply itself.
+      await expect.poll(() => w.find('.search-count').text()).toBe('2/2')
       expect(w.find('.chat').text()).toContain('All good.')
       await w.setProps({ search: false })
       await expect.poll(() => w.find('.chat').text()).not.toContain('All good.')
@@ -69,7 +71,7 @@ describe('wakes in a conversation', () => {
       await run.trigger('click')
       expect(w.findAll('[data-testid="wake"]')).toHaveLength(5)
       const first = w.find('[data-testid="wake"]')
-      expect(first.find('.wake-head').text()).toBe('Scheduled wake')
+      expect(first.find('.wake-head').text()).toBe('Scheduled Nothing to do.')
       await first.find('.wake-row').trigger('click')
       expect(w.find('.wake-text').text()).toContain('wherdr pm ack a1')
     } finally { w.unmount() }
@@ -92,7 +94,7 @@ describe('wakes in a conversation', () => {
       const [incident, routine] = w.findAll('[data-testid="wake"]')
       // The folded answer is the wake turn's own, not a later reply.
       expect(incident!.find('.wake-answer').text()).toBe('Restarted the worker.')
-      expect(routine!.find('.wake-answer').text()).toBe('Checking the board.')
+      expect(routine!.find('.wake-head').text()).toBe('Scheduled Checking the board.')
       // The "!" command, the user's message and the replies after them show outside.
       const chat = w.find('.chat').text()
       expect(chat).toContain('npm install -g some-tool')
@@ -110,16 +112,48 @@ describe('a turn the coordinator takes by itself after routine wakes', () => {
     herdrState.value = { ok: true, workspaces: [], panes: [pane] }
     items = [
       ...wake('Autopilot: wake a1', 'Scheduled wake', 'Nothing to do.', 8),
-      ...wake('Autopilot: wake a2', 'Scheduled wake', '**WHR-12 merged.**\nThe board is clear.', 9),
+      ...wake('Autopilot: wake a2', 'Scheduled wake', '**WHR-12 merged.**', 9),
       { role: 'assistant', text: 'The fix is live.', ts: at(10), own: true },
+      ...wake('Autopilot: wake a3', 'Scheduled wake', 'The study is done.\n\n```wherdr\nchoices "Go" | "Wait"\n```', 11),
+      ...wake('Autopilot: wake a4', 'Scheduled wake', 'Nothing new.', 12),
     ]
     const w = await mountSuspended(ChatView, { props: { pane, localQueued: [] }, global: { stubs: { UTooltip: { template: '<slot />' } } } })
     try {
       await expect.poll(() => w.find('[data-testid="wake-run"]').exists()).toBe(true)
-      expect(w.find('[data-testid="wake-run"]').text()).toContain('2 routine checks')
-      expect(w.find('.wake-last').text()).toBe('· last: “WHR-12 merged.”')
+      expect(w.find('[data-testid="wake-run"]').text()).toContain('2 checks')
       expect(w.find('.chat').text()).toContain('The fix is live.')
       expect(w.find('.chat').text()).not.toContain('Nothing to do.')
+      // A reply with choices is never folded: it shows in full under its row.
+      expect(w.findAll('[data-testid="wake-run"]')).toHaveLength(1)
+      expect(w.find('.chat').text()).toContain('The study is done.')
+      expect(w.findAll('[data-testid="wake"]').some(r => r.find('.wake-answer').exists() && r.text().includes('study'))).toBe(false)
+      // A routine one-liner on its own still folds under its row.
+      expect(w.findAll('.wake-line').some(a => a.text().startsWith('Scheduled Nothing new.'))).toBe(true)
+    } finally { w.unmount() }
+  })
+})
+
+describe('a run of routine wakes, opened', () => {
+  afterEach(() => { herdrState.value = { ok: false, workspaces: [], panes: [] } })
+
+  it('shows one line per wake with its task chip, and folds quiet ones in a row', async () => {
+    herdrState.value = { ok: true, workspaces: [], panes: [pane] }
+    items = [
+      ...wake('Autopilot: scheduled wake a1', 'Scheduled wake (every 1h).', 'Nothing new.', 8),
+      ...wake('Autopilot: scheduled wake a2', 'Scheduled wake (every 1h).', 'Still nothing.', 9),
+      ...wake('Autopilot: wake a3', 'DEMO-5 (Add a login page): done', 'DEMO-5 merged. The board is empty now.', 10),
+    ]
+    const w = await mountSuspended(ChatView, { props: { pane, localQueued: [] }, global: { stubs: { UTooltip: { template: '<slot />' } } } })
+    try {
+      await expect.poll(() => w.find('[data-testid="wake-run"]').exists()).toBe(true)
+      const run = w.find('[data-testid="wake-run"]')
+      expect(run.findAll('[data-testid="wake-part"]').map(p => p.text())).toEqual(['1 merged DEMO-5', '2 quiet'])
+      await run.trigger('click')
+      expect(w.find('[data-testid="wake-quiet"]').text()).toContain('2 quiet checks')
+      expect(w.findAll('[data-testid="wake"]')).toHaveLength(1)
+      expect(w.find('.wake-line').text()).toContain('DEMO-5merged DEMO-5 merged.')
+      await w.find('[data-testid="wake-quiet"]').trigger('click')
+      expect(w.findAll('[data-testid="wake"]')).toHaveLength(3)
     } finally { w.unmount() }
   })
 })

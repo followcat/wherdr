@@ -1,15 +1,18 @@
-// Content of the browser demo (wherdr.dev/demo): an invented session with two
-// projects, four agents and a dev server. Everything here is fiction, in
+// Content of the browser demo (wherdr.dev/demo): an invented session with
+// Alfred, two projects and their coordinators, three task agents, another
+// agent and a dev server (the projects' tasks: projects.ts). Everything here is fiction, in
 // English, with no real path, machine, person or conversation.
 import type { ChatItem, ModelInfo, OmpToolView, Pane, Quotas, Tab, Workspace } from '#shared/types'
 import type { TaskAgent } from '#shared/pm/taskAgents'
 
 export const HOME = '/Users/demo'
 const REPO = `${HOME}/code/acme-api`
-const WT = `${HOME}/.herdr/worktrees/acme-api`
+const WT = `${HOME}/.wherdr/worktrees`
 const WEB = `${HOME}/code/acme-web`
 
+export const ALFRED = 'w0:p1'
 export const COORD = 'w1:p1'
+export const WEB_COORD = 'w5:p1'
 export const CODEX = 'w2:p1'
 export const OMP = 'w3:p1'
 export const CLAUDE_WEB = 'w4:p1'
@@ -23,10 +26,12 @@ export const MODELS: Record<string, ModelInfo> = {
 
 export function workspaces(): Workspace[] {
   return [
+    { id: 'w0', label: 'Alfred', number: 0, status: null, worktree: false },
     { id: 'w1', label: 'acme-api', number: 1, status: null, worktree: false },
     { id: 'w2', label: 'Per-key rate limits', number: 2, status: null, worktree: true, repo: REPO, repoName: 'acme-api', branch: 'hp/acme-api/t-0012-rate-limits' },
     { id: 'w3', label: 'Fix the flaky CSV export test', number: 3, status: null, worktree: true, repo: REPO, repoName: 'acme-api', branch: 'hp/acme-api/t-0013-flaky-export' },
     { id: 'w4', label: 'acme-web', number: 4, status: null, worktree: false, repo: WEB, repoName: 'acme-web', branch: 'main' },
+    { id: 'w5', label: 'acme-web', number: 5, status: null, worktree: false },
   ]
 }
 
@@ -37,7 +42,7 @@ const one = (ws: string, pane: string): Tab => ({
 
 export function tabs(): Tab[] {
   return [
-    one('w1', COORD), one('w2', CODEX), one('w3', OMP),
+    one('w0', ALFRED), one('w1', COORD), one('w5', WEB_COORD), one('w2', CODEX), one('w3', OMP),
     {
       id: 'w4:t1', workspace: 'w4', label: '1', number: 1,
       layout: {
@@ -55,10 +60,12 @@ const pane = (p: Partial<Pane> & Pick<Pane, 'id' | 'workspace' | 'agent' | 'cwd'
 
 export function panes(now: number): Pane[] {
   return [
-    pane({ id: COORD, workspace: 'w1', agent: 'claude', cwd: `${HOME}/.herdr-projects/data/coordinator/default/chat`, status: 'idle', model: MODELS.claude, stateSeq: 4, bornAt: now - 3600_000, preview: 'ACME-API-12 and ACME-API-13 are under way. I will tell you when one is ready to review.' }),
-    pane({ id: CODEX, workspace: 'w2', agent: 'codex', cwd: `${WT}/acme-api-12-rate-limits`, status: 'working', model: MODELS.codex, stateSeq: 7, bornAt: now - 1800_000, coreAddress: 'demo/codex', since: now - 8 * 60_000 }),
-    pane({ id: OMP, workspace: 'w3', agent: 'omp', cwd: `${WT}/acme-api-13-flaky-export`, status: 'blocked', model: MODELS.omp, stateSeq: 9, bornAt: now - 1500_000, coreAddress: 'demo/omp', task: 'ACME-API-13', role: 'worker', since: now - 2 * 60_000, prompt: approval('npm test -- export.spec.ts --repeat 20') }),
-    pane({ id: CLAUDE_WEB, workspace: 'w4', agent: 'claude', cwd: WEB, status: 'done', model: MODELS.claude, stateSeq: 8, bornAt: now - 2400_000 }),
+    pane({ id: ALFRED, workspace: 'w0', agent: 'claude', cwd: `${HOME}/.wherdr/alfred`, status: 'idle', model: MODELS.claude, stateSeq: 3, bornAt: now - 5400_000, coreAddress: 'demo/alfred', preview: 'Two things wait for you in Tasks to review.' }),
+    pane({ id: COORD, workspace: 'w1', agent: 'claude', cwd: `${HOME}/.wherdr/coordinators/API`, status: 'idle', model: MODELS.claude, stateSeq: 4, bornAt: now - 3600_000, coreAddress: 'demo/coord-api', preview: 'API-12 and API-13 are under way. I will tell you when one is ready to review.' }),
+    pane({ id: WEB_COORD, workspace: 'w5', agent: 'claude', cwd: `${HOME}/.wherdr/coordinators/WEB`, status: 'idle', model: MODELS.claude, stateSeq: 5, bornAt: now - 3000_000, coreAddress: 'demo/coord-web', preview: 'WEB-7 is reviewed: look at its screenshots, then merge.' }),
+    pane({ id: CODEX, workspace: 'w2', agent: 'codex', cwd: `${WT}/API-12`, status: 'working', model: MODELS.codex, stateSeq: 7, bornAt: now - 1800_000, coreAddress: 'demo/codex', task: 'API-12', role: 'worker', since: now - 8 * 60_000 }),
+    pane({ id: OMP, workspace: 'w3', agent: 'omp', cwd: `${WT}/API-13`, status: 'blocked', model: MODELS.omp, stateSeq: 9, bornAt: now - 1500_000, coreAddress: 'demo/omp', task: 'API-13', role: 'worker', since: now - 2 * 60_000, prompt: approval('npm test -- export.spec.ts --repeat 20') }),
+    pane({ id: CLAUDE_WEB, workspace: 'w4', agent: 'claude', cwd: WEB, status: 'done', model: MODELS.claude, stateSeq: 8, bornAt: now - 2400_000, coreAddress: 'demo/claude-web', task: 'WEB-7', role: 'worker' }),
     pane({ id: DEV_SERVER, workspace: 'w4', agent: null, cwd: WEB, command: 'npm run dev', status: null, agentSession: null }),
   ]
 }
@@ -66,8 +73,9 @@ export function panes(now: number): Pane[] {
 // The task agents' rows (GET /api/pm/agents): Codex on its task (by address),
 // omp fixing red CI (by its task and role labels, as after a restart).
 export const taskAgents = (): Record<string, TaskAgent> => ({
-  'demo/codex': { task: 'ACME-API-12', shown: 'ACME-API-12', title: 'Per-key rate limits on the public API', role: 'dev' },
-  'ACME-API-13#worker': { task: 'ACME-API-13', shown: 'ACME-API-13', title: 'Fix the flaky CSV export test', role: 'fix' },
+  'demo/codex': { task: 'API-12', shown: 'API-12', title: 'Per-key rate limits on the public API', role: 'dev' },
+  'API-13#worker': { task: 'API-13', shown: 'API-13', title: 'Fix the flaky CSV export test', role: 'dev' },
+  'demo/claude-web': { task: 'WEB-7', shown: 'WEB-7', title: 'Dark mode toggle on the settings page', role: 'dev' },
 })
 
 // The notes the agents wrote (GET /api/notes, NotesPanel.vue).
@@ -114,14 +122,28 @@ const omp = (title: string, target: string, extra: Partial<OmpToolView> = {}): O
 export function conversations(now: number): Record<string, ChatItem[]> {
   const at = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString()
   return {
+    [ALFRED]: [
+      { role: 'user', text: 'Morning! What needs me today?', ts: at(8) },
+      { role: 'tool', name: 'Bash', text: 'wherdr pm board --your-turn', ts: at(8) },
+      { role: 'assistant', text: 'Good morning. Two things wait for you in **Tasks to review**:\n\n1. **WEB-7 — Dark mode toggle**: reviewed with no findings. Look at its three screenshots, then merge.\n2. **WEB-8 — Price table**: its agent asks which yearly discount to show.\n\nOn acme-api, Ada has two agents at work (rate limits, the flaky export test) and the webhook retries are in review.', ts: at(7) },
+      { role: 'user', text: 'Remind me to write the 2.3 release notes on Friday.', ts: at(6) },
+      { role: 'tool', name: 'Edit', text: 'notes/reminders.md', ts: at(6) },
+      { role: 'assistant', text: 'Added to your **Reminders** note: release notes for 2.3, Friday.', ts: at(5) },
+    ],
+    [WEB_COORD]: [
+      { role: 'user', text: 'Add a dark mode toggle to the settings page, and start on the price table from the billing plan.', ts: at(96) },
+      { role: 'tool', name: 'Bash', text: 'wherdr pm task add "Dark mode toggle on the settings page" --type visual --start', ts: at(95) },
+      { role: 'tool', name: 'Bash', text: 'wherdr pm task add "Price table on the billing page" --type visual --start', ts: at(36) },
+      { role: 'assistant', text: 'Both are on the board: **WEB-7** (dark mode) is reviewed and waits for your merge; **WEB-8** (price table) has a question for you about the yearly discount.', ts: at(4) },
+    ],
     [COORD]: [
       { role: 'user', text: 'Plan the 2.3 release: per-key rate limits on the public API, and the CSV export test that fails one run in ten.', ts: at(62) },
-      { role: 'tool', name: 'Bash', text: 'herdr-projects list', ts: at(61) },
+      { role: 'tool', name: 'Bash', text: 'wherdr pm board', ts: at(61) },
       { role: 'tool', name: 'Grep', text: 'rateLimit · src/', ts: at(61) },
-      { role: 'assistant', text: 'Two independent pieces of work, touching different files, so they can run in parallel:\n\n1. **ACME-API-12 — Rate limits** (Codex): a token bucket per API key in `src/middleware/rateLimit.ts`, `429` with `Retry-After`, limits read from the plan.\n2. **ACME-API-13 — Flaky export test** (omp): `export.spec.ts` depends on the order of rows coming back from the database.\n\nI added both tasks and put an agent on each.', ts: at(60) },
-      { role: 'tool', name: 'Bash', text: 'herdr-projects add "Per-key rate limits on the public API" --delegate', ts: at(59) },
-      { role: 'tool', name: 'Bash', text: 'herdr-projects add "Fix the flaky CSV export test" --delegate', ts: at(59) },
-      { role: 'assistant', text: 'Both agents are on it. Their work is reviewed when they finish, then waits for your approval on the Board.', ts: at(58) },
+      { role: 'assistant', text: 'Two independent pieces of work, touching different files, so they can run in parallel:\n\n1. **API-12 — Rate limits** (Codex): a token bucket per API key in `src/middleware/rateLimit.ts`, `429` with `Retry-After`, limits read from the plan.\n2. **API-13 — Flaky export test** (omp): `export.spec.ts` depends on the order of rows coming back from the database.\n\nI added both tasks and put an agent on each.', ts: at(60) },
+      { role: 'tool', name: 'Bash', text: 'wherdr pm task add "Per-key rate limits on the public API" --start', ts: at(59) },
+      { role: 'tool', name: 'Bash', text: 'wherdr pm task add "Fix the flaky CSV export test" --start', ts: at(59) },
+      { role: 'assistant', text: 'Both agents are on it. Their work is reviewed when they finish, then waits for your approval in Tasks to review.', ts: at(58) },
     ],
     [CODEX]: [
       { role: 'user', text: 'Add per-key rate limits to the public API: a token bucket per key, 429 with Retry-After, limits from the customer plan. Tests included.', ts: at(30) },

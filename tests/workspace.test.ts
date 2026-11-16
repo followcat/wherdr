@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Project } from '../shared/pm/project'
-import { cleanWorkspaceFields, effectiveProject, effectiveWorkflow, memberOverrides, workflowOverrides, workspaceErrors, workspaceTaskError } from '../shared/pm/workspace'
+import { WORKSPACE_FIRST, workspaceInput, cleanWorkspaceFields, effectiveProject, effectiveWorkflow, memberOverrides, workflowOverrides, workspaceErrors, workspaceTaskError } from '../shared/pm/workspace'
 import { defaultWorkflow, type Template } from '../shared/pm/workflow'
 import { taskGuards } from '../shared/pm/actions'
 
@@ -12,6 +12,17 @@ const ws: Project = {
   },
 }
 const member: Project = { key: 'PAY', name: 'payroll-api', machine: 'home', path: '~/work/payroll-api', workspace: 'WS', addedAt: 2 }
+
+describe('workspaceInput', () => {
+  it('a new workspace from its form: its home machine first, the others shared with their roots', () => {
+    const one = workspaceInput({ key: 'WS', name: 'Work', roots: [['', '~/work']] })
+    expect(one).toEqual({ key: 'WS', name: 'Work', machine: '', path: '~/work', kind: 'workspace' })
+    expect(cleanWorkspaceFields(workspaceInput({ key: 'WS', group: 'g1', roots: [['', '~/work'], ['big', '/srv/work']] }))).toEqual({
+      fields: { kind: 'workspace', group: 'g1', shared: { machines: ['big'], clones: { big: '/srv/work' } } }, errors: [],
+    })
+    expect(WORKSPACE_FIRST).toContain('wherdr pm map list')
+  })
+})
 
 describe('workspaces', () => {
   it('a member inherits every shared field, its clone under each machine\'s root', () => {

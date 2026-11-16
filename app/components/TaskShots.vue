@@ -1,11 +1,12 @@
 <script setup lang="ts">
 // A step's screenshots in the task sheet: thumbnails; a tap opens the image
 // viewer on the whole set (full size, swipe or ← → between images). Before and
-// after are side by side on a computer, and toggled on the phone.
-import { shotRows, shotUrl, type Shot, type ShotPhase } from '#shared/pm/shots'
+// after are side by side on a computer, and toggled on the phone. head: the
+// step's newest commit, a shot of the result taken before it marked Earlier commit.
+import { earlierCommit, shotRows, shotUrl, type Shot, type ShotPhase } from '#shared/pm/shots'
 import type { ShotMode } from '#shared/pm/workflow'
 
-const props = defineProps<{ task: string, shots: Shot[], mode: ShotMode }>()
+const props = defineProps<{ task: string, shots: Shot[], mode: ShotMode, head?: string }>()
 const side = ref<ShotPhase>('after')
 const compare = computed(() => props.mode === 'before-after')
 const rows = computed(() => shotRows(props.shots, props.mode))
@@ -36,6 +37,7 @@ const label = (p: ShotPhase) => (p === 'before' ? tl('Before', 'Avant') : tl('Af
         <template v-for="p in phases" :key="p">
           <button v-if="r[p]" type="button" class="shot" :class="p" :aria-label="tl(`${label(p)} ${i + 1}, full size`, `${label(p)} ${i + 1}, en grand`)" data-testid="shot" @click="open(r[p]!)">
             <img :src="shotUrl(task, r[p]!.file)" alt="" loading="lazy" decoding="async">
+            <span v-if="earlierCommit(r[p]!, head)" class="shot-mark mono-label" data-testid="shot-earlier">{{ tl('Earlier commit') }}</span>
           </button>
           <span v-else class="shot none muted" :class="p">{{ tl('None', 'Aucune') }}</span>
         </template>
@@ -50,8 +52,9 @@ const label = (p: ShotPhase) => (p === 'before' ? tl('Before', 'Avant') : tl('Af
 .shots.compare .shots-grid { grid-template-columns: 1fr; }
 .shots-row { display: grid; gap: 8px; }
 .shots.compare .shots-row { grid-template-columns: 1fr 1fr; }
-.shot { display: block; width: 100%; aspect-ratio: 16 / 10; min-height: 44px; padding: 0; border: 1px solid var(--line); background: var(--surface); cursor: zoom-in; overflow: hidden; }
+.shot { position: relative; display: block; width: 100%; aspect-ratio: 16 / 10; min-height: 44px; padding: 0; border: 1px solid var(--line); background: var(--surface); cursor: zoom-in; overflow: hidden; }
 .shot img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+.shot-mark { position: absolute; left: 4px; bottom: 4px; padding: 2px 6px; background: var(--surface); color: var(--muted); border: 1px solid var(--line); }
 .shot.none { display: grid; place-items: center; cursor: default; font: 500 12px/1 var(--mono); }
 .shots-toggle { display: none; gap: 8px; }
 .shots-toggle > button { min-height: 44px; flex: 1; justify-content: center; }

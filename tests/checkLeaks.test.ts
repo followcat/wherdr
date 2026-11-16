@@ -19,7 +19,7 @@ describe('check-leaks', () => {
     expect(scanText('docs/a/b.md', 'alice', p)).toEqual([])
     expect(scanText('README.md', 'alice', p)).toHaveLength(1)
     expect(scanText('tests/fixtures/x.json', 'alice bob', p)).toEqual([])
-    expect(scanText('.leak-patterns.example', 'bob', p)).toEqual([])
+    expect(scanText('scripts/leak-patterns.example', 'bob', p)).toEqual([])
   })
 
   it('counts each occurrence on a line', () => {

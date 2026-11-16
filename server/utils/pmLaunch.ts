@@ -22,10 +22,11 @@ import { ensureReady } from './pmReady'
 import { fileConflict, filesSection, pastAgents } from '../../shared/pm/files'
 import { branchFor } from '../../shared/pm/branchName'
 import { showIds, shownTaskId } from '../../shared/pm/projectKey'
-import { LABEL, TMP_DIR, agentEnv, agentLine, isAuthFailure, instructionsText, shotStep, taskBase, taskPlan, reconcile, runLabels, taskPaths, tmpRefusal, workerPlan, type Run, type Task } from '../../shared/pm/run'
+import { LABEL, TMP_DIR, agentEnv, agentLine, isAuthFailure, instructionsText, shotStep, startBase, taskPlan, workflowBaseNote, reconcile, runLabels, taskPaths, tmpRefusal, workerPlan, type Run, type Task } from '../../shared/pm/run'
 import { isOpen, type Incident, type Recovery } from '../../shared/pm/incident'
 import { recordGone, type CoreList } from './pmIncidents'
 import { interruptTask } from './pmRecovery'
+import { pmDir } from './pmHome'
 
 // Reuses the worktree of an earlier attempt; else a new branch from the base,
 // origin's as fetched now when origin has it (a local one may be stale: a
@@ -141,6 +142,12 @@ export async function mergingOf(store: PmStore): Promise<(t: Task) => boolean> {
   }
 }
 
+// Says once in the project's log that its tasks take their base from the workflow.
+export async function noteWorkflowBase(store: PmStore, key: string, base: string) {
+  const text = workflowBaseNote(base)
+  if (!(await store.projectLog(key)).some(e => e.text === text)) await store.logProject(key, { by: 'engine', text })
+}
+
 const wait = (store: PmStore, task: Task, reason: string, waitKind?: Task['waitKind']) => store.saveTask({ ...task, state: 'waiting', waiting: reason, waitKind, held: undefined, sameFiles: undefined, machineWait: undefined })
 
 // Its machine out of reach: herdr-core's inventory, or an answer of herdr-core midway.
@@ -247,9 +254,11 @@ async function startOnce(deps: PmLaunchDeps, id: unknown, { handover, revive, on
   const contLine = fetched?.code === 2 ? `Branch \`${task.fromBranch}\` is no longer on the remote: this task starts from the base branch instead.` : ''
   if (contLine) task = await store.logTask(task, 'engine', contLine)
   // Named at the first start (a task started before has task/<id>): a later title, tag or template change leaves it alone.
-  const paths = taskPaths(home, task.id, task.branch || (cont ? task.fromBranch : task.run ? undefined : branchFor(p.branchName, { ...task, id: shownTaskId([p], task.id) })))
+  const paths = taskPaths(home, task.id, task.branch || (cont ? task.fromBranch : task.run ? undefined : branchFor(p.branchName, { ...task, id: shownTaskId([p], task.id) })), pmDir())
   // Recorded at the first start: changing the project's branch later leaves this task alone.
-  const base = taskBase(task, p) ?? ''
+  const started = startBase(t, task, p)
+  if (started.fromWorkflow) await noteWorkflowBase(store, p.key, started.base!)
+  const base = started.base ?? ''
   const wt = await exec(deps, on, WORKTREE_SCRIPT, [repo, paths.worktree, paths.branch, base, cont ? `origin/${task.fromBranch}` : ''])
   if (wt.code !== 0) return wait(store, task, `git worktree failed: ${wt.out.split('\n').slice(-3).join(' ') || 'timeout'}`)
   // Its worktree is there now: the task stays on this machine.

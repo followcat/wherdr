@@ -1,8 +1,7 @@
 <script setup lang="ts">
 // A command (one line, or several joined by newlines) or an agent prompt, copied in one click.
 // `big`: a large accent Copy button (the agent prompt card).
-const props = withDefaults(defineProps<{ command?: string, prompt?: string, what?: string, wrap?: boolean, big?: boolean }>(), {
-  command: 'curl -fsSL https://wherdr.dev/install | sh',
+const props = withDefaults(defineProps<{ command: string, prompt?: string, what?: string, wrap?: boolean, big?: boolean }>(), {
   prompt: '$',
   what: 'command',
   wrap: false,

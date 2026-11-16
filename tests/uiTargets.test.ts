@@ -22,7 +22,7 @@ it('links each target to its section with a target parameter, named on the card'
     expect(isAppLink(link), link).toBe(true)
     expect(link.startsWith(`${UI_TARGETS[id].link}&`)).toBe(true)
   }
-  expect(uiTargetLink('conversation.reply-style')).toBe('#/settings?section=conversation&tab=display&target=conversation.reply-style')
+  expect(uiTargetLink('conversation.typewriter')).toBe('#/settings?section=conversation&tab=display&target=conversation.typewriter')
   expect(uiPlaceLabel(uiTargetLink('phone.app-start'))).toBe('Settings › Phone › App start')
   expect(uiTarget('toString')).toBeNull()
   expect(uiTarget('nope')).toBeNull()

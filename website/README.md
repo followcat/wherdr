@@ -7,8 +7,9 @@ makes no request to another site.
 - **Develop**: `npm ci && npm run dev` (http://localhost:3000).
 - **Build**: `npm run generate` → static files in `.output/public/` (`npm run typecheck` checks the types).
 - **Deploy (public)**: Cloudflare Workers static assets, on the custom domain `wherdr.dev`
-  (`wrangler.jsonc`, no Worker script). `.github/workflows/site.yml` generates and deploys on every
-  push to `main` that touches `website/`, or by hand (Actions → site → Run workflow). It needs the
+  (`wrangler.jsonc`, no Worker script). `.github/workflows/site.yml` generates and deploys when run
+  by hand (Actions → site → Run workflow); on v3 pushes and pull requests that touch the site, it
+  only generates it, from the same sparse checkout (`website/` plus the docs it imports). It needs the
   repository secrets `CLOUDFLARE_API_TOKEN` (permissions: Account › Workers Scripts › Edit,
   Zone › Workers Routes › Edit, Zone › DNS › Edit and Zone › Zone › Read on `wherdr.dev`) and
   `CLOUDFLARE_ACCOUNT_ID`; without them the deploy job is skipped. By hand:

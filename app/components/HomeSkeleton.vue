@@ -31,6 +31,4 @@ const groups = [{ rows: 2, coord: true }, { rows: 3 }, { rows: 2 }]
 .home-skel-row { display: flex; align-items: center; min-height: var(--home-skel-row, 64px); padding: 0 14px 0 16px; background: var(--bg-2); }
 .home-skel-row + .home-skel-row { border-top: 1px solid var(--line-soft); }
 .home-skel-row.coord { min-height: 53px; padding: 0 12px; background: var(--surface); }
-:global(.list-compact) .home-skel-row:not(.coord) { --home-skel-row: 44px; }
-:global(.list-compact) .home-skel-row:not(.coord) .home-skel-lines i + i { display: none; }
 </style>

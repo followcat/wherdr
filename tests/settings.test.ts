@@ -7,20 +7,20 @@ import { onSettingsChange, patchSettings, readSettings } from '../server/utils/s
 
 describe('settings patch', () => {
   it('keeps known keys with text or null, drops the rest', () => {
-    expect(cleanSettingsPatch({ theme: 'nord', compactListV2: null, token: 'x', fontSize: '14', showShells: 1 })).toEqual({ theme: 'nord', compactListV2: null })
+    expect(cleanSettingsPatch({ theme: 'nord', showCounters: null, token: 'x', fontSize: '14', showShells: 1 })).toEqual({ theme: 'nord', showCounters: null })
     expect(cleanSettingsPatch({ theme: 'x'.repeat(SETTING_MAX + 1) })).toBeNull()
     expect(cleanSettingsPatch([])).toBeNull()
     expect(cleanSettingsPatch('theme')).toBeNull()
   })
   it('reports only what changed; null forgets a key', () => {
-    const { next, changed } = applySettingsPatch({ theme: 'nord', compactListV2: '1' }, { theme: 'nord', compactListV2: null, homeGrouping: 'state' })
+    const { next, changed } = applySettingsPatch({ theme: 'nord', showCounters: '1' }, { theme: 'nord', showCounters: null, homeGrouping: 'state' })
     expect(next).toEqual({ theme: 'nord', homeGrouping: 'state' })
-    expect(changed).toEqual({ compactListV2: null, homeGrouping: 'state' })
+    expect(changed).toEqual({ showCounters: null, homeGrouping: 'state' })
   })
   it('a migration never replaces a key the server already has', () => {
-    const { next, changed } = applySettingsPatch({ theme: 'nord' }, { theme: 'paper', compactListV2: '1' }, true)
-    expect(next).toEqual({ theme: 'nord', compactListV2: '1' })
-    expect(changed).toEqual({ compactListV2: '1' })
+    const { next, changed } = applySettingsPatch({ theme: 'nord' }, { theme: 'paper', showCounters: '1' }, true)
+    expect(next).toEqual({ theme: 'nord', showCounters: '1' })
+    expect(changed).toEqual({ showCounters: '1' })
   })
 })
 
@@ -43,7 +43,7 @@ describe('settings file', () => {
     await patchSettings({ theme: 'nord' }, { file })
     expect(JSON.parse(await fs.readFile(file, 'utf8')).settings).toEqual({ theme: 'nord' })
     await fs.writeFile(file, '{not json')
-    await expect(patchSettings({ compactListV2: '1' }, { file })).rejects.toMatchObject({ code: 'settings_damaged' })
+    await expect(patchSettings({ showCounters: '1' }, { file })).rejects.toMatchObject({ code: 'settings_damaged' })
     expect(await fs.readFile(file, 'utf8')).toBe('{not json')
     await fs.rm(file)
     await fs.mkdir(file) // reading a folder fails with EISDIR, like EIO or EACCES would
@@ -59,25 +59,25 @@ describe('settings file', () => {
   })
   it('keeps both of two simultaneous writes; the last one wins for the same key', async () => {
     await Promise.all([
-      patchSettings({ theme: 'nord', compactListV2: '1' }, { file }),
+      patchSettings({ theme: 'nord', showCounters: '1' }, { file }),
       patchSettings({ homeGrouping: 'state', theme: 'paper' }, { file }),
     ])
-    expect(await readSettings(file)).toEqual({ theme: 'paper', compactListV2: '1', homeGrouping: 'state' })
+    expect(await readSettings(file)).toEqual({ theme: 'paper', showCounters: '1', homeGrouping: 'state' })
   })
   it('tells the listeners what changed, and nothing for a no-op', async () => {
     const seen: unknown[] = []
     const off = onSettingsChange(c => seen.push(c))
     await patchSettings({ theme: 'nord' }, { file })
     await patchSettings({ theme: 'nord' }, { file })
-    await patchSettings({ theme: 'paper', compactListV2: '1' }, { file, onlyMissing: true })
+    await patchSettings({ theme: 'paper', showCounters: '1' }, { file, onlyMissing: true })
     off()
-    expect(seen).toEqual([{ theme: 'nord' }, { compactListV2: '1' }])
+    expect(seen).toEqual([{ theme: 'nord' }, { showCounters: '1' }])
   })
-  it('drops the 1.x compact list left in the file (2.0 resets it to normal once)', async () => {
+  it('drops removed settings left in the file (compact list, Show terminals)', async () => {
     await fs.mkdir(path.dirname(file), { recursive: true })
-    await fs.writeFile(file, JSON.stringify({ v: 1, settings: { compactList: '1', theme: 'nord' } }))
+    await fs.writeFile(file, JSON.stringify({ v: 1, settings: { compactList: '1', compactListV2: '1', showShells: '0', theme: 'nord' } }))
     expect(await readSettings(file)).toEqual({ theme: 'nord' })
-    await patchSettings({ compactListV2: '1' }, { file })
-    expect(JSON.parse(await fs.readFile(file, 'utf8')).settings).toEqual({ theme: 'nord', compactListV2: '1' })
+    await patchSettings({ showCounters: '1' }, { file })
+    expect(JSON.parse(await fs.readFile(file, 'utf8')).settings).toEqual({ theme: 'nord', showCounters: '1' })
   })
 })

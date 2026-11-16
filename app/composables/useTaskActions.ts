@@ -41,5 +41,7 @@ export function useTaskActions(card: () => Card | undefined, changed: () => void
     restartReview: () => run(() => api('/api/pm/review-restart', { id: id() })),
     startWorker: () => run(() => api('/api/pm/worker-start', { id: id() })),
     askCoordinator: () => run(() => api('/api/pm/ask-coordinator', { id: id() })),
+    // Ask the agent to fix it: its worker (started again if it ended) gets the block's reason.
+    askFix: () => run(() => api('/api/pm/agent-fix', { id: id() })),
   }
 }

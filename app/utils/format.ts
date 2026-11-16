@@ -34,6 +34,17 @@ export function fmtDateTime(ts: string | number) {
   return new Date(ts).toLocaleString(locale(), { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
+// A message's time under it: "21:39" today, "Yesterday 21:39", then "12 Nov 21:39".
+export function fmtStamp(ts: string | number, now = Date.now()) {
+  const d = new Date(ts)
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const days = Math.round((day(new Date(now)) - day(d)) / 86400000)
+  if (days === 0) return fmtTime(ts)
+  if (days === 1) return `${t('Yesterday')} ${fmtTime(ts)}`
+  const date = d.toLocaleDateString(locale(), { day: 'numeric', month: 'short', ...(d.getFullYear() === new Date(now).getFullYear() ? {} : { year: 'numeric' }) })
+  return `${date} ${fmtTime(ts)}`
+}
+
 export function dayLabel(ts: string) {
   const d = new Date(ts)
   const today = new Date()

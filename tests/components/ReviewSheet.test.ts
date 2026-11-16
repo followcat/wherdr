@@ -12,6 +12,7 @@ import { machineBarSaved, machineGroups } from '~/composables/useMachineBar'
 import { reviewFilter, reviewOpen } from '~/composables/useReview'
 import { lightboxSrc } from '~/composables/useUi'
 import { taskSheetTick } from '~/composables/useTaskSheet'
+import { setToaster } from '~/composables/useHerdr'
 import { toHandle, type Card } from '#shared/pm/board'
 
 const plan = [{ id: 'work', holder: 'worker', ends: 'report' }, { id: 'review', holder: 'reviewer', ends: 'verdict' }, { id: 'merge', holder: 'user', ends: 'user', action: { kind: 'github.merge' } }]
@@ -123,6 +124,16 @@ it('follows the group tab by default, and keeps the filter picked', async () => 
     await expect.poll(shown).toBe('WK-1')
     reviewFilter.value = 'all'
     await expect.poll(progress).toBe('1 of 3')
+    // WHR-401: each option counts what waits under it, in a grey chip after the name; none at 0,
+    // listed after those with tasks (groups still before projects); the closed picker too.
+    cards = [...cards, card('WK-2', 'work'), card('OT-1', 'other', { yourTurn: undefined })]
+    machineGroups.value = [{ id: '*group:spare', name: 'Spare', machines: ['spare'] }, ...machineGroups.value]
+    taskSheetTick.value++
+    await expect.poll(() => q('review-filter')?.querySelector('[data-testid="option-count"]')?.textContent).toBe('4')
+    q('review-filter')!.click()
+    const options = () => [...document.querySelectorAll('[role="option"]')].map(o => [o.querySelector('[data-testid="option-label"]')?.textContent, o.querySelector('[data-testid="option-count"]')?.textContent ?? ''])
+    await expect.poll(() => options().length).toBe(7)
+    expect(options()).toEqual([['Follow group tab', '2'], ['All', '4'], ['Personal', '2'], ['Work', '2'], ['Spare', ''], ['Home', '2'], ['Work', '2']])
     w.unmount()
   } finally { coordinators.value = []; machineGroups.value = []; machineBarSaved.value = null }
 })
@@ -197,4 +208,48 @@ it('keeps its order while open: a new task goes at the end, the one on screen st
   await expect.poll(shown).toBe('HO-0')
   expect(progress()).toBe('1 of 2')
   again.unmount()
+})
+
+it('asks the agent to fix a blocked merge: it leaves at once, and comes back on the agent\'s question', async () => {
+  const conflict = 'Merge: The PR conflicts with its target branch'
+  const blocked = (badge: string) => card('HO-F', 'home', { yourTurn: badge, state: { at: 2, started: true, proofs: {}, rounds: {}, yourTurn: { reason: 'action', badge, error: badge } } })
+  cards = [blocked(conflict), card('HO-2', 'home')]
+  const asked: string[] = []
+  registerEndpoint('/api/pm/agent-fix', { method: 'POST', handler: async (e) => { asked.push((await readBody(e) as { id: string }).id); return { task: {} } } })
+  reviewOpen.value = true
+  const w = await mountSuspended(ReviewCard)
+  await expect.poll(shown).toBe('HO-F')
+  // Ask the agent to fix it first; Try again stays, secondary.
+  expect(q('todo-fix')?.textContent).toBe('Ask the agent to fix it')
+  expect(q('review-retry')?.className).not.toContain('bg-primary')
+  q('todo-fix')!.click()
+  await expect.poll(() => q('review-fixing')?.textContent).toBe('The agent is fixing it')
+  await expect.poll(shown, { timeout: 3000 }).toBe('HO-2') // off the list, even before the board says so
+  expect([asked, progress()]).toEqual([['HO-F'], '1 of 1'])
+  // The agent asks a question: its badge changed, back at the end of the list.
+  cards = [{ ...blocked(conflict), yourTurn: 'Its agent asks a question' }, cards[1]!]
+  taskSheetTick.value++
+  await expect.poll(progress).toBe('1 of 2')
+  w.unmount()
+})
+
+it('copies the task id from its badge, with the Copied toast, and the task stays on screen', async () => {
+  cards = [card('HO-1', 'home'), card('HO-2', 'home')]
+  const writeText = vi.fn(async () => {})
+  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+  const added: { title: string }[] = []
+  setToaster({ add: (x: { title: string }) => added.push(x), clear: () => {} } as unknown as Parameters<typeof setToaster>[0])
+  const w = await mountSuspended(ReviewCard)
+  await expect.poll(() => w.find('[data-testid="review-open"]').exists()).toBe(true)
+  await w.find('[data-testid="review-open"]').trigger('click')
+  await expect.poll(shown).toBe('HO-1')
+  const badge = sheet()!.querySelector<HTMLElement>('.review-head [data-testid="project-badge"]')!
+  expect([badge.getAttribute('role'), badge.getAttribute('aria-label')]).toEqual(['button', 'Copy HO-1'])
+  badge.click()
+  await expect.poll(() => added.map(x => x.title)).toEqual(['Copied: HO-1'])
+  expect(writeText).toHaveBeenCalledWith('HO-1')
+  expect(shown()).toBe('HO-1')
+  setToaster(null as unknown as Parameters<typeof setToaster>[0])
+  vi.unstubAllGlobals()
+  w.unmount()
 })

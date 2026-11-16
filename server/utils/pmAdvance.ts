@@ -31,6 +31,7 @@ import type { Incident } from '../../shared/pm/incident'
 import { interruptTask } from './pmRecovery'
 import { killTerminal } from './pmProcs'
 import { noteTaskError } from './pmSentinel'
+import { loginRestartText } from '../../shared/pm/recovery'
 
 // The task's commit, its diff size since the branch started, the worker's note, the verdict file,
 // its branch, then its own commits (no merges) and files per line count since its fork from the base ($5).
@@ -304,11 +305,14 @@ async function reviewer(deps: PmLaunchDeps, { task, p, t, on }: Ctx, text: strin
   // The receipt first: an unconfirmed start is found again by its labels, never started twice.
   await store.saveRun(run)
   const again = wasReleased(latest(await store.runs(), task.id, 'reviewer')) ? ' again in its worktree' : ''
-  await store.logTask({ ...task, step: told, run: run.id }, 'engine', switched ? `review: ${switched}, reviewed by ${plan.program} ${plan.model}` : `review: started the reviewer${again} (${plan.program} ${plan.model})`)
+  // Restarted after a login incident: told once to go on, in its first message.
+  const said = task.recovery?.say ? loginRestartText('reviewer') : undefined
+  await store.logTask({ ...task, step: told, run: run.id, ...(said ? { recovery: { ...task.recovery!, say: undefined } } : {}) }, 'engine',
+    (switched ? `review: ${switched}, reviewed by ${plan.program} ${plan.model}` : `review: started the reviewer${again} (${plan.program} ${plan.model})`) + (said ? `; told it: ${said}` : ''))
   const { address } = await deps.call<{ address: string }>('terminal.run', {
     cwd: worker.worktree, ...(on ? { on } : {}), no_parent: true, wait: false,
     env: { ...agentEnv(worker.worktree), ...await deps.proxyEnv?.(worker.machine) },
-    labels: runLabels(await store.install(), run), line: `${PATH_SETUP}; ${agentLine(plan.program, plan.model, files.review)}`,
+    labels: runLabels(await store.install(), run), line: `${PATH_SETUP}; ${agentLine(plan.program, plan.model, files.review, undefined, said)}`,
   }, 30000)
   run = { ...run, terminal: address, state: 'running', startedAt: Date.now() }
   await store.saveRun(run)

@@ -119,6 +119,13 @@ describe('enrich', () => {
     await closed.screens.enrich([pane('w', { status: 'working' })])
     expect(closed.reads).toEqual([])
   })
+  it('reads the "!" command a working Claude runs, before its transcript has it', async () => {
+    const running = '! make deploy\n  ⎿  step 3 of 9\n     +2 lines (35s)\n\n' + input
+    const s = setup({ 'm/w': running })
+    const w = pane('w', { status: 'working' })
+    await s.screens.enrich([w])
+    expect(w.claudeScreen?.shell).toMatchObject({ command: 'make deploy', lines: ['step 3 of 9'], hidden: 2, since: -35_000 })
+  })
   it('caches reads per viewed / background pace and re-applies them', async () => {
     const { screens, reads, tick } = setup({ 'm/a': bash }, () => false)
     await screens.enrich([pane('a')])

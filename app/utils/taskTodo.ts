@@ -18,6 +18,14 @@ export type TodoKind = 'merge' | 'decide' | 'stopped' | 'step' | 'ask' | 'refuse
 export const shotSteps = (c: Pick<Card, 'plan' | 'state'>) =>
   c.plan.slice(0, c.state?.at ?? 0).filter(s => c.state?.shots?.[s.id]?.length).reverse()
 
+// Ask the agent to fix it: a block of a started task its worker could fix (a failed
+// action, a stall, an ended worker, a step over its time limit; the server says
+// exactly, fixableBlock), not a review's (Restart the review) nor a stop's. A step's
+// own Your turn only for a failed action or a time limit, as the server reads it.
+export const fixable = (c: Card, kind: TodoKind | undefined) =>
+  (kind === 'refused' || kind === 'blocked') && !!c.state?.started && !c.state.done && !c.state.acting && !c.state.agent && !c.stopped && c.holder !== 'reviewer'
+  && (!c.state.yourTurn || c.state.yourTurn.reason === 'action' || c.state.yourTurn.reason === 'timeout')
+
 export function taskTodo(c: Card): TodoKind | undefined {
   if (c.stopped) return 'stopped'
   if (coordinatorWait(c)) return 'coordinator'

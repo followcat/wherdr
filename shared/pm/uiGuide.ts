@@ -40,7 +40,7 @@ export function uiGuideRows(role: UiRole, o: { pm?: boolean, key?: string } = {}
   const pm = role === 'coordinator' || !!o.pm
   return [
     { when: 'The user asks where a setting is, or one would solve their problem', use: { cli, argv: ['ui', 'open', '--target', TARGET] }, not: '"go to Settings › Terminal" alone' },
-    ...(role === 'alfred' ? [{ when: 'A setting change would help', use: { cli: 'alfred', argv: ['setting', 'set', 'replyStyle', 'list', '--propose'] }, not: 'asking "shall I?" and changing it yourself' } as UiGuideRow] : []),
+    ...(role === 'alfred' ? [{ when: 'A setting change would help', use: { cli: 'alfred', argv: ['setting', 'set', 'typewriterSpeed', 'slow', '--propose'] }, not: 'asking "shall I?" and changing it yourself' } as UiGuideRow] : []),
     ...(role === 'alfred' && pm ? [{ when: 'A project change the user wants (add, template, guards, coordinator)', use: { cli: 'alfred', argv: ['project', 'guards', o.key || 'ABC', '--merge-protected', 'user', '--propose'] }, not: 'a yes in text, then --apply' } as UiGuideRow] : []),
     ...blocks,
     { when: 'How a machine, a quota, a PR or an operation is doing', use: { block: `status ${STATUS}:laptop` }, not: 'numbers copied from a command (they go stale)' },

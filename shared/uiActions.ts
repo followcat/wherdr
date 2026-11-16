@@ -112,6 +112,7 @@ export const settingStamp = (key: string, value: string | undefined) => `setting
 // Each project change's place: the card's title and what Show me highlights.
 export const CHANGE_PLACES: Record<string, { label: (key: string) => string, target?: UiTargetId }> = {
   'project add': { label: k => `New project ${k}` },
+  'workspace add': { label: k => `New workspace ${k}` },
   'project template': { label: k => `Project ${k} › Workflow`, target: 'project.workflow' },
   'project guards': { label: k => `Project ${k} › Guards`, target: 'project.guards' },
   'project machine': { label: k => `Project ${k} › Machines` },

@@ -59,7 +59,7 @@ it('advances the legacy channel only after npm latest, the tarball, and Homebrew
   }
 })
 
-it('reports npm and Homebrew blockers separately, ignores 3.x and does not rewrite an already-current latest', async () => {
+it('reports npm and Homebrew blockers separately and does not rewrite an already-current latest', async () => {
   const request = async () => ({ ok: false, json: async () => ({}), text: async () => '' })
   const result = await readiness('1.3.3', request, 'example/wherdr')
   expect(result.ready).toBe(false)
@@ -69,11 +69,22 @@ it('reports npm and Homebrew blockers separately, ignores 3.x and does not rewri
   const calls: string[] = []
   const run = (_cmd: string, args: string[]) => {
     calls.push(args.join(' '))
-    return JSON.stringify(args[1].endsWith('/latest') ? { tag_name: 'v1.3.3' } : [{ tag_name: 'v3.0.0' }, { tag_name: 'v1.3.3' }])
+    return JSON.stringify(args[1].endsWith('/latest') ? { tag_name: 'v1.3.3' } : [{ tag_name: 'v1.3.3' }])
   }
   const logs: string[] = []
   await promote({ repo: 'example/wherdr', request, run, log: (line: string) => logs.push(line) })
   expect(calls).toHaveLength(2)
   expect(calls.some(call => call.includes('release edit'))).toBe(false)
   expect(logs.join('\n')).toContain('already at v1.3.3')
+})
+
+it('keeps latest on the newest 3.x: a newer 2.x fix never takes it back', async () => {
+  const request = async () => { throw new Error('3.x needs no npm or Homebrew check') }
+  const calls: string[] = []
+  const run = (_cmd: string, args: string[]) => {
+    calls.push(args.join(' '))
+    return JSON.stringify(args[1].endsWith('/latest') ? { tag_name: 'v2.6.1' } : [{ tag_name: 'v2.6.1' }, { tag_name: 'v3.0.0' }, { tag_name: 'v2.6.0' }])
+  }
+  await promote({ repo: 'example/wherdr', request, run, log: () => {} })
+  expect(calls.at(-1)).toBe('release edit v3.0.0 --repo example/wherdr --latest')
 })

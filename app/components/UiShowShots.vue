@@ -26,7 +26,7 @@ const steps = computed(() => (card.value?.plan ?? []).filter(s => card.value?.st
     <template v-else-if="card">
       <section v-for="s in steps" :key="s.id">
         <span class="mono-label">{{ s.column || s.id }}</span>
-        <TaskShots :task="card.id" :shots="card.state!.shots![s.id]!" :mode="shotMode(s)" />
+        <TaskShots :task="card.id" :shots="card.state!.shots![s.id]!" :mode="shotMode(s)" :head="card.state!.shotsHead?.[s.id]" />
       </section>
       <p v-if="!steps.length" class="muted">{{ t('No screenshots yet') }}</p>
       <UButton color="neutral" variant="outline" icon="i-lucide-square-arrow-out-up-right" class="ui-show-task" @click="openTaskSheet(task)">

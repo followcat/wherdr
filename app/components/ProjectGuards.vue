@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // The project sheet's Guards tab: the protected branches as chips with an add
 // field, who merges into protected and other branches, and what that does
-// (guardEffects: what each task type adds, who merges at each step). Saved
-// through project-guards, which only the user or Alfred may call.
+// (guardEffects: what each task type adds, who merges at each step). Each
+// change saves at once (useAutosave) through project-guards, which only the
+// user or Alfred may call.
 import { guardEffects } from '#shared/pm/guardEffects'
 import type { Project } from '#shared/pm/project'
 import type { Guards, MergeBy, Template } from '#shared/pm/workflow'
@@ -13,14 +14,12 @@ const emit = defineEmits<{ changed: [] }>()
 
 const form = reactive({ protected: [] as string[], merge: { ...DEFAULT_MERGE } })
 const adding = ref('')
-const busy = ref(false)
-const error = ref('')
-const reset = (g: Guards = {}) => Object.assign(form, { protected: [...(g.protected ?? [])], merge: { ...DEFAULT_MERGE, ...g.merge } })
+let filling = false
+const reset = (g: Guards = {}) => { filling = true; Object.assign(form, { protected: [...(g.protected ?? [])], merge: { ...DEFAULT_MERGE, ...g.merge } }); filling = false }
 watch(() => props.workflow.guards, g => reset(g), { immediate: true })
 
 // The guards the form says, keeping what it does not show (contributorPrs).
 const draft = computed<Guards>(() => ({ ...props.workflow.guards, protected: [...form.protected], merge: { ...form.merge } }))
-const dirty = computed(() => JSON.stringify(draft.value) !== JSON.stringify({ ...props.workflow.guards, protected: props.workflow.guards?.protected ?? [], merge: { ...DEFAULT_MERGE, ...props.workflow.guards?.merge } }))
 const effects = computed(() => guardEffects(props.workflow, draft.value, props.project.base))
 
 function add() {
@@ -39,23 +38,17 @@ const typeLine = (e: ReturnType<typeof guardEffects>['types'][number]) => [
   ...(e.merge.others ? [tl(`merge into other branches → ${who(e.merge.others)}`)] : []),
 ].join(' · ')
 
-async function save() {
-  if (busy.value) return
-  busy.value = true
-  error.value = ''
-  try {
-    await api('/api/pm/project-guards', { key: props.project.key, guards: draft.value })
-    emit('changed')
-    toast(tl('Guards saved'))
-  }
-  catch (e) { error.value = (e as Error).message }
-  finally { busy.value = false }
-}
+const auto = useAutosave(async () => {
+  await api('/api/pm/project-guards', { key: props.project.key, guards: draft.value })
+  emit('changed')
+})
+watch(() => JSON.stringify(form.protected), () => { if (!filling) auto.change('protected', true) }, { flush: 'sync' })
+for (const r of ROWS) watch(() => form.merge[r.k], () => { if (!filling) auto.change(`merge-${r.k}`, true) }, { flush: 'sync' })
 </script>
 
 <template>
-  <form class="sheet-form" data-testid="project-guards" @submit.prevent="save">
-    <span class="field-label">{{ tl('Protected branches') }}</span>
+  <form class="sheet-form" data-testid="project-guards" :aria-busy="auto.busy.value" @submit.prevent>
+    <span class="field-label">{{ tl('Protected branches') }}<SavedMark :s="auto.state.protected" /></span>
     <div class="guard-chips">
       <span v-for="b in form.protected" :key="b" class="guard-chip mono" data-testid="guard-chip">
         {{ b }}
@@ -63,18 +56,20 @@ async function save() {
       </span>
       <small v-if="!form.protected.length" class="muted">{{ tl('No branch is protected.') }}</small>
     </div>
+    <p v-if="auto.errors.protected" class="form-error" role="alert">{{ t(auto.errors.protected) }}</p>
     <span class="guard-add">
       <UInput v-model="adding" size="lg" class="mono" :placeholder="tl('Add a branch')" :aria-label="tl('Branch to protect')" maxlength="200" data-testid="guard-add" @keydown.enter.prevent="add" />
       <UButton size="lg" color="neutral" variant="outline" icon="i-lucide-plus" :disabled="!adding.trim()" data-testid="guard-add-button" @click="add">{{ tl('Add') }}</UButton>
     </span>
 
     <template v-for="r in ROWS" :key="r.k">
-      <span class="field-label pm-later">{{ tl(r.label) }}</span>
+      <span class="field-label pm-later">{{ tl(r.label) }}<SavedMark :s="auto.state[`merge-${r.k}`]" /></span>
       <div class="segmented" role="radiogroup" :aria-label="tl(r.label)" style="--segment-count: 2">
         <button v-for="w in WHO" :key="w.value" type="button" role="radio" :aria-checked="form.merge[r.k] === w.value" :class="{ on: form.merge[r.k] === w.value }" :data-testid="`guard-${r.k}-${w.value}`" @click="form.merge[r.k] = w.value">
           <span>{{ w.value === 'user' ? tl(w.label) : w.label }}</span>
         </button>
       </div>
+      <p v-if="auto.errors[`merge-${r.k}`]" class="form-error" role="alert">{{ t(auto.errors[`merge-${r.k}`]!) }}</p>
     </template>
 
     <span class="field-label pm-later">{{ tl('Effect') }}</span>
@@ -86,8 +81,6 @@ async function save() {
       <li v-if="!effects.types.length && !effects.steps.length" class="muted">{{ tl('No step merges a branch.') }}</li>
     </ul>
 
-    <UButton type="submit" size="xl" color="primary" variant="solid" class="hw-cta" icon="i-lucide-save" :loading="busy" :disabled="!dirty || busy" data-testid="guard-save">{{ tl('Save guards') }}</UButton>
-    <p v-if="error" class="form-error" role="alert">{{ t(error) }}</p>
   </form>
 </template>
 

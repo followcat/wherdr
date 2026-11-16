@@ -6,7 +6,7 @@
 import { WATCH, actionField, type Evidence, type Holder, type Step, type StepAction, type Template, type TaskInput } from './workflow'
 import { mayMerge } from './guards'
 import { taskGuards, type Unapproved } from './actions'
-import { shotsMissing, shotsText, shotMode, type Shot } from './shots'
+import { needsShots, POINTED_SHOTS, shotsMissing, shotsText, shotMode, type Shot } from './shots'
 import { advise, blocking, weight, reviewText, sendBackText, type Advice, type Choice, type Finding, type Round } from './verdict'
 
 // text: what the holder is told at the start. guarded: a merge only the user may do.
@@ -46,7 +46,10 @@ export interface StepState {
   agent?: AgentWork
   proofs: Record<string, Partial<Record<Evidence, string>>> // per step id
   shots?: Record<string, Shot[]> // the screenshots uploaded per step id (shots.ts)
-  earlierShots?: Record<string, Shot[]> // the sets a rework after the review replaced, oldest first
+  earlierShots?: Record<string, Shot[]> // the shots a redone one replaced, oldest first
+  shotsHead?: Record<string, string> // per step id: the task's newest commit seen with its shots (an upload, the worker's done)
+  shotsShown?: Record<string, number> // per step id: how many shots of the result its last round ended with
+  lastBack?: { note: string, at: number } // the user's last send-back: their note (without the shot downloads), when
   rounds: Record<string, number> // send-backs per verdict step id
   tries?: Record<string, number> // engine actions started per step id: one receipt each
   reviews?: Record<string, Round[]> // the send-backs of each verdict step
@@ -107,7 +110,7 @@ export type StepEvent =
   | { kind: 'caught-up', head?: string, review?: Rereview, error?: string }
   | { kind: 'tick' }
   | { kind: 'skip' } // the user takes a stopped task as it is: on to the next step
-  | { kind: 'back', note: string } // the user sends a step of theirs (a visual merge) back to the worker, with what to change
+  | { kind: 'back', note: string, redo?: string[] } // the user sends a step of theirs (a visual merge) back to the worker, with what to change and the worker's shots to redo
 
 export type Effect =
   | { kind: 'instruct', step: string, holder: Holder, text: string }
@@ -140,6 +143,18 @@ export const rereviewText = ({ since, head }: Rereview) => [
   `Review only that change. List it with \`git log --oneline ${since}..${head}\`. For a merge of the base branch, \`git show --remerge-diff <commit>\` shows only how its conflicts were resolved; for any other commit, \`git show <commit>\`.`,
   'Pass unless one of them breaks the task or goes beyond it; what the base branch brought is not reviewed again.',
 ].join('\n\n')
+
+// The worker gives this line in its note when its round ends with fewer shots of the result.
+const FEWER_RE = /^\s*fewer screenshots because:\s*(.+)$/im
+
+// What a send-back tells the worker about its screenshots: which to redo (the
+// user's picks, by file for replaces=), that the others stay, and to retake any
+// screen its new commits change.
+function redoText(step: PlannedStep, redo: string[] = []) {
+  if (!needsShots(step)) return ''
+  const picked = redo.length ? `Redo the screenshots the user points at, each uploaded with &replaces=<its file>: ${redo.join(', ')}. ` : ''
+  return `${picked}Your other screenshots stay shown; retake only a screen your new commits change, with &replaces=<its file> too.\n`
+}
 
 export interface StepResult { state: StepState, effects: Effect[], refused?: string }
 
@@ -295,13 +310,24 @@ export function onEvent(plan: PlannedStep[], state: StepState, ev: StepEvent, no
       if (!fromHolder(ev.from)) return refuse(`Step "${step.id}" is held by the ${step.holder}`)
       const given = { ...state.proofs[step.id], ...ev.evidence }
       const proofs = { ...state.proofs, [step.id]: given }
+      // The final commit: a shot of the result taken before it is marked as from an earlier commit.
+      if (given.commit && needsShots(step)) state = { ...state, shotsHead: { ...state.shotsHead, [step.id]: given.commit } }
       // Screenshots are not given with the report: they are the images uploaded for this step.
       const shots = shotsMissing(step, state.shots?.[step.id])
       const missing = (step.evidence ?? []).filter(e => (e === 'screenshots' ? shots.length : !given[e]?.trim()))
-      if (missing.length) {
-        const ask = `Not done yet: step "${step.id}" needs ${missing.map(e => (e === 'screenshots' ? shotsText(shots) : PROOF[e])).join(', ')}.`
+      // The set does not shrink silently: fewer shots of the result than the last round, only with a reason.
+      const shown = state.shots?.[step.id]?.filter(s => s.phase === 'after').length ?? 0, last = state.shotsShown?.[step.id] ?? 0
+      const fewer = needsShots(step) && shown < last ? FEWER_RE.exec(given.report ?? '')?.[1]?.trim() : undefined
+      const shrunk = needsShots(step) && shown < last && !fewer
+      if (missing.length || shrunk) {
+        const ask = [
+          ...(missing.length ? [`Not done yet: step "${step.id}" needs ${missing.map(e => (e === 'screenshots' ? shotsText(shots) : PROOF[e])).join(', ')}.`] : []),
+          ...(shrunk ? [`Not done yet: step "${step.id}" shows ${shown} screenshots of the result, the last round ${last}. Upload the missing ones again, or add a line "Fewer screenshots because: <why>" to your note.`] : []),
+        ].join('\n')
         return { state: { ...state, proofs }, effects: [{ kind: 'instruct', step: step.id, holder: step.holder!, text: ask }], refused: ask }
       }
+      if (fewer) effects.push({ kind: 'log', text: `${step.id}: ${shown} screenshots of the result instead of ${last}, because: ${fewer}` })
+      if (needsShots(step)) state = { ...state, shotsShown: { ...state.shotsShown, [step.id]: shown } }
       let reviews = state.reviews
       const from = state.backFrom, list = from ? reviews?.[from] : undefined
       if (from && list?.length && ev.disputes?.length)
@@ -444,12 +470,12 @@ export function onEvent(plan: PlannedStep[], state: StepState, ev: StepEvent, no
       if (step.ends !== 'user' || state.acting) return refuse(`Step "${step.id}" does not wait for you`)
       if (back < 0) return refuse('No earlier step of the agent to send it back to')
       if (!ev.note.trim()) return refuse('Say what to change')
-      const fix = `The user sent it back from "${step.id}": ${ev.note.trim()}\nFix it, commit, then say you are done.`
+      const fix = `The user sent it back from "${step.id}": ${ev.note.trim()}\n${redoText(plan[back]!, ev.redo)}Fix it, commit, then say you are done.`
       effects.push({ kind: 'instruct', step: plan[back]!.id, holder: 'worker', text: fix }, { kind: 'log', text: `${step.id}: sent back by the user${state.approved ? ', approval dropped' : ''}. ${ev.note.trim()}` })
-      // The screens sent back are dropped: the worker gives new ones, and the merge shows only those.
-      const { [plan[back]!.id]: _sentBack, ...shots } = state.shots ?? {}
-      // The reworked task waits for the user's look again: an earlier Merge click no longer counts.
-      return { state: { ...enter(plan, { ...state, shots, approved: undefined }, back, now, []), fix }, effects }
+      // The screenshots stay: the worker redoes those pointed at (and those its new commits change)
+      // in place (addShot's replaces). The reworked task waits for the user's look again: an earlier Merge click no longer counts.
+      const lastBack = { note: ev.note.split(`\n\n${POINTED_SHOTS}`)[0]!.trim(), at: now }
+      return { state: { ...enter(plan, { ...state, approved: undefined, lastBack }, back, now, []), fix }, effects }
     }
     case 'catch-up': {
       if (!waitsToMerge(step) || state.acting || state.catchUp) return refuse('No merge waits to be updated')

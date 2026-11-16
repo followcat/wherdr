@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Extract every output frame, in both cuts, for visual review. */
+/** Extract every third output frame (10 fps), in both cuts, for visual review. */
 import { mkdir } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { dirname, resolve, join } from "node:path";
@@ -23,22 +23,22 @@ ffmpeg([
   "-i",
   "assets/wherdr-launch-wide.mp4",
   "-filter_complex",
-  "[0:v]fps=30,scale=360:360,drawtext=text='%{n}':fontsize=20:fontcolor=white:box=1:boxcolor=black:x=6:y=6[s];[1:v]fps=30,scale=640:360[w];[s][w]hstack=inputs=2,tile=3x5:nb_frames=15:padding=6:margin=6[v]",
+  "[0:v]fps=10,scale=360:360,drawtext=text='%{n}':fontsize=20:fontcolor=white:box=1:boxcolor=black:x=6:y=6[s];[1:v]fps=10,scale=640:360[w];[s][w]hstack=inputs=2,tile=3x5:nb_frames=15:padding=6:margin=6[v]",
   "-map",
   "[v]",
   "-fps_mode",
   "vfr",
   "-frames:v",
-  "30",
+  "40",
   "-threads",
   "2",
   join(output, "sheet-%02d.jpg"),
 ]);
 for (const [at, name, cut] of [
-  [0.8, "01-start-on-pc", ""],
-  [2.8, "02-handoff-to-phone", ""],
-  [4.5, "03-one-tap-approval", ""],
-  [8.8, "04-project-wide", "-wide"],
+  [6.5, "01-alfred", ""],
+  [17.8, "02-approved-with-screenshots", ""],
+  [22.8, "03-board-moves-wide", "-wide"],
+  [30.5, "04-phone-answer", ""],
 ]) {
   ffmpeg([
     "-ss",
@@ -53,5 +53,5 @@ for (const [at, name, cut] of [
   ]);
 }
 console.log(
-  "30 sheets: all 450 rendered frames, square + wide. Review before pushing.",
+  "Sheets: every third rendered frame, square + wide. Review before pushing.",
 );

@@ -46,6 +46,8 @@ describe('alfredFiles', () => {
     expect(a).not.toContain('## Coordinating')
     expect(a).toContain('Settings › Projects')
     expect(alfredFiles({ ...ctx, pm: true }, ['## Coordinating'])['AGENTS.md']).toContain('## Coordinating')
+    // A request about a project: relayed to its coordinator, an unclear project asked with choices.
+    expect(a).toMatch(/unsure, ask with a `choices` line[^\n]*`tell <KEY>`[^\n]*`last <KEY>`[^\n]*`task <id>` line/)
     // The guided setup of v2 projects: only for a user who comes from v2.
     expect(a).not.toContain('## Coming from wherdr v2')
     expect(alfredFiles({ ...ctx, v2: true }, [])['AGENTS.md']).toContain('## Coming from wherdr v2')

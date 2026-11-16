@@ -38,7 +38,10 @@ only the routes listed in `shared/coreRoutes.ts` answer.
   does the same and removes the passkeys; every open app then posts its push subscription again
   at once, and an app that was closed or asleep does so when it opens or reconnects. The first start after upgrading to this version ends the open
   sessions once (the old numeric generation is replaced); the passkeys stay. Lost passkey: delete
-  `data/auth.json` on the server; the app is open again to whoever can reach it.
+  `data/auth.json` on the server; the app is open again to whoever can reach it. A damaged
+  `data/auth.json` (cut write, full disk) never opens the app: it stays locked, the server log says
+  so, and the file is left as it is; restore it from a backup, or delete it and register the
+  passkeys again, then restart wherdr.
 - **Before the unlock**, a locked device only learns that the app is locked: no passkey names or
   dates, no machine name, no server clock. Unlocking lists no key: the device offers its own
   passkey for the site (passkeys are registered as discoverable credentials). Unlock attempts

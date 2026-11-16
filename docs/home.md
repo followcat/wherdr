@@ -24,9 +24,9 @@
 - **Quick answers**: a waiting agent's card shows its question and options; **answer in one tap**
   without opening it. The question is read again before the answer is sent; if it changed, the
   answer is refused.
-- **Compact list**: Settings › Appearance › Home screen › **Compact list** shows one line per
-  card; Normal adds the current activity on a second line. It follows you across devices.
-  Every agent terminal is its own row, with its pane or tab label.
+- **Rows**: one line per card; an agent outside a task adds its current activity on a second
+  line, and terminal spaces are filed under Ready. Every agent terminal is its own row, with its
+  pane or tab label.
 - **Task agents**: an agent the [project engine](project-management.md) started for a task keeps
   its own status, but its row is named after its task: the state square, the task id badge, the
   task title (cut when long; a pane you renamed keeps your name, in the conversation header and
@@ -63,8 +63,8 @@
 
 Alfred, wherdr's assistant, is always the first row of the agent list, even
 with no agent and projects off. Its row is a card of its own: its emblem (the
-wherdr ram in a bow tie, also in its conversation's header), *Your assistant ·
-all projects*, and its state (*Not started*, *Ready*, *Working*…) with its
+wherdr ram in a bow tie, also in its conversation's header), *wherdr assistant*,
+and its state (*Not started*, *Ready*, *Working*…) with its
 agent. A tap on it opens its conversation. Its card keeps a faint mauve
 wash; like other rows, it looks selected (a mauve edge and left bar) only while its
 conversation is the one open. It helps you get started and, with projects
@@ -117,6 +117,14 @@ current session stops), and *Stop the coordinator*, after a short confirm: its a
 starts again on the next message or wake. Mute and Stop show while it runs. Alfred's row keeps
 its own menu. A coordinator shows only in its own row, never again among the agents.
 
+A [workspace](workspaces.md)'s coordinator is its **workspace row**, in the same list (its
+members have none of their own): its key badge and name, its coordinator's state, then how many
+of its members' tasks are *working* and *waiting for you* (*Claude · Idle · 2 working · 1
+waiting for you*). Under its name, its members' key badges; a tap lists them, each opening its
+member's board. Its menu is a coordinator's, with *Workspace settings* for *Project settings*;
+*Open the board* shows the workspace's features and every member's tasks. It reorders and hides
+like any coordinator.
+
 Their order is yours and follows you to every device: drag a row by the ⠿ handle that shows on
 hover (or with the up and down arrows on it), or long press it on a phone, then drag. The menu's
 *Move to hidden* puts a coordinator in the **Hidden** group at the end of the section, as does
@@ -127,7 +135,8 @@ needs you (a question, a block), its row comes back in the main list until you a
 
 Coordinators and **Tasks to review** follow the [machine tab](#machines-as-tabs): a tab shows the
 projects whose allowed machines it holds (a project on machines of several groups shows on each
-of those tabs), **All** shows every project, and Alfred shows on every tab. An open coordinator
+of those tabs), **All** shows every project, and Alfred shows on every tab. A workspace shows
+under its tab group (unless its *Shown in* says otherwise). An open coordinator
 conversation stays open on the tabs that show its project. The board follows the tab too when
 its picker is on *Follow machine tab* ([Board](project-management.md#board)); notifications stay
 global.
@@ -229,7 +238,8 @@ header is narrow (a phone, a side-by-side cell, a narrow window) Notes is the fi
 the header's ⋯ menu instead. Alfred and the coordinators write them for you:
 read-only, a short whiteboard. On a computer of
 at least 1280 px they open beside the conversation or Home's list, like Settings (drag the panel's left edge
-to resize it); otherwise in a sheet. They follow the home tab by default (**Follow
+to resize it); otherwise in a sheet. The panel stays open after a reload, on the linked file it
+showed if that file still exists, kept on each device (the sheet does not reopen). They follow the home tab by default (**Follow
 tab**), with a muted line saying which (*Work · following the tab*); the menu at the top shows
 **All** or one tab instead (every group and every machine shown as its own tab, in the bar's
 order), and the choice follows you across devices. A tab shows its own notes and the ones

@@ -78,3 +78,15 @@ export function ompConsoleRows<T>(list: readonly T[], open: boolean): { hidden: 
   if (open || list.length <= OMP_CONSOLE_SHOWN) return { hidden: 0, rows: list }
   return { hidden: list.length - OMP_CONSOLE_SHOWN, rows: list.slice(-OMP_CONSOLE_SHOWN) }
 }
+
+// A Claude Code or Codex "!" command (its transcript entry, or what the
+// screen shows while it runs) drawn as omp's own bash call (ChatShellRun.vue):
+// its output (stderr after stdout), its run time when known.
+export function shellView(it: Pick<ChatItem, 'text' | 'out' | 'err' | 'ms'>, hidden = 0): OmpToolView {
+  const out = [it.out, it.err].filter(Boolean).join('\n')
+  return {
+    title: 'Bash', target: it.text,
+    ...(out ? { out, ...(hidden ? { outLines: hidden + out.split('\n').length } : {}) } : {}),
+    ...(typeof it.ms === 'number' ? { ms: it.ms } : {}),
+  }
+}

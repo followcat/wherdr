@@ -4,8 +4,8 @@
 import { REPO } from './site'
 
 export const SITE_URL = 'https://wherdr.dev'
-export const TITLE = 'wherdr — Herdr on your desktop and phone'
-export const DESCRIPTION = 'Self-hosted web app and PWA to drive your Herdr coding agents (Claude Code, Codex) from your desktop or phone. Open source.'
+export const TITLE = 'wherdr — your coding agents on desktop and phone'
+export const DESCRIPTION = 'Self-hosted web app and PWA on herdr-core: drive your coding agents and their projects from your desktop or phone. Open source.'
 // 1200×630, drawn by tools/og.html.
 export const SHARE_IMAGE = { url: `${SITE_URL}/og.png`, width: 1200, height: 630, alt: 'wherdr — Your coding agents. Wherever you are.' }
 

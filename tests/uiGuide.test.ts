@@ -29,7 +29,7 @@ describe('uiGuide', () => {
     expect(text('task')).toContain('choices "')
     expect(text('coordinator', { key: 'WEB' })).toMatch(/wherdr pm ui action step WEB-12/)
     expect(text('coordinator')).not.toMatch(/wherdr alfred|setting set/)
-    expect(text('alfred')).toContain('wherdr alfred setting set replyStyle list --propose')
+    expect(text('alfred')).toContain('wherdr alfred setting set typewriterSpeed slow --propose')
     expect(text('alfred')).not.toContain('wherdr pm')
     expect(text('alfred', { pm: true })).toContain('wherdr pm ui show shots')
   })

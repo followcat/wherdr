@@ -1,39 +1,103 @@
 {
-  "source": "Unmodified wherdr app, static app/demo build",
-  "commit": "9ffd8a5156484bb9972bb108bdb89fda2b51624d",
-  "appTree": "b425ccbfb0186f148217821bfff8727561248731",
-  "actions": [
+  "source": "Unmodified wherdr v3 app, static app/demo build",
+  "commit": "1871505470f9ff0e407e8e8a69cb7f1d0558591b",
+  "appTree": "ea2e0caf06b19c7eec18444192af0aa396c60079",
+  "shots": [
     {
-      "at": 1.2,
-      "action": "Click Launch in the real New agent sheet",
-      "route": "#/a/w5:p1"
+      "file": "home.png",
+      "action": "Open wherdr on a computer: Alfred, Tasks to review, coordinators",
+      "route": "#/",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      }
     },
     {
-      "at": 2.4,
-      "action": "Resize the same live page to a phone; no reload or new session",
-      "route": "#/a/w5:p1"
+      "file": "alfred.png",
+      "action": "Open Alfred: what needs me today",
+      "route": "#/a/w0:p1",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      }
     },
     {
-      "at": 4.8,
-      "action": "Approve once with the actual first Yes button",
-      "route": "#/a/w5:p1"
+      "file": "coordinator.png",
+      "action": "Open the acme-api coordinator: it plans two tasks",
+      "route": "#/a/w1:p1",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      }
     },
     {
-      "at": 10,
-      "action": "Go back to the actual compact agent list: project coordinator and task rows",
-      "route": "#/"
+      "file": "board.png",
+      "action": "Open the Board",
+      "route": "#/board",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      }
     },
     {
-      "at": 12,
-      "action": "Return to desktop and open the real Board",
-      "route": "#/board"
+      "file": "review.png",
+      "action": "Open Tasks to review: WEB-7 and its screenshots",
+      "route": "#/",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      }
+    },
+    {
+      "file": "approved.png",
+      "action": "Approve WEB-7 with the real Approve button",
+      "route": "#/",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      }
+    },
+    {
+      "file": "board-after.png",
+      "action": "Back to the Board: WEB-7 merged and Done",
+      "route": "#/board",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      }
+    },
+    {
+      "file": "phone-home.png",
+      "action": "Continue on a phone: Tasks to review shows WEB-8",
+      "route": "#/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      }
+    },
+    {
+      "file": "phone-question.png",
+      "action": "Open Tasks to review: the agent asks a question",
+      "route": "#/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      }
+    },
+    {
+      "file": "phone-answered.png",
+      "action": "Answer with one tap: Two months free",
+      "route": "#/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      }
     }
   ],
   "width": 720,
   "height": 720,
-  "frames": 225,
-  "durationMs": 14999,
-  "bytes": 1491360,
-  "loop": "infinite",
-  "actionsTimeline": "Source capture, before launch-film editing"
+  "frames": 540,
+  "durationMs": 35999,
+  "bytes": 4194022,
+  "loop": "infinite"
 }

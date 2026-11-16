@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // "Works with": the agents wherdr is tested with, with the app's brand icons
-// (app/utils/agentIcons.ts). Other Herdr agents get the list and terminal, so
+// (app/utils/agentIcons.ts). Other terminals get the list and terminal, so
 // they are mentioned without a logo.
 // omp's logo is a thin pixel π: at the size of the others its 2-unit legs
 // blur into a dim smudge, so it is drawn larger (`big`).
@@ -19,7 +19,7 @@ const AGENTS: { name: string, icon: string, color?: string, big?: boolean }[] = 
         <UIcon :name="a.icon" class="ico" :class="{ big: a.big }" :style="a.color ? { color: a.color } : undefined" />
         {{ a.name }}
       </li>
-      <li class="more">and every agent Herdr recognizes</li>
+      <li class="more">and Devin, and every terminal of herdr-core</li>
     </ul>
   </div>
 </template>

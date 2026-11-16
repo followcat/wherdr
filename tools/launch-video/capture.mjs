@@ -1,5 +1,10 @@
 #!/usr/bin/env node
-/** Photograph the unmodified demo UI. Actions use its real controls and API. */
+/**
+ * Photograph the unmodified v3 demo build (app/demo, fictional data). Every
+ * step uses the app's real controls in one live page and session; only the
+ * demo strip at the top is hidden. Writes .generated/<shot>.png and
+ * .generated/capture.json (actions, routes, viewports, SHA-256 of each PNG).
+ */
 import assert from "node:assert/strict";
 import { chromium } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -12,23 +17,22 @@ import { serveDemo } from "./serve.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
 const generated = join(here, ".generated");
-const fps = 15;
 const git = (args) =>
   execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
-// The branch the film is made from (origin/develop, the integration branch).
-const base = process.env.WHERDR_FILM_BASE || "origin/main";
+// The branch the film is made from: the app must match it exactly.
+const base = process.env.WHERDR_FILM_BASE || "origin/v3";
 git(["diff", "--exit-code", base, "--", "app", "nuxt.config.ts"]);
+const desktop = { width: 1440, height: 900 };
+const phone = { width: 390, height: 844 };
 const provenance = {
-  source: "Unmodified wherdr app, static app/demo build",
+  source: "Unmodified wherdr v3 app, static app/demo build",
   base,
   mainCommit: git(["rev-parse", base]),
   appTree: git(["rev-parse", "HEAD:app"]),
   uiChanges: false,
   overlaysInsideApp: false,
-  fps,
-  duration: 15,
-  actions: [],
-  frames: [],
+  hidden: [".demo-banner"],
+  shots: [],
 };
 await mkdir(generated, { recursive: true });
 const server = await serveDemo(join(root, ".output-demo/public"));
@@ -36,17 +40,17 @@ let browser;
 try {
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
-    viewport: { width: 1440, height: 900 },
+    viewport: desktop,
     deviceScaleFactor: 1,
     locale: "en-US",
     timezoneId: "UTC",
     colorScheme: "dark",
     reducedMotion: "reduce",
-    hasTouch: false,
     serviceWorkers: "block",
   });
   const failures = [];
   const origin = new URL(server.url).origin;
+  // Only the demo build itself: no network, no real API.
   await context.route("**/*", async (route) => {
     const url = new URL(route.request().url());
     if (url.origin === origin && !/^\/(api|ws)\//.test(url.pathname))
@@ -59,175 +63,96 @@ try {
   page.on("pageerror", (error) => failures.push(error.message));
   await page.clock.install({ time: new Date("2026-01-01T09:41:00Z") });
   await page.goto(server.url);
-  await page.getByRole("button", { name: "New", exact: true }).waitFor();
+  await page.locator(".card[data-pane]").first().waitFor();
+  await page.addStyleTag({
+    content:
+      ".demo-banner { display: none !important } :root { --demo-h: 0px !important }",
+  });
   await page.evaluate(() => document.fonts.ready);
-  await page.getByRole("button", { name: "New", exact: true }).click();
-  await page.locator("#newPrompt").fill("Run the test suite.");
-  await page
-    .getByRole("button", { name: "acme-api", exact: true })
-    .last()
-    .click();
-  await page.locator("#newName").fill("Test suite");
-  await page.locator("#newName").press("Tab");
-  await page.clock.pauseAt(
-    new Date((await page.evaluate(() => Date.now())) + 1000),
-  );
-  const start = await page.evaluate(() => Date.now());
-  const tick = async (ms = 34) => {
+  // From here the app's time moves only when the script says, so each shot
+  // shows the state its action reached, not a later one.
+  await page.clock.pauseAt(new Date((await page.evaluate(() => Date.now())) + 1000));
+  const settle = async (ms = 1500) => {
     await page.clock.runFor(ms);
+    await page.waitForTimeout(300);
   };
   const until = async (check, label) => {
     for (let tries = 0; tries < 40; tries++) {
       if (await check()) return;
-      await tick(50);
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await settle(100);
     }
     await page.screenshot({ path: join(generated, "failure.png") });
     throw new Error(`The real UI did not reach: ${label}`);
   };
-  let conversation;
-  async function action(frame, name, fn) {
+  const text = () => page.locator("body").innerText();
+  async function shot(name, action, fn = async () => {}, wait = 1500) {
     await fn();
-    provenance.actions.push({
-      at: frame / fps,
-      action: name,
-      route: new URL(page.url()).hash,
-    });
-  }
-  for (let frame = 0; frame < 225; frame++) {
-    const now = await page.evaluate(() => Date.now());
-    await page.clock.runFor(
-      Math.max(0, start + Math.round((frame * 1000) / fps) - now),
-    );
-    if (frame === 18)
-      await action(
-        frame,
-        "Click Launch in the real New agent sheet",
-        async () => {
-          await page
-            .getByRole("button", { name: "Launch", exact: true })
-            .click({ force: true });
-          await tick();
-          await until(
-            () => /#\/a\/w5:p1$/.test(page.url()),
-            "new agent conversation",
-          );
-          conversation = page.url();
-        },
-      );
-    if (frame === 36)
-      await action(
-        frame,
-        "Resize the same live page to a phone; no reload or new session",
-        async () => {
-          await device.send("Emulation.setTouchEmulationEnabled", {
-            enabled: true,
-            maxTouchPoints: 1,
-          });
-          await page.setViewportSize({ width: 390, height: 844 });
-          await tick();
-          assert.equal(page.url(), conversation);
-          assert.ok(
-            (await page.locator("body").innerText()).includes(
-              "Run the test suite.",
-            ),
-          );
-        },
-      );
-    if (frame === 66) {
-      assert.ok(
-        (await page.locator(".choices").innerText()).includes(
-          "Do you want to proceed?",
-        ),
-      );
-    }
-    if (frame === 72)
-      await action(
-        frame,
-        "Approve once with the actual first Yes button",
-        async () => {
-          const yes = page.locator(".choices-list > button").first();
-          assert.equal((await yes.locator(".l").innerText()).trim(), "Yes");
-          await yes.click({ force: true });
-          await tick();
-          await until(
-            async () => (await page.locator(".choices-list").count()) === 0,
-            "approval accepted",
-          );
-        },
-      );
-    if (frame === 130) {
-      await until(
-        async () => /162\s+tests/.test(await page.locator("body").innerText()),
-        "real demo test result",
-      );
-    }
-    if (frame === 150)
-      await action(
-        frame,
-        "Go back to the actual compact agent list: project coordinator and task rows",
-        async () => {
-          await page
-            .getByRole("button", { name: "Back", exact: true })
-            .click({ force: true });
-          await tick();
-          await until(
-            async () =>
-              (await page.locator('.card[data-pane="w1:p1"]').isVisible()) &&
-              (await page.locator(".task-row").count()) > 0,
-            "compact agent list with tasks",
-          );
-        },
-      );
-    if (frame === 180)
-      await action(
-        frame,
-        "Return to desktop and open the real Board",
-        async () => {
-          await device.send("Emulation.setTouchEmulationEnabled", {
-            enabled: false,
-          });
-          await page.setViewportSize({ width: 1440, height: 900 });
-          await tick();
-          await page
-            .locator('[aria-label="Board"]')
-            .first()
-            .click({ force: true });
-          await tick();
-          await until(
-            async () => (await page.locator(".board-col-head").count()) === 4,
-            "four board columns",
-          );
-        },
-      );
-    const segment = frame < 36 ? "desktop" : frame < 180 ? "mobile" : "board";
-    const number = frame < 36 ? frame : frame < 180 ? frame - 36 : frame - 180;
-    const directory = join(generated, segment);
-    await mkdir(directory, { recursive: true });
-    const filename = `${String(number).padStart(3, "0")}.png`;
+    await settle(wait);
+    const file = `${name}.png`;
     const bytes = await page.screenshot({
-      path: join(directory, filename),
+      path: join(generated, file),
       type: "png",
-      animations: "allow",
+      animations: "disabled",
     });
-    provenance.frames.push({
-      at: frame / fps,
-      file: `${segment}/${filename}`,
+    provenance.shots.push({
+      file,
+      action,
+      route: new URL(page.url()).hash || "#/",
       viewport: page.viewportSize(),
       sha256: createHash("sha256").update(bytes).digest("hex"),
     });
-    if (frame % 30 === 0)
-      console.log(`Captured real app frame ${frame + 1}/225 (${segment})`);
+    console.log(`Captured ${file} (${action})`);
   }
-  assert.deepEqual(
-    failures,
-    [],
-    "No external requests, real API calls or browser errors",
+
+  await shot("home", "Open wherdr on a computer: Alfred, Tasks to review, coordinators", () =>
+    until(async () => await page.getByTestId("review-open").isVisible(), "Tasks to review on Home"),
   );
-  await writeFile(
-    join(generated, "capture.json"),
-    JSON.stringify(provenance, null, 2) + "\n",
-  );
+  await shot("alfred", "Open Alfred: what needs me today", async () => {
+    await page.getByTestId("alfred-open").click();
+    await until(async () => (await text()).includes("What needs me today?"), "Alfred conversation");
+  });
+  await shot("coordinator", "Open the acme-api coordinator: it plans two tasks", async () => {
+    await page.getByTestId("coordinator-row").filter({ hasText: "Ada" }).click();
+    await until(async () => (await text()).includes("Two independent pieces of work"), "coordinator plan");
+  });
+  await shot("board", "Open the Board", async () => {
+    await page.locator('[aria-label="Board"]').first().click();
+    await until(async () => (await page.getByTestId("board-lane").count()) === 4, "four board columns");
+  });
+  await shot("review", "Open Tasks to review: WEB-7 and its screenshots", async () => {
+    await page.locator('[aria-label="Back"]').first().click().catch(() => {});
+    await page.evaluate(() => { location.hash = "#/"; });
+    await settle();
+    await page.getByTestId("review-open").click();
+    await until(async () => (await page.locator('[data-testid="review-item"][data-task="WEB-7"]').count()) === 1, "WEB-7 in review");
+  });
+  await shot("approved", "Approve WEB-7 with the real Approve button", async () => {
+    await page.getByTestId("review-approve").click();
+    await until(async () => (await page.locator('[data-testid="review-approve"].confirmed').count()) === 1, "approved");
+  }, 0);
+  await shot("board-after", "Back to the Board: WEB-7 merged and Done", async () => {
+    await page.keyboard.press("Escape");
+    await settle(3000); // the demo engine merges 2.5 s after the approval
+    await page.locator('[aria-label="Board"]').first().click();
+    await until(async () => (await page.getByTestId("board-lane").allInnerTexts()).at(-1)?.includes("Dark mode toggle"), "WEB-7 in Done");
+  });
+  // The same live page, resized to a phone: no reload, no new session.
+  await device.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+  await page.setViewportSize(phone);
+  await shot("phone-home", "Continue on a phone: Tasks to review shows WEB-8", async () => {
+    await page.evaluate(() => { location.hash = "#/"; });
+    await until(async () => (await page.getByTestId("review-ids").allInnerTexts()).join().trim() === "WEB-8", "only WEB-8 left");
+  });
+  await shot("phone-question", "Open Tasks to review: the agent asks a question", async () => {
+    await page.getByTestId("review-open").click();
+    await until(async () => (await page.getByTestId("review-choice").count()) === 3, "three answers");
+  });
+  await shot("phone-answered", "Answer with one tap: Two months free", async () => {
+    await page.locator('[data-choice="Two months free"]').click();
+    await until(async () => (await page.locator('[data-choice="Two months free"].confirmed').count()) === 1, "answer sent");
+  }, 0);
+  assert.deepEqual(failures, [], "No external requests, real API calls or browser errors");
+  await writeFile(join(generated, "capture.json"), JSON.stringify(provenance, null, 2) + "\n");
   await context.close();
 } finally {
   if (browser) await browser.close();

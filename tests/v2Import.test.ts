@@ -9,8 +9,10 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanProjectInput } from '../shared/pm/project'
 import { detectV2, keptDirs, v3AppDir, mapMachines, mapSettings, parseArgs as importArgs, parseEnvFile, parseUnit, remapMachineSettings, runImport, sshProblem, v3MachineKey } from '../scripts/v2-import.mjs'
+import { pmDir } from '../server/utils/pmHome'
+import { taskPaths } from '../shared/pm/run'
 import { HANDOVER_PROMPT, goalLine, mapCandidates, readBoard } from '../server/utils/v2Board'
-import { EXIT, buildCommand, buildTuning, deployUnits, hcTarget, hcUnit, main, parseArgs, pickHttpsPort, unitProtections, updateScript, v2Board, v3Unit } from '../scripts/install-v3-beside-v2.mjs'
+import { EXIT, buildCommand, buildTuning, deployUnits, hcTarget, hcUnit, installPmDir, main, parseArgs, pickHttpsPort, unitProtections, updateScript, v2Board, v3Unit } from '../scripts/install-v3-beside-v2.mjs'
 
 const FIX = path.resolve(__dirname, 'fixtures/v2-install')
 const machinesJson = fs.readFileSync(path.join(FIX, 'herdr-machines.json'), 'utf8')
@@ -431,6 +433,39 @@ describe('installer', () => {
     expect(plan).toContain('OOMScoreAdjust=-900 MemoryLow=256M CPUWeight=200 from defaults')
     expect(plan).toContain('tailscale serve --bg --https=8106 http://127.0.0.1:7699 (added beside the existing entries, which use 8103, 8104, 8105)')
   })
+  it('gives a second install its own pm folders; the default one and an older install keep ~/.wherdr/pm', () => {
+    expect(installPmDir('wherdr-v3', null)).toBeNull()
+    expect(installPmDir('wherdr-test', null)).toBe('.wherdr/pm-wherdr-test')
+    expect(installPmDir('wherdr-test', { v: 1 })).toBeNull()
+    expect(installPmDir('wherdr-v3', { pmDir: '.wherdr/pm-x' })).toBe('.wherdr/pm-x')
+    expect(v3Unit({ node: '/n', dir: '/d', socket: '/s', port: '7684', hcService: null, pmDir: '.wherdr/pm-wherdr-test' })).toContain('Environment="WHERDR_PM_DIR=.wherdr/pm-wherdr-test"')
+    expect(v3Unit({ node: '/n', dir: '/d', socket: '/s', port: '7684', hcService: null })).not.toContain('WHERDR_PM_DIR')
+    // The server reads it; anything but a plain relative path falls back to the default.
+    expect(taskPaths('/h', 'CO-1', undefined, pmDir('.wherdr/pm-wherdr-test')).worktree).toBe('/h/.wherdr/pm-wherdr-test/worktrees/CO-1')
+    for (const bad of [undefined, '', '/abs', '../x', '.wherdr/../x', 'a b']) expect(pmDir(bad)).toBe('.wherdr/pm')
+  })
+
+  it.runIf(process.platform === 'linux')('uninstall lists, then removes, its own pm folders and never the default ones', async () => {
+    const home = tmp()
+    const dir = path.join(home, 'wherdr-test')
+    const own = path.join(home, '.wherdr', 'pm-wherdr-test')
+    for (const d of ['coordinators/CO', 'worktrees/CO-1', 'tasks/CO-1', '../pm/coordinators/CO']) fs.mkdirSync(path.join(own, d), { recursive: true })
+    fs.writeFileSync(path.join(own, 'worktrees/CO-1/.git'), 'gitdir: /src/co/.git/worktrees/CO-1\n')
+    fs.mkdirSync(dir)
+    fs.writeFileSync(path.join(dir, 'install-manifest.json'), JSON.stringify({ v: 1, createdDir: true, name: 'wherdr-test', units: [], machines: [], hcSession: 't', pmDir: '.wherdr/pm-wherdr-test' }))
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { run, calls } = io(home)
+    expect(await main(['--uninstall', '--dir', dir], { run, home, env: {} })).toBe(EXIT.ok)
+    expect(log.mock.calls.flat().join('\n')).toContain(`PLAN remove this install's pm folders, ${own} (1 coordinators, 1 worktrees, 1 tasks)`)
+    expect(fs.existsSync(own)).toBe(true)
+    expect(await main(['--uninstall', '--yes', '--dir', dir], { run, home, env: {} })).toBe(EXIT.ok)
+    log.mockRestore()
+    expect(fs.existsSync(own)).toBe(false)
+    expect(fs.existsSync(dir)).toBe(false)
+    expect(calls).toContain('git --git-dir /src/co/.git worktree prune')
+    expect(fs.readdirSync(path.join(home, '.wherdr', 'pm', 'coordinators'))).toEqual(['CO'])
+  })
+
   it('carries v2\'s herdr-projects board over to v3\'s service, --herdr-projects first', () => {
     const hp = path.join(FIX, 'herdr-projects')
     const b = v2Board({ home: '/home/user', v2: { home: hp, dataDir: null } })

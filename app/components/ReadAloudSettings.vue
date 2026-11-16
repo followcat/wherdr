@@ -10,8 +10,8 @@ import { language } from '~/utils/i18n'
 import { languageName, langCode, userLanguages, voiceLanguages, voiceSections, type VoiceQuality } from '~/utils/speech/voicePicker'
 
 const engineItems = computed(() => [
-  { label: tl('Off', 'Désactivée'), description: tl('No Play button under replies.', 'Pas de bouton Lire sous les réponses.'), value: 'off' },
-  { label: tl('Voices of this device', 'Voix de cet appareil'), description: tl('Free, spoken by the device. Default.', 'Gratuit, lu par l’appareil. Par défaut.'), value: 'device', disabled: !readAloudSupported },
+  { label: t('Off'), description: t('No Play button under replies. Default.'), value: 'off' },
+  { label: tl('Voices of this device', 'Voix de cet appareil'), description: t('Free, spoken by the device.'), value: 'device', disabled: !readAloudSupported },
   { label: t('Voice of wherdr (on this device)'), description: t('Free, natural French and English voices, downloaded once and run on this device.'), value: 'wherdr', disabled: !neuralVoice },
 ])
 // The select drops an item whose value is '': the system voice gets a name here.

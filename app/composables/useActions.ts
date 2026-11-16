@@ -53,7 +53,7 @@ export function navKey(paneId: string, key: 'up' | 'down' | 'enter' | 'esc' | 'l
 export async function sendMessage(p: Pane | undefined, paneId: string, text: string, clientId?: string, signal?: AbortSignal): Promise<QueuedMessage | null> {
   const pastes = pasteRanges(text, splitPasted(text, [], sentPastes.value).pastes)
   const r = viaPrompt(p)
-    ? await api<{ queued?: QueuedMessage }>('/api/prompt', { pane_id: paneId, text, ...(clientId ? { client_id: clientId } : {}), ...(pastes.length ? { pastes } : {}) }, signal)
+    ? await api<{ queued?: QueuedMessage }>('/api/prompt', { pane_id: paneId, text, tab: notesTab.value ?? 'all', ...(clientId ? { client_id: clientId } : {}), ...(pastes.length ? { pastes } : {}) }, signal)
     : await api<{ queued?: QueuedMessage }>('/api/input', { pane_id: paneId, text, keys: ['enter'], ...(p?.prompt ? { native: true, identity: p.prompt.identity } : {}) }, signal)
   return r.queued || null
 }

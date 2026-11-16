@@ -16,7 +16,9 @@ Reading:
 | `wherdr alfred machines` | the machines herdr-core knows (key, label, status); `""` is this machine |
 | `wherdr alfred coordinators` | each coordinator, its agent and whether it runs (`stopped`: its terminal ended, see `--resume`) |
 | `wherdr alfred coordinator open <KEY>` | the link that opens a running project coordinator |
-| `wherdr alfred last <KEY>` | what the project's coordinator last said (its last message, else the bottom of its screen), and whether it is still working |
+| `wherdr alfred last <KEY>` | what the project's coordinator last said (its last message, else the bottom of its screen), whether it is still working, and the tasks it added since Alfred last told it (`tasks`) |
+| `wherdr alfred groups` | your home tabs (tab groups, and machines shown as their own tab) with the projects each one shows, and the tab you have open (`open`, sent with each message you write to Alfred, not shown in the chat) |
+| `wherdr alfred brief [--group <name> \| --all] [--since <YYYY-MM-DD>]` | the facts of a [brief](#briefs) for the open tab's group, another group, or all |
 | `wherdr alfred v2` | when you come from wherdr v2: its projects, read then from the herdr-projects board of this machine, their open tasks, the v3 project made from each, and the migration report ([set up your v2 projects](migrate-from-v2.md#set-up-your-v2-projects-with-alfred)) |
 | `wherdr alfred settings` | the synced settings, their values, and the values each setting Alfred may change accepts (`1` on, `0` off) |
 | `wherdr alfred help` | this list |
@@ -26,6 +28,7 @@ Changing (show, then do):
 | Command | Does |
 | --- | --- |
 | `wherdr alfred project add <KEY> --machine <key> --path <folder> [--name <name>] [--template <id>]` | adds a project: a git folder inside the home folder of a machine, not already a project (on this machine, checked before the yes too) |
+| `wherdr alfred workspace add <KEY> --root <folder,folder> [--machine <key,key>] [--name <name>] [--group <tab group>]` | adds a [workspace](workspaces.md#creating-a-workspace): `--machine` and `--root` pair up, the first machine its home (none: this machine), its root checked when applied; `--group` is a tab group's id or name; once applied, its coordinator starts and offers to build the map |
 | `wherdr alfred project template <KEY> <id\|none>` | gives the project a template (a saved one or `example:<id>`), or none |
 | `wherdr alfred v2 import [--only <KEY,KEY>] [--start no]` | brings every v2 project not made yet over in one change: each added on this machine with its v2 folder, then its coordinator started (no workflow needed); with `--propose`, one card with a checkbox per project, one for *Start their coordinators* and, with project management off, *Turn on project management*; the outcome lists each project ([set up your v2 projects](migrate-from-v2.md#set-up-your-v2-projects-with-alfred)) |
 | `wherdr alfred project memory <KEY> < note.md` | adds the lines it is given (at most 30) to the end of the project coordinator's `memory.md`, created when missing: a v2 handover note and goal, for instance ([set up your v2 projects](migrate-from-v2.md#set-up-your-v2-projects-with-alfred)) |
@@ -52,16 +55,39 @@ Proposing and delegating (no `--apply`):
 | Command | Does |
 | --- | --- |
 | `wherdr alfred project workflow edit <KEY> < workflow.json` | proposes a new workflow for the project (the whole JSON, guards unchanged). Nothing changes yet: you accept or refuse it in the project's [Workflow tab](project-management.md#workflow), in the same review as a coordinator's proposal. Only on your request in Alfred's chat, never in a wake |
-| `wherdr alfred tell <KEY> "<text>"` | sends a message to the project's coordinator, starting it when it does not run, and writes it to the project's log as from Alfred. When Alfred relays your message, the coordinator's turn counts as yours; otherwise as a wake |
+| `wherdr alfred tell <KEY> "<text>"` | sends a message to the project's coordinator, starting it when it does not run, and writes it to the project's log as from Alfred. When Alfred relays your message, it reaches the coordinator as *From Alfred, for the user: …* and its turn counts as yours; otherwise *From Alfred: …*, as a wake |
 
 So you can ask Alfred "propose a workflow for WEB": it tells WEB's coordinator, reads its reply
 with `last`, and reports back; the proposal itself waits for your answer in wherdr.
+
+### Requests about a project
+
+Tell Alfred something about a project ("on TV, the progress bar under an episode does not
+show"): it finds the project by its name or key, else among the projects of the home tab you
+have open, and asks with buttons when it is not sure which. It never changes the project
+itself: it relays your request to that project's coordinator (`tell`), which adds the task as if
+you had written to it, waits for its answer (`last`), and reports back in one or two lines, the
+task it created as a task card. For a long back-and-forth (a design to discuss, many
+questions), it suggests opening the coordinator's conversation instead.
 
 ```text
 $ wherdr alfred project template WEB company
 { "dryRun": true, "change": ["project WEB template: none → company"],
   "next": "Show this to the user; only after their yes, run: wherdr alfred project template WEB company --apply" }
 ```
+
+## Briefs
+
+Ask Alfred "how is it going", "brief" or "what's new": it answers for the home tab you have
+open, one short line per project, the tasks waiting for you first. Its facts come from
+`wherdr alfred brief`, read from the engine with no model call: per project, the tasks merged
+since the last brief of that tab (a day back for the first one, or since `--since`), the tasks
+waiting for you and for what (*Merge*, a question, a block), the tasks stuck for over an hour,
+a coordinator idle, stopped or not started, and its open incidents; then the tab's machines
+offline or full (every agent slot taken) and the quotas near their limit (80 % of a window
+used, or limited). Tasks show as `task` cards and machines and quotas as live
+[status cards](conversation.md#live-status-cards), never numbers copied into the text. The reply
+ends with buttons for the other scopes (*All*, another group), and a tap gives that one's brief.
 
 ## Notes
 

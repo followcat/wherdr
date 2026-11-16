@@ -8,15 +8,28 @@ Claude Code, Codex, Devin, Command Code, OpenCode and Antigravity terminals open
 
 - **Conversation view**: the agent's real transcript (Claude Code, Codex, Devin, Command Code, OpenCode and Antigravity), rendered as
   Markdown, with grouped tool calls, images (full-screen viewer with pinch / wheel zoom and pan),
-  timestamps, search and scrolling through older messages (Command Code follows the bounded
-  reads described under [herdr-core › Conversations](core.md#conversations)). Reading a conversation never
+  timestamps, search and infinite scroll back to the first message (Command Code follows the bounded
+  reads described under [herdr-core › Conversations](core.md#conversations)). Every message shows its time,
+  muted and always on the right: under your messages, at the end of the agent reply's action
+  row or of its end-of-turn line (`✓ 27 s · 1 action … 21:39`), with the day for an earlier one (*Yesterday 21:39*, then a short
+  date); hover or tap it for the full date and time. Reading a conversation never
   touches the terminal, so it never resizes it. A command the agent proposes (shell code block,
-  or inline `! command`) can be copied without its prompt.
+  or inline `! command`) can be copied without its prompt, and, with Claude Code, Codex or omp,
+  run in the agent's shell mode with **▷ Run** (shown on every such block, after a confirmation).
+  The button then says *Running…*, and *Ran at 16:42* once it has finished; it stays a button, to
+  run the command again. The run shows at once in the conversation as omp shows its actions: a
+  *! · You ran* card with the command, the elapsed time and the working ring (in the agent's colors, as the message field's halo), its output so far
+  underneath (Claude Code: read from its screen); when the transcript writes the command, that
+  entry takes the card's place (shown once), with its run time and its output folded.
 - **Following new messages**: a new or growing reply (typed in as it arrives, or shown at once)
   keeps the view at the bottom only if you were at the bottom. Scroll up (wheel, touch, keyboard
   or scrollbar) and the view stays where you are until you scroll back to the bottom or tap the
   **↓** button; content above that changes height (images, folding) does not move it. A
   conversation still opens at its last message.
+- **Message field focus**: the focused message field's border takes the agent's color, a
+  second color glides slowly around it, with a faint glow around the field (omp's running
+  actions get the same moving border, without the glow). It is frozen when the system asks for
+  reduced motion. There is no setting for it.
 - **SVG diagrams**: complete code fences labelled `svg` render as isolated, theme-aware images.
   **Source / Preview**, beside **Copy** in the card header, switches the same card between the
   diagram and its original markup; **Copy** always copies that markup. Click or use Enter/Space
@@ -89,8 +102,8 @@ Claude Code, Codex, Devin, Command Code, OpenCode and Antigravity terminals open
   though, any program on this computer reaches the app's API, as the task sheet's buttons do.
 - **Setting changes Alfred proposes**: Alfred never changes a setting itself, even after a yes in
   text. It proposes one (`wherdr alfred setting set <key> <value> --propose`) and its reply carries
-  a card: *Setting change proposed · by Alfred*, the setting (*Conversation › Reply style*), before
-  → after (*default → list*) and the message of yours it answers. *Show me* opens Settings on that
+  a card: *Setting change proposed · by Alfred*, the setting (*Conversation › Typewriter*), before
+  → after (*default → slow*) and the message of yours it answers. *Show me* opens Settings on that
   setting and highlights it; *Apply* changes it from your session (never a token); *Cancel* drops
   it. The card then says *Applied by you · 14:02* or *Cancelled by you*. If the setting changed
   since (in Settings, on another device), it says so and applies nothing. Only in a turn that
@@ -117,13 +130,20 @@ Claude Code, Codex, Devin, Command Code, OpenCode and Antigravity terminals open
   has some). On a wide computer they open in the side panel, in place of Settings: the file
   read-only as in Files, the screenshots by step, before and after side by side, with a button
   to open the task. On a phone a card shows above the message field, and a tap opens a sheet
-  (before and after toggled). The card also stays in the reply (a ```wherdr block of
+  (before and after toggled). A tap on a shown image (the file, an image of a shown Markdown
+  file, a screenshot) opens the full-screen viewer, with zoom and pan, through the images shown
+  together. The card also stays in the reply (a ```wherdr block of
   `show file|shots …` lines), and a tap shows it again. Showing approves nothing: the agent adds
   the step's button (*Approve screenshots*) with `ui action step`. Only in a turn that follows
   your message, and a coordinator shows its own project's tasks only.
 - **Wakes**: in a coordinator's conversation, a wake (Autopilot, Engine, Incident,
   Step check) is a compact muted row, not one of your bubbles, with the coordinator's answer under
-  it; routine runs fold into one row. See
+  it; routine runs fold into one row that counts them by kind with their tasks
+  (*5 checks · ✓ 3 merged WHR-352 354 355 · ⏳ 1 waits for you · 1 quiet*; a chip opens the
+  task's sheet), read from each wake's first line and task lines, standing out when one waits
+  for you. Open, each wake is one line: an icon, its task, a short label (*merged*,
+  *Scheduled*, *Health check*) and the reply's first sentence, a tap showing the full reply;
+  quiet checks are dimmer, two or more in a row fold into *N quiet checks*. See
   [Who sends a wake](project-management.md#who-sends-a-wake).
 - **Questions and permissions**: native questions, approvals and menus show their options; a tap
   answers. wherdr reads the screen again right before answering and refuses the answer if the
@@ -163,17 +183,13 @@ Claude Code, Codex, Devin, Command Code, OpenCode and Antigravity terminals open
   available; typing in it takes control of the terminal's size ([Terminal](terminal.md)).
 - The model and effort pickers, the slash-command list and Codex update cards are v2 only.
 
-**Settings › Conversation › Display › Reply style** chooses how an agent's reply offers to be quoted in
-the field, question by question and point by point (a list item or a paragraph that asks
-nothing), so that one message answers them all:
+An agent's reply can be quoted in the field question by question and point by point (a list
+item or a paragraph that asks nothing), so that one message answers them all:
 
-| Style | A question | A point |
-| --- | --- | --- |
-| **Icon** (default) | A small `↳` after it, in the middle or at the end of the message. | A grey `↳` at its end: on hover on a computer, always there and pale on a phone. |
-| **Tap the text** | No button: the question is underlined, tap or click it. | Click it on a computer. On a phone, tap it, then **↳ Discuss**: a single tap never quotes, so reading, scrolling and selecting text stay as they are. |
-| **List under the message** | A number after it, and the questions listed under the message. | **+ Quote a point** under the message, then the point. Offered when the reply has a list item to quote, or two points or more: not under one paragraph of prose. |
+- **A question**: a small `↳` after it, in the middle or at the end of the message.
+- **A point**: a grey `↳` at its end, on hover on a computer, always there and pale on a phone.
 
-Every one of these is a button reachable with the keyboard (`Tab`, then `Enter`), and selecting a
+Each `↳` is a button reachable with the keyboard (`Tab`, then `Enter`), and selecting a
 passage still offers **Reply** on it. A quoted question or point shows `✓`.
 
 **One syntax for every reference.** Whatever you reply to, the field gets one line that names it,
@@ -214,9 +230,8 @@ No
 - In the conversation, each reference of a sent message shows as a quote; tap it to see the
   message it names. Messages sent earlier with `> ` lines still show as quotes.
 
-**Settings › Conversation › Display › Quoted replies** chooses how the field shows these lines: **Tokens,
-native field** (default) draws each one as a token in the usual field, **Plain text** shows the
-same lines as text, a fallback if the tokens misbehave. The message sent is the same.
+The field draws each of these lines as a token, in the usual field: typing, dictation and
+autocorrect work as with plain text, and the message sent is the text itself.
 
 A **closed question**, one that yes or no answers in full, also gets **Yes** and **No** next to
 its `↳` (at the end of its row in the list style). A tap refers to the question and writes the
@@ -273,11 +288,13 @@ field, so nothing moves when it comes or goes.
 **Settings › Conversation** has three tabs, each kept in the address so a link opens it:
 
 - **Display** (`#/settings?section=conversation&tab=display`, the default): default pane view,
-  typewriter, reply style and quoted replies.
+  typewriter, reply style and quoted replies. The typewriter's sample reply sits under **Show me**
+  (closed by default; it plays once on opening, ↻ replays it, **Hide** folds it).
 - **Dictation** (`#/settings?section=conversation&tab=dictation`): off, on this device (its
   models), online, and the rewrite pass ([Dictation design](dictation.md)). A dictation error's
   **Settings** button opens this tab.
-- **Read aloud** (`#/settings?section=conversation&tab=read-aloud`): off or a voice, the voice
-  list and Test.
+- **Read aloud** (`#/settings?section=conversation&tab=read-aloud`): off by default; choosing a
+  voice adds a **Play** button under each reply. A voice chosen earlier on the device is kept.
+  The voice list and Test.
 
 Each setting says whether it is saved on this device or follows you on every device.

@@ -3,7 +3,7 @@ import { boardColumns, cardOf, shownTexts, type Board, type BoardMachine, type C
 import { initialState, onEvent, planSteps, reviewedCommit, reworkSince, waitsToMerge, type StepEvent } from '../../shared/pm/steps'
 import { endsMerged, taskGuards, type ActionResult } from '../../shared/pm/actions'
 import type { MergeBy, Template } from '../../shared/pm/workflow'
-import { addShot, isImage, needsShots, SHOT_TOKEN_HEADER, SHOT_TYPES, shotUrl, type Shot } from '../../shared/pm/shots'
+import { addShot, isImage, needsShots, POINTED_SHOTS, SHOT_FILE_RE, SHOT_TOKEN_HEADER, SHOT_TYPES, shotUrl, type Shot } from '../../shared/pm/shots'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { taskPlan, type Task } from '../../shared/pm/run'
 import { boardOrder } from '../../shared/pm/boardOrder'
@@ -292,7 +292,9 @@ export async function userSendBack(store: PmStore, id: unknown, note: unknown, s
   const where = (f: string) => (task.shotToken
     ? `curl -fsS -H '${SHOT_TOKEN_HEADER}: ${task.shotToken}' '${wherdrBase(machine, origin)}${shotUrl(task.id, f)}' -o ${f}`
     : store.shotPath(task.id, f))
-  return userEvent(store, id, { kind: 'back', note: [note.trim(), '', 'Screenshots the user points at:', ...kept.map(f => `- ${where(f)}`)].join('\n') })
+  // The worker's own shots among them are redone in place (the send-back lists them for replaces=).
+  const own = new Set(Object.values(task.step?.shots ?? {}).flat().map(s => s.file))
+  return userEvent(store, id, { kind: 'back', note: [note.trim(), '', POINTED_SHOTS, ...kept.map(f => `- ${where(f)}`)].join('\n'), redo: kept.filter(f => own.has(f)) })
 }
 
 // A screenshot the user adds to a send-back (POST /api/pm/user-shot): kept with
@@ -307,7 +309,8 @@ export async function userShot(store: PmStore, id: unknown, data: Buffer, ctype:
   return { file }
 }
 
-export async function userEvent(store: PmStore, id: unknown, ev: StepEvent, by = 'user') {
+// why: added to the log (the coordinator's step back: the user's words).
+export async function userEvent(store: PmStore, id: unknown, ev: StepEvent, by = 'user', why = '') {
   const task = await store.task(id)
   if (!task) throw new HerdrError('not_found', 'Unknown task')
   const p = (await store.projects()).find(x => x.key === task.project)
@@ -316,7 +319,7 @@ export async function userEvent(store: PmStore, id: unknown, ev: StepEvent, by =
   const r = onEvent(planOf(t, task, p), task.step ?? initialState(), ev, Date.now())
   if (r.refused) throw new HerdrError('refused', r.refused)
   // The step sent back answers a reported problem.
-  return store.logTask({ ...task, step: r.state, ...(ev.kind === 'back' ? { report: undefined } : {}) }, by, r.effects.flatMap(e => (e.kind === 'log' ? [e.text] : [])).join('; '))
+  return store.logTask({ ...task, step: r.state, ...(ev.kind === 'back' ? { report: undefined } : {}) }, by, [...r.effects.flatMap(e => (e.kind === 'log' ? [e.text] : [])), ...(why ? [why] : [])].join('; '))
 }
 
 const sameKey = (a: string | undefined, b: unknown) =>
@@ -324,25 +327,28 @@ const sameKey = (a: string | undefined, b: unknown) =>
 
 // An agent's screenshot for its current step (POST /api/pm/shot), kept with
 // the task's data. `token`: the task's key, written in the agent's instructions file.
-// head: reads the task's commit, asked only on a step that takes no screenshots:
-// new commits since the review let the worker replace its screenshots (addShot).
+// head: reads the task's commit, recorded on a shot of the result; on a step that
+// takes no screenshots, new commits since the review let the worker take new ones (addShot).
+// replaces: the file of the shot this one redoes (from the user's send-back).
 // reason: the worker's "Back to review because: …" after an approval dropped
 // (askWhy); its shots then rework the step that took them, since the approval.
-export async function uploadShot(store: PmStore, id: unknown, phase: unknown, data: Buffer, ctype: string, token: unknown, head?: (task: Task) => Promise<string | undefined>, reason?: unknown): Promise<Shot> {
+export async function uploadShot(store: PmStore, id: unknown, phase: unknown, data: Buffer, ctype: string, token: unknown, head?: (task: Task) => Promise<string | undefined>, reason?: unknown, replaces?: unknown): Promise<Shot> {
   const task = await store.task(id)
   // An unknown task and a wrong key answer the same.
   if (!task || !sameKey(task.shotToken, token)) throw new HerdrError('forbidden', 'Unknown task or wrong screenshot key')
   const ext = SHOT_TYPES[ctype]
   if (!ext || !isImage(data, ext)) throw new HerdrError('bad_input', 'A PNG, JPEG or WebP image, matching its Content-Type')
   if (phase !== 'before' && phase !== 'after') throw new HerdrError('bad_input', 'phase: before or after')
+  if (replaces !== undefined && (typeof replaces !== 'string' || !SHOT_FILE_RE.test(replaces))) throw new HerdrError('bad_input', 'replaces: the file of a screenshot of this task')
   const p = (await store.projects()).find(x => x.key === task.project)
   const plan = planOf(p ? await store.workflow(p.key) : null, task, p)
   const open = task.step && plan[task.step.at]
-  const now = open && !needsShots(open) && head ? await head(task) : undefined
-  const shot: Shot = { file: `${randomUUID().replace(/-/g, '').slice(0, 12)}.${ext}`, phase, at: Date.now() }
+  const commit = head && (phase === 'after' || (open && !needsShots(open))) ? await head(task) : undefined
+  const now = open && !needsShots(open) ? commit : undefined
+  const shot: Shot = { file: `${randomUUID().replace(/-/g, '').slice(0, 12)}.${ext}`, phase, at: Date.now(), ...(phase === 'after' && commit ? { commit } : {}) }
   let kept = shot
   await store.addShot(task.id, shot.file, data, (fresh) => {
-    const r = addShot(plan, fresh.step, shot, fresh.step && (reworkSince(plan, fresh.step, now) ?? fresh.step.lookAgain?.since))
+    const r = addShot(plan, fresh.step, shot, fresh.step && (reworkSince(plan, fresh.step, now) ?? fresh.step.lookAgain?.since), replaces as string | undefined)
     if ('refused' in r) throw new HerdrError('refused', r.refused)
     const why = typeof reason === 'string' ? reason.replace(/\s+/g, ' ').trim().replace(/^back to review because:\s*/i, '').slice(0, 500) : ''
     if (why) r.state.lookAgain = { ...(r.state.lookAgain ?? { why: 'new screenshots since your approval', at: shot.at }), reason: why }

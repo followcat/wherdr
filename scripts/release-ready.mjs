@@ -1,4 +1,6 @@
-// Legacy updaters require both npm and Homebrew before releases/latest moves.
+// Legacy updaters require both npm and Homebrew before releases/latest moves to a 2.x.
+// Once a stable 3.x exists, releases/latest belongs to the newest one and never goes back
+// to a 2.x (2.x fixes are published with latest=false from the `2.x` branch).
 import { execFileSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 
@@ -26,13 +28,17 @@ export async function ready(...args) { return (await readiness(...args)).ready }
 export async function promote({ repo, request = fetch, run = execFileSync, log = console.log }) {
   if (!repo) throw new Error('GITHUB_REPOSITORY is required')
   const releases = JSON.parse(run('gh', ['api', `repos/${repo}/releases?per_page=100`], { encoding: 'utf8' }))
-  // Only the npm line (1.x, 2.x): v3 is a GitHub release only and never becomes latest.
-  const versions = releases.filter(r => !r.draft && !r.prerelease && /^v[12]\.\d+\.\d+$/.test(r.tag_name))
+  const versions = releases.filter(r => !r.draft && !r.prerelease && /^v\d+\.\d+\.\d+$/.test(r.tag_name))
     .sort((a, b) => b.tag_name.slice(1).localeCompare(a.tag_name.slice(1), 'en', { numeric: true }))
   const tag = versions[0]?.tag_name
   if (!tag) { log('No published stable release.'); return }
   const current = JSON.parse(run('gh', ['api', `repos/${repo}/releases/latest`], { encoding: 'utf8' }))
-  if (current.tag_name === tag) { log(`Legacy update channel already at ${tag}.`); return }
+  if (current.tag_name === tag) { log(`Latest already at ${tag}.`); return }
+  // 3.x is a GitHub release only: no npm or Homebrew to wait for.
+  if (Number(tag.slice(1).split('.')[0]) >= 3) {
+    run('gh', ['release', 'edit', tag, '--repo', repo, '--latest'], { stdio: 'inherit' })
+    return
+  }
   const result = await readiness(tag.slice(1), request, repo)
   if (!result.ready) {
     for (const reason of result.missing) log(`Legacy update channel unchanged: ${reason}.`)

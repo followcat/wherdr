@@ -9,6 +9,7 @@ import { taskPaths } from '../../shared/pm/run'
 import { homeOf } from './coreCreate'
 import { exec, runOn, type PmLaunchDeps } from './pmLaunch'
 import { wakeCoordinators } from './pmWakes'
+import { pmDir } from './pmHome'
 
 type Deps = Pick<PmLaunchDeps, 'call'>
 
@@ -41,7 +42,7 @@ export async function sweepOrphans(deps: PmLaunchDeps, now = Date.now()) {
     try { on = runOn(deps, { machine }) } catch { continue }
     const home = await homeOf(deps, on).catch(() => '')
     if (!home) continue
-    const root = dirname(taskPaths(home, 'x').worktree)
+    const root = dirname(taskPaths(home, 'x', undefined, pmDir()).worktree)
     const ps = await exec(deps, on, PROCS_SCRIPT, ['env', root], undefined, 30).catch(() => null)
     if (ps?.code !== 0) continue
     // Read after the processes: a run saved before its terminal starts is live by then.

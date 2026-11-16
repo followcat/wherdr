@@ -563,6 +563,7 @@ body.short-bottom { --safe-bottom: 0px; }
 .open-network-banner { margin-top: 0; border-color: color-mix(in srgb, var(--rose) 55%, transparent); }
 .settings-group .open-network-banner { margin: 12px 0 0; }
 .open-network-banner .update-banner-icon { color: var(--rose); }
+.login-banner .update-banner-icon { color: var(--blocked); }
 /* Settings › Security and the guide: network advice (NetworkTips.vue). */
 .network-tips { margin: 12px 0 0; padding: 12px 14px; border: 1px solid var(--line); }
 .network-tips-label { margin: 0 0 8px; font: 500 10.5px/1.2 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--text-3); }
@@ -789,6 +790,8 @@ body.short-bottom { --safe-bottom: 0px; }
 .phone-keybar-toggle::after { content: ''; position: absolute; inset: -5px; }
 .phone-keybar-toggle .iconify { width: 20px; height: 20px; }
 .phone-keybar-toggle.on { color: var(--accent); border-color: var(--accent); }
+/* The last line of the chat (its time on the right) stays clear of the toggle. */
+.phone-chrome:has(.phone-keybar-controls) .chat-list { padding-bottom: 48px; }
 .phone-keybar-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* File dragged from the Finder / file explorer: drop zone over the whole view. */
 .file-drop {
@@ -883,6 +886,9 @@ body.short-bottom { --safe-bottom: 0px; }
 .files-num { flex: none; min-width: 4ch; padding: 6px 8px 6px 6px !important; text-align: right; color: var(--dim); user-select: none; border-right: 1px solid var(--line); }
 .files-text { flex: 1; padding: 6px 10px !important; color: var(--text-2); }
 .files-image { display: block; max-width: 100%; max-height: 70vh; margin: 12px auto; background: repeating-conic-gradient(var(--code-bg) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
+.files-image-open { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; }
+.files-image-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.files-md img[src] { cursor: zoom-in; }
 /* A Markdown file, formatted: the conversation's Markdown styles on a framed
    page, headings ruled as a document, light syntax colours in code blocks. */
 .files-md-mode { max-width: 280px; margin: 10px 0 0; }
@@ -1047,6 +1053,11 @@ body.short-bottom { --safe-bottom: 0px; }
   font-size: 15px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .msg-time { font: 400 10.5px/1 var(--mono); color: var(--dim); letter-spacing: .04em; }
+/* A message's time as a button: tap shows the full date. Always on the right, like under the user's messages. */
+.msg-stamp { flex: none; white-space: nowrap; background: none; border: 0; border-radius: 0; padding: 0; cursor: pointer; text-align: right; }
+.turn-end > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msg-stamp:hover, .msg-stamp:focus-visible { color: var(--text-2); }
+.msg-actions .msg-stamp, .turn-end .msg-stamp { height: 28px; padding: 0; margin-left: auto; }
 /* Long typed message: folded after ~12 lines, with a fade and Show more. */
 .msg-fold { position: relative; }
 .msg-fold.folded { max-height: var(--fold-max, calc(15px * 1.5 * 12)); overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 60%, transparent); mask-image: linear-gradient(to bottom, #000 60%, transparent); }
@@ -1184,18 +1195,20 @@ body.short-bottom { --safe-bottom: 0px; }
 }
 .md-body .code-copy:hover { color: var(--text); background: var(--surface-2); }
 .md-body .code-copy.done { color: var(--green); }
-/* Run: only on a shell command, in a reply of an agent that can run it
-   (ChatView.vue sets `can-run`). With a mouse it shows on hovering the block
-   (its place stays reserved); on touch it is always there. */
+/* Run: on every shell command, in a reply of an agent that can run it
+   (ChatView.vue sets `can-run`), always shown (not only on hover: each block
+   says it can run). "Running…" while its run is on, then the muted
+   "Ran at 16:42" beside it (ChatMarkdown.vue); it stays clickable. */
 .md-body .code-run { display: none; align-items: center; gap: .55em; color: color-mix(in srgb, var(--green) 65%, var(--muted)); }
 .md-body .code-run::before { content: "▷"; letter-spacing: 0; font-size: 11px; }
 .can-run .md-body .code-run { display: inline-flex; }
 .md-body .code-run:hover { color: var(--green); background: var(--surface-2); }
 .md-body .code-run:focus-visible, .md-body .code-copy:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
-@media (hover: hover) and (pointer: fine) {
-  .md-body .code-run { opacity: 0; transition: opacity .12s ease; }
-  .md-body .code-block:hover .code-run, .md-body .code-block:focus-within .code-run { opacity: 1; }
-}
+.md-body .code-run.running { color: var(--green); animation: code-run-pulse 1.6s ease-in-out infinite; }
+@keyframes code-run-pulse { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { .md-body .code-run.running { animation: none; } }
+.md-body .code-ran { display: none; padding: 0 4px; font: 400 10px/1 var(--mono); letter-spacing: .04em; text-transform: none; color: var(--dim); white-space: nowrap; }
+.can-run .md-body .code-ran { display: inline; }
 /* Finger: enlarged touch area without changing the drawing. */
 @media (pointer: coarse) {
   .md-body .code-copy, .md-body .code-run { position: relative; }
@@ -1329,39 +1342,18 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
 @media (pointer: coarse) { .omp-thinking .omp-thinking-head, .omp-job-head { min-height: 40px; } }
 
 /* "!" command (bash mode) and its output. */
-.msg-shell {
-  align-self: flex-end; width: fit-content; min-width: min(300px, 100%); max-width: min(92%, 760px);
-  display: flex; flex-direction: column; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); background: var(--code-bg);
-}
-.msg-shell-cmd {
-  display: flex; align-items: center; gap: 10px; padding: 4px 4px 4px 12px; min-height: 36px;
-  font: 500 12.5px/1.5 var(--mono); color: var(--text);
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
-}
-.msg-shell-cmd code { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
-.msg-shell-sign { flex: none; font-weight: 700; color: var(--accent); }
-.msg-shell:not(.bash) .msg-shell-sign { color: var(--dim); font-weight: 500; }
-.msg-shell-copy { flex: none; color: var(--dim); width: 24px; height: 24px; justify-content: center; }
-.msg-shell-copy:hover { color: var(--text); }
-.msg-shell-body { border-top: 1px solid var(--line-soft); overflow: hidden; }
 .msg-shell-out {
   margin: 0; padding: 9px 12px; overflow-x: auto; white-space: pre; tab-size: 4;
   font: 400 12px/1.55 var(--mono); color: var(--text-2);
 }
 .msg-shell-out + .msg-shell-out { border-top: 1px dashed var(--line-soft); }
 .msg-shell-out.err { color: var(--danger); }
-.msg-shell.long:not(.open) .msg-shell-body {
-  max-height: calc(12 * 12px * 1.55 + 18px);
-  mask-image: linear-gradient(to bottom, #000 70%, transparent);
-  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
-}
-.msg-shell-empty { border-top: 1px solid var(--line-soft); padding: 7px 12px; font: 400 11px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
 .msg-shell-more {
   display: flex; align-items: center; gap: 6px; width: 100%; min-height: 32px; padding: 0 12px;
   border-top: 1px solid var(--line-soft); font: 500 10.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
 }
 .msg-shell-more:hover { color: var(--text); background: var(--surface); }
-@media (pointer: coarse) { .msg-shell-more { min-height: 40px; } .msg-shell-copy { width: 32px; height: 32px; } }
+@media (pointer: coarse) { .msg-shell-more { min-height: 40px; } }
 /* Agent note outside its replies (omp advisor, background task…). */
 .msg-notice {
   align-self: flex-start; width: 100%; max-width: min(100%, 760px);
@@ -1429,9 +1421,6 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
 .queued-tag.failed { color: var(--danger); }
 .queued-tag.failed .iconify { color: var(--danger); }
 .queued-tag .spin { animation: spin .8s linear infinite; }
-.msg-shell.running { border-color: var(--accent); }
-.msg-shell.running .msg-shell-cmd { padding-right: 12px; }
-.msg-shell-hidden { padding: 6px 12px 0; font: 400 11px/1.3 var(--mono); color: var(--dim); }
 
 /* "Claude is working…" (UChatShimmer). */
 .chat-status { display: flex; align-items: center; gap: 10px; padding: 4px 16px 18px; font-size: 14px; color: var(--muted); }
@@ -1695,13 +1684,10 @@ body.kb .composer { padding-bottom: 8px; }
   background: var(--bg-2); border: 1px solid var(--input-line); box-shadow: none; backdrop-filter: none;
   transition: border-color .15s ease;
 }
-/* Focused field (Settings › Appearance › Focus border, utils/focusBorder.ts, applied as
-   data-focus-border on <html>). "off": the plain 1 px accent border. */
-.prompt:focus-within { border-color: color-mix(in srgb, var(--accent) 60%, transparent); outline: none; }
-/* "border" and "halo" (default): the whole 1 px border takes the agent's color and a second
-   color glides slowly around it. The agent's color is toned down a little toward the field's
-   background so that the second color reads on it (the herdr mauve on the Claude orange, for
-   instance). On the field, a conic gradient on a square (.fx-spin) turns under a fixed mask
+/* Focused field: the whole 1 px border takes the agent's color and a second color glides
+   slowly around it, with a faint halo around the field. The agent's color is toned down a
+   little toward the field's background so that the second color reads on it (the herdr mauve
+   on the Claude orange, for instance). On the field, a conic gradient on a square (.fx-spin) turns under a fixed mask
    (.fx-ring: the 1 px border; .fx-halo: the glow): only `transform` is animated, which the
    compositor runs alone. Animating the gradient's angle instead recomputed the page's style
    on every frame (more than half of the main thread while the field had the focus). No JS,
@@ -1720,17 +1706,20 @@ body.kb .composer { padding-bottom: 8px; }
 .fx-spin {
   --fx-ring: conic-gradient(var(--fx-1) 0deg, var(--fx-2) 60deg, var(--fx-2) 120deg, var(--fx-1) 180deg, var(--fx-1) 360deg);
 }
-.composer[data-agent="claude"] { --fx-base: var(--claude); --fx-2: var(--ring-2, var(--accent)); }
-.composer[data-agent="codex"] { --fx-base: var(--codex); --fx-2: var(--ring-2, var(--accent)); }
-.composer[data-agent="omp"], .tools.omp-console { --fx-base: var(--omp); --fx-2: var(--ring-2, var(--accent)); }
+/* A "!" command card (.omp-run) takes the conversation's agent, as the field does; omp's own
+   action consoles keep omp's colors. */
+:is(.composer, .omp-run)[data-agent="claude"] { --fx-base: var(--claude); --fx-2: var(--ring-2, var(--accent)); }
+:is(.composer, .omp-run)[data-agent="codex"] { --fx-base: var(--codex); --fx-2: var(--ring-2, var(--accent)); }
+:is(.composer, .omp-run)[data-agent="omp"], .tools.omp-console:not(.omp-run) { --fx-base: var(--omp); --fx-2: var(--ring-2, var(--accent)); }
+.tools.omp-run { --omp-color: var(--fx-base); }
 /* omp themes: their accent is the omp magenta's neighbour; glide the cyan / blue instead. */
-:root[data-theme="omp"] :is(.composer[data-agent="omp"], .tools.omp-console) { --fx-2: var(--teal); }
-:root[data-theme="omp-light"] :is(.composer[data-agent="omp"], .tools.omp-console) { --fx-2: var(--blue); }
-:root:not([data-focus-border="off"]) .prompt:focus-within { border-color: transparent; }
+:root[data-theme="omp"] :is(.composer[data-agent="omp"], .omp-run[data-agent="omp"], .tools.omp-console:not(.omp-run)) { --fx-2: var(--teal); }
+:root[data-theme="omp"][data-mode="light"] :is(.composer[data-agent="omp"], .omp-run[data-agent="omp"], .tools.omp-console:not(.omp-run)) { --fx-2: var(--blue); }
+.prompt:focus-within { border-color: transparent; outline: none; }
 /* Both masks are as big as what they show (container units size the square): the square is
    at least as wide as the diagonal, so it covers them whatever its angle. */
 .fx-ring, .fx-halo { display: none; position: absolute; pointer-events: none; overflow: hidden; container-type: size; }
-:root:not([data-focus-border="off"]) .prompt:focus-within .fx-ring { display: block; }
+.prompt:focus-within .fx-ring { display: block; }
 .fx-ring {
   inset: -1px; padding: 1px; z-index: 1;
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
@@ -1744,17 +1733,17 @@ body.kb .composer { padding-bottom: 8px; }
 }
 @keyframes fx-spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
 /* omp's console while its last action runs (ChatView `live`, only the last group): the same
-   ring (.omp-ring), "border only" whatever the field's setting, and none with "off". Kept in
+   ring (.omp-ring), border only (no halo). Kept in
    place so that it fades out when the group ends; it only turns while the group is live. */
 .tools.omp-console { position: relative; --fx-fill: var(--code-bg); }
 .tools.omp-console .omp-ring { display: block; opacity: 0; transition: opacity .4s ease; }
 .omp-ring .fx-spin { animation: none; }
-:root:not([data-focus-border="off"]) .tools.omp-console.live .omp-ring { opacity: 1; }
-:root:not([data-focus-border="off"]) .tools.omp-console.live .omp-ring .fx-spin { animation: fx-spin var(--fx-speed) linear infinite; }
-/* "halo": the same ring, faint and fading outward, under the field (its opaque background
+.tools.omp-console.live .omp-ring { opacity: 1; }
+.tools.omp-console.live .omp-ring .fx-spin { animation: fx-spin var(--fx-speed) linear infinite; }
+/* The halo: the same ring, faint and fading outward, under the field (its opaque background
    hides the inner part). A masked gradient, not a blur filter (cheap on an iPhone). */
-:root[data-focus-border="halo"] .composer { isolation: isolate; }
-:root[data-focus-border="halo"] .prompt:focus-within .fx-halo { display: block; }
+.composer { isolation: isolate; }
+.prompt:focus-within .fx-halo { display: block; }
 .fx-halo {
   inset: calc(-1px - var(--fx-glow)); z-index: -1; opacity: .32;
   --fx-fade-y: linear-gradient(to bottom, transparent, #000 var(--fx-glow), #000 calc(100% - var(--fx-glow)), transparent);
@@ -1764,7 +1753,7 @@ body.kb .composer { padding-bottom: 8px; }
 }
 @media (prefers-reduced-motion: reduce) {
   /* Still colored all around, frozen. */
-  .fx-spin, :root:not([data-focus-border="off"]) .tools.omp-console.live .omp-ring .fx-spin { animation: none; transform: translate(-50%, -50%) rotate(135deg); }
+  .fx-spin, .tools.omp-console.live .omp-ring .fx-spin { animation: none; transform: translate(-50%, -50%) rotate(135deg); }
 }
 .prompt-body { width: 100%; min-width: 0; padding: 0; }
 .prompt-input {
@@ -2348,7 +2337,7 @@ body.kb .composer { padding-bottom: 8px; }
    backdrop like the lock screen; top bar (brand, Skip), step rail, one page, Back / Next. */
 .onboarding { position: fixed; inset: 0; z-index: 45; display: flex; }
 /* Passkey card on localhost: the lock is enabled on the tailnet address. */
-.settings-card > .passkey-tailnet { margin-top: 14px; color: var(--text-2); }
+.settings-card > .passkey-tailnet { margin-top: 0; color: var(--text-2); }
 .settings-action.passkey-tailnet-go { margin-top: 12px; padding: 12px 14px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line-strong); text-decoration: none; transition: background-color .12s ease, color .12s ease, box-shadow .12s ease; }
 .passkey-tailnet-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .passkey-tailnet-text small { font: 600 10px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
@@ -2365,7 +2354,7 @@ body.kb .composer { padding-bottom: 8px; }
 }
 .settings-typing .encrypted-toggle.is-disabled { opacity: .48; cursor: not-allowed; }
 /* Typewriter preview: sample reply, replayed on each setting change. */
-.typing-preview { margin: 14px 0 0; border: 1px solid var(--line); background: var(--bg); }
+.typing-preview { margin: 0; border: 1px solid var(--line); background: var(--bg); }
 .typing-preview figcaption {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 0 4px 0 14px; height: 36px; border-bottom: 1px solid var(--line);
@@ -2388,6 +2377,9 @@ body.kb .composer { padding-bottom: 8px; }
 /* Home: one discreet line while quiet mode is active, outside the header (which keeps
    its shape); a tap opens Settings › Notifications. */
 /* Themes: color swatches, selection marked by the accent. */
+/* Mode (Dark, Light, System) above the theme. */
+.segmented.theme-mode { margin-bottom: 12px; }
+.segmented.theme-mode .iconify { width: 16px; height: 16px; }
 .theme-list { display: flex; flex-direction: column; gap: 18px; padding-top: 18px; }
 .theme-grid { display: grid; grid-template-columns: 1fr; border: 1px solid var(--line); }
 .theme-opt {
@@ -2405,9 +2397,16 @@ body.kb .composer { padding-bottom: 8px; }
 .theme-name { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 500; color: var(--text); }
 .theme-name small { display: block; font: 400 11px/1.3 var(--mono); color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .theme-check { width: 18px; height: 18px; color: var(--accent); }
-@media (min-width: 900px), (min-width: 700px) and (min-height: 700px), (min-width: 700px) and (min-device-width: 700px) and (min-device-height: 700px) and (pointer: coarse) { .theme-grid { grid-template-columns: 1fr 1fr; } .theme-grid .theme-opt:nth-child(2) { border-top: 0; } .theme-grid .theme-opt:nth-child(even) { border-left: 1px solid var(--line-soft); } }
+/* A custom theme: the radio and its Edit button side by side. */
+.theme-custom { display: flex; align-items: center; min-width: 0; border-top: 1px solid var(--line-soft); }
+.theme-custom .theme-opt { flex: 1; min-width: 0; border-top: 0; }
+.theme-grid .theme-custom:first-child { border-top: 0; }
+.theme-tools { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (min-width: 900px), (min-width: 700px) and (min-height: 700px), (min-width: 700px) and (min-device-width: 700px) and (min-device-height: 700px) and (pointer: coarse) { .theme-grid { grid-template-columns: 1fr 1fr; } .theme-grid > :nth-child(2) { border-top: 0; } .theme-grid > :nth-child(even) { border-left: 1px solid var(--line-soft); } }
 .settings-card, .settings-action.solo, .settings-stepper, .settings-toggle { background: var(--bg-2); border: 1px solid var(--line); }
 .settings-card { padding: 0 16px 14px; }
+/* Cards opening with text (no action row bringing its own top inset) get the bottom inset on top too. */
+.settings-card:has(> p:first-child) { padding-top: 14px; }
 .settings-card > p { margin: 6px 0 0; font-size: 13px; line-height: 1.45; }
 .settings-action {
   display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; font-size: 15px;
@@ -2428,6 +2427,11 @@ body.kb .composer { padding-bottom: 8px; }
 .shortcut-row dd { margin: 0; display: flex; align-items: center; gap: 4px; flex: none; }
 .shortcut-row .sep { margin: 0 4px; font-size: 12px; color: var(--dim); }
 .shortcut-row [data-slot], .shortcut-row kbd { border-radius: 0; font-family: var(--mono); }
+.shortcut-row dt small { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 3px; font-size: 12px; color: var(--muted); }
+.shortcut-row dt small.warn { color: var(--rose); }
+.shortcut-row.recording { background: var(--bg-2); }
+.shortcut-row .shortcut-btn { margin-left: 8px; }
+.shortcuts-reset-all { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 .settings-card .keys { padding-top: 14px; font-family: var(--mono); font-size: 12px; }
 .settings-toggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 16px; cursor: pointer; }
 .settings-toggle + .settings-toggle { border-top: 0; }
@@ -2751,13 +2755,13 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
 .interactive-terminal #term .xterm { padding: 0; box-shadow: none; }
 .interactive-terminal .keybar { flex: none; padding: 8px; padding-bottom: max(8px, var(--safe-bottom)); border-top: 1px solid var(--line); justify-content: flex-start; background: var(--bg); }
 .interactive-terminal .keybar::before { display: none; }
-/* Settings › Appearance › Desktop › Background "wherdr grid" (components/GridBackdrop.vue):
+/* The wherdr grid behind the conversation on a computer (components/GridBackdrop.vue):
    the layer sits at z-index -1 inside this host, under its content and above its own
    background. Computer only. */
 .hw-backdrop-host { isolation: isolate; }
 
 /* Settings beside the conversation (computer ≥ 1280 px, utils/settingsPanel.ts): a fixed
-   column on the right, the conversation shrinks to its left; the sections as an icon rail. */
+   column on the right, the conversation shrinks to its left. */
 @media (min-width: 1280px) {
   :root { --settings-panel: clamp(440px, 36vw, 560px); }
   #settings.settings-panel { left: auto; right: 0; width: var(--settings-panel); border-left: 1px solid var(--line); z-index: 4; }
@@ -2767,9 +2771,19 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
   /* Notes (NotesPanel.vue) too. */
   :is(#ui-show, #notes) { position: fixed; top: 0; bottom: 0; right: 0; width: var(--settings-panel); display: flex; flex-direction: column; background: var(--bg); border-left: 1px solid var(--line); z-index: 4; }
   body:has(#ui-show, #notes) :is(#agent, #placeholder, #tabview) { right: var(--settings-panel); }
-  .settings-panel .settings-nav { width: 57px; padding: 16px 6px; }
-  .settings-panel .settings-nav-item { justify-content: center; padding: 0; }
-  .settings-panel .settings-nav-item span:not(.iconify) { display: none; }
+  /* Sections: icon + name when the panel has room (its own width, not the window's),
+     an icon rail otherwise, whose bottom toggle can show the names (SettingsView.vue). */
+  #settings.settings-panel { container: settings-panel / inline-size; }
+  .settings-panel .settings-nav { width: 168px; padding: 16px 8px; }
+  .settings-rail-toggle { display: none; }
+  @container settings-panel (max-width: 559px) {
+    .settings-nav:not(.rail-labels) { width: 57px; padding: 16px 6px; }
+    .settings-nav:not(.rail-labels) .settings-nav-item { justify-content: center; padding: 0; }
+    .settings-nav:not(.rail-labels) .settings-nav-item span:not(.iconify) { display: none; }
+    .settings-rail-toggle { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 40px; margin-top: 8px; color: var(--muted); border-radius: 6px; }
+    .settings-rail-toggle:hover { color: var(--text-strong); background: var(--surface-2); }
+    .settings-rail-toggle .iconify { width: 16px; height: 16px; }
+  }
   .settings-panel .settings-column { padding: 22px 20px 44px; }
   .settings-panel .settings-section-title { font-size: 24px; margin-bottom: 20px; }
   /* Its left edge resizes it (components/SidePanelHandle.vue), drawn like .list-handle. */
@@ -2862,10 +2876,13 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
   .choices, .composer { padding-left: max(12px, calc((100% - var(--read)) / 2 + 12px)); padding-right: max(12px, calc((100% - var(--read)) / 2 + 12px)); }
   /* An agent's opened place: in the reading column, as wide as the message field. */
   .ui-open-row { padding-left: max(12px, calc((100% - var(--read)) / 2 + 12px)); padding-right: max(12px, calc((100% - var(--read)) / 2 + 12px)); }
-  /* Reading column framed by thin lines, grid in the margins. */
+  /* Reading column framed by thin lines. */
   .chat, .composer, .keybar, .ui-open-row {
     --col-l: calc(50% - var(--read) / 2);
     --col-r: calc(50% + var(--read) / 2);
+  }
+  /* Key row (terminal mode, no GridBackdrop): a flat grid in the margins. */
+  .keybar {
     background-color: var(--bg);
     background-image:
       linear-gradient(90deg, transparent calc(var(--col-l) - 1px), var(--line) calc(var(--col-l) - 1px), var(--line) var(--col-l),
@@ -2877,21 +2894,19 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
     background-position: 0 0, -1px -1px, -1px -1px;
     background-repeat: no-repeat, repeat, repeat;
   }
-  /* Background "wherdr grid": the margins show GridBackdrop instead of the flat grid;
-     the reading column stays solid, nothing behind the text. */
-  html[data-backdrop='wherdr'] :is(.chat, .composer, .ui-open-row) {
+  /* Conversation: the margins show the wherdr grid (GridBackdrop); the reading
+     column stays solid, nothing behind the text. */
+  .chat, .composer, .ui-open-row {
     background-color: transparent;
     background-image:
       linear-gradient(90deg, transparent calc(var(--col-l) - 1px), var(--line) calc(var(--col-l) - 1px), var(--line) var(--col-l),
         var(--bg) var(--col-l), var(--bg) var(--col-r), var(--line) var(--col-r), var(--line) calc(var(--col-r) + 1px), transparent calc(var(--col-r) + 1px));
     background-size: 100% 100%;
-    background-attachment: scroll;
-    background-position: 0 0;
     background-repeat: no-repeat;
   }
   /* Same for a blocking prompt between the two: the column stays solid and framed
      under its tint, the grid does not run behind the question. */
-  html[data-backdrop='wherdr'] .view .choices {
+  .view .choices {
     --col-l: calc(50% - var(--read) / 2);
     --col-r: calc(50% + var(--read) / 2);
     background:
@@ -2931,10 +2946,8 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
   .cell-view .choices, .cell-view .composer { padding-left: 10px; padding-right: 10px; }
   .cell-view .composer { padding-bottom: 10px; }
   .cell-view .ui-open-row { padding-left: 10px; padding-right: 10px; }
-  /* Also over the "wherdr grid" rule above (html[data-backdrop] outweighs .cell-view):
-     a cell keeps a solid background, without the column lines. */
-  .cell-view .chat, .cell-view .composer, .cell-view .ui-open-row,
-  html[data-backdrop='wherdr'] .cell-view :is(.chat, .composer, .ui-open-row) { background-color: var(--bg); background-image: none; }
+  /* A cell keeps a solid background, without the column lines or the grid. */
+  .cell-view .chat, .cell-view .composer, .cell-view .ui-open-row { background-color: var(--bg); background-image: none; }
   /* Narrow cell: no reading column, the margins of its composer. */
   .cell-view .keybar { background-image: none; border-top: 1px solid var(--line-soft); padding-left: 10px; padding-right: 10px; }
   .cell-view .keybar::before { content: none; }
@@ -3072,8 +3085,22 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
 .wake-run { flex-direction: row; font: 500 10.5px/1.4 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
 .wake-head { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .wake-run .wake-head { font-size: inherit; }
-.wake-run:has(.wake-last) .wake-head { flex: none; }
-.wake-last { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 12.5px/1.4 var(--sans); letter-spacing: 0; text-transform: none; }
+/* A routine run's header: its count, then each kind's count, icon and task chips (they wrap on a phone). */
+.wake-run { flex-wrap: wrap; row-gap: 2px; }
+.wake-run .wake-time { margin-left: auto; }
+.wake-run.ask { padding-left: 8px; border-left: 2px solid var(--accent); color: var(--text-2); }
+.wake-toggle { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; text-align: left; cursor: pointer; }
+.wake-part { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.wake-icon { flex: none; width: 13px; height: 13px; }
+[data-tone="done"] > .wake-icon, .wake-icon[data-tone="done"] { color: var(--done); }
+[data-tone="ready"] > .wake-icon, .wake-icon[data-tone="ready"], [data-tone="question"] > .wake-icon, .wake-icon[data-tone="question"] { color: var(--accent); }
+[data-tone="stuck"] > .wake-icon, .wake-icon[data-tone="stuck"] { color: var(--blocked); }
+.wake-chip { flex: none; padding: 1px 5px; border: 1px solid var(--line); background: none; color: var(--text-2); font: 500 10.5px/1.4 var(--mono); letter-spacing: .04em; cursor: pointer; }
+.wake-chip:hover, .wake-chip:focus-visible { color: var(--text); border-color: var(--text-2); outline: none; }
+/* Open run: one line per wake; a quiet one dimmer. */
+.wake-line .wake-head { display: block; font: 400 13px/1.4 var(--sans); letter-spacing: 0; text-transform: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wake-label { color: var(--text-2); font-weight: 500; }
+.wake-line.quiet, .wake-quiet { color: var(--dim); }
 .wake-time { flex: none; font: 400 10.5px/1 var(--mono); color: var(--dim); letter-spacing: .04em; }
 .wake-chev { flex: none; width: 13px; height: 13px; }
 .wake-row:hover .wake-head, .wake-run:hover, .wake-row:focus-visible .wake-head, .wake-run:focus-visible { color: var(--text-2); outline: none; }
@@ -3107,129 +3134,49 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
 .sel-reply .iconify, .sel-reply svg { width: 13px; height: 13px; color: var(--accent); }
 /* Reply targets of an agent reply (utils/questionReply.ts): a button after
    each question (`.q-reply`, its words in `.q-text`) and at the end of each
-   point (`.q-point` in a `.q-pt` block). The same markup for the three styles
-   of Settings › Conversation › Reply style; the list carries `rs-icon`,
-   `rs-text` or `rs-list`, or `no-reply` when the conversation is read-only
-   (nothing shows then). Labels come from data attributes (no text node: the
+   point (`.q-point` in a `.q-pt` block). The list carries `can-reply`, or
+   `no-reply` when the conversation is read-only (nothing shows then). Labels come from data attributes (no text node: the
    typewriter and the copied text ignore them). */
 .q-reply, .q-point {
   display: none; position: relative; margin: 0; padding: 0; white-space: nowrap; color: var(--dim); background: none;
   border: 0; border-radius: 0; cursor: pointer; -webkit-user-select: none; user-select: none;
 }
-:is(.rs-icon, .rs-text, .rs-list) :is(.q-reply, .q-point):focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.can-reply :is(.q-reply, .q-point):focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 /* Finger-sized target around a small glyph. */
 .q-reply::after, .q-point::after { content: ""; position: absolute; left: 50%; top: 50%; width: 32px; height: 32px; translate: -50% -50%; }
-/* The glyph alone: "↳", then "✓" once quoted. Shared by the icon style and by
-   what the two other styles show of a point. */
-.rs-icon :is(.q-reply, .q-point), .rs-text :is(.q-reply, .q-point), .rs-list .q-point {
+/* The glyph alone: "↳", then "✓" once quoted. */
+.can-reply :is(.q-reply, .q-point) {
   display: inline-block; margin-left: .3em; padding: 0 3px; font: 500 15px/1 var(--mono); letter-spacing: 0;
 }
-.rs-icon :is(.q-reply, .q-point)::before, .rs-text .q-reply::before, .rs-list .q-point::before { content: "↳"; }
-:is(.rs-icon, .rs-text, .rs-list) :is(.q-reply, .q-point).quoted::before { content: "✓"; }
-:is(.rs-icon, .rs-text, .rs-list) :is(.q-reply, .q-point).quoted { color: var(--accent); opacity: 1; }
+.can-reply :is(.q-reply, .q-point)::before { content: "↳"; }
+.can-reply :is(.q-reply, .q-point).quoted::before { content: "✓"; }
+.can-reply :is(.q-reply, .q-point).quoted { color: var(--accent); opacity: 1; }
 
-/* Icon: accent after a question (the agent expects an answer), grey after a
+/* Accent after a question (the agent expects an answer), grey after a
    point. On a computer the point's icon shows on hover of its point, from a
    zero-width anchor: hidden, it must not change where the text wraps. */
-.rs-icon .q-reply { color: var(--accent); opacity: .9; }
-.rs-icon .q-reply.q-mid { margin-right: .15em; }
-.rs-icon .q-point { opacity: .5; }
-.rs-icon :is(.q-reply, .q-point):is(:hover, :focus-visible) { color: var(--text); opacity: 1; }
+.can-reply .q-reply { color: var(--accent); opacity: .9; }
+.can-reply .q-reply.q-mid { margin-right: .15em; }
+.can-reply .q-point { opacity: .5; }
+.can-reply :is(.q-reply, .q-point):is(:hover, :focus-visible) { color: var(--text); opacity: 1; }
 @media (hover: hover) and (pointer: fine) {
-  .rs-icon .q-point { width: 0; height: 1em; margin: 0; padding: 0; vertical-align: -1px; transition: opacity 120ms; }
-  .rs-icon .q-point::before { position: absolute; left: .45em; top: 62%; translate: 0 -50%; padding: 4px; }
+  .can-reply .q-point { width: 0; height: 1em; margin: 0; padding: 0; vertical-align: -1px; transition: opacity 120ms; }
+  .can-reply .q-point::before { position: absolute; left: .45em; top: 62%; translate: 0 -50%; padding: 4px; }
   /* The hit area covers the glyph only, and each point keeps room on its
      right for it: a point whose last line fills the width (a long path) must
      not push the glyph past the conversation's edge, which would make it
      scroll sideways. */
-  .rs-icon .q-point::after { left: .45em; width: calc(1ch + 8px); height: 24px; translate: 0 -50%; }
-  .rs-icon .md-body .q-pt { padding-right: 28px; }
+  .can-reply .q-point::after { left: .45em; width: calc(1ch + 8px); height: 24px; translate: 0 -50%; }
+  .can-reply .md-body .q-pt { padding-right: 28px; }
   /* What a point holds after its own text (a nested list, a code block)
      keeps the full width. */
-  .rs-icon .md-body .q-pt > :is(ul, ol, pre, div, blockquote, table) { margin-right: -28px; } /* overflow-safe: its .q-pt parent has the same right padding */
-  .rs-icon .q-point:not(.quoted) { opacity: 0; }
-  .rs-icon .md-body :is(p, li):hover > .q-point, .rs-icon .q-point:focus-visible { opacity: 1; }
+  .can-reply .md-body .q-pt > :is(ul, ol, pre, div, blockquote, table) { margin-right: -28px; } /* overflow-safe: its .q-pt parent has the same right padding */
+  .can-reply .q-point:not(.quoted) { opacity: 0; }
+  .can-reply .md-body :is(p, li):hover > .q-point, .can-reply .q-point:focus-visible { opacity: 1; }
 }
 
-/* Tap the text: the words of a question are the button; its own button only
-   shows for the keyboard and as the "✓" of a quoted question. */
-.rs-text .q-text {
-  text-decoration: underline dotted color-mix(in srgb, var(--accent) 75%, transparent); text-decoration-thickness: 1.5px;
-  text-underline-offset: 5px; cursor: pointer;
-}
-.rs-text .q-text:hover { text-decoration-style: solid; background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.rs-text .q-text.quoted { text-decoration-style: solid; text-decoration-color: var(--accent); }
-.rs-text .q-reply { color: var(--accent); }
-.rs-text :is(.q-reply, .q-point):not(:focus-visible, .quoted) { position: absolute; width: 1px; height: 1px; margin: 0; padding: 0; overflow: hidden; clip-path: inset(50%); }
-.rs-text .q-point::before { content: "↳ " attr(data-l); }
-.rs-text .q-point { font: 500 9.5px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); vertical-align: 1px; }
-.rs-text .q-point.quoted::before { content: "✓ " attr(data-lq); }
-/* A point about to be quoted: hovered on a computer (a click quotes it), or
-   tapped once on a touch screen (its "↳ Discuss" then quotes it). */
-.rs-text .q-pt.q-armed {
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
-  box-shadow: -6px 0 0 color-mix(in srgb, var(--accent) 7%, transparent), 6px 0 0 color-mix(in srgb, var(--accent) 7%, transparent);
-}
-.rs-text .q-pt.q-armed > .q-point:not(.quoted) {
-  position: relative; width: auto; height: 22px; margin-left: .6em; padding: 0 6px; overflow: visible; clip-path: none;
-  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 8%, transparent);
-}
-@media (hover: hover) and (pointer: fine) {
-  .rs-text .q-pt { cursor: pointer; }
-  .rs-text .q-pt:hover:not(:has(.q-pt:hover)) {
-    background: color-mix(in srgb, var(--accent) 7%, transparent);
-    box-shadow: -6px 0 0 color-mix(in srgb, var(--accent) 7%, transparent), 6px 0 0 color-mix(in srgb, var(--accent) 7%, transparent);
-  }
-  /* The hint of the hovered point, out of the flow like the icon above. */
-  .rs-text .q-pt:hover:not(:has(.q-pt:hover)) > .q-point:not(.quoted, :focus-visible) { position: relative; width: 0; height: 1em; overflow: visible; clip-path: none; }
-  .rs-text .q-pt:hover:not(:has(.q-pt:hover)) > .q-point:not(.quoted, :focus-visible)::before { position: absolute; left: .6em; top: 50%; translate: 0 -50%; }
-}
-
-/* List under the message: a number after each question, the questions listed
-   in `.q-bar` (ChatView.vue); "+ Quote a point" makes the points of that
-   message (`.q-picking`) the targets. */
-.rs-list .q-reply {
-  display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; margin-left: .3em; vertical-align: 5px;
-  font: 500 9px/1 var(--mono); letter-spacing: 0; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
-}
-.rs-list .q-reply::before { content: attr(data-n); }
-.rs-list .q-reply:is(:hover, :focus-visible) { border-color: var(--accent); }
-.rs-list .q-reply.quoted { color: var(--bg); background: var(--accent); }
-.rs-list .q-reply.quoted::before { content: attr(data-n); }
-.rs-list .q-text.q-hot { background: color-mix(in srgb, var(--accent) 16%, transparent); }
-.rs-list .q-point:not(.quoted) { display: none; }
-.rs-list .q-picking .q-point { display: inline-block; opacity: .7; }
-.rs-list .q-picking .q-pt { outline: 1px dashed color-mix(in srgb, var(--text) 30%, transparent); outline-offset: 3px; cursor: pointer; }
-.rs-list .q-picking .q-pt:hover:not(:has(.q-pt:hover)) { outline: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
-.rs-list .q-picking li.q-pt { margin: .7em 0; }
-.q-bar { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: -4px 0 6px; padding-top: 12px; border-top: 1px solid var(--line); }
-.q-bar-h { margin: 0; font: 500 10px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
-.q-row {
-  display: flex; align-items: center; gap: 10px; width: 100%; max-width: 620px; min-height: 34px; padding: 0 10px;
-  font-size: 13px; line-height: 1.3; text-align: left; color: var(--text-2); background: none;
-  border: 1px solid var(--line); border-left: 2px solid var(--accent); border-radius: 0; cursor: pointer;
-}
-.q-row > b { flex: none; min-width: 1ch; font: 500 10px/1 var(--mono); color: var(--accent); }
-.q-row > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.q-row > i { flex: none; font: 500 9.5px/1 var(--mono); font-style: normal; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
-.q-row > i > em { margin-left: .5em; font-style: normal; }
-.q-row:is(:hover, :focus-visible) { color: var(--text); border-color: var(--accent); outline: 0; }
-.q-row:is(:hover, :focus-visible) > i, .q-row.quoted > i { color: var(--accent); }
-.q-row.quoted { background: color-mix(in srgb, var(--accent) 7%, transparent); }
-.q-pick {
-  display: inline-flex; align-items: center; min-height: 30px; margin-top: 2px; padding: 0 10px;
-  font: 500 10px/1.2 var(--mono); letter-spacing: .06em; text-transform: uppercase; text-align: left; color: var(--dim);
-  background: none; border: 1px dashed var(--line); border-radius: 0; cursor: pointer;
-}
-.q-pick:is(:hover, :focus-visible) { color: var(--text); border-color: var(--accent); outline: 0; }
-.q-pick[aria-pressed="true"] { color: var(--accent); border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
-@media (pointer: coarse) {
-  .q-row > i > em { display: none; }
-  .q-row { min-height: 40px; }
-  .q-pick { min-height: 36px; }
-}
 /* One-tap answers of a closed question (`.q-ans`: "Yes", "No"), right after
-   its Reply button in the three styles: a small mono tag, pressed once the
+   its Reply button: a small mono tag, pressed once the
    draft holds that answer. Its line keeps its height (the tag is shorter than
    the text); the target is finger-sized, the two never overlap. */
 .q-ans {
@@ -3237,22 +3184,13 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
   font: 500 9.5px/16px var(--mono); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; color: var(--text-2);
   background: none; border: 1px solid var(--line); border-radius: 0; cursor: pointer; -webkit-user-select: none; user-select: none;
 }
-:is(.rs-icon, .rs-text, .rs-list) .q-ans { display: inline-block; }
+.can-reply .q-ans { display: inline-block; }
 .q-ans::before { content: attr(data-l); }
 .q-ans::after { content: ""; position: absolute; left: -3px; right: -3px; top: 50%; height: 32px; translate: 0 -50%; }
 .q-ans.q-yes { margin-left: 8px; }
 .q-ans.q-no { margin-right: .3em; }
-.q-ans:is(:hover, :focus-visible), .q-row-ans:is(:hover, :focus-visible) { color: var(--text); border-color: var(--accent); outline: 0; }
-.q-ans[aria-pressed="true"], .q-row-ans[aria-pressed="true"] { color: var(--bg); background: var(--accent); border-color: var(--accent); }
-/* List style: the answers sit at the end of the question's row under the
-   message, not in the text. */
-.rs-list .md-body .q-ans { display: none; }
-.q-line { display: flex; align-items: stretch; gap: 6px; width: 100%; max-width: 620px; }
-.q-line > .q-row { flex: 1; min-width: 0; width: auto; max-width: none; }
-.q-row-ans {
-  flex: none; min-width: 44px; padding: 0 8px; font: 500 10px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
-  color: var(--text-2); background: none; border: 1px solid var(--line); border-radius: 0; cursor: pointer;
-}
+.q-ans:is(:hover, :focus-visible) { color: var(--text); border-color: var(--accent); outline: 0; }
+.q-ans[aria-pressed="true"] { color: var(--bg); background: var(--accent); border-color: var(--accent); }
 @media (pointer: coarse) {
   .q-ans { height: 22px; padding: 0 8px; font-size: 10px; line-height: 20px; }
   .q-ans::after { height: 36px; }
@@ -3261,7 +3199,7 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
    row per numbered question with its one-tap answers and its Reply, and "OK
    to all" above them. Every word comes from a data attribute. */
 .q-table { display: none; flex-direction: column; gap: 6px; max-width: 620px; margin: -2px 0 .9em; }
-:is(.rs-icon, .rs-text, .rs-list) .q-table { display: flex; }
+.can-reply .q-table { display: flex; }
 .q-table-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 30px; }
 .q-table-h::before { content: attr(data-l); font: 500 10px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
 .q-trow { display: flex; align-items: stretch; gap: 6px; min-height: 34px; }
@@ -3336,7 +3274,7 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
 }
 .composer-quote-x:hover { color: var(--text); }
 .composer-quote-x .iconify, .composer-quote-x svg { width: 12px; height: 12px; }
-/* "Native" mode (utils/quoteMirror.ts): the native field, its reference lines
+/* Quoted replies (utils/quoteMirror.ts): the native field, its reference lines
    ("↳ … —") drawn as tokens by a mirror behind it. Nothing here may change a
    line's size: colours and a band only. */
 .qm-host { position: relative; }
@@ -3353,96 +3291,7 @@ body.kb .interactive-terminal { top: var(--vv-top, 0px); bottom: auto; height: v
 }
 .qm-a { color: var(--accent); }
 .qm-h { color: var(--dim); }
-/* Settings preview of quoted replies (components/QuoteTokensPreview.vue):
-   one 10 s timeline shared by every piece, played once; the static styles are
-   the composed field, where it ends (and stays under reduced motion): the
-   keyframes have no 100% step, so each piece returns to them. */
-.qt-preview { margin: 14px 0 0; border: 1px solid var(--line); background: var(--bg); --qt-d: 10s; }
 .settings-lead { margin: 0 2px; font-size: 13.5px; line-height: 1.45; }
-.quote-mode-radio { margin-top: 14px; }
-.qt-preview figcaption {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px; height: 36px; padding: 0 4px 0 14px; border-bottom: 1px solid var(--line);
-  font: 500 10.5px/1 var(--mono); letter-spacing: .13em; text-transform: uppercase; color: var(--muted);
-}
-.qt-stage { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px 16px; font-size: 13.5px; line-height: 1.45; color: var(--text); }
-.qt-conv { display: grid; min-height: 98px; }
-.qt-conv > * { grid-area: 1 / 1; }
-.qt-agent p { margin: 0 0 4px; }
-.qt-tag {
-  display: inline-flex; align-items: center; height: 17px; margin-left: 4px; padding: 0 5px; vertical-align: 1px;
-  font: 500 9px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
-  color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); background: color-mix(in srgb, var(--accent) 7%, transparent);
-}
-.qt-sent {
-  align-self: end; justify-self: end; display: flex; flex-direction: column; gap: 1px; max-width: 80%; padding: 7px 10px;
-  background: var(--surface); border: 1px solid var(--line); opacity: 0;
-}
-.qt-sent-q { padding: 1px 6px; border: 1px solid var(--line); border-left: 2px solid var(--accent); font-size: 11.5px; color: var(--text-2); }
-.qt-sent-q b { margin-right: 5px; font: 500 9.5px/1 var(--mono); color: var(--dim); }
-.qt-field { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-height: 92px; padding: 8px 44px 8px 8px; border: 1px solid var(--accent); }
-.qt-ph { position: absolute; left: 9px; top: 8px; color: var(--dim); opacity: 0; }
-.qt-tok {
-  display: flex; align-items: center; gap: 6px; max-width: 100%; height: 22px; padding: 0 6px 0 7px;
-  border: 1px solid var(--line); border-left: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent);
-  font-size: 11.5px; color: var(--text-2); white-space: nowrap; overflow: hidden;
-}
-.qt-tok b { font-weight: 400; color: var(--accent); }
-.qt-tok em { font-style: normal; color: var(--dim); }
-.qt-tok span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-/* Preview of the "lines" mode: the same "↳ … —" lines as plain text. */
-.qt-preview[data-mode="lines"] .qt-tok { height: auto; padding: 0; border: 0; background: none; color: var(--text); }
-.qt-preview[data-mode="lines"] .qt-tok :is(b, em) { color: inherit; }
-.qt-chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 22px; margin-bottom: -4px; }
-.qt-chip {
-  display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 6px 0 7px;
-  border: 1px solid var(--line); border-left: 2px solid var(--accent); background: var(--surface);
-  font-size: 11.5px; color: var(--text-2); white-space: nowrap;
-}
-.qt-chip i { font-style: normal; font-size: 10px; color: var(--dim); }
-/* Preview of the "native" mode: a band across the field. */
-.qt-preview[data-mode="native"] .qt-tok {
-  align-self: stretch; max-width: none; margin: 0 -44px 0 -8px; padding: 0 44px 0 8px; border: 0; /* overflow-safe: .qt-field has the same side padding */
-  background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: inset 2px 0 0 var(--accent);
-}
-.qt-send {
-  position: absolute; right: 7px; bottom: 7px; display: grid; place-items: center; width: 26px; height: 26px;
-  font: 600 14px/1 var(--mono); color: var(--bg); background: var(--text);
-}
-@media (prefers-reduced-motion: no-preference) {
-  .qt-tag.one { animation: qt-tag-one var(--qt-d) 1; }
-  .qt-tag.two { animation: qt-tag-two var(--qt-d) 1; }
-  .qt-tok.one { animation: qt-tok-one var(--qt-d) 1; }
-  .qt-tok.two { animation: qt-tok-two var(--qt-d) 1; }
-  .qt-chip.one { animation: qt-tok-one var(--qt-d) 1; }
-  .qt-chip.two { animation: qt-tok-two var(--qt-d) 1; }
-  .qt-ans.one { animation: qt-ans-one var(--qt-d) 1; }
-  .qt-ans.two { animation: qt-ans-two var(--qt-d) 1; }
-  .qt-ph { animation: qt-ph var(--qt-d) 1; }
-  .qt-send { animation: qt-send var(--qt-d) 1; }
-  .qt-sent { animation: qt-sent var(--qt-d) 1; }
-  .qt-agent { animation: qt-agent var(--qt-d) 1; }
-}
-/* Untouched tag: plain, dim. */
-@keyframes qt-tag-one {
-  0%, 7% { color: var(--dim); border-color: var(--line); background: none; }
-  9% { color: var(--bg); background: var(--accent); border-color: var(--accent); }
-  12%, 70% { color: var(--accent); }
-  74%, 94% { color: var(--dim); border-color: var(--line); background: none; }
-}
-@keyframes qt-tag-two {
-  0%, 32% { color: var(--dim); border-color: var(--line); background: none; }
-  34% { color: var(--bg); background: var(--accent); border-color: var(--accent); }
-  37%, 70% { color: var(--accent); }
-  74%, 94% { color: var(--dim); border-color: var(--line); background: none; }
-}
-@keyframes qt-tok-one { 0%, 9% { opacity: 0; transform: translateY(4px); } 12%, 70% { opacity: 1; transform: none; } 73%, 94% { opacity: 0; } }
-@keyframes qt-tok-two { 0%, 34% { opacity: 0; transform: translateY(4px); } 37%, 70% { opacity: 1; transform: none; } 73%, 94% { opacity: 0; } }
-@keyframes qt-ans-one { 0%, 15% { clip-path: inset(0 100% 0 0); animation-timing-function: steps(5, end); } 24%, 70% { clip-path: inset(0 0 0 0); opacity: 1; } 73%, 94% { opacity: 0; } }
-@keyframes qt-ans-two { 0%, 40% { clip-path: inset(0 100% 0 0); animation-timing-function: steps(6, end); } 52%, 70% { clip-path: inset(0 0 0 0); opacity: 1; } 73%, 94% { opacity: 0; } }
-@keyframes qt-ph { 0%, 8% { opacity: 1; } 10%, 72% { opacity: 0; } 75%, 94% { opacity: 1; } }
-@keyframes qt-send { 0%, 64% { background: var(--text); } 67% { background: var(--accent); transform: scale(.9); } 70% { background: var(--text); transform: none; } }
-@keyframes qt-sent { 0%, 70% { opacity: 0; transform: translateY(14px); } 75%, 94% { opacity: 1; transform: none; } }
-@keyframes qt-agent { 0%, 70% { opacity: 1; transform: none; } 75%, 94% { opacity: 0; transform: translateY(-14px); } }
 /* Sent message: each reference ("↳ … —" line) a quote above its answer. */
 .msg-ref {
   display: flex; align-items: baseline; gap: 6px; width: fit-content; max-width: 100%; min-width: 0; margin: 4px 0 3px; padding: 3px 8px;
@@ -3487,8 +3336,8 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
 }
 
 /* ================================================================
-   Compact list (Settings › Appearance › Compact list): one line per
-   card, thinner group headers, counters and quotas on a single strip.
+   Home list card: one line per card (a task or an activity line adds
+   a second one).
    ================================================================ */
 .card.compact { flex-wrap: nowrap; align-items: center; gap: 8px; min-height: 30px; padding: 4px 10px 4px 12px; }
 .card.compact .avatar { width: 18px; height: 18px; font-size: 9px; }
@@ -3536,30 +3385,6 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
 @media (prefers-reduced-motion: reduce) {
   .card.compact .card-more.card-more-enter-active, .card.compact .card-more.card-more-leave-active { transition: none; }
 }
-
-.list-compact .agent-group { margin-bottom: 14px; }
-.list-compact .group-title { margin-bottom: 6px; font-size: 9.5px; }
-
-/* Counters on one strip: "3 YOUR TURN" per cell. */
-.list-compact .stats { margin-bottom: 12px; }
-.list-compact .stat { display: flex; align-items: center; gap: 7px; padding: 6px 9px; }
-.list-compact .stat b { display: inline; font-size: 15px; }
-.list-compact .stat span { margin-top: 0; font-size: 8.5px; letter-spacing: .1em; }
-/* Quotas: numbers and bars only (reset time and footnote in the normal list). */
-.list-compact .quotas { margin-bottom: 12px; }
-.list-compact .quotas.after-stats { margin-top: -4px; }
-.list-compact .quota-row { grid-template-columns: 34px 1fr 1fr; }
-.list-compact .quota-who .avatar { width: 20px; height: 20px; }
-.list-compact .quota-who .avatar .iconify { width: 13px; height: 13px; }
-.list-compact .quota-who small { display: none; }
-.list-compact .quota-who { gap: 2px; }
-.list-compact .quota { display: block; padding: 5px 9px 5px; }
-.list-compact .quota-top { justify-content: space-between; gap: 8px; }
-.list-compact .quota-label { letter-spacing: .14em; }
-.list-compact .quota-top b { font-size: 14px; letter-spacing: -.04em; }
-.list-compact .quota-top b small { font-size: 11px; }
-.list-compact .quota-bar { height: 3px; margin: 4px 0 0; }
-.list-compact .quota-reset { display: none; }
 
 /* Touch tablet (iPad, shortest side ≥ 700 px, also by its screen while the
    on-screen keyboard shortens the window): 44 px targets, like on the

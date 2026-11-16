@@ -2,13 +2,14 @@
 // for Claude Code (no OSC 7501) and never describes a question, so the visible
 // screen (terminal.read) fills in `prompt`, `interaction` and, when core
 // reports nothing, the status. Reads are cached, bounded and never fatal.
-import type { Choices, OmpStatus, Pane } from '../../shared/types'
+import type { Choices, ClaudeScreen, OmpStatus, Pane } from '../../shared/types'
 import { classifyScreen, confirmedInput } from '../../shared/interactiveScreen'
 import { codexError } from '../../shared/codexError'
 import { hasTranscript } from '../../shared/agentKind'
 import { parseOmpStatus } from '../../shared/ompStatus'
 import { parseChoices, parseOmpPrompt, promptIdentity, completeClaudeAsk, type ClaudeAsked } from './choices'
 import { queueSendNow, readDraft, sameText } from './coreDraft'
+import { parseClaudeScreen } from './claudeScreen'
 
 const WORKING = /\besc(?:ape)? to interrupt\b/i
 // Antigravity's running turn offers "esc to cancel"; its pickers number their
@@ -82,7 +83,7 @@ const KEYED_MS = 2000
 
 // What one screen text says, kept while the text, the agent and core's status
 // stay the same: most polls see the screens they saw before.
-interface Parsed { agent: string | null | undefined, status: string | null | undefined, r: CoreReading, error: ReturnType<typeof codexError>, sendNow: boolean, draft?: ReturnType<typeof readDraft> }
+interface Parsed { agent: string | null | undefined, status: string | null | undefined, r: CoreReading, error: ReturnType<typeof codexError>, sendNow: boolean, draft?: ReturnType<typeof readDraft>, claude?: ClaudeScreen | null }
 
 export function createCoreScreens(deps: CoreScreenDeps) {
   const now = deps.now ?? Date.now
@@ -200,6 +201,12 @@ export function createCoreScreens(deps: CoreScreenDeps) {
         p.interaction = published
         if (choices && r.interaction === 'native') p.prompt = choices
         if (parsed.sendNow) p.queueSendNow = true
+        // A working Claude's screen: the "!" command running (its output so far)
+        // and its queue, which the transcript only has at the end (ChatView).
+        if (p.agent === 'claude' && p.status === 'working' && !failed.has(p.id)) {
+          const screen = parsed.claude === undefined ? parsed.claude = parseClaudeScreen(c.text, c.at) : parsed.claude
+          if (screen) p.claudeScreen = screen
+        }
         const draft = !failed.has(p.id) && r.interaction === 'input' && p.status !== 'working' ? (parsed.draft === undefined ? parsed.draft = readDraft(c.text, p.agent) : parsed.draft) : null
         let seen = drafts.get(p.id)
         if (!draft) drafts.delete(p.id)

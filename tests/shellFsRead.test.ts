@@ -38,7 +38,7 @@ function fakeCall(file: Buffer, answer?: (i: number, part: Buffer) => Partial<Re
 }
 const shellFs = (file: Buffer, answer?: (i: number, part: Buffer) => Partial<Reply>, chunk = CHUNK) => {
   const { call, execs } = fakeCall(file, answer)
-  return { fs: createShellFs(coreShell(call, 'box'), { chunkBytes: chunk }), execs }
+  return { fs: createShellFs(coreShell(call, 'box'), { readChunk: chunk }), execs }
 }
 
 describe('bounded chunked reads over a core wire', () => {
@@ -98,7 +98,7 @@ describe('bounded chunked reads over a core wire', () => {
         vi.advanceTimersByTime(30)
         return call(m, p)
       }
-      const fs = createShellFs(coreShell(slow, 'box'), { chunkBytes: 1024 })
+      const fs = createShellFs(coreShell(slow, 'box'), { readChunk: 1024 })
       await expect(fs.read('/s/ses.jsonl', 0, file.length, 90)).rejects.toMatchObject({ code: 'unreachable', message: 'read timed out' })
       expect(execs.length).toBe(3) // a 90 ms budget dies on the 4th chunk, not after 64
     } finally {
@@ -125,17 +125,17 @@ describe('bounded chunked reads over a core wire', () => {
     expect(execs[0]!.argv[2]).not.toContain('reboot')
   })
 
-  it('keeps the default single-exec behavior without the option', async () => {
+  it('reads in READ_CHUNK slices without the option', async () => {
     const file = body(13 * 1024 * 1024)
     const { call, execs } = fakeCall(file)
     const fs = createShellFs(coreShell(call, 'box'))
     expect((await fs.read('/s/ses.jsonl', 0, file.length)).equals(file)).toBe(true)
-    expect(execs.length).toBe(1)
-    expect(Number(execs[0]!.argv[6])).toBe(file.length)
+    expect(execs.length).toBe(4)
+    expect(Number(execs[0]!.argv[6])).toBe(4 * 1024 * 1024)
   })
 
   it('bounds a single-chunk read exactly like a slice', async () => {
-    // len <= chunkBytes still supplies its per-reply bound: an over-returned
+    // len <= readChunk still supplies its per-reply bound: an over-returned
     // or truncated small reply fails instead of being kept.
     for (const fail of [
       { stdout: b64(body(8 * 1024 * 1024)) }, // far beyond the 1 MiB asked
@@ -153,9 +153,9 @@ describe('bounded chunked reads over a core wire', () => {
     // A ShellExec that drops maxBytes cannot over-serve a read: run enforces
     // the bound itself on single- and multi-chunk paths alike.
     const rich = async () => ({ code: 0, stdout: Buffer.alloc(5), stderr: '' })
-    await expect(createShellFs(rich, { chunkBytes: 4 }).read('/x', 0, 1)).rejects.toMatchObject({ code: 'remote' })
+    await expect(createShellFs(rich, { readChunk: 4 }).read('/x', 0, 1)).rejects.toMatchObject({ code: 'remote' })
     const fat = async (_s: string, args: string[] = []) => ({ code: 0, stdout: Buffer.alloc(Number(args[2]) + 3), stderr: '' })
-    await expect(createShellFs(fat, { chunkBytes: 4 }).read('/x', 0, 10)).rejects.toMatchObject({ code: 'remote' })
+    await expect(createShellFs(fat, { readChunk: 4 }).read('/x', 0, 10)).rejects.toMatchObject({ code: 'remote' })
   })
 
   it('rejects failed and over-budget replies before any decode of the payload', async () => {
@@ -183,10 +183,10 @@ describe('bounded chunked reads over a core wire', () => {
     }
   })
 
-  it('rejects a chunkBytes option that is not a safe positive integer', async () => {
+  it('rejects a readChunk option that is not a safe positive integer', async () => {
     const { call } = fakeCall(body(64))
     for (const bad of [Infinity, NaN, 1.5, 0, -4]) {
-      expect(() => createShellFs(coreShell(call, 'box'), { chunkBytes: bad })).toThrow()
+      expect(() => createShellFs(coreShell(call, 'box'), { readChunk: bad })).toThrow()
     }
   })
 

@@ -9,6 +9,8 @@ const router = useRouter()
 const panel = computed(() => sidePanelRoom.value && (route.path === '/' || isConversationPath(route.path)))
 const sheetOpen = computed({ get: () => notesOpen.value && !panel.value, set: (v) => { notesOpen.value = v } })
 const close = () => { notesOpen.value = false }
+// Reopened after a reload (useNotes.ts) on a page without the panel: stays closed.
+router.isReady().then(() => { if (!panel.value) close() })
 // A link followed from the sheet leaves it; the panel stays beside the conversation.
 const leave = () => { if (!panel.value) close() }
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { t } from '~/utils/i18n'
-import { shortcutKbds } from '~/utils/shortcuts'
+import { shortcutKbds } from '~/composables/useShortcuts'
 
 const props = defineProps<{ mode: 'chat' | 'term' | null }>()
 const emit = defineEmits<{ toggle: [] }>()

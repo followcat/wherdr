@@ -1,97 +1,69 @@
-# Setting up wherdr — a guide for coding agents
+# Setting up wherdr 3 — a guide for coding agents
 
 > If your fetch tool summarizes, read the raw file with `curl -fsSL https://wherdr.dev/agent.md`.
 
-You are helping your user install **wherdr**: a self-hosted web app and phone PWA to drive the
-coding agents running in [Herdr](https://herdr.dev). It runs natively on **one** machine, where
-Herdr runs, as the same user, on `127.0.0.1:7683` only. Details: https://github.com/afloury/wherdr/blob/main/docs/installation.md.
+You are helping your user install **wherdr 3**: a self-hosted web app and phone PWA for the coding
+agents running in [herdr-core](https://github.com/herdrdev/herdr-core) (hc), with built-in project
+management. It installs from the `v3` branch of https://github.com/afloury/wherdr as a systemd user
+service, reachable over Tailscale HTTPS, **beside** a wherdr 2 that may already run there.
 
 ## Rules
 
 1. **Security first.** wherdr is a remote shell on that machine. Never expose it: no port
    forwarding, no public proxy, no ngrok, no `tailscale funnel`, no plain HTTP on the local
    network. Other devices use `tailscale serve` only (private HTTPS inside the user's tailnet).
-   Another private network: https://github.com/afloury/wherdr/blob/main/docs/networks.md#other-private-networks.
-2. **Detect before you ask.** Never offer to install what is already there.
-3. **Ask before** installing anything (wherdr, Tailscale, Node.js) and before any `sudo`.
-4. Do not edit `~/.claude`, `~/.codex`, Herdr's config or wherdr's files (`plugin.env`, `.env`).
-   Never run wherdr as root.
-5. Run every command on the machine where Herdr runs; if you are not on it, ask the user to
-   start you there.
+2. **Never touch wherdr 2**: its service, folder, data, port, Herdr or its `tailscale serve` entry.
+   Read them only.
+3. **Ask before** installing anything (hc, Node.js, Tailscale) and before any `sudo`. Never start
+   hc from your own shell: the installer runs it as a user service.
+4. Run every command on the machine where wherdr will run, as the user.
 
-## 1. Detect
+## 1. Pick the prompt
 
-```sh
-herdr --version          # Herdr ≥ 0.9.1, or send the user to https://herdr.dev
-herdr status server      # its server must be running
-herdr plugin list        # afloury.wherdr: wherdr is installed
-curl -fsS http://127.0.0.1:7683/manifest.webmanifest   # answers: wherdr already runs
-brew list wherdr         # a Homebrew install
-node --version           # Node.js 22
-tailscale status         # Tailscale connected?
-tailscale serve status   # an https://….ts.net address proxying to port 7683: already published
-```
+The step-by-step instructions are the prompts of
+https://github.com/afloury/wherdr/blob/v3/docs/install-with-an-agent.md: **New install of v3**, or
+**v3 beside an existing v2, with import** when a wherdr 2 runs here. Follow the one that fits; the
+steps below are their summary.
 
-A command that fails only means "not there". Then ask only what you could not find out:
-**phone, or this computer only?** Computer only: do step 2, give `http://localhost:7683` and
-stop; no Tailscale, and no passkey on localhost if a phone may come later (see step 4).
-
-## 2. Install
-
-Skip it when wherdr already answers. Otherwise:
+## 2. Detect
 
 ```sh
-curl -fsSL https://wherdr.dev/install | sh
+node --version           # 22 or newer
+git --version
+hc --version             # missing: tell the user, propose hc's official installer, wait
+systemctl --user status  # the install script needs systemd --user (Linux)
+tailscale status
+tailscale serve status
 ```
 
-It installs the Herdr plugin in `~/wherdr`, runs wherdr as a login service and opens the setup
-guide, no sudo. No Node.js 22: it asks first (user agreed: `WHERDR_YES=1` before `sh`).
-Another port: `WHERDR_PORT=7684` before `sh`.
+On macOS there is no install script: follow
+https://github.com/afloury/wherdr/blob/v3/docs/installation.md#on-macos.
 
-**Check:** `curl -fsS http://127.0.0.1:7683` returns HTML. If the install says lingering is off,
-give the user `sudo loginctl enable-linger $USER`.
+## 3. Install
 
-## 3. Phone (Tailscale)
+```sh
+git clone -b v3 https://github.com/afloury/wherdr.git "${TMPDIR:-/tmp}/wherdr-setup"
+sh "${TMPDIR:-/tmp}/wherdr-setup/scripts/install-v3-beside-v2.sh" --json
+```
 
-1. Tailscale on this machine and on the phone, same account. In the Tailscale admin console
-   (DNS page) the user enables [HTTPS certificates](https://tailscale.com/kb/1153/enabling-https).
-2. Publish, unless step 1 showed it is already published:
+Without `--yes` it changes nothing and prints its plan; each problem is one `ERROR <id>: ...` line,
+and `NEXT: ...` lines are for the user. Fix what it cannot do itself (ask first), dry-run again
+until it exits 0, show the plan to the user, then run the same command with `--yes`.
 
-   ```sh
-   tailscale serve --bg --https=7683 http://127.0.0.1:7683
-   ```
+## 4. Check and finish
 
-3. wherdr adopts the address by itself (`APP_URL`). Check it:
+Check the health URL, the HTTPS address and the services the summary names. Then tell the user, in a
+few lines: the address, how to update (`<dir>/update.sh`, or **Update with Alfred** in the app's
+banner) and what is left for them:
 
-   ```sh
-   curl -fsS http://127.0.0.1:7683/api/phone
-   ```
+- **Passkey lock** (optional, only if the user asks): on the HTTPS address, with the token of the
+  last `First passkey` line of the service's journal.
+- **On the phone**: open the address in Safari (Share › Add to Home Screen) or Chrome on Android
+  (menu › Install app), then Settings › **Enable notifications**.
 
-   Done when the JSON says `"reach":"ok"`; its `url` is the phone address. `"pending"`: wait,
-   the first HTTPS certificate takes up to a minute. Same thing in the app: Settings › Phone
-   (`wherdr phone` with an npm or Homebrew install).
+## More
 
-## 4. Finish on the phone address
-
-From now on use `https://<machine>.<tailnet>.ts.net:7683/`, not localhost: **a passkey only
-works on the address it was created on.**
-
-1. Open that address for the user, or give them the link.
-2. **Passkey lock** (optional, only if the user asks: wherdr already answers only this
-   computer and the user's own tailnet devices): on that address,
-   Settings › Security › **Enable passkey lock**. It asks for a bootstrap token: the last
-   `First passkey: bootstrap token` line of `~/wherdr/wherdr.log` (`wherdr logs` with Homebrew). Give the token to the user.
-3. **On the phone**: open the address in Safari (Share › Add to Home Screen, then open wherdr
-   from the Home Screen) or in Chrome on Android (menu › Install app), unlock it with the
-   passkey if the lock is on, then Settings › **Enable notifications**.
-
-**Check:** the phone lists the agents. Then tell the user, in a few lines: the address, whether the
-passkey lock is on, and how to update (run the install command again).
-
-## Extras (only if asked)
-
-- **Only a terminal, no conversation**: `herdr integration install claude|codex|omp`.
-- **Agents on other computers**: Herdr only on them, each registered as a Herdr machine:
-  https://github.com/afloury/wherdr/blob/main/docs/machines.md#several-machines-ssh.
-- **Something fails**: the **L** key (log) of the wherdr panel in Herdr, and
-  https://github.com/afloury/wherdr/blob/main/docs/troubleshooting.md#troubleshooting.
+- Updating: https://github.com/afloury/wherdr/blob/v3/docs/update-with-an-agent.md
+- Moving from wherdr 2: https://github.com/afloury/wherdr/blob/v3/docs/migrate-from-v2.md
+- Something fails: https://github.com/afloury/wherdr/blob/v3/docs/troubleshooting.md
+- All the docs: https://github.com/afloury/wherdr/blob/v3/docs/README.md

@@ -22,6 +22,8 @@ vi.mock('../server/utils/pmCoordinator', async orig => ({
   ...(await orig<object>()),
   startCoordinator: vi.fn(async (_d: unknown, key: string) => { if (key === 'APP') throw new Error('agent missing'); started.push(key); return { terminal: `t-${key}` } }),
 }))
+// Machine '' has every agent slot taken; Claude's week is near its limit.
+vi.mock('../server/utils/pmMemory', async orig => ({ ...(await orig<object>()), memoryState: vi.fn(async (_d: unknown, key: string) => ({ agents: key ? 0 : 2, cap: 2 })) }))
 vi.mock('../server/utils/pmReady', () => ({ checkMachine: vi.fn(async () => ({ items: [], at: 1, refused: 'gh login: not logged in' })) }))
 
 describe('parseAlfredCommand', () => {
@@ -31,6 +33,12 @@ describe('parseAlfredCommand', () => {
     expect(parseAlfredCommand(['coordinator', 'open', 'WEB'])).toEqual({ name: 'coordinator open', key: 'WEB' })
     expect(parseAlfredCommand(['settings', 'x'])).toMatchObject({ error: /^unknown command/ })
     expect(parseAlfredCommand(['projects', '--apply'])).toEqual({ error: '--apply is for a change only' })
+    expect(parseAlfredCommand(['groups'])).toEqual({ name: 'groups' })
+    expect(parseAlfredCommand(['brief'])).toEqual({ name: 'brief' })
+    expect(parseAlfredCommand(['brief', '--group', 'Work', '--since', '2026-11-01'])).toEqual({ name: 'brief', group: 'Work', since: Date.parse('2026-11-01') })
+    expect(parseAlfredCommand(['brief', '--all', '--group', 'Work'])).toMatchObject({ error: /^usage: wherdr alfred brief/ })
+    expect(parseAlfredCommand(['brief', '--since', 'monday'])).toEqual({ error: '--since is a date: YYYY-MM-DD' })
+    expect(parseAlfredCommand(['projects', '--all'])).toEqual({ error: '--all is for brief only' })
   })
 
   it('reads the changes, a dry run unless --apply', () => {
@@ -41,9 +49,9 @@ describe('parseAlfredCommand', () => {
     expect(parseAlfredCommand(['coordinator', 'start', 'WEB', '--program', 'codex'])).toEqual({ name: 'coordinator start', apply: false, key: 'WEB', program: 'codex' })
     expect(parseAlfredCommand(['coordinator', 'start', 'WEB', '--resume', '--apply'])).toEqual({ name: 'coordinator start', apply: true, key: 'WEB', resume: true })
     expect(parseAlfredCommand(['coordinator', 'start', 'WEB', '--resume', '--program', 'codex'])).toEqual({ error: expect.stringContaining('no --program') })
-    expect(parseAlfredCommand(['setting', 'set', 'theme', 'catppuccin-latte', '--propose'])).toEqual({ name: 'setting set', propose: true, key: 'theme', value: 'catppuccin-latte' })
+    expect(parseAlfredCommand(['setting', 'set', 'theme', 'gruvbox', '--propose'])).toEqual({ name: 'setting set', propose: true, key: 'theme', value: 'gruvbox' })
     // Alfred never applies a setting itself.
-    expect(parseAlfredCommand(['setting', 'set', 'theme', 'nord', '--apply'])).toEqual({ error: expect.stringContaining('--propose puts a card the user applies') })
+    expect(parseAlfredCommand(['setting', 'set', 'theme', 'vesper', '--apply'])).toEqual({ error: expect.stringContaining('--propose puts a card the user applies') })
     expect(parseAlfredCommand(['projects', '--propose'])).toEqual({ error: expect.stringContaining('--propose is for setting set and the changes') })
     expect(parseAlfredCommand(['project', 'template', 'WEB', 'common', '--propose'])).toEqual({ name: 'project template', apply: false, propose: true, key: 'WEB', template: 'common' })
     expect(parseAlfredCommand(['project', 'template', 'WEB', 'common', '--propose', '--apply'])).toEqual({ error: '--propose or --apply, not both' })
@@ -59,7 +67,7 @@ describe('parseAlfredCommand', () => {
     expect(parseAlfredCommand(['coordinator', 'start', 'WEB', '--program', 'omp'])).toEqual({ error: '--program is claude or codex' })
     expect(parseAlfredCommand(['setting', 'set', 'password', 'x'])).toMatchObject({ error: /^password is not a setting Alfred changes/ })
     // Only a value the app reads: no theme "light", no list setting.
-    expect(parseAlfredCommand(['setting', 'set', 'theme', 'light'])).toMatchObject({ error: /^light is not a value of theme: one of herdr, claude-code/ })
+    expect(parseAlfredCommand(['setting', 'set', 'theme', 'light'])).toMatchObject({ error: /^light is not a value of theme: one of wherdr-titanium, wherdr-neon/ })
     expect(parseAlfredCommand(['setting', 'set', 'showQuotas', 'yes'])).toEqual({ error: 'yes is not a value of showQuotas: one of 1, 0' })
     expect(parseAlfredCommand(['setting', 'set', 'hiddenAgents', '[]'])).toMatchObject({ error: /^hiddenAgents is not a setting Alfred changes/ })
     expect(parseAlfredCommand(['project', 'remove', 'WEB'])).toMatchObject({ error: /^unknown command: project remove WEB/ })
@@ -95,6 +103,7 @@ describe('runAlfredCommand', () => {
   let herdrProjects = ''
   const deps = () => ({
     store, machines: () => machines, panes: () => [], urls: { local: 'http://127.0.0.1:7690' }, settingsFile: path.join(dir, 'settings.json'), dataDir: dir, herdrProjects,
+    quotas: async () => ({ claude: { five: null, week: { used: 92, resetsAt: null, minutes: 10080 }, at: 1 }, codex: null }),
     check: async (m: string, f: string) => { if (failCheck) throw new Error('path: a folder inside the home folder'); if (f.endsWith('/gone')) throw new Error('This folder does not exist'); checked.push(`${m}:${f}`); return { path: f.replace(/^~/, '/home/user'), git: true } },
   }) as unknown as Parameters<typeof runAlfredCommand>[0]
   const run = (...argv: string[]) => runAlfredCommand(deps(), token, { argv })
@@ -133,6 +142,23 @@ describe('runAlfredCommand', () => {
     await expect(run('project', 'template', 'WEB', 'nope')).rejects.toThrow('No template nope')
     // A built-in example works as a template too.
     expect(await run('project', 'template', 'WEB', 'example:vibe', '--apply')).toMatchObject({ applied: true, change: ['project WEB template: common → example:vibe'] })
+  })
+
+  it('adds a workspace: its root on each machine and its tab group, then starts its coordinator', async () => {
+    expect(parseAlfredCommand(['workspace', 'add', 'ws', '--machine', ',mac', '--root', '~/work'])).toEqual({ error: '--machine and --root pair up: one root folder per machine, in the same order' })
+    await patchSettings({ machineGroups: JSON.stringify([{ id: '*group:o', name: 'Office', machines: ['mac'] }]) }, { file: path.join(dir, 'settings.json') })
+    await expect(run('workspace', 'add', 'WS', '--root', '~/work', '--group', 'Lab')).rejects.toThrow('No tab group Lab: Office')
+    const argv = ['workspace', 'add', 'WS', '--name', 'Work', '--machine', ',Mac', '--root', '~/work,/srv/work', '--group', 'Office']
+    expect(await run(...argv)).toMatchObject({ dryRun: true, remote: expect.stringContaining('Mac'), change: ['add workspace WS "Work" in tab group Office', 'root folder ~/work on this machine (its home: checked when applied, it must exist)', 'clone root /srv/work on Mac', expect.stringContaining('offers to build the map')] })
+    expect(await store.projects()).toEqual([])
+    await store.saveCoordinator({ ...(await store.coordinator(MAIN))!, turn: { kind: 'user', at: Date.now() } })
+    await run(...argv, '--propose')
+    const card = (await store.coordinator(MAIN))!.cards!.at(-1)!
+    expect(card).toMatchObject({ label: 'New workspace WS', change: { argv } })
+    const done = await actOnCard({ store, applyChange: (a: string[], lines: string[]) => applyProposedChange(deps(), a, lines) } as never, card.id, undefined)
+    expect(done).toMatchObject({ state: 'done', outcome: { lines: ['WS: added, coordinator started (it offers to build the map)'] } })
+    expect(await store.project('WS')).toMatchObject({ kind: 'workspace', git: false, name: 'Work', path: '/home/user/work', group: '*group:o', shared: { machines: ['mac'], clones: { mac: '/srv/work' } } })
+    expect(started.splice(0)).toEqual(['WS'])
   })
 
   it('lists the v2 projects read now from the herdr-projects board, with the v3 project made from each', async () => {
@@ -267,30 +293,30 @@ describe('runAlfredCommand', () => {
   })
 
   it('proposes a setting as a card the user applies or cancels, only in the user\'s turn', async () => {
-    const turn = async (kind: 'user' | 'wake') => store.saveCoordinator({ ...(await store.coordinator(MAIN))!, turn: { kind, at: Date.now(), said: 'show questions as a list' } })
-    expect(await run('setting', 'set', 'replyStyle', 'list')).toMatchObject({ dryRun: true, change: ['setting replyStyle: (default) → "list"'] })
+    const turn = async (kind: 'user' | 'wake') => store.saveCoordinator({ ...(await store.coordinator(MAIN))!, turn: { kind, at: Date.now(), said: 'type the replies slower' } })
+    expect(await run('setting', 'set', 'typewriterSpeed', 'slow')).toMatchObject({ dryRun: true, change: ['setting typewriterSpeed: (default) → "slow"'] })
     await turn('wake')
-    await expect(run('setting', 'set', 'replyStyle', 'list', '--propose')).rejects.toThrow('never in a wake')
+    await expect(run('setting', 'set', 'typewriterSpeed', 'slow', '--propose')).rejects.toThrow('never in a wake')
     await turn('user')
-    const out = await run('setting', 'set', 'replyStyle', 'list', '--propose') as { note: string }
+    const out = await run('setting', 'set', 'typewriterSpeed', 'slow', '--propose') as { note: string }
     const card = (await store.coordinator(MAIN))!.cards![0]!
     expect(out.note).toContain(`action ${card.id}`)
-    expect(card).toMatchObject({ kind: 'setting', label: 'Conversation › Reply style', setting: { key: 'replyStyle', after: 'list', said: 'show questions as a list', target: 'conversation.reply-style' } })
+    expect(card).toMatchObject({ kind: 'setting', label: 'Conversation › Typewriter', setting: { key: 'typewriterSpeed', after: 'slow', said: 'type the replies slower', target: 'conversation.typewriter' } })
     expect(await run('settings')).toMatchObject({ settings: {} }) // nothing changed yet
     const act = (id: string, cancel = false) => actOnCard({ store, settingsFile: path.join(dir, 'settings.json') } as never, id, undefined, cancel)
     await expect(actOnCard({ store } as never, card.id, 'Bearer abc')).rejects.toThrow(/never a token/)
     expect(await act(card.id)).toMatchObject({ state: 'done', outcome: { text: 'Applied by you' } })
-    expect(await run('settings')).toMatchObject({ settings: { replyStyle: 'list' } })
+    expect(await run('settings')).toMatchObject({ settings: { typewriterSpeed: 'slow' } })
     // A second proposal over the old value goes stale once the setting moved; a cancelled one runs nothing.
-    await run('setting', 'set', 'theme', 'nord', '--propose')
+    await run('setting', 'set', 'theme', 'vesper', '--propose')
     const theme = (await store.coordinator(MAIN))!.cards![0]!.id
     expect(await act(theme, true)).toMatchObject({ state: 'dismissed' })
     expect(await act(theme)).toMatchObject({ state: 'dismissed' })
-    await run('setting', 'set', 'replyStyle', 'icon', '--propose')
+    await run('setting', 'set', 'typewriterSpeed', 'off', '--propose')
     const back = (await store.coordinator(MAIN))!.cards![0]!.id
-    await patchSettings({ replyStyle: 'text' }, { file: path.join(dir, 'settings.json') })
+    await patchSettings({ typewriterSpeed: 'fast' }, { file: path.join(dir, 'settings.json') })
     expect(await act(back)).toMatchObject({ state: 'stale' })
-    expect(await run('settings')).toMatchObject({ settings: { replyStyle: 'text' } })
+    expect(await run('settings')).toMatchObject({ settings: { typewriterSpeed: 'fast' } })
   })
 
   it('proposes a project change as a card: the user\'s Apply makes it while its dry run still holds', async () => {
@@ -321,6 +347,31 @@ describe('runAlfredCommand', () => {
     expect(await run('coordinators')).toMatchObject({ coordinators: [{ project: '_main' }, { project: 'WEB', agent: 'codex' }] })
     expect(await run('coordinator', 'start', 'WEB', '--program', 'claude')).toMatchObject({ change: ['start the coordinator of WEB with claude on this machine'] })
     await expect(run('coordinator', 'start', 'WEB', '--program', 'codex', '--model', 'gpt-6')).rejects.toThrow()
+  })
+
+  // WHR-387: the tab open at the user's message, the tabs with their projects, a brief per tab or all.
+  it('knows the open tab, lists the groups and briefs one group or all', async () => {
+    const groups = [{ id: '*group:perso', name: 'Perso', machines: [''] }, { id: '*group:work', name: 'Work', machines: ['mac'] }]
+    await fs.writeFile(path.join(dir, 'settings.json'), JSON.stringify({ v: 1, settings: { machineGroups: JSON.stringify(groups), machineBarHidden: JSON.stringify(['', 'mac']) } }))
+    await run('project', 'add', 'WEB', '--machine', '', '--path', '/src/web', '--apply')
+    await run('project', 'add', 'API', '--machine', 'mac', '--path', '/src/api', '--apply')
+    await store.saveTask({ id: 'WEB-1', project: 'WEB', title: 'Login page', description: '', type: 'feature', state: 'working', step: { at: 1, yourTurn: { reason: 'action', badge: 'Merge' } } as never })
+    await store.saveCoordinator({ ...(await store.coordinator(MAIN))!, terminal: 'host/t1' })
+    await userMessageTo(store, 'host/t1', 'How is it going?', '*group:work')
+    expect(await run('groups')).toEqual({ open: 'Work', groups: [{ name: 'Perso', kind: 'group', projects: ['WEB'] }, { name: 'Work', kind: 'group', projects: ['API'] }] })
+    expect(await run('brief')).toMatchObject({ scope: 'Work', open: 'Work', projects: [{ project: 'API', merged: [], waiting: [], coordinator: 'not started' }], machines: [], quotas: [{ status: 'quota:claude', near: ['week 92% used'] }], others: ['all', 'Perso'] })
+    // A machine's status line names it by key; a label with a space never makes one (it would not parse).
+    const [local, mac] = machines as { label: string, status: string }[]
+    local!.label = 'Mac Studio'
+    mac!.status = 'offline'
+    try {
+      expect((await run('brief', '--group', 'work') as { machines: unknown[] }).machines).toEqual([{ name: 'Mac', state: 'offline', status: 'machine:mac' }])
+      expect((await run('brief', '--group', 'perso') as { machines: unknown[] }).machines).toEqual([{ name: 'Mac Studio', state: 'full' }])
+    } finally { local!.label = 'this'; mac!.status = 'online' }
+    expect(await run('brief', '--group', 'perso')).toMatchObject({ scope: 'Perso', projects: [{ project: 'WEB', waiting: [{ id: 'WEB-1', what: 'Merge' }] }], machines: [{ name: 'this', state: 'full', status: 'machine:this' }] })
+    expect((await run('brief', '--all') as { projects: unknown[] }).projects).toHaveLength(2)
+    expect((await store.coordinator(MAIN))!.briefs).toEqual({ '*group:work': expect.any(Number), '*group:perso': expect.any(Number), 'all': expect.any(Number) })
+    await expect(run('brief', '--group', 'Home')).rejects.toThrow('Unknown scope Home')
   })
 })
 
@@ -375,16 +426,33 @@ describe('Alfred and a project\'s workflow and coordinator', () => {
     panes = [{ id: 'p1', coreAddress: 't-web', status: 'idle' }]
     await turn('user', 'ask WEB for a workflow')
     expect(await run(['tell', 'WEB', 'propose a workflow'])).toMatchObject({ told: 'WEB' })
-    // Its own "From Alfred:" is not doubled.
-    await run(['tell', 'WEB', 'From Alfred: propose a workflow'])
-    expect(sent).toEqual([['terminal.send', { terminal: 't-web', text: 'From Alfred: propose a workflow' }], ['terminal.send', { terminal: 't-web', text: 'From Alfred: propose a workflow' }]])
+    // The user's message relayed is marked as theirs; Alfred's own prefix is not doubled.
+    await run(['tell', 'WEB', 'From Alfred, for the user: propose a workflow'])
+    const relayed = { terminal: 't-web', text: 'From Alfred, for the user: propose a workflow' }
+    expect(sent).toEqual([['terminal.send', relayed], ['terminal.send', relayed]])
     expect((await store.coordinator('WEB'))!.turn).toMatchObject({ kind: 'user', said: 'ask WEB for a workflow' })
     expect((await store.projectLog('WEB')).at(-1)).toMatchObject({ by: 'Alfred', text: 'told the coordinator: propose a workflow' })
     // In Alfred's wake, the coordinator's turn is a wake too.
     await turn('wake')
     await run(['tell', 'WEB', 'anything blocked?'])
     expect((await store.coordinator('WEB'))!.turn).toMatchObject({ kind: 'wake' })
+    expect(sent.at(-1)).toEqual(['terminal.send', { terminal: 't-web', text: 'From Alfred: anything blocked?' }])
     expect(await run(['last', 'WEB'])).toEqual({ project: 'WEB', working: false, from: 'conversation', text: 'Proposed: see the review', at: null })
+  })
+
+  it('routes a request to the right coordinator and reports the task it added', async () => {
+    await run(['project', 'add', 'TV', '--machine', '', '--path', '/src/tv', '--name', 'Living room TV', '--apply'])
+    await store.saveCoordinator({ project: 'TV', tokenHash: '', terminal: 't-tv' })
+    panes = [{ id: 'p2', coreAddress: 't-tv', status: 'idle' }]
+    await store.addTask({ project: 'TV', title: 'Older task', type: 'simple' })
+    await new Promise(r => setTimeout(r, 5))
+    await turn('user', 'on the TV, the progress bar does not show')
+    await run(['tell', 'TV', 'The progress bar under an episode does not show'])
+    expect(sent).toEqual([['terminal.send', { terminal: 't-tv', text: 'From Alfred, for the user: The progress bar under an episode does not show' }]])
+    // The coordinator adds the task, as if the user had written to it.
+    const added = await store.addTask({ project: 'TV', title: 'Show the progress bar under an episode', type: 'simple' })
+    await store.addTask({ project: 'WEB', title: 'Another project', type: 'simple' })
+    expect(await run(['last', 'TV'])).toMatchObject({ project: 'TV', tasks: [{ id: added.id, title: 'Show the progress bar under an episode' }] })
   })
 })
 

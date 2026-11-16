@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // wherdr on a computer (the app's desktop layout): the agent list on the left
-// (brand line, "Agents" and its buttons, Herdr session, the compact list of
+// (brand line, "Agents" and its buttons, hc session, the compact list of
 // components/demo/List.vue, New at the bottom), the
 // open agent's header (state pill · kind · title · folder, Conversation /
 // Terminal tabs, +, search, menu), the reading column framed by thin lines
@@ -30,7 +30,7 @@ const open = computed(() => props.agents.find(a => a.name === props.active))
 <template>
   <div class="dd app-ui desk" :style="{ '--u': `calc(100cqw / ${width ?? 1440})` }">
     <aside class="side">
-      <div class="eyebrow home-brand"><PixelMark class="home-logo" :boot="false" :glow="false" />wherdr 2.0.0 · herdr 0.9.1</div>
+      <div class="eyebrow home-brand"><PixelMark class="home-logo" :boot="false" :glow="false" />wherdr 3.0.0 · hc</div>
       <div class="home-title-row">
         <h3 class="home-title">Agents</h3>
         <div class="home-actions">

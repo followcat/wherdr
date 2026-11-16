@@ -1,55 +1,36 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { checkDocLinks } from '../scripts/check-doc-links.mjs'
-import { AGENT_PROMPT, REPO } from '../website/app/utils/site'
+import { REPO } from '../website/app/utils/site'
+import { AGENT_PROMPTS, promptOf } from '../website/app/utils/agentPrompts'
 
-// website/public/agent.md guides coding agents through an install: every
-// command, port and variable it cites must be one the documentation really uses,
-// so the guide cannot drift from it. The guide is part of the v2 site, kept as is
-// until the site moves to v3 (docs/RELEASING.md, transition step 8): the settings
-// of v2's installer (2.x branch) it quotes are listed here.
+// website/public/agent.md guides coding agents through a v3 install: every
+// command and variable it cites must be one the documentation really uses, so the
+// guide cannot drift from it.
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
-const documentation = ['installation', 'networks', 'command', 'plugins', 'security', 'machines', 'troubleshooting'].map(page => read(`../docs/${page}.md`)).join('\n')
+const documentation = ['installation', 'install-with-an-agent', 'migrate-from-v2', 'update-with-an-agent', 'networks', 'security', 'troubleshooting'].map(page => read(`../docs/${page}.md`)).join('\n')
 const guide = read('../website/public/agent.md')
-const V2_INSTALLER = ['WHERDR_YES=1', 'WHERDR_PORT=7684']
-// Shell line continuations joined, as in the guide's snippets below.
-const sources = [documentation, ...V2_INSTALLER].join('\n').replace(/\\\n\s*/g, '')
 const llms = read('../website/public/llms.txt')
 
-// Checks an agent runs to verify a step: not in the documentation, harmless, read-only.
-const CHECKS = ['curl -fsS http://127.0.0.1:7683', 'curl -fsS http://127.0.0.1:7683/manifest.webmanifest', 'curl -fsSL https://wherdr.dev/agent.md', 'tailscale status', 'tailscale serve status', 'herdr --version', 'herdr plugin list', 'brew list wherdr', 'git --version', 'node --version']
-// Placeholders and file paths the guide names, not commands.
-const PLAIN = /^(~\/[\w./-]+|\.env|plugin\.env|url|https:\/\/<machine>\.<tailnet>\.ts\.net:7683\/)$/
-// Quoted from wherdr's own output, checked against the code below.
-const OUTPUT = ['"reach":"ok"', '"pending"', 'First passkey: bootstrap token']
+// Checks an agent runs to verify a step: harmless, read-only.
+const CHECKS = ['curl -fsSL https://wherdr.dev/agent.md', 'git --version', 'node --version', 'tailscale status', 'tailscale serve status', 'hc --version', 'systemctl --user status']
+// Words and placeholders the guide names, not commands.
+const PLAIN = /^(v3|sudo|--yes)$/
 
 const snippets = [
   ...[...guide.matchAll(/```sh\n([\s\S]*?)```/g)].flatMap(([, block]) =>
-    block!.replace(/\\\n\s*/g, '').split('\n').map(l => l.replace(/\s+#.*$/, '').trim()).filter(Boolean)),
+    block!.split('\n').map(l => l.replace(/\s+#.*$/, '').trim()).filter(Boolean)),
   ...[...guide.replace(/```[\s\S]*?```/g, '').matchAll(/`([^`\n]+)`/g)].map(([, s]) => s!),
 ]
 
 describe('agent.md', () => {
-  it.each(snippets.filter(s => !CHECKS.includes(s) && !OUTPUT.includes(s) && !PLAIN.test(s)))('`%s` is in the documentation or the installer', (snippet) => {
-    // The guide fills one placeholder; the documentation writes a sample address.
-    const s = snippet.replace('https://<machine>.<tailnet>.ts.net:7683/', 'https://server.example.ts.net:7683/')
-    expect(sources).toContain(s)
+  it.each(snippets.filter(s => !CHECKS.includes(s) && !PLAIN.test(s)))('`%s` is in the documentation', (snippet) => {
+    // The agent prompts write the repository as REPO.
+    expect(documentation).toContain(snippet.replace(`${REPO}.git`, 'REPO'))
   })
 
-  it.each([...new Set(guide.match(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/g))])('variable %s exists', (name) => {
-    expect(sources).toMatch(new RegExp(`\\b${name}\\b`))
-  })
-
-  it.each([...new Set(guide.match(/(?<=[:= ])\d{4,5}\b/g))])('port %s exists', (port) => {
-    expect(sources).toMatch(new RegExp(`(?:127\\.0\\.0\\.1|localhost|PORT)[:=]${port}\\b`))
-  })
-
-  it('quotes the /api/phone states and the bootstrap token line the server really writes', () => {
-    const reach = read('../shared/phone.ts').match(/export type PhoneReach = (.+)/)![1]
-    expect(reach).toContain('\'ok\'')
-    expect(reach).toContain('\'pending\'')
-    expect(read('../server/utils/phone.ts')).toMatch(/reach: null/)
-    expect(read('../server/utils/auth.ts')).toContain('First passkey: bootstrap token')
+  it('names no v2 install method', () => {
+    expect(guide).not.toMatch(/npx wherdr|npm install -g|brew install|herdr plugin install|wherdr\.dev\/install/)
   })
 
   it('stays short enough for fetch tools to return it whole, and says how to read the raw file', () => {
@@ -58,8 +39,6 @@ describe('agent.md', () => {
   })
 
   it('keeps the passkey lock optional, as the documentation says', () => {
-    // wherdr answers only this computer and the tailnet; a passkey is an extra lock.
-    expect(documentation).toContain('The passkey lock is never required')
     expect(guide).not.toMatch(/passkey[^\n]*\(required|\brequired\b[^\n]*passkey/i)
     expect(guide).toMatch(/\*\*Passkey lock\*\* \(optional/)
   })
@@ -67,16 +46,16 @@ describe('agent.md', () => {
   it('documentation links resolve to existing pages and anchors', () => {
     expect(checkDocLinks()).toEqual([])
   })
+})
 
-  it('keeps the passkey lock optional, as the README says', () => {
-    // wherdr answers only this computer and the tailnet; a passkey is an extra lock.
-    expect(read('../README.md')).toContain('optional passkey lock')
-    expect(guide).not.toMatch(/passkey[^\n]*\(required|\brequired\b[^\n]*passkey/i)
-    expect(guide).toMatch(/\*\*Passkey lock\*\* \(optional/)
-  })
-
-  it('the install tab prompt points to it', () => {
-    expect(AGENT_PROMPT).toContain('https://wherdr.dev/agent.md')
+describe('the install card', () => {
+  it('shows the prompts of docs/install-with-an-agent.md with the repository filled in', () => {
+    expect(AGENT_PROMPTS.map(p => p.text.split('\n')[0])).toEqual([
+      expect.stringContaining('Install wherdr v3'),
+      expect.stringContaining('NEXT TO the wherdr v2'),
+    ])
+    for (const p of AGENT_PROMPTS) expect(p.text).toContain(`the v3 branch of ${REPO}`)
+    expect(() => promptOf('# no prompt', 'New install of v3')).toThrow()
   })
 })
 
@@ -91,10 +70,8 @@ describe('llms.txt', () => {
     expect(existsSync(new URL(`../website/public/${url.slice('https://wherdr.dev/'.length)}`, import.meta.url))).toBe(true)
   })
 
-  it.each(links.filter(u => u.includes('raw.githubusercontent.com')))('%s is a file of the repository', (url) => {
-    const [, repo, path] = url.match(/raw\.githubusercontent\.com\/([^/]+\/[^/]+)\/main\/(.+)$/)!
-    expect(`https://github.com/${repo}`).toBe(REPO)
-    expect(existsSync(new URL(`../${path}`, import.meta.url))).toBe(true)
+  it.each(links.filter(u => u.startsWith(`${REPO}/blob/v3/`)))('%s is a file of the repository', (url) => {
+    expect(existsSync(new URL(`../${url.slice(`${REPO}/blob/v3/`.length)}`, import.meta.url))).toBe(true)
   })
 })
 

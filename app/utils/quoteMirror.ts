@@ -1,6 +1,6 @@
-// Quoted replies, "native" mode (utils/quoteTokens.ts): the field stays the
-// native textarea, with the same text as the plain mode (a "↳ … —" line per
-// reference, its answer below, see shared/reference.ts), so sending, Enter,
+// Quoted replies in the message field: the field stays the native textarea,
+// its text plain (a "↳ … —" line per reference, its answer below, see
+// shared/reference.ts), so sending, Enter,
 // "/", image paste, dictation and autocorrect do not change; only its drawing
 // does. A mirror behind the textarea draws the same text with the same
 // metrics (font, size, padding, wrapping, scroll), each reference line as a

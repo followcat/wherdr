@@ -22,6 +22,7 @@ function waitWhy(t: Task, i: Incident, tasks: Task[]): string {
   if (before.length) return `waits for ${before.join(', ')} to resume first`
   if (t.held) return t.held
   if (t.recovery!.cause === 'offline') return `${t.recovery!.label} still offline`
+  if (t.recovery!.cause === 'login') return `the login: /login once on ${t.recovery!.label}, then the engine restarts it`
   if (t.recovery!.cause === 'limit') {
     const until = i.evidence.find(e => e.startsWith(`${t.id} `))?.match(/resets at (\S+)/)?.[1]
     return `the account's limit${until ? ` until ${until}` : ', until its reading says it reset'}`

@@ -9,7 +9,7 @@
 // In a linked worktree (`git worktree add`), .leak-patterns (ignored by git) often only
 // exists in the main checkout: we then fall back to that one.
 //
-// .leak-patterns format (see .leak-patterns.example):
+// .leak-patterns format (see scripts/leak-patterns.example):
 //   # comment
 //   <regex>                        forbidden pattern (case-insensitive)
 //   <regex>  !! LICENSE, docs/*.md pattern allowed in these files
@@ -21,7 +21,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const PATTERNS_FILE = '.leak-patterns'
-const ALWAYS_SKIPPED = ['.leak-patterns', '.leak-patterns.example', 'package-lock.json']
+const ALWAYS_SKIPPED = ['.leak-patterns', 'leak-patterns.example', 'package-lock.json']
 
 /** Simple glob: `*` = anything but `/`, `**` = anything, `?` = one character. */
 export function globToRegExp(glob) {
@@ -215,7 +215,7 @@ function runGitleaks({ dir, root, range }) {
   // --verbose lists each finding (commit, file, line, rule); --redact hides the secret itself.
   const opts = ['--redact', '--verbose', '--no-banner', '--exit-code', '1']
   // Index scans run on a temporary export, outside the repository config discovery.
-  const config = path.join(root ?? git(['rev-parse', '--show-toplevel']).trim(), '.gitleaks.toml')
+  const config = path.join(root ?? git(['rev-parse', '--show-toplevel']).trim(), '.github', 'gitleaks.toml')
   if (existsSync(config)) opts.push('--config', config)
   const args = range ? ['git', root, `--log-opts=${range}`, ...opts] : ['dir', dir, ...opts]
   if (!hasGitleaks()) {

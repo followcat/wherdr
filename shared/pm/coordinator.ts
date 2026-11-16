@@ -12,7 +12,7 @@ import pkg from '../../package.json'
 type AgentRole = Run['role']
 import type { WorkflowChanges } from './workflowChanges'
 import type { ProjectColor } from './projectKey'
-import { FIXES_PER_STEP, FIX_KINDS, FIX_TEXT, type Autopilot, type FixKind, type limitsLeft } from './autopilot'
+import { FIXES_PER_STEP, FIX_KINDS, FIX_TEXT, taskStatus, type Autopilot, type FixKind, type limitsLeft } from './autopilot'
 import type { Wake, WakeSkip } from './wakes'
 import type { PaceGauge } from './pace'
 import type { AutomationProposal } from './automations'
@@ -110,6 +110,22 @@ export interface CoordinatorView {
   // Since yesterday's midnight, for the Autopilot tab's timeline: the wakes not sent and
   // why, the tasks started (first worker run); and the worker's account pace.
   skips?: WakeSkip[], started?: { task: string, title: string, at: number }[], pace?: PaceGauge
+  // A workspace's coordinator (workspace.ts): its tab group, its members and their tasks at work or waiting for the user.
+  workspace?: WorkspaceView
+}
+export interface WorkspaceView { group?: string, members: { key: string, name: string, label?: string, color?: ProjectColor }[], working: number, waiting: number }
+
+// The sidebar's workspace row: its members (in the order they were added), and
+// how many of their tasks work (stalled ones too) or wait for the user.
+export function workspaceView(ws: Pick<Project, 'key' | 'group'>, projects: Project[], tasks: Task[]): WorkspaceView {
+  const members = projects.filter(p => p.workspace === ws.key)
+  const states = tasks.filter(t => members.some(m => m.key === t.project)).map(taskStatus)
+  return {
+    ...(ws.group ? { group: ws.group } : {}),
+    members: members.map(m => ({ key: m.key, name: m.name, ...(m.label ? { label: m.label } : {}), ...(m.color ? { color: m.color } : {}) })),
+    working: states.filter(s => s === 'working' || s === 'stalled').length,
+    waiting: states.filter(s => s === 'waiting' || s === 'ready').length,
+  }
 }
 
 // Where the coordinator's current turn comes from: a message the user sent
@@ -124,6 +140,7 @@ export type Command =
   | { name: 'task tag', task: string, text: string }
   | { name: 'task link', task: string, url: string, label: string }
   | { name: 'step done', task: string, userSaid?: string, link?: string }
+  | { name: 'step back', task: string, text: string, userSaid: string }
   | { name: 'step wait', task: string, for?: string, untilUser?: true, reason: string }
   | { name: 'task decide', task: string, choice: Choice, reason: string }
   | { name: 'ack', wakes: string[] } | { name: 'automation show', id: string }
@@ -164,6 +181,7 @@ export const COMMANDS: { usage: string, does: string }[] = [
   { usage: 'step done <task> [--link <url>]', does: 'end the task\'s current step when you hold it (holder: coordinator)' },
   { usage: 'step wait <task> (--for <duration> | --until-user) --reason "<one sentence>"', does: 'when a recheck of a step you hold finds nothing new, postpone the next one: --for sets it (30m, 2h, up to 1d), --until-user stops rechecks until the user writes to you or acts on the task. Without it, each recheck with no news doubles the next interval, up to 1h; any news on the task starts it over. Written to the task\'s log' },
   { usage: 'step done <task> --user-said "<their words>"', does: 'end a step that waits for the user, with the user\'s own words; only in a turn that comes from the user' },
+  { usage: 'step back <task> "<what to change>" --user-said "<their words>"', does: 'send a step that waits for the user (a visual merge in Tasks to review) back to the worker, as the sheet\'s Send back does: the approval drops, the worker gets what to change and redoes the screenshots it touches, and the task leaves Tasks to review until its next review is done; only in a turn that comes from the user' },
   { usage: 'task decide <task> <choice> --reason "<one sentence>"', does: 'after N send-backs, pick one of the engine\'s options. Also pass when each remaining finding contradicts a spec change recorded on the task (task edit, task note, tell --spec), the reason citing it (its date YYYY-MM-DD or its words); never before a merge only the user may do nor on a critical finding with proof. Written to the task\'s log and shown in the user\'s Decisions: tell the user in your next message' },
   { usage: 'ack <wake> [<wake>…]', does: 'say you handled a wake (each wake ends with its id); unacked, it comes back once, then the user is told' },
   { usage: 'autopilot show', does: 'your autopilot\'s goal, hours, whether it looks for new work (and how many tasks those wakes may still add today), the scheduled wakes skipped today (nothing to do, or ahead of the pace), what is left of today\'s limits, the pacing of your worker\'s account (go, or what automatic work waits for), each machine the project allows (online or offline, its available hours, memory, cores and load, its agents at work by weight, the heaviest weight it takes now or why none) the weights (what each counts, the weight of each task type) and the last open incident (why agents were gone, see incidents)' },
@@ -259,7 +277,7 @@ function parseWords(argv: unknown): Command | { error: string } {
   const verb = [w0, w1].join(' '), task = w2 ?? ''
   const usage = (u: string) => ({ error: `usage: wherdr pm ${COMMANDS.find(c => c.usage.startsWith(u))!.usage}` })
   const known = (...k: string[]) => Object.keys(flags).find(f => !k.includes(f))
-  const extra = known('project', ...({ 'tell': ['to', 'fix', 'reason', 'spec'], 'task edit': ['title', 'description', 'after', 'merge-after', 'reason'], 'read': ['to', 'lines'], 'pr merge': ['user-said', 'method'], 'task link': ['label'], 'step done': ['user-said', 'link'], 'step wait': ['for', 'until-user', 'reason'], 'task decide': ['reason'], 'task stop': ['reason'], 'task remove': ['reason'], 'task add': ['type', 'after', 'merge-after', 'description', 'weight', 'files', 'from-branch', 'feature'], 'feature add': ['description'], 'feature close': ['reason'], 'task start': ['on'], 'list': ['archived'], 'automation propose': ['remove'], 'incidents': ['since'], 'ui open': ['target'], 'map set': ['does', 'talks', 'used-by'], 'map list': ['refresh'] }[w0 === 'tell' || w0 === 'read' || w0 === 'incidents' || w0 === 'list' ? w0 : verb] ?? []))
+  const extra = known('project', ...({ 'tell': ['to', 'fix', 'reason', 'spec'], 'task edit': ['title', 'description', 'after', 'merge-after', 'reason'], 'read': ['to', 'lines'], 'pr merge': ['user-said', 'method'], 'task link': ['label'], 'step done': ['user-said', 'link'], 'step back': ['user-said'], 'step wait': ['for', 'until-user', 'reason'], 'task decide': ['reason'], 'task stop': ['reason'], 'task remove': ['reason'], 'task add': ['type', 'after', 'merge-after', 'description', 'weight', 'files', 'from-branch', 'feature'], 'feature add': ['description'], 'feature close': ['reason'], 'task start': ['on'], 'list': ['archived'], 'automation propose': ['remove'], 'incidents': ['since'], 'ui open': ['target'], 'map set': ['does', 'talks', 'used-by'], 'map list': ['refresh'] }[w0 === 'tell' || w0 === 'read' || w0 === 'incidents' || w0 === 'list' ? w0 : verb] ?? []))
   if (extra) return { error: `unknown option --${extra}` }
   if (w0 === 'map') return parseMap(words.slice(1), flags)
   if (w0 === 'repo') return parseRepo(words.slice(1))
@@ -293,6 +311,12 @@ function parseWords(argv: unknown): Command | { error: string } {
   if (verb === 'report back' || verb === 'report close') {
     const text = words.slice(3).join(' ').trim()
     return TASK_RE.test(task) && text && text.length <= 2000 ? { name: verb, task, text } : usage(verb)
+  }
+  if (verb === 'step back') {
+    const text = words.slice(3).join(' ').trim(), said = flags['user-said']?.trim()
+    if (!TASK_RE.test(task) || !text || text.length > 2000) return usage(verb)
+    if (!said) return { error: '--user-said needs the user\'s words' }
+    return { name: verb, task, text, userSaid: said.slice(0, 500) }
   }
   if (verb === 'ui open') return uiOpenArgs(w2, w3, flags.target, usage(verb), flags.project)
   if (verb === 'ui targets') return w2 ? usage(verb) : { name: verb }
@@ -418,6 +442,14 @@ export function stepDoneEvent(step: PlannedStep | undefined, cmd: { userSaid?: s
   }
   if (step.holder !== 'coordinator') return { refused: `Step "${step.id}" is held by the ${step.holder ?? 'none'}, not the coordinator` }
   return { kind: 'report', from: 'coordinator', ...(cmd.link ? { evidence: { link: cmd.link } } : {}) }
+}
+
+// `step back`: why the coordinator may not send this step back to the worker
+// (the sheet's Send back, on the user's words), or undefined.
+export function stepBackRefusal(step: PlannedStep | undefined, turn: Turn): string | undefined {
+  if (turn !== 'user') return 'step back is only for a turn that comes from the user, not a wake: tell the user what you would change'
+  if (!step) return 'The task has no current step'
+  if (step.ends !== 'user') return `Step "${step.id}" does not wait for the user: \`tell\` its agent instead`
 }
 
 // task edit, task note and tell --spec change what the task asks: the user's
@@ -656,6 +688,7 @@ export function roleFiles(p: Project, t: Template | null, examples: Template[], 
     ...reachLines(p.reach, shown ?? (k => k)),
     `## Commands (your token: ${p.reach?.length || members.length ? 'this project, and the other projects above' : 'this project only'})`, '', ...commandList(t), '',
     'When the user changes direction mid-task, record it as a spec change (`task edit`, `task note`, or `tell --spec`), not only a `tell`: the reviewer reviews against the spec.',
+    'When the user asks you for changes on a task that waits for them (a merge in Tasks to review), `step back` it with what to change and their words, not only a `tell`: a `tell` leaves the step at the merge, with the old screenshots, while the work restarts.',
     'Every change you make is written to the task\'s or the workflow\'s log with your name.',
     `Quote a file as inline code with its absolute path (\`${p.path.replace(/\/$/, '')}/README.md\`): the user's interface makes it a link.`, '',
     ...docsRule(docs, '`wherdr pm help`', { cmd: 'wherdr pm ui open', places: `one of your project's places (its board, a task, its sheet: KEY ${p.key}) or a global Settings section` }, uiGuide('coordinator', { key: p.key })),

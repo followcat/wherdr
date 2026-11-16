@@ -36,7 +36,7 @@ export async function endAgents(deps: Pick<PmLaunchDeps, 'store' | 'call'>, task
   let saved = task
   for (const r of (await store.runs()).filter(x => x.task === task.id && x.state !== 'ended')) {
     const err = r.terminal ? await killTerminal(deps, r.terminal).then(() => '', (e: Error) => e.message) : ''
-    await store.saveRun({ ...r, state: 'ended', endedBy })
+    await store.saveRun({ ...r, state: 'ended', endedBy, ...(endedBy === 'released' ? { endedAt: Date.now() } : {}) })
     saved = await store.logTask(saved, 'engine', err ? `could not end the ${r.role} (${err}): close its terminal by hand` : `ended the ${r.role} (${r.program} ${r.model})${why}; its worktree stays`)
   }
   return saved

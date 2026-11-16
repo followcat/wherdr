@@ -123,7 +123,7 @@ it('its card: the emblem, what it is, and its state as a square (not started, re
   await mount()
   const sub = () => w!.find('[data-testid="alfred-sub"]')
   expect(w!.find('[data-testid="alfred-emblem"]').exists()).toBe(true)
-  expect(w!.text()).toContain('Your assistant · all projects')
+  expect(w!.text()).toContain('wherdr assistant')
   // No Ask field under it (WHR-183): a tap on the row opens its conversation.
   expect(w!.find('input').exists()).toBe(false)
   await vi.waitFor(() => expect(sub().text()).toBe('Not started · Claude'))

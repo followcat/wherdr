@@ -34,7 +34,7 @@ is kept per device.
 ### Build and install a plugin (step by step)
 
 A plugin is two files in one folder: `manifest.json` and a prebuilt ES module. The complete
-working example is [`examples/plugins/hello-mic/`](../examples/plugins/hello-mic/): a microphone
+working example is [`docs/examples/plugins/hello-mic/`](examples/plugins/hello-mic/): a microphone
 button next to Send that inserts a fixed sample text (no audio). To follow the steps without
 writing code, install it as is.
 
@@ -46,7 +46,7 @@ writing code, install it as is.
    dependencies; any bundler works): `npx esbuild src/index.ts --bundle --format=esm --target=es2020 --outfile=index.js`.
    For the example: `npm run build:example-plugin` from the repo root.
 3. **Install**: copy `manifest.json` and `index.js` (not the sources) to
-   `<DATA_DIR>/plugins/<id>/`, e.g. `mkdir -p data/plugins/hello-mic && cp examples/plugins/hello-mic/{manifest.json,index.js} data/plugins/hello-mic/`.
+   `<DATA_DIR>/plugins/<id>/`, e.g. `mkdir -p data/plugins/hello-mic && cp docs/examples/plugins/hello-mic/{manifest.json,index.js} data/plugins/hello-mic/`.
    Reload the page: no restart needed.
 4. **Check**: Settings › Plugins lists it as "On". If it says "Disabled after an error", the message is
    the exception; fix it and flip the switch.

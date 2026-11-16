@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Settings, in sections: appearance, conversation, terminal, agents (with pace), machines,
 // notifications, security (passkey), shortcuts, about.
-import type { ThemeDef, ThemeGroup } from '~/utils/themes'
+import type { ThemeDef, ThemeGroup, ThemeMode } from '~/utils/themes'
 import type { TypingSpeed } from '~/utils/typewriter'
 import { SETTINGS_ALIASES, SETTINGS_SECTIONS, settingsBack } from '~/utils/settingsNav'
 import { CONVERSATION_TABS, conversationTab, type ConversationTab } from '#shared/appLinks'
@@ -118,6 +118,15 @@ const openedBy = computed(() => {
   return props.panel && o && o.section === route.query.section ? o.by : null
 })
 if (props.panel) onBeforeUnmount(() => { uiOpenedBy.value = null })
+// Side panel too narrow for labels (main.css container query): the rail can show them
+// anyway, a choice kept on the device.
+const RAIL_LABELS_KEY = 'settingsRailLabels'
+const railLabels = ref(false)
+onMounted(() => { try { railLabels.value = localStorage.getItem(RAIL_LABELS_KEY) === '1' } catch {} })
+function toggleRailLabels() {
+  railLabels.value = !railLabels.value
+  try { localStorage.setItem(RAIL_LABELS_KEY, railLabels.value ? '1' : '0') } catch {}
+}
 function closePanel() {
   const { section: _s, project: _p, tab: _t, review: _r, library: _l, group: _g, target: _x, ...query } = route.query
   router.replace({ query })
@@ -160,26 +169,11 @@ onMounted(async () => {
   await router.push(here)
 })
 // Global refs bound in the template: local (assignable) aliases.
-const shellsOn = showShells
 const countersOn = showCounters
 const quotasOn = showQuotas
-const compactOn = compactList
 const autoReorderOn = autoReorderReady
 const encryptedOn = encryptedText
 const agentClipboardOn = agentClipboard
-// Quoted replies: the mode of this device.
-const quoteChoice = quoteMode
-const quoteItems = computed(() => [
-  { label: tl('Tokens, native field', 'Jetons, champ natif'), description: tl('Each “↳ … —” line is drawn as a token in the usual field. Typing, dictation and autocorrect unchanged. Default.', 'Chaque ligne « ↳ … — » est dessinée en jeton dans le champ habituel. Saisie, dictée et correction auto inchangées. Par défaut.'), value: 'native' },
-  { label: tl('Plain text', 'Texte simple'), description: tl('The same “↳ … —” lines, shown as plain text. A fallback if the tokens misbehave.', 'Les mêmes lignes « ↳ … — », affichées en texte simple. Un secours si les jetons se comportent mal.'), value: 'lines' },
-])
-// How questions and points offer to be quoted (utils/questionReply.ts).
-const replyStyleChoice = replyStyle
-const replyStyleItems = computed(() => [
-  { label: tl('Icon', 'Icône'), description: tl('A small ↳ after each question, and a grey one after each point (on hover on a computer). Default.', 'Un petit ↳ après chaque question, et un gris après chaque point (au survol sur ordinateur). Par défaut.'), value: 'icon' },
-  { label: tl('Tap the text', 'Toucher le texte'), description: tl('No button: a question is underlined, tap it. A point: click it on a computer; on a phone, tap it, then “↳ Discuss”.', 'Aucun bouton : une question est soulignée, touche-la. Un point : clique-le sur ordinateur ; sur téléphone, touche-le, puis « ↳ Discuter ».'), value: 'text' },
-  { label: tl('List under the message', 'Liste sous le message'), description: tl('A number after each question and the questions listed under the message; “+ Quote a point”, then the point.', 'Un numéro après chaque question et les questions listées sous le message ; « + Citer un point », puis le point.'), value: 'list' },
-])
 // Dictation: Off, then the engines this build has (utils/dictation/registry.ts). Per device.
 const dictationChoice = dictationEngine
 const dictationItems = computed(() => {
@@ -233,18 +227,6 @@ const quotaItems = computed(() => [
   { label: t('Remaining'), description: t('What is left in each window, like Codex.'), value: 'left' },
   { label: t('Used'), description: t('What has been used, like Claude.'), value: 'used' },
 ])
-const focusBorderMode = focusBorder
-const focusBorderItems = computed(() => [
-  { label: t('Border only'), description: t('A second color glides slowly around the border.'), value: 'border' },
-  { label: t('Halo'), description: t('The same, with a faint glow around the field.'), value: 'halo' },
-  { label: t('None'), description: t('Plain 1 px border, no animation.'), value: 'off' },
-])
-const backdropMode = backdrop
-const packetsOn = backdropPackets
-const backdropItems = computed(() => [
-  { label: 'wherdr grid', description: t('Dotted grid with light packets, like wherdr.dev.'), value: 'wherdr' },
-  { label: 'herdr grid', description: t('Flat line grid, like herdr.dev.'), value: 'herdr' },
-])
 
 // ------------------------------------------------------------ notifications
 const subscribed = pushOn
@@ -297,17 +279,50 @@ const quietEnd = computed(() => {
 })
 
 // ------------------------------------------------------------ theme
-// Picker section titles: brand names stay as is in both languages; the
-// 'herdr' group holds the classic terminal palettes.
-const themeGroupLabel = (g: ThemeGroup) => (g === 'agents' ? tl('Agents', 'Agents') : g === 'herdr' ? tl('Classic', 'Classiques') : 'wherdr')
-// Preview: background, surface, line, text, accent, states (working, waiting, done).
-const swatches = (th: ThemeDef) => [th.c.bg, th.c.surface, th.c.line, th.c.text, th.c.accent, th.c.blue, th.c.rose, th.c.teal]
+// Picker section titles: brand names stay as is.
+const themeGroupLabel = (g: ThemeGroup) => (g === 'agents' ? t('Agents') : g === 'classic' ? t('Classic') : g === 'custom' ? tl('Custom') : 'wherdr')
+// Preview in the mode shown: background, surface, line, text, accent, states (working, waiting, done).
+const swatches = (th: ThemeDef) => {
+  const c = activeTheme.value.light ? th.light : th.c
+  return [c.bg, c.surface, c.line, c.text, c.accent, c.blue, c.rose, c.teal]
+}
+const modeItems = computed(() => [
+  { value: 'dark' as ThemeMode, label: t('Dark'), icon: 'i-lucide-moon' },
+  { value: 'light' as ThemeMode, label: t('Light'), icon: 'i-lucide-sun' },
+  { value: 'system' as ThemeMode, label: t('System'), icon: 'i-lucide-monitor' },
+])
+function pickMode(m: ThemeMode) {
+  themeMode.value = m
+  haptic()
+}
 const themesOpen = ref(false)
-const currentTheme = computed(() => themeById(themeChoice.value))
+const currentTheme = computed(() => findTheme(themeChoice.value))
 const currentLabel = computed(() => (currentTheme.value ? currentTheme.value.label : themeChoice.value))
 function pickTheme(id: string) {
   themeChoice.value = id
   haptic()
+}
+// Custom themes: the editor opens on a theme (a custom one is edited, any other starts a new one).
+const editorOpen = ref(false)
+const editorBase = ref<ThemeDef | null>(null)
+function openEditor(th: ThemeDef | undefined) {
+  editorBase.value = th || themeById(DEFAULT_THEME)!
+  editorOpen.value = true
+}
+const importOpen = ref(false)
+const importText = ref('')
+const importError = ref('')
+async function importFile(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (file) importText.value = file.size > THEME_FILE_MAX ? '' : await file.text()
+  importError.value = file && file.size > THEME_FILE_MAX ? tl(`The file is larger than ${THEME_FILE_MAX / 1024} KB`) : ''
+}
+function importTheme() {
+  const th = importThemeText(importText.value)
+  if (typeof th === 'string') { importError.value = tl(th); return }
+  if (!saveCustomTheme(th)) return
+  importOpen.value = false
+  toast(tl(`Theme ${th.label} imported`))
 }
 
 // ------------------------------------------------------------ texte du terminal
@@ -403,13 +418,20 @@ onMounted(() => {
       </template>
     </header>
     <div class="settings-layout" :class="{ 'section-open': activeSection }">
-      <nav class="settings-nav" :aria-label="t('Settings sections')">
+      <nav class="settings-nav" :class="{ 'rail-labels': panel && railLabels }" :aria-label="t('Settings sections')">
         <button
           v-for="item in sections" :key="item.id" type="button" class="settings-nav-item"
-          :class="{ selected: activeSection === item.id }" :title="panel ? item.label : undefined" :aria-current="activeSection === item.id ? 'page' : undefined"
+          :class="{ selected: activeSection === item.id }" :title="panel ? item.label : undefined" :aria-label="panel ? item.label : undefined" :aria-current="activeSection === item.id ? 'page' : undefined"
           @click="openSection(item.id)"
         >
           <UIcon :name="item.icon" /><span>{{ item.label }}</span><UIcon name="i-lucide-chevron-right" class="settings-nav-arrow" />
+        </button>
+        <button
+          v-if="panel" type="button" class="settings-rail-toggle" :aria-pressed="railLabels"
+          :aria-label="t('Show section names')" :title="t('Show section names')"
+          @click="toggleRailLabels"
+        >
+          <UIcon :name="railLabels ? 'i-lucide-chevrons-left' : 'i-lucide-chevrons-right'" />
         </button>
       </nav>
       <div v-show="activeSection" ref="body" class="settings-body">
@@ -421,6 +443,11 @@ onMounted(() => {
         <div v-show="activeSection === 'appearance'" class="settings-section">
           <div data-ui-target="appearance.theme" class="settings-group">
             <h3>{{ t('Theme') }}</h3>
+            <div class="segmented theme-mode" role="radiogroup" :aria-label="t('Mode')" style="--segment-count: 3">
+              <button v-for="m in modeItems" :key="m.value" type="button" role="radio" :class="{ on: themeMode === m.value }" :aria-checked="themeMode === m.value" @click="pickMode(m.value)">
+                <UIcon :name="m.icon" /><span>{{ m.label }}</span>
+              </button>
+            </div>
             <!-- Collapsed by default: the current theme shows, a tap expands the list. -->
             <button type="button" class="theme-opt theme-current" :aria-expanded="themesOpen" @click="themesOpen = !themesOpen">
               <span class="theme-sw"><i v-for="(c, i) in currentTheme ? swatches(currentTheme) : []" :key="i" :style="{ background: c }" /></span>
@@ -428,42 +455,49 @@ onMounted(() => {
               <UIcon :name="themesOpen ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'" class="theme-check" />
             </button>
             <div v-show="themesOpen" class="theme-list" role="radiogroup" :aria-label="t('Theme')">
-              <section v-for="sec in themeSections()" :key="sec.group" class="theme-section" :aria-label="themeGroupLabel(sec.group)">
+              <section v-for="sec in themeSections(customThemes)" :key="sec.group" class="theme-section" :aria-label="themeGroupLabel(sec.group)">
                 <h4 class="theme-section-title">{{ themeGroupLabel(sec.group) }}</h4>
                 <div class="theme-grid">
+                  <div v-for="th in sec.group === 'custom' ? sec.themes : []" :key="th.id" class="theme-custom">
+                    <button type="button" role="radio" class="theme-opt" :class="{ on: themeChoice === th.id }" :aria-checked="themeChoice === th.id" @click="pickTheme(th.id)">
+                      <span class="theme-sw"><i v-for="(c, i) in swatches(th)" :key="i" :style="{ background: c }" /></span>
+                      <span class="theme-name">{{ th.label }}<small v-if="th.author">{{ th.author }}</small></span>
+                    </button>
+                    <button type="button" class="icon-btn" :aria-label="tl(`Edit ${th.label}`)" data-testid="theme-edit" @click="openEditor(th)"><UIcon name="i-lucide-pencil" /></button>
+                  </div>
                   <button
-                    v-for="th in sec.themes" :key="th.id" type="button" role="radio" class="theme-opt" :class="{ on: themeChoice === th.id }"
+                    v-for="th in sec.group === 'custom' ? [] : sec.themes" :key="th.id" type="button" role="radio" class="theme-opt" :class="{ on: themeChoice === th.id }"
                     :aria-checked="themeChoice === th.id" @click="pickTheme(th.id)"
                   >
                     <span class="theme-sw"><i v-for="(c, i) in swatches(th)" :key="i" :style="{ background: c }" /></span>
-                    <span class="theme-name">{{ th.label }}<small v-if="th.id === DEFAULT_THEME">{{ t('default') }}</small><small v-else-if="th.light">{{ t('light') }}</small></span>
+                    <span class="theme-name">{{ th.label }}<small v-if="th.id === DEFAULT_THEME">{{ t('default') }}</small></span>
                     <UIcon v-if="themeChoice === th.id" name="i-lucide-check" class="theme-check" />
                   </button>
                 </div>
               </section>
+              <div class="theme-tools">
+                <UButton size="lg" color="neutral" variant="outline" icon="i-lucide-palette" data-testid="theme-create" @click="openEditor(currentTheme)">{{ tl('Create theme') }}</UButton>
+                <UButton size="lg" color="neutral" variant="outline" icon="i-lucide-upload" @click="importText = ''; importError = ''; importOpen = true">{{ tl('Import theme') }}</UButton>
+              </div>
             </div>
           </div>
-          <p class="muted settings-hint">{{ t('The theme follows you on every device.') }}</p>
-
-          <div class="settings-group">
-            <h3>{{ t('Message field border on focus') }}</h3>
-            <URadioGroup v-model="focusBorderMode" :items="focusBorderItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
-            <p class="muted settings-hint">{{ t('Also on omp’s running actions (border only). Frozen when the system asks for reduced motion. Follows you on every device.') }}</p>
-          </div>
+          <ThemeEditor v-model:open="editorOpen" :base="editorBase" />
+          <AppSheet v-model:open="importOpen" :title="tl('Import theme')" hide-close>
+            <form class="sheet-form" @submit.prevent="importTheme">
+              <label class="field-label" for="themeImport">{{ tl('Theme JSON') }}</label>
+              <UTextarea id="themeImport" v-model="importText" :rows="8" class="w-full mono" :placeholder="tl('Paste a theme file, or pick one')" />
+              <input type="file" accept=".json,application/json" class="w-full" :aria-label="tl('Theme file')" @change="importFile">
+              <p v-if="importError" class="form-error" role="alert">{{ importError }}</p>
+              <UButton type="submit" size="xl" color="primary" class="hw-cta" :disabled="!importText.trim()">{{ tl('Import') }}</UButton>
+            </form>
+          </AppSheet>
+          <p class="muted settings-hint">{{ t('The theme and its mode follow you on every device. System follows the light or dark setting of this device.') }}</p>
 
           <div data-ui-target="appearance.home-screen" class="settings-group">
             <h3>{{ t('Home screen') }}</h3>
             <label class="settings-toggle">
-              <span><b>{{ t('Compact list') }}</b><small>{{ t('Cards: one line in Compact, two in Normal with current activity. Follows you on every device.') }}</small></span>
-              <USwitch v-model="compactOn" size="xl" />
-            </label>
-            <label class="settings-toggle">
               <span><b>{{ t('Reorder automatically') }}</b><small>{{ t('In Ready, show unread agents before read ones. Follows you on every device.') }}</small></span>
               <USwitch v-model="autoReorderOn" size="xl" />
-            </label>
-            <label class="settings-toggle">
-              <span><b>{{ t('Show terminals') }}</b><small>{{ t('Show terminal spaces in the list, filed under Ready.') }}</small></span>
-              <USwitch v-model="shellsOn" size="xl" />
             </label>
             <label class="settings-toggle">
               <span><b>{{ t('Show counters') }}</b><small>{{ t('Show agent counters on the home screen.') }}</small></span>
@@ -485,15 +519,6 @@ onMounted(() => {
           <!-- Computer layout only (same threshold as the app: 900 px). -->
           <template v-if="desk">
             <div class="eyebrow settings-subhead"><span>{{ t('Desktop') }}</span></div>
-            <div class="settings-group">
-              <h3>{{ t('Background') }}</h3>
-              <URadioGroup v-model="backdropMode" :items="backdropItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
-              <label v-if="backdropMode === 'wherdr'" class="settings-toggle">
-                <span><b>{{ t('Animated packets') }}</b><small>{{ t('Small glowing squares running along the wherdr grid.') }}</small></span>
-                <USwitch v-model="packetsOn" size="xl" />
-              </label>
-              <p class="muted settings-hint">{{ t('In the margins of the conversation. Still when the system asks for reduced motion. Follows you on every device.') }}</p>
-            </div>
             <div class="settings-group settings-width">
               <h3>{{ t('Content width') }}</h3>
               <URadioGroup v-model="width" :items="widthItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
@@ -527,20 +552,9 @@ onMounted(() => {
                 <span><b>{{ t('Encrypted text') }}</b><small>{{ t('Writing advances in glyphs, then the text decrypts behind it.') }}</small></span>
                 <USwitch v-model="encryptedOn" :disabled="!typewriterActive" size="xl" />
               </label>
-              <TypingPreview v-if="activeSection === 'conversation' && convTab === 'display'" />
-            </div>
-            <div data-ui-target="conversation.reply-style" class="settings-group">
-              <h3>{{ tl('Reply style', 'Style de réponse') }}</h3>
-              <p class="muted settings-lead">{{ tl('Each question an agent asks, and each point it lists, can be quoted in the field to answer them one by one. Choose how they offer it.', 'Chaque question d’un agent, et chaque point qu’il liste, peut être cité dans le champ pour y répondre un par un. Choisis comment ils le proposent.') }}</p>
-              <URadioGroup v-model="replyStyleChoice" :items="replyStyleItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio reply-style-radio" />
-              <p class="muted settings-hint">{{ tl('Follows you on every device.', 'Te suit sur tous tes appareils.') }}</p>
-            </div>
-            <div class="settings-group">
-              <h3>{{ tl('Quoted replies', 'Réponses citées') }}</h3>
-              <p class="muted settings-lead">{{ tl('Answer several questions, passages or decisions of an agent in one message: each one goes into the field as a “↳ … —” line that names the message and quotes it, your answer below. Choose how the field shows these lines; the message sent is the same.', 'Réponds à plusieurs questions, passages ou décisions d’un agent dans un seul message : chacun entre dans le champ sous la forme d’une ligne « ↳ … — » qui nomme le message et le cite, ta réponse en dessous. Choisis comment le champ affiche ces lignes ; le message envoyé est le même.') }}</p>
-              <QuoteTokensPreview v-if="activeSection === 'conversation' && convTab === 'display'" :mode="quoteChoice" />
-              <URadioGroup v-model="quoteChoice" :items="quoteItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio quote-mode-radio" />
-              <p class="muted settings-hint">{{ tl('Saved on this device.', 'Enregistré sur cet appareil.') }}</p>
+              <SettingsPreview v-if="activeSection === 'conversation' && convTab === 'display'">
+                <TypingPreview />
+              </SettingsPreview>
             </div>
           </div>
           <div v-show="convTab === 'dictation'" id="conversation-panel-dictation" role="tabpanel" aria-labelledby="conversation-tab-dictation" class="settings-group" data-testid="dictation-settings" data-ui-target="conversation.dictation">
@@ -554,20 +568,13 @@ onMounted(() => {
           </div>
           <div v-show="convTab === 'read-aloud'" id="conversation-panel-read-aloud" role="tabpanel" aria-labelledby="conversation-tab-read-aloud" class="settings-group" data-testid="read-aloud-group" data-ui-target="conversation.read-aloud">
             <h3>{{ tl('Read aloud', 'Lecture à voix haute') }}</h3>
-            <p class="muted settings-lead">{{ tl('Play under each agent reply reads it aloud: the words only, with “code block” in place of code. One reply at a time; tap Stop to end it. On iPhone, iOS may stop reading when the screen locks or you leave the app.', 'Lire sous chaque réponse d’agent la lit à voix haute : les mots seulement, avec « bloc de code » à la place du code. Une réponse à la fois ; Arrêter y met fin. Sur iPhone, iOS peut arrêter la lecture quand l’écran se verrouille ou que tu quittes l’app.') }}</p>
+            <p class="muted settings-lead" data-testid="read-aloud-lead">{{ t('Turning it on adds a Play button under each reply, which reads it aloud: the words only, with “code block” in place of code. One reply at a time; tap Stop to end it. On iPhone, iOS may stop reading when the screen locks or you leave the app.') }}</p>
             <ReadAloudSettings />
             <p class="muted settings-hint">{{ tl('Saved on this device.', 'Enregistré sur cet appareil.') }}</p>
           </div>
         </div>
 
         <div v-show="activeSection === 'terminal'" class="settings-section">
-          <div class="settings-group">
-            <h3>{{ t('Home screen') }}</h3>
-            <label class="settings-toggle">
-              <span><b>{{ t('Show terminals') }}</b><small>{{ t('Show terminal spaces in the list, filed under Ready.') }}</small></span>
-              <USwitch v-model="shellsOn" size="xl" />
-            </label>
-          </div>
           <div data-ui-target="terminal.text-size" class="settings-group">
             <h3>{{ t('Text') }}</h3>
             <div class="settings-stepper">
@@ -683,7 +690,7 @@ onMounted(() => {
         </div>
 
         <div v-if="desk && !coarse" v-show="activeSection === 'shortcuts'" class="settings-section">
-          <ShortcutsReference />
+          <ShortcutsReference editable />
         </div>
 
         <div v-show="activeSection === 'about'" class="settings-section">

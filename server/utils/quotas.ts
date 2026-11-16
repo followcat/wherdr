@@ -33,6 +33,7 @@ import type { ExecResult, MachineFs } from './fsx'
 import { HerdrError } from './herdr'
 import type { Machine } from './machines'
 import { coreQuotaMachines } from './coreQuotaMachines'
+import { coreFailureKind } from './coreTranscripts'
 import { fmt } from '../../shared/message'
 import { type KnownWeek, type WeekReading, codexWeekWindow } from '../../shared/codexStatus'
 
@@ -579,10 +580,13 @@ async function readMachineClaude(m: QuotaMachine): Promise<ClaudeMachineReading 
     try { return await readClaude(m.fs, m.home) }
     catch (error) {
       const code = (error as { code?: unknown } | null)?.code
-      // No account, quota payload or raw SSH diagnostics in logs.
+      // No account, quota payload or raw SSH diagnostics in logs. `reason`: core's
+      // error kind when core refused the read ("unavailable", "timeout"…).
+      const reason = coreFailureKind(error)
       console.warn(new Date().toISOString(), 'Claude quota read failed', {
         machine: m.key || 'local',
         code: typeof code === 'string' && /^[a-z_0-9]+$/i.test(code) ? code : 'unknown',
+        ...(reason ? { reason } : {}),
         attempt, action: attempt === 1 ? 'retry' : 'discard',
       })
     }

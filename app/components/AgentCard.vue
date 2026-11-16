@@ -33,7 +33,7 @@ const space = computed(() => (props.row && props.row.kind === 'space' ? props.ro
 // Pane whose state the card shows.
 const statePane = computed(() => props.pane)
 const cardStatus = computed(() => statusKey(statePane.value))
-// Compact list: one line (avatar, title, tab dots or pane count, state dot);
+// One line (avatar, title, tab dots or pane count, state dot);
 // while the agent waits for an answer, its question and one-tap answers open below.
 const compact = computed(() => compactMeta({ tabs: space.value?.tabs.length, panes: space.value?.panes.length }))
 const compactDots = computed(() => (compact.value.dots && space.value ? tabStates(space.value) : []))
@@ -72,7 +72,7 @@ function verdictLine(text: string): string {
   return `${tl(`${v.total} findings`)}: ${[...SEVERITIES].reverse().filter(s => v.count[s]).map(s => `${v.count[s]} ${tl(s)}`).join(', ')}`
 }
 // Normal mode: the current activity on a second line, unless the answers show below.
-const activityLine = computed(() => !task.value && !compactList.value && !more.value ? preview.value || '' : '')
+const activityLine = computed(() => !task.value && !more.value ? preview.value || '' : '')
 const subtitle = computed(() => (isAlfredPane(props.pane) ? '' : conversationSubtitle(props.pane, ws.value)))
 // Selection (computer): the pane being viewed, or for a space one of its panes / tabs.
 const route = useRoute()

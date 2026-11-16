@@ -15,7 +15,7 @@ import { timesOf, type Times } from './times'
 import { sameFilesText } from './files'
 import { MERGE_REFUSED, ordinal } from './mergeQueue'
 import { agentCatchingUp, refusalSaid, turnText, type Told } from './refusal'
-import { AGENT_ENDED, retriesAction, waitsShort } from './release'
+import { AGENT_ENDED, retriesAction, waitsShort, wasReleased } from './release'
 import { recovering } from './incident'
 import { showIds } from './projectKey'
 import { questionKey } from './summary'
@@ -37,6 +37,7 @@ export interface Card {
   holder: Holder
   terminal?: string // herdr-core address of the holder's agent, if it runs
   agents?: { worker?: string, reviewer?: string } // herdr-core address of each role's agent still running (Open the agent)
+  released?: number // its worker was released to free memory, at (0: unknown): opening it starts it again (release.ts)
   yourTurn?: string // the badge
   stall?: Stall // stalled, the machine may still fix it (blocked.ts); past HANDLE_AFTER_MS, also its yourTurn
   userLabel?: string // the button of a step that waits for the user
@@ -107,7 +108,8 @@ export function cardOf(task: Task, plan: PlannedStep[], runs: Run[], now = Date.
   const worker = live('worker')?.terminal
   const reviewer = live('reviewer')?.terminal
   const stall = stallOf(task, plan, now)
-  const branch = runs.filter(r => r.task === task.id && r.role === 'worker').sort((a, b) => b.startedAt - a.startedAt)[0]?.branch
+  const lastWorker = runs.filter(r => r.task === task.id && r.role === 'worker').sort((a, b) => b.startedAt - a.startedAt)[0]
+  const branch = lastWorker?.branch
   // A done task (merged, archived) is never the user's turn.
   // In the merge queue, waiting its turn or out of line: a refused merge is the queue's, not the user's.
   const queue = task.queue && !s?.done ? task.queue : undefined
@@ -129,6 +131,7 @@ export function cardOf(task: Task, plan: PlannedStep[], runs: Run[], now = Date.
     holder,
     ...(run?.terminal ? { terminal: run.terminal } : {}),
     ...(worker || reviewer ? { agents: { ...(worker ? { worker } : {}), ...(reviewer ? { reviewer } : {}) } } : {}),
+    ...(!s?.done && wasReleased(lastWorker) ? { released: lastWorker!.endedAt ?? 0 } : {}),
     ...(branch ? { branch } : {}),
     ...(task.prBase ? { pr: task.prBase } : {}),
     ...(yourTurn ? { yourTurn } : {}),

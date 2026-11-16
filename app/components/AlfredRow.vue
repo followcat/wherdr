@@ -78,7 +78,7 @@ onUnmounted(() => clearInterval(timer))
       <span class="alfred-mark"><AlfredEmblem class="alfred-mark-emblem" /></span>
       <span class="alfred-text">
         <span class="alfred-head"><b data-testid="alfred-name">{{ name }}</b><span v-if="!alfredPane && !busy" class="alfred-start">{{ tl('Start', 'Lancer') }}</span></span>
-        <small v-if="!banner" class="alfred-role">{{ tl('Your assistant · all projects', 'Ton assistant · tous les projets') }}</small>
+        <small v-if="!banner" class="alfred-role">{{ tl('wherdr assistant') }}</small>
         <small class="alfred-sub pill" :class="tone" data-testid="alfred-sub"><i aria-hidden="true" />{{ banner ? `${tl('All projects', 'Tous les projets')} · ${sub}` : sub }}</small>
       </span>
       <UIcon v-if="alfredPane" name="i-lucide-chevron-right" class="alfred-go" />

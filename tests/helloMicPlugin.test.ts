@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
 import { createPluginHost, type HostDeps } from '../app/utils/pluginHost'
 
-const dir = resolve(__dirname, '../examples/plugins/hello-mic')
+const dir = resolve(__dirname, '../docs/examples/plugins/hello-mic')
 
 const hosts: ReturnType<typeof createPluginHost>[] = []
 

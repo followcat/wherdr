@@ -2,7 +2,7 @@
 // Settings › Projects: the project management switch, then the projects (a git
 // folder on a machine herdr-core reaches). A row opens the project's sheet
 // (ProjectSheet), its key and tab in the URL (`?project=WHR&tab=general`).
-// Add project opens SetupWizard on a new project. A row whose coordinator
+// Add project opens SetupWizard on a new project; Add workspace, WorkspaceAddSheet. A row whose coordinator
 // proposes a workflow change says so (reviewed on the sheet's Workflow tab).
 // Template library opens TemplateLibrary (`?library=1`). Set up a project opens
 // SetupWizard, at the first step left.
@@ -22,6 +22,7 @@ const error = ref('')
 const loadError = ref('')
 const busy = ref(false)
 const setupOpen = ref(false)
+const workspaceOpen = ref(false)
 
 const machineName = (key: string) => key ? (appConfig.value.machines?.find(m => m.key === key)?.label || key) : (appConfig.value.hostLabel || t('This machine'))
 
@@ -98,12 +99,14 @@ const exampleCount = computed(() => EXAMPLES.filter(e => !data.value?.templates.
       <p v-else class="muted settings-hint" data-testid="pm-empty">{{ tl('No project yet.', 'Aucun projet pour l’instant.') }}</p>
       <div class="pm-actions">
         <UButton color="primary" variant="solid" size="xl" icon="i-lucide-plus" data-testid="pm-add" @click="addProject">{{ tl('Add project', 'Ajouter le projet') }}</UButton>
+        <UButton color="neutral" variant="outline" size="xl" icon="i-lucide-boxes" data-testid="pm-add-workspace" @click="workspaceOpen = true">{{ tl('Add workspace') }}</UButton>
         <UButton v-if="data.projects.length" to="/board" color="neutral" variant="outline" size="xl" icon="i-lucide-kanban" data-testid="pm-board">{{ tl('Open the board', 'Ouvrir le tableau') }}</UButton>
       </div>
       <button type="button" class="settings-card pm-row pm-library" data-testid="pm-library" @click="libraryOpen = true">
         <span class="pm-id"><b>{{ tl('Template library') }}</b><small class="mono-label">{{ tl(`${data.templates.length} saved · ${exampleCount} examples`) }}</small></span>
         <UIcon name="i-lucide-chevron-right" class="pm-chevron" />
       </button>
+      <WorkspaceAddSheet v-model:open="workspaceOpen" :taken="data.projects.flatMap(p => [p.key, ...(p.aliases ?? [])])" @added="k => { load(); show(k) }" />
       <TemplateLibrary v-model:open="libraryOpen" :templates="data.templates" @changed="load" />
       <ProjectSheet v-if="opened" :key="opened.key" :project="opened" :tab="tab" :templates="data.templates" :projects="data.projects" :review="review" @tab="k => show(opened!.key, k)" @close="show()" @changed="load" />
     </template>

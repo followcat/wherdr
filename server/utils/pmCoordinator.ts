@@ -7,8 +7,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { projectPlace } from '../../shared/pm/places'
 import { notesStore, runNotes, type NotesStore } from './notesStore'
-import { FIRST_REPLY, MAIN, canResume, canRunCoordinator, coordinatorBy, commandList, coordinatorArgs, updateNotice, isCoordinatorProgram, promptAsArg, promptArgOnResume, PROMPT_ARG_FLAG, PROMPT_LEAD, mainRoleFiles, OWN_ROLE_FILES, parseCommand, roleFiles, citedSpecChange, specChangeRefusal, specChangedText, specDiff, tellTarget, stepDoneEvent, templateDiff, templateEditRefusal, type CoordinatorAgent, type CoordinatorProgram, type CoordinatorView, type Proposal, type ProposalAnswer, type ProposalOutcome, type Turn, PROPOSAL_ANSWERS } from '../../shared/pm/coordinator'
-import { FEATURE, coordinatorKey, handledBy, isWorkspace, membersOf, ownWorkflow } from '../../shared/pm/workspace'
+import { FIRST_REPLY, MAIN, canResume, canRunCoordinator, coordinatorBy, commandList, coordinatorArgs, updateNotice, isCoordinatorProgram, promptAsArg, promptArgOnResume, PROMPT_ARG_FLAG, PROMPT_LEAD, mainRoleFiles, OWN_ROLE_FILES, parseCommand, roleFiles, citedSpecChange, specChangeRefusal, specChangedText, specDiff, tellTarget, stepBackRefusal, stepDoneEvent, templateDiff, templateEditRefusal, type CoordinatorAgent, type CoordinatorProgram, type CoordinatorView, type Proposal, type ProposalAnswer, type ProposalOutcome, type Turn, PROPOSAL_ANSWERS, workspaceView } from '../../shared/pm/coordinator'
+import { FEATURE, WORKSPACE_FIRST, coordinatorKey, handledBy, isWorkspace, membersOf, ownWorkflow } from '../../shared/pm/workspace'
 import { initialState, onEvent, planSteps, currentStep, durationMs, waitStep } from '../../shared/pm/steps'
 import { templateChanges } from '../../shared/pm/templateText'
 import { changeSummary, workflowChanges } from '../../shared/pm/workflowChanges'
@@ -68,6 +68,7 @@ import { runMap } from './pmMap'
 import { adoptRepo } from './pmAdopt'
 import { splitFeature } from './pmFeature'
 import { afterRefusal, closeRefusal, featureState } from '../../shared/pm/feature'
+import { pmDir } from './pmHome'
 
 // The running build's version (shared/v3Version.ts: package version plus commit),
 // so the update notice fires between two builds of one version. Outside Nitro
@@ -128,11 +129,12 @@ export async function alfredTokenOk(store: PmStore, token: unknown) {
 // look: a look-for-new-work wake, whose turn counts the tasks it adds.
 // The user's message is kept whole (a long one too) for the proposal it may lead to.
 const SAID_MAX = 8000
-export async function noteTurn(store: PmStore, key: string, kind: 'user' | 'wake', said?: string, look = false) {
+// tab: the home tab the user has open (Alfred's `groups` and `brief` read it).
+export async function noteTurn(store: PmStore, key: string, kind: 'user' | 'wake', said?: string, look = false, tab?: string) {
   const c = await store.coordinator(key)
   if (!c) throw new HerdrError('not_found', 'No coordinator for this project')
   const at = Date.now()
-  await store.saveCoordinator({ ...c, turn: { kind, at, ...(kind === 'user' && said ? { said: said.slice(0, SAID_MAX) } : {}), ...(kind === 'wake' && look ? { look: true as const } : {}) }, ...(kind === 'user' ? { userAt: at } : {}) })
+  await store.saveCoordinator({ ...c, turn: { kind, at, ...(kind === 'user' && said ? { said: said.slice(0, SAID_MAX) } : {}), ...(kind === 'wake' && look ? { look: true as const } : {}) }, ...(kind === 'user' ? { userAt: at } : {}), ...(tab ? { openTab: tab } : {}) })
 }
 
 const TURN_MS = 3_600_000
@@ -140,10 +142,11 @@ const TURN_MS = 3_600_000
 // The user's message sent from the interface to a terminal: when that
 // terminal is a coordinator, its turn now comes from the user. Alfred's too
 // with project management off (it then helps the user switch it on).
-export async function userMessageTo(store: PmStore, terminal: string | undefined, text: string) {
+export async function userMessageTo(store: PmStore, terminal: string | undefined, text: string, tab?: unknown) {
   if (!terminal) return
   const c = (await store.coordinators()).find(x => x.terminal === terminal)
-  if (c && (c.project === MAIN || await store.enabled())) await noteTurn(store, c.project, 'user', text)
+  const open = c?.project === MAIN && typeof tab === 'string' && tab.length <= 200 ? tab : undefined
+  if (c && (c.project === MAIN || await store.enabled())) await noteTurn(store, c.project, 'user', text, false, open)
 }
 
 // The branch tasks start from, open their PR to and merge into when a step names none.
@@ -335,6 +338,13 @@ async function command(deps: Deps, token: unknown, body: CliBody, visit: { on?: 
       const r = onEvent(plan, state, ev, Date.now())
       if (r.refused) throw new HerdrError('refused', r.refused)
       return { task: await store.logTask({ ...task, step: r.state }, by, `${step}: done`) }
+    }
+    case 'step back': {
+      // The sheet's Send back (same event, same screenshot rules), on the user's words.
+      const task = await taskOf(cmd.task)
+      const why = stepBackRefusal(currentStep(planOf(needPlan(), task, p), task.step ?? initialState()), turn)
+      if (why) throw new HerdrError('refused', why)
+      return { task: await userEvent(store, task.id, { kind: 'back', note: cmd.text }, by, `on the user's message "${(rec?.turn?.said || cmd.userSaid).slice(0, 500)}"`) }
     }
     case 'step wait': {
       const task = await taskOf(cmd.task)
@@ -748,13 +758,14 @@ export async function coordinatorsView(store: PmStore): Promise<CoordinatorView[
       ...(c?.proposal ? { proposal: { diff: c.proposal.diff, at: c.proposal.at, changes, template: c.proposal.template, by: c.proposal.by ?? (p.key === MAIN ? 'main' : p.key), ...(c.proposal.said ? { said: c.proposal.said } : {}), ...(c.proposal.saidAt ? { saidAt: c.proposal.saidAt } : {}) } } : {}),
       ...('label' in p && p.label ? { label: p.label } : {}), ...('color' in p && p.color ? { color: p.color } : {}),
       ...(answersOf(c).length ? { answers: answersOf(c) } : {}),
+      ...('kind' in p && isWorkspace(p) ? { workspace: workspaceView(p, projects, tasks) } : {}),
       ...(autoProps.some(x => x.by === byOf(p.key)) ? { automationProposals: autoProps.filter(x => x.by === byOf(p.key)) } : {}),
     }
   }))
 }
 
 // The role files (and the `wherdr` script) in the coordinator's own folder,
-// ~/.wherdr/pm/coordinators/<KEY> on the project's machine; never ~/.claude
+// ~/.wherdr/pm/coordinators/<KEY> (pmHome.ts) on the project's machine; never ~/.claude
 // or ~/.codex.
 // The main coordinator's: Alfred's home (writeAlfredHome).
 // program: the harness that runs it — its own files land there too (alfred.ts).
@@ -769,7 +780,7 @@ export async function writeRoleFiles(deps: Deps, key: string, program?: Coordina
   const { m, on } = machineOn(deps, p.machine)
   const home = await homeOf(deps, on)
   if (!home) throw new HerdrError('core', 'Home folder not found on the project\'s machine')
-  const folder = `${home}/.wherdr/pm/coordinators/${key}`
+  const folder = `${home}/${pmDir()}/coordinators/${key}`
   for (const [file, text] of Object.entries(roleFiles(p, t, EXAMPLES, m.local ? docsDir() : undefined, k => { const x = projects.find(y => y.key === k); return x && shownKey(x) }, membersOf(key, projects).map(shownKey))))
     if ((await exec(deps, on, WRITE_SCRIPT, [`${folder}/${file}`], text)).code !== 0) throw new HerdrError('core', `Could not write ${file}`)
   for (const [file, text] of Object.entries(OWN_ROLE_FILES))
@@ -787,7 +798,7 @@ export async function appendCoordinatorMemory(deps: Deps, key: string, lines: st
   const { on } = machineOn(deps, p.machine)
   const home = await homeOf(deps, on)
   if (!home) throw new HerdrError('core', 'Home folder not found on the project\'s machine')
-  const file = `${home}/.wherdr/pm/coordinators/${key}/memory.md`
+  const file = `${home}/${pmDir()}/coordinators/${key}/memory.md`
   if ((await exec(deps, on, APPEND_SCRIPT, [file, OWN_ROLE_FILES['memory.md']!], `${lines.join('\n')}\n`)).code !== 0) throw new HerdrError('core', 'Could not write memory.md')
   return { file, added: lines.length }
 }
@@ -910,7 +921,10 @@ export async function startCoordinator(deps: Deps, key: unknown, agent: { progra
   const notes = cardNotesMessage(before)
   // Its very first start on a git project with no accepted workflow: its first reply proposes one.
   const git = key !== MAIN && projects.find(x => x.key === key)?.git !== false
-  const proposes = git && !resume && !before?.ran && isDefaultWorkflow(await deps.store.workflow(key)) ? [FIRST_REPLY] : []
+  // A new workspace's: its first reply offers to build the map.
+  const fresh = !resume && !before?.ran
+  const proposes = fresh && isWorkspace(projects.find(x => x.key === key)) ? [WORKSPACE_FIRST]
+    : git && fresh && isDefaultWorkflow(await deps.store.workflow(key)) ? [FIRST_REPLY] : []
   // First messages its last session never got (coordinatorFirst.ts): given again, once.
   // Alfred's start prompt is made anew at each start: an old one is not given again.
   const pending = c.prompt.length ? [] : (before?.undelivered?.texts ?? []).filter(x => !c.prompt.includes(x) && !first.includes(x) && !proposes.includes(x))

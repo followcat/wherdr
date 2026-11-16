@@ -36,10 +36,19 @@ registerEndpoint('/api/pm/overview', async (event) => {
   setResponseStatus(event, 503)
   return { error: 'Overview unavailable' }
 })
-registerEndpoint('/api/pm/project', () => ({ project: state.projects[0], workflow: { id: 'web', steps: [], taskTypes: {}, guards: { protected: ['main'] }, prefs: { agent: 'claude', model: 'sonnet' }, worktree: { share: [] } }, log: [] }))
+let guards: Record<string, unknown> = { protected: ['main'] } // as saved
+registerEndpoint('/api/pm/project', () => ({ project: state.projects[0], workflow: { id: 'web', steps: [], taskTypes: {}, guards, prefs: { agent: 'claude', model: 'sonnet' }, worktree: { share: [] } }, log: [] }))
 post('/api/pm/enabled', (b) => { state = { ...state, enabled: b.enabled as boolean }; return state })
-post('/api/pm/project-update', b => edit(b, { name: b.name as string, base: b.base as string, ...(b.newKey ? { label: b.newKey as string } : {}) }))
-post('/api/pm/project-guards', () => ({}))
+// Refused while `refuse` is set, as the server does on a bad value.
+let refuse = ''
+registerEndpoint('/api/pm/project-update', { method: 'POST', handler: async (event) => {
+  const b = await readBody(event)
+  calls.push({ url: '/api/pm/project-update', body: b })
+  if (!refuse) return edit(b, { name: b.name as string, base: b.base as string, ...(b.newKey ? { label: b.newKey as string } : {}) })
+  setResponseStatus(event, 400)
+  return { error: refuse }
+} })
+post('/api/pm/project-guards', (b) => { guards = b.guards as Record<string, unknown>; return {} })
 let coordinators: { project: string, name: string, proposal?: { diff: string, at: number, said?: string } }[] = []
 let coordinatorReads = 0
 registerEndpoint('/api/pm/coordinators', () => { coordinatorReads++; return coordinators })
@@ -55,7 +64,7 @@ post('/api/pm/project-visibility', b => edit(b, { visibility: { value: b.value a
 
 const inSheet = (id: string) => document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`)
 let mounted: { unmount: () => void } | null = null
-afterEach(() => { mounted?.unmount(); mounted = null; reset(); newAgentOpen.value = false; gate = Promise.resolve(); down = false })
+afterEach(() => { mounted?.unmount(); mounted = null; reset(); refuse = ''; guards = { protected: ['main'] }; newAgentOpen.value = false; gate = Promise.resolve(); down = false })
 
 // WHR-328: while the overview loads, no off switch and no empty list: skeletons,
 // the buttons disabled; a failed read shows its error and Try again.
@@ -117,9 +126,8 @@ it('opens the project sheet on the URL\'s tab; Guards saves a branch added; Gene
   ;(branch as HTMLInputElement).value = 'develop'
   branch.dispatchEvent(new Event('input'))
   branch.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+  await vi.waitFor(() => expect(calls.shift()?.body).toEqual({ key: 'WEB', guards: { protected: ['main', 'develop'], merge: { protected: 'user', others: 'engine' } } }))
   inSheet('guard-others-user')!.click()
-  await nextTick()
-  inSheet('guard-save')!.closest('form')!.dispatchEvent(new Event('submit'))
   await vi.waitFor(() => expect(calls.shift()).toEqual({ url: '/api/pm/project-guards', body: { key: 'WEB', guards: { protected: ['main', 'develop'], merge: { protected: 'user', others: 'user' } } } }))
 
   document.body.querySelector<HTMLElement>('[data-tab="general"]')!.click()
@@ -130,15 +138,13 @@ it('opens the project sheet on the URL\'s tab; Guards saves a branch added; Gene
   const copy = inSheet('pm-setup-copy')!.querySelector('textarea') ?? inSheet('pm-setup-copy') as HTMLTextAreaElement
   ;(copy as HTMLTextAreaElement).value = '.env\n config/local.json '
   copy.dispatchEvent(new Event('input'))
-  await pick(w, 'pm-reach-DOC', 'act')
-  inSheet('pm-save')!.closest('form')!.dispatchEvent(new Event('submit'))
+  await pick(w, 'pm-reach-DOC', 'act') // a pick saves at once, with what was typed
   await vi.waitFor(() => expect(calls[0]).toEqual({ url: '/api/pm/project-update', body: {
     key: 'WEB', name: 'Website', coordinatorName: '', base: '', branchName: '', archiveAfter: 7, deleteBranch: true, reach: [{ project: 'DOC', level: 'act' }], prefs: { agent: 'claude', model: 'sonnet', reviewAgent: '', reviewModel: '', reviewFallbackAgent: '', reviewFallbackModel: '' },
     worktree: { copy: ['.env', 'config/local.json'], share: [], lockfile: '', command: '', timeout: '' }, // share none kept
   } }))
 
   await vi.waitFor(() => expect(inSheet('pm-general')!.getAttribute('aria-busy')).toBe('false'))
-  expect(inSheet('pm-save')!.hasAttribute('disabled')).toBe(true) // saved: nothing to save
   await pick(w, 'pm-visibility', 'private')
   await vi.waitFor(() => expect(w.find('[data-testid="pm-public"]').exists()).toBe(false))
   expect(calls[1]).toEqual({ url: '/api/pm/project-visibility', body: { key: 'WEB', value: 'private' } })
@@ -166,23 +172,53 @@ it('a coordinator\'s proposal: badge on the row and on Workflow, the URL opens i
   outdated = false
 })
 
-// WHR-284: the worktree setup's help sits above its fields, Save on its own row,
-// enabled only once something changed.
-it('the worktree setup: help above the fields, Save on its own row and enabled only after a change', async () => {
+// WHR-400: no Save button. A typed field saves after a pause in typing or on
+// blur, once, with its latest value; a switch at once; an invalid value is held
+// with its message; a refused save shows the server's message and keeps the text.
+it('the General tab saves by itself: typed text after a pause or on blur, a switch at once, errors inline', async () => {
   state = { ...state, enabled: true, projects: [web()] }
   mounted = await mountSuspended(ProjectsSettings, { props: { active: true }, route: '/settings?section=projects&project=WEB&tab=general' })
-  await vi.waitFor(() => expect(inSheet('pm-setup-copy')).toBeTruthy())
-  const help = inSheet('pm-setup-help')!
-  const save = inSheet('pm-save')!
-  expect(help.contains(save)).toBe(false)
-  expect(save.parentElement!.classList.contains('pm-save')).toBe(true)
-  expect(help.compareDocumentPosition(inSheet('pm-setup-copy')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-  expect(save.hasAttribute('disabled')).toBe(true)
-  inSheet('pm-setup-no-share')!.click()
-  await vi.waitFor(() => expect(save.hasAttribute('disabled')).toBe(false))
+  await vi.waitFor(() => expect(inSheet('pm-setup-copy')).toBeTruthy(), { timeout: 5000 })
+  expect(inSheet('pm-save')).toBeNull()
+  expect(inSheet('pm-setup-help')!.compareDocumentPosition(inSheet('pm-setup-copy')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  const field = (id: string) => (inSheet(id)!.querySelector('input,textarea') ?? inSheet(id)) as HTMLInputElement
+  const type = (id: string, v: string) => { field(id).value = v; field(id).dispatchEvent(new Event('input')) }
+
+  type('pm-setup-command', 'npm')
+  type('pm-setup-command', 'npm ci')
+  expect(calls).toHaveLength(0) // still typing
+  await vi.waitFor(() => expect(calls).toHaveLength(1), { timeout: 2000 })
+  expect((calls[0]!.body.worktree as Record<string, string>).command).toBe('npm ci')
+  await vi.waitFor(() => expect(inSheet('pm-setup-command')!.closest('.pm-col')!.querySelector('[data-testid="saved-mark"]')?.textContent).toContain('Saved'))
+
+  type('pm-setup-lockfile', 'yarn.lock')
+  field('pm-setup-lockfile').dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+  await vi.waitFor(() => expect(calls).toHaveLength(2)) // on blur, no wait
+  expect((calls[1]!.body.worktree as Record<string, string>).lockfile).toBe('yarn.lock')
+
+  inSheet('pm-setup-no-share')!.click() // a switch: at once
+  await vi.waitFor(() => expect(calls).toHaveLength(3))
+  expect((calls[2]!.body.worktree as Record<string, unknown>).share).toBeUndefined()
+
+  type('pm-setup-timeout', '99m') // invalid: shown, not sent
+  field('pm-setup-timeout').dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+  await vi.waitFor(() => expect(inSheet('pm-general')!.textContent).toContain('Must be a duration up to 10m, like 5m.'))
+  expect(calls).toHaveLength(3)
+  type('pm-setup-timeout', '5m')
+
+  refuse = 'The branch name template must contain {id}'
+  type('pm-branch-name', 'feature/x')
+  field('pm-branch-name').dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+  await vi.waitFor(() => expect(field('pm-branch-name').closest('.pm-field')!.querySelector('.form-error')?.textContent).toContain(refuse))
+  expect(calls.at(-1)!.body.branchName).toBe('feature/x')
+  expect((calls.at(-1)!.body.worktree as Record<string, string>).timeout).toBe('5m')
+  expect(field('pm-branch-name').value).toBe('feature/x') // kept
+  refuse = '' // fixed: saved, nothing left to send on close
+  field('pm-branch-name').dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+  await vi.waitFor(() => expect(field('pm-branch-name').closest('.pm-field')!.querySelector('.form-error')).toBeNull())
 })
 
-it('a saved key stays in the field and the badge, and the shared coordinators are read again', async () => {
+it('a key saves only on blur, then stays in the field and the badge, and the shared coordinators are read again', async () => {
   state = { ...state, enabled: true, projects: [web()] }
   const w = await mountSuspended(ProjectsSettings, { props: { active: true }, route: '/settings?section=projects&project=WEB&tab=general' })
   mounted = w
@@ -191,8 +227,10 @@ it('a saved key stays in the field and the badge, and the shared coordinators ar
   ;(key as HTMLInputElement).value = 'site'
   key.dispatchEvent(new Event('input'))
   await nextTick()
+  await new Promise(r => setTimeout(r, 1200))
+  expect(calls).toHaveLength(0) // a pause in a key saves nothing: only blur or Enter renames
   const reads = coordinatorReads
-  inSheet('pm-save')!.closest('form')!.dispatchEvent(new Event('submit'))
+  key.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
   await vi.waitFor(() => expect(calls.at(-1)?.body.newKey).toBe('SITE'))
   await vi.waitFor(() => expect(inSheet('pm-general')!.getAttribute('aria-busy')).toBe('false'))
   expect((key as HTMLInputElement).value).toBe('SITE')

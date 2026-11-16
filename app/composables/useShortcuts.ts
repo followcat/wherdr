@@ -5,9 +5,17 @@
 // (`curPane`; side by side, the active cell) registers its own actions: search,
 // conversation / terminal, Stop (usePaneShortcuts, AgentView).
 import type { Ref } from 'vue'
-import { type ShortcutContext, type ShortcutFocus, type ShortcutId, matchShortcut } from '~/utils/shortcuts'
+import { type Bindings, type ShortcutContext, type ShortcutFocus, type ShortcutId, applyBindings, matchShortcut, parseBindings, tableKbds } from '~/utils/shortcuts'
 import { describeFocus } from '~/utils/cardKeys'
 import { stepAgent, stepTab } from '~/utils/stepNav'
+import { syncedRef } from './useSyncedSettings'
+
+// The user's keys (Settings › Shortcuts), synced; tooltips and the help read them here.
+export const shortcutBindings = syncedRef<Bindings>('shortcutBindings', parseBindings, b => (Object.keys(b).length ? JSON.stringify(b) : null))
+export const activeShortcuts = computed(() => applyBindings(shortcutBindings.value))
+export const shortcutKbds = (id: ShortcutId) => tableKbds(activeShortcuts.value, id)
+// Settings › Shortcuts is recording keys: no shortcut fires.
+export const shortcutRecording = ref(false)
 
 export interface PaneShortcuts {
   searchChat: () => boolean
@@ -87,10 +95,10 @@ export function useShortcuts(searchOpen: Ref<boolean>) {
   }
   function onKey(e: KeyboardEvent, phase: 'capture' | 'bubble') {
     // Synthetic keys (HeaderMenu closes its menu with a fake Escape) are not the user's.
-    if (!e.isTrusted) return
+    if (!e.isTrusted || shortcutRecording.value) return
     const focus = phase === 'bubble' && start?.e === e ? start.focus : focusNow()
     if (phase === 'capture') start = { e, focus }
-    const id = matchShortcut(e, focus, { mac, phase, desk: desk.value, layout })
+    const id = matchShortcut(e, focus, { mac, phase, desk: desk.value, layout }, activeShortcuts.value)
     if (!id) return
     if (id === 'search-all') {
       // Taken even while locked, as before.

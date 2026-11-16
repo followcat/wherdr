@@ -15,8 +15,10 @@ Follow their work and answer from your phone.</b></p>
 
 <p align="center"><a href="https://github.com/afloury/wherdr/actions/workflows/ci.yml"><img src="https://github.com/afloury/wherdr/actions/workflows/ci.yml/badge.svg?branch=v3" alt="CI"></a></p>
 
-This page describes **wherdr v3**, which runs on herdr-core (`hc`). The launch film, the website
-and the [browser demo](https://wherdr.dev/demo/) show wherdr v2 on Herdr.
+This page describes **wherdr v3**, which runs on herdr-core (`hc`). The README animation and the
+launch film show v3, recorded from its browser demo; the website still shows v2. The browser demo
+built from v3 shows Alfred, two made-up projects with their coordinators, the board, Tasks to
+review and Notes, on a computer and on a phone; [wherdr.dev/demo](https://wherdr.dev/demo/) serves v2's until the site moves to v3.
 
 ## Why wherdr
 

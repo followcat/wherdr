@@ -90,7 +90,7 @@ test('sheets: no sideways scroll, one scroll, long texts', async ({ page, browse
   const check = async (p: Page, size: string) => {
     await core.open(p, '/#/settings?section=projects&project=WH&tab=general')
     await expect(p.locator('[data-testid="pm-setup-copy"], .sheet-form .settings-hint').first()).toBeVisible() // loaded
-    await expect(p.getByTestId('pm-save')).toBeDisabled()
+    await expect(p.getByTestId('pm-save')).toHaveCount(0) // every field saves by itself
     expect(await overflows(p)).toEqual([])
     await wide(p, size)
     expect(await bottom(p)).toEqual({ band: 0, clipped: false })

@@ -1,60 +1,50 @@
 import { REPO } from './site'
 
-// What `curl -fsSL https://wherdr.dev/install | sh` prints on a Mac with Herdr
-// and Node.js (public/install, same wording and order: say / step / ok, plus
-// the lines the Herdr plugin and `wherdr service install` write), replayed by
-// InstallTerminal. Versions and the home folder are examples. `wait` is the
-// pause before the line shows, in ms (installing the plugin takes a while).
+// What the v3 installer prints for its plan on a Linux machine that runs
+// wherdr v2 (scripts/install-v3-beside-v2.mjs, its say / OK / PLAN lines),
+// replayed by InstallTerminal. Versions, commits and names are examples.
+// `wait` is the pause before the line shows, in ms.
 export type InstallLine = { kind: 'blank' | 'title' | 'step' | 'ok' | 'say' | 'strong' | 'dim', text: string, wait: number }
 // A command typed at `prompt`; `fast` types it quicker (ssh, short commands).
 export type CommandLine = { kind: 'cmd', prompt: string, text: string, wait: number, fast?: boolean }
 export type TermLine = InstallLine | CommandLine
 export type TermDemo = { title: string, lines: TermLine[] }
 
-export const INSTALL_COMMAND = 'curl -fsSL https://wherdr.dev/install | sh'
-// `herdr plugin install owner/repo` (herdr-plugin.toml at the root of the repository).
-export const PLUGIN_COMMAND = `herdr plugin install ${REPO.replace('https://github.com/', '')}`
-// Homebrew formula (<owner>/homebrew-tap): the npm package, with a `brew services` entry.
-export const BREW_COMMANDS = [`brew install ${REPO.replace('https://github.com/', '').split('/')[0]}/tap/wherdr`, 'brew services start wherdr', 'wherdr open']
-// The npm package `wherdr` (prebuilt): try it with a package runner, keep it with a global install.
-export const RUNNERS = {
-  npx: { run: 'npx wherdr', keep: 'npm install -g wherdr' },
-  bunx: { run: 'bunx wherdr', keep: 'bun add -g wherdr' },
-  pnpm: { run: 'pnpm dlx wherdr', keep: 'pnpm add -g wherdr' },
-} as const
+const SETUP = '/tmp/wherdr-setup'
+export const CLONE_COMMAND = `git clone -b v3 ${REPO}.git ${SETUP}`
+export const PLAN_COMMAND = `sh ${SETUP}/scripts/install-v3-beside-v2.sh`
+// By hand: clone, then read the plan; the same command with --yes applies it.
+export const INSTALL_COMMANDS = [CLONE_COMMAND, PLAN_COMMAND]
 
-const HOME = '/Users/you'
-const PORT = 7683
+const HOME = '/home/you'
+const PROMPT = 'you@devbox:~$'
 
-export const INSTALL_OUTPUT: InstallLine[] = [
-  { kind: 'blank', text: '', wait: 350 },
-  { kind: 'title', text: 'wherdr installer — your Herdr agents, from your phone and your browser', wait: 120 },
-  { kind: 'step', text: 'Checking the system', wait: 200 },
-  { kind: 'ok', text: 'macOS 15.6', wait: 260 },
-  { kind: 'ok', text: `Herdr 0.9.3 (${HOME}/.local/bin/herdr)`, wait: 300 },
-  { kind: 'ok', text: 'Runtime: /opt/homebrew/bin/node (v22.20.0)', wait: 300 },
-  { kind: 'step', text: 'Installing the wherdr Herdr plugin', wait: 260 },
-  { kind: 'say', text: `wherdr: installing in ${HOME}/wherdr`, wait: 900 },
-  { kind: 'say', text: 'Press prefix+i in Herdr to open the wherdr panel.', wait: 1600 },
-  { kind: 'dim', text: '  Herdr reloaded its config: no restart needed.', wait: 200 },
-  { kind: 'ok', text: `Herdr plugin ${REPO.split('/').at(-2)}.wherdr installed`, wait: 900 },
-  { kind: 'ok', text: `wherdr answers on http://localhost:${PORT}`, wait: 500 },
-  { kind: 'step', text: 'Configuring automatic startup', wait: 260 },
-  { kind: 'say', text: `  A LaunchAgent (${HOME}/Library/LaunchAgents/dev.wherdr.plist): wherdr starts at login and restarts if it stops.`, wait: 200 },
-  { kind: 'ok', text: 'Login service installed', wait: 1100 },
+export const PLAN_OUTPUT: InstallLine[] = [
+  { kind: 'say', text: 'v2 install: found', wait: 500 },
+  { kind: 'dim', text: '  service: wherdr.service (running)', wait: 80 },
+  { kind: 'dim', text: `  data: ${HOME}/wherdr/data (12 files), port 7683`, wait: 80 },
+  { kind: 'dim', text: '  Herdr SSH machines: laptop (you@laptop)', wait: 80 },
+  { kind: 'say', text: 'OK prerequisites: node v22.20.0, git, npm, systemd --user, hc 0.4.2', wait: 700 },
+  { kind: 'say', text: `PLAN start herdr-core session "default" as wherdr-v3-hc.service`, wait: 400 },
+  { kind: 'say', text: `PLAN clone ${REPO} (v3 at 1a2b3c4) into ${HOME}/wherdr-v3/src`, wait: 120 },
+  { kind: 'say', text: 'PLAN npm ci && npm run build, swapped in once built', wait: 120 },
+  { kind: 'say', text: `PLAN import from v2 into ${HOME}/wherdr-v3/data (v2 is only read)`, wait: 120 },
+  { kind: 'dim', text: '  machines to add: laptop (you@laptop)', wait: 80 },
+  { kind: 'dim', text: '  projects: 2 on the v2 board: Alfred offers them at its first start', wait: 80 },
+  { kind: 'say', text: 'PLAN start wherdr-v3.service on 127.0.0.1:7684', wait: 120 },
+  { kind: 'say', text: 'PLAN tailscale serve --bg --https=8104 127.0.0.1:7684 (added beside the existing entries)', wait: 120 },
+  { kind: 'say', text: `PLAN write ${HOME}/wherdr-v3/update.sh`, wait: 120 },
   { kind: 'blank', text: '', wait: 120 },
-  { kind: 'strong', text: '✓ wherdr is running', wait: 60 },
-  { kind: 'say', text: `  On this computer: http://localhost:${PORT}`, wait: 60 },
-  { kind: 'say', text: '  In Herdr, prefix+i opens the wherdr panel.', wait: 60 },
-  { kind: 'say', text: '  The setup guide is open in your browser.', wait: 60 },
-  { kind: 'say', text: '  Phone: follow its Phone step to set up Tailscale (private network only).', wait: 60 },
-  { kind: 'blank', text: '', wait: 60 },
-  { kind: 'dim', text: 'Update: run this command again, or U in the wherdr panel.', wait: 60 },
-  { kind: 'dim', text: `Docs:   ${REPO}/blob/main/docs/installation.md`, wait: 60 },
+  { kind: 'strong', text: 'Dry run: nothing changed. Run again with --yes to apply.', wait: 200 },
 ]
 
-// The one command, on the Mac that runs Herdr.
-export const ONE_COMMAND_DEMO: TermDemo = {
-  title: 'you@mac — zsh',
-  lines: [{ kind: 'cmd', prompt: 'you@mac ~ %', text: INSTALL_COMMAND, wait: 300 }, ...INSTALL_OUTPUT],
+// The plan, on the Linux machine that runs v2.
+export const PLAN_DEMO: TermDemo = {
+  title: 'you@devbox — bash',
+  lines: [
+    { kind: 'cmd', prompt: PROMPT, text: CLONE_COMMAND, wait: 300, fast: true },
+    { kind: 'dim', text: `Cloning into '${SETUP}'...`, wait: 600 },
+    { kind: 'cmd', prompt: PROMPT, text: PLAN_COMMAND, wait: 400, fast: true },
+    ...PLAN_OUTPUT,
+  ],
 }
