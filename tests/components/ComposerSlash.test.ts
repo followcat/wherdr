@@ -25,7 +25,12 @@ const commands = () => menuState.items.filter((i: MenuItem) => i.kind === 'comma
 
 async function openPlus(agent: string) {
   const p = pane(`w1:${agent}`, agent)
-  const w = await mountSuspended(Composer, { props: { pane: p, paneId: p.id, sendKeys: async () => {} } })
+  // ModelPicker (devin and friends) is out of scope here: its tooltips need a
+  // provider the bare mount does not have.
+  const w = await mountSuspended(Composer, {
+    props: { pane: p, paneId: p.id, sendKeys: async () => {} },
+    global: { stubs: { ModelPicker: true } },
+  })
   await w.find('[aria-label="Photo, file, paste, commands"]').trigger('click')
   return p
 }
@@ -48,6 +53,21 @@ describe('Composer + menu: the agent’s slash commands', () => {
       ['/usage', 'Plan usage'],
       ['/model', 'Change model'],
       ['/diff', 'View diff'],
+    ])
+  })
+
+  // Devin CLI 3000.12.57: each runs from a paste + Enter; /shortcuts opens a
+  // panel that shows the interactive terminal (see core-screen-fixtures.test.ts).
+  it('offers Devin’s commands after Interrupt', async () => {
+    await openPlus('devin')
+    expect(commands().map(c => [c.cmd, c.desc])).toEqual([
+      ['esc', 'Interrupt agent'],
+      ['/compact', 'Summarize context'],
+      ['/clear', 'New conversation'],
+      ['/context', 'Context usage'],
+      ['/usage', 'Plan usage'],
+      ['/session-stats', 'Session stats'],
+      ['/shortcuts', 'Keyboard shortcuts'],
     ])
   })
 

@@ -604,6 +604,10 @@ const SLASH: Record<string, [string, string][]> = {
   // Antigravity CLI: its panels and model picker open the interactive terminal.
   agy: [['/compact', 'Summarize context'], ['/clear', 'New conversation'], ['/context', 'Context usage'],
     ['/usage', 'Plan usage'], ['/model', 'Change model'], ['/diff', 'View diff']],
+  // Devin CLI: /model stays out (wherdr's own picker drives it); /shortcuts
+  // opens a panel, which shows the interactive terminal.
+  devin: [['/compact', 'Summarize context'], ['/clear', 'New conversation'], ['/context', 'Context usage'],
+    ['/usage', 'Plan usage'], ['/session-stats', 'Session stats'], ['/shortcuts', 'Keyboard shortcuts']],
 }
 // Images first, then interruption and the agent's commands.
 function openPlus() {

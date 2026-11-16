@@ -166,7 +166,7 @@ Claude Code, Codex, Devin, Command Code, OpenCode and Antigravity terminals open
   never its file path, also when the message was sent again (**Send now**, **Retry**) or waited
   in the agent's queue.
   Slash commands typed in the field (`/compact`, `/clear`…) are sent as text; **+** also lists
-  the common ones of Claude Code, Codex, omp and Antigravity. A command that opens a panel or a
+  the common ones of Claude Code, Codex, Devin, omp and Antigravity. A command that opens a panel or a
   picker (`/context`, `/model`…) shows the interactive terminal over the conversation. **Stop** (or `Esc`
   in the empty field) interrupts the agent and says what core observed. When Claude Code
   suggests a reply (grayed-out in the empty field), `Tab` takes it on a computer and **Use**,
