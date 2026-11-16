@@ -148,7 +148,7 @@ sheet, a project coordinator's agent, Alfred's. Uncheck a program to hide it eve
 a row by its ⠿ handle (or use its arrows) to reorder: the first is the default and comes first
 in every picker. Programs only: each starts with its own default model, changed inside the
 agent. Alfred runs with any of Claude, Codex, OMP, Pi, OpenCode, Kimi, Gemini CLI, Qwen Code,
-Copilot, Amp, Droid, Devin and Cursor Agent (other programs are left out of its picker: wherdr knows no instructions
+Copilot, Amp, Droid, Devin, Cursor Agent and Antigravity CLI (other programs are left out of its picker: wherdr knows no instructions
 file they read). A project's coordinator runs with Claude or Codex only: they are the ones wherdr
 can keep out of the project's repository (a deny rule for Claude, the sandbox for Codex). Choices and order follow you on every device.
 

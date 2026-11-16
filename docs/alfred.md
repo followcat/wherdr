@@ -122,6 +122,10 @@ The home banner's **Update with Alfred** opens Alfred's conversation and sends, 
 notes (with their *Upgrade notes*), never from memory, shows you the plan and waits for your yes.
 It lives in herdr-core, so it outlives wherdr's restart and checks the new version answers.
 
+Alfred's home also carries, per program, the folder-local allowlist of its `wherdr` command and
+nothing else — `.devin/config.json` for Devin, `.cursor/cli.json` for Cursor Agent. Antigravity
+knows no such file: it asks each `wherdr` command itself, once per command.
+
 ## After an update
 
 When wherdr starts (after an update too), it rewrites the instructions (`AGENTS.md` and the files

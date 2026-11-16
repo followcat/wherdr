@@ -55,8 +55,9 @@ export const startPrompt = (first: boolean, name: string, v2 = false, none = fal
     : `Follow "At start" in AGENTS.md, then say exactly: "${FIRST_MESSAGE}"`)
 
 // Its start message, as the chat reads it back: wherdr's, not the user's (a
-// collapsed system line, never the conversation's title).
-export const isStartPrompt = (text: string) => /^\s*Follow "At start" in AGENTS\.md\b/.test(text)
+// collapsed system line, never the conversation's title). Antigravity's copy
+// leads with the one line that tells it to read AGENTS.md (PROMPT_LEAD).
+export const isStartPrompt = (text: string) => /^\s*(?:First read this folder's AGENTS\.md[^\n]*\n+)?Follow "At start" in AGENTS\.md\b/.test(text)
 
 export interface AlfredContext {
   home: string, version: string, docs: string, docFiles: string[], pm: boolean

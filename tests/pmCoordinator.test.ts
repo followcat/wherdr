@@ -363,7 +363,7 @@ describe('the main coordinator (WHR-398)', () => {
     expect(await store.coordinator(MAIN)).toMatchObject({ ran: { program: 'devin' } })
     // A program without a folder-scoped resume cannot be resumed.
     await store.saveCoordinator({ ...(await store.coordinator(MAIN))!, ran: { program: 'omp' } })
-    await expect(startCoordinator(d, MAIN, { resume: true }, { local: 'http://127.0.0.1:7690' })).rejects.toThrow('Only a Claude, Codex, Devin or Cursor conversation can be resumed')
+    await expect(startCoordinator(d, MAIN, { resume: true }, { local: 'http://127.0.0.1:7690' })).rejects.toThrow('Only a Claude, Codex, Devin, Cursor or Antigravity conversation can be resumed')
     expect(coordinatorArgs('devin', '/h/c')).toEqual(['devin', '--respect-workspace-trust', 'false'])
     expect(coordinatorArgs('devin', '/h/c', undefined, false, true)).toEqual(['devin', '--respect-workspace-trust', 'false', '-c'])
   })
@@ -407,6 +407,41 @@ describe('the main coordinator (WHR-398)', () => {
     await vi.waitFor(async () => expect((await store.coordinator(MAIN))!.undelivered).toMatchObject({ why: expect.stringContaining('not ready') }))
     // The dialog is never answered either (the user's MCP servers are theirs).
     expect(trustKeys(mcp, path.join(dir, 'alfred'))).toBeUndefined()
+  })
+
+  it('runs Alfred with Antigravity: its trust box answered, AGENTS.md told by the prompt, -i message, -c resume after the old session ended', async () => {
+    const trust = await fs.readFile(new URL('./fixtures/agy-trust.txt', import.meta.url), 'utf8')
+    const calls: string[] = [], lines: string[] = [], keys: unknown[] = []
+    let answered = false
+    const call = async (method: string, params: Record<string, unknown>) => {
+      if (method === 'terminal.run') { calls.push(`run${lines.length + 1}`); lines.push(params.line as string); return { address: `host/t${lines.length}` } }
+      if (method === 'terminal.kill') { calls.push(`kill${params.terminal}`); return {} }
+      // Antigravity reports `done` at rest — and on its trust box too.
+      if (method === 'terminal.get') return { state: 'live', status: { state: 'done' } }
+      if (method === 'terminal.read') return { text: answered ? 'Orchestrator (Carbon)' : trust.replaceAll('/home/user/acme-shop', path.join(dir, 'alfred')) }
+      if (method === 'terminal.keys') { answered = true; keys.push(params.keys) }
+      return {}
+    }
+    const home = path.join(dir, 'alfred')
+    const d = { store, call, machines: () => [], alfredHome: home, pollMs: 1 } as never
+    await startCoordinator(d, MAIN, { program: 'agy' }, { local: 'http://127.0.0.1:7690' })
+    expect(keys).toEqual([['enter']])
+    expect(lines[0]).toContain(`exec 'agy' '-i'`)
+    expect(lines[0]).toContain('AGENTS.md: it is your role file')
+    expect(lines[0]).toContain('give me another name?')
+    // No permission file exists for it: AGENTS.md alone is written for it.
+    await expect(fs.stat(path.join(home, 'AGENTS.md'))).resolves.toBeTruthy()
+    // A second conversation needs the first ended, like Devin's.
+    answered = true
+    await startCoordinator(d, MAIN, { resume: true }, { local: 'http://127.0.0.1:7690' }, ['Back again'])
+    expect(lines[1]).toContain(`exec 'agy' '-c' '-i'`)
+    expect(lines[1]).toContain('Back again')
+    expect(calls[1]).toBe('killhost/t1')
+    expect(calls.indexOf('killhost/t1')).toBeLessThan(calls.indexOf('run2'))
+    expect(await store.coordinator(MAIN)).toMatchObject({ ran: { program: 'agy' } })
+    expect(trustKeys(trust, '/home/user/acme-shop')).toEqual(['enter'])
+    expect(coordinatorArgs('agy', '/h/c')).toEqual(['agy'])
+    expect(coordinatorArgs('agy', '/h/c', undefined, false, true)).toEqual(['agy', '-c'])
   })
 
   it('runs Alfred with projects off: its record is saved, its instructions say how to switch them on', async () => {

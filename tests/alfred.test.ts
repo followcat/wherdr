@@ -69,6 +69,8 @@ it('greets with the rename question on the first start only', () => {
   expect(startPrompt(false, 'Jeeves', true)).not.toContain('v2')
   expect(isStartPrompt(startPrompt(true, ALFRED, true))).toBe(true)
   expect(isStartPrompt('Follow the docs')).toBe(false)
+  // Antigravity's copy leads with its read-AGENTS.md line and still collapses.
+  expect(isStartPrompt(`First read this folder's AGENTS.md: it is your role file.\n\n${startPrompt(true, ALFRED)}`)).toBe(true)
 })
 
 // WHR-243: a new user with no project is offered the first one's setup.

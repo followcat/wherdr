@@ -7,7 +7,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { projectPlace } from '../../shared/pm/places'
 import { notesStore, runNotes, type NotesStore } from './notesStore'
-import { FIRST_REPLY, MAIN, canResume, canRunCoordinator, coordinatorBy, commandList, coordinatorArgs, updateNotice, isCoordinatorProgram, promptAsArg, promptArgOnResume, PROMPT_ARG_FLAG, mainRoleFiles, OWN_ROLE_FILES, parseCommand, roleFiles, citedSpecChange, specChangeRefusal, specChangedText, specDiff, tellTarget, stepDoneEvent, templateDiff, templateEditRefusal, type CoordinatorAgent, type CoordinatorProgram, type CoordinatorView, type Proposal, type ProposalAnswer, type ProposalOutcome, type Turn, PROPOSAL_ANSWERS } from '../../shared/pm/coordinator'
+import { FIRST_REPLY, MAIN, canResume, canRunCoordinator, coordinatorBy, commandList, coordinatorArgs, updateNotice, isCoordinatorProgram, promptAsArg, promptArgOnResume, PROMPT_ARG_FLAG, PROMPT_LEAD, mainRoleFiles, OWN_ROLE_FILES, parseCommand, roleFiles, citedSpecChange, specChangeRefusal, specChangedText, specDiff, tellTarget, stepDoneEvent, templateDiff, templateEditRefusal, type CoordinatorAgent, type CoordinatorProgram, type CoordinatorView, type Proposal, type ProposalAnswer, type ProposalOutcome, type Turn, PROPOSAL_ANSWERS } from '../../shared/pm/coordinator'
 import { FEATURE, coordinatorKey, handledBy, isWorkspace, membersOf, ownWorkflow } from '../../shared/pm/workspace'
 import { initialState, onEvent, planSteps, currentStep, durationMs, waitStep } from '../../shared/pm/steps'
 import { templateChanges } from '../../shared/pm/templateText'
@@ -904,7 +904,7 @@ export async function startCoordinator(deps: Deps, key: unknown, agent: { progra
   if (!a) throw new HerdrError('bad_input', BAD_AGENT)
   if (!canRunCoordinator(a.program, key)) throw new HerdrError('bad_input', BAD_PROJECT_AGENT)
   const { program } = a
-  if (resume && !canResume(program)) throw new HerdrError('bad_input', 'Only a Claude, Codex, Devin or Cursor conversation can be resumed: start a new one')
+  if (resume && !canResume(program)) throw new HerdrError('bad_input', 'Only a Claude, Codex, Devin, Cursor or Antigravity conversation can be resumed: start a new one')
   const c = await prepareCoordinator(deps, key, program, urls, resume, a.model)
   // What the user applied on its cards while it did not run, said once (a resume too).
   const notes = cardNotesMessage(before)
@@ -914,16 +914,17 @@ export async function startCoordinator(deps: Deps, key: unknown, agent: { progra
   // First messages its last session never got (coordinatorFirst.ts): given again, once.
   // Alfred's start prompt is made anew at each start: an old one is not given again.
   const pending = c.prompt.length ? [] : (before?.undelivered?.texts ?? []).filter(x => !c.prompt.includes(x) && !first.includes(x) && !proposes.includes(x))
-  const prompt = [...c.prompt, ...first, ...proposes, ...pending, ...notes]
+  const prompt = [...(PROMPT_LEAD[program] ? [PROMPT_LEAD[program]!] : []), ...c.prompt, ...first, ...proposes, ...pending, ...notes]
   // A resumed Codex reads a word after `resume --last` as a session: its messages are
   // typed. Devin's go on the resume line too, after `--` (PROMPT_ARG_FLAG).
   const asArg = promptAsArg(program) && (!resume || promptArgOnResume(program))
   // Codex takes one [PROMPT] argument: its messages go as one.
   const argv = [...c.argv, ...(asArg && prompt.length ? [...(PROMPT_ARG_FLAG[program] ? [PROMPT_ARG_FLAG[program]!] : []), prompt.join('\n\n')] : [])]
   const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
-  // A resumed Devin refuses to start while its old session lives ("already open
-  // in another process"): it is ended before the new one runs, not after.
-  if (resume && program === 'devin' && before?.terminal) await deps.call('terminal.kill', { terminal: before.terminal }, 15000).catch(() => {})
+  // A resumed Devin or Antigravity refuses to start while its old session
+  // lives ("already open in another process" / "Conversation already open"):
+  // it is ended before the new one runs, not after.
+  if (resume && (program === 'devin' || program === 'agy') && before?.terminal) await deps.call('terminal.kill', { terminal: before.terminal }, 15000).catch(() => {})
   // One start at a time (coordinatorFirst.ts): the one before is up first.
   const up = await startTurn(deps)
   let address: string
@@ -962,10 +963,13 @@ export async function answerOwnTrust(deps: CoreAdminDeps, address: string, folde
   while (Date.now() < end) {
     const t = await deps.call<{ state?: string, status?: string | { state?: string } | null }>('terminal.get', { terminal: address }, 3000).catch(() => null)
     const state = typeof t?.status === 'string' ? t.status : t?.status?.state
-    if (!t?.state || t.state === 'finished' || state === 'idle' || state === 'working' || state === 'done') return false
+    if (!t?.state || t.state === 'finished' || state === 'idle' || state === 'working') return false
     const screen = String((await deps.call<{ text?: string }>('terminal.read', { terminal: address, lines: 30 }, 3000).catch(() => null))?.text || '')
     const keys = trustKeys(screen, folder)
     if (keys) return deps.call('terminal.keys', { terminal: address, keys }, 10000).then(() => true)
+    // A `done` status is where Antigravity sits on its trust box too: the
+    // screen said whether it was asked, one read was enough.
+    if (state === 'done') return false
     await new Promise(r => setTimeout(r, deps.pollMs ?? 500))
   }
   return false
