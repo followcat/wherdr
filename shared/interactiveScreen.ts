@@ -43,7 +43,7 @@ export function confirmedInput(text: string, agent?: string | null): boolean {
   if (at < 0) return false
   const line = lines[at]!
   const below = lines.slice(at + 1).join('\n')
-  if (/\b(?:enter|esc|escape)\s+(?:to\s+)?(?:select|open|back|cancel|confirm|close)\b/i.test(below)) return false
+  if (/\b(?:enter|esc|escape)\s+(?:to\s+)?(?:select|open|back|cancel|confirm|close|collapse)\b/i.test(below)) return false
   if (/^\s*[❯›❭]\s+\d{1,2}\.\s/.test(line)) return false
   // Antigravity's prompt is a plain `>` between rules, `? for shortcuts` below.
   if (agent === 'agy' && /^\s*>(?:\s|$)/.test(line)) return /^\s*─{3,}/.test(lines[at - 1] || '')
@@ -55,7 +55,7 @@ export function confirmedInput(text: string, agent?: string | null): boolean {
   // a frame still being painted has none.
   if (/^\s*❭(?:\s|$)/.test(line)) {
     const rule = lines.findIndex((l, i) => i > at && /^\s*─{3,}/.test(l))
-    return /^\s*─/.test(lines[at - 1] || '') && rule > at && Boolean(lines[rule + 1]?.trim())
+    return /^\s*─/.test(lines[at - 1] || '') && rule !== -1 && Boolean(lines[rule + 1]?.trim())
   }
   if (/^╰─(?:\s|$)/.test(line)) return true
   if (/^\s*›(?:\s|$)/.test(line)) return /for shortcuts|context left|\b(?:gpt-[\w.-]+|o[1-9](?:-[\w.-]+)?)\b.*·/i.test(below)

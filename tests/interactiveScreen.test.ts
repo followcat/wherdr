@@ -59,6 +59,10 @@ describe('terminal fallback after native recognition', () => {
   it('reads an unrecognized opencode screen as a plain terminal like other transcript agents', () => {
     expect(classifyScreen({ text: 'A normal reply without a known input marker', agent: 'opencode' })).toBe('terminal')
   })
+  it.each(['devin-fusion-lead.txt', 'devin-fusion-sidekick.txt'])('excludes the Fusion picker %s by its legend, whatever its slider is drawn with', name => {
+    // Drawn with ─ instead of ━, the slider would pass for the field's lower rule.
+    expect(confirmedInput(fx(name).replaceAll('━', '─'), 'devin')).toBe(false)
+  })
   it('never reads normal working output as an interactive fallback', () => {
     expect(classifyScreen({ text: 'Thinking…', agent: 'codex', status: 'working' })).toBe('working')
     expect(classifyScreen({ text: '', agent: 'codex' })).toBe('unknown')
