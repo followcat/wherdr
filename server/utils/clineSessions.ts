@@ -68,6 +68,9 @@ export function clineDataDir(home: string, procs: ClineProcess[], honorEnv = tru
     const dir = flag(proc.argv || [], '--data-dir')
     if (dir && path.isAbsolute(dir)) return stripSlash(dir)
   }
+  // The two variables are wherdr's own environment, not the pane's: they count
+  // only when the wherdr service has them too. The agent's `/proc/<pid>/environ`
+  // is never read (it holds secrets).
   if (honorEnv) {
     for (const name of ['CLINE_DATA_DIR', 'CLINE_SESSION_DATA_DIR']) {
       const dir = process.env[name]

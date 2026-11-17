@@ -266,7 +266,8 @@ manifest `~/.cline/data/sessions/<id>/<id>.json` (pid, start time, folder, model
 the conversation `sessions/<id>/<id>.messages.json`, one JSON document rewritten whole
 on every update, cached on size and mtime so an unchanged file is never parsed again.
 `--data-dir` in the launch arguments, or `CLINE_DATA_DIR` / `CLINE_SESSION_DATA_DIR`
-on the machine itself, moves the store; `--id <id>` names a resumed session. With the
+on the machine itself — wherdr's own environment, never the pane's, nor its
+`/proc/<pid>/environ` — moves the store; `--id <id>` names a resumed session. With the
 local backend (`--yolo` or `--data-dir`) the manifest's pid is the engine `.cline`
 process under the pane's `node …/bin/cline`, and that PID decides; with the hub
 backend (`cline -i` alone) it is the user's shared hub daemon, so the pane's folder

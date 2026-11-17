@@ -4,7 +4,9 @@
 
 Claude Code, Codex, Devin, Command Code, OpenCode, Antigravity and Cline terminals open in conversation mode; any other terminal shows only its
 [terminal](terminal.md). How wherdr finds the conversation file on herdr-core is described in
-[herdr-core › Conversations](core.md#conversations).
+[herdr-core › Conversations](core.md#conversations). Cline's data-folder variables
+(`CLINE_DATA_DIR`, `CLINE_SESSION_DATA_DIR`) are read from wherdr's own environment, never
+from the pane's: they count only when the wherdr service has them too.
 
 - **Conversation view**: the agent's real transcript (Claude Code, Codex, Devin, Command Code, OpenCode, Antigravity and Cline), rendered as
   Markdown, with grouped tool calls, images (full-screen viewer with pinch / wheel zoom and pan),
