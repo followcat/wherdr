@@ -153,6 +153,15 @@ describe('Cline approvals', () => {
     expect(choices?.options.map(o => [o.label, o.key])).toEqual([['Approve', 'y'], ['Deny', 'n']])
     expect(choices?.identity).toBeUndefined()
   })
+
+  // hc reports no agent for Cline, so there is no status to tell a panel from a
+  // frame still being painted: an unrecognized screen stays 'unknown' (the
+  // conversation stays, the Terminal tab is there) rather than becoming a
+  // terminal overlay on a guess.
+  it('leaves an unrecognized screen unknown instead of a terminal', () => {
+    const frame = screen('cline-idle').replace(/\n ClinePass:[\s\S]*$/, '\n')
+    expect(readCoreScreen(frame, 'cline', 'unknown')).toMatchObject({ status: null, choices: null, interaction: 'unknown' })
+  })
 })
 
 // Antigravity reports its own status (idle under these panels). A slash command
