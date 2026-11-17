@@ -37,7 +37,9 @@ export function processInfo(d: CoreDetail) {
   return { process_info: { foreground_processes: procs } }
 }
 
-const AGENT_PROGRAMS = new Set(['claude', 'codex', 'omp', 'devin', 'agy', 'antigravity', 'antigravity-cli'])
+// Cline runs as `node …/bin/cline` (its argv[1]) with the engine `.cline` under
+// it: both names count as its programs.
+const AGENT_PROGRAMS = new Set(['claude', 'codex', 'omp', 'devin', 'agy', 'antigravity', 'antigravity-cli', 'cline', '.cline'])
 const baseName = (s: string | undefined) => (s || '').split('/').pop() || ''
 // Programs under the terminal's process, from `ps -e -o pid=,ppid=,args=`: an agent started by a
 // shell, or hosted by a helper, is not the foreground process of the terminal.
@@ -142,7 +144,7 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
       const kids = agentDescendants(await psTable(), p.pid!).filter(k => names(k).includes('devin')).map(k => k.pid!)
       if (kids.length) p.childPids = kids
     }
-    const snapshotNames = new Set(['devin', 'agy', 'antigravity', 'antigravity-cli'])
+    const snapshotNames = new Set(['devin', 'agy', 'antigravity', 'antigravity-cli', 'cline', '.cline'])
     const snapshotted = procs.filter(p => names(p).some(n => snapshotNames.has(n)) && Number.isSafeInteger(p.pid) && p.pid! > 0)
     if (snapshotted.length) {
       // Exact argv and a conservative birth bound for Devin and Antigravity

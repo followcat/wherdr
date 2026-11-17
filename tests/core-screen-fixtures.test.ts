@@ -8,6 +8,7 @@ import { createCorePreviews } from '../server/utils/corePreview'
 import { coreChoose } from '../server/utils/coreChoose'
 import type { Pane } from '../shared/types'
 import { createInteractionWindow } from '../app/utils/interactionWindow'
+import { parseClineApproval } from '../shared/clineScreen'
 
 const screen = (name: string) => readFileSync(new URL(`./fixtures/core-screens/${name}.txt`, import.meta.url), 'utf8')
 const settle = () => new Promise(r => setTimeout(r, 5))
@@ -24,6 +25,8 @@ interface Case {
   options?: string[]
   /** Labels of the options that open a free-text field. */
   free?: string[]
+  /** Literal key each option is answered with (Cline's `[y]` / `[n]`). */
+  optionKeys?: string[]
 }
 
 const CODEX_LIMIT = "You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 8th, 2026 2:52 PM."
@@ -80,6 +83,14 @@ const CASES: Case[] = [
     question: 'Allow Antigravity to run this command?',
     options: ['Yes', 'Always allow', 'No'],
   },
+  // Cline: `❯ Ask anything...` between rules, a braille spinner while it runs,
+  // and a permission box answered by its own letters.
+  { name: 'cline-idle', status: 'idle', interaction: 'input', preview: 'Result: the directory is empty. /home/user/acme-shop contains only the two implicit entries.' },
+  { name: 'cline-working', status: 'working', interaction: 'working', preview: '⠏ Thinking... (esc to cancel)' },
+  {
+    name: 'cline-approval', status: 'blocked', interaction: 'native', preview: '[y] Approve   [n] Deny',
+    question: 'Approve tool call?', options: ['Approve', 'Deny'], optionKeys: ['y', 'n'],
+  },
 ]
 
 const agentOf = (c: Case) => c.name.split('-')[0]!
@@ -99,6 +110,7 @@ describe('readCoreScreen on recorded screens (no core status)', () => {
     expect(r.choices?.question).toBe(c.question)
     expect(r.choices?.options.map(o => o.label)).toEqual(c.options)
     expect(r.choices?.options.filter(o => o.free).map(o => o.label)).toEqual(c.free ?? [])
+    expect(r.choices?.options.map(o => o.key)).toEqual(c.options.map((_, i) => c.optionKeys?.[i]))
     expect(r.choices?.cursor).toBe(0)
     expect(r.choices?.identity).toBeTruthy()
   })
@@ -117,6 +129,29 @@ describe('readCoreScreen on recorded screens (no core status)', () => {
 
   it('reads Claude\'s usage-limit footer as a native wait once core reports the agent idle', () => {
     expect(readCoreScreen(screen('claude-usage-limit'), 'claude', 'idle')).toMatchObject({ status: null, choices: null, interaction: 'native' })
+  })
+})
+
+// Cline's footer says "Auto-approve all disabled (Shift+Tab)": that word is not
+// an approval request. Only the box (`[y] Approve   [n] Deny` under its
+// question) is one.
+describe('Cline approvals', () => {
+  it('never reads the idle or working footer as an approval', () => {
+    for (const name of ['cline-idle', 'cline-working']) {
+      expect(parseClineApproval(screen(name)), name).toBeNull()
+      expect(readCoreScreen(screen(name), 'cline', 'unknown').choices, name).toBeNull()
+    }
+    const footer = screen('cline-idle').trimEnd().split('\n').slice(-3).join('\n')
+    expect(footer).toContain('Auto-approve all disabled')
+    expect(parseClineApproval(footer)).toBeNull()
+  })
+
+  it('keeps the box\'s tool and command as the permission detail', () => {
+    const choices = parseClineApproval(screen('cline-approval'))
+    expect(choices?.question).toBe('Approve tool call?')
+    expect(choices?.detail).toMatchObject({ tool: 'run_commands', command: 'ls' })
+    expect(choices?.options.map(o => [o.label, o.key])).toEqual([['Approve', 'y'], ['Deny', 'n']])
+    expect(choices?.identity).toBeUndefined()
   })
 })
 
@@ -230,6 +265,9 @@ describe('coreChoose on recorded questions', () => {
       pane: id => (id === p.id ? p : undefined), panes: () => [p], refresh: () => {},
       read: async () => text, sleep: async () => {},
     }, { pane_id: p.id, index, label, identity })
-    expect(calls).toEqual([['terminal.keys', { terminal: p.coreAddress, keys: [...Array(index).fill('down'), 'enter'] }]])
+    // A box that names its letters (Cline's `[y]` / `[n]`) is answered with
+    // them; the others move the cursor, then Enter.
+    const keys = c.optionKeys ? [c.optionKeys[index]!] : [...Array(index).fill('down'), 'enter']
+    expect(calls).toEqual([['terminal.keys', { terminal: p.coreAddress, keys }]])
   })
 })

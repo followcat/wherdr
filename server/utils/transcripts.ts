@@ -20,6 +20,8 @@ import { devinSession } from './devinSessions'
 import { createOpencodeTranscripts } from './opencodeTranscripts'
 import { createAgyTranscripts } from './agyTranscripts'
 import { agySession } from './agySessions'
+import { createClineTranscripts } from './clineTranscripts'
+import { clineSession } from './clineSessions'
 import { codexDaemonReplyKey, type CodexHistory } from './codexDaemon'
 import { clip, isNoise } from './transcriptText'
 
@@ -1456,6 +1458,9 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   // opencodeTranscripts.ts). Without an exec there is no reader.
   const oc = ocExec ? createOpencodeTranscripts({ exec: ocExec, home, fs }) : null
   const agy = createAgyTranscripts({ home, fs, now })
+  // Cline: one JSON document per session, rewritten whole on every update (see
+  // clineTranscripts.ts).
+  const cline = createClineTranscripts({ home, fs, now })
   // File -> state (size, generation) and when this server first saw it, for
   // whole-second mtimes (see SETTLE_MS); `file|size|gen` -> checksum of the
   // file at first sight (null: could not be taken).
@@ -1553,6 +1558,17 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     const match = procs.find(p => names.includes(p.name) || names.includes(path.basename((p.argv && p.argv[0]) || '')))
     return match || (kind === 'devin' || kind === 'agy' ? null : procs[0]) || null
   }
+  // Cline's pane runs `node …/bin/cline -i …` (its argv[1] names the program)
+  // with the engine `.cline` under it: the pane's whole family counts, from
+  // core's foreground list and the process tree under the terminal.
+  const CLINE_NAMES = new Set(['cline', '.cline'])
+  async function clineProcesses(paneId: string): Promise<Json[]> {
+    const r = await herdr('pane.process_info', { pane_id: paneId }, 4000)
+    const procs: Json[] = (r.process_info && r.process_info.foreground_processes) || []
+    return procs.filter(p => CLINE_NAMES.has(String(p.name || ''))
+      || [p.argv && p.argv[0], p.argv && p.argv[1]].some(a => CLINE_NAMES.has(path.basename(String(a || '')))))
+  }
+
 
   const encodeCwd = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g, '-')
 
@@ -1799,6 +1815,12 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
         }
         const file = id && agy.pathOf(id)
         if (file) loc = { file, session: id! }
+      } else if (pane.agent === 'cline') {
+        const procs = await clineProcesses(pane.id)
+        const guess = procs.length
+          ? await clineSession(fs, home, procs, { cwd: pane.cwd, bornAt: pane.bornAt }, fs === localFs)
+          : null
+        if (guess) loc = { file: guess.file, session: guess.id }
       } else if (pane.agent === 'codex') loc = await locateCodexPane(pane)
       else if (pane.agentSession) {
         const f = await findSessionFile(pane.agent, pane.agentSession)
@@ -2185,6 +2207,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     if (!loc || Date.now() >= deadline) return { hits: [], limited: Date.now() >= deadline, kind: null }
     if (pane.agent === 'devin') return devin.search({ ...pane, agentSession: loc.session }, query, deadline)
     if (pane.agent === 'agy') return agy.search({ ...pane, agentSession: loc.session }, query, deadline)
+    if (pane.agent === 'cline') return cline.search({ ...pane, agentSession: loc.session }, loc.file, query, deadline)
     if (pane.agent === 'opencode') {
       const r = oc ? await oc.search(pane, loc, query, deadline) : { hits: [], limited: false, kind: 'opencode' }
       // The known-selection veto: hits of a selection observed moving or
@@ -2258,6 +2281,11 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     if (pane.agent === 'agy') {
       const r = await agy.chat({ ...pane, agentSession: loc.session }, opts)
       for (const item of r.items || []) if (item.role === 'assistant' && item.ref) replyKeys.set(item, `agy:${r.session}:${item.ref}`)
+      return r
+    }
+    if (pane.agent === 'cline') {
+      const r = await cline.chat({ ...pane, agentSession: loc.session }, loc.file, opts)
+      for (const item of r.items || []) if (item.role === 'assistant' && item.ref) replyKeys.set(item, `cline:${r.session}:${item.ref}`)
       return r
     }
     // OpenCode answers from its fingerprint-verified reader; the reply is
@@ -2440,6 +2468,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     // no file tail: previews come from the same verified chat.
     if (pane.agent === 'cmd' || pane.agent === 'opencode') return null
     if (pane.agent === 'agy') return null // Antigravity conversations are a SQLite database, not JSONL.
+    if (pane.agent === 'cline') return null // Cline rewrites one JSON document on every update.
     if (!hasTranscript(pane.agent)) return null
     const loc = await locate(pane)
     if (!loc) return null
@@ -2494,6 +2523,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     if (pane.agent === 'devin') return devin.image({ ...pane, agentSession: loc.session }, fileId, ref, index)
     if (path.basename(loc.file) !== fileId) return null
     if (pane.agent === 'agy') return agy.image({ ...pane, agentSession: loc.session }, fileId, ref, index)
+    if (pane.agent === 'cline') return null // Cline's messages hold no images.
     const m = /^(\d+):(\d+)$/.exec(String(ref || ''))
     if (!m) return null
     const off = Number(m[1])
@@ -2562,6 +2592,10 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     if (pane.agent === 'agy') {
       const loc = await locate(pane)
       return loc ? agy.model({ ...pane, agentSession: loc.session }) : null
+    }
+    if (pane.agent === 'cline') {
+      const loc = await locate(pane)
+      return loc ? cline.model({ ...pane, agentSession: loc.session }, loc.file) : null
     }
     if (pane.agent === 'opencode') {
       const loc = await locate(pane)

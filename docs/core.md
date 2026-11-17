@@ -76,7 +76,7 @@ after each reply and have a three-second deadline and a 16 MiB reply limit.
 
 ## Conversations
 
-Claude Code, Codex, Devin and Antigravity terminals open in conversation mode, as in v2, with the same
+Claude Code, Codex, Devin, Antigravity and Cline terminals open in conversation mode, as in v2, with the same
 conversation view, search, queued messages and quotas. The conversation file is found
 the way v2 does for Herdr panes, from what core gives: `terminal.get` supplies the
 foreground process and pid (Claude Code's `~/.claude/sessions/<pid>.json` names its
@@ -260,6 +260,25 @@ model metadata comes from `gen_metadata`. `node:sqlite` needs Node 22.13 or
 later and is loaded only when an Antigravity conversation is read: on an older
 Node the pane stays in Terminal mode (Conversation unavailable), and no other
 agent loads or warns about it.
+
+Cline CLI (`cline`, tested with 3.0.74) terminals open on their saved session: the
+manifest `~/.cline/data/sessions/<id>/<id>.json` (pid, start time, folder, model) and
+the conversation `sessions/<id>/<id>.messages.json`, one JSON document rewritten whole
+on every update, cached on size and mtime so an unchanged file is never parsed again.
+`--data-dir` in the launch arguments, or `CLINE_DATA_DIR` / `CLINE_SESSION_DATA_DIR`
+on the machine itself, moves the store; `--id <id>` names a resumed session. With the
+local backend (`--yolo` or `--data-dir`) the manifest's pid is the engine `.cline`
+process under the pane's `node …/bin/cline`, and that PID decides; with the hub
+backend (`cline -i` alone) it is the user's shared hub daemon, so the pane's folder
+and a session started at or after the process start decide, newest first. A folder
+with no manifest, an unknown `--id` or no match leaves the pane in Terminal mode
+rather than showing another conversation. User texts lose Cline's
+`<user_input …>` wrapper, tool calls are paired with their results, and a call the
+user denied or one cancelled before it ran (a hook) shows as failed. The screen is
+read too: the field is `❯ Ask anything...` between rules above a footer that names
+the model and the auto-approve state, a braille spinner while a turn runs, and a
+permission box (`Approve tool call?`, its tool, `[y] Approve` / `[n] Deny`) answered
+with its own letters rather than a cursor.
 
 Text left unsent in Claude Code's own input box (a draft or paste never submitted, or the
 prompt Claude puts back after an interrupt) shows at the end of the conversation as

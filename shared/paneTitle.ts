@@ -5,7 +5,7 @@ export const cleanTitle = (title: string | null | undefined) =>
 
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'tcsh', 'csh', 'nu', 'pwsh', 'login', 'tmux', 'screen'])
 const CMD_NAMES = ['cmd', 'cmdc', 'command code', 'command-code', 'command_code', 'commandcode']
-const GENERIC_AGENTS = new Set(['claude', 'claude code', 'codex', 'gemini', 'gemini cli', 'opencode', 'kimi', 'agent', 'agy', 'antigravity', ...CMD_NAMES])
+const GENERIC_AGENTS = new Set(['claude', 'claude code', 'codex', 'gemini', 'gemini cli', 'opencode', 'kimi', 'agent', 'agy', 'antigravity', 'cline', ...CMD_NAMES])
 
 const baseName = (dir: string | null | undefined) =>
   (dir || '').replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop() || ''
@@ -76,5 +76,6 @@ function kindLabel(kind: string | null) {
   if (kind === 'kimi') return 'Kimi'
   if (kind === 'cmd') return 'Command Code'
   if (kind === 'agy') return 'Antigravity'
+  if (kind === 'cline') return 'Cline'
   return kind ? kind[0]!.toUpperCase() + kind.slice(1) : 'Shell'
 }

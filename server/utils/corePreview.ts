@@ -3,6 +3,7 @@
 // only when the terminal's state changed, so the one-second inventory poll stays cheap.
 import type { Pane } from '../../shared/types'
 import { ompPreviewText } from '../../shared/ompStatus'
+import { clinePreviewText } from '../../shared/clineScreen'
 
 const MAX = 200
 const MAX_BUSY = 4
@@ -73,7 +74,8 @@ export function createCorePreviews(deps: CorePreviewDeps) {
       if (reply?.text) return reply.text.length > MAX ? `${reply.text.slice(0, MAX - 1)}…` : reply.text
     }
     const screen = await deps.read(p.coreAddress!)
-    return lastLine(p.agent === 'omp' ? ompPreviewText(screen) : screen)
+    const text = p.agent === 'cline' ? clinePreviewText(screen) : screen
+    return lastLine(p.agent === 'omp' ? ompPreviewText(text) : text)
   }
   return {
     /** Sets `preview` on the panes from what is known; starts the readings that are due. */

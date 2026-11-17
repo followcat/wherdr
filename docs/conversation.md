@@ -2,11 +2,11 @@
 
 [Documentation](README.md) · [Project](../README.md)
 
-Claude Code, Codex, Devin, Command Code, OpenCode and Antigravity terminals open in conversation mode; any other terminal shows only its
+Claude Code, Codex, Devin, Command Code, OpenCode, Antigravity and Cline terminals open in conversation mode; any other terminal shows only its
 [terminal](terminal.md). How wherdr finds the conversation file on herdr-core is described in
 [herdr-core › Conversations](core.md#conversations).
 
-- **Conversation view**: the agent's real transcript (Claude Code, Codex, Devin, Command Code, OpenCode and Antigravity), rendered as
+- **Conversation view**: the agent's real transcript (Claude Code, Codex, Devin, Command Code, OpenCode, Antigravity and Cline), rendered as
   Markdown, with grouped tool calls, images (full-screen viewer with pinch / wheel zoom and pan),
   timestamps, search and infinite scroll back to the first message (Command Code follows the bounded
   reads described under [herdr-core › Conversations](core.md#conversations)). Every message shows its time,
@@ -151,7 +151,8 @@ Claude Code, Codex, Devin, Command Code, OpenCode and Antigravity terminals open
 - **Questions and permissions**: native questions, approvals and menus show their options; a tap
   answers. wherdr reads the screen again right before answering and refuses the answer if the
   question changed meanwhile. A free answer selects its option, waits for the field, then types
-  the text. Unrecognized blocking screens offer the real terminal.
+  the text. Cline's permission box answers with its own letters (`[y] Approve`, `[n] Deny`).
+  Unrecognized blocking screens offer the real terminal.
 - **Composer**: send messages while the agent works (queued: the agent's own queue when it takes
   them, else held by wherdr and sent when the turn ends; never sent twice; a message sent while
   wherdr types a wake or another of its own messages into the agent waits for it, then goes;
