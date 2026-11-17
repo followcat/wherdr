@@ -45,6 +45,10 @@ export function confirmedInput(text: string, agent?: string | null): boolean {
   const below = lines.slice(at + 1).join('\n')
   if (/\b(?:enter|esc|escape)\s+(?:to\s+)?(?:select|open|back|cancel|confirm|close|collapse)\b/i.test(below)) return false
   if (/^\s*[❯›❭]\s+\d{1,2}\.\s/.test(line)) return false
+  // Cline's field: `❯ Ask anything...` between full-width rules, above the
+  // status footer (`ClinePass: …`, the workspace, `Auto-approve all …`).
+  if (agent === 'cline') return /^\s*─{3,}/.test(lines[at - 1] || '') && /^\s*─{3,}/m.test(below)
+    && /\bAuto-approve all (?:enabled|disabled)\b/i.test(below)
   // Antigravity's prompt is a plain `>` between rules, `? for shortcuts` below.
   if (agent === 'agy' && /^\s*>(?:\s|$)/.test(line)) return /^\s*─{3,}/.test(lines[at - 1] || '')
     && /^\s*─{3,}/m.test(below) && /\?\s+for shortcuts/i.test(below)

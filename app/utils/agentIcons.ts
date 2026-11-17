@@ -9,6 +9,7 @@ export const AGENT_ICON: Record<string, string> = {
   kimi: 'i-lucide-moon-star',
   cmd: 'i-lucide-square-terminal',
   agy: 'i-lucide-orbit',
+  cline: 'i-lucide-braces',
 }
 
 export const agentIcon = (agent: string | null | undefined): string | null =>

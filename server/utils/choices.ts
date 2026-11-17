@@ -41,6 +41,7 @@ import { createHash } from 'node:crypto'
 import type { ChoiceOption, Choices, PromptDetail } from '../../shared/types'
 import { isPermissionQuestion, screenDetail } from './promptDetail'
 import { OMP_CURSOR, OMP_UP_DOWN, ompAlt } from '../../shared/ompSymbols'
+import { parseClineApproval } from '../../shared/clineScreen'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = any
@@ -299,6 +300,9 @@ function markClaudeFree(options: ChoiceOption[]) {
 // Checkboxes: Space checks or unchecks, without confirming; among them, an
 // option without a box (Claude's Submit, Chat about this) is confirmed by Enter.
 export function keysFor(choices: Choices, index: number): string[] {
+  // Cline's permission box answers with the letter beside the option (`[y]`).
+  const key = choices.options[index]?.key
+  if (key) return [key]
   const from = choices.options[choices.cursor]?.n
   const to = choices.options[index]?.n
   const d = from && to ? to - from : index - choices.cursor
@@ -806,8 +810,10 @@ export function sameQuestion(a: string | null | undefined, b: string | null | un
 // Permission details are part of the question; checkbox/cursor state is not.
 const identity = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 export function promptIdentity(text: string | null | undefined, agent?: string | null): string {
-  const c = agent === 'omp' ? parseOmpPrompt(text, true) : agent ? parseChoices(text, { full: true }) : parseChoices(text, { full: true }) || parseOmpPrompt(text, true)
-  return identity(c ? { question: c.question, options: c.options.map(({ label, hint, n, free }) => ({ label, hint, n, free })), detail: c.detail, multi: c.multi, tabs: c.tabs } : null)
+  const c = agent === 'omp' ? parseOmpPrompt(text, true)
+    : agent === 'cline' ? parseClineApproval(text)
+      : agent ? parseChoices(text, { full: true }) : parseChoices(text, { full: true }) || parseOmpPrompt(text, true)
+  return identity(c ? { question: c.question, options: c.options.map(({ label, hint, n, free, key }) => ({ label, hint, n, free, key })), detail: c.detail, multi: c.multi, tabs: c.tabs } : null)
 }
 
 // On-screen prompt re-read before choose/nav; Claude questions can be

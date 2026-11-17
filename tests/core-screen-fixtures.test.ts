@@ -8,8 +8,16 @@ import { createCorePreviews } from '../server/utils/corePreview'
 import { coreChoose } from '../server/utils/coreChoose'
 import type { Pane } from '../shared/types'
 import { createInteractionWindow } from '../app/utils/interactionWindow'
+import { clinePreviewText, parseClineApproval } from '../shared/clineScreen'
 
 const screen = (name: string) => readFileSync(new URL(`./fixtures/core-screens/${name}.txt`, import.meta.url), 'utf8')
+// The status footer under the field: its meter line, then the workspace and the
+// auto-approve line. Provider names in it vary.
+const withoutFooter = (text: string) => {
+  const lines = text.split('\n')
+  const meter = lines.findLastIndex(l => /█{2,}\s*\(\d[\d,]*\)/.test(l))
+  return meter > 0 ? lines.slice(0, meter).join('\n') : text
+}
 const settle = () => new Promise(r => setTimeout(r, 5))
 
 interface Case {
@@ -24,6 +32,8 @@ interface Case {
   options?: string[]
   /** Labels of the options that open a free-text field. */
   free?: string[]
+  /** Literal key each option is answered with (Cline's `[y]` / `[n]`). */
+  optionKeys?: string[]
 }
 
 const CODEX_LIMIT = "You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 8th, 2026 2:52 PM."
@@ -80,6 +90,14 @@ const CASES: Case[] = [
     question: 'Allow Antigravity to run this command?',
     options: ['Yes', 'Always allow', 'No'],
   },
+  // Cline: `❯ Ask anything...` between rules, a braille spinner while it runs,
+  // and a permission box answered by its own letters.
+  { name: 'cline-idle', status: 'idle', interaction: 'input', preview: 'Result: the directory is empty. /home/user/acme-shop contains only the two implicit entries.' },
+  { name: 'cline-working', status: 'working', interaction: 'working', preview: '⠏ Thinking... (esc to cancel)' },
+  {
+    name: 'cline-approval', status: 'blocked', interaction: 'native', preview: '[y] Approve   [n] Deny',
+    question: 'Approve tool call?', options: ['Approve', 'Deny'], optionKeys: ['y', 'n'],
+  },
 ]
 
 const agentOf = (c: Case) => c.name.split('-')[0]!
@@ -99,6 +117,7 @@ describe('readCoreScreen on recorded screens (no core status)', () => {
     expect(r.choices?.question).toBe(c.question)
     expect(r.choices?.options.map(o => o.label)).toEqual(c.options)
     expect(r.choices?.options.filter(o => o.free).map(o => o.label)).toEqual(c.free ?? [])
+    expect(r.choices?.options.map(o => o.key)).toEqual(c.options.map((_, i) => c.optionKeys?.[i]))
     expect(r.choices?.cursor).toBe(0)
     expect(r.choices?.identity).toBeTruthy()
   })
@@ -117,6 +136,74 @@ describe('readCoreScreen on recorded screens (no core status)', () => {
 
   it('reads Claude\'s usage-limit footer as a native wait once core reports the agent idle', () => {
     expect(readCoreScreen(screen('claude-usage-limit'), 'claude', 'idle')).toMatchObject({ status: null, choices: null, interaction: 'native' })
+  })
+})
+
+// Cline's footer says "Auto-approve all disabled (Shift+Tab)": that word is not
+// an approval request. Only the box (`[y] Approve   [n] Deny` under its
+// question) is one.
+describe('Cline approvals', () => {
+  it('never reads the idle or working footer as an approval', () => {
+    for (const name of ['cline-idle', 'cline-working']) {
+      expect(parseClineApproval(screen(name)), name).toBeNull()
+      expect(readCoreScreen(screen(name), 'cline', 'unknown').choices, name).toBeNull()
+    }
+    const footer = screen('cline-idle').trimEnd().split('\n').slice(-3).join('\n')
+    expect(footer).toContain('Auto-approve all disabled')
+    expect(parseClineApproval(footer)).toBeNull()
+  })
+
+  it('keeps the box\'s tool and command as the permission detail', () => {
+    const choices = parseClineApproval(screen('cline-approval'))
+    expect(choices?.question).toBe('Approve tool call?')
+    expect(choices?.detail).toMatchObject({ tool: 'run_commands', command: 'ls' })
+    expect(choices?.options.map(o => [o.label, o.key])).toEqual([['Approve', 'y'], ['Deny', 'n']])
+    expect(choices?.identity).toBeUndefined()
+  })
+
+  // hc reports no agent for Cline, so there is no status to tell a panel from a
+  // frame still being painted: an unrecognized screen stays 'unknown' (the
+  // conversation stays, the Terminal tab is there) rather than becoming a
+  // terminal overlay on a guess.
+  it('leaves an unrecognized screen unknown instead of a terminal', () => {
+    expect(readCoreScreen(withoutFooter(screen('cline-idle')), 'cline', 'unknown'))
+      .toMatchObject({ status: null, choices: null, interaction: 'unknown' })
+  })
+
+  // The live box replaces the message field and the screen ends with the
+  // footer. A box quoted above the field (a reply, a fixture being edited, a
+  // pasted capture) is history: no buttons, and never a "blocked" pane.
+  it('refuses a box quoted above the message field', () => {
+    const lines = screen('cline-idle').split('\n')
+    const rule = lines.findIndex(l => /^\s*─{10,}\s*$/.test(l))
+    const quoted = [
+      ...lines.slice(0, rule), '',
+      ' Cline needs permission', '', ' Approve tool call?', '', ' run_commands', '', '   $ ls', '', '  [y] Approve   [n] Deny', '',
+      ...lines.slice(rule),
+    ].join('\n')
+    expect(quoted).toContain('❯ Ask anything')
+    expect(parseClineApproval(quoted)).toBeNull()
+    const r = readCoreScreen(quoted, 'cline', 'unknown')
+    expect(r.choices).toBeNull()
+    expect(r.status).toBe('idle')
+  })
+
+  // Another provider prints its own name where the capture says ClinePass: the
+  // footer is recognised by its meter and its auto-approve line.
+  it('reads a box whose footer names another provider', () => {
+    const renamed = screen('cline-approval').replace('ClinePass:', 'Demo Provider:')
+    expect(parseClineApproval(renamed)).toMatchObject({ question: 'Approve tool call?', detail: { tool: 'run_commands', command: 'ls' } })
+    expect(clinePreviewText(renamed).trimEnd().split('\n').at(-1)?.trim()).toBe('[y] Approve   [n] Deny')
+    expect(readCoreScreen(renamed, 'cline', 'unknown')).toMatchObject({ status: 'blocked', interaction: 'native' })
+  })
+
+  // Anything but blank lines between the options and the footer means the box
+  // is not the screen's last element: still history, not a request.
+  it('refuses a box followed by other text before the footer', () => {
+    const trailing = screen('cline-approval')
+      .replace('  [y] Approve   [n] Deny\n', '  [y] Approve   [n] Deny\n\n That was a past box.\n')
+    expect(parseClineApproval(trailing)).toBeNull()
+    expect(readCoreScreen(trailing, 'cline', 'unknown').choices).toBeNull()
   })
 })
 
@@ -230,6 +317,9 @@ describe('coreChoose on recorded questions', () => {
       pane: id => (id === p.id ? p : undefined), panes: () => [p], refresh: () => {},
       read: async () => text, sleep: async () => {},
     }, { pane_id: p.id, index, label, identity })
-    expect(calls).toEqual([['terminal.keys', { terminal: p.coreAddress, keys: [...Array(index).fill('down'), 'enter'] }]])
+    // A box that names its letters (Cline's `[y]` / `[n]`) is answered with
+    // them; the others move the cursor, then Enter.
+    const keys = c.optionKeys ? [c.optionKeys[index]!] : [...Array(index).fill('down'), 'enter']
+    expect(calls).toEqual([['terminal.keys', { terminal: p.coreAddress, keys }]])
   })
 })

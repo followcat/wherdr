@@ -10,6 +10,7 @@ import { parseOmpStatus } from '../../shared/ompStatus'
 import { parseChoices, parseOmpPrompt, promptIdentity, completeClaudeAsk, type ClaudeAsked } from './choices'
 import { queueSendNow, readDraft, sameText } from './coreDraft'
 import { parseClaudeScreen } from './claudeScreen'
+import { clineWorking, parseClineApproval } from '../../shared/clineScreen'
 
 const WORKING = /\besc(?:ape)? to interrupt\b/i
 // Antigravity's running turn offers "esc to cancel"; its pickers number their
@@ -33,10 +34,13 @@ export function readCoreScreen(text: string, agent: string | null | undefined, s
   const tail = text.trimEnd().split('\n').slice(-14).join('\n')
   const working = WORKING.test(tail)
     || (agent === 'agy' && AGY_WORKING.test(tail) && !NUMBERED_OPTION.test(tail))
+    || (agent === 'cline' && clineWorking(text))
     || tail.split('\n').some(l => SPINNER.test(l))
   let choices: Choices | null = null
   if (!working) {
-    choices = agent === 'omp' ? parseOmpPrompt(text) : parseChoices(text, { strict: status !== 'blocked' && !(agent === 'claude' && TRUST_FOLDER.test(tail)) })
+    choices = agent === 'omp' ? parseOmpPrompt(text)
+      : agent === 'cline' ? parseClineApproval(text)
+        : parseChoices(text, { strict: status !== 'blocked' && !(agent === 'claude' && TRUST_FOLDER.test(tail)) })
     if (choices) choices.identity = promptIdentity(text, agent)
   }
   const known = status && status !== 'unknown' ? status : null

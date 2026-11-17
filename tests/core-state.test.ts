@@ -57,6 +57,16 @@ it('recognizes a Devin command when core supplies no agent field', () => {
   expect(coreState([terminal('t1', { argv: ['/opt/bin/devin', '-r', 'session-a'] })], []).panes[0]?.agent).toBe('devin')
 })
 
+it('recognizes a Cline command when core supplies no agent field', () => {
+  // The pane's foreground is `node …/bin/cline -i …`.
+  const cline = { foreground: { argv: ['/opt/nvm/bin/node', '/opt/nvm/bin/cline', '-i', 'List the files'] } }
+  expect(coreState([terminal('t1', cline)], []).panes[0]?.agent).toBe('cline')
+  expect(coreState([terminal('t1', { argv: ['/opt/nvm/bin/cline', '-i', 'hello'] })], []).panes[0]?.agent).toBe('cline')
+  // A script or a prompt that merely mentions the name is not Cline.
+  for (const argv of [['vim', 'cline.txt'], ['bash', '-c', 'cline -i x'], ['node', 'scripts/cline.js']])
+    expect(coreState([terminal('t1', { argv })], []).panes[0]?.agent, argv.join(' ')).toBeNull()
+})
+
 describe('Command Code agent kind', () => {
   const agentOf = (extra = {}) => coreState([terminal('t1', extra)], []).panes[0]?.agent
   it('canonicalizes trusted Command Code aliases to cmd', () => {

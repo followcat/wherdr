@@ -644,6 +644,9 @@ const TOOL_LABEL: Record<string, string> = {
   write_file: tl('Write', 'Écriture'), edit_file: TOOL_EDIT, multi_edit_file: TOOL_EDIT, replace_file_content: TOOL_EDIT,
   grep_search: tl('Search', 'Recherche'), codebase_search: tl('Search', 'Recherche'), find_by_name: tl('Files', 'Fichiers'), list_dir: tl('Files', 'Fichiers'),
   search_web: tl('Web search', 'Recherche web'), read_url_content: 'Web', invoke_subagent: TOOL_SUBAGENT, view_code_item: tl('Read', 'Lecture'),
+  // Cline tool names.
+  run_commands: TOOL_COMMAND, read_files: tl('Read', 'Lecture'), editor: TOOL_EDIT, search_codebase: tl('Search', 'Recherche'),
+  fetch_web_content: 'Web', web_search: tl('Web search', 'Recherche web'), ask_question: tl('Question', 'Question'), skills: tl('Skill', 'Compétence'),
 }
 const TOOL_ICON: Record<string, string> = {
   Bash: 'i-lucide-terminal', exec: 'i-lucide-terminal', shell: 'i-lucide-terminal',
@@ -657,6 +660,9 @@ const TOOL_ICON: Record<string, string> = {
   grep_search: 'i-lucide-text-search', codebase_search: 'i-lucide-text-search', find_by_name: 'i-lucide-folder-search', list_dir: 'i-lucide-folder-search',
   search_web: 'i-lucide-search', read_url_content: 'i-lucide-globe', invoke_subagent: 'i-lucide-bot',
   send_message: 'i-lucide-message-square', ask_question: 'i-lucide-message-circle-question',
+  // Cline tool names.
+  run_commands: 'i-lucide-terminal', read_files: 'i-lucide-file-text', editor: 'i-lucide-file-pen', search_codebase: 'i-lucide-text-search',
+  fetch_web_content: 'i-lucide-globe', web_search: 'i-lucide-search', skills: 'i-lucide-sparkles',
 }
 // Codex "exec" runs code: a shell command, or another tool (write_stdin…).
 // Tool summary: the task count comes from the server in English ("3 tasks").

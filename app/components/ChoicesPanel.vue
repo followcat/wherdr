@@ -92,7 +92,10 @@ function onFreeKey(e: KeyboardEvent, i: number, label: string) {
 // option (or opens the free-answer field), ←/→ change tabs. Field open: the
 // keyboard is its own.
 const disabled = computed(() => busy.value || props.prompt?.unavailable || !linkShown.value || offlineView.value)
-const keyboard = computed(() => Boolean(props.keys && desk.value && props.prompt && !props.prompt.kind && props.prompt.options.length && freeAt.value === null && !disabled.value))
+// A box whose options carry their own key (`[y] Approve`, `[n] Deny`): the keys
+// are sent as they are, so ↑/↓/Enter say nothing there.
+const literalKeys = computed(() => Boolean(props.prompt?.options.length && props.prompt.options.every(o => o.key)))
+const keyboard = computed(() => Boolean(props.keys && desk.value && props.prompt && !props.prompt.kind && props.prompt.options.length && freeAt.value === null && !disabled.value && !literalKeys.value))
 useCardKeys(() => keyboard.value, () => ({ digits: Math.min(9, props.prompt?.options.length || 0), enter: true, tabs: Boolean(tabs.value) }), (k) => {
   const p = props.prompt
   if (!p) return
@@ -141,7 +144,7 @@ useCardKeys(() => keyboard.value, () => ({ digits: Math.min(9, props.prompt?.opt
           :disabled="disabled" @click="o.free ? (editing = prompt.typing || editing === i ? null : i) : pick(i, o.label)"
         >
           <span v-if="prompt.multi && o.checked !== undefined" class="n"><UIcon :name="o.checked ? 'i-lucide-square-check' : 'i-lucide-square'" /></span>
-          <span v-else class="n">{{ i + 1 }}</span>
+          <span v-else class="n">{{ o.key || i + 1 }}</span>
           <span class="l">{{ o.label }}<small v-if="o.hint">{{ o.hint }}</small></span>
           <UIcon v-if="o.free" name="i-lucide-pencil-line" class="choices-free-icon" />
         </button>
