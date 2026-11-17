@@ -165,6 +165,7 @@ const FR: Record<string, string> = {
   'Change model': 'Changer de modèle', 'Code review': 'Revue de code',
   'Session status': 'État de la session', 'View diff': 'Voir le diff',
   'Session stats': 'Statistiques de la session', 'Keyboard shortcuts': 'Raccourcis clavier',
+  'Usage': 'Consommation', 'This session': 'Cette session', 'Total': 'Total', 'Tokens by model': 'Tokens par modèle',
   'Interrupt agent': 'Interrompre l’agent',
   'Commands that open a menu (model…) can then be controlled in the Terminal tab.': 'Les commandes qui ouvrent un menu (modèle…) se pilotent ensuite dans l’onglet Terminal.',
   'Settings': 'Réglages',

@@ -5,7 +5,7 @@
 // "unchanged" as long as the file has not grown).
 // Shown = older pages loaded on demand (`older`, up to
 // byte `olderCursor`) + bottom re-read continuously from byte `tailStart`.
-import type { ChatItem, ChatResponse, ClaudeQueueEntry, ClaudeScreen, CommandCodeToolUpdate, OmpToolView, Pane, QueuedMessage } from '#shared/types'
+import type { ChatItem, ChatResponse, ClaudeQueueEntry, ClaudeScreen, CommandCodeToolUpdate, DevinCommandCard, OmpToolView, Pane, QueuedMessage } from '#shared/types'
 import { readChat, saveChat, touchChat } from '~/utils/offlineCache'
 import { mayReadOffline, readOfflineAccess } from '~/utils/offlineAccess'
 import { restoreDraft } from '~/utils/queuedCancel'
@@ -692,6 +692,8 @@ type Block = ({ k: 'day', key: string, label: string }
   // `cmd`: a local '/' command the user ran.
   | { k: 'system', key: string, text: string, full?: string, cmd?: boolean, ms?: number }
   | { k: 'notice', key: string, label: string, icon: string, html: string, long: boolean, scheduled?: boolean, ms?: number }
+  // Devin's /usage, /context or /session-stats, kept by wherdr (see devinCards.ts): not the agent's turn.
+  | { k: 'devinCard', key: string, card: DevinCommandCard, time: string | null, ts: string | null }
   // The agent's turn failed (omp: usage limit, credit balance, stalled stream…).
   | { k: 'error', key: string, text: string, long: boolean }
   | { k: 'ompRun', key: string, tool: ChatItem & { omp: OmpToolView }, ms?: number }
@@ -872,7 +874,7 @@ const blocks = computed<Block[]>(() => {
         needWho = true
         turn = { key: keys[i]!, start: it.ts, end: null, tools: 0, replies: 0 }
       }
-      if (turn && it.ts && it.role !== 'notice' && it.role !== 'job') {
+      if (turn && it.ts && it.role !== 'notice' && it.role !== 'job' && it.role !== 'devinCard') {
         // A note (background task finished afterwards…) does not extend the turn.
         turn.end = it.ts
         if (it.role === 'tool') turn.tools++
@@ -921,6 +923,8 @@ const blocks = computed<Block[]>(() => {
       const [label, icon] = NOTICE[it.name || ''] || [it.name || 'Note', 'i-lucide-info']
       // A scheduled prompt starts folded: it is not what the user wrote.
       out.push(lazyHtml({ k: 'notice' as const, key, label: t(label), icon, scheduled: it.name === 'scheduled', long: it.name === 'scheduled' || it.text.split('\n').length > SHELL_LINES || it.text.length > 1200, ...msOf(it) }, () => md(it.text)))
+    } else if (it.role === 'devinCard' && it.card) {
+      out.push({ k: 'devinCard', key, card: it.card, time: it.ts ? fmtTime(it.ts) : null, ts: it.ts || null })
     } else {
       const effort = it.role === 'system' ? it.text.match(/^Effort : (low|medium|high|xhigh|max|ultracode) \(cette session\)$/) : null
       // Local "/" command: one-line system separator ("/cost → …"); a tap
@@ -1933,6 +1937,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                   <span>{{ isOpen(b.key) ? t('Collapse') : t('Show all') }}</span>
                 </button>
               </div>
+              <DevinCommandCard v-else-if="b.k === 'devinCard'" :card="b.card" :time="b.time" :ts="b.ts" />
               <div v-else-if="b.k === 'turn'" class="turn-end">
                 <UTooltip v-if="b.copy" :text="t('Copy reply')" :disabled="!desk">
                   <UButton icon="i-lucide-copy" color="neutral" variant="ghost" size="xs" class="turn-copy" :aria-label="t('Copy reply')" @click="copyText(b.copy)" />

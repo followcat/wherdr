@@ -9,8 +9,9 @@ export default defineApi(async (event) => {
   const num = (k: string) => (q[k] !== undefined ? Math.max(0, Number(q[k]) || 0) : null)
   // Messages taken back after a Stop (see interruptRestore.ts): hidden, and
   // part of the token so that the view reloads when one is added.
+  // Devin's command cards (devinCards.ts) are marked the same way.
   const { hidden, seq } = takenBackOf(p.id)
-  const mark = hidden.length ? `~${seq}` : ''
+  const mark = (hidden.length ? `~${seq}` : '') + devinCards.mark(p.id)
   // Token sent back by the client: the transcript's token, the taken-back
   // mark, then the fingerprint of the list it holds (see chatDelta.ts).
   // A fingerprinted token the server does not remember with that count (server
@@ -35,6 +36,8 @@ export default defineApi(async (event) => {
     if (r.unchanged) r.token = sent
     if (r.items) {
       r.items = chatPasted(withoutTakenBack(r.items, hidden))
+      // The bottom only: an older page never holds a card, so none is shown twice.
+      if (!r.older) r.items = devinCards.place(p.id, r.items, r.start === 0)
       await addUploadHashes(r.items)
     }
     // Current model ("Opus 5.5", "GPT-6-Sol"): cached by transcript state. Not read

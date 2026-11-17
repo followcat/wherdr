@@ -8,6 +8,7 @@ import { fieldGap, fieldHolds, isBareBang, isSlashCommand } from '../../shared/q
 import { corePaint, pasting, readDraft, sameText } from './coreDraft'
 import { noteSubmitting, type Submitting } from './submitting'
 import { inTurn, typingInto } from './terminalTurns'
+import { devinCards } from './devinCards'
 import type { Pane } from '../../shared/types'
 
 type Call = <T>(method: string, params: object, timeout: number) => Promise<T>
@@ -25,6 +26,8 @@ export interface CoreInputDeps {
   settleMs?: number
   /** Quiet time after a send before the next writer of the terminal (see terminalTurns.ts). */
   turnSettleMs?: number
+  /** Devin's /usage, /context, /session-stats: the send, and the card read off the screen after it (devinCards.ts). */
+  card?: <T>(p: Pane, text: string, send: () => Promise<T>) => Promise<T>
 }
 
 const KEY_RE = /^[a-z0-9+\-]{1,24}$/i
@@ -52,6 +55,7 @@ export function coreInputDeps(): CoreInputDeps {
       return null
     },
     submitting: noteSubmitting,
+    card: devinCards.sending,
     takeBack: (p) => {
       const call = (method: string, params: object, t: number) => coreCall(process.env.HC_SOCKET || '', method, params, t)
       return takeBackFromClaude(p, {
@@ -96,7 +100,8 @@ export async function coreSend(deps: CoreInputDeps, b: { pane_id?: unknown, text
   if (!text.trim() || isBareBang(text)) throw new HerdrError('empty', 'Empty message')
   if (text.length > MAX_TEXT) throw new HerdrError('too_large', 'Message too large')
   const waited = typingInto(p.coreAddress!)
-  return inTurn(p.coreAddress!, () => typeIn(deps, p, text, b.pastes, waited), deps.turnSettleMs)
+  const send = () => inTurn(p.coreAddress!, () => typeIn(deps, p, text, b.pastes, waited), deps.turnSettleMs)
+  return deps.card ? deps.card(p, text, send) : send()
 }
 
 // Behind another writer (or just after it), Claude may still be taking its

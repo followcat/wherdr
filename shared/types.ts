@@ -259,7 +259,9 @@ export interface HerdrState {
 // 'bash': Claude Code "!" command (bash mode), 'cmd': local "/" command.
 // 'notice': note shown by the agent outside its replies (omp advisor,
 // finished background task, IRC message…); `name` gives its kind.
-export type ChatRole = 'user' | 'assistant' | 'thinking' | 'tool' | 'cmd' | 'bash' | 'system' | 'notice' | 'job'
+// 'devinCard': Devin's /usage, /context or /session-stats answer, kept by
+// wherdr (server/utils/devinCards.ts); never part of Devin's transcript.
+export type ChatRole = 'user' | 'assistant' | 'thinking' | 'tool' | 'cmd' | 'bash' | 'system' | 'notice' | 'job' | 'devinCard'
 export interface ChatItem {
   role: ChatRole
   text: string
@@ -295,7 +297,21 @@ export interface ChatItem {
   // First item of a turn the agent took by itself, not after a message
   // (Claude: a background task's notification).
   own?: boolean
+  // Devin command card (role 'devinCard'); `text` is its plain text.
+  card?: DevinCommandCard
 }
+// Devin's /usage, /context and /session-stats, read off Devin's screen as data
+// (shared/devinCommandCards.ts). `text` is the block as text, for a block whose
+// shape is not known (a Devin update, or a message such as "No turns yet").
+export type DevinCardCommand = '/usage' | '/context' | '/session-stats'
+export interface DevinRow { label: string, value: string }
+export interface DevinUsageWindow { label: string, percent: number, reset: string }
+export interface DevinShare { label: string, value: string | null, percent: number }
+export type DevinCommandCard =
+  | { command: '/usage', kind: 'usage', windows: DevinUsageWindow[], session: DevinRow[], note: string | null }
+  | { command: '/context', kind: 'context', model: string | null, categories: DevinShare[], total: { used: string, limit: string, percent: number } | null }
+  | { command: '/session-stats', kind: 'stats', rows: DevinRow[], models: DevinShare[], total: string | null }
+  | { command: DevinCardCommand, kind: 'text', lines: string[] }
 // An omp tool call: omp's own title ("Bash", "Grep"…), its target (command,
 // path with its line range, pattern, query), counts, wall time, and the end
 // of its output (`outLines`: lines in the whole output, `diff`: an edit's diff).
