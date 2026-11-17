@@ -30,6 +30,7 @@ import { pmStore } from './pmStore'
 import { projectCoordinatorName } from '../../shared/pm/project'
 import { createHeld } from './coreHeld'
 import { coreInputDeps, coreSend } from './coreInput'
+import { devinCards } from './devinCards'
 import { createModelCtl, createModelRefresh } from './modelctl'
 import { createCoreModelCtl } from './coreModelctl'
 import { coreFilesMachine } from './coreFilesMachine'
@@ -237,6 +238,7 @@ export async function poll() {
   const alive = new Set(state.panes.map(p => p.id))
   for (const id of modelRefresh().ids()) if (!alive.has(id)) { modelRefresh().forget(id); modelCtl().forgetModel(id) }
   coreModelCtlInstance?.prunePanes(alive)
+  devinCards.prune(alive)
   for (const p of state.panes) {
     // The model picker's own menu may still be the screen: that mark is not
     // a foreign prompt (ModelPicker's why reads it).

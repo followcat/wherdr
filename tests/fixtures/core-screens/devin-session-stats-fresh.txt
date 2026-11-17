@@ -1,0 +1,26 @@
+⠀⣴⣾⣶⡄⠀⠀⠀⠀
+⠀⠛⠿⠟⠻⣶⣾⣶⡄  Devin CLI
+⠀⣤⣶⣦⣴⠿⢿⠿⠃  v3000.12.57
+⠀⠻⢿⠿⠃⠀⠀⠀⠀
+
+❭ /usage
+
+ Usage
+ Daily   ■■■■■■■■■■■■■■■■■■■■  29% used  · resets in 4h 41m
+ Weekly  ■■■■■■■■■■■■■■■■■■■■  20% used  · resets Nov 22, 4:00 PM (UTC+8)
+
+ No usage yet in this session.
+
+❭ /context
+
+ No context usage available yet. Send a message first.
+
+❭ /session-stats
+
+ No turns completed yet in this session.
+
+ ● /home/user/acme-shop
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❭ Ask Devin to build features, fix bugs, or work on your code
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+SWE-2 Max                                                                                                                                          Press alt+↑/alt+↓ to rate a response (thumbs up/down)

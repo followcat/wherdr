@@ -1,0 +1,45 @@
+⠀⣴⣾⣶⡄⠀⠀⠀⠀
+⠀⠛⠿⠟⠻⣶⣾⣶⡄  Devin CLI
+⠀⣤⣶⣦⣴⠿⢿⠿⠃  v3000.12.57
+⠀⠻⢿⠿⠃⠀⠀⠀⠀
+
+❭ /usage
+
+ Usage
+ Daily   ■■■■■■■■■■■■■■■■■■■■  29% used  · resets in 4h 41m
+ Weekly  ■■■■■■■■■■■■■■■■■■■■  20% used  · resets Nov 22, 4:00 PM (UTC+8)
+
+ No usage yet in this session.
+
+❭ /context
+
+ No context usage available yet. Send a message first.
+
+❭ /session-stats
+
+ No turns completed yet in this session.
+
+❭ Reply with exactly one word: ok
+
+ ok
+
+❭ /usage
+
+ Usage
+ Daily   ■■■■■■■■■■■■■■■■■■■■  30% used  · resets in 4h 39m
+ Weekly  ■■■■■■■■■■■■■■■■■■■■  20% used  · resets Nov 22, 4:00 PM (UTC+8)
+
+ This session
+ Agent messages       1 message
+ Input tokens         5452 tokens
+ Output tokens        28 tokens
+ Cached input tokens  7936 tokens
+ Activity             1 turn · 0 tool calls · 0 files · 0 commands
+ Tokens               13k in · 28 out  (~13k per turn)
+ Model                SWE-2 Max
+
+ ● /home/user/acme-shop
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Reply with exactly one word ─
+❭ Ask Devin to build features, fix bugs, or work on your code
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+SWE-2 Max                                                                                                                                                                Context: 13k / 262k tokens (5%)

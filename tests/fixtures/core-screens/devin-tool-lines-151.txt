@@ -1,0 +1,50 @@
+ ✓ Found files matching **/*session* in ~/.cache/devin
+ ✓ Found files matching **/*usage* in ~/.local/share/devin
+ ✓ Found files matching **/*.jsonl in ~/
+ ✓ devin list --help
+ ✓ devin list
+ ✓ devin list --format json
+ ✓ Listed ~/.local/share/devin/cli
+ ✓ sqlite3 "/home/user/.local/share/devin/cli/sessions.db" "SELECT name, type FROM sqlite_master WHERE type IN ('table','view') ORDER BY name;"
+
+❭ /context
+
+ Context usage  swe-2-max
+ ● System prompt  ▄▄▄...............................................................................................................        7.4k   3%
+ ● Tools          ...▄▄▄▄...........................................................................................................        9.8k   4%
+ ● Messages       .......▄▄▄▄▄▄▄▄▄▄.................................................................................................       22.3k   9%
+ ● Free           .................▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄      222.5k  85%
+ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   Total                                                                                                                              39.5k/262k  15%
+
+ ✓ sqlite3 "/home/user/.local/share/devin/cli/sessions.db" ".schema sessions"
+ ✓ sqlite3 "/home/user/.local/share/devin/cli/sessions.db" ".schema message_nodes"
+ ✓ sqlite3 "/home/user/.local/share/devin/cli/sessions.db" ".schema tool_call_state"
+ ✓ sqlite3 "/home/user/.local/share/devin/cli/sessions.db" ".schema live_row_times"
+
+❭ /session-stats
+
+ Session stats  4f1c9a2e-7b3d-4e8a-9c61-2d5b8e0f7a13
+
+ Agent messages       1 message
+ Input tokens         3221 tokens
+ Output tokens        50 tokens
+ Cached input tokens  10176 tokens
+
+ Tokens by model
+ ● SWE-2 Max      ▄▄▄▄....▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄  373k     96%
+ ● Unknown model  ....▄▄▄▄.............................................................................................................   14k      4%
+ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   Total                                                                                                                                 387k  tokens
+
+ ✓ sqlite3 -json "/home/user/.local/share/devin/cli/sessions.db" "SELECT * FROM sessions WHERE id='acme-shop';"
+ ✓ Listed ~/.local/share/devin/cli/transcripts
+ ✗ ls -la "/home/user/.local/share/devin/cli/transcripts/acme-shop.json" 2>/dev/null || true Canceled due to user interrupt
+
+ ✱ Canceled. What should Devin do?
+
+ ● /home/user/acme-shop
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────── Request for a one-word acknowledgment ─
+❭ Ask Devin to build features, fix bugs, or work on your code
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+SWE-2 Max · smart                                                                                                      Context: 47k / 262k tokens (18%)

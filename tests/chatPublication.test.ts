@@ -43,6 +43,7 @@ function handler(disk: Record<string, MemFile>, opts: { locate?: () => Promise<L
   vi.stubGlobal('takenBackOf', () => ({ hidden: [], seq: 0 }))
   vi.stubGlobal('withoutTakenBack', (items: unknown) => items)
   vi.stubGlobal('chatPasted', (items: unknown) => items)
+  vi.stubGlobal('devinCards', { mark: () => '', place: (_pane: string, items: unknown) => items })
   vi.stubGlobal('transcripts', wire(t))
   vi.stubGlobal('currentModel', async (p: TranscriptPane) => t.model(p))
   return { t, run: async () => (await import('../server/api/chat.get')).default({}) as Promise<any> }

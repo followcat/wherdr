@@ -1,0 +1,14 @@
+❭ /context
+
+ Context usage  swe-2-max
+ System prompt  ▄▄▄▄...........................  7.4k tokens   3%
+ Tools          ...▄▄▄▄........................  9.8k tokens   4%
+ Free           .........▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄  222.5k tokens  85%
+ ─────────────────────────────────────────────────────────────────
+   Total  39.5k of 262k tokens  15%
+
+ ● /home/user/acme-shop
+───────────────────────────────────────────────────────────────────
+❭ Ask Devin to build features, fix bugs, or work on your code
+───────────────────────────────────────────────────────────────────
+SWE-2 Max                                    Context: 39k / 262k tokens (15%)

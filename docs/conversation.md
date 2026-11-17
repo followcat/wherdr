@@ -167,7 +167,7 @@ Claude Code, Codex, Devin, Command Code, OpenCode and Antigravity terminals open
   in the agent's queue.
   Slash commands typed in the field (`/compact`, `/clear`…) are sent as text; **+** also lists
   the common ones of Claude Code, Codex, Devin, omp and Antigravity. A command that opens a panel or a
-  picker (`/context`, `/model`…) shows the interactive terminal over the conversation. **Stop** (or `Esc`
+  picker (`/context`, `/model`…) shows the interactive terminal over the conversation, but for Devin, `/usage`, `/context` and `/session-stats` show their answer as a card in the conversation, after the messages written before the command, read off Devin's screen and kept in memory until wherdr restarts. **Stop** (or `Esc`
   in the empty field) interrupts the agent and says what core observed. When Claude Code
   suggests a reply (grayed-out in the empty field), `Tab` takes it on a computer and **Use**,
   inside the field on its right, on a phone. A long pasted text (log, output) becomes a
