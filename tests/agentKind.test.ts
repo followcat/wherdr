@@ -58,7 +58,7 @@ it('recognizes Antigravity conversation databases and enables the shared convers
 it('recognizes Cline sessions and enables the shared conversation view', async () => {
   const { hasTranscript } = await import('../shared/agentKind')
   expect(hasTranscript('cline')).toBe(true)
-  expect(transcriptKind('/home/user/.cline/data/sessions/1794894104593_rurer/1794894104593_rurer.messages.json')).toBe('cline')
-  expect(transcriptKind('/home/user/.cline/data/sessions/1794894104593_rurer/1794894104593_rurer.json')).toBe('cline')
+  expect(transcriptKind('/home/user/.cline/data/sessions/1700000000123_demoa/1700000000123_demoa.messages.json')).toBe('cline')
+  expect(transcriptKind('/home/user/.cline/data/sessions/1700000000123_demoa/1700000000123_demoa.json')).toBe('cline')
   expect(transcriptKind('/home/user/projects/cline-probe/src/cline.ts')).toBeNull()
 })

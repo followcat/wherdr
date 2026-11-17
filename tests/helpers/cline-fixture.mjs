@@ -4,7 +4,7 @@ import path from 'node:path'
 // Invented Cline CLI sessions (the 3.0.74 on-disk layout):
 // <data dir>/sessions/<id>/<id>.json and <id>.messages.json. Never reads the
 // developer's ~/.cline.
-export const CLINE_ID = '1794894104593_rurer'
+export const CLINE_ID = '1700000000123_demoa'
 
 export const clineUser = (text, mode = 'act') => ({ type: 'text', text: `<user_input mode="${mode}">${text}</user_input>` })
 export const clineText = text => ({ type: 'text', text })
