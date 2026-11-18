@@ -8,6 +8,14 @@
 // same size. The deep paint replaces every buffer row, so the viewport is
 // restored by its distance from the bottom, not by a buffer coordinate.
 
+// How long a `terminal.history` may stay unanswered before the client gives up
+// on it. The measured deep reveal on a phone-sized view is ~1 s (the attach plus
+// the reveal gate's 150 ms quiet window and its 2 s bound); a slow link adds the
+// relay's own attach round trip and the paint. Six seconds leaves room for that
+// without letting a relay that ignored the message (an older server after a
+// rollback, or a viewer with no channel) freeze the view for good.
+export const DEEP_FETCH_TIMEOUT_MS = 6000
+
 export interface DeepFetchInput {
   // The reader's own seek reached the oldest row xterm holds.
   atTop: boolean

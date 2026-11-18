@@ -239,6 +239,7 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
       // The deep paint replaced every row: put the window back on the line the
       // person was reading, measured from the tail, then clear the strip.
       if (restore !== null && term) {
+        cancelDeepTimer()
         deep.fromBottom = null
         deep.pending = false
         loadingEarlier.value = false
@@ -254,13 +255,33 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
   // The deep history of this xterm: asked once, when the person scrolls back
   // to the top of what the cold attach delivered (utils/terminalDeepHistory.ts).
   const deep = { asked: false, pending: false, fromBottom: null as number | null }
+  // A relay that never answers (an older server after a rollback, or one that
+  // ignored the message) must not leave the strip up and freeze the follow for
+  // the life of the xterm: the fetch gives up after this deadline.
+  let deepTimer: ReturnType<typeof setTimeout> | undefined
+  function cancelDeepTimer() {
+    clearTimeout(deepTimer)
+    deepTimer = undefined
+  }
   // One deep fetch per xterm: a cold re-open (wake, reconnect, eviction) starts
   // small again, so forgetStream clears it.
   function resetDeep() {
+    cancelDeepTimer()
     deep.asked = false
     deep.pending = false
     deep.fromBottom = null
     loadingEarlier.value = false
+  }
+  // The fetch is abandoned: no paint is coming, so the strip goes and the view
+  // follows live output again from where the reader left it. `deep.asked` stays
+  // set — a silent relay would otherwise be asked on every seek to the top.
+  function giveUpDeep() {
+    if (!deep.pending) return
+    cancelDeepTimer()
+    deep.pending = false
+    deep.fromBottom = null
+    loadingEarlier.value = false
+    followCursor()
   }
   // Called on the reader's own seek only (scroll(), viewportMoved): never from
   // the reveal, so a short cold buffer showing its top on arrival waits for
@@ -287,7 +308,13 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     loadingEarlier.value = true
     // A gesture measured against the screen about to be replaced dies with it.
     scrollInputVersion.value++
-    if (!sendTerm({ type: 'terminal.history', lines: MAX_HISTORY })) deep.pending = false
+    if (!sendTerm({ type: 'terminal.history', lines: MAX_HISTORY })) {
+      deep.pending = false
+      loadingEarlier.value = false
+      return
+    }
+    cancelDeepTimer()
+    deepTimer = setTimeout(giveUpDeep, DEEP_FETCH_TIMEOUT_MS)
   }
   // A viewport move we did not make is an absolute position in xterm's own
   // domain: its bottom edge (viewportY === baseY) is the live tail. A move
@@ -370,6 +397,9 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     // the last view. Move the same element into the new host — no new xterm,
     // no new attach — then fit and repaint.
     if (term && parked) {
+      // The xterm this adopt owns: another mount, or a dispose, can land while
+      // the renderer move is awaited, and must not be touched from here.
+      const adopted = term
       parked = false
       clearTimeout(parkTimer)
       parkTimer = undefined
@@ -380,11 +410,22 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
       twsRetry = 0
       const seq = ++mountSeq
       mounting = true
-      host.append(term.element!)
+      host.append(adopted.element!)
       // A WebGL context can be lost by the detach (iOS, Android): rebuild the
       // addon through the same path as a first open, with its HTML fallback.
       if (terminalRenderer.value === 'webgl') await setRenderer('webgl')
-      if (seq !== mountSeq || disposed) return false
+      // The view went away while the renderer move was awaited — disposed, or
+      // (the reachable case: TerminalView unmounts) parked again. This adopt no
+      // longer owns the controller: it must not leave `mounting` set, nor finish
+      // the adopt into a host that is gone. The state that now owns it stands:
+      // dispose() cleared everything, park() detached the xterm again.
+      if (seq !== mountSeq || disposed || parked || term !== adopted) {
+        if (seq === mountSeq && !disposed) {
+          mounting = false
+          loading.value = false
+        }
+        return false
+      }
       mounting = false
       // The existing buffer, not a replay: the window goes back to the live
       // tail, as it does after a Conversation/Terminal toggle.
@@ -1061,6 +1102,7 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     anchor = null
     // A deep fetch still on its way belongs to the leaving view.
     if (deep.pending) {
+      cancelDeepTimer()
       deep.pending = false
       deep.fromBottom = null
       loadingEarlier.value = false

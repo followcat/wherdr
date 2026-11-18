@@ -5,6 +5,7 @@ import { createTerminal } from '~/composables/useTerminal'
 import { kbOpen } from '~/composables/useViewport'
 import { terminalRenderer } from '~/composables/useHerdr'
 import { PARK_IDLE_MS } from '~/utils/terminalPark'
+import { DEEP_FETCH_TIMEOUT_MS } from '~/utils/terminalDeepHistory'
 import { COLD_HISTORY, MAX_HISTORY } from '#shared/terminalHistory'
 
 // Parking a terminal instead of disposing it: the Conversation/Terminal toggle
@@ -56,7 +57,9 @@ class FakeTerm {
   }
   attachCustomWheelEventHandler() {} attachCustomKeyEventHandler() {}
   onData() {} onBinary() {} onScroll() {}
-  scrollToLine() {}
+  // xterm clamps a line to the buffer's scroll domain, as the controller's
+  // followCursor relies on.
+  scrollToLine(y: number) { this.buffer.active.viewportY = Math.max(0, Math.min(y, this.buffer.active.baseY)) }
   scrollToBottom() { this.buffer.active.viewportY = this.buffer.active.baseY }
   registerMarker = (offset = 0) => new FakeMarker(this.buffer.active.cursorY + offset)
 }
@@ -119,7 +122,7 @@ function setup() {
   }
   // What TerminalView does on unmount.
   const leave = () => ctl.park()
-  return { ctl, open, leave, wrapper, setBanner, banner: () => banner }
+  return { ctl, open, leave, hostFor: host, wrapper, setBanner, banner: () => banner }
 }
 
 // A cold attach whose replay is revealed: capabilities, control, the full
@@ -424,4 +427,118 @@ it('a cold re-open asks for the cold amount and may fetch deep again', async () 
     expect(cold.cts()).toHaveLength(1)
     expect(COLD_HISTORY).toBeLessThan(MAX_HISTORY)
   } finally { ctl.dispose(); wrapper.unmount() }
+})
+
+// A deep fetch the relay never answers (an older server after a rollback, or
+// one that ignored it) must not freeze the view on the old line for good.
+it('an unanswered deep fetch clears the strip when its deadline passes, and the view follows again', async () => {
+  vi.useFakeTimers()
+  const { ctl, open, wrapper } = setup()
+  try {
+    const ws = await open()
+    await attached(ctl, ws)
+    const term = h1.terms[0]!
+    Object.assign(term.buffer.active, { baseY: 240, length: 280, cursorY: 39 })
+    ctl.scroll(1000)
+    expect(ctl.loadingEarlier.value).toBe(true)
+    expect(ws.cts()).toHaveLength(1)
+    // No `full` frame ever comes. The strip clears on its own…
+    vi.advanceTimersByTime(DEEP_FETCH_TIMEOUT_MS)
+    await nextTick()
+    expect(ctl.loadingEarlier.value).toBe(false)
+    expect(ws.cts()).toHaveLength(1)
+    // …and the view is not frozen: the reader's row is held while parked at
+    // the top, and scrolling back down moves the window again, to the tail.
+    expect(term.buffer.active.viewportY).toBe(0)
+    Object.assign(term.buffer.active, { baseY: 300, length: 340 })
+    ctl.scroll(-1000)
+    expect(term.buffer.active.viewportY).toBe(300)
+  } finally { ctl.dispose(); wrapper.unmount() }
+})
+
+it('a full frame before the deadline still restores the reading line', async () => {
+  vi.useFakeTimers()
+  const { ctl, open, wrapper } = setup()
+  try {
+    const ws = await open()
+    await attached(ctl, ws)
+    const term = h1.terms[0]!
+    Object.assign(term.buffer.active, { baseY: 240, length: 280, cursorY: 39 })
+    ctl.scroll(1000)
+    expect(ctl.loadingEarlier.value).toBe(true)
+    expect(term.buffer.active.viewportY).toBe(0)
+    vi.advanceTimersByTime(50)
+    // The deep paint arrives: the window goes back to the same distance from
+    // the tail it had when the fetch was asked (baseY 240, viewportY 0 → 240
+    // rows from the bottom), not to the new tail and not to the new top.
+    Object.assign(term.buffer.active, { baseY: 4780, length: 4820, cursorY: 39 })
+    ws.receive({ type: 'terminal.frame', full: true, width: 47, height: 40, bytes: '' })
+    ws.receive({ type: 'terminal.frame', bytes: btoa('deep'), credit: 4, width: 47, height: 40 })
+    vi.advanceTimersByTime(2000)
+    await nextTick()
+    expect(ctl.loadingEarlier.value).toBe(false)
+    expect(term.buffer.active.viewportY).toBe(4540)
+    // The deadline was cancelled: no second clear, no jump.
+    vi.advanceTimersByTime(DEEP_FETCH_TIMEOUT_MS)
+    await nextTick()
+    expect(term.buffer.active.viewportY).toBe(4540)
+  } finally { ctl.dispose(); wrapper.unmount() }
+})
+
+// The adopt awaits the renderer move (a WebGL rebuild); the view can unmount
+// in that window, which parks the controller again. The stale adopt must not
+// finish into the host the leaving view took with it, nor leave it mounting.
+it('an adopt overtaken by a park during its renderer move leaves the terminal parked', async () => {
+  const { ctl, open, leave, hostFor, wrapper } = setup()
+  terminalRenderer.value = 'webgl'
+  try {
+    const ws = await open()
+    await attached(ctl, ws)
+    const xterm = h1.terms[0]!
+    leave()
+    expect(ctl.isParked()).toBe(true)
+    const adopting = ctl.mount(hostFor())
+    // The view unmounts while the renderer move is awaited: parked again.
+    ctl.park()
+    expect(ctl.isParked()).toBe(true)
+    expect(await adopting).toBe(false)
+    // Its own state stands: parked, with the same one xterm, not loading, and
+    // not left "mounting" (which would block the paste rebind on adopt).
+    expect(ctl.isParked()).toBe(true)
+    expect(ctl.loading.value).toBe(false)
+    expect(h1.terms).toHaveLength(1)
+    expect(h1.terms[0]).toBe(xterm)
+    // A later mount adopts it normally.
+    expect(await open()).toBe(ws)
+    expect(h1.terms).toHaveLength(1)
+    expect(ctl.isParked()).toBe(false)
+  } finally { terminalRenderer.value = 'html'; ctl.dispose(); wrapper.unmount() }
+})
+
+it('an adopt interrupted by dispose during its renderer move leaves a clean controller', async () => {
+  const { ctl, open, leave, hostFor, wrapper } = setup()
+  // webgl makes the adopt await the renderer move: that is the window in which
+  // the view can go away.
+  terminalRenderer.value = 'webgl'
+  try {
+    const ws = await open()
+    await attached(ctl, ws)
+    const xterm = h1.terms[0]!
+    leave()
+    expect(ctl.isParked()).toBe(true)
+    // Adopt, and dispose before the renderer move settles.
+    const adopting = ctl.mount(hostFor())
+    ctl.dispose()
+    expect(await adopting).toBe(false)
+    // No half-adopted state: not parked (it would be adopted again), not
+    // connected, and not left loading.
+    expect(ctl.isParked()).toBe(false)
+    expect(ctl.isConnected()).toBe(false)
+    expect(ctl.loading.value).toBe(false)
+    // The next mount is a cold one and works.
+    terminalRenderer.value = 'html'
+    const again = await open()
+    expect(h1.terms).toHaveLength(2)
+    expect(again).not.toBe(ws)
+  } finally { terminalRenderer.value = 'html'; ctl.dispose(); wrapper.unmount() }
 })
