@@ -88,8 +88,12 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
   // RESIZE): what the browser terminal sent to core. `keys` ride channel 0 as
   // terminal.keys calls and are read from `framed`.
   const inbound: { channel: number, kind: number, data: Buffer }[] = []
-  // Sockets that attached a terminal: output() writes on their stream channel.
-  const attachSockets = new Set<Socket>()
+  // Sockets that attached a terminal, and the channel each last attached on:
+  // output() writes there (a deep re-attach replaces the socket's channel).
+  const attachSockets = new Map<Socket, number>()
+  // Every terminal.attach gets its own channel, as the core's do (3, 4…): a
+  // re-attach for the deep history must not share its predecessor's number.
+  let nextAttachChannel = 3
   // Timers of a streamed paint, cleared with the server.
   const paintTimers = new Set<ReturnType<typeof setTimeout>>()
   const terminals = feed.terminals?.map(t => ({ ...fixture.inventory.terminals[0]!, ...t }))
@@ -139,19 +143,22 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
           const c = JSON.parse(payload.toString()) as Call
           framed.push(c)
           const own = answer(c)
+          const attached = c.method === 'terminal.attach' ? nextAttachChannel++ : 0
           const result = own !== undefined ? own
-            : c.method === 'events.subscribe' ? { channel: 2, seq: 1, terminals: terminals.map(t => ({ cols: 80, rows: 24, ...t })) } : { channel: 3 }
+            : c.method === 'events.subscribe' ? { channel: 2, seq: 1, terminals: terminals.map(t => ({ cols: 80, rows: 24, ...t })) }
+              : attached ? { channel: attached } : { channel: 3 }
           served.push({ method: c.method, result })
           socket.write(frame(0, Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: c.id, result }))))
           if (c.method === 'terminal.attach') {
-            attachSockets.add(socket)
-            socket.once('close', () => attachSockets.delete(socket))
+            const channel = attached
+            if (!attachSockets.has(socket)) socket.once('close', () => attachSockets.delete(socket))
+            attachSockets.set(socket, channel)
             if (feed.paint) {
               const { pieces: list, gapMs = 0 } = feed.paint
               const pieces = typeof list === 'function' ? list(c) : list
               const write = (i: number) => {
                 if (i >= pieces.length || socket.destroyed) return
-                socket.write(frame(3, Buffer.from(pieces[i]!)))
+                socket.write(frame(channel, Buffer.from(pieces[i]!)))
                 if (i + 1 < pieces.length) {
                   const timer = setTimeout(() => { paintTimers.delete(timer); write(i + 1) }, gapMs)
                   paintTimers.add(timer)
@@ -160,7 +167,7 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
               write(0)
             } else if (feed.firstPaint !== '') {
               const paint = typeof feed.firstPaint === 'function' ? feed.firstPaint(c) : (feed.firstPaint ?? 'hello from core\r\n')
-              socket.write(frame(3, Buffer.from(paint)))
+              socket.write(frame(channel, Buffer.from(paint)))
             }
           }
         }
@@ -181,12 +188,12 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
     served,
     // More terminal output on the attach channel, after the first paint.
     output(data: string | Uint8Array) {
-      for (const socket of attachSockets) socket.write(frame(3, Buffer.from(data)))
+      for (const [socket, channel] of attachSockets) socket.write(frame(channel, Buffer.from(data)))
     },
     // An events-channel payload after the subscribe — e.g. the size event
     // another viewer set, which flips this client into watching mode.
     event(data: string | Uint8Array) {
-      for (const socket of attachSockets) socket.write(frame(2, Buffer.from(data)))
+      for (const socket of attachSockets.keys()) socket.write(frame(2, Buffer.from(data)))
     },
     // Signed in with the test passkey session, then on `path` of the app.
     async open(page: Page, path = '/') {

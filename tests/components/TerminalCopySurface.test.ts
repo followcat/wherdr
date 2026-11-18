@@ -40,7 +40,8 @@ async function mounted(smooth: boolean, screen: TerminalCopySnapshot | null = sn
     clearVirtualModifiers: vi.fn(() => calls.push('mods')),
     captureScreen: vi.fn(() => { calls.push('capture'); return screen }),
     scrollInputVersion: ref(0), scrollGeometryVersion: ref(0), frameTick: ref(0),
-    loading: ref(false), selectionHint: { visible: ref(false), dismiss: vi.fn() },
+    loading: ref(false), loadingEarlier: ref(false), park: vi.fn(), isConnected: () => true,
+    selectionHint: { visible: ref(false), dismiss: vi.fn() },
   }
   // emitted() is reset by unmount: a parent listener sees the whole session,
   // including the final copying(false) released while the view tears down.
@@ -274,6 +275,8 @@ describe('frozen screen session', () => {
     r.w.unmount()
     unmount = undefined
     expect(r.copying).toEqual([true, false])
-    expect(r.ctl.dispose).toHaveBeenCalledOnce()
+    // The terminal is parked, not disposed: the pane keeps it for the next mount.
+    expect(r.ctl.park).toHaveBeenCalledOnce()
+    expect(r.ctl.dispose).not.toHaveBeenCalled()
   })
 })

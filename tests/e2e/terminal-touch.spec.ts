@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { startCore, STREAM, type Call } from './core'
+import { COLD_HISTORY } from '../../shared/terminalHistory'
 
 // Local-scroll journeys through the fake herdr-core socket (tests/e2e/core.ts):
 // the attach delivers retained history ("Scrollback lines to show first (main
@@ -109,11 +110,12 @@ async function finger(page: Page, browserName: string) {
   return { down: () => fire('touchstart', x0, y0), move: (x: number, y: number) => fire('touchmove', x, y), up: () => fire('touchend', x0, y0) }
 }
 
-// The attach asks core for the same retained history on every screen variant:
-// the requested amount (source contract: coreTerm.ts HISTORY = 1000).
+// The attach asks core for the cold amount on every screen variant: the deep
+// history is fetched on demand, when the reader scrolls back to the top
+// (shared/terminalHistory.ts, COLD_HISTORY).
 function expectAttachHistory(core: Core) {
   const attach = core.framed.find(c => c.method === 'terminal.attach')
-  expect(attach?.params?.history).toBe(1000)
+  expect(attach?.params?.history).toBe(COLD_HISTORY)
   expect(Number.isInteger(attach?.params?.cols)).toBe(true)
   expect(Number.isInteger(attach?.params?.rows)).toBe(true)
 }
