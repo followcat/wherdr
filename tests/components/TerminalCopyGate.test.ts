@@ -108,6 +108,8 @@ async function setup() {
   ws.open()
   ws.receive({ type: 'web.capabilities', core: true, mouse: true })
   ws.receive({ type: 'terminal.frame', bytes: b64('frame'), credit: 40, full: true })
+  // The copy surface opens only once the attach's replay is shown.
+  await vi.waitFor(() => expect(ctl.loading.value).toBe(false))
   const term = hoisted.terminals.at(-1)!
   return { ctl, ws, term, wrapper }
 }

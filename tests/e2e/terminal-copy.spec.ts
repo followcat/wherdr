@@ -50,6 +50,9 @@ async function openTerminal(page: Page, core: Core) {
   await expect(page.locator('.xterm')).toBeVisible()
   await expect.poll(() => core.framed.filter(c => c.method === 'terminal.attach').length).toBeGreaterThan(0)
   await expectRows(page, /acme-shop/)
+  // The attach's replay is revealed after a quiet period (utils/terminalReveal.ts),
+  // which only passes while the fake clock runs: input waits for the reveal.
+  await expect.poll(async () => { await tick(page, 80); return await page.locator('#termWrap .term-loading').count() }).toBe(0)
 }
 
 // xterm parses written frames behind a setTimeout: poll while the fake clock runs.

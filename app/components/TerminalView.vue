@@ -312,7 +312,7 @@ watch(smoothTouchScrolling, () => {
   legacyLastX = legacyLastY = null
 }, { flush: 'sync' })
 function onTouchStart(e: TouchEvent) {
-  if (copyMode.value) return
+  if (copyMode.value || props.ctl.loading.value) return
   lastTouchAt = performance.now()
   // A second finger arriving through a new touchstart kills the pending hold,
   // without waiting for a move.
@@ -387,7 +387,7 @@ function onTouchEnd(e: TouchEvent) {
 // compatibility mouse after a touch is never a focus request — touchend
 // already decided the tap's keyboard intent in both modes.
 function onMouseDown(e: MouseEvent) {
-  if (copyMode.value) return
+  if (copyMode.value || props.ctl.loading.value) return
   const fromTouch = mouseFromTouch((e as MouseEvent & { sourceCapabilities?: { firesTouchEvents?: boolean } }).sourceCapabilities?.firesTouchEvents, performance.now() - lastTouchAt)
   // A touch-derived compatibility mouse is never a focus request: touchend
   // already decided the tap's keyboard intent in both modes.
@@ -399,6 +399,8 @@ function onMouseDown(e: MouseEvent) {
 // mode. Herdr applies the application's mouse mode itself.
 function onWheel(e: WheelEvent) {
   if (copyMode.value) return
+  // The replay under the cover is about to be replaced: the wheel goes nowhere.
+  if (props.ctl.loading.value) { e.preventDefault(); return }
   // A wheel is another input device acting on the viewport: it cancels any
   // pending touch or hold in either scroll mode — but not the wheel's own
   // accumulation, which coalesces across consecutive events.
@@ -462,7 +464,7 @@ onUnmounted(() => {
   <div id="termWrap" :class="{ 'smooth-touch': smoothTouchScrolling, 'copying-screen': copyMode }" @wheel.capture="onWheel">
     <div id="term" ref="host" :inert="copyMode" />
     <div
-      id="touch" aria-hidden="true" :inert="copyMode"
+      id="touch" aria-hidden="true" :inert="copyMode || ctl.loading.value"
       @touchstart="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd" @touchcancel="cancelTouch"
       @mousedown.prevent="onMouseDown"
     />

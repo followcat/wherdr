@@ -28,6 +28,7 @@ import { TERM_FONT, onFontsLoaded, scaledTermFont } from '~/utils/terminalFont'
 import { displayVirtualChord, virtualNavigationBytes, virtualNavigationKeys } from '~/utils/keybarKeys'
 import { createCompositionTracker, toggleVirtualModifier, virtualChord, virtualInputAction, type VirtualModifier } from '~/utils/terminalModifiers'
 import { captureTerminalScreen, type TerminalCopySnapshot } from '~/utils/terminalCopy'
+import { createRevealGate } from '~/utils/terminalReveal'
 
 const CORE_SCROLLBACK = 5000
 const MAX_WHEEL_NOTCHES = 40
@@ -53,6 +54,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   let takeoverQueued = false
   let focusQueued = false
   const loading = ref(false)
+  // A core repaint is being written: the view is covered and reacts to nothing
+  // until it is complete (utils/terminalReveal.ts).
+  const covering = ref(false)
   const kbdOn = ref(false)
   const scrollInputVersion = ref(0)
   // Resizes and viewport changes invalidate a gesture's coordinates but must
@@ -95,6 +99,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     sgrMouse = false
     coreStream = false
     coreControl = true
+    revealGate.cancel()
+    covering.value = false
     if (sizeBanner) { sizeBanner = null; opts.setBanner(null) }
   }
   // Watching a terminal taller than this screen: the visible window's top is
@@ -128,6 +134,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   // from an in-place edit (a disposed marker always reports line -1).
   let anchor: IMarker | null = null
   function followCursor() {
+    // The replay is still being written: the reveal positions the window once.
+    if (covering.value) return
     const buf = term?.buffer.active
     if (!term || !buf) return
     if (buf !== activeBuf) {
@@ -190,6 +198,21 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       anchor = null
     }
   }
+  // Every attach replays the history, and nothing marks its end: cover the
+  // terminal from the full frame until the writes have drained and the stream
+  // has been quiet for a moment, then show it once at the live tail.
+  const revealGate = createRevealGate({
+    onBegin: () => {
+      covering.value = true
+      loading.value = true
+    },
+    onReveal: () => {
+      covering.value = false
+      followCursor()
+      if (term) selectionHint.refresh(term, mouseSupported)
+      loading.value = false
+    },
+  })
   // A viewport move we did not make is an absolute position in xterm's own
   // domain: its bottom edge (viewportY === baseY) is the live tail. A move
   // where the viewport simply stayed pinned to the bottom edge is output
@@ -197,6 +220,12 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   function viewportMoved() {
     const buf = term?.buffer.active
     if (!term || !buf) return
+    // xterm scrolls through the replay: that is not the reader seeking.
+    if (covering.value) {
+      lastY = buf.viewportY
+      lastBaseY = buf.baseY
+      return
+    }
     if (buf.viewportY !== lastY || buf.baseY !== lastBaseY) {
       const trackedTail = lastY === lastBaseY && buf.viewportY === buf.baseY
       // Output moves rows, not the reader's position: growth that leaves the
@@ -654,7 +683,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
           twsRetry = 0
           clearTimeout(frameWait)
         }
-        if (gotFrame) loading.value = false
+        // A core repaint is not shown piece by piece: it stays covered until the
+        // replay is written (utils/terminalReveal.ts).
+        if (gotFrame && !covering.value) loading.value = false
         if (!term) return
         const current = term
         const credit = coreStream && Number.isInteger(m.credit) && m.credit > 0 ? m.credit : 0
@@ -662,7 +693,12 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
         // Core repaints the screen and its history on each attach.
         // A full repaint replaces the screen the gesture measured — input
         // version kills it. A resize only invalidates its coordinates.
-        if (coreStream && m.full === true) { scrollInputVersion.value++; atTail = true }
+        if (coreStream && m.full === true) {
+          scrollInputVersion.value++
+          atTail = true
+          revealGate.begin()
+        }
+        revealGate.pushed()
         writeTerminalFrame(current, { width: m.width, height: m.height, reset: coreStream && m.full === true, bytes }, {
           resized: () => {
             if (term !== current) return
@@ -670,10 +706,15 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
             if (coreStream) offerFit()
           },
           written: () => {
+            // Credits never wait for the reveal: the server stops relaying when
+            // its window is spent.
             if (credit && tws === ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'credit', bytes: credit }))
+            revealGate.written()
+            if (smoothTouchScrolling.value) frameTick.value++
+            // Nothing in the view reacts to the replay while it is covered.
+            if (covering.value) return
             if (coreStream && !coreControl) followCursor()
             selectionHint.refresh(current, mouseSupported)
-            if (smoothTouchScrolling.value) frameTick.value++
           },
         })
       } else if (m.type === 'terminal.control') {
@@ -742,7 +783,15 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   }
   const isConnected = () => Boolean(tws && tws.readyState <= 1)
 
-  function reset() { view = 0; atTail = true; anchor?.dispose(); anchor = null; term?.reset() }
+  function reset() {
+    view = 0
+    atTail = true
+    anchor?.dispose()
+    anchor = null
+    revealGate.cancel()
+    covering.value = false
+    term?.reset()
+  }
   function focus() {
     focusQueued = !term && mounting
     term?.focus()
@@ -765,7 +814,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   // one finalize tick after compositionend; `ended` can linger set after a
   // cancelled composition until the next keystroke and must not block copy.
   const captureScreen = (): TerminalCopySnapshot | null => {
-    if (!term || composition.active || composition.pending) return null
+    if (!term || covering.value || composition.active || composition.pending) return null
     return captureTerminalScreen(term)
   }
   // An active composition or a deferred commit that may still land: a
@@ -811,6 +860,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   // row, inside history and the clipped grid alike.
   function scroll(lines: number): boolean {
     if (!term) return false
+    // The replay is not written yet: the finger has no window to move, and its
+    // rows would land on a screen that is about to be replaced.
+    if (covering.value) return false
     if (appTakesWheel()) return sendWheel(lines)
     view -= lines
     atTail = false
