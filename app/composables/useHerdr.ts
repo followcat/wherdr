@@ -33,6 +33,7 @@ import type { QuotaDisplay } from '~/utils/quotas'
 import type { ContentWidth } from '~/utils/contentWidth'
 import { PHONE_KEY_HIDDEN_KEY, PHONE_KEY_ORDER_KEY, readHiddenKeys, readKeyOrder, writeHiddenKeys, writeKeyOrder, type PhoneKeyId } from '~/utils/keybarOrder'
 import { smoothTouchDefault } from '~/utils/smoothTouch'
+import { terminalIdentity, terminalPark } from '~/utils/terminalPark'
 
 const ls = {
   get(k: string) {
@@ -228,6 +229,11 @@ function pruneViewModes(s: HerdrState) {
   if (changed) ls.set('viewModes', JSON.stringify(viewModes))
 }
 watch(herdrState, pruneViewModes)
+// Parked terminals of panes that went away, or whose core terminal changed:
+// disposed and their wires closed (utils/terminalPark.ts).
+watch(herdrState, (s) => {
+  terminalPark.reconcile((paneId) => terminalIdentity(s.ok ? s.panes.find(p => p.id === paneId) : null))
+})
 
 // Computer (≥ 900 px, or a tablet in portrait): list as a sidebar, agent on
 // the right. Slim: narrower than 1024 px, the list slides over the agent

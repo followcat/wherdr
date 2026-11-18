@@ -160,11 +160,27 @@ const inputAllowed = () => live.value && !terminalCopying.value
 // a parked upload or send never outlives the view.
 const dead = ref(false)
 onUnmounted(() => { dead.value = true })
-const ctl = createTerminal(props.paneId, {
-  setBanner: (b) => { banner.value = b },
+const terminalOpts = {
+  setBanner: (b: Banner | null) => { banner.value = b },
   hasBanner: () => Boolean(banner.value),
   fill: () => Boolean(props.cell),
   input: inputAllowed,
+}
+// A recently viewed pane may still hold a parked terminal (utils/terminalPark.ts):
+// adopt it instead of opening a cold one, and bind it to this view's closures.
+const parkedCtl = terminalPark.take<TerminalCtl>(props.paneId, terminalIdentity(herdrState.value.panes.find(p => p.id === props.paneId)))
+const ctl = parkedCtl ?? createTerminal(props.paneId, terminalOpts)
+if (parkedCtl) parkedCtl.rebind(terminalOpts)
+// Leaving this pane keeps its parked terminal for a while, so swiping back or
+// coming home again adopts it (its own idle limit disposes it meanwhile).
+// Children unmount before this parent, so TerminalView has already parked it;
+// a closed pane, or one whose terminal changed, is dropped instead.
+onUnmounted(() => {
+  if (!ctl.isParked()) return ctl.dispose()
+  const pane = herdrState.value.panes.find(p => p.id === props.paneId)
+  const identity = terminalIdentity(pane)
+  if (!identity) return ctl.dispose()
+  terminalPark.keep(props.paneId, { identity, viewer: ctl })
 })
 const chatRef = ref<{ scrollToEnd: (force: boolean) => void, reload: () => void, focusSearch: () => void, gotoUnanswered: () => void } | null>(null)
 // Questions of the agent's last message the draft does not answer yet (ChatView): the composer's reminder.

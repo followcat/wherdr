@@ -1001,6 +1001,16 @@ body.short-bottom { --safe-bottom: 0px; }
    after its reset nor a partly written history is ever shown, and the finger
    has nothing to touch until the final screen appears (useTerminal.ts). */
 #termWrap .term-loading { z-index: 3; background: var(--bg); pointer-events: auto; }
+/* The deep history is being fetched (a scroll back to the top): a short strip
+   pinned over the top edge of the terminal, never a cover. Square, tokens only. */
+#termWrap .term-earlier {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 2;
+  display: flex; align-items: center; justify-content: center;
+  padding: 6px 8px; pointer-events: none;
+  background: var(--surface); border-bottom: 1px solid var(--line);
+  color: var(--muted); font: 500 10.5px/1.2 var(--mono);
+  letter-spacing: .1em; text-transform: uppercase;
+}
 .xterm .xterm-viewport { background: transparent !important; overflow-y: hidden !important; }
 .xterm { padding: 0; }
 /* A Herdr client may send a wider frame: scrolling, without distorting the glyphs. */

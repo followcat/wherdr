@@ -10,7 +10,10 @@ import { mouseFromTouch, tapFocusesTerminal } from '~/utils/terminalTapFocus'
 import { kbOpen } from '~/composables/useViewport'
 import type { TerminalCopySnapshot } from '~/utils/terminalCopy'
 
-const props = defineProps<{ ctl: TerminalCtl }>()
+// `park` defaults to true: a view leaving keeps its xterm and stream (an
+// absent Boolean prop would otherwise be false). The interactive window, a
+// second viewer of the same pane, passes false and disposes instead.
+const props = withDefaults(defineProps<{ ctl: TerminalCtl, park?: boolean }>(), { park: true })
 const emit = defineEmits<{ copying: [active: boolean] }>()
 const host = ref<HTMLElement | null>(null)
 const copySnapshot = shallowRef<TerminalCopySnapshot | null>(null)
@@ -433,12 +436,13 @@ onMounted(() => {
   document.addEventListener('compositionstart', compositionStart, true)
   document.addEventListener('compositionend', compositionEnd, true)
   // xterm is downloaded on the first terminal shown (utils/xtermLoader.ts):
-  // the first fit and the connection wait for it.
+  // the first fit and the connection wait for it. An adopted xterm is already
+  // connected: this mount only puts it back on screen.
   void props.ctl.mount(host.value!).then((ready) => {
     if (!ready) return
     nextTick(() => {
       props.ctl.fitNow(false)
-      if (!props.ctl.hasBanner()) props.ctl.connect(false)
+      if (!props.ctl.isConnected() && !props.ctl.hasBanner()) props.ctl.connect(false)
     })
   })
   ro = new ResizeObserver(scheduleFit)
@@ -456,7 +460,12 @@ onUnmounted(() => {
   ro?.disconnect()
   clearTimeout(fitTimer)
   cancelAnimationFrame(legacyRaf)
-  props.ctl.dispose()
+  // The terminal is parked by default: its xterm and its stream stay, so the
+  // next mount adopts them (the pane's AgentView owns the cross-pane cache).
+  // A view that does not park (the interactive window, a second viewer of the
+  // same pane) disposes as before.
+  if (props.park === false) props.ctl.dispose()
+  else props.ctl.park()
 })
 </script>
 
@@ -469,6 +478,11 @@ onUnmounted(() => {
       @mousedown.prevent="onMouseDown"
     />
     <TerminalCopyLayer v-if="copySnapshot" :snapshot="copySnapshot" :metrics="copyMetrics" @close="exitCopyMode" />
+    <!-- The deep history is on its way: a short strip at the top, above the
+         terminal the person is reading, never a cover and never focusable. -->
+    <div v-if="ctl.loadingEarlier.value" class="term-earlier" role="status" aria-live="polite">
+      {{ t('Loading earlier output') }}
+    </div>
     <div v-if="ctl.loading.value" class="term-loading"><span class="spinner" /></div>
     <div v-if="ctl.selectionHint.visible.value" class="terminal-selection-hint">
       {{ tl('Shift + drag to select', 'Shift + glisser pour sélectionner') }}

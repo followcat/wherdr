@@ -193,6 +193,7 @@ const FR: Record<string, string> = {
   'Keys': 'Touches',
   'Ctrl': 'Ctrl', 'Alt': 'Alt', 'Shift': 'Maj',
   'Terminal function keys': 'Touches de fonction du terminal',
+  'Loading earlier output': 'Chargement de l’historique…',
   'Common keys and modifiers': 'Touches courantes et modificateurs',
   'Show or hide terminal keys': 'Afficher ou masquer les touches du terminal',
   'Show or hide the phone keyboard': 'Afficher ou masquer le clavier du téléphone',
