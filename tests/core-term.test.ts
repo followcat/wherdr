@@ -6,7 +6,7 @@ import { COLD_HISTORY, MAX_HISTORY } from '../shared/terminalHistory'
 
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
 
-function setup(opts: { terminal?: object | null, attachError?: CoreError, watch?: boolean, attachGate?: Promise<void> } = {}) {
+function setup(opts: { terminal?: object | null, attachError?: CoreError, watch?: boolean, attachGate?: Promise<void>, reattachGate?: Promise<void> } = {}) {
   const sent: { channel: number, kind: number, payload: Buffer }[] = []
   const calls: { method: string, params: any }[] = []
   const streams = new Map<number, StreamHandler>()
@@ -14,11 +14,20 @@ function setup(opts: { terminal?: object | null, attachError?: CoreError, watch?
   let closed = false
   // Each attach gets its own channel number, as the core's do: 3, 4…
   let nextChannel = 3
+  let attaches = 0
   const core: FramedCore = {
     async call<T>(method: string, params: any = {}) {
       calls.push({ method, params })
       if (method === 'events.subscribe') return { channel: 2, terminals: opts.terminal === null ? [] : [{ address: 'm/t7', state: 'live', cols: 200, rows: 50, ...opts.terminal }] } as T
-      if (method === 'terminal.attach') { await opts.attachGate; if (opts.attachError) throw opts.attachError; return { channel: nextChannel++ } as T }
+      if (method === 'terminal.attach') {
+        // A re-attach (the second attach) can be held on its own gate: the
+        // first must answer so the viewer has a channel to swap from.
+        const n = attaches++
+        if (n > 0 && opts.reattachGate) await opts.reattachGate
+        else if (n === 0 && opts.attachGate) await opts.attachGate
+        if (opts.attachError) throw opts.attachError
+        return { channel: nextChannel++ } as T
+      }
       return {} as T
     },
     send: (channel, kind, payload = Buffer.alloc(0)) => { sent.push({ channel, kind, payload }) },
@@ -240,9 +249,11 @@ describe('terminal history', () => {
     // The old channel is closed, the new one attached at the current size…
     expect(t.sent.filter(f => f.channel === 3 && f.kind === FRAME.CLOSE)).toHaveLength(1)
     expect(attaches(t.calls)[1]!.params).toMatchObject({ cols: 120, rows: 40, history: MAX_HISTORY })
-    // …without a resize and without re-announcing control.
+    // …without a resize, and with control re-stated at the value it already
+    // had: the shared attach tail announces it, and it must not change.
     expect(resizes(t.sent)).toHaveLength(before.resizes)
-    expect(t.out.slice(before.frames)).not.toContainEqual({ type: 'terminal.control', on: false })
+    const control = t.out.slice(before.frames).filter(m => m.type === 'terminal.control')
+    expect(control).toEqual([{ type: 'terminal.control', on: false }])
     expect(t.out.slice(before.frames)).not.toContainEqual({ type: 'terminal.control', on: true })
   })
 
@@ -304,5 +315,49 @@ describe('terminal history', () => {
     release()
     await tick()
     expect(attaches(t.calls).map(c => c.params.history)).toEqual([COLD_HISTORY])
+  })
+
+  it('input and a fit sent while the re-attach is on its way land on the new channel, in order', async () => {
+    let release!: () => void
+    const t = setup({ reattachGate: new Promise<void>((resolve) => { release = resolve }) })
+    await tick()
+    // The viewer is in control; its own size is what the terminal is at.
+    t.sess.onMessage(JSON.stringify({ type: 'terminal.resize', cols: 42, rows: 21 }))
+    expect(resizes(t.sent)).toEqual([[42, 21]])
+    t.sess.onMessage(history(MAX_HISTORY))
+    await tick()
+    // The deep fetch closed channel 3 and is waiting for channel 4.
+    const pending = attaches(t.calls)[1]!
+    expect(pending.params.history).toBe(MAX_HISTORY)
+    // Typed now, while the re-attach is unanswered: a keystroke, a send and a
+    // new fit. None may be lost or reach the detached channel.
+    t.sess.onMessage(JSON.stringify({ type: 'terminal.input', text: 'a' }))
+    t.sess.onMessage(JSON.stringify({ type: 'terminal.input', text: 'b' }))
+    t.sess.onMessage(JSON.stringify({ type: 'terminal.resize', cols: 44, rows: 22 }))
+    expect(t.sent.filter(f => f.kind === FRAME.DATA)).toEqual([])
+    release()
+    await tick()
+    // Everything queued reaches the new channel (4), in order and once each.
+    const data = t.sent.filter(f => f.channel === 4 && f.kind === FRAME.DATA).map(f => f.payload.toString())
+    expect(data).toEqual(['a', 'b'])
+    expect(t.sent.filter(f => f.channel === 3 && f.kind === FRAME.DATA)).toEqual([])
+    // The fit asked for during the swap is applied once the channel is back.
+    expect(resizes(t.sent)).toEqual([[42, 21], [44, 22]])
+    expect(t.sent.filter(f => f.channel === 4 && f.kind === FRAME.RESIZE)).toHaveLength(1)
+  })
+
+  it('a watching viewer\'s fit during the re-attach is kept as want, not sent', async () => {
+    let release!: () => void
+    const t = setup({ watch: true, reattachGate: new Promise<void>((resolve) => { release = resolve }) })
+    await tick()
+    t.sess.onMessage(history(MAX_HISTORY))
+    await tick()
+    t.sess.onMessage(JSON.stringify({ type: 'terminal.resize', cols: 70, rows: 30 }))
+    release()
+    await tick()
+    // Control off: the size lease stays the other viewer's, nothing is sent.
+    expect(resizes(t.sent)).toEqual([])
+    t.sess.onMessage(JSON.stringify({ type: 'take.control' }))
+    expect(resizes(t.sent).at(-1)).toEqual([70, 30])
   })
 })

@@ -135,6 +135,12 @@ export function openCoreTerm(ws: WsLike, url: URL, deps: CoreTermDeps): TermSess
 
   // One attach of this viewer's channel. `lines`: the history it asks for.
   // Returns false when the viewer ended meanwhile.
+  //
+  // The shared tail of every attach (the first and a `terminal.history`
+  // re-attach): a fit that arrived while no channel was open is applied, then
+  // the input queued meanwhile is delivered, in order. Both paths go through
+  // here so they cannot drift — a re-attach that skipped it dropped whatever
+  // the person typed while the deep history loaded.
   async function attach(lines: number): Promise<boolean> {
     if (!core || done) return false
     attaching = true
@@ -171,6 +177,13 @@ export function openCoreTerm(ws: WsLike, url: URL, deps: CoreTermDeps): TermSess
           end(closedText(why), 4000, 'terminal ended')
         }
       })
+      // A fit that arrived while no channel was open (the attach in flight) had
+      // nowhere to go: this viewer imposes it now, if it is still in control.
+      if (control && (want.cols !== size?.cols || want.rows !== size?.rows)) resize(want)
+      announce()
+      // Input sent while the attach answered: delivered now, in the order it
+      // arrived. `end()` on a failed re-attach leaves it to the closed viewer.
+      for (const go of early.splice(0)) go()
       return true
     } finally {
       attaching = false
@@ -191,10 +204,14 @@ export function openCoreTerm(ws: WsLike, url: URL, deps: CoreTermDeps): TermSess
     // message must not grant the new channel bytes it never sent.
     outstanding = 0
     try {
+      // attach() re-applies a pending fit and flushes the input queued while
+      // the re-attach was in flight.
       if (!await attach(lines)) return
     } catch (e) {
       const err = e instanceof CoreError ? e : new CoreError('protocol', 'Invalid response from herdr-core')
       deps.log?.(`core term ${address}: re-attach failed (${err.kind})`)
+      // The viewer ends: input still queued goes with it, never into a screen
+      // nobody will see.
       return end(err.kind === 'not_found' ? closedText(null) : err.message, err.kind === 'not_found' ? 4000 : 4503, 'core unavailable')
     }
   }
@@ -217,11 +234,9 @@ export function openCoreTerm(ws: WsLike, url: URL, deps: CoreTermDeps): TermSess
       // first: core's paint ends wrapped lines with hard newlines, so a paint
       // drawn at another width would not reflow to this one in xterm.
       size = control ? want : { cols: t.cols || want.cols, rows: t.rows || want.rows }
+      // attach() applies a pending fit and flushes the input queued during the
+      // handshake, so the first open and a re-attach share one tail.
       if (!await attach(COLD_HISTORY)) return
-      // A fit that arrived during the attach had no channel to resize yet.
-      if (control && (want.cols !== size?.cols || want.rows !== size?.rows)) resize(want)
-      announce()
-      for (const go of early.splice(0)) go()
     } catch (e) {
       const err = e instanceof CoreError ? e : new CoreError('protocol', 'Invalid response from herdr-core')
       deps.log?.(`core term ${address}: ${err.kind}`)
