@@ -41,13 +41,14 @@ async function freePort() {
 // seed: writes files into the data folder before the server starts. feed tunes
 // the attach stream: firstPaint replaces the default 'hello from core' burst
 // (pass '' for none, or a function of the attach call when the paint must be
-// sized to the client's requested cols/rows); output() pushes more terminal
-// data after the attach.
+// sized to the client's requested cols/rows); paint streams the same kind of
+// paint as several DATA frames with a gap between them, the way core sends a
+// long replay; output() pushes more terminal data after the attach.
 // feed.terminal overrides fixture fields on BOTH the one-shot terminal.list
 // answer and the framed events.subscribe snapshot (screen:'inexact' etc);
 // feed.terminals replaces the whole list the same way (each entry merged
 // onto the fixture's base terminal).
-export async function startCore(answer: Answer = () => undefined, seed?: (data: string) => Promise<void>, feed: { firstPaint?: string | Uint8Array | ((attach: Call) => string | Uint8Array), terminal?: Record<string, unknown>, terminals?: Record<string, unknown>[] } = {}) {
+export async function startCore(answer: Answer = () => undefined, seed?: (data: string) => Promise<void>, feed: { firstPaint?: string | Uint8Array | ((attach: Call) => string | Uint8Array), paint?: { pieces: (string | Uint8Array)[] | ((attach: Call) => (string | Uint8Array)[]), gapMs?: number }, terminal?: Record<string, unknown>, terminals?: Record<string, unknown>[] } = {}) {
   const data = await mkdtemp(join(tmpdir(), 'core-e2e-'))
   const socketPath = join(data, 'core.sock')
   // Every path the server can derive (HOME fallbacks, XDG, its own dir
@@ -89,6 +90,8 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
   const inbound: { channel: number, kind: number, data: Buffer }[] = []
   // Sockets that attached a terminal: output() writes on their stream channel.
   const attachSockets = new Set<Socket>()
+  // Timers of a streamed paint, cleared with the server.
+  const paintTimers = new Set<ReturnType<typeof setTimeout>>()
   const terminals = feed.terminals?.map(t => ({ ...fixture.inventory.terminals[0]!, ...t }))
     ?? [{ ...fixture.inventory.terminals[0]!, ...feed.terminal }]
   // What the server was answered for inventory/subscription (read-only record
@@ -143,7 +146,19 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
           if (c.method === 'terminal.attach') {
             attachSockets.add(socket)
             socket.once('close', () => attachSockets.delete(socket))
-            if (feed.firstPaint !== '') {
+            if (feed.paint) {
+              const { pieces: list, gapMs = 0 } = feed.paint
+              const pieces = typeof list === 'function' ? list(c) : list
+              const write = (i: number) => {
+                if (i >= pieces.length || socket.destroyed) return
+                socket.write(frame(3, Buffer.from(pieces[i]!)))
+                if (i + 1 < pieces.length) {
+                  const timer = setTimeout(() => { paintTimers.delete(timer); write(i + 1) }, gapMs)
+                  paintTimers.add(timer)
+                }
+              }
+              write(0)
+            } else if (feed.firstPaint !== '') {
               const paint = typeof feed.firstPaint === 'function' ? feed.firstPaint(c) : (feed.firstPaint ?? 'hello from core\r\n')
               socket.write(frame(3, Buffer.from(paint)))
             }
@@ -183,6 +198,8 @@ export async function startCore(answer: Answer = () => undefined, seed?: (data: 
         server.kill('SIGTERM')
         await new Promise<void>(resolve => server.once('exit', () => resolve()))
       }
+      for (const timer of paintTimers) clearTimeout(timer)
+      paintTimers.clear()
       for (const socket of sockets) socket.destroy()
       if (core.listening) await new Promise<void>(resolve => core.close(() => resolve()))
       await rm(data, { recursive: true, force: true })

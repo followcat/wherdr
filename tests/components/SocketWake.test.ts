@@ -3,6 +3,7 @@ import { defineComponent, h, nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createTerminal } from '~/composables/useTerminal'
 import { pageVisible, socketWake, terminalRenderer, smoothTouchScrolling } from '~/composables/useHerdr'
+import { REVEAL_QUIET_MS } from '~/utils/terminalReveal'
 
 const terms: { scrollToLine: ReturnType<typeof vi.fn> }[] = []
 vi.mock('@xterm/xterm', () => ({ Terminal: class {
@@ -28,6 +29,8 @@ vi.mock('~/utils/terminalOsc52', () => ({ OSC52_MAX_BYTES: 1000, bindTerminalOsc
 vi.mock('~/utils/terminalFont', async (importOriginal) => ({ ...(await importOriginal() as object), TERM_FONT: 'monospace', onFontsLoaded: () => () => {} }))
 
 it.each([false, true])('shares wake probes while preserving touch beta=%s frame accounting', async enabled => {
+  // The attach's reveal gate runs on timers: move them by hand.
+  vi.useFakeTimers()
   smoothTouchScrolling.value = enabled
   const sockets: Socket[] = []
   class Socket {
@@ -94,6 +97,9 @@ it.each([false, true])('shares wake probes while preserving touch beta=%s frame 
     ws.onmessage!({ data: JSON.stringify({ type: 'terminal.frame', width: 100, height: 30, bytes: '' }) })
     expect(ctl.scrollInputVersion.value).toBe(beforeGeometry)
     expect(ctl.scrollGeometryVersion.value).toBeGreaterThan(0)
+    // The replay is covered until it is written and quiet; its reveal re-pins
+    // the window to the tail in one move.
+    await vi.advanceTimersByTimeAsync(REVEAL_QUIET_MS)
     // scroll.ack belongs to the retired remote model: ignored, never an error.
     ws.onmessage!({ data: '{"type":"scroll.ack","lines":2}' })
     expect(ctl.frameTick.value).toBe(enabled ? 3 : 0)
@@ -133,6 +139,7 @@ it.each([false, true])('shares wake probes while preserving touch beta=%s frame 
     smoothTouchScrolling.value = false
     wrapper.unmount()
     vi.unstubAllGlobals()
+    vi.useRealTimers()
   }
 })
 
@@ -186,8 +193,12 @@ it.each([
     if (paint !== null) {
       const bytes = new TextEncoder().encode(paint)
       receive({ type: 'terminal.frame', width: 80, height: 24, bytes: btoa(paint), credit: bytes.length })
-      expect(ctl.loading.value).toBe(false)
+      // The attach's replay stays covered until its writes are quiet, and the
+      // credit still goes back at once.
+      expect(ctl.loading.value).toBe(true)
       expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ type: 'credit', bytes: bytes.length }))
+      await vi.advanceTimersByTimeAsync(REVEAL_QUIET_MS)
+      expect(ctl.loading.value).toBe(false)
     }
     await vi.advanceTimersByTimeAsync(6000)
     receive({ type: 'terminal.frame', width: 80, height: 24, bytes: '' })

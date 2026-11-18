@@ -419,8 +419,9 @@ it('output preserves the reading position, control returning drops the lift, a f
     expect(windowTop(term)).toBe(10)
     expect(liveMarkers(term)).toBe(1)
     ws.receive({ type: 'terminal.frame', full: true, bytes: btoa('x'), credit: 10 })
-    await nextTick()
-    expect(windowTop(term)).toBe(32)
+    // The repaint is covered until its replay is quiet (utils/terminalReveal.ts):
+    // the reveal is the single move that re-pins the window.
+    await vi.waitFor(() => expect(windowTop(term)).toBe(32))
     expect(liveMarkers(term)).toBe(0)
   } finally {
     ctl.dispose()
