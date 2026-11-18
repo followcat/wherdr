@@ -18,7 +18,7 @@ const hoisted = vi.hoisted(() => ({
 vi.mock('~/composables/useTerminal', async () => {
   const { ref } = await import('vue')
   const ctl = () => ({
-    loading: ref(false), kbdOn: ref(false),
+    loading: ref(false), loadingEarlier: ref(false), kbdOn: ref(false), park: vi.fn(), isParked: () => false,
     mount: vi.fn(async () => true), connect: vi.fn(), disconnect: vi.fn(), dispose: vi.fn(),
     takeControl: vi.fn(), isConnected: () => true, sendTerm: vi.fn(() => true), sendKeys: vi.fn(),
     fitNow: vi.fn(), setFontSize: vi.fn(), reset: vi.fn(), scroll: vi.fn(() => true),

@@ -31,7 +31,8 @@ async function mounted(enabled: boolean) {
     tapLink: vi.fn(() => false), tapMouse: vi.fn(), tapOnCursor: vi.fn(() => false),
     captureScreen: vi.fn(() => null), clearVirtualModifiers: vi.fn(),
     scrollInputVersion: ref(0), scrollGeometryVersion: ref(0), frameTick: ref(0),
-    loading: ref(false), selectionHint: { visible: ref(false), dismiss: vi.fn() },
+    loading: ref(false), loadingEarlier: ref(false), park: vi.fn(), isConnected: () => true,
+    selectionHint: { visible: ref(false), dismiss: vi.fn() },
   }
   const w = await mountSuspended(TerminalView, { props: { ctl: ctl as unknown as TerminalCtl } })
   vi.stubGlobal('requestAnimationFrame', (fn: FrameRequestCallback) => { frames.set(++id, fn); return id })
@@ -299,7 +300,9 @@ describe('terminal beta switch', () => {
     expect(r.ctl.scroll.mock.calls).toEqual([[3]])
     r.w.unmount(); unmount = undefined
     expect(frames.size).toBe(0)
-    expect(r.ctl.dispose).toHaveBeenCalledOnce()
+    // The terminal is parked, not disposed: the pane keeps it for the next mount.
+    expect(r.ctl.park).toHaveBeenCalledOnce()
+    expect(r.ctl.dispose).not.toHaveBeenCalled()
   })
   it.each([false, true])('the resize observer kills an armed hold but keeps the finger with beta=%s', async enabled => {
     vi.useFakeTimers()

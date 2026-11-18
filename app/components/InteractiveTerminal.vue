@@ -14,6 +14,9 @@ const ctl = createTerminal(props.paneId, {
   input: () => props.active && !copying.value,
 })
 watch(pageVisible, v => ctl.setVisible(v))
+// This window owns a viewer of its own (the pane keeps another): it disposes
+// with the window instead of parking (TerminalView park={false}).
+onUnmounted(() => ctl.dispose())
 
 // Computer: the keys go to the terminal as soon as it is ready. Phone: the window
 // itself takes the focus, so the keyboard only opens on a tap in the terminal.
@@ -53,7 +56,7 @@ const ui = { overlay: 'hw-scrim interactive-terminal-scrim', content: 'interacti
         <span>{{ banner.text }}</span>
         <UButton size="xs" color="warning" variant="outline" @click="banner.fn()">{{ banner.btn }}</UButton>
       </div>
-      <TerminalView :ctl="ctl" @copying="copying = $event" @keydown.stop />
+      <TerminalView :ctl="ctl" :park="false" @copying="copying = $event" @keydown.stop />
       <Keybar :ctl="ctl" all-digits :inert="copying" @keydown.stop />
     </template>
   </UModal>

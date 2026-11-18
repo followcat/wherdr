@@ -72,9 +72,10 @@
 - **Web Push notifications** when an agent finishes or needs you.
 - **Quick replies**: answer permissions and questions in one tap from the agent list.
 - **Terminal key bar** (Esc, Enter, arrows, Shift+Tab, Ctrl+C…) and touch scrolling.
-  A finger drag or the wheel browses the history the attach delivered locally —
-  the attach requests up to 1000 lines, a bound the core fills from the main
-  screen only, so an alternate-screen attach gets none. Known limitation: an
+  A finger drag or the wheel browses the history the terminal holds locally —
+  the attach asks for 200 lines first, and scrolling back to the top fetches up
+  to 5000 more once, on the same connection. The core fills the request from the
+  main screen only, so an alternate-screen attach gets none. Known limitation: an
   alternate-screen app's own pre-attach history is not recoverable passively —
   stitching it through `terminal.read` would scroll the application. Pressing and holding a
   still finger freezes the screen to copy from it; release and drag to select,

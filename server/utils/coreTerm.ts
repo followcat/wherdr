@@ -16,12 +16,12 @@
 import { CoreError } from './core'
 import { FRAME, openFramed, type FramedCore } from './coreFramed'
 import type { TermSession, WsLike } from './terminal'
+import { COLD_HISTORY, clampHistoryLines } from '../../shared/terminalHistory'
 
 const clamp = (v: unknown, lo: number, hi: number, dflt: number) => {
   const n = Number.parseInt(String(v), 10)
   return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt
 }
-const HISTORY = 1000
 const WINDOW = 256 * 1024
 // Never more than one credit window in flight, plus the first paint.
 const MAX_OUTSTANDING = 8 * 1024 * 1024
@@ -128,6 +128,94 @@ export function openCoreTerm(ws: WsLike, url: URL, deps: CoreTermDeps): TermSess
     }
   }
 
+  // The attach in flight (a `terminal.history` re-attach), so a second request
+  // while one runs changes nothing.
+  let attaching = false
+  let capabilitiesSent = false
+
+  // One attach of this viewer's channel. `lines`: the history it asks for.
+  // Returns false when the viewer ended meanwhile.
+  //
+  // The shared tail of every attach (the first and a `terminal.history`
+  // re-attach): a fit that arrived while no channel was open is applied, then
+  // the input queued meanwhile is delivered, in order. Both paths go through
+  // here so they cannot drift — a re-attach that skipped it dropped whatever
+  // the person typed while the deep history loaded.
+  async function attach(lines: number): Promise<boolean> {
+    if (!core || done) return false
+    attaching = true
+    try {
+      // The size the terminal is at, never a new `want`: a re-attach keeps the
+      // size lease and control exactly as they were.
+      const at = size ?? want
+      const attached = await core.call<{ channel: number }>('terminal.attach', { terminal: address, cols: at.cols, rows: at.rows, history: lines })
+      if (done) return false
+      channel = attached.channel
+      outstanding = 0
+      // The browser reads `core` from the capabilities before it treats a full
+      // frame as a replay (reveal gate): sent once, ahead of the first paint.
+      if (!capabilitiesSent) {
+        capabilitiesSent = true
+        send({ type: 'web.capabilities', mouse: false, core: true })
+      }
+      send({ type: 'terminal.frame', encoding: 'ansi', full: true, width: at.cols, height: at.rows, bytes: '' })
+      // Bound to its own channel: a frame the core had queued on a channel we
+      // already detached never reaches the screen the new attach owns.
+      const mine = channel
+      core.stream(mine, (kind, payload) => {
+        if (mine !== channel) return
+        if (kind === FRAME.DATA) {
+          const cols = size?.cols ?? at.cols
+          const rows = size?.rows ?? at.rows
+          outstanding += payload.length
+          if (outstanding > MAX_OUTSTANDING) return end('The terminal viewer fell behind', 4500, 'backpressure')
+          send({ type: 'terminal.frame', encoding: 'ansi', width: cols, height: rows, bytes: payload.toString('base64'), credit: payload.length })
+        } else if (kind === FRAME.CLOSE) {
+          let why = null
+          try { why = payload.length ? JSON.parse(payload.toString('utf8')) : null }
+          catch { /* reason unreadable */ }
+          end(closedText(why), 4000, 'terminal ended')
+        }
+      })
+      // A fit that arrived while no channel was open (the attach in flight) had
+      // nowhere to go: this viewer imposes it now, if it is still in control.
+      if (control && (want.cols !== size?.cols || want.rows !== size?.rows)) resize(want)
+      announce()
+      // Input sent while the attach answered: delivered now, in the order it
+      // arrived. `end()` on a failed re-attach leaves it to the closed viewer.
+      for (const go of early.splice(0)) go()
+      return true
+    } finally {
+      attaching = false
+    }
+  }
+
+  // The deep history, asked from the browser when the reader scrolls back to
+  // the top: detach this viewer's channel and attach again with more lines on
+  // the same framed connection. Control and the size are untouched.
+  async function reattach(lines: number) {
+    // Nothing to swap while the first attach is still on its way: the client
+    // cannot ask before it has seen a paint anyway.
+    if (!core || done || channel < 0 || attaching) return
+    const old = channel
+    channel = -1
+    core.send(old, FRAME.CLOSE)
+    // The detached channel's unreturned credit dies with it: a late `credit`
+    // message must not grant the new channel bytes it never sent.
+    outstanding = 0
+    try {
+      // attach() re-applies a pending fit and flushes the input queued while
+      // the re-attach was in flight.
+      if (!await attach(lines)) return
+    } catch (e) {
+      const err = e instanceof CoreError ? e : new CoreError('protocol', 'Invalid response from herdr-core')
+      deps.log?.(`core term ${address}: re-attach failed (${err.kind})`)
+      // The viewer ends: input still queued goes with it, never into a screen
+      // nobody will see.
+      return end(err.kind === 'not_found' ? closedText(null) : err.message, err.kind === 'not_found' ? 4000 : 4503, 'core unavailable')
+    }
+  }
+
   async function start() {
     try {
       core = await (deps.connect ?? openFramed)(deps.endpoint!)
@@ -146,27 +234,9 @@ export function openCoreTerm(ws: WsLike, url: URL, deps: CoreTermDeps): TermSess
       // first: core's paint ends wrapped lines with hard newlines, so a paint
       // drawn at another width would not reflow to this one in xterm.
       size = control ? want : { cols: t.cols || want.cols, rows: t.rows || want.rows }
-      const attached = await core.call<{ channel: number }>('terminal.attach', { terminal: address, cols: size.cols, rows: size.rows, history: HISTORY })
-      if (done) return
-      channel = attached.channel
-      send({ type: 'web.capabilities', mouse: false, core: true })
-      send({ type: 'terminal.frame', encoding: 'ansi', full: true, width: size.cols, height: size.rows, bytes: '' })
-      core.stream(channel, (kind, payload) => {
-        if (kind === FRAME.DATA) {
-          outstanding += payload.length
-          if (outstanding > MAX_OUTSTANDING) return end('The terminal viewer fell behind', 4500, 'backpressure')
-          send({ type: 'terminal.frame', encoding: 'ansi', width: size!.cols, height: size!.rows, bytes: payload.toString('base64'), credit: payload.length })
-        } else if (kind === FRAME.CLOSE) {
-          let why = null
-          try { why = payload.length ? JSON.parse(payload.toString('utf8')) : null }
-          catch { /* reason unreadable */ }
-          end(closedText(why), 4000, 'terminal ended')
-        }
-      })
-      // A fit that arrived during the attach had no channel to resize yet.
-      if (control && (want.cols !== size?.cols || want.rows !== size?.rows)) resize(want)
-      announce()
-      for (const go of early.splice(0)) go()
+      // attach() applies a pending fit and flushes the input queued during the
+      // handshake, so the first open and a re-attach share one tail.
+      if (!await attach(COLD_HISTORY)) return
     } catch (e) {
       const err = e instanceof CoreError ? e : new CoreError('protocol', 'Invalid response from herdr-core')
       deps.log?.(`core term ${address}: ${err.kind}`)
@@ -213,6 +283,12 @@ export function openCoreTerm(ws: WsLike, url: URL, deps: CoreTermDeps): TermSess
           want = { cols: clamp(m.cols, 10, 400, want.cols), rows: clamp(m.rows, 5, 200, want.rows) }
           if (control && (want.cols !== size?.cols || want.rows !== size?.rows)) resize(want)
           break
+        // The deep history, on the socket it already has: see reattach().
+        case 'terminal.history': {
+          const lines = clampHistoryLines(m.lines)
+          if (lines !== null) void reattach(lines)
+          break
+        }
         // Scrolling happens in the browser (history comes with the attach);
         // mouse reporting and visibility have no core equivalent here.
       }

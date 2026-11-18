@@ -14,6 +14,16 @@
 - **Input**: keys go to core with `terminal.keys`, text with `terminal.send` (never retried),
   Stop with `terminal.interrupt`. The history the terminal received is scrolled locally, with the
   wheel or by touch.
+- **History on demand**: an open asks core for a few screens of history (200 lines), and the
+  older output comes when you scroll back to the top of what the terminal holds — up to 5000
+  lines, fetched once on the same connection, with a short *Loading earlier output* strip while
+  it comes and the view kept on the line you were reading. An app on its alternate screen keeps
+  its own history, so nothing is fetched there.
+- **Kept while you are away**: leaving the terminal (Conversation, another agent, the home
+  screen) parks it with its connection instead of closing it, so coming back shows the same
+  screen at once — no download, no repaint. Two recently viewed terminals are kept for two
+  minutes, then closed; a hidden page closes them at once, and a connection that ended while
+  parked (another viewer took control, a wake-up) reopens the terminal fresh.
 - **Copy and links**: on a computer, drag over the text on screen to select it: releasing the
   button copies it, as do `⌘C` / `Ctrl+Shift+C`. Links (OSC 8 hyperlinks and plain `http(s)://`
   URLs, even wrapped over several rows) open in a new tab with `⌘`+click / `Ctrl`+click, or a tap

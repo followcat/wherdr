@@ -29,15 +29,27 @@ import { displayVirtualChord, virtualNavigationBytes, virtualNavigationKeys } fr
 import { createCompositionTracker, toggleVirtualModifier, virtualChord, virtualInputAction, type VirtualModifier } from '~/utils/terminalModifiers'
 import { captureTerminalScreen, type TerminalCopySnapshot } from '~/utils/terminalCopy'
 import { createRevealGate } from '~/utils/terminalReveal'
+import { PARK_IDLE_MS, terminalPark } from '~/utils/terminalPark'
+import { COLD_HISTORY, MAX_HISTORY } from '#shared/terminalHistory'
+import { restoreFromBottom, shouldFetchDeep, viewForRestore } from '~/utils/terminalDeepHistory'
 
 const CORE_SCROLLBACK = 5000
 const MAX_WHEEL_NOTCHES = 40
 
 export interface Banner { text: string, btn: string, fn: () => void }
+export interface TerminalOptions {
+  setBanner: (b: Banner | null) => void
+  hasBanner: () => boolean
+  fill?: () => boolean
+  input?: () => boolean
+}
 
 // `fill`: side-by-side cell, the terminal takes the whole cell instead of the
 // reading column of a pane opened alone.
-export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | null) => void, hasBanner: () => boolean, fill?: () => boolean, input?: () => boolean }) {
+export function createTerminal(paneId: string, options: TerminalOptions) {
+  // Swapped by rebind(): a parked controller is adopted by a new view whose
+  // closures (live, copying, cell) are the ones that must count from then on.
+  let opts = options
   let term: Terminal | null = null
   let fit: FitAddon | null = null
   let webgl: WebglAddon | null = null
@@ -48,12 +60,19 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   let twsIntent = false
   let lastSize = { cols: 0, rows: 0 }
   let disposed = false
+  // The view is gone but the xterm and its wire are kept (TerminalView parks
+  // instead of disposing): output keeps being written, nothing else runs.
+  let parked = false
+  let parkTimer: ReturnType<typeof setTimeout> | undefined
+  let visibilityWanted: boolean | null = null
+  const loading = ref(false)
+  // The deep history is being fetched (the strip at the top of the view).
+  const loadingEarlier = ref(false)
   // xterm is being downloaded: what is asked meanwhile is done once it is there.
   let mountSeq = 0
   let mounting = false
   let takeoverQueued = false
   let focusQueued = false
-  const loading = ref(false)
   // A core repaint is being written: the view is covered and reacts to nothing
   // until it is complete (utils/terminalReveal.ts).
   const covering = ref(false)
@@ -101,6 +120,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     coreControl = true
     revealGate.cancel()
     covering.value = false
+    // A cold re-open asks for the cold amount again and may fetch the deep
+    // history once more (the brief's "one deep fetch per xterm").
+    resetDeep()
     if (sizeBanner) { sizeBanner = null; opts.setBanner(null) }
   }
   // Watching a terminal taller than this screen: the visible window's top is
@@ -134,8 +156,13 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   // from an in-place edit (a disposed marker always reports line -1).
   let anchor: IMarker | null = null
   function followCursor() {
+    // A parked view has no host to measure and no window to drive: the adopt
+    // places the window once (see mount's adopt branch).
+    if (parked) return
     // The replay is still being written: the reveal positions the window once.
     if (covering.value) return
+    // A deep fetch is in flight: its reveal restores the reading line.
+    if (loadingEarlier.value) return
     const buf = term?.buffer.active
     if (!term || !buf) return
     if (buf !== activeBuf) {
@@ -208,11 +235,87 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     },
     onReveal: () => {
       covering.value = false
+      const restore = deep.fromBottom
+      // The deep paint replaced every row: put the window back on the line the
+      // person was reading, measured from the tail, then clear the strip.
+      if (restore !== null && term) {
+        cancelDeepTimer()
+        deep.fromBottom = null
+        deep.pending = false
+        loadingEarlier.value = false
+        view = viewForRestore(term.buffer.active.baseY, restore)
+        atTail = false
+      }
       followCursor()
       if (term) selectionHint.refresh(term, mouseSupported)
       loading.value = false
+      loadingEarlier.value = false
     },
   })
+  // The deep history of this xterm: asked once, when the person scrolls back
+  // to the top of what the cold attach delivered (utils/terminalDeepHistory.ts).
+  const deep = { asked: false, pending: false, fromBottom: null as number | null }
+  // A relay that never answers (an older server after a rollback, or one that
+  // ignored the message) must not leave the strip up and freeze the follow for
+  // the life of the xterm: the fetch gives up after this deadline.
+  let deepTimer: ReturnType<typeof setTimeout> | undefined
+  function cancelDeepTimer() {
+    clearTimeout(deepTimer)
+    deepTimer = undefined
+  }
+  // One deep fetch per xterm: a cold re-open (wake, reconnect, eviction) starts
+  // small again, so forgetStream clears it.
+  function resetDeep() {
+    cancelDeepTimer()
+    deep.asked = false
+    deep.pending = false
+    deep.fromBottom = null
+    loadingEarlier.value = false
+  }
+  // The fetch is abandoned: no paint is coming, so the strip goes and the view
+  // follows live output again from where the reader left it. `deep.asked` stays
+  // set — a silent relay would otherwise be asked on every seek to the top.
+  function giveUpDeep() {
+    if (!deep.pending) return
+    cancelDeepTimer()
+    deep.pending = false
+    deep.fromBottom = null
+    loadingEarlier.value = false
+    followCursor()
+  }
+  // Called on the reader's own seek only (scroll(), viewportMoved): never from
+  // the reveal, so a short cold buffer showing its top on arrival waits for
+  // the person to pull before anything is fetched.
+  function maybeFetchDeep() {
+    const buf = term?.buffer.active
+    if (!term || !buf) return
+    if (!shouldFetchDeep({
+      atTop: view <= 0,
+      covered: covering.value,
+      alternate: buf.type === 'alternate',
+      appTakesWheel: appTakesWheel(),
+      alreadyAsked: deep.asked,
+      pending: deep.pending,
+      scrollbackRows: buf.baseY,
+      rows: term.rows,
+      // A watched grid taller than the host has no history to fetch beyond
+      // what the cold paint delivered: xterm owns every row it holds.
+      cold: COLD_HISTORY,
+    })) return
+    deep.asked = true
+    deep.pending = true
+    deep.fromBottom = restoreFromBottom(buf.baseY, buf.viewportY)
+    loadingEarlier.value = true
+    // A gesture measured against the screen about to be replaced dies with it.
+    scrollInputVersion.value++
+    if (!sendTerm({ type: 'terminal.history', lines: MAX_HISTORY })) {
+      deep.pending = false
+      loadingEarlier.value = false
+      return
+    }
+    cancelDeepTimer()
+    deepTimer = setTimeout(giveUpDeep, DEEP_FETCH_TIMEOUT_MS)
+  }
   // A viewport move we did not make is an absolute position in xterm's own
   // domain: its bottom edge (viewportY === baseY) is the live tail. A move
   // where the viewport simply stayed pinned to the bottom edge is output
@@ -244,6 +347,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
           view = buf.viewportY
           atTail = view >= buf.baseY
         }
+        // The native scrollbar's own seek to the top, like a drag there.
+        maybeFetchDeep()
       }
     } else if (anchor && !atTail) {
       // Neither coordinate moved, yet the buffer scrolled: rows were trimmed
@@ -263,6 +368,8 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     followCursor()
   }
   function offerFit() {
+    // A parked view shows no banner and cannot measure its new host yet.
+    if (parked) return
     followCursor()
     const fits = !term || !fit || (() => {
       const p = proposeTerminalSize(term!)
@@ -286,6 +393,71 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   // Resolves true once the terminal is in `host`, false if it was disposed (or
   // xterm could not be downloaded: a banner then offers to retry) meanwhile.
   async function mount(host: HTMLElement): Promise<boolean> {
+    // Adopt: the xterm (and, when the wire stayed live, its stream) survived
+    // the last view. Move the same element into the new host — no new xterm,
+    // no new attach — then fit and repaint.
+    if (term && parked) {
+      // The xterm this adopt owns: another mount, or a dispose, can land while
+      // the renderer move is awaited, and must not be touched from here.
+      const adopted = term
+      parked = false
+      clearTimeout(parkTimer)
+      parkTimer = undefined
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      el = host
+      host.addEventListener('paste', clearVirtualModifiers, true)
+      disposed = false
+      twsRetry = 0
+      const seq = ++mountSeq
+      mounting = true
+      host.append(adopted.element!)
+      // A WebGL context can be lost by the detach (iOS, Android): rebuild the
+      // addon through the same path as a first open, with its HTML fallback.
+      if (terminalRenderer.value === 'webgl') await setRenderer('webgl')
+      // The view went away while the renderer move was awaited — disposed, or
+      // (the reachable case: TerminalView unmounts) parked again. This adopt no
+      // longer owns the controller: it must not leave `mounting` set, nor finish
+      // the adopt into a host that is gone. The state that now owns it stands:
+      // dispose() cleared everything, park() detached the xterm again.
+      if (seq !== mountSeq || disposed || parked || term !== adopted) {
+        if (seq === mountSeq && !disposed) {
+          mounting = false
+          loading.value = false
+        }
+        return false
+      }
+      mounting = false
+      // The existing buffer, not a replay: the window goes back to the live
+      // tail, as it does after a Conversation/Terminal toggle.
+      view = 0
+      atTail = true
+      lastY = -1
+      lastBaseY = -1
+      activeBuf = null
+      anchor?.dispose()
+      anchor = null
+      fitNow(false)
+      term.refresh(0, term.rows - 1)
+      // A reveal withheld while parked shows now: the adopt places the window
+      // once, since followCursor did nothing while parked.
+      if (!covering.value) {
+        // Re-parenting resets the DOM scroll position while xterm's own
+        // viewport keeps its row, so scrollToBottom would see "already at the
+        // bottom" and leave the view on the oldest row. Setting the viewport's
+        // scroll position makes xterm sync again; the scroll event re-derives
+        // the window, which followCursor then places at the tail.
+        const vp = term.element?.querySelector('.xterm-viewport') as HTMLElement | null
+        if (vp) vp.scrollTop = vp.scrollHeight
+        followCursor()
+      }
+      if (visibilityWanted !== null) {
+        const visible = visibilityWanted && !document.hidden
+        visibilityWanted = null
+        setVisible(visible)
+      }
+      if (focusQueued) focus()
+      return true
+    }
     el = host
     // Clear before xterm handles paste, including a one-character paste.
     host.addEventListener('paste', clearVirtualModifiers, true)
@@ -526,6 +698,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   }
 
   function fitNow(send: boolean) {
+    // A parked view is detached: it measures zero and must never resize the
+    // terminal, locally or on the wire (the adopt fits once in its new host).
+    if (parked) return
     if (!term || !fit || !el || !el.parentElement) return
     // Measured on the parent of .xterm (#term), not .xterm itself (as FitAddon does).
     // On the phone, the inset of #term already defines its width.
@@ -738,6 +913,14 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
       clearTimeout(handshake)
       clearTimeout(frameWait)
       tws = null
+      // A parked viewer whose wire died (taken over, woken, the terminal
+      // ended) is dropped quietly: no banner, no retry. The next mount opens
+      // cold, exactly as it did before parking existed.
+      if (parked) {
+        dispose()
+        terminalPark.forget(self)
+        return
+      }
       forgetStream()
       followCursor()
       loading.value = false
@@ -793,6 +976,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     term?.reset()
   }
   function focus() {
+    // A parked xterm is detached: it has no host to focus and must never send
+    // a focus report (see the blur below).
+    if (parked) return
     focusQueued = !term && mounting
     term?.focus()
     kbdOn.value = true
@@ -801,6 +987,7 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   // reporting emits through onData for it is swallowed there.
   let swallowFocusOut = false
   function blur() {
+    if (parked) return
     focusQueued = false
     swallowFocusOut = true
     try { term?.textarea?.blur() }
@@ -867,6 +1054,9 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     view -= lines
     atTail = false
     followCursor()
+    // Scrolling back (positive lines) to the oldest row xterm holds asks for
+    // the deep history, once.
+    if (lines > 0) maybeFetchDeep()
     return true
   }
   // These two end with the owning component, not with dispose(): the view can
@@ -883,15 +1073,69 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
   })
 
   function setVisible(visible: boolean) {
+    // A parked viewer never reports visibility: it would read as visible while
+    // nobody watches it. The adopt sends the current one instead.
+    if (parked) { visibilityWanted = visible; return }
     if (!visible) scrollInputVersion.value++
     sendTerm({ type: 'visibility', visible })
     // Another client may have resized the pane while we were away.
     if (visible) nextTick(() => fitNow(true))
   }
 
+  // A view going away keeps its xterm and its stream: output keeps being
+  // written into the parked terminal and credit keeps flowing back, so the
+  // next mount adopts it with no download and no repaint. The idle limit runs
+  // from here (not from entering the cross-pane cache), so a controller parked
+  // inside its live view is bounded too.
+  function park() {
+    if (disposed || parked || !term) return
+    parked = true
+    el?.removeEventListener('paste', clearVirtualModifiers, true)
+    // The xterm element keeps its buffer, addons and pixels: only its host
+    // changes, on adopt (mount).
+    term.element?.parentElement?.removeChild(term.element)
+    el = null
+    kbdOn.value = false
+    // The window position belongs to the host being left; the adopt re-derives
+    // it (at the tail, as after a toggle).
+    anchor?.dispose()
+    anchor = null
+    // A deep fetch still on its way belongs to the leaving view.
+    if (deep.pending) {
+      cancelDeepTimer()
+      deep.pending = false
+      deep.fromBottom = null
+      loadingEarlier.value = false
+    }
+    // The reveal gate and the cover are deliberately kept: a view can unmount
+    // in the middle of a replay, and the gate works on writes and timers alone
+    // (see the adopt branch of mount).
+    clearTimeout(parkTimer)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    parkTimer = setTimeout(() => {
+      parkTimer = undefined
+      if (!parked) return
+      dispose()
+      terminalPark.forget(self)
+    }, PARK_IDLE_MS)
+  }
+  // A hidden page: a parked viewer has nobody watching it, so it goes at once
+  // (a visible terminal behaves as it does today).
+  function onVisibilityChange() {
+    if (parked && document.hidden) {
+      dispose()
+      terminalPark.forget(self)
+    }
+  }
+
   function dispose() {
     el?.removeEventListener('paste', clearVirtualModifiers, true)
     disposed = true
+    parked = false
+    clearTimeout(parkTimer)
+    parkTimer = undefined
+    document.removeEventListener('visibilitychange', onVisibilityChange)
+    visibilityWanted = null
     if (mounting) loading.value = false
     mounting = false
     takeoverQueued = false
@@ -916,13 +1160,23 @@ export function createTerminal(paneId: string, opts: { setBanner: (b: Banner | n
     term = null
   }
 
-  return {
+  // The cache holds this controller while its view is gone: a controller that
+  // disposed itself (idle limit, a wire that died while parked) must not be
+  // adopted as a live one.
+  // `self`: the object other modules hold (the park cache, an adopting view).
+  const self = {
     mount, connect, disconnect, takeControl, isConnected, sendTerm, sendKeys, fitNow, setFontSize,
     reset, scroll, focus, blur, tapLink, tapMouse: (x: number, y: number) => mouse?.tap(x, y), tapOnCursor, hasFocus, rowHeight, pageRows, setVisible, dispose, loading, kbdOn, captureScreen, imeBusy,
-    hasBanner: opts.hasBanner, selectionHint,
+    hasBanner: () => opts.hasBanner(), selectionHint,
     scrollInputVersion, scrollGeometryVersion, frameTick,
     virtualModifiers, lastVirtualChord, toggleModifier, toggleVirtualModifier: toggleModifier, clearVirtualModifiers, sendVirtualKey,
+    park, loadingEarlier,
+    isParked: () => parked,
+    // An adopted controller is bound to the view that adopts it: its closures
+    // (live, copying, cell) are the ones that count from then on.
+    rebind: (next: TerminalOptions) => { opts = next },
   }
+  return self
 }
 
 export type TerminalCtl = ReturnType<typeof createTerminal>
