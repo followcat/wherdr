@@ -88,11 +88,12 @@ moved=$({ git diff --name-only --no-renames "$m2" "$2" -- ${files}; git diff --n
 export const SCRIPT = {
   // Catch up with the target, then push the task branch onto it. A repository
   // without origin lands locally: the clone's branch $t (made when missing)
-  // moves to the task's commit, unless a folder has it checked out.
+  // moves to the task's commit, unless a folder has it checked out. A merge
+  // commit it makes takes the message $2 when there is one (commitMessageFor).
   land: `${IN} ${CLEAN} t=$1
 if ! git remote get-url origin >/dev/null 2>&1; then
   old=$(git rev-parse -q --verify "refs/heads/$t")
-  if [ -n "$old" ] && ! git merge -q --no-edit "$old" >/dev/null 2>&1; then
+  if [ -n "$old" ] && ! git merge -q --no-edit \${2:+-m "$2"} "$old" >/dev/null 2>&1; then
     f=$(git diff --name-only --diff-filter=U | head -3 | paste -sd ' ' -); git merge --abort; printf 'conflict in %s\\n' "$f"; exit ${CODE.SEND_BACK}; fi
   w=$(git worktree list --porcelain | awk -v b="branch refs/heads/$t" '/^worktree /{ p=substr($0, 10) } $0 == b { print p }')
   [ -z "$w" ] || { printf '%s\\n' "$t is checked out in $w: switch that folder to another branch, then try again"; exit 1; }
@@ -101,7 +102,7 @@ if ! git remote get-url origin >/dev/null 2>&1; then
 fi
 if git ls-remote -q --exit-code --heads origin "$t" >/dev/null; then
   git fetch -q origin "$t" 2>"$_e" || { cat "$_e"; exit 1; }
-  if ! git merge -q --no-edit "origin/$t" >/dev/null 2>&1; then
+  if ! git merge -q --no-edit \${2:+-m "$2"} "origin/$t" >/dev/null 2>&1; then
     f=$(git diff --name-only --diff-filter=U | head -3 | paste -sd ' ' -); git merge --abort; printf 'conflict in %s\\n' "$f"; exit ${CODE.SEND_BACK}; fi
   ${AFTER_MERGE}
 fi
@@ -152,8 +153,10 @@ printf '%s\\n' "$h" "$j"`,
   // The branch's latest PR closed without a merge (--state closed lists merged ones too): its link.
   prClosed: `${IN} gh pr list --head "$1" --state closed --json url,state -q '[.[] | select(.state == "CLOSED")][0].url // empty' 2>"$_e" || { cat "$_e"; exit 1; }`,
   // The step's method ($3), else the first the repo allows: merge commit, squash, rebase.
+  // A squash takes the commit title $4 when there is one (commitMessageFor).
   merge: `${IN} m=$3; [ -n "$m" ] || m=$(gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed -q 'if .mergeCommitAllowed then "merge" elif .squashMergeAllowed then "squash" else "rebase" end' 2>"$_e") || { cat "$_e"; exit 1; }
-gh pr merge "$1" "--$m" --match-head-commit "$2" 2>"$_e" || { cat "$_e"; exit 1; }; printf '%s\\n' "$1"`,
+s=; [ "$m" = squash ] && s=$4
+gh pr merge "$1" "--$m" \${s:+--subject "$s"} --match-head-commit "$2" 2>"$_e" || { cat "$_e"; exit 1; }; printf '%s\\n' "$1"`,
   // Merged when GitHub has a merged PR from the branch into the target whose
   // head is HEAD (or holds it): squash and rebase merges leave no ancestor.
   // Else HEAD must be in the target and the branch hold a commit of its own:

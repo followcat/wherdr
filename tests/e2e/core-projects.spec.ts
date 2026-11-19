@@ -6,8 +6,8 @@ import { startCore, type Call } from './core'
 // A project's settings on the built server: a project added from an example
 // gets its own workflow, a branch protected in the Guards tab is saved, and a
 // coordinator's proposal is accepted from the Workflow tab, guards kept. The New
-// sheet's form, each tab and the library sheet are covered lower, in
-// tests/components (NewProject, ProjectsSettings, ProjectWorkflow, TemplateLibrary).
+// sheet's form and each tab are covered lower, in
+// tests/components (NewProject, ProjectsSettings, ProjectWorkflow).
 const b64 = (s: string) => Buffer.from(s).toString('base64')
 // The folder checks run as shell scripts on the machine (server/utils/pmFolder.ts).
 const exec = (call: Call) => {

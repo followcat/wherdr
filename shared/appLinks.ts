@@ -28,12 +28,15 @@ export const boardLink = (o: { project?: string, tag?: string, task?: string } =
 // A project's sheet (Settings › Projects › KEY) on one of its tabs; its
 // Autopilot tab holds the coordinator's autopilot panel.
 export const projectLink = (key: string, tab: ProjectTab = 'general') => `#/settings${query({ section: 'projects', project: key.toUpperCase(), tab })}`
-export const DECISIONS_LINK = '#/decisions'
+// Tasks to review (the sheet of Home's card and the board's To review button),
+// over the current page. #/decisions, the former Decisions page, opens it too.
+export const REVIEW_LINK = '#/review'
+export const REVIEW_PATHS = ['/review', '/decisions']
 
 // What an agent's role text lists: each place, its address, and what it shows.
 export function appLinkList(): string[] {
   return [
-    `- Home: \`#/\`; Decisions (what waits for the user's choice): \`${DECISIONS_LINK}\`.`,
+    `- Home: \`#/\`; Tasks to review (what waits for the user's choice): \`${REVIEW_LINK}\`.`,
     `- The board: \`${boardLink()}\`; one project: \`${boardLink({ project: 'KEY' })}\`; one tag: \`${boardLink({ tag: 'TAG' })}\`; a task's sheet: \`${boardLink({ task: 'ID' })}\`.`,
     `- A Settings section: \`#/settings?section=<section>\`, section one of ${SETTINGS_SECTIONS.join(', ')}; the agents' Pace group: \`${settingsLink('pacing')}\`; a Conversation tab: \`#/settings?section=conversation&tab=<tab>\`, tab one of ${CONVERSATION_TABS.join(', ')}.`,
     `- A project's sheet: \`#/settings?section=projects&project=KEY&tab=<tab>\`, tab one of ${PROJECT_TABS.join(', ')} (autopilot: its coordinator's autopilot).`,

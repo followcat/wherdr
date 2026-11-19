@@ -6,17 +6,15 @@ const query = defineModel<string>({ required: true })
 defineProps<{ label: string }>()
 const emit = defineEmits<{ pick: [] }>()
 const input = useTemplateRef('input')
-// Safari ends an IME composition before the key that confirms it: keyCode 229.
-const composing = (e: KeyboardEvent) => e.isComposing || e.keyCode === 229
 function onEnter(e: KeyboardEvent) {
-  if (composing(e)) return
+  if (imeComposing(e)) return
   e.preventDefault()
   if (!e.repeat && query.value.trim()) emit('pick')
 }
 function onEscape(e: KeyboardEvent) {
-  if (!query.value && !composing(e)) return
+  if (!query.value && !imeComposing(e)) return
   e.stopPropagation()
-  if (!composing(e)) query.value = ''
+  if (!imeComposing(e)) query.value = ''
 }
 function clear() {
   query.value = ''

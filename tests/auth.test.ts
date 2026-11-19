@@ -3,8 +3,8 @@ import { createHmac } from 'node:crypto'
 import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { createAuth, type Auth } from '../server/utils/auth'
+import { describe, expect, it, vi } from 'vitest'
+import { createAuth, syncDir, type Auth } from '../server/utils/auth'
 import { createRateLimit } from '../server/utils/rateLimit'
 
 const dir = () => mkdtempSync(path.join(tmpdir(), 'hw-auth-'))
@@ -16,6 +16,23 @@ const cookieValue = (setCookie: string) => setCookie.split(';')[0]!
 const withKey = (a: ReturnType<typeof createAuth>) => {
   a._db().credentials.push({ id: 'k1', publicKey: 'x', counter: 0, transports: [], name: 'iPhone', createdAt: '2026-01-01T00:00:00.000Z' })
 }
+
+describe('syncDir', () => {
+  const fakeFs = () => ({ openSync: vi.fn(() => 7), fsyncSync: vi.fn(), closeSync: vi.fn() })
+  it('fsyncs the folder on Linux and macOS, never on Windows', () => {
+    for (const platform of ['linux', 'darwin'] as const) {
+      const f = fakeFs()
+      syncDir('/data', platform, f as never)
+      expect(f.openSync).toHaveBeenCalledWith('/data', 'r')
+      expect(f.fsyncSync).toHaveBeenCalledWith(7)
+      expect(f.closeSync).toHaveBeenCalledWith(7)
+    }
+    const w = fakeFs()
+    syncDir('C:\\data', 'win32', w as never)
+    expect(w.openSync).not.toHaveBeenCalled()
+    expect(w.fsyncSync).not.toHaveBeenCalled()
+  })
+})
 
 describe('auth', () => {
   it('creates data/auth.json (secret, random generation, no key) on first startup', () => {

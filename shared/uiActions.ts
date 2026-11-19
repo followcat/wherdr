@@ -6,6 +6,7 @@ import type { Task } from './pm/run'
 import { stepLabels, type PlannedStep } from './pm/steps'
 import type { SyncedSetting } from './settings'
 import type { UiTargetId } from './uiTargets'
+import type { ThemeFile } from '../app/utils/customThemes'
 
 export const UI_ACTIONS = ['resume', 'step', 'open'] as const
 export type UiAction = typeof UI_ACTIONS[number]
@@ -30,6 +31,10 @@ export interface SettingChange { key: SyncedSetting, before?: string, after: str
 // management was off when it was proposed: a "Turn on project management"
 // checkbox (on), switched on by the Apply before the change.
 export interface ProjectChange { argv: string[], lines: string[], project: string, said?: string, target?: UiTargetId, picks?: (string | null)[], on?: string[], start?: boolean, pm?: true }
+// A proposed custom theme (`wherdr alfred theme propose < theme.json`): the
+// checked theme file and the user's message behind it. Apply saves it as a
+// custom theme and picks it; the card also opens it, unsaved, in the editor.
+export interface ThemeProposal { file: ThemeFile, said?: string }
 // The user's checkboxes at the click: the keys to add, whether to start their coordinators and to turn project management on.
 export interface CardChoice { picks: string[], start: boolean, pm: boolean }
 export function cardChoice(body: { picks?: unknown, start?: unknown, pm?: unknown }): CardChoice | undefined {
@@ -42,16 +47,17 @@ export const defaultChoice = (c: Pick<ProjectChange, 'picks' | 'on' | 'start'>):
 // With the user's choice, the command the click runs (its argv holds no --only nor --start).
 export const choiceArgv = (argv: string[], c?: CardChoice) => (c ? [...argv, '--only', c.picks.join(','), '--start', c.start ? 'yes' : 'no'] : argv)
 export interface UiCard {
-  id: string, by: string, at: number, kind: UiAction | 'setting' | 'change', task: string, shown: string
+  id: string, by: string, at: number, kind: UiAction | 'setting' | 'change' | 'theme', task: string, shown: string
   label: string, stamp: string, state: UiCardState, outcome?: { text: string, at: number, lines?: string[] } // lines: per project (v2 import)
   setting?: SettingChange // kind 'setting' only (task and shown are '')
   change?: ProjectChange // kind 'change' only (task and shown are '')
+  theme?: ThemeProposal // kind 'theme' only (task and shown are '')
   refused?: string // the click's answer only, never stored: why the step's action was refused
 }
 export const UI_CARD_MS = 24 * 3600_000
 export const UI_CARDS_MAX = 20
 
-// What must still hold at the click, the same thing Decisions keys on: the same
+// What must still hold at the click, the same thing the grouped push keys on: the same
 // stop (resume), the same user step entered at the same time (step). null: the
 // action has nothing to act on now. open always holds.
 export function actionStamp(kind: UiAction, task: Task, plan: PlannedStep[]): string | null {
@@ -122,8 +128,8 @@ export const CHANGE_PLACES: Record<string, { label: (key: string) => string, tar
 export const changeStamp = (lines: string[]) => `change:${lines.join('\n')}`
 
 // What the card is about: one card per task and action, per setting, or per
-// project and change.
-const cardAbout = (c: UiCard) => (c.setting ? `setting:${c.setting.key}` : c.change ? `change:${c.label}` : `${c.kind}:${c.task}`)
+// project and change, per theme name.
+const cardAbout = (c: UiCard) => (c.setting ? `setting:${c.setting.key}` : c.theme ? `theme:${c.label}` : c.change ? `change:${c.label}` : `${c.kind}:${c.task}`)
 
 // The cards a coordinator keeps: the new one first, one per task and action
 // (a new one replaces the older), the newest UI_CARDS_MAX of the last day.

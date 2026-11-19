@@ -330,7 +330,8 @@ export const isPoint = (text: string) => words(text) >= POINT_MIN_WORDS && !/[:ï
 export function markQuestions(root: ParentNode, labels: ReplyLabels) {
   const wrapped = new Map<HTMLElement, HTMLElement[]>()
   for (const el of root.querySelectorAll<HTMLElement>('p, li')) {
-    if (el.closest('pre, code, .code-block, blockquote, table')) continue
+    // A `questions` card (QuestionsCard.vue) answers its own questions.
+    if (el.closest('pre, code, .code-block, blockquote, table, .w-questions')) continue
     // A loose list item holds paragraphs: they carry the button.
     if (el.tagName === 'LI' && el.querySelector(':scope > p')) continue
     const { parts, raw, masked } = ownText(el)

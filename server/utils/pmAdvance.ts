@@ -5,7 +5,7 @@
 // stop. All of it is read again from the task's state, so a restart loses
 // nothing (shared/pm/advance.ts holds the rules).
 import { randomUUID } from 'node:crypto'
-import { DONE_CMD, READ_SEP, dueText, parseRead, reviewFile, runFiles, runsNow, signalEvent, signalKept } from '../../shared/pm/advance'
+import { DONE_CMD, READ_SEP, appendLine, dueText, parseRead, reviewFile, runFiles, runsNow, signalEvent, signalKept } from '../../shared/pm/advance'
 import { onEvent, type PlannedStep } from '../../shared/pm/steps'
 import { followedBranch } from '../../shared/pm/branchName'
 import { LABEL, agentEnv, agentLine, duplicateAgents, prefOf, programName, quotaOut, reviewerPlan, runLabels, taskPlan, type LabelledTerminal, type Run, type Task } from '../../shared/pm/run'
@@ -17,10 +17,12 @@ import { reviewAccount, reviewCap, reviewTurn, reviewerOut, runningReviews } fro
 import { policyIn, readPolicies } from './pacingPolicies'
 import { showIds } from '../../shared/pm/projectKey'
 import { PATH_SETUP, launchFailure } from './coreCreate'
-import { WRITE_SCRIPT, exec, oneStart, prepareTmp, runOn, workspaceFiles, type PmLaunchDeps } from './pmLaunch'
+import { WRITE_SCRIPT, contextFolders, exec, linkSkills, oneStart, prepareTmp, runOn, unconfirmed, workspaceFiles, type PmLaunchDeps } from './pmLaunch'
+import { contextSection } from '../../shared/pm/context'
 import { HerdrError } from './herdr'
 import { startAction } from './pmBoard'
 import { cleanTask } from './pmCleanup'
+import { tickPlanFile } from './pmPlan'
 import { readLeakCheck } from './pmVisibility'
 import { isPublic, leakText, scanDiff } from '../../shared/pm/visibility'
 import type { Project } from '../../shared/pm/project'
@@ -32,6 +34,8 @@ import { interruptTask } from './pmRecovery'
 import { killTerminal } from './pmProcs'
 import { noteTaskError } from './pmSentinel'
 import { loginRestartText } from '../../shared/pm/recovery'
+import { isBlockedOn } from '../../shared/pm/park'
+import { blockedOn } from './pmPark'
 
 // The task's commit, its diff size since the branch started, the worker's note, the verdict file,
 // its branch, then its own commits (no merges) and files per line count since its fork from the base ($5).
@@ -46,7 +50,8 @@ m=
 [ -n "$base" ] && { m=$(git -C "$wt" merge-base HEAD "origin/$base" 2>/dev/null) || m=$(git -C "$wt" merge-base HEAD "$base" 2>/dev/null); }
 [ -n "$m" ] || m=$s
 git -C "$wt" log --no-merges --format='%at %s' \${m:+"$m..HEAD"} 2>/dev/null | cksum; echo "${READ_SEP}"
-git -C "$wt" diff --numstat \${m:+"$m"} HEAD 2>/dev/null`
+git -C "$wt" diff --numstat \${m:+"$m"} HEAD 2>/dev/null; echo "${READ_SEP}"
+cat "$6" 2>/dev/null`
 // The task moves to the branch its worker pushed: its start point (and takeover tip) goes with it.
 const FOLLOW_SCRIPT = `for k in wherdrstart wherdrtaken; do s=$(git -C "$1" config "branch.$2.$k") && git -C "$1" config "branch.$3.$k" "$s"; done; exit 0`
 
@@ -115,7 +120,10 @@ export async function advanceTick(deps: PmLaunchDeps, now = Date.now()) {
   const gone = (await store.runs()).filter(r => r.terminal && r.state !== 'ended' && !alive(r) && terminals.find(x => x.address === r.terminal)?.exit_code !== 0)
   const why = gone.length ? await recordGone(deps, gone, list, now).catch(() => new Map<string, Incident>()) : new Map<string, Incident>()
   for (const run of await store.runs()) {
-    if (alive(run)?.labels?.[LABEL.report] !== 'done') continue
+    const said = alive(run)?.labels?.[LABEL.report]
+    // Blocked on another task or repository: parked (park.ts), its signal cleared once handled.
+    if (isBlockedOn(said)) { if (await blockedOn(deps, run, said!, now).then(() => true, () => false)) await clearSignal(deps, run.terminal!); continue }
+    if (said !== 'done') continue
     // Cleared once handled; a failure leaves it for the next tick.
     if (await signal(deps, run, now).then(() => true, () => false)) await clearSignal(deps, run.terminal!)
   }
@@ -130,8 +138,10 @@ async function signal(deps: PmLaunchDeps, run: Run, now: number) {
   if (!c || c.task.step!.done) return
   const step = c.plan[c.task.step!.at]
   const files = runFiles(latest(await deps.store.runs(), run.task, 'worker')?.instructions ?? run.instructions)
-  const r = await exec(deps, c.on, SIGNAL_READ_SCRIPT, [run.worktree, run.branch, files.note, files.verdict, c.task.base ?? ''])
+  const r = await exec(deps, c.on, SIGNAL_READ_SCRIPT, [run.worktree, run.branch, files.note, files.verdict, c.task.base ?? '', files.before])
   const read = parseRead(r.out)
+  // The worker rewrote its report file: the earlier rounds go back on top.
+  if (read.rewrote && run.role === 'worker') await exec(deps, c.on, 'printf \'%s\\n\' "$2" > "$1"', [files.note, read.whole!])
   const ev = signalEvent(step, run.role, read)
   const moved = ev && 'kind' in ev && ev.kind === 'report' ? followedBranch(run.branch, read, c.task.branchStart ?? `task/${c.task.id}`) : undefined
   if (moved) await follow(deps, c, run, moved)
@@ -200,6 +210,8 @@ async function advance(deps: PmLaunchDeps, id: string, alive: (r?: Run) => Label
     }
     // Its agents ended: its worktree (and, merged, its local branch) goes, once tried.
     if (!task.cleanup) void cleanTask(deps, id).catch(() => {})
+    // Done with its whole workflow: its plan lines are ticked, once (pmPlan.ts).
+    if (task.refs?.length && !s.abandoned && !task.planTick) void tickPlanFile(deps, id).catch(() => {})
     return
   }
   // Stopped on a failure: it waits for the user, nothing is tried again alone.
@@ -225,6 +237,10 @@ async function advance(deps: PmLaunchDeps, id: string, alive: (r?: Run) => Label
   const told = { ...s, told: s.since }
   if (due.holder === 'reviewer') return oneStart(id, 'reviewer', () => reviewer(deps, c, due.text, alive(rv) && rv)).catch(busy)
   const worker = latest(runs, id, 'worker')
+  // The report file is kept, a copy of it too, before the worker is told or revived:
+  // this round's section, added at its end, alone gives this step's proofs (parseRead).
+  const files = runFiles(worker?.instructions ?? '')
+  if (worker) await exec(deps, c.on, 'if [ -s "$1" ]; then cp -f "$1" "$2"; else rm -f "$2"; fi', [files.note, files.before])
   // Released while the task waited for the user, or ended earlier (on its own, or
   // by a stop the task went on from) with no incident: a step due for it (a
   // send-back, the user's or the engine's) starts it again, the handover gives the step.
@@ -240,12 +256,10 @@ async function advance(deps: PmLaunchDeps, id: string, alive: (r?: Run) => Label
     return void await interruptTask(deps, task, i)
   }
   await clearSignal(deps, worker!.terminal!)
-  // A new note for this step: the last one's link must not pass as this step's proof.
-  await exec(deps, c.on, 'rm -f "$1"', [runFiles(worker!.instructions).note])
   // The workspace's instructions files changed since the worker read them: the step gives them again.
   const ws = await workspaceFiles(deps, task, c.p, true)
   const again = ws.changed ? ['', '', 'The workspace\'s instructions files changed: follow them from now on.', '', ...ws.lines].join('\n') : ''
-  await deps.call('terminal.send', { terminal: worker!.terminal, text: showIds([c.p], due.text + again) }, 30000)
+  await deps.call('terminal.send', { terminal: worker!.terminal, text: showIds([c.p], `${due.text}\n\n${appendLine(files.note)}${again}`) }, 30000)
   await deps.store.logTask({ ...ws.task, step: told, run: worker!.id }, 'engine', `${plan[s.at]!.id}: sent to the worker`)
 }
 
@@ -294,8 +308,11 @@ async function reviewer(deps: PmLaunchDeps, { task, p, t, on }: Ctx, text: strin
   task = { ...task, held: undefined, reviewWait: undefined }
   const ws = await workspaceFiles(deps, task, p)
   task = ws.task
+  // A new reviewer reads the commits its worker read; a running one keeps its own (its folders were allowed at its start).
+  const ctx = live ? { task, folders: live.context ?? [], lines: contextSection(live.context ?? []) } : await contextFolders(deps, task, p, t, worker.machine, worker.context)
+  task = ctx.task
   const files = runFiles(worker.instructions)
-  if ((await exec(deps, on, `rm -f "$2" && ${WRITE_SCRIPT}`, [files.review, files.verdict], showIds([p], reviewFile(task, worker, text, files.verdict, isPublic(p), ws.lines)))).code !== 0)
+  if ((await exec(deps, on, `rm -f "$2" && ${WRITE_SCRIPT}`, [files.review, files.verdict], showIds([p], reviewFile(task, worker, text, files.verdict, isPublic(p), [...ws.lines, ...ctx.lines])))).code !== 0)
     return void await waitFor(deps, task.id, 'Could not write the review file')
   const told = { ...task.step!, told: task.step!.since }
   if (live) {
@@ -305,8 +322,11 @@ async function reviewer(deps: PmLaunchDeps, { task, p, t, on }: Ctx, text: strin
   }
   const tmpWhy = await prepareTmp(deps, on, worker.worktree)
   if (tmpWhy) return void await waitFor(deps, task.id, `The reviewer was not started: ${tmpWhy}`)
+  // Skills added at the workspace's root since the worker started are linked too (the worker's start logged them).
+  const skills = await linkSkills(deps, store, on, p, worker.machine, worker.worktree)
+  if (skills.includes('could not')) task = await store.logTask(task, 'engine', skills)
   const { switched, ...who } = plan
-  let run: Run = { id: randomUUID().replace(/-/g, '').slice(0, 12), task: task.id, role: 'reviewer', ...who, machine: worker.machine, worktree: worker.worktree, branch: worker.branch, instructions: files.review, attempt: 1, state: 'starting', startedAt: Date.now() }
+  let run: Run = { id: randomUUID().replace(/-/g, '').slice(0, 12), task: task.id, role: 'reviewer', ...who, machine: worker.machine, worktree: worker.worktree, branch: worker.branch, instructions: files.review, attempt: 1, state: 'starting', startedAt: Date.now(), ...(ctx.folders.length ? { context: ctx.folders } : {}) }
   // The receipt first: an unconfirmed start is found again by its labels, never started twice.
   await store.saveRun(run)
   const again = wasReleased(latest(await store.runs(), task.id, 'reviewer')) ? ' again in its worktree' : ''
@@ -314,11 +334,19 @@ async function reviewer(deps: PmLaunchDeps, { task, p, t, on }: Ctx, text: strin
   const said = task.recovery?.say ? loginRestartText('reviewer') : undefined
   await store.logTask({ ...task, step: told, run: run.id, ...(said ? { recovery: { ...task.recovery!, say: undefined } } : {}) }, 'engine',
     (switched ? `review: ${switched}, reviewed by ${plan.program} ${plan.model}` : `review: started the reviewer${again} (${plan.program} ${plan.model})`) + (said ? `; told it: ${said}` : ''))
-  const { address } = await deps.call<{ address: string }>('terminal.run', {
-    cwd: worker.worktree, ...(on ? { on } : {}), no_parent: true, wait: false,
-    env: { ...agentEnv(worker.worktree), ...await deps.proxyEnv?.(worker.machine) },
-    labels: runLabels(await store.install(), run), line: `${PATH_SETUP}; ${agentLine(plan.program, plan.model, files.review, undefined, said)}`,
-  }, 30000)
+  let address: string
+  try {
+    address = (await deps.call<{ address: string }>('terminal.run', {
+      cwd: worker.worktree, ...(on ? { on } : {}), no_parent: true, wait: false,
+      env: { ...agentEnv(worker.worktree), ...await deps.proxyEnv?.(worker.machine) },
+      labels: runLabels(await store.install(), run), line: `${PATH_SETUP}; ${agentLine(plan.program, plan.model, files.review, undefined, said, ctx.folders.map(f => f.dir))}`,
+    }, 30000)).address
+  } catch (e) {
+    // Unconfirmed: it may run anyway; the watchdog finds it by its labels, or ends the run (staleStarts).
+    if (unconfirmed(e)) return
+    await store.saveRun({ ...run, state: 'ended', endedBy: 'exit' })
+    return void await waitFor(deps, task.id, `herdr-core refused to start the reviewer (${plan.program}): ${(e as Error).message}`)
+  }
   run = { ...run, terminal: address, state: 'running', startedAt: Date.now() }
   await store.saveRun(run)
   const failed = await launchFailure(deps, address, deps.launchWatchMs ?? 5000)

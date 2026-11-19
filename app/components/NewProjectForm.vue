@@ -18,9 +18,11 @@ const emit = defineEmits<{ browse: [], machine: [m: MachineConfig] }>()
 
 const current = computed(() => projectCoordinators.value.find(c => c.project === project.value))
 const choices = computed(() => (current.value ? offerCoordinators(undefined, current.value.project) : draft.value ? offerCoordinators(undefined, 'NEW') : []))
-const fallback = computed(() => (current.value ? coordinatorAgent(current.value)?.program ?? '' : choices.value[0] ?? ''))
+const fallback = computed(() => (current.value ? coordinatorAgent(current.value)?.program ?? '' : defaultProjectChoice(choices.value)))
 // The projects to start again: their coordinator does not run.
 const stopped = computed(() => projectCoordinators.value.filter(c => !coordinatorPane(c)))
+// Collapsed by default; open when the sheet comes with one of them picked.
+const restartOpen = ref(!draft.value && stopped.value.some(c => c.project === project.value))
 function pick(key: string) {
   if (key === project.value && !draft.value) return
   haptic()
@@ -146,27 +148,28 @@ const notes = {
         </span>
       </div>
       <p v-if="draftGit(draft)" class="coord-hint muted">{{ tl('Its coordinator looks at the repository and proposes a workflow in its first message.') }}</p>
-      <label class="field-label">{{ tl('Agent', 'Agent') }}</label>
-      <AgentPicker v-model="agent" :programs="choices" />
-      <p v-if="current && fallback" class="coord-hint muted">
-        {{ fallback === agent ? tl('The project’s default agent.', 'L’agent par défaut du projet.') : tl(`The default stays ${kindLabel(fallback)}.`, `Le défaut reste ${kindLabel(fallback)}.`) }}
-      </p>
-      <p v-else-if="!fallback" class="coord-hint muted" data-testid="coordinator-no-agent">{{ tl('No offered agent can coordinate: check Settings › Agents.', 'Aucun agent proposé ne peut coordonner : vois Réglages › Agents.') }}</p>
     </template>
 
-    <template v-if="stopped.length">
-      <label class="field-label">{{ tl('Existing projects') }}</label>
-      <div class="coord-projects" role="radiogroup" :aria-label="tl('Existing projects')" data-testid="project-existing">
-        <button
-          v-for="c in stopped" :key="c.project" type="button" role="radio" :class="{ on: !draft && c.project === project }"
-          :aria-checked="!draft && c.project === project" :data-project="c.project" @click="pick(c.project)"
-        >
-          <span class="coord-key">{{ c.project }}</span>
-          <span class="coord-name">{{ c.name }}</span>
-        </button>
-      </div>
-    </template>
-    <template v-if="current">
+    <UCollapsible v-if="stopped.length" v-model:open="restartOpen" data-testid="project-restart">
+      <button type="button" class="field-label restart-toggle" data-testid="project-restart-toggle">
+        <span>{{ tl('Restart a coordinator') }} · {{ stopped.length }}</span>
+        <UIcon name="i-lucide-chevron-down" class="restart-chevron" :class="{ open: restartOpen }" aria-hidden="true" />
+      </button>
+      <template #content>
+        <p class="coord-hint muted restart-hint">{{ tl('These projects’ coordinators are not running: pick one to start it again.') }}</p>
+        <div class="coord-projects" role="radiogroup" :aria-label="tl('Restart a coordinator')" data-testid="project-existing">
+          <button
+            v-for="c in stopped" :key="c.project" type="button" role="radio" :class="{ on: !draft && c.project === project }"
+            :aria-checked="!draft && c.project === project" :data-project="c.project" @click="pick(c.project)"
+          >
+            <span class="coord-key">{{ c.project }}</span>
+            <span class="coord-name">{{ c.name }}</span>
+          </button>
+        </div>
+      </template>
+    </UCollapsible>
+    <!-- One agent picker, always below the restart list: a new folder or a stopped project. -->
+    <template v-if="draft || current">
       <label class="field-label">{{ tl('Agent', 'Agent') }}</label>
       <AgentPicker v-model="agent" :programs="choices" />
       <p v-if="current && fallback" class="coord-hint muted">
@@ -198,4 +201,8 @@ const notes = {
 .coord-note { margin: 14px 2px 0; font-size: 14px; color: var(--text-2); }
 .coord-note a, .coord-hint a { color: var(--mauve); text-decoration: underline; }
 .coord-hint { margin: 8px 2px 0; font-size: 13px; }
+.restart-toggle { display: flex; align-items: center; gap: 6px; min-height: 32px; text-align: left; }
+.restart-chevron { flex: none; width: 14px; height: 14px; color: var(--dim); transition: transform .15s; }
+.restart-chevron.open { transform: rotate(180deg); }
+.restart-hint { margin: 0 2px 8px; }
 </style>

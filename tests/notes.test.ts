@@ -4,7 +4,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { machineScope, noteLinks, noteTabs, notesShown, parseNotes, resolveScope, projectScopes, NOTES_FOLLOW, type Note } from '../shared/notes'
+import { MAX_BODY, contentLines, machineScope, noteBody, noteLinks, noteMarkdown, noteTabs, notesShown, parseNotes, resolveScope, projectScopes, NOTES_FOLLOW, type Note } from '../shared/notes'
 import { parseAlfredCommand } from '../shared/pm/alfredCli'
 import { parseCommand } from '../shared/pm/coordinator'
 import { notesStore, runNotes } from '../server/utils/notesStore'
@@ -52,6 +52,21 @@ describe('notes store', () => {
     expect(noteLinks('[x](plans/../../secret.md)')).toHaveProperty('error')
     await expect(run(['add', 'Bad'], '[x](../../settings.json)')).rejects.toThrow(/never \.\./)
     await expect(run(['show', '../settings.json'])).rejects.toThrow(/No file/)
+  })
+})
+
+describe('note body', () => {
+  const items = (n: number) => Array.from({ length: n }, (_, i) => `- item ${i + 1}`)
+  it('counts only content lines: blank lines, separators and headings do not count', () => {
+    expect(contentLines(['# Title', '', '---', '***', '#### Small', 'text', '- [ ] box', '##### deep'])).toBe(3)
+    const shaped = ['# Plan', ...items(4), '', '---', '## Next', ...items(4), '---', '### Later', ...items(4)]
+    expect(noteBody(shaped.join('\n'))).toBe(shaped.join('\n'))
+    expect(noteBody([...shaped, 'one more'].join('\n'))).toMatchObject({ error: expect.stringContaining('12 content lines') })
+    expect(noteBody('x'.repeat(MAX_BODY + 1))).toMatchObject({ error: expect.any(String) })
+  })
+  it('sets a separator apart so it never turns the line above into a heading, outside code', () => {
+    expect(noteMarkdown('a\n---\nb')).toBe('a\n\n---\n\nb')
+    expect(noteMarkdown('```\n---\n```')).toBe('```\n---\n```')
   })
 })
 

@@ -1,5 +1,5 @@
-import { execFile } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFile, spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -8,10 +8,10 @@ import { fieldOf } from '../server/utils/agyProtobuf'
 import { createTranscripts } from '../server/utils/transcripts'
 import {
   agyAnchorOf, agyHeadOf, agyToolSummary, agyUserText, conversationPath, createAgyTranscripts, hasStep,
-  modelOf, parseAgy, parseAgyStep, prefixOf, takeVisible, type AgyDoc, type AgyStep,
+  parseAgyStep, prefixOf, sweepAgyCopies, takeVisible, type AgyDoc, type AgyStep,
 } from '../server/utils/agyTranscripts'
-import { AGY_OTHER, AGY_SESSION, agyModelBlob, openAgyFixture, stepBlobs, writeAgyFixture, writeAgySummaries } from './helpers/agy-fixture.mjs'
-import { type MachineFs, createShellFs, localFs } from '../server/utils/fsx'
+import { AGY_SESSION, openAgyFixture, stepBlobs, writeAgyFixture, writeAgySummaries } from './helpers/agy-fixture.mjs'
+import { type MachineFs, createShellFs } from '../server/utils/fsx'
 
 const homes: string[] = []
 const keepers: { close: () => void }[] = []
@@ -81,27 +81,6 @@ it('summarizes a tool call from its best-known argument', () => {
   expect(agyToolSummary('read_file', '{}')).toBe('read_file')
 })
 
-it('pairs a stored result back to its call and renders an error notice', () => {
-  const steps = [
-    step({ role: 'user', text: 'Run tests' }, 0)!,
-    step({ role: 'agent', thinking: 'Check first', calls: [{ id: 'call-1', name: 'run_command', args: JSON.stringify({ CommandLine: 'npm test' }) }] }, 1)!,
-    step({ role: 'agent', text: '**All pass.**' }, 3)!,
-    step({ role: 'error', text: 'Invalid call' }, 4)!,
-  ]
-  const d = doc(steps, [['call-1', { out: '12 passed', error: false }]])
-  const items = parseAgy(steps, d)
-  expect(items.map(i => i.role)).toEqual(['user', 'thinking', 'tool', 'assistant', 'notice'])
-  expect(items[2]).toMatchObject({ name: 'run_command', text: 'npm test', out: '12 passed' })
-  expect(items[4]).toMatchObject({ name: 'error', error: true, text: 'Invalid call' })
-})
-
-it('reads the model from gen_metadata data', () => {
-  expect(modelOf(agyModelBlob('gemini-3-pro-test', 'Gemini 3 Pro (test)')))
-    .toEqual({ id: 'gemini-3-pro-test', label: 'Gemini 3 Pro (test)' })
-  expect(modelOf(agyModelBlob('other-model'))).toMatchObject({ id: 'other-model' })
-  expect(modelOf(null)).toBeNull()
-})
-
 it('pages backwards over the visible items', () => {
   const steps: AgyStep[] = []
   for (let i = 0; i < 140; i++) {
@@ -162,17 +141,6 @@ it('reads a user prompt, the reply, its thinking and its tool call with the pair
   expect(items.at(-1)).toMatchObject({ role: 'assistant', text: '**All twelve tests pass.**' })
 })
 
-it('honors ANTIGRAVITY_APP_DATA_DIR locally but not on a remote filesystem', async () => {
-  const { home, reader } = fixture()
-  const alternate = path.join(home, 'alternate')
-  writeAgyFixture(alternate, { rows: [{ role: 'user', text: 'Custom data dir' }] })
-  vi.stubEnv('ANTIGRAVITY_APP_DATA_DIR', path.join(alternate, '.gemini/antigravity-cli'))
-  expect((await reader.chat(pane)).items?.[0]?.text).toBe('Custom data dir')
-  const remote = createAgyTranscripts({ home, fs: { ...localFs } })
-  writeAgyFixture(home, { rows: [{ role: 'user', text: 'Default data dir' }] })
-  expect((await remote.chat(pane)).items?.[0]?.text).toBe('Default data dir')
-})
-
 it('skips malformed protobuf rows in a stored conversation', async () => {
   const { home, reader } = fixture()
   writeAgyFixture(home, { rows: [
@@ -198,6 +166,21 @@ it('maps error steps to an error notice', async () => {
   ] })
   const items = (await reader.chat(pane)).items!
   expect(items.at(-1)).toMatchObject({ role: 'notice', name: 'error', error: true, text: 'The model produced an invalid tool call.' })
+})
+
+it('reads a closed database without leaving sidecars next to it', async () => {
+  const { home, reader } = fixture()
+  // agy leaves a WAL-mode database behind, its sidecars removed on close.
+  const live = openAgyFixture(home, { wal: true, rows: [{ role: 'user', text: 'Closed conversation' }] })
+  live.close()
+  const file = live.file
+  expect(existsSync(`${file}-wal`)).toBe(false)
+  expect(existsSync(`${file}-shm`)).toBe(false)
+  expect((await reader.chat(pane)).items?.[0]?.text).toBe('Closed conversation')
+  // node:sqlite writes a -wal and a -shm on a read-only open: agy's own folder
+  // must stay exactly as agy left it.
+  expect(existsSync(`${file}-wal`)).toBe(false)
+  expect(existsSync(`${file}-shm`)).toBe(false)
 })
 
 it('reads committed WAL frames of a live conversation database', async () => {
@@ -292,31 +275,34 @@ it('returns not_found for a missing database and fails open on transient errors'
   await expect(reader.chat(pane)).rejects.toThrow()
 })
 
-it('summaries fallback only resolves a unique live match for the pane folder', async () => {
+it('never guesses a session from the summaries index', async () => {
   const { home } = fixture()
-  const agy = createAgyTranscripts({ home, fs: localFs })
-  const p = { cwd: '/home/user/acme-shop', bornAt: Date.parse('2026-02-02T11:00:00Z') }
-  expect(await agy.summariesSession(p, false)).toBeNull()
-  writeAgySummaries(home, [
-    { id: AGY_SESSION, uris: ['/home/user/acme-shop'], modified: '2026-02-02T12:05:00Z' },
-    { id: AGY_OTHER, uris: ['/home/user/other'], modified: '2026-02-02T12:06:00Z' },
-  ])
+  // A top-level live conversation claims this folder, and its database exists.
+  writeAgySummaries(home, [{ id: AGY_SESSION, uris: ['/home/user/acme-shop'], modified: '2026-02-02T12:05:00Z' }])
   writeAgyFixture(home, { rows: [{ role: 'user', text: 'Hi' }] })
-  expect(await agy.summariesSession(p, false)).toBe(AGY_SESSION)
-  expect(await agy.summariesSession(p, true)).toBeNull() // a peer agy on the same folder
-  expect(await agy.summariesSession({ ...p, cwd: '/home/user/elsewhere' }, false)).toBeNull()
+  // The live agy process holds no conversation file open (the scan reads this
+  // test process's own descriptors) and its launch line carries no flag: the
+  // summaries row must not stand in and put an older conversation on screen.
+  const t = createTranscripts({
+    home,
+    herdr: async () => ({ process_info: { foreground_processes: [{ name: 'agy', pid: process.pid }] } }),
+  })
+  expect(await t.chat({ id: 'p1', agent: 'agy', cwd: '/home/user/acme-shop' })).toMatchObject({ available: false, reason: 'not_found' })
 })
 
 // A remote filesystem over an in-memory store: `read` bytes are counted like
 // data transferred over SSH, `sync` reloads a fixture file's real bytes after
 // the remote moved (the store mtime is bumped so a rewrite is another
-// generation), and `setHook` can move the store in the middle of a copy.
+// generation), `setHook` can move the store in the middle of a copy, and
+// `failReads` answers a chosen read short.
 function remoteMachine() {
   const store = new Map<string, { buf: Buffer, mtimeMs: number, ino: number }>()
   const bytes = new Map<string, number>()
   let clock = 1000
   let ino = 100
   let hook: ((p: string) => void) | null = null
+  let shortLeft = 0
+  let shortWhen: ((p: string, start: number, len: number) => boolean) | null = null
   const enoent = (p: string) => Object.assign(new Error(`not found: ${p}`), { code: 'ENOENT' })
   const fs: MachineFs = {
     async stat(p) {
@@ -331,8 +317,12 @@ function remoteMachine() {
       const f = store.get(p)
       if (!f) throw enoent(p)
       bytes.set(p, (bytes.get(p) ?? 0) + len)
-      const out = Buffer.from(f.buf.subarray(start, start + len))
+      let out = Buffer.from(f.buf.subarray(start, start + len))
       hook?.(p)
+      if (shortLeft > 0 && shortWhen?.(p, start, len)) {
+        shortLeft--
+        out = out.subarray(0, Math.max(0, out.length - 1))
+      }
       return out
     },
   }
@@ -348,6 +338,8 @@ function remoteMachine() {
       store.set(p, { buf: Buffer.from(buf), mtimeMs: clock += 10, ino: store.get(p)?.ino ?? (ino += 7) })
     },
     setHook: (h: typeof hook) => { hook = h },
+    // The next `n` reads that `when` picks out lose their last byte.
+    failReads: (n: number, when: (p: string, start: number, len: number) => boolean) => { shortLeft = n; shortWhen = when },
   }
 }
 
@@ -377,6 +369,47 @@ it('retries a remote read that moved under the copy', async () => {
   const r = await agy.chat(pane)
   expect(r.items?.map(i => i.text)).toEqual(['First request', 'First reply', 'Second reply'])
   expect(remote.bytes.get(live.file) ?? 0).toBeGreaterThan(remote.sizeOf(live.file)) // copied again after the move
+})
+
+it('recopies the whole WAL after a full copy failed part-way', async () => {
+  const { home } = fixture()
+  const live = openAgyFixture(home, { wal: true, rows: [
+    { role: 'user', text: 'First request' },
+    { role: 'agent', text: 'First reply' },
+  ] })
+  keepers.push(live)
+  const remote = remoteMachine()
+  remote.sync(live.file)
+  remote.sync(`${live.file}-wal`)
+  const agy = createAgyTranscripts({ home, fs: remote.fs })
+  const walFile = `${live.file}-wal`
+
+  // A transaction spills about a megabyte of frames, and the kept copy takes
+  // them; the WAL stays under the 4 MiB copy chunk.
+  live.db.exec('PRAGMA cache_size=1')
+  live.db.exec('BEGIN; SAVEPOINT spill')
+  live.append([{ role: 'agent', text: `Spilled ${'x'.repeat(1_000_000)}` }])
+  remote.sync(walFile)
+  expect((await agy.chat(pane)).items?.map(i => i.text)).toEqual(['First request', 'First reply'])
+  expect(remote.sizeOf(walFile)).toBeLessThan(4 * 1024 * 1024)
+
+  // Rewinding the savepoint makes the transaction write over those frames and
+  // commit a WAL of over 5 MiB on top: the kept frame is stale, so the next
+  // read must ship the whole WAL, in two chunks.
+  live.db.exec('ROLLBACK TO spill; RELEASE spill')
+  live.append([{ role: 'agent', text: `Rewritten ${'y'.repeat(5_000_000)}` }, { role: 'agent', text: 'Final reply' }])
+  live.db.exec('COMMIT')
+  remote.sync(walFile)
+  expect(remote.sizeOf(walFile)).toBeGreaterThan(4 * 1024 * 1024)
+
+  // The second chunk comes back one byte short: that attempt fails as `moved`
+  // after the first chunk was already written to the kept file. The retry must
+  // not append a tail to what the failed copy left behind.
+  remote.failReads(1, (p, start) => p === walFile && start >= 4 * 1024 * 1024)
+  const r = await agy.chat(pane)
+  expect(r.items?.length).toBe(4)
+  expect(r.items?.[2]?.text.startsWith('Rewritten')).toBe(true)
+  expect(r.items?.[3]?.text).toBe('Final reply')
 })
 
 it('keeps a remote base copy and ships only the grown WAL tail', async () => {
@@ -444,7 +477,8 @@ it('recopies the WAL in full when a kept frame was rewritten in place', async ()
   expect(remote.sizeOf(walFile)).toBeGreaterThan(keptWal)
 
   const next = await agy.chat(pane, { since: first.token })
-  expect(next.items?.map(i => i.text)).toEqual(['First request', 'First reply', expect.stringMatching(/^Rewritten y+$/), 'Final reply'])
+  // A reply past the text limit ends with the shared truncation marker.
+  expect(next.items?.map(i => i.text)).toEqual(['First request', 'First reply', expect.stringMatching(/^Rewritten y+…$/), 'Final reply'])
   // The rewritten kept frame was detected: the whole WAL shipped again, the
   // main file did not.
   expect(remote.bytes.get(live.file) ?? 0).toBe(dbBytes)
@@ -485,11 +519,52 @@ it('cuts a kept WAL ending mid-frame back to the last whole frame', async () => 
   expect(remote.sizeOf(walFile)).toBeGreaterThan(boundary + 24)
 
   const next = await agy.chat(pane, { since: first.token })
-  expect(next.items?.map(i => i.text)).toEqual(['First request', 'First reply', expect.stringMatching(/^Rewritten y+$/), 'Final reply'])
+  // A reply past the text limit ends with the shared truncation marker.
+  expect(next.items?.map(i => i.text)).toEqual(['First request', 'First reply', expect.stringMatching(/^Rewritten y+…$/), 'Final reply'])
   // The stale partial frame was not kept: the tail ships from the last
   // whole-frame boundary, still far below a full WAL copy.
   expect(remote.bytes.get(live.file) ?? 0).toBe(dbBytes)
   expect((remote.bytes.get(walFile) ?? 0) - walBytes).toBe(remote.sizeOf(walFile) - boundary + 88)
+})
+
+it('sweeps only the kept copies whose process is gone', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'wherdr-sweep-'))
+  try {
+    // A folder of this process, of a child that has exited, one without a pid,
+    // and something else entirely.
+    const live = path.join(dir, `wherdr-agy-${process.pid}-live`)
+    const exited = spawnSync(process.execPath, ['-e', '']).pid!
+    const dead = path.join(dir, `wherdr-agy-${exited}-dead`)
+    const nameless = path.join(dir, 'wherdr-agy-stale')
+    const other = path.join(dir, 'wherdr-other')
+    for (const d of [live, dead, nameless, other]) mkdirSync(d)
+    writeFileSync(path.join(dead, 'conv.db'), 'kept copy')
+    sweepAgyCopies(dir)
+    expect(existsSync(live)).toBe(true)
+    expect(existsSync(dead)).toBe(false)
+    expect(existsSync(nameless)).toBe(true)
+    expect(existsSync(other)).toBe(true)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+it('removes a kept copy when its pane is gone', async () => {
+  const scratch = mkdtempSync(path.join(tmpdir(), 'wherdr-keep-'))
+  const home = mkdtempSync(path.join(scratch, 'home-'))
+  vi.stubEnv('TMPDIR', scratch)
+  try {
+    writeAgyFixture(home, { rows: [{ role: 'user', text: 'Hi' }] })
+    const t = createTranscripts({ home, herdr: async () => ({}) })
+    const p = { id: 'p1', agent: 'agy', cwd: '/work/acme-shop', agentSession: AGY_SESSION }
+    expect((await t.chat(p)).available).toBe(true)
+    const kept = readdirSync(scratch).filter(n => n.startsWith('wherdr-agy-'))
+    expect(kept).toHaveLength(1)
+    // The pane left the state: its copy goes with it.
+    t.observe([])
+    expect(existsSync(path.join(scratch, kept[0]!))).toBe(false)
+  } finally {
+    vi.unstubAllEnvs()
+    rmSync(scratch, { recursive: true, force: true })
+  }
 })
 
 it('recopies a restarted WAL in full', async () => {

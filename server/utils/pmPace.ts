@@ -3,6 +3,7 @@
 // reading and verdict. Read only when an automatic start or a scheduled wake
 // asks for it.
 import { accountFor } from '../../shared/quotaAccount'
+import { limitState } from '../../shared/quotaLimit'
 import { DEFAULT_PACE, paceVerdict } from '../../shared/pm/pacing'
 import { accountQuota, paceRows, type PaceRow, type PaceState } from '../../shared/pm/pace'
 import { workerPlan, type Task } from '../../shared/pm/run'
@@ -22,14 +23,20 @@ export async function projectPace(store: PmStore, project: string, task?: Pick<T
   const type = task?.type ?? Object.keys(t.taskTypes)[0] ?? ''
   const plan = workerPlan(t, { type, ...(task?.prefs ? { prefs: task.prefs } : {}) } as Task)
   if ('reason' in plan) return null
-  const program = plan.program as 'claude' | 'codex'
+  const { program } = plan
+  // Only Claude and Codex have a quota reading (omp has none): no account, quota
+  // unknown, only the task-count limits hold.
+  if (program !== 'claude' && program !== 'codex') return { program, account: null, quota: null, policy: DEFAULT_PACE, verdict: paceVerdict(DEFAULT_PACE, null, now, 'auto', false), today: null }
   // A failed read: quota unknown, only the task-count limits hold.
   const q: Quotas | null = await readQuotas().catch(() => null)
   const account = accountFor(q?.accounts, machine ?? p.machine, program)
   const quota = q && account ? accountQuota(q, account) : null
   const policy = account ? policyIn(await readPolicies(), account.key) : DEFAULT_PACE
   const today = account && withToday ? await accountUsedToday(account.key, now).catch(() => null) : null
-  return { program, account, quota, policy, verdict: paceVerdict(policy, quota, now), today }
+  // A stale "limit reached" lets one agent of the account start, to find out.
+  const probed = !!quota && limitState(quota, now) === 'stale' && (await store.runs())
+    .some(r => r.program === program && r.startedAt > quota.at && accountFor(q?.accounts, r.machine, program)?.key === account?.key)
+  return { program, account, quota, policy, verdict: paceVerdict(policy, quota, now, 'auto', probed), today }
 }
 
 // Settings › Pace: every account read, plus a program with no reading at all.

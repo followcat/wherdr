@@ -22,6 +22,7 @@ export interface ActionDeps {
 export interface ActionJob {
   task: { id: string, title: string, description: string, project?: string }
   shown?: string // the task id as the user sees it, for the PR title
+  message?: string // the project's commit message for a squash merge or git.land's merge commit (commitMessageFor)
   step: string
   attempt: number // from the step engine's action effect
   action: StepAction
@@ -167,7 +168,7 @@ async function perform(deps: ActionDeps, job: ActionJob, resumed = false): Promi
     return r.code === 0 ? { ok: true, commit: lastLine(r.out) } : fail(r)
   }
   switch (a.kind) {
-    case 'git.land': return commit(SCRIPT.land, [a.target!])
+    case 'git.land': return commit(SCRIPT.land, [a.target!, job.message ?? ''])
     case 'git.push': return commit(SCRIPT.push, [branch])
     case 'git.verify-merged': {
       const r = await run(deps, SCRIPT.verify, [wt, a.target!, branch])
@@ -249,7 +250,7 @@ async function perform(deps: ActionDeps, job: ActionJob, resumed = false): Promi
         const ready = prReady(pr, head.trim(), a.checks)
         if (!ready.ok) return { ok: false, error: `merge: ${ready.why}`, ...(ready.later ? { later: true } : {}) }
         if (await job.halted?.()) return { ok: false, error: 'merge: the task was stopped' }
-        const m = await run(deps, SCRIPT.merge, [wt, pr!.url, head.trim(), a.method ?? ''], undefined, true)
+        const m = await run(deps, SCRIPT.merge, [wt, pr!.url, head.trim(), a.method ?? '', job.message ?? ''], undefined, true)
         // Timed out: it may have merged. The PR is read again before any new try.
         if (m.code === null && cut++ < MERGE_RESUMES) continue
         if (m.code === 0) return { ok: true, link: pr!.url, commit: head.trim(), base: pr!.baseRefName, reached: [pr!.baseRefName], ...keptNote(kept) }
@@ -330,7 +331,8 @@ async function bitbucketMerge(deps: ActionDeps, job: ActionJob, fail: (r: ShellR
     const ready = bbReady(st.body.values ?? [], a.checks)
     if (!ready.ok) return { ok: false, error: `merge: ${ready.why}`, ...(ready.later ? { later: true } : {}) }
     if (await job.halted?.()) return { ok: false, error: 'merge: the task was stopped' }
-    const body = JSON.stringify({ type: 'pullrequest', merge_strategy: BB_STRATEGY[a.method ?? 'merge'], close_source_branch: false })
+    const squash = a.method === 'squash' && job.message ? { message: job.message } : {}
+    const body = JSON.stringify({ type: 'pullrequest', merge_strategy: BB_STRATEGY[a.method ?? 'merge'], close_source_branch: false, ...squash })
     const m = await api<object>('POST', `/pullrequests/${pr.id}/merge`, body)
     if ('error' in m) return m.error!
     return m.status === 200 ? { ok: true, link, commit: head, base, reached: [base], ...keptNote(kept) } : refusal(m)

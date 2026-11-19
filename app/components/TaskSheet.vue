@@ -138,9 +138,10 @@ const remove = () => run(async () => { const yes = await removeTaskApi(props.car
         <p v-if="card.archived" class="muted" data-testid="task-archived">{{ tl('Archived') }} {{ fmtWhen(new Date(card.archived).toISOString()) }}</p>
         <div class="task-sheet-actions">
           <UButton v-if="!todo && canStart(card) && !waitsFor?.length" color="primary" size="xl" icon="i-lucide-play" :loading="busy" data-testid="task-start" @click="start">{{ card.sameFiles ? tl('Start anyway') : tl('Start', 'Lancer') }}</UButton>
-          <UButton v-if="failedAction" :color="fixable(card, todo) ? 'neutral' : 'primary'" :variant="fixable(card, todo) ? 'outline' : 'solid'" size="xl" icon="i-lucide-rotate-ccw" :loading="busy" data-testid="task-retry" @click="press">{{ tl('Try again', 'Réessayer') }}</UButton>
+          <UButton v-if="failedAction" :color="fixFirst(card, todo) ? 'neutral' : 'primary'" :variant="fixFirst(card, todo) ? 'outline' : 'solid'" size="xl" icon="i-lucide-rotate-ccw" :loading="busy" data-testid="task-retry" @click="press">{{ tl('Try again', 'Réessayer') }}</UButton>
           <UButton v-if="canReport && !reportOpen" color="neutral" variant="outline" size="xl" icon="i-lucide-flag" data-testid="task-report-start" @click="reportOpen = true">{{ tl('Report a problem') }}</UButton>
           <AgentButton v-if="!card.archived" :card="card" :primary="todo === 'ask'" />
+          <UButton v-if="card.parked?.room && !card.stopped" color="primary" size="xl" icon="i-lucide-play" :loading="busy" :title="tl(`Paused for room on ${card.parked.room}: ${card.parked.need}`)" data-testid="task-room-resume" @click="resume('continue')">{{ tl('Resume now') }}</UButton>
           <UButton v-if="canStop(card) && !confirmStop" color="error" variant="outline" size="xl" icon="i-lucide-square" data-testid="task-stop" @click="confirmStop = true">{{ tl('Stop', 'Arrêter') }}</UButton>
           <UButton v-if="canCheckGithub(card)" color="neutral" variant="outline" size="xl" icon="i-lucide-refresh-cw" :loading="busy" data-testid="task-check" @click="checkGithub">{{ tl('Check on GitHub') }}</UButton>
           <UButton v-if="card.archived" color="neutral" variant="outline" size="xl" icon="i-lucide-archive-restore" :loading="busy" data-testid="task-unarchive" @click="unarchive">{{ tl('Unarchive') }}</UButton>
@@ -179,7 +180,7 @@ const remove = () => run(async () => { const yes = await removeTaskApi(props.car
       </div>
 
       <div id="task-panel" class="task-panel" role="tabpanel" :aria-labelledby="`task-tab-${tab}`" data-testid="task-panel">
-        <TaskTodo v-if="tab === 'todo' && todo" :card="card" :kind="todo" :pane="pane" :busy="busy" :pressing="pressing" :refused="refused" :waits-for="waitsFor"
+        <TaskTodo v-if="tab === 'todo' && todo" :card="card" :kind="todo" :pane="pane" :busy="busy" :pressing="pressing" :refused="refused" :failed="!!error || !!refused" :waits-for="waitsFor"
           @press="press" @start="start" @resume="resume" @decide="decide" @back="sendBack" @review="restartReview" @worker="startWorker" @ask="askCoordinator" @fix="askFix" @comments="picked = 'comments'" />
         <template v-else-if="tab === 'description'">
           <!-- eslint-disable-next-line vue/no-v-html -- HTML sanitized by DOMPurify (utils/markdown.ts) -->

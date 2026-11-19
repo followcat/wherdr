@@ -5,7 +5,7 @@
 // shows (useMachineBar.projectOnBar), right under Alfred, above the
 // coordinators; hidden when nothing waits. Under its title, the id badges of the
 // first ones in their projects' colors, on one line ending with … when they do
-// not all fit. A tap opens ReviewSheet, one at a time.
+// not all fit. A tap opens ReviewSheet (shown by app.vue), one at a time.
 import type { ToHandle } from '#shared/pm/board'
 
 const all = ref<ToHandle[]>([])
@@ -17,12 +17,11 @@ onMounted(() => { load(); timer = setInterval(() => { if (!document.hidden) load
 onBeforeUnmount(() => clearInterval(timer))
 watch(taskSheetTick, load) // an action in a task's sheet or the review sheet
 watch(homeRetryTick, () => { if (homeFirstLoad.handle !== 'ok') load() }) // the home list's Try again
-const show = (v: boolean) => { reviewOpen.value = v }
 </script>
 
 <template>
   <section v-if="tasks.length" class="agent-group review-group" data-testid="tasks-to-review">
-    <button type="button" class="review-card press-row" data-testid="review-open" @click="show(true)">
+    <button type="button" class="review-card press-row" data-testid="review-open" @click="showReview()">
       <span class="review-count" data-testid="review-count">{{ tasks.length }}</span>
       <span class="review-text">
         <b>{{ tl('Tasks to review') }}</b>
@@ -31,7 +30,6 @@ const show = (v: boolean) => { reviewOpen.value = v }
       <UIcon name="i-lucide-chevron-right" class="review-go" />
     </button>
   </section>
-  <ReviewSheet v-if="reviewOpen" @closed="show(false)" />
 </template>
 
 <style scoped>

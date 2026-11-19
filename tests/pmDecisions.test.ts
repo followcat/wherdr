@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { decisionGroups, decisionsOf, decisionsPush, type DecisionsInput } from '../shared/pm/decisions'
+import { decisionsOf, decisionsPush, type DecisionsInput } from '../shared/pm/decisions'
 import { initialState, onEvent, planSteps, type StepEvent, type StepState } from '../shared/pm/steps'
 import { github } from '../shared/pm/examples'
 import type { Card } from '../shared/pm/board'
@@ -36,8 +36,8 @@ const input = (more: Partial<DecisionsInput> = {}): DecisionsInput => ({
 
 it('groups what waits for the user, the recommended answer first', () => {
   const ds = decisionsOf(input())
-  expect(decisionGroups(ds).map(g => [g.group, g.items.map(d => d.task ?? d.project)])).toEqual([
-    ['agent', ['CO-5']], ['arbitrate', ['CO-3', 'CO-2']], ['proposal', ['CO']], ['step', ['CO-4']], ['overdue', ['CO-1']], ['coordinator', ['CO']],
+  expect(ds.map(d => [d.group, d.task ?? d.project])).toEqual([
+    ['agent', 'CO-5'], ['arbitrate', 'CO-3'], ['arbitrate', 'CO-2'], ['proposal', 'CO'], ['step', 'CO-4'], ['overdue', 'CO-1'], ['coordinator', 'CO'],
   ])
   const by = (t: string) => ds.find(d => d.task === t)!
   expect(by('CO-5')).toMatchObject({ kind: 'permission', terminal: 'h/t5', text: 'Asks for a permission' })
@@ -48,14 +48,6 @@ it('groups what waits for the user, the recommended answer first', () => {
   expect(decisionsOf(input({ cards: [card('CO-7', { yourTurn: advice('your-turn', []) })] }))[0]!.options).toHaveLength(7)
   expect(by('CO-4')).toMatchObject({ label: 'Merged', text: 'Merge the PR' })
   expect(ds.find(d => d.group === 'proposal')!.text).toBe('After your message: “add a deploy step”')
-})
-
-it('shows a pass on a spec change for a day, without a push', () => {
-  const specPass = { at: 1000, step: 'review', reason: 'Per the spec change of 2026-11-09.' }
-  const at = (now: number) => decisionsOf(input({ cards: [card('CO-8', {})], tasks: [{ id: 'CO-8', state: 'working', specPass }], coordinators: [], wakes: [], now }))
-  expect(at(2000)).toEqual([expect.objectContaining({ group: 'passed', text: 'The coordinator passed review on a spec change: Per the spec change of 2026-11-09.' })])
-  expect(decisionsPush(at(2000), new Set())).toBeNull()
-  expect(at(1000 + 24 * 3600_000)).toEqual([])
 })
 
 it('drops an unanswered wake once the coordinator acked a later one', () => {

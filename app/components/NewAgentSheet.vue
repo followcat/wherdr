@@ -1,12 +1,14 @@
 <script setup lang="ts">
 // New agent (Claude, Codex) or terminal: folder (browser + recent ones),
 // conversation resume, first message. With project management on, also a
-// project: open or start its coordinator, or add one (NewProjectForm), not in a new tab.
+// project: open or start its coordinator, or add one (NewProjectForm), not in a new tab;
+// or, its Workspace side, a workspace (WorkspaceForm, as in Settings), the
+// sheet's machine checked first.
 // Several machines: choice of the machine, its folders and recent ones.
 // "New tab" (`newTabSpace`): a new terminal labelled for that space, on its
 // machine.
 // On the phone it opens full screen, Launch pinned at the bottom.
-import type { MachineConfig, QueuedMessage } from '#shared/types'
+import type { MachineConfig, Pane, QueuedMessage } from '#shared/types'
 import { shortHome, type ProjectDraft } from '#shared/pm/newProject'
 import { machineOf } from '#shared/ids'
 import { selectedAgentKind, visibleAgentKinds } from '~/utils/agentChoices'
@@ -27,6 +29,10 @@ const coordinator = ref(false)
 const coordProject = ref('')
 const coordAgent = ref('')
 const draft = ref<ProjectDraft | null>(null)
+// Project › Project | Workspace.
+const workspace = ref(false)
+const ws = reactive({ busy: false, error: '', browsing: false })
+const wsSide = computed(() => coordinator.value && workspace.value)
 const canCoordinate = computed(() => !newTabSpace.value && coordinators.value.length > 0)
 watch(canCoordinate, (can) => { if (!can && !newProjectOpen.value) coordinator.value = false })
 
@@ -94,6 +100,8 @@ watch(newAgentOpen, async (open) => {
   browsing.value = false
   launching.value = false
   draft.value = null
+  workspace.value = false
+  ws.browsing = false
   // Each opening starts on the user's first agent, or on a new project.
   kind.value = ''
   if (newProjectOpen.value) coordinator.value = true
@@ -117,6 +125,16 @@ function pickCoordinator() {
   coordinator.value = true
   draft.value = null
   coordProject.value = ''
+  workspace.value = false
+}
+function pickSide(w: boolean) {
+  workspace.value = w
+  ws.browsing = false
+}
+// The workspace's coordinator started: its conversation, as for a project.
+function workspaceDone(p: Pane | undefined) {
+  open.value = false
+  if (p) { haptic(); navigateTo(panePath(p.id)) }
 }
 function pickKind(k: string) {
   coordinator.value = false
@@ -145,6 +163,8 @@ function afterFirstMessage(r: { pane_id: string, first_message?: string | null, 
   else if (r.queued) outboxAdd(r.pane_id, r.queued)
   else if (r.first_message === 'queued') {
     toast(tl('The first message will be sent once you have answered the prompt.', 'Le premier message partira dès que tu auras répondu à la question.'))
+  } else if (r.first_message === 'uncertain') {
+    toast(t('herdr-core did not confirm the first message was typed: check the conversation before sending it again.'), true)
   } else if (r.first_message === 'skipped') {
     toast(tl('The first message was not sent: answer the prompt in the terminal, then send it again.', 'Le premier message n’est pas parti : réponds à la question dans le terminal, puis renvoie-le.'), true)
   }
@@ -183,7 +203,7 @@ async function launch() {
 <template>
   <AppSheet v-model:open="open" :title="newTabSpace ? t('Start in a new tab') : coordinator ? tl('Project', 'Projet') : t(shell ? 'New terminal' : 'New agent')" tall screen>
     <!-- Kept mounted while browsing: the project form then sees the chosen folder. -->
-    <div v-show="!browsing" class="sheet-form">
+    <div v-show="!browsing && !ws.browsing" class="sheet-form">
       <div v-if="newTabSpace" class="into-pane">
         <span class="tabmap" aria-hidden="true"><i class="cur" style="inset: 0" /></span>
         <span>
@@ -206,11 +226,16 @@ async function launch() {
         </button>
       </div>
 
+      <div v-if="coordinator" class="segmented project-side" role="radiogroup" :aria-label="tl('Project')" style="--segment-count: 2" data-testid="project-side">
+        <button type="button" role="radio" :class="{ on: !workspace }" :aria-checked="!workspace" data-side="project" @click="pickSide(false)">{{ tl('Project') }}</button>
+        <button type="button" role="radio" :class="{ on: workspace }" :aria-checked="workspace" data-side="workspace" @click="pickSide(true)">{{ tl('Workspace') }}</button>
+      </div>
+
       <NewProjectForm
-        v-if="coordinator" v-model:project="coordProject" v-model:agent="coordAgent" v-model:draft="draft" :machine="machine" :machines="machineList"
+        v-if="coordinator && !workspace" v-model:project="coordProject" v-model:agent="coordAgent" v-model:draft="draft" :machine="machine" :machines="machineList"
         @browse="browsing = true" @machine="pickMachine"
       />
-      <template v-else>
+      <template v-else-if="!coordinator">
         <label class="field-label">{{ t('Folder') }}</label>
         <DirField :key="machine" v-model="dir" :recents="recents" @browse="browsing = true" />
 
@@ -243,11 +268,20 @@ async function launch() {
       </template>
     </div>
 
+    <WorkspaceForm
+      v-if="wsSide" id="new-workspace" v-model:busy="ws.busy" v-model:error="ws.error" v-model:browsing="ws.browsing"
+      :taken="coordinators.map(c => c.project)" :machine="machine" @done="workspaceDone"
+    />
+
     <DirBrowser v-if="browsing" :start="coordinator && draft ? (draft.probe?.exists ? draft.probe.path : null) : dir" :machine="machine" @choose="chooseDir" @cancel="browsing = false" />
 
     <template #footer>
+      <div v-if="wsSide" v-show="!ws.browsing" class="sheet-form">
+        <p v-if="ws.error" class="form-error" role="alert">{{ ws.error }}</p>
+        <UButton type="submit" form="new-workspace" block size="xl" color="primary" class="hw-cta" icon="i-lucide-plus" :loading="ws.busy" data-testid="new-workspace-submit">{{ tl('Create') }}</UButton>
+      </div>
       <NewProjectActions
-        v-if="coordinator && !browsing" :project="coordProject" :agent="coordAgent" :draft="draft"
+        v-else-if="coordinator && !browsing" :project="coordProject" :agent="coordAgent" :draft="draft"
         @done="open = false" @added="k => { draft = null; coordProject = k }"
       />
       <div v-else-if="!browsing" class="sheet-form">
@@ -259,3 +293,8 @@ async function launch() {
     </template>
   </AppSheet>
 </template>
+
+<style scoped>
+.project-side { margin-top: 12px; }
+.project-side button { padding: 14px 6px 13px; }
+</style>

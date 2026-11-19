@@ -80,7 +80,7 @@ export interface Prefs { agent?: string, model?: string, reviewAgent?: string, r
 export const PREF_KEYS = ['agent', 'model', 'reviewAgent', 'reviewModel', 'reviewFallbackAgent', 'reviewFallbackModel'] as const
 
 // Agents the engine knows how to start with a pinned model and a first message.
-export const PROGRAMS = ['claude', 'codex'] as const
+export const PROGRAMS = ['claude', 'codex', 'omp'] as const
 // reviewModel: the worker's own model, in a new session.
 export const SAME_MODEL = 'same'
 export const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:[\]/-]{0,63}$/
@@ -89,7 +89,7 @@ export const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:[\]/-]{0,63}$/
 // worker's, or "same" with the worker's agent. Returns the reason it cannot run.
 export function reviewerCheck(worker: { program: string, model: string }, program: string, asked: string, field: 'reviewModel' | 'reviewFallbackModel'): { program: string, model: string } | { reason: string } {
   const same = asked === SAME_MODEL, model = same ? worker.model : asked
-  if (!(PROGRAMS as readonly string[]).includes(program)) return { reason: `The engine cannot start "${program}": claude or codex` }
+  if (!(PROGRAMS as readonly string[]).includes(program)) return { reason: `The engine cannot start "${program}": claude, codex or omp` }
   if (same && program !== worker.program) return { reason: `${field} "${SAME_MODEL}" needs the worker's agent (${worker.program})` }
   if (!MODEL_RE.test(model)) return { reason: model ? `Invalid review model "${model}"` : `No review model set: add prefs.${field} to the template` }
   if (!same && model === worker.model) return { reason: `The reviewer must use another model than the worker (${model}), or set ${field} to "${SAME_MODEL}"` }
@@ -102,7 +102,31 @@ export interface TaskType {
   guards?: Guards // may only make the project's guards stricter
   prefs?: Prefs
   childType?: string // the type of the tasks this one proposes (a split)
+  context?: ContextSpec // read-only context folders for its tasks (context.ts); a task's own setting wins
   steps: (Step | string)[] // a string reuses a shared step by its id
+}
+
+// Read-only context folders (shared/pm/context.ts): which other members of the
+// task's workspace its agents may read at their base branch. 'all': every other
+// member; a list of member keys; [] none.
+export type ContextSpec = 'all' | string[]
+const MEMBER_KEY = /^[A-Z][A-Z0-9]{1,9}$/
+export const isContextError = (c: unknown): c is { error: string } => !!c && typeof c === 'object' && !Array.isArray(c)
+// A --context value: all, none, or member keys separated by commas.
+export function parseContext(text: string): ContextSpec | { error: string } {
+  const t = text.trim()
+  if (t === 'all') return 'all'
+  if (t === 'none') return []
+  const keys = t.split(',').map(k => k.trim())
+  if (!t || !keys.every(k => MEMBER_KEY.test(k))) return { error: 'context is all, none, or a list of member projects: PAY,WEB' }
+  return [...new Set(keys)]
+}
+// A context as a file or a request holds it: the text of parseContext, or a list of keys.
+export function readContext(v: unknown): ContextSpec | undefined | { error: string } {
+  if (v === undefined || v === null || v === '') return undefined
+  if (typeof v === 'string') return parseContext(v)
+  if (Array.isArray(v) && v.every(k => typeof k === 'string' && MEMBER_KEY.test(k))) return [...new Set(v as string[])]
+  return { error: 'context is "all", or a list of member project keys' }
 }
 
 // Worktree setup (pmDeps.ts), before a task's first worker: copy, ignored
@@ -279,7 +303,8 @@ export function validateTemplate(t: unknown): WorkflowError[] {
   for (const [name, tt] of Object.entries(t.taskTypes)) {
     const path = `taskTypes.${name}`
     if (!isObj(tt)) { errs.push({ path, message: 'must be an object' }); continue }
-    checkKeys(tt, ['instructions', 'weight', 'guards', 'prefs', 'childType', 'steps'], path, errs)
+    checkKeys(tt, ['instructions', 'weight', 'guards', 'prefs', 'childType', 'context', 'steps'], path, errs)
+    if (tt.context !== undefined) { const c = readContext(tt.context); if (!c || isContextError(c)) errs.push({ path: `${path}.context`, message: c ? c.error : 'must be "all" or a list of member project keys' }) }
     if (tt.weight !== undefined && !isWeight(tt.weight)) errs.push({ path: `${path}.weight`, message: `must be one of ${WEIGHTS.join(', ')}` })
     if (tt.instructions !== undefined && typeof tt.instructions !== 'string') errs.push({ path: `${path}.instructions`, message: 'must be text' })
     checkGuards(tt.guards, `${path}.guards`, errs)

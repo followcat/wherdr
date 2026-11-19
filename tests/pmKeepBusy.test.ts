@@ -8,7 +8,7 @@ import type { Task } from '../shared/pm/run'
 import { createPmStore } from '../server/utils/pmStore'
 import { HerdrError } from '../server/utils/herdr'
 import { startTask } from '../server/utils/pmLaunch'
-import { startNext } from '../server/utils/pmMechanic'
+import { startHeld, startNext } from '../server/utils/pmMechanic'
 import { machinesNow } from '../server/utils/pmPlace'
 
 vi.mock('../server/utils/pmLaunch', async orig => ({ ...(await orig<typeof import('../server/utils/pmLaunch')>()), startTask: vi.fn() }))
@@ -68,6 +68,34 @@ describe('keep the board busy', () => {
       expect(await startNext(deps)).toEqual([])
       expect(startTask).toHaveBeenCalledTimes(2)
       expect((await store.task(second.id))!.log ?? []).toEqual([])
+    } finally { await fs.rm(dir, { recursive: true, force: true }) }
+  })
+
+  it('one project\'s unreadable workflow never stops the next project\'s starts, and is said once in its log (WHR-513)', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-busy-'))
+    try {
+      const store = createPmStore(dir)
+      await store.setEnabled(true)
+      await store.saveTemplate(github)
+      for (const key of ['AA', 'BB']) {
+        await store.addProject({ key, machine: 'm1', path: `/src/${key}`, template: 'github' }, async (_m, p) => p)
+        await store.saveCoordinator({ project: key, tokenHash: '', autopilot: ap })
+      }
+      await fs.writeFile(path.join(store.files.workflows, 'AA.json'), '{ not json')
+      await store.addTask({ project: 'AA', title: 'Broken', type: 'simple' })
+      const ok = await store.addTask({ project: 'BB', title: 'Fine', type: 'simple' })
+      const meminfo = `MemTotal: ${64 * 1024 * 1024} kB\nMemAvailable: ${60 * 1024 * 1024} kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n`
+      const call = async (method: string) => (method === 'machine.exec' ? { code: 0, stdout: Buffer.from(meminfo).toString('base64') } : {})
+      const deps = { store, call, machines: () => [{ key: 'm1', local: false, label: 'box', status: 'online' }] } as never
+      vi.mocked(startTask).mockReset().mockImplementation(async (_d, id) => store.saveTask({ ...(await store.task(id))!, state: 'working' }))
+      expect(await startNext(deps)).toEqual([ok.id])
+      // Held tasks too: the broken project's is skipped, the next one starts.
+      const held = await store.saveTask({ ...(await store.addTask({ project: 'BB', title: 'Held', type: 'simple' })), held: 'Waits for room' })
+      await store.saveTask({ ...(await store.addTask({ project: 'AA', title: 'Held too', type: 'simple' })), held: 'Waits for room' })
+      expect(await startHeld(deps)).toEqual([held.id])
+      expect(startTask).toHaveBeenCalledTimes(2)
+      const said = (await store.projectLog('AA')).filter(e => e.text.startsWith('could not start its tasks:'))
+      expect(said).toHaveLength(1)
     } finally { await fs.rm(dir, { recursive: true, force: true }) }
   })
 

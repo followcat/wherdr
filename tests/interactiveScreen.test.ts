@@ -44,7 +44,7 @@ describe('terminal fallback after native recognition', () => {
   it.each(['pi', 'gemini', 'kimi', null])('does not infer a menu from an unsupported agent %s', agent => {
     expect(classifyScreen({ text: 'A normal reply without a known input marker', agent })).toBe('unknown')
   })
-  it.each(['devin-idle.txt', 'devin-status-plain.txt', 'devin-idle-edits.txt', 'devin-idle-narrow.txt'])(
+  it.each(['devin-idle.txt', 'devin-idle-quota.txt', 'devin-status-plain.txt', 'devin-idle-edits.txt', 'devin-idle-narrow.txt'])(
     'confirms the Devin field in %s whatever its footer says', name => {
       const text = fx(name)
       expect(confirmedInput(text, 'devin')).toBe(true)

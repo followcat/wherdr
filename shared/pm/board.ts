@@ -19,6 +19,7 @@ import { AGENT_ENDED, retriesAction, waitsShort, wasReleased } from './release'
 import { recovering } from './incident'
 import { showIds } from './projectKey'
 import { questionKey } from './summary'
+import { MERGE_KINDS, mergedByStep } from './cleanup'
 
 export type Phase = 'todo' | 'working' | 'done'
 export const PHASES: Phase[] = ['todo', 'working', 'done']
@@ -50,6 +51,7 @@ export interface Card {
   stopped?: Stopped // who stopped it and why: Continue, Take it as it is or Archive
   removable?: true // never started (no agent, worktree or branch): the user may remove it
   after?: string[] // tasks of the same project it starts after
+  parked?: { on: string, need: string, room?: string } // its worker waits for this task or repository, or (room) for room on this machine (park.ts)
   mergeAfter?: string[] // tasks of its project or workspace its PR merges after
   prNow?: string // its PR as the engine last read it (prNow)
   branch?: string // its working branch, once an agent worked on it
@@ -164,6 +166,7 @@ export function cardOf(task: Task, plan: PlannedStep[], runs: Run[], now = Date.
     ...(task.tldrHeld ? { tldrWaits: true as const } : task.tldr?.text ? { tldr: task.tldr.text } : {}),
     ...(notStarted(task, runs) ? { removable: true as const } : {}),
     ...(task.after ? { after: afterIds(task) } : {}),
+    ...(task.parked && !s?.done ? { parked: { on: task.parked.on, need: task.parked.need, ...(task.parked.room ? { room: task.parked.room } : {}) } } : {}),
     ...(task.mergeAfter ? { mergeAfter: mergeAfterIds(task) } : {}),
     ...(s?.started ? { times: timesOf(task, plan, runs, now) } : {}),
     ...(task.archived ? { archived: task.archived } : {}),
@@ -295,7 +298,7 @@ export function statusText(s: CardStatus, when: (at: number) => string, dated = 
   const approval = s.approved === undefined ? '' : `Approved${dated ? ` on ${when(s.approved)}` : ''}, merges by itself`
   return [approval, s.at ? `${s.text} ${when(s.at)}` : s.text].filter(Boolean).join(' · ')
 }
-const MERGES = ['github.merge', 'bitbucket.merge', 'git.verify-merged']
+const MERGES = MERGE_KINDS
 const bad = (text: string): CardStatus => ({ text, tone: 'bad' })
 // Its checks red at its merge step, as "Checks failed (smoke)"; undefined otherwise.
 export function redAtMerge(c: Pick<Card, 'plan' | 'state' | 'prNow' | 'queueOut'>): string | undefined {
@@ -324,8 +327,7 @@ export function cardStatus(c: Pick<Card, 'plan' | 'state' | 'stopped' | 'prNow' 
   if (c.sameFiles) return { text: sameFilesText(c.sameFiles), tone: 'wait' }
   if (!s?.started || c.stopped) return
   if (s.done) {
-    const merged = c.plan.some(p => p.action && MERGES.includes(p.action.kind) && s.proofs[p.id] && Object.keys(s.proofs[p.id]!).length)
-    return merged ? { text: 'merged', tone: 'ok', ...(s.since ? { at: s.since } : {}) } : undefined
+    return mergedByStep(c.plan, s) ? { text: 'merged', tone: 'ok', ...(s.since ? { at: s.since } : {}) } : undefined
   }
   // Red checks at the merge step: the worker fixes them, or waits to (why); never "merges by itself" meanwhile.
   const red = redAtMerge(c)

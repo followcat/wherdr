@@ -9,6 +9,8 @@ import { hasTranscript } from '../../shared/agentKind'
 import { parseOmpStatus } from '../../shared/ompStatus'
 import { parseChoices, parseOmpPrompt, promptIdentity, completeClaudeAsk, type ClaudeAsked } from './choices'
 import { queueSendNow, readDraft, sameText } from './coreDraft'
+import { lastSentText, sendingTo } from './submitting'
+import { fieldHolds } from '../../shared/queuedMatch'
 import { parseClaudeScreen } from './claudeScreen'
 import { clineWorking, parseClineApproval } from '../../shared/clineScreen'
 
@@ -72,9 +74,6 @@ const IDLE_MS = 5000
 // An unconfirmed 'terminal' observation is re-read at this faster pace so a
 // real interactive screen still opens quickly on an otherwise quiet server.
 const CONFIRM_MS = 250
-// Agents whose 'terminal' reading waits for a second read (see terms below).
-// Antigravity's panels (fork) were built on the same rule.
-const SETTLES = new Set(['devin', 'agy'])
 const MAX_READS = 6
 // A draft is shown once it stayed the same this long (not while someone types it)
 // and the colored screen confirms it.
@@ -102,8 +101,8 @@ export function createCoreScreens(deps: CoreScreenDeps) {
   // omp's status line and context gauge, kept between reads (an unviewed resting omp
   // is read at the background pace).
   const omps = new Map<string, { at: number, status: OmpStatus | null }>()
-  // Consecutive 'terminal' observations per Devin or Antigravity pane, keyed
-  // to the read that produced them (at): Devin mid-redraw (footer or rule not yet
+  // Consecutive 'terminal' observations per Devin pane, keyed to the read
+  // that produced them (at): Devin mid-redraw (footer or rule not yet
   // painted) classifies 'terminal' for one read, and the overlay that opens
   // on it flaps. Only a reading seen in two consecutive reads is published;
   // while unconfirmed the pane keeps its last published interaction instead
@@ -205,7 +204,7 @@ export function createCoreScreens(deps: CoreScreenDeps) {
         if (error) p.error = error
         else delete p.error
         const raw = failed.has(p.id) ? 'unknown' : r.interaction
-        if (!SETTLES.has(p.agent || '')) {
+        if (p.agent !== 'devin') {
           terms.delete(p.id)
           p.interaction = raw
         } else {
@@ -218,6 +217,9 @@ export function createCoreScreens(deps: CoreScreenDeps) {
         }
         if (choices && r.interaction === 'native') p.prompt = choices
         if (parsed.sendNow) p.queueSendNow = true
+        // wherdr is still submitting a message here (a photo becoming an image):
+        // what its field holds is that message on its way, not "Not sent".
+        if (p.agent === 'claude' && sendingTo(p.coreAddress)) p.sending = true
         // A working Claude's screen: the "!" command running (its output so far)
         // and its queue, which the transcript only has at the end (ChatView).
         if (p.agent === 'claude' && p.status === 'working' && !failed.has(p.id)) {
@@ -233,6 +235,9 @@ export function createCoreScreens(deps: CoreScreenDeps) {
             // Once per text: is it typed, or Claude's gray suggestion (same bytes on the plain screen)?
             seen.real ??= await deps.colors(p).then(ansi => sameText(readDraft(ansi, p.agent)?.text ?? '', draft.text), () => false)
             if (seen.real) p.draft = draft
+            // Claude's field may show only "[Pasted text #N]": the message wherdr sent it, as the user wrote it (WHR-472).
+            const own = seen.real ? lastSentText(p.coreAddress) : undefined
+            if (own && fieldHolds(draft.text, own, true, true)) p.inputText = own
           }
         }
       }

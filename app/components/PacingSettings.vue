@@ -107,7 +107,7 @@ function reasonText(reason: PaceReason) {
 }
 function state(r: PaceRow) {
   const v = r.verdict
-  if (v.go) return tl('Auto: go', 'Auto : go')
+  if (v.go) return v.probe ? tl('Auto: go, one start to check the old limit') : tl('Auto: go', 'Auto : go')
   const until = v.until ? tl(` until ${when(v.until)}`, ` jusqu’à ${when(v.until)}`) : ''
   return tl(`Auto: waiting (${reasonText(v.reason)})`, `Auto : attend (${reasonText(v.reason)})`) + until
 }
@@ -115,6 +115,7 @@ function state(r: PaceRow) {
 function limitNote(r: PaceRow) {
   const credits = r.credits ? creditsText(r.credits) : ''
   if (r.limit === 'credits') return tl(`Limit reached · work goes on with ${credits}`)
+  if (r.limit === 'stale') return tl(`Limit reached when last read, over an hour ago · may have reset${credits ? ` · ${credits}` : ''}`)
   if (r.limit === 'expired') return tl(`Limit reset since the last reading${credits ? ` · ${credits}` : ''}`)
   return credits ? tl(`Credits: ${credits}`) : ''
 }
@@ -133,7 +134,7 @@ const unknown = (r: PaceRow) => !r.account || (r.verdict.go && r.verdict.unknown
             <input
               v-model="names[r.account.key]" class="pace-name" maxlength="40" :placeholder="defaultAccountName(r.account.key)"
               :aria-label="tl('Account name', 'Nom du compte')" data-testid="pace-name"
-              @blur="rename(r)" @keydown.enter="($event.target as HTMLInputElement).blur()"
+              @blur="rename(r)" @keydown.enter="!imeComposing($event) && ($event.target as HTMLInputElement).blur()"
             >
             <USelect
               :model-value="r.policy.mode" :items="modeItems" size="lg" class="pace-mode" :disabled="busy !== ''" :aria-label="tl('Mode', 'Mode')"

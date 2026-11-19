@@ -82,3 +82,30 @@ export function resolveAgentPath(written: string, cwd: string | null | undefined
   const r = posixResolve(base, p.replace(/^~(?=$|\/)/, root))
   return inside(r) ? r : null
 }
+
+// Where a written path was found: the agent's folder (its home when unknown),
+// its project's repository (a task's worktree, a coordinator's clones), or the
+// notes (opened in the Notes panel: `notes` is the notes file's path).
+// The most paths one request resolves (POST /api/files/resolve): the client sends more in several.
+export const WRITTEN_BATCH = 200
+
+export type PathPlace = 'agent' | 'repo' | 'notes'
+export interface PathFound { where: PathPlace, abs: string, notes?: string }
+export const PLACE_LABELS: Record<PathPlace, string> = { agent: 'Agent folder', repo: 'Repository', notes: 'Notes' }
+
+// The absolute paths a written path may mean on the agent's machine, in order:
+// the agent's folder, then each repository folder. An absolute or `~/` path
+// means one file. A folder outside `roots` is skipped; duplicates once.
+export function writtenCandidates(written: string, cwd: string | null | undefined, repos: string[], home: string, roots: string[] = [home]): PathFound[] {
+  const first = resolveAgentPath(written, cwd, home, roots)
+  const out: PathFound[] = first ? [{ where: 'agent', abs: first }] : []
+  const p = stripPosition(String(written || '').trim())
+  if (!p || p.startsWith('/') || /^~(?=$|\/)/.test(p)) return out
+  const allowed = roots.filter(r => r.startsWith('/')).map(r => posixResolve('/', r))
+  for (const dir of repos) {
+    if (!dir.startsWith('/') || !allowed.some(a => insideRoot(a, posixResolve('/', dir)))) continue
+    const abs = posixResolve(dir, p)
+    if (allowed.some(a => insideRoot(a, abs)) && !out.some(c => c.abs === abs)) out.push({ where: 'repo', abs })
+  }
+  return out
+}

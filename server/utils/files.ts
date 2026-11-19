@@ -10,16 +10,19 @@
 //
 // Never shown, whatever the root: wherdr's own data folder (DATA_DIR: the
 // lock's signing secret, push keys), its settings (wherdr.env, which can hold
-// the OpenRouter key, and wherdr.json), ~/.ssh and ~/.config/herdr. Checked on
-// the machine once symlinks are resolved (exit 9), and before that on the
-// written path for a clear error. Only a written path, with "Also show
-// protected files" on, skips them ($5 = 1).
+// the OpenRouter key, and wherdr.json), ~/.ssh, ~/.config/herdr, ~/.config/gh,
+// agents' credentials, a v2 data folder (~/wherdr/data) and herdr-core's state
+// (but its uploads). Checked on the machine once symlinks are resolved (exit
+// 9), and before that on the written path for a clear error. Only a written
+// path, with "Also show protected files" on, skips them ($5 = 1).
 import { execFile } from 'node:child_process'
+import { realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { DATA_DIR, WHERDR_DIR } from './env'
 import { shq } from './fsx'
 import type { FileEntry, FilePreview, FilesListing } from '../../shared/types'
-import { insideRoot, posixResolve, resolveAgentPath } from '../../shared/filePaths'
+import { insideRoot, posixResolve, resolveAgentPath, stripPosition, writtenCandidates, WRITTEN_BATCH, type PathFound } from '../../shared/filePaths'
+import { filePath as notesFilePath } from '../../shared/notes'
 import { chatFilesRoots, type ChatFilesPolicy } from '../../shared/chatFiles'
 import { gitToplevel } from './changes'
 import { HerdrError } from './herdr'
@@ -94,22 +97,37 @@ if stat -f %z / >/dev/null 2>&1; then stat -f %z -- "$@"; else stat -c %s -- "$@
 exit 0`
 
 // Folders and files never read (see the top): resolved on the machine itself.
-const PROTECTED_HOME = ['.ssh', '.config/herdr']
+// ~/wherdr/data: a v2 install's data folder (its auth.json), next to v3's.
+const PROTECTED_HOME = ['.ssh', '.config/herdr', '.config/gh', 'wherdr/data']
+// Agents' credentials, in the home folder of every machine.
+const PROTECTED_HOME_FILES = ['.claude/.credentials.json', '.codex/auth.json']
+// herdr-core's state (the same folder on Linux and macOS), all but each
+// session's `files` folder, where photos and attached files are put for the agent.
+const CORE_STATE = '.local/state/herdr-core'
 // wherdr's settings, in its folder on this machine ($WHERDR_DIR) and in
 // ~/wherdr on every machine.
 const PROTECTED_FILES = ['wherdr.env', 'wherdr.json']
 const wherdrFiles = () => PROTECTED_FILES.map(f => path.join(path.resolve(WHERDR_DIR), f))
 export const protectedPaths = (home: string | undefined) => [
-  ...(home ? [...PROTECTED_HOME, ...PROTECTED_FILES.map(f => `wherdr/${f}`)].map(d => path.posix.join(posixResolve('/', home), d)) : []),
+  ...(home ? [...PROTECTED_HOME, ...PROTECTED_HOME_FILES, ...PROTECTED_FILES.map(f => `wherdr/${f}`)].map(d => path.posix.join(posixResolve('/', home), d)) : []),
   path.resolve(DATA_DIR), ...wherdrFiles(),
 ]
+// <session>/files/… under herdr-core's state: an upload, never protected.
+const coreState = (home: string | undefined) => (home ? path.posix.join(posixResolve('/', home), CORE_STATE) : '')
+export const isCoreUpload = (state: string, abs: string) => abs.startsWith(`${state}/`) && /^[^/]+\/files\/./.test(abs.slice(state.length + 1))
 // A file: the same one (-ef: through symlinks and hard links too).
 const PROTECTED = `protected_path() {
   for pp in ${PROTECTED_HOME.map(d => `"$HOME/${d}"`).join(' ')} ${shq(path.resolve(DATA_DIR))}; do
     pd=$(cd "$pp" 2>/dev/null && pwd -P) || continue
     case "$1/" in "\${pd%/}/"*) return 0 ;; esac
   done
-  for pf in ${PROTECTED_FILES.map(f => `"$HOME/wherdr/${f}"`).join(' ')} ${wherdrFiles().map(shq).join(' ')}; do
+  for pp in "$HOME/${CORE_STATE}" "\${XDG_STATE_HOME:+$XDG_STATE_HOME/herdr-core}"; do
+    [ -n "$pp" ] && pd=$(cd "$pp" 2>/dev/null && pwd -P) || continue
+    case "$1/" in "\${pd%/}/"*) ;; *) continue ;; esac
+    rest=\${1#"\${pd%/}/"}
+    case "$rest" in "\${rest%%/*}"/files/?*) ;; *) return 0 ;; esac
+  done
+  for pf in ${[...PROTECTED_HOME_FILES, ...PROTECTED_FILES.map(f => `wherdr/${f}`)].map(f => `"$HOME/${f}"`).join(' ')} ${wherdrFiles().map(shq).join(' ')}; do
     [ "$1" -ef "$pf" ] && return 0
   done
   return 1
@@ -283,9 +301,56 @@ export function writtenTarget(m: Machine, cwd: string | null | undefined, writte
   return { root, rel, abs, show: policy.protected ? '1' : '' }
 }
 
+// One line per (root, rel) pair after $1 (the protected switch): 1 when the
+// file opens as a preview would (symlinks resolved, under its root), else 0.
+export const EXISTS_SCRIPT = `show=$1; shift
+while [ "$#" -ge 2 ]; do
+  ( set -- "$1" "$2" "" "" "$show"
+${OPEN_FILE}
+  ) </dev/null >/dev/null 2>&1 && echo 1 || echo 0
+  shift 2
+done`
+
+// Where each written path is found (shared/filePaths.ts: the agent's folder,
+// then `repos`), checked on the machine in one run, then the notes on this
+// server (`notes`: their folder and a reader, given when the policy allows that folder). Missing,
+// protected or outside the policy: not listed.
+export async function findWritten(m: Machine, cwd: string | null | undefined, repos: string[], written: unknown[], policy: ChatFilesPolicy = HOME_ONLY, notes?: { dir: string, read: (rel: string) => Promise<string | null> }): Promise<Record<string, PathFound[]>> {
+  const roots = chatFilesRoots(posixResolve('/', m.home), policy.level)
+  const paths = [...new Set(written.filter((w): w is string => typeof w === 'string' && w.length <= 1024 && !w.endsWith('/')))].slice(0, WRITTEN_BATCH)
+  const checks: { w: string, c: PathFound, root: string, rel: string }[] = []
+  for (const w of paths) {
+    for (const c of writtenCandidates(w, cwd, repos, m.home, roots)) {
+      try { checks.push({ w, c, ...writtenTarget(m, null, c.abs, policy) }) }
+      catch { /* protected or not a file: never offered */ }
+    }
+  }
+  const lines = checks.length ? (await run(m, EXISTS_SCRIPT, [policy.protected ? '1' : '', ...checks.flatMap(x => [x.root, x.rel])], { timeoutMs: 20000 })).toString('utf8').split('\n') : []
+  const found: Record<string, PathFound[]> = Object.fromEntries(paths.map(w => [w, []]))
+  checks.forEach((x, i) => { if (lines[i] === '1') found[x.w]!.push(x.c) })
+  if (notes) {
+    for (const w of paths) {
+      const rel = stripPosition(w.trim())
+      if (notesFilePath(rel) && (await notes.read(rel)) !== null) found[w]!.push({ where: 'notes', abs: path.posix.join(notes.dir, rel), notes: rel })
+    }
+  }
+  return found
+}
+
+// The notes folder, once its symlinks are resolved, lies in one of `roots`
+// (resolved too): only then are notes offered for a written path.
+export async function notesAllowed(dir: string, roots: string[]): Promise<boolean> {
+  const real = await realpath(dir).catch(() => '')
+  if (!real) return false
+  const reals = await Promise.all(roots.map(r => realpath(r).catch(() => '')))
+  return reals.some(r => r && insideRoot(r, real) && real !== r)
+}
+
 // Early, on the path as written (the machine checks again once symlinks are resolved).
 export function refuseProtected(m: Machine, abs: string) {
-  for (const d of protectedPaths(m.home)) {
+  const state = coreState(m.home)
+  for (const d of [...protectedPaths(m.home), ...(state ? [state] : [])]) {
+    if (d === state && isCoreUpload(state, abs)) continue
     if (abs === d || abs.startsWith(d.replace(/\/+$/, '') + '/')) throw new HerdrError('protected', PROTECTED_MESSAGE)
   }
 }

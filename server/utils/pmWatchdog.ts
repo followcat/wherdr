@@ -4,7 +4,7 @@
 // the next advance pass). Its machine offline or paused, no room, or the start
 // refused: the status line says why; at the second failure the coordinator is
 // woken once. The rules are in shared/pm/watchdog.ts.
-import { LABEL, taskPlan, type LabelledTerminal, type Run, type Task } from '../../shared/pm/run'
+import { LABEL, staleStarts, taskPlan, type LabelledTerminal, type Run, type Task } from '../../shared/pm/run'
 import { MACHINE_OFFLINE, MACHINE_PAUSED } from '../../shared/pm/release'
 import { isReadHold } from '../../shared/pm/sentinel'
 import { AGENTLESS_WHY, agentNeeded, reviewRestartRefusal, reviewRestarted, watchAgent, watchFailed, type AgentWatch } from '../../shared/pm/watchdog'
@@ -51,13 +51,16 @@ function machineWait(deps: PmLaunchDeps, p: Project, machine: string) {
 export async function watchAgents(deps: PmLaunchDeps, wake: (task: Task, why: string) => Promise<string[]>, now = Date.now()) {
   const { store } = deps
   const { terminals } = await deps.call<{ terminals: LabelledTerminal[] }>('terminal.list', { all: true, labels: { [LABEL.install]: await store.install() } }, 8000)
+  // A start never confirmed: its terminal adopted by its labels, else the run ends (lost).
+  for (const f of staleStarts(await store.runs(), terminals, await store.install(), now))
+    await store.saveRun(f.state === 'running' ? { ...f.run, terminal: f.terminal, state: 'running' } : { ...f.run, state: 'ended', endedBy: f.state })
   const runs = await store.runs(), projects = await store.projects(), restarted: string[] = []
   for (const task of await store.tasks()) {
     const p = projects.find(x => x.key === task.project)
     const t = p ? await store.workflow(p.key).catch(() => null) : null
     const role = p && t ? agentNeeded(task, taskPlan(t, task, p)) : undefined
     const run = role && latest(runs, task.id, role)
-    // A run still starting has no terminal yet: there.
+    // A run still starting has no terminal yet: there (for STARTING_MS, staleStarts above).
     const there = !!run && run.state !== 'ended' && (!run.terminal || terminals.some(x => x.address === run.terminal && x.state !== 'finished'))
     const worker = latest(runs, task.id, 'worker')
     const { watch, due } = watchAgent(watches.get(task.id), !!role && !there && !!worker, now)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { type KeyInput, type ShortcutContext, type ShortcutFocus, SHORTCUTS, applyBindings, bindingFromEvent, findConflict, matchShortcut, parseBindings, reservedReason, tableKbds } from '../app/utils/shortcuts'
+import { type KeyInput, type ShortcutContext, type ShortcutFocus, SHORTCUTS, applyBindings, bindingFromEvent, findConflict, imeComposing, matchShortcut, parseBindings, reservedReason, tableKbds } from '../app/utils/shortcuts'
 
 const body: ShortcutFocus = { editable: false, empty: true, overlay: false, terminal: false }
 const field = (text: string): ShortcutFocus => ({ ...body, editable: true, empty: !text })
@@ -7,6 +7,14 @@ const term: ShortcutFocus = { ...body, editable: true, empty: true, terminal: tr
 const mac: ShortcutContext = { mac: true, phase: 'bubble', desk: true }
 const linux: ShortcutContext = { ...mac, mac: false }
 const match = (e: KeyInput, f = body, c = mac) => matchShortcut(e, f, c)
+
+describe('imeComposing', () => {
+  it('holds while composing and for Safari\'s keyCode 229 Enter', () => {
+    expect(imeComposing({ isComposing: true, keyCode: 13 })).toBe(true)
+    expect(imeComposing({ isComposing: false, keyCode: 229 })).toBe(true)
+    expect(imeComposing({ isComposing: false, keyCode: 13 })).toBe(false)
+  })
+})
 
 describe('matchShortcut', () => {
   it('Mod is ⌘ on macOS and Ctrl elsewhere, never the other one', () => {

@@ -2,13 +2,13 @@
 
 [Documentation](README.md) · [Project](../README.md)
 
-Claude Code, Codex, Devin, Command Code, OpenCode, Antigravity and Cline terminals open in conversation mode; any other terminal shows only its
+Claude Code, Codex, Devin, Command Code, OpenCode, Antigravity, Cline and Hermes Agent terminals open in conversation mode; any other terminal shows only its
 [terminal](terminal.md). How wherdr finds the conversation file on herdr-core is described in
 [herdr-core › Conversations](core.md#conversations). Cline's data-folder variables
 (`CLINE_DATA_DIR`, `CLINE_SESSION_DATA_DIR`) are read from wherdr's own environment, never
 from the pane's: they count only when the wherdr service has them too.
 
-- **Conversation view**: the agent's real transcript (Claude Code, Codex, Devin, Command Code, OpenCode, Antigravity and Cline), rendered as
+- **Conversation view**: the agent's real transcript (Claude Code, Codex, Devin, Command Code, OpenCode, Antigravity, Cline and Hermes Agent), rendered as
   Markdown, with grouped tool calls, images (full-screen viewer with pinch / wheel zoom and pan),
   timestamps, search and infinite scroll back to the first message (Command Code follows the bounded
   reads described under [herdr-core › Conversations](core.md#conversations)). Every message shows its time,
@@ -21,7 +21,8 @@ from the pane's: they count only when the wherdr service has them too.
   The button then says *Running…*, and *Ran at 16:42* once it has finished; it stays a button, to
   run the command again. The run shows at once in the conversation as omp shows its actions: a
   *! · You ran* card with the command, the elapsed time and the working ring (in the agent's colors, as the message field's halo), its output so far
-  underneath (Claude Code: read from its screen); when the transcript writes the command, that
+  underneath (Claude Code: read from its screen). The card keeps its place in time: a message sent
+  while it runs, and the agent's reply, show under it. When the transcript writes the command, that
   entry takes the card's place (shown once), with its run time and its output folded.
   Run while Claude is working: Claude Code queues the command and runs it once, when its turn
   ends; until then it shows only as its queued bubble, and the card starts when Claude runs it.
@@ -59,7 +60,7 @@ from the pane's: they count only when the wherdr service has them too.
   Settings › Projects › KEY › Guards*, *Open Task KEY-12*, *Open Board › KEY › ui*). A tap opens
   the place in the app, on a computer and a phone,
   without reloading; Back returns to the conversation. Other links open in a new tab, other
-  inline code stays plain. The addresses: `#/`, `#/decisions`, `#/board` (with `?project=KEY`,
+  inline code stays plain. The addresses: `#/`, `#/review` (Tasks to review; the former `#/decisions` opens it too), `#/board` (with `?project=KEY`,
   `?tag=TAG` or `?task=ID`), `#/settings?section=<section>`, a tab of Settings › Conversation
   `#/settings?section=conversation&tab=<tab>` (`display`, `dictation`, `read-aloud`) and a
   project's sheet `#/settings?section=projects&project=KEY&tab=<tab>`; Alfred and coordinators get the list in
@@ -124,8 +125,9 @@ from the pane's: they count only when the wherdr service has them too.
   button), or answer a workflow or automation change, wherdr tells the agent that proposed it in
   its conversation, so it goes on by itself (Alfred moves to the next project): *Applied:
   Project WEB › Guards*, *Cancelled: …*, or *Not applied: …* with why (changed since, a check
-  that failed). It shows as a muted *From the card* row, not as a message you typed, and counts as
-  your turn (the agent may propose the next card). A second click on a closed card tells nothing.
+  that failed). It shows as a muted *From the card* row, not as a message you typed: the agent may
+  propose the next card, but the click is never your yes to anything else (a *Cancel* cannot end
+  a step that waits for you or merge a PR). A second click on a closed card tells nothing.
   While that agent does not run, nothing is typed: its next start's first message lists what you
   applied or cancelled since.
 - **Files and screenshots beside the conversation**: an agent can show you a file of its own
@@ -148,7 +150,8 @@ from the pane's: they count only when the wherdr service has them too.
   scrolls sideways, on a phone too), read from each wake's first line and task lines, standing out when one waits
   for you. Open, each wake is one line: an icon, its task, a short label (*merged*,
   *Scheduled*, *Health check*) and the reply's first sentence, a tap showing the full reply;
-  quiet checks are dimmer, two or more in a row fold into *N quiet checks*. See
+  quiet checks are dimmer, two or more in a row fold into *N quiet checks*. A message of yours that
+  Claude took in the same turn as a wake keeps its own bubble (photos included) beside the wake's row. See
   [Who sends a wake](project-management.md#who-sends-a-wake).
 - **Questions and permissions**: native questions, approvals and menus show their options; a tap
   answers. wherdr reads the screen again right before answering and refuses the answer if the
@@ -280,6 +283,30 @@ block (to the whole message when there is none), the same as typing it. Only the
 agent's last message are live; once a sent message answers them, and in older messages, they are
 greyed, the answer given marked. A `wherdr` block with a line wherdr does not understand (a
 missing quote, no option or more than four, an unknown kind) shows as ordinary code.
+
+**Several questions in one card.** When an agent has several questions at once (a plan to
+settle, say), it asks them in one `questions` card instead of a numbered list or one message
+each: a `questions` line, then one numbered line per question (up to 8), the question then its
+2 to 4 options:
+
+````md
+A few things before I start:
+
+```wherdr
+questions
+1 "Which database?" | "Postgres" | "SQLite"
+2 "Keep the old API?" | "Yes" | "No, remove it"
+```
+````
+
+Tap one option per question (tap it again to take it back), or **Other…** and type your own
+answer. On a computer, with the focus in the card, a digit goes to that question and a letter
+(`a` to `d`) picks that option and moves to the next one. **Send** sends all the answers as one
+reply, quoted to the message, one line per question: `1A Postgres`, then `2B No, remove it`: the
+number, the option's letter and its text, or your own words, exactly as typed, after the number. Send needs one answer at least; a question left
+unanswered is sent as `skip`, and the card says how many will be. Like choice buttons, only the
+card of the agent's last message is live; once answered it is greyed with the answers given. In
+Tasks to review, the card in the agent's question answers it the same way.
 
 Above the field, **N questions unanswered** counts the questions of the agent's last message
 (and the rows of its decision tables) that your draft does not answer yet; tap it to scroll to

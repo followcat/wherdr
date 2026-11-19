@@ -1,7 +1,7 @@
 // File paths in agent replies: which inline code is a path, how it resolves
 // against the agent's folder, and the clickable markup in rendered markdown.
 import { describe, expect, it, vi } from 'vitest'
-import { pathCandidate, posixResolve, resolveAgentPath } from '../shared/filePaths'
+import { pathCandidate, posixResolve, resolveAgentPath, writtenCandidates } from '../shared/filePaths'
 import { chatFilesLevel } from '../shared/chatFiles'
 
 // markdown.ts runs in the browser: DOMPurify needs a DOM, `t` is auto-imported.
@@ -114,5 +114,23 @@ describe('markdown rendering', () => {
   it('leaves fenced code blocks alone', async () => {
     const { md } = await import('../app/utils/markdown')
     expect(md('```\n~/project/a.ts\n```')).not.toContain('md-path')
+  })
+})
+
+describe('writtenCandidates', () => {
+  const repo = '/home/demo/project'
+  it('tries the agent folder, then each repository, once each', () => {
+    expect(writtenCandidates('app/x.vue', '/home/demo/coord', [repo, '/home/demo/coord'], HOME)).toEqual([
+      { where: 'agent', abs: '/home/demo/coord/app/x.vue' },
+      { where: 'repo', abs: '/home/demo/project/app/x.vue' },
+    ])
+  })
+  it('keeps an absolute or ~/ path as the one file it names', () => {
+    expect(writtenCandidates('~/a.md', '/home/demo/coord', [repo], HOME)).toEqual([{ where: 'agent', abs: '/home/demo/a.md' }])
+    expect(writtenCandidates('/home/demo/a.md', null, [repo], HOME)).toEqual([{ where: 'agent', abs: '/home/demo/a.md' }])
+  })
+  it('skips a repository outside the allowed folders, or a path leaving them', () => {
+    expect(writtenCandidates('x.md', '/home/demo/coord', ['/srv/repo'], HOME).map(c => c.where)).toEqual(['agent'])
+    expect(writtenCandidates('../../../etc/x', '/home/demo/coord', [repo], HOME)).toEqual([])
   })
 })

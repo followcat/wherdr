@@ -23,4 +23,15 @@ export const notesMachineName = (key: string) => machineName(key) || key || t('T
 
 export const loadNotes = () => api<{ notes: Note[], files: string[] }>('/api/notes').then((r) => { notes.value = r.notes; noteFiles.value = r.files }, () => {})
 export const loadNoteFile = (path: string) => api<{ text: string | null }>(`/api/notes/file?path=${encodeURIComponent(path)}`).then(r => r.text, () => null)
-export function toggleNotes() { notesOpen.value = !notesOpen.value }
+// Open but out of sight: the panel was beside the conversation and the page
+// now shown has none (the board, a settings page). Back in the panel beside
+// the next conversation or Home; only an explicit open shows it as a sheet.
+export const notesAway = ref(false)
+export function openNotes() {
+  notesOpen.value = true
+  notesAway.value = false
+}
+export function toggleNotes() {
+  if (notesOpen.value && !notesAway.value) notesOpen.value = false
+  else openNotes()
+}

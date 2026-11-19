@@ -4,7 +4,7 @@
 // after the user's yes. Nothing here removes data.
 import path from 'node:path'
 import { CHANGES, SETTING_TARGETS, SETTING_VALUES, alfredCommandList, dryRun, memoryLines, parseAlfredCommand, workflowEditRefusal, type AlfredPlan } from '../../shared/pm/alfredCli'
-import { GUARDED_PROGRAMS, MAIN, templateDiff, type CoordinatorAgent } from '../../shared/pm/coordinator'
+import { GUARDED_PROGRAMS, MAIN, TOOL_GUARDED_PROGRAMS, defaultProjectProgram, templateDiff, type CoordinatorAgent } from '../../shared/pm/coordinator'
 import { validateTemplate, type Template } from '../../shared/pm/workflow'
 import { templateChanges } from '../../shared/pm/templateText'
 import { ALFRED } from '../../shared/pm/alfred'
@@ -19,7 +19,9 @@ import { resendFirst } from './coordinatorFirst'
 import { lastWords } from './pmRead'
 import type { FolderCheck, PmStore } from './pmStore'
 import { readSettings } from './settings'
-import { addChangeCard, addSettingCard } from './uiActions'
+import { addChangeCard, addSettingCard, addThemeCard } from './uiActions'
+import { importThemeText, themeFile } from '../../app/utils/customThemes'
+import { contrastIssues } from '../../app/utils/themes'
 import { CHANGE_PLACES, choiceArgv, type CardChoice } from '../../shared/uiActions'
 import { UI_TARGETS } from '../../shared/uiTargets'
 import { saveProjectGuards } from './pmProject'
@@ -81,15 +83,16 @@ async function alfredCommand(deps: Deps, argv: unknown, input: unknown, card?: s
   const remoteOf = (key: string) => (key && !machines.find(m => m.key === key)?.local ? machineName(key) : undefined)
   const needPm = async () => { if (!(await store.enabled())) throw new HerdrError('pm_off', `Projects are off: the user switches them on in ${projectPlace(undefined, 'general', true)}`) }
   const knownTemplate = async (id: string) => {
-    if (id && !EXAMPLES.some(e => `example:${e.id}` === id) && !(await store.overview()).templates.some(t => t.id === id)) throw new HerdrError('not_found', `No template ${id} (see wherdr alfred templates)`)
+    if (id && !EXAMPLES.some(e => `example:${e.id}` === id)) throw new HerdrError('not_found', `No example ${id} (see wherdr alfred examples)`)
   }
-  // A project coordinator's agent: its default while the user offers it, else
-  // their first offered agent that can run it (Settings › Agents), else Claude.
+  // A project coordinator's agent: its default while the user offers it (omp
+  // too: choosing it is the opt-in), else their first offered agent that can run
+  // it (Settings › Agents), a Claude or Codex before omp, else Claude.
   const projectAgent = async (key: string): Promise<CoordinatorAgent> => {
     const s = await readSettings(deps.settingsFile)
-    const offered = offeredAgents(GUARDED_PROGRAMS, readHiddenAgents(s.hiddenAgents ?? null), readAgentOrder(s.agentOrder ?? null)) as CoordinatorAgent['program'][]
+    const offered = offeredAgents([...GUARDED_PROGRAMS, ...TOOL_GUARDED_PROGRAMS], readHiddenAgents(s.hiddenAgents ?? null), readAgentOrder(s.agentOrder ?? null)) as CoordinatorAgent['program'][]
     const own = (await coordinatorsView(store)).find(x => x.project === key)?.agent
-    return own && offered.includes(own.program) ? own : { program: offered[0] ?? 'claude' }
+    return own && offered.includes(own.program) ? own : { program: defaultProjectProgram(offered) ?? 'claude' }
   }
   // Its conversation runs: its terminal is a live pane. stopped: it ended (its
   // machine restarted, say), and `coordinator start --resume` takes it up again.
@@ -110,7 +113,11 @@ async function alfredCommand(deps: Deps, argv: unknown, input: unknown, card?: s
   // gives --only and --start again, so the card's argv leaves them out.
   const change = async (plan: AlfredPlan & { picks?: (string | null)[], on?: string[], start?: boolean, pm?: true }, make: () => Promise<unknown>) => {
     if (card) return plan.change.join('\n') === card.join('\n') ? { applied: true, change: plan.change, result: await make() } : { stale: true }
-    if ('apply' in cmd && cmd.apply) return { applied: true, change: plan.change, result: await make() }
+    // Only in a turn of the user's own message: never a wake, a card's click, or text read meanwhile.
+    if ('apply' in cmd && cmd.apply) {
+      if ((await alfredTurn())?.kind !== 'user') throw new HerdrError('refused', '--apply is only for a turn that comes from the user, never a wake: show the change and wait for their yes')
+      return { applied: true, change: plan.change, result: await make() }
+    }
     if (!('propose' in cmd && cmd.propose)) return dryRun(argv as string[], plan)
     const key = 'input' in cmd ? cmd.input.key : 'key' in cmd ? cmd.key : '', place = CHANGE_PLACES[cmd.name]!, turn = await alfredTurn()
     const target = cmd.name === 'project add' || cmd.name === 'workspace add' ? undefined : place.target
@@ -127,7 +134,7 @@ async function alfredCommand(deps: Deps, argv: unknown, input: unknown, card?: s
       for (const t of await store.tasks()) if (t.project === p.key) tasks[t.state] = (tasks[t.state] ?? 0) + 1
       return { project: { ...p, machineName: machineName(p.machine) }, coordinator: c && { agent: (await projectAgent(p.key)).program, ...runState(c.terminal), ...(c.proposal ? { proposalWaits: { by: c.proposal.by === 'main' ? ALFRED : 'the coordinator', at: c.proposal.at } } : {}) }, tasks }
     }
-    case 'templates': return { templates: (await store.overview()).templates, examples: EXAMPLES.map(e => ({ id: `example:${e.id}`, instructions: e.instructions, taskTypes: Object.keys(e.taskTypes), guards: e.guards })) }
+    case 'examples': return { examples: EXAMPLES.map(e => ({ id: `example:${e.id}`, instructions: e.instructions, taskTypes: Object.keys(e.taskTypes), guards: e.guards })) }
     case 'v2': {
       const candidates = await v2Projects(store, deps.herdrProjects)
       if (!candidates.length) return { fromV2: false }
@@ -193,6 +200,14 @@ async function alfredCommand(deps: Deps, argv: unknown, input: unknown, card?: s
       const turn = await alfredTurn(), target = SETTING_TARGETS[cmd.key]
       return addSettingCard(store, { turn: turn?.kind ?? 'none', by: ALFRED, label: target ? UI_TARGETS[target].label : cmd.key, change: { key: cmd.key, ...(old === undefined ? {} : { before: old }), after: cmd.value, ...(turn?.said ? { said: turn.said } : {}), ...(target ? { target } : {}) } })
     }
+    case 'theme propose': {
+      // Checked as an import is; the card keeps the file, the Apply gives it its id.
+      const th = importThemeText(typeof input === 'string' ? input : input === undefined ? '' : JSON.stringify(input))
+      if (typeof th === 'string') throw new HerdrError('bad_input', `${th}: fix the theme file and run it again`)
+      const turn = await alfredTurn()
+      const note = await addThemeCard(store, { turn: turn?.kind ?? 'none', by: ALFRED, theme: { file: themeFile(th), ...(turn?.said ? { said: turn.said } : {}) } })
+      return { proposed: true, belowWcagAA: { dark: contrastIssues(th.c), light: contrastIssues(th.light) }, note }
+    }
     case 'project add': {
       await needPm()
       // The machine by its key or its label.
@@ -249,8 +264,10 @@ async function alfredCommand(deps: Deps, argv: unknown, input: unknown, card?: s
       await needPm()
       const p = projectOf(cmd.key)
       await knownTemplate(cmd.template)
-      if (!cmd.template && !p.from) return { unchanged: true, project: p.key, template: 'none' }
-      return change({ change: [`project ${p.key} template: ${p.from?.template ?? 'none'} → ${cmd.template || 'none'}`] }, () => store.setTemplate(p.key, cmd.template))
+      // none on a workspace's project with its own workflow: it follows the workspace's again.
+      const own = !cmd.template && p.workspace && !!(await store.savedWorkflow(p.key))
+      if (!cmd.template && !p.from && !own) return { unchanged: true, project: p.key, template: 'none' }
+      return change({ change: [own ? `project ${p.key}: remove its own workflow, follow workspace ${p.workspace}'s again` : `project ${p.key} template: ${p.from?.template ?? 'none'} → ${cmd.template || 'none'}`] }, () => store.setTemplate(p.key, cmd.template))
     }
     case 'project memory': {
       await needPm()
@@ -288,13 +305,14 @@ async function alfredCommand(deps: Deps, argv: unknown, input: unknown, card?: s
       const p = projectOf(cmd.key)
       const pane = await coordinatorPane(p.key)
       const started = !pane
-      // The coordinator's turn is the user's when Alfred relays the user's message; a wake's otherwise.
+      // Alfred relaying the user's message: a relay turn, never the user's own (the
+      // user's yes to Alfred is no yes to the coordinator); a wake's otherwise.
       const turn = await alfredTurn()
       const said = tellText(cmd.text)
       const text = `From ${ALFRED}${turn?.kind === 'user' ? ', for the user' : ''}: ${said}`
       // Not running: started with the message, typed once it is ready (coordinatorFirst.ts).
       const terminal = pane?.coreAddress ?? (await startCoordinator(deps, p.key, await projectAgent(p.key), deps.urls, [text])).terminal
-      await noteTurn(store, p.key, turn?.kind === 'user' ? 'user' : 'wake', turn?.said)
+      await noteTurn(store, p.key, turn?.kind === 'user' ? 'relay' : 'wake', turn?.said)
       if (!started) await deps.call('terminal.send', { terminal, text }, 30000)
       await store.logProject(p.key, { by: ALFRED, text: `told the coordinator: ${said.slice(0, 300)}`, ...(turn?.said ? { said: turn.said } : {}) })
       return { told: p.key, ...(started ? { started: `its coordinator was not running: started on ${machineName(p.machine)}, the message goes once it is ready` } : {}), next: `Read its answer later with wherdr alfred last ${p.key}` }

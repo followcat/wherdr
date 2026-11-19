@@ -8,7 +8,7 @@ import { freedMerge } from '../../shared/pm/guardEffects'
 import { allowedMachines, cleanProjectUpdate, type Project } from '../../shared/pm/project'
 import { taskPlan } from '../../shared/pm/run'
 import { ownWorkflow } from '../../shared/pm/workspace'
-import { PREF_KEYS, isDefaultWorkflow, type Guards, type Prefs, type Template, type WorktreeSetup } from '../../shared/pm/workflow'
+import { PREF_KEYS, checkSetup, isDefaultWorkflow, type Guards, type Prefs, type Template, type WorkflowError, type WorktreeSetup } from '../../shared/pm/workflow'
 import { HerdrError } from './herdr'
 import { alfredTokenOk, scopeOf } from './pmCoordinator'
 import type { CoreAdminDeps } from './coreCreate'
@@ -34,7 +34,7 @@ async function workflowOf(store: PmStore, key: unknown) {
   const p = await store.project(key)
   if (!p) throw new HerdrError('not_found', 'Unknown project')
   const t = await store.workflow(p.key)
-  if (!t) throw new HerdrError('not_found', 'The project has no workflow: start it from a template')
+  if (!t) throw new HerdrError('not_found', 'The project has no workflow: ask its coordinator to propose one')
   return { p, t }
 }
 
@@ -57,18 +57,37 @@ export async function projectView(store: PmStore, key: string) {
 }
 
 // { name?, base?, prefs? }: prefs (worker and reviewer agents) live in the workflow.
-export async function updateProject(store: PmStore, key: unknown, body: Record<string, unknown>) {
+// authorization: the request's; with a token (a coordinator, Alfred) the On state change command is refused.
+export async function updateProject(store: PmStore, key: unknown, body: Record<string, unknown>, authorization?: unknown) {
+  if ((body.onStateChange !== undefined || body.follow === 'onStateChange') && bearer(authorization)) throw new HerdrError('forbidden', 'Only the user sets the On state change command, in the project\'s settings')
+  // { follow: <field> }: a member takes its workspace's value of that field again.
+  if (body.follow !== undefined) {
+    const project = await store.followWorkspace(key, body.follow)
+    if (body.follow === 'archiveAfter') await archiveDone(store)
+    return { project }
+  }
   const { update, errors } = cleanProjectUpdate(body)
   if (!update) throw new HerdrError('bad_input', errors.map(e => `${e.path}: ${e.message}`).join('; '))
+  // A member without a workflow of its own: its agents and worktree setup are
+  // kept on it (overrides), never a copy of its workspace's workflow.
+  const p = await store.project(key)
+  const member = !!p?.workspace && !(await store.savedWorkflow(p.key))
   if (body.prefs !== undefined) {
     const { t } = await workflowOf(store, key)
-    const raw = (body.prefs && typeof body.prefs === 'object' ? body.prefs : {}) as Record<string, unknown>
-    // An empty value goes back to the default.
-    const prefs = Object.fromEntries(PREF_KEYS.flatMap(k => (typeof raw[k] === 'string' && raw[k] ? [[k, raw[k]]] : []))) as Prefs
+    const prefs = cleanPrefs(body.prefs)
     const { prefs: _old, ...rest } = t
-    await store.saveWorkflow(t.id.toUpperCase(), Object.keys(prefs).length ? { ...rest, prefs } : rest)
+    if (member) await store.setMemberSetup(key, { prefs })
+    else await store.saveWorkflow(t.id.toUpperCase(), Object.keys(prefs).length ? { ...rest, prefs } : rest)
   }
-  if (body.worktree !== undefined) await saveWorktreeSetup(store, key, body.worktree)
+  if (body.worktree !== undefined) {
+    if (!member) await saveWorktreeSetup(store, key, body.worktree)
+    else {
+      const w = cleanSetup(body.worktree), errors: WorkflowError[] = []
+      checkSetup(w, errors)
+      if (errors.length) throw new HerdrError('bad_input', errors.map(e => `${e.path}: ${e.message}`).join('; '))
+      await store.setMemberSetup(key, { worktree: w as WorktreeSetup })
+    }
+  }
   const project = await store.updateProject(key, update)
   // A shorter delay archives at once what it now covers.
   if (update.archiveAfter !== undefined) await archiveDone(store)
@@ -77,12 +96,26 @@ export async function updateProject(store: PmStore, key: unknown, body: Record<s
 
 // The workflow's worktree block, from the General tab: empty fields dropped
 // (but `share: []`, which shares no folder), none left removes it.
+const cleanSetup = (raw: unknown) => Object.fromEntries(Object.entries(raw && typeof raw === 'object' ? raw : {}).filter(([k, v]) => (Array.isArray(v) ? v.length || k === 'share' : v !== '' && v !== undefined && v !== null)))
+// An empty value goes back to the default.
+function cleanPrefs(body: unknown): Prefs {
+  const raw = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>
+  return Object.fromEntries(PREF_KEYS.flatMap(k => (typeof raw[k] === 'string' && raw[k] ? [[k, raw[k]]] : []))) as Prefs
+}
 async function saveWorktreeSetup(store: PmStore, key: unknown, raw: unknown) {
   const { p, t } = await workflowOf(store, key)
-  const w = Object.fromEntries(Object.entries(raw && typeof raw === 'object' ? raw : {}).filter(([k, v]) => (Array.isArray(v) ? v.length || k === 'share' : v !== '' && v !== undefined && v !== null)))
+  const w = cleanSetup(raw)
   const { worktree: _old, ...rest } = t
   const next = Object.keys(w).length ? { ...rest, worktree: w as WorktreeSetup } : rest
   await store.saveWorkflow(p.key, next) // checked there
+}
+
+// A member back on its workspace's workflow: its own file removed (logged).
+export async function resetMemberWorkflow(store: PmStore, key: unknown) {
+  const p = await store.project(key)
+  if (!p?.workspace) throw new HerdrError('refused', 'Only a workspace\'s project follows its workspace\'s workflow')
+  if (!(await store.savedWorkflow(p.key))) throw new HerdrError('refused', `${p.key} already follows workspace ${p.workspace}'s workflow`)
+  return { project: await store.setTemplate(p.key, '') }
 }
 
 // The user's save of the workflow: everything but the guards.
@@ -113,12 +146,4 @@ export async function retryFreedMerges(deps: CoreAdminDeps & { store: PmStore },
     await deps.store.logTask(task, 'engine', `guards changed: the engine may now merge into ${into}, so it tries the step again`)
     startAction(deps, task.id, () => {})
   }
-}
-
-// Save as template: a copy of the project's workflow joins the library under
-// `id` (a taken id is refused). The project is untouched.
-export async function templateFromProject(store: PmStore, key: unknown, id: unknown) {
-  const { t } = await workflowOf(store, key)
-  const { version: _version, workspaceGuards: _ws, ...copy } = t
-  return { template: await store.saveTemplate({ ...copy, id }) }
 }

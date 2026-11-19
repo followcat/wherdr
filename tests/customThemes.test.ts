@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { importThemeText, readCustomThemes, readThemeFile, themeFile, writeCustomThemes } from '../app/utils/customThemes'
+import { importThemeText, readCustomThemes, readThemeFile, themeErrorLine, themeFile, writeCustomThemes } from '../app/utils/customThemes'
 import { THEMES } from '../app/utils/themes'
 
 const gruvbox = THEMES.find(t => t.id === 'gruvbox')!
@@ -22,6 +22,15 @@ describe('custom theme files', () => {
     expect(bad(f => { f.light.glow = '#ffffff' })).toBe('Unknown color "light.glow"')
     expect(bad(f => { delete f.light.text })).toBe('"light.text" is missing')
     expect(bad(f => { f.dark.ansi = f.dark.ansi.slice(1) })).toBe('"dark.ansi" must be 16 #rrggbb colors')
+  })
+  it('points an error at its line', () => {
+    const text = JSON.stringify(file(), null, 2)
+    const lineOf = (needle: string, from = 0) => text.slice(0, text.indexOf(needle, from)).split('\n').length
+    expect(themeErrorLine('{\n  "a": 1,\n  }', 'Not valid JSON')).toBe(3)
+    expect(themeErrorLine(text, '"light.bg" is not a #rrggbb color')).toBe(lineOf('"bg"', text.indexOf('"light"')))
+    expect(themeErrorLine(text, '"light.text" is missing')).toBe(lineOf('"light"'))
+    expect(themeErrorLine(text, 'The name must be 1 to 40 characters')).toBe(lineOf('"name"'))
+    expect(themeErrorLine('[]', 'Not a wherdr theme file')).toBeUndefined()
   })
   it('keeps the valid themes of the synced setting', () => {
     const th = readThemeFile(file(), 'custom-a') as typeof gruvbox

@@ -1,5 +1,6 @@
-// A message sent while Claude works is held in Claude's own queue until it
-// takes it (next step or end of turn): it must not read "read by the agent".
+// A waiting message only tells what the app knows (WHR-471): held in Claude's
+// own queue until it takes it, otherwise "sending" until it is in the
+// transcript (then it is no longer waiting), never "read by the agent".
 import { describe, expect, it } from 'vitest'
 import { inputShown, pendingLabel, pendingQueue } from '../app/utils/pendingQueue'
 import type { ClaudeScreen } from '../shared/types'
@@ -23,15 +24,35 @@ describe('waiting message: in the agent\'s queue or taken', () => {
       { kind: 'agent-queue', agent: 'claude' }, { kind: 'agent-queue', agent: 'claude' }])
   })
 
-  it('taken (gone from the queue, not in the transcript yet): read by the agent', () => {
+  it('taken (gone from the queue, not in the transcript yet): still sending, never "read"', () => {
     const list = pendingQueue({ mine, claude: [], items: [], screen: misread })
     expect(list.map(q => q.phase)).toEqual(['sent', 'sent'])
-    expect(pendingLabel(list[1]!, 'working', 'claude')).toEqual({ kind: 'read' })
+    expect(pendingLabel(list[1]!, 'working', 'claude')).toEqual({ kind: 'sending' })
+  })
+
+  it('send answered while the agent works, not in its queue nor the transcript: sending, even with no screen', () => {
+    const [q] = pendingQueue({ mine: [mine[0]!], claude: [], items: [], screen: null })
+    expect(pendingLabel(q!, 'working', 'claude')).toEqual({ kind: 'sending' })
+  })
+
+  it('send answered, agent idle, not in the transcript yet: sending', () => {
+    const list = pendingQueue({ mine, claude: [], items: [], screen: null, idle: true })
+    expect(list.map(q => pendingLabel(q, 'sending', 'claude'))).toEqual([{ kind: 'sending' }, { kind: 'sending' }])
   })
 
   it('in the transcript as a user turn: no longer waiting', () => {
     const items = [{ role: 'user' as const, text: ONE, ts: '2026-01-01T00:00:03Z' }, { role: 'user' as const, text: TWO, ts: '2026-01-01T00:00:03Z' }]
     expect(pendingQueue({ mine, claude: [], items, screen: null })).toEqual([])
+  })
+
+  it('a photo message in the transcript is sent, whatever form its photo took; even with a copy in Claude\'s field', () => {
+    const core = '/home/user/.local/state/herdr-core/default/files/t1/2026-11-15T15-00-18-537Z-deeecd.jpg'
+    const msg = { id: 'p', text: `margin missing\n${core}`, at: Date.parse('2026-01-01T00:00:00Z'), settledAt: 1 }
+    const said = (text: string, images = 0) => [{ role: 'user' as const, text, images, ts: '2026-01-01T00:00:05Z' }]
+    for (const items of [said('margin missing', 1), said(`margin missing\n${core}`), said(`margin missing\n~/.local/state/herdr-core/default/files/t1/${core.split('/').pop()}`)]) {
+      expect(pendingQueue({ mine: [msg], claude: [], items, screen: null, idle: true, input: '[Image #3] margin missing' })).toEqual([])
+    }
+    expect(pendingQueue({ mine: [msg], claude: [], items: said('another message'), screen: null, idle: true })).toHaveLength(1)
   })
 
   it('Claude\'s own entries (typed on the computer) are in its queue too', () => {
@@ -53,13 +74,15 @@ describe('label of a waiting message', () => {
   const held = { phase: 'queued' as const, state: null, inAgentQueue: true }
   const plain = { phase: 'queued' as const, state: null }
   it.each([
-    [plain, 'working', { kind: 'queued' }],
+    // Answered while the agent works, not in its queue nor the transcript yet: unconfirmed.
+    [plain, 'working', { kind: 'sending' }],
+    [{ ...plain, state: 'held' as const }, 'working', { kind: 'queued' }],
     [plain, 'sending', { kind: 'sending' }],
     [{ ...plain, state: 'sending' as const }, 'working', { kind: 'sending' }],
     [held, 'working', { kind: 'agent-queue', agent: 'claude' }],
     [held, 'question', { kind: 'question' }],
     [held, 'stopped', { kind: 'stopped' }],
-    [{ phase: 'sent' as const, state: null }, 'working', { kind: 'read' }],
+    [{ phase: 'sent' as const, state: null }, 'working', { kind: 'sending' }],
     [{ phase: 'sent' as const, state: null, inAgentQueue: true }, 'working', { kind: 'agent-queue', agent: 'claude' }],
   ] as const)('%o while %s', (q, waitFor, label) => {
     expect(pendingLabel(q, waitFor, 'claude')).toEqual(label)
@@ -76,7 +99,9 @@ describe('message left in Claude\'s input field', () => {
   it('waiting there: one bubble, never "read", even once the agent is idle', () => {
     const list = pendingQueue({ mine: [sent], claude: [], items: [], screen: null, idle: true, input: FIELD })
     expect(list.map(q => [q.phase, q.inInput])).toEqual([['queued', true]])
-    expect(pendingLabel(list[0]!, 'sending', 'claude')).toEqual({ kind: 'input' })
+    // The server still presses Enter on it: sending; done and still there: not sent.
+    expect(pendingLabel(list[0]!, 'sending', 'claude', true)).toEqual({ kind: 'sending' })
+    expect(pendingLabel(list[0]!, 'sending', 'claude', false)).toEqual({ kind: 'input' })
     // The field's own "Not sent" bubble is not shown a second time.
     expect(inputShown(list, FIELD)).toBe(true)
   })

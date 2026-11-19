@@ -35,7 +35,7 @@ commit it was built from (`wherdr 3.0.0+1a2b3c4 · herdr-core`).
 
 **Alfred**, wherdr's assistant, is the first row of the home screen: start it and it offers to
 set up your first project with you, one question at a time, or in the **setup window**
-(Settings › Projects › *Set up a project*), three steps: turn projects on, pick a project and its coordinator's agent, then meet the coordinator, whose first message proposes how you work
+(Home's *Open the setup window*), three steps: turn projects on, pick a project and its coordinator's agent, then meet the coordinator, whose first message proposes how you work
 ([Alfred](home.md#alfred), [Getting started](project-management.md#getting-started)). The rest is in
 Settings:
 

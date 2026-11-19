@@ -253,6 +253,9 @@ describe('working branch', () => {
     expect(startBase(wf({ kind: 'git.verify-merged', target: 'next' }), { type: 'task', base: '' }, { base: 'v3' })).toEqual({ base: 'next', fromWorkflow: true })
     expect(startBase(wf({ kind: 'github.pr' }), { type: 'task' }, {})).toEqual({})
     expect(startBase(null, { type: 'task' })).toEqual({})
+    // {base} unresolved is never a base: the repository's current branch.
+    expect(startBase(wf({ kind: 'github.pr', base: '{base}' }), { type: 'task' }, {})).toEqual({})
+    expect(startBase(null, { type: 'task', base: '{base}' }, { base: 'v3' })).toEqual({})
   })
 })
 

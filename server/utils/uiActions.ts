@@ -6,8 +6,8 @@ import { randomBytes } from 'node:crypto'
 import type { Turn } from '../../shared/pm/coordinator'
 import { shownTaskId } from '../../shared/pm/projectKey'
 import { taskPlan, type Task } from '../../shared/pm/run'
-import { actionBlock, actionLabel, actionRefusal, actionStamp, cardNow, cardOutcome, changeStamp, defaultChoice, keepCards, outcomeText, settingStamp, type CardChoice, type ProjectChange, type SettingChange, type UiAction, type UiCard } from '../../shared/uiActions'
-import { MAIN } from '../../shared/pm/coordinator'
+import { actionBlock, actionLabel, actionRefusal, actionStamp, cardNow, cardOutcome, changeStamp, defaultChoice, keepCards, outcomeText, settingStamp, type CardChoice, type ProjectChange, type SettingChange, type ThemeProposal, type UiAction, type UiCard } from '../../shared/uiActions'
+import { MAIN, cardTurn } from '../../shared/pm/coordinator'
 import { tellCardOutcome } from './cardOutcome'
 import { HerdrError } from './herdr'
 import { userStep } from './pmBoard'
@@ -15,6 +15,7 @@ import type { PmLaunchDeps } from './pmLaunch'
 import { resumeTask } from './pmStop'
 import type { PmStore } from './pmStore'
 import { patchSettings, readSettings } from './settings'
+import { CUSTOM_THEMES_MAX, newCustomId, readCustomThemes, readThemeFile, writeCustomThemes } from '../../app/utils/customThemes'
 
 async function stampOf(store: PmStore, kind: UiAction, task: Task | null) {
   if (!task) return { stamp: null, plan: [] }
@@ -25,7 +26,7 @@ async function stampOf(store: PmStore, kind: UiAction, task: Task | null) {
 
 // `ui action <kind> <task>`: scope, the coordinator's key (its record keeps the card).
 export async function addAction(store: PmStore, o: { scope: string, turn: Turn, by: string, kind: UiAction, task: Task }) {
-  if (o.turn !== 'user') throw new HerdrError('refused', 'ui action is only for a turn that comes from the user, never in a wake')
+  if (!cardTurn(o.turn)) throw new HerdrError('refused', 'ui action is only for a turn that comes from the user, never in a wake')
   const shown = shownTaskId(await store.projects(), o.task.id)
   const { stamp, plan } = await stampOf(store, o.kind, o.task)
   const why = actionRefusal(o.kind, stamp, shown)
@@ -44,7 +45,7 @@ export async function addAction(store: PmStore, o: { scope: string, turn: Turn, 
 // `wherdr alfred setting set <key> <value> --propose`: a card in Alfred's
 // reply; only the user's Apply changes the setting.
 export async function addSettingCard(store: PmStore, o: { turn: Turn, by: string, change: SettingChange, label: string }) {
-  if (o.turn !== 'user') throw new HerdrError('refused', 'setting set --propose is only for a turn that comes from the user, never in a wake')
+  if (!cardTurn(o.turn)) throw new HerdrError('refused', 'setting set --propose is only for a turn that comes from the user, never in a wake')
   const rec = await store.coordinator(MAIN)
   if (!rec) throw new HerdrError('not_found', 'No Alfred record')
   const now = Date.now()
@@ -56,13 +57,25 @@ export async function addSettingCard(store: PmStore, o: { turn: Turn, by: string
 // `wherdr alfred <change> --propose` (project add, template, guards…): a card
 // in Alfred's reply; only the user's Apply makes the change.
 export async function addChangeCard(store: PmStore, o: { turn: Turn, by: string, change: ProjectChange, label: string }) {
-  if (o.turn !== 'user') throw new HerdrError('refused', '--propose is only for a turn that comes from the user, never in a wake')
+  if (!cardTurn(o.turn)) throw new HerdrError('refused', '--propose is only for a turn that comes from the user, never in a wake')
   const rec = await store.coordinator(MAIN)
   if (!rec) throw new HerdrError('not_found', 'No Alfred record')
   const now = Date.now()
   const card: UiCard = { id: randomBytes(8).toString('hex'), by: o.by, at: now, kind: 'change', task: '', shown: '', label: o.label, change: o.change, stamp: changeStamp(o.change.lines), state: 'open' }
   await store.saveCoordinator({ ...rec, cards: keepCards(rec.cards ?? [], card, now) })
   return { proposed: true, change: o.change.lines, note: `Nothing changed: the user clicks Apply. End your reply with this block, after the sentence that explains it:\n${actionBlock(card.id)}` }
+}
+
+// `wherdr alfred theme propose < theme.json`: a card in Alfred's reply; only
+// the user's Apply saves the theme and picks it.
+export async function addThemeCard(store: PmStore, o: { turn: Turn, by: string, theme: ThemeProposal }) {
+  if (!cardTurn(o.turn)) throw new HerdrError('refused', 'theme propose is only for a turn that comes from the user, never in a wake')
+  const rec = await store.coordinator(MAIN)
+  if (!rec) throw new HerdrError('not_found', 'No Alfred record')
+  const now = Date.now()
+  const card: UiCard = { id: randomBytes(8).toString('hex'), by: o.by, at: now, kind: 'theme', task: '', shown: '', label: o.theme.file.name, theme: o.theme, stamp: `theme:${o.theme.file.name}`, state: 'open' }
+  await store.saveCoordinator({ ...rec, cards: keepCards(rec.cards ?? [], card, now) })
+  return `Nothing saved: the user clicks Apply (or edits it first). End your reply with this block, after the sentence that explains it:\n${actionBlock(card.id)}`
 }
 
 async function find(store: PmStore, id: unknown) {
@@ -80,8 +93,9 @@ export async function readCard(store: PmStore, id: unknown, settingsFile?: strin
   if (!hit) return null
   const s = hit.card.setting
   if (s) return cardNow(hit.card, settingStamp(s.key, (await readSettings(settingsFile))[s.key]), Date.now())
-  // A project change is checked again at the click (its dry run): here, its age only.
-  if (hit.card.change) return cardNow(hit.card, hit.card.stamp, Date.now())
+  // A project change is checked again at the click (its dry run), a theme at
+  // the click (the custom-themes limit): here, their age only.
+  if (hit.card.change || hit.card.theme) return cardNow(hit.card, hit.card.stamp, Date.now())
   const task = await store.task(hit.card.task)
   const { stamp } = await stampOf(store, hit.card.kind as UiAction, task)
   const card = cardNow(hit.card, stamp, Date.now()), turn = task?.step?.yourTurn
@@ -124,6 +138,14 @@ async function act(deps: ActDeps, id: unknown, cancel: boolean, choice?: CardCho
   const s = card.setting
   if (s) {
     await patchSettings({ [s.key]: s.after }, { file: deps.settingsFile })
+    return save(deps.store, { ...card, state: 'done', outcome: { text: 'Applied by you', at: Date.now() } })
+  }
+  if (card.theme) {
+    const list = readCustomThemes((await readSettings(deps.settingsFile)).customThemes ?? null)
+    if (list.length >= CUSTOM_THEMES_MAX) throw new HerdrError('refused', `At most ${CUSTOM_THEMES_MAX} custom themes: delete one in Settings › Appearance first`)
+    const th = readThemeFile(card.theme.file, newCustomId())
+    if (typeof th === 'string') throw new HerdrError('bad_input', th)
+    await patchSettings({ customThemes: writeCustomThemes([...list, th]), theme: th.id }, { file: deps.settingsFile })
     return save(deps.store, { ...card, state: 'done', outcome: { text: 'Applied by you', at: Date.now() } })
   }
   const c = card.change

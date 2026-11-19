@@ -32,6 +32,7 @@ import { advanceTick } from './pmAdvance'
 import { forgetMemory } from './pmMemory'
 import { samplePeaks } from './pmPeaks'
 import { releaseIdle, reviveWorker } from './pmRelease'
+import { resumeParked } from './pmPark'
 import { watchAgents } from './pmWatchdog'
 import { startFileWaits, syncFiles } from './pmFiles'
 import { agentBack, agentWaits, fixWatch, handToAgent, handedWatch, MACHINE_OFFLINE, MACHINE_PAUSED, retriesAction, roomWakeDue, type WorkerNow } from '../../shared/pm/release'
@@ -78,7 +79,7 @@ export async function syncWaits(deps: PmLaunchDeps) {
     // A login prompt, not a permission: one login incident for the machine's account, the task waits for the engine.
     if (kind === 'permission' && (task.state === 'working' || task.waitKind === 'permission')) {
       const screen = String((await deps.call<{ text?: string }>('terminal.read', { terminal: run!.terminal, lines: 10 }, 3000).catch(() => null))?.text || '')
-      if (isLoginPrompt(`${term.status && typeof term.status === 'object' ? term.status.msg ?? '' : ''}\n${screen}`)) { await loginExpired(deps, task, run!); continue }
+      if (isLoginPrompt(`${term.status && typeof term.status === 'object' ? term.status.msg ?? '' : ''}\n${screen}`) && await loginExpired(deps, task, run!)) continue
     }
     // What herdr-core says is asked ("approve Bash: npm test"), else the kind.
     const msg = typeof term.status === 'object' ? term.status?.msg?.trim().slice(0, 300) : undefined
@@ -100,11 +101,21 @@ export async function syncWaits(deps: PmLaunchDeps) {
 // Started another way meanwhile (the user, the coordinator): the engine's own start is dropped, not logged as a failure.
 const startedElsewhere = (e: Error) => e instanceof HerdrError && e.code === 'busy'
 
+// One project's starts failing (its workflow unreadable, ...): said once in its
+// log, and the other projects' starts go on.
+async function perProject(store: PmLaunchDeps['store'], key: string, fn: () => Promise<unknown>) {
+  try { await fn() } catch (e) {
+    const text = `could not start its tasks: ${e instanceof Error ? e.message : String(e)}`
+    const log = await store.projectLog(key).catch(() => [])
+    if (log.at(-1)?.text !== text) await store.logProject(key, { by: 'engine', text }).catch(() => {})
+  }
+}
+
 export async function startChained(deps: PmLaunchDeps, now = Date.now()) {
   const { store } = deps
-  const tasks = await store.tasks(), started: string[] = []
+  const tasks = await store.tasks(), started: string[] = [], projects = await store.projects()
   for (const t of tasks.filter(x => x.after && !x.step?.started)) {
-    const c = chainState(t, tasks)
+    const c = chainState(t, tasks, projects)
     const held = c && c !== 'go' && 'wait' in c ? c.wait : undefined
     // One before it is resumed by the engine after an incident: it waits quietly, still to do.
     const quiet = c && c !== 'go' && 'resumes' in c ? resumeWait(c.resumes) : undefined
@@ -115,8 +126,7 @@ export async function startChained(deps: PmLaunchDeps, now = Date.now()) {
     else if (t.state === 'todo' && !quiet && isResumeWait(t.held)) await store.saveTask({ ...t, held: undefined })
   }
   const machines = new Set<string>() // one start per machine and tick: the next reading counts the new agent
-  const projects = await store.projects()
-  for (const p of projects) {
+  for (const p of projects) await perProject(store, p.key, async () => {
     // A member's: its workspace's autopilot, whose limits count all its projects' tasks.
     // Runs read again: a member started above counts in its workspace's limits.
     const { ap, all, holds } = await pilotOf(store, projects, p.key), runs = await store.runs()
@@ -127,18 +137,18 @@ export async function startChained(deps: PmLaunchDeps, now = Date.now()) {
       pace = pacedStart(t, 'engine') ? await paceOf(store, p, t, now) : undefined
       if (!coordinatorStartRefusal(ap, t, all, runs, now, false, { pace: pace?.verdict, engine: true, holds })) { next = t; break }
     }
-    if (!next) continue
+    if (!next) return
     // No room on any allowed machine: held, with why on its card, until a later tick finds room.
     const placed = await placeFor(deps, next, { waits: pace?.waits })
-    if ('hold' in placed) { if (next.held !== placed.hold) await store.logTask({ ...next, held: placed.hold }, 'engine', placed.hold); continue }
-    if (machines.has(placed.machine)) continue
+    if ('hold' in placed) { if (next.held !== placed.hold) await store.logTask({ ...next, held: placed.hold }, 'engine', placed.hold); return }
+    if (machines.has(placed.machine)) return
     machines.add(placed.machine)
     forgetMemory(placed.machine)
     const r = await startTask(deps, next.id, { on: placed.machine }).catch((e: Error) => startedElsewhere(e) ? null : ({ ...next, state: 'waiting' as const, waiting: e.message }))
-    if (!r) continue
+    if (!r) return
     if (!r.sameFiles) await store.logTask((await store.task(next.id))!, 'engine', r.state === 'working' ? `started: ${next.after} done` : `could not start after ${next.after}: ${r.waiting ?? r.held ?? ''}`)
     started.push(next.id)
-  }
+  })
   return started
 }
 
@@ -150,24 +160,24 @@ export async function startChained(deps: PmLaunchDeps, now = Date.now()) {
 export async function startHeld(deps: PmLaunchDeps, now = Date.now()) {
   const { store } = deps
   const projects = await store.projects(), started: string[] = [], machines = new Set<string>()
-  for (const t of (await store.tasks()).filter(x => x.held && x.state === 'todo' && !x.after && !x.sameFiles)) {
+  for (const t of ((await store.tasks()).filter(x => x.held && x.state === 'todo' && !x.after && !x.sameFiles))) await perProject(store, t.project, async () => {
     const p = projects.find(x => x.key === t.project), runs = await store.runs() // a start above counts in the limits
-    if (!p) continue
+    if (!p) return
     const pace = pacedStart(t, 'wake') ? await paceOf(store, p, t, now) : undefined
     // An engine start its machine was out of reach for: already decided, it only waits for a machine.
     const why = t.machineWait ? undefined : originOf(t) === 'automation' ? paceRefusal(pace?.verdict)
       : await pilotOf(store, projects, p.key).then(o => coordinatorStartRefusal(o.ap, t, o.all, runs, now, true, { pace: pace?.verdict, holds: o.holds }))
-    if (why && /autopilot on/.test(why)) { await store.logTask({ ...t, held: undefined }, 'engine', `no longer held: ${why}`); continue }
+    if (why && /autopilot on/.test(why)) { await store.logTask({ ...t, held: undefined }, 'engine', `no longer held: ${why}`); return }
     const placed = why ? { hold: `Waits: ${why}` } : await placeFor(deps, t, { waits: pace?.waits })
-    if ('hold' in placed) { if (placed.hold !== t.held) await store.saveTask({ ...t, held: placed.hold }); continue }
-    if (machines.has(placed.machine)) continue
+    if ('hold' in placed) { if (placed.hold !== t.held) await store.saveTask({ ...t, held: placed.hold }); return }
+    if (machines.has(placed.machine)) return
     machines.add(placed.machine)
     forgetMemory(placed.machine)
     const r = await startTask(deps, t.id, { on: placed.machine }).catch((e: Error) => startedElsewhere(e) ? null : ({ ...t, state: 'waiting' as const, waiting: e.message }))
-    if (!r) continue
+    if (!r) return
     if (!r.sameFiles) await store.logTask((await store.task(t.id))!, 'engine', r.state === 'working' ? (t.machineWait ? 'started: a machine is back' : t.autopilot && !(await launched(store, r)) ? UNCONFIRMED : AUTOPILOT_STARTED.room) : `could not start: ${r.waiting ?? r.held ?? ''}`)
     started.push(t.id)
-  }
+  })
   return started
 }
 
@@ -305,25 +315,25 @@ async function handedWaits(deps: PmLaunchDeps, task: Task, why: string, now: num
 export async function startNext(deps: PmLaunchDeps, now = Date.now()) {
   const { store } = deps
   const runs = await store.runs(), started: string[] = [], machines = new Set<string>(), projects = await store.projects()
-  for (const p of projects.filter(x => coordinatorKey(x.key, projects) === x.key)) {
+  for (const p of projects.filter(x => coordinatorKey(x.key, projects) === x.key)) await perProject(store, p.key, async () => {
     const { ap, all: mine, holds, held } = await pilotOf(store, projects, p.key)
     const first = ap?.on ? busyQueue(mine)[0] : undefined
-    if (!first) continue
+    if (!first) return
     const pace = await paceOf(store, held.find(x => x.key === first.project)!, first, now)
     const next = busyNext(ap, mine, runs, now, { pace: pace.verdict, holds })
-    if (!('task' in next)) continue
+    if (!('task' in next)) return
     const placed = await placeFor(deps, first, { waits: pace.waits })
-    if ('hold' in placed || machines.has(placed.machine)) continue
+    if ('hold' in placed || machines.has(placed.machine)) return
     machines.add(placed.machine)
     forgetMemory(placed.machine)
     const r = await startTask(deps, first.id, { on: placed.machine })
       .catch((e: Error) => (startedElsewhere(e) ? null : { ...first, state: 'waiting' as const, waiting: e.message }))
-    if (!r || r.sameFiles) continue
+    if (!r || r.sameFiles) return
     const label = deps.machines().find(m => m.key === placed.machine)?.label ?? placed.machine
     const t = (await store.task(first.id))!
     await store.logTask(r.state === 'working' ? { ...t, autopilot: true } : t, 'engine', r.state === 'working' ? (await launched(store, r) ? `${AUTOPILOT_STARTED.busy}room on ${label}` : UNCONFIRMED) : `the autopilot could not start it: ${r.waiting ?? r.held ?? ''}`)
     started.push(first.id)
-  }
+  })
   return started
 }
 
@@ -359,6 +369,7 @@ export async function mechanicTick(deps: PmLaunchDeps, now = Date.now(), doing: 
   const resumes = await stage('resumeInterrupted', () => resumeInterrupted(deps, now))
   if (resumes) await stage('wakeIncidents', () => wakeIncidents(deps, resumes.busy, now))
   await stage('releaseIdle', () => releaseIdle(deps, now))
+  await stage('resumeParked', () => resumeParked(deps, now))
   await stage('startChained', () => startChained(deps, now))
   await stage('startHeld', () => startHeld(deps, now))
   await stage('syncFiles', () => syncFiles(deps, now))
@@ -394,7 +405,8 @@ async function followTask(deps: PmLaunchDeps, task: Task, projects: Project[], r
     return
   }
   // Its step action runs (outside the tick): followed once it ended, never from an older copy.
-  if (actionRunning(task.id)) return
+  // Parked on another task (park.ts): no move until it goes on.
+  if (actionRunning(task.id) || task.parked) return
   const p = projects.find(x => x.key === task.project)
   const t = p ? await store.workflow(p.key) : null
   if (!p || !t) { await noteCannotFollow(store, task, 'its project or workflow is missing'); return }

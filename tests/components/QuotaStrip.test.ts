@@ -101,6 +101,17 @@ describe('QuotaStrip with a Codex limit', () => {
     expect(w.find('[data-testid="quota-note"]').exists()).toBe(false)
   })
 
+  it('a limit read over an hour ago is muted and may have reset; a fresh one is red', async () => {
+    quotaNow.value = now
+    const w = await mountSuspended(QuotaStrip, { props: { rows: limited({ at: now - 16 * 3600000 }) } })
+    const label = w.find('[data-testid="quota-limited"]')
+    expect(label.text()).toMatch(/^Limit reached 16 h ago · may have reset \(resets .+\)$/)
+    expect(label.classes()).not.toContain('quota-limited')
+    expect(label.attributes('title')).toBe('Last read 16 h ago: send a message to a Codex agent to refresh')
+    const fresh = await mountSuspended(QuotaStrip, { props: { rows: limited({}) } })
+    expect(fresh.find('.quota-limited').exists()).toBe(true)
+  })
+
   it('with credits left, says work goes on with them; credits also show beside the gauges', async () => {
     quotaNow.value = now
     const w = await mountSuspended(QuotaStrip, { props: { rows: limited({ credits: { unlimited: false, balance: 120 } }) } })

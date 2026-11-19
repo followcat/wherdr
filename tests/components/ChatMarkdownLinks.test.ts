@@ -32,7 +32,7 @@ describe('ChatMarkdown in-app links', () => {
     const html = marked.parse('See `#/settings?section=projects&project=WHR&tab=guards` and [the board](#/board?project=WHR), [#/decisions](#/decisions).', { breaks: true, gfm: true, async: false }) as string
     const w = await mountSuspended(ChatMarkdown, { props: { typing: null, html } })
     const links = w.findAll('a.md-app-link')
-    expect(links.map(a => a.text())).toEqual(['Open Settings › Projects › WHR › Guards', 'the board', 'Open Decisions'])
+    expect(links.map(a => a.text())).toEqual(['Open Settings › Projects › WHR › Guards', 'the board', 'Open Tasks to review'])
     expect(links.every(a => a.find('.md-app-icon').exists() && !a.find('code').exists())).toBe(true)
     expect(w.text()).not.toContain('#/')
     w.unmount()

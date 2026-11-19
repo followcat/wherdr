@@ -17,7 +17,8 @@ import { STRATEGIES, STRATEGY_HINTS, STRATEGY_LABELS, type MachineNow, type Stra
 import { memoryLabel } from '#shared/pm/memory'
 import type { Weight } from '#shared/pm/weight'
 
-const props = defineProps<{ project: Project, ready?: Record<string, string> }>()
+// workspace: a member's workspace name, for its placement's ProjectFollow mark.
+const props = defineProps<{ project: Project, ready?: Record<string, string>, workspace?: string }>()
 const emit = defineEmits<{ changed: [] }>()
 const p = computed(() => props.project)
 
@@ -141,6 +142,7 @@ const remove = (k: string) => run(`rm:${k}`, async () => {
       <span>{{ tl('Placement') }}</span>
       <USelect v-model="strategy" :items="strategies" size="lg" :disabled="busy !== ''" :aria-label="tl('Placement strategy')" data-testid="pm-placement" />
     </label>
+    <ProjectFollow :project="p" field="placement" :workspace="workspace ?? ''" @followed="emit('changed')" />
     <span class="pm-strategy">
       <svg class="pm-picture" viewBox="0 0 54 22" aria-hidden="true">
         <g v-for="(tasks, i) in PICTURE[strategy]" :key="i">

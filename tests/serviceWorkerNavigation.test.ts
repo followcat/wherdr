@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.resetModules() })
 
-async function navigation(hit: Response | undefined, network: Promise<Response>, start?: string) {
+async function navigation(hit: Response | undefined, network: Promise<Response>, start?: string, url = 'https://app.example/?open=agent') {
   vi.useFakeTimers()
   const handlers: Record<string, (event: unknown) => void> = {}
   const put = vi.fn()
@@ -18,14 +18,15 @@ async function navigation(hit: Response | undefined, network: Promise<Response>,
   vi.stubGlobal('fetch', vi.fn().mockReturnValue(network))
   await import('../app/service-worker/sw')
   let served: Response | undefined
+  let answered = false
   const background: Promise<unknown>[] = []
   handlers.fetch!({
-    request: { method: 'GET', url: 'https://app.example/?open=agent', mode: 'navigate' },
-    respondWith: (response: Promise<Response>) => { void response.then(r => { served = r }) },
+    request: { method: 'GET', url, mode: url.includes('/_nuxt/') ? 'cors' : 'navigate' },
+    respondWith: (response: Promise<Response>) => { answered = true; void response.then(r => { served = r }) },
     waitUntil: (work: Promise<unknown>) => background.push(work),
   })
   await vi.advanceTimersByTimeAsync(0)
-  return { served: () => served, background, put }
+  return { served: () => served, answered: () => answered, background, put }
 }
 
 it('serves the current build when the network answers within the wait', async () => {
@@ -69,4 +70,13 @@ it('serves the cached shell at once on Instant start, and still refreshes the ca
   network.resolve(new Response('next shell'))
   await Promise.all(result.background)
   expect(await result.put.mock.calls[0]![1].text()).toBe('next shell')
+})
+
+it('leaves the build-version check to the network, never stored (WHR-514)', async () => {
+  // useAppVersion asks /_nuxt/builds/latest.json?<time>: each answer kept would grow the cache forever.
+  const result = await navigation(undefined, Promise.resolve(new Response('{}')), undefined, 'https://app.example/_nuxt/builds/latest.json?1700000000000')
+  await Promise.all(result.background)
+  expect(result.answered()).toBe(false)
+  expect(result.background).toEqual([])
+  expect(result.put).not.toHaveBeenCalled()
 })

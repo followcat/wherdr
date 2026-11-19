@@ -117,6 +117,21 @@ if [ -n "$old_pid" ] && [ "$old_pid" != "$pid" ]; then kill "$old_pid" 2>/dev/nu
 echo "started=$pid"`
 }
 
+// $1 mode, in one exec: the platform and its tool are checked on the machine itself
+// (no status read first), then controlScript of that platform runs.
+export function setScript(): string {
+  return `case "$(uname -s)" in
+Darwin)
+${controlScript('mac')}
+;;
+Linux)
+command -v systemd-inhibit >/dev/null 2>&1 && command -v systemd-run >/dev/null 2>&1 || { echo "error=no_tool"; exit 0; }
+${controlScript('linux')}
+;;
+*) echo "error=no_tool";;
+esac`
+}
+
 export const AWAKE_ERRORS: Record<string, string> = {
   no_tool: 'Sleep control is not available on this machine',
   evening_past: 'It is already past 8 pm on this machine: pick a duration',
@@ -144,6 +159,16 @@ export function parseAwakeStatus(raw: string): AwakeState {
     battery, lidClosed: /^lid=closed$/m.test(raw) ? true : battery ? false : null,
     eveningPast: Number(/^clock=(\d{4})$/m.exec(raw)?.[1] ?? 0) >= 2000,
   }
+}
+
+// A tap's read: the state, or why the machine could not be read (timeout, exec failure).
+export type AwakeRead = AwakeState | { error: string }
+
+// Why the menu does not open: "not available" only when the machine said it has no
+// tool; a read that failed says the machine could not be reached, and why.
+export function awakeRefusal(label: string, read: AwakeRead): string {
+  if ('error' in read) return `Could not reach ${label || 'this machine'}: ${read.error}`
+  return read.supported ? '' : AWAKE_ERRORS.no_tool!
 }
 
 export function parseControl(raw: string): { error: string } | { started: number | null } {

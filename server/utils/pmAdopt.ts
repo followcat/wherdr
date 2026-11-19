@@ -2,7 +2,7 @@
 // workspace's coordinator: the folder probed on the workspace's machine, the
 // member added (store.addProject), its visibility checked, its map line
 // pointed at it and the adoption written to the workspace's log.
-import { REAL_ALL_SCRIPT, REAL_SCRIPT, adoptRefusal, foldersOn, realLines, adoptedMember, realRepo, repoUnder, type RepoCommand } from '../../shared/pm/workspaceAdopt'
+import { REAL_ALL_SCRIPT, REAL_SCRIPT, adoptRefusal, foldersOn, realLines, adoptedMember, realRepo, repoUnder, underRoot, type RepoCommand } from '../../shared/pm/workspaceAdopt'
 import { effectiveWorkflow, isWorkspace } from '../../shared/pm/workspace'
 import { needsRemote } from '../../shared/pm/newProject'
 import { renderMap } from '../../shared/pm/workspaceMap'
@@ -31,7 +31,7 @@ export async function checkAdoption(deps: Deps, ws: Project, projects: Project[]
   const named = repoUnder(cmd.repo, ws.path, home)
   if (typeof named !== 'string') throw new HerdrError('refused', named.error)
   // Symlinks resolved on the machine: a link out of the root is refused.
-  const r = await exec(deps, on, REAL_SCRIPT, [ws.path, `${ws.path.replace(/\/+$/, '')}/${named}`])
+  const r = await exec(deps, on, REAL_SCRIPT, [ws.path, underRoot(ws.path, named)])
   if (r.code !== 0) throw new HerdrError('core', 'Could not resolve the folder on the workspace\'s machine')
   const [realRoot = '', realFolder = ''] = r.out.split('\n')
   const repo = realRepo(named, realRoot, realFolder)
@@ -39,8 +39,9 @@ export async function checkAdoption(deps: Deps, ws: Project, projects: Project[]
   const member = adoptedMember(ws, repo, projects)
   const probe = await probeFolder(ws.machine, member.path, deps)
   const workflow = effectiveWorkflow(member.key, null, member as Project, ws, await store.savedWorkflow(ws.key))
-  // Every project's folder on this machine, its clones' included, ~ expanded and resolved there.
-  const others = foldersOn(projects, ws.machine, home)
+  // Every project's folder on this machine, its clones' included, ~ expanded and resolved there;
+  // not the workspace's own root, which its root's repository may join as a member.
+  const others = foldersOn(projects.filter(p => p.key !== ws.key), ws.machine, home)
   const real = others.length ? await exec(deps, on, REAL_ALL_SCRIPT, others.map(o => o.folder)) : { code: 0, out: '' }
   if (real.code !== 0) throw new HerdrError('core', 'Could not resolve the projects\' folders on the workspace\'s machine')
   const resolved = realLines(real.out, others.length)

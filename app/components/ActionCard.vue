@@ -11,23 +11,35 @@
 // the command asked, none for one that cannot be added) and one to start their
 // coordinators; the outcome then lists each project. Proposed while project
 // management was off (change.pm): a "Turn on project management" checkbox,
-// on, that the Apply needs.
+// on, that the Apply needs. A proposed theme (kind 'theme'): its swatches and
+// sample in the current mode with the contrast check, Edit in editor (opens it
+// unsaved), Cancel and Apply (saves and picks it; refused at the limit).
 import { defaultChoice, type UiCard } from '#shared/uiActions'
 import { appRoute } from '#shared/appLinks'
 import { uiTargetLink } from '#shared/uiTargets'
+import { CUSTOM_THEMES_MAX, readThemeFile } from '~/utils/customThemes'
 
 const props = defineProps<{ id: string }>()
 const card = ref<UiCard | null | undefined>(undefined)
 const busy = ref<'' | 'run' | 'cancel'>('')
 const router = useRouter()
 const value = (v?: string) => (v === undefined ? t('default') : v === '1' ? t('on') : v === '0' ? t('off') : v)
-// The proposal (a setting or a project change) and its target, if any.
-const proposal = computed(() => card.value?.setting ?? card.value?.change)
+// The proposal (a setting, a project change or a theme) and its target, if any.
+const proposal = computed(() => card.value?.setting ?? card.value?.change ?? card.value?.theme)
 function showMe() {
-  const p = proposal.value, target = p?.target
+  const p = proposal.value, target = card.value?.theme ? 'appearance.theme' : p && 'target' in p ? p.target : undefined
   router.push(appRoute(target ? uiTargetLink(target, card.value?.change?.project) : '#/settings'))
 }
 const error = ref('')
+// A proposed theme as the app reads it (the server checked it), shown in the current mode.
+const theme = computed(() => {
+  const th = card.value?.theme ? readThemeFile(card.value.theme.file, 'proposed') : null
+  return typeof th === 'string' ? null : th
+})
+const themeShown = computed(() => theme.value && themeVariant(theme.value, activeTheme.value.light))
+const SWATCHES = ['bg', 'surface', 'line', 'text', 'muted', 'accent', 'green', 'ochre', 'rose'] as const
+const themesFull = computed(() => !!card.value?.theme && customThemes.value.length >= CUSTOM_THEMES_MAX)
+const editorOpen = ref(false)
 // The checkboxes of a several-projects card: the keys to add, and whether to start their coordinators.
 const picked = ref<string[]>([])
 const start = ref(true)
@@ -60,12 +72,19 @@ async function act(cancel = false) {
 
 <template>
   <div class="action-card" :class="card?.state ?? 'off'" data-testid="action-card">
-    <span class="action-by">{{ !card ? t('Action') : card.setting ? tl(`Setting change proposed · by ${card.by}`) : card.change ? tl(`Change proposed · by ${card.by}`) : tl(`${card.by} suggests`) }}</span>
+    <span class="action-by">{{ !card ? t('Action') : card.setting ? tl(`Setting change proposed · by ${card.by}`) : card.theme ? tl(`Theme proposed · by ${card.by}`) : card.change ? tl(`Change proposed · by ${card.by}`) : tl(`${card.by} suggests`) }}</span>
     <p v-if="card === undefined" class="action-line">{{ t('Loading…') }}</p>
     <p v-else-if="!card" class="action-line">{{ t('This action is no longer available') }}</p>
     <template v-else-if="proposal">
       <span class="action-task">{{ card.label }}</span>
       <p v-if="card.setting" class="action-change" data-testid="setting-change"><span>{{ value(card.setting.before) }}</span><UIcon name="i-lucide-arrow-right" /><b>{{ value(card.setting.after) }}</b></p>
+      <div v-else-if="card.theme" class="action-theme" data-testid="theme-proposal">
+        <template v-if="themeShown && card.state === 'open'">
+          <div class="action-swatches"><i v-for="k in SWATCHES" :key="k" :title="k" :style="{ background: themeShown.c[k] }" /></div>
+          <ThemeSample :variant="themeShown" />
+        </template>
+        <ThemeEditor v-if="theme" v-model:open="editorOpen" :base="theme" />
+      </div>
       <div v-else-if="card.change!.picks && card.state === 'open'" class="action-picks" data-testid="change-picks">
         <label v-for="(l, i) in card.change!.lines" :key="i" class="action-pick" :class="{ off: !card.change!.picks[i] }">
           <input v-if="card.change!.picks[i]" v-model="picked" type="checkbox" :value="card.change!.picks[i]">
@@ -77,11 +96,13 @@ async function act(cancel = false) {
       </div>
       <ul v-else class="action-lines" data-testid="change-lines"><li v-for="(l, i) in card.change!.lines" :key="i">{{ l }}</li></ul>
       <p v-if="proposal.said" class="action-line">{{ t('After your message:') }} “{{ proposal.said }}”</p>
+      <p v-if="themesFull && card.state === 'open'" class="action-line" data-testid="theme-full">{{ tl(`At most ${CUSTOM_THEMES_MAX} custom themes: delete one in the theme editor (Settings › Appearance) first`) }}</p>
       <div v-if="card.state === 'open'" class="action-row">
-        <UButton v-if="card.setting || proposal.target" color="neutral" variant="ghost" size="lg" icon="i-lucide-locate-fixed" data-testid="setting-show" @click="showMe">{{ t('Show me') }}</UButton>
+        <UButton v-if="card.theme" color="neutral" variant="outline" size="lg" icon="i-lucide-palette" data-testid="theme-edit" @click="editorOpen = true">{{ tl('Edit in editor') }}</UButton>
+        <UButton v-if="card.setting || themesFull || ('target' in proposal && proposal.target)" color="neutral" variant="ghost" size="lg" icon="i-lucide-locate-fixed" data-testid="setting-show" @click="showMe">{{ t('Show me') }}</UButton>
         <span class="action-gap" />
         <UButton color="neutral" variant="outline" size="lg" :loading="busy === 'cancel'" :disabled="busy !== ''" data-testid="setting-cancel" @click="act(true)">{{ t('Cancel') }}</UButton>
-        <UButton color="primary" size="lg" :loading="busy === 'run'" :disabled="busy !== '' || (!!card.change?.picks && (!picked.length || (!!card.change.pm && !pm)))" data-testid="setting-apply" @click="act()">{{ t('Apply') }}</UButton>
+        <UButton color="primary" size="lg" :loading="busy === 'run'" :disabled="busy !== '' || themesFull || (!!card.change?.picks && (!picked.length || (!!card.change.pm && !pm)))" data-testid="setting-apply" @click="act()">{{ t('Apply') }}</UButton>
       </div>
       <p v-else-if="card.state === 'stale'" class="action-line" data-testid="action-stale">{{ card.setting ? t('This setting changed since: nothing was applied') : t('This changed since: nothing was applied') }}</p>
       <p v-else class="action-outcome" :class="{ no: card.state === 'dismissed' }" :title="fmtDateTime(card.outcome?.at ?? card.at)" data-testid="action-outcome">
@@ -118,6 +139,9 @@ async function act(cancel = false) {
 .action-change > span { color: var(--text-2); }
 .action-lines { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; font: 13px/1.4 var(--font-mono); overflow-wrap: anywhere; }
 .action-gap { flex: 1 1 0; }
+.action-theme { display: grid; gap: 8px; min-width: 0; }
+.action-swatches { display: flex; flex-wrap: wrap; gap: 4px; }
+.action-swatches i { width: 24px; height: 24px; border: 1px solid var(--line); }
 .action-picks { display: grid; min-width: 0; font: 13px/1.4 var(--font-mono); }
 .action-pick { display: flex; align-items: center; gap: 10px; min-height: 44px; min-width: 0; overflow-wrap: anywhere; cursor: pointer; }
 .action-pick > input, .action-pick > .iconify { width: 21px; height: 21px; flex: none; accent-color: var(--accent); }

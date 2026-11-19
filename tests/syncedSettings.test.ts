@@ -100,6 +100,27 @@ describe('settings kept on the server', () => {
     expect(b.data.get('showCounters')).toBe('1')
   })
 
+  it('a server that cannot read its file changes nothing here', async () => {
+    const { server, device } = fakeServer({ theme: 'nord', showCounters: '1' })
+    const a = device()
+    await a.sync.load()
+    server.down = true // GET /api/settings fails on a damaged file
+    await a.sync.load()
+    expect(a.data.get('theme')).toBe('nord')
+    expect(a.data.get('showCounters')).toBe('1')
+  })
+
+  it('a value received from the server is never sent back', async () => {
+    const { server, device } = fakeServer({ communityPlugins: '0' })
+    const a = device()
+    await a.sync.load()
+    a.sync.receive({ communityPlugins: '1' })
+    expect(a.data.get('communityPlugins')).toBe('1')
+    expect(await a.sync.flush()).toBe(true)
+    expect(server.posts).toEqual([])
+    expect(server.map.communityPlugins).toBe('0')
+  })
+
   it('offline: the change stays local and goes out on reconnection', async () => {
     const { server, device } = fakeServer({ theme: 'nord' })
     const a = device()

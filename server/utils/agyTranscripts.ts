@@ -3,14 +3,16 @@
 // kept local copy through MachineFs: the database goes back over the wire only
 // when its own identity moves, a matching WAL generation only by its grown
 // tail, and a pair that moved under the copy is retried so node:sqlite always
-// opens one generation. Locally the live database is tried read-only first
-// and the same kept copy is only the fallback.
+// opens one generation. Locally the live database is opened in place,
+// read-only, only while agy holds both sidecars (node:sqlite would create
+// them otherwise); every other local read uses the same kept copy.
 import { createHash } from 'node:crypto'
-import { appendFileSync, closeSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, mkdtempSync, openSync, readdirSync, readSync, rmSync, truncateSync, writeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { ChatItem, ChatResponse, ModelInfo } from '../../shared/types'
-import type { TranscriptPane } from './transcripts'
+import { clip } from './transcriptText'
+import { type TranscriptPane, isMissing } from './transcripts'
 import { excerpt, matchAt } from '../../shared/searchText'
 import { ompModelLabel } from './models'
 import { HerdrError } from './herdr'
@@ -25,7 +27,6 @@ const PAGE_ITEMS = 120
 // than copying hundreds of MB per poll on a small host.
 const MAX_SNAPSHOT_BYTES = 256 * 1024 * 1024
 const READ_CHUNK_BYTES = 4 * 1024 * 1024
-const MAX_TEXT = 20000
 const FAIL_QUIET_MS = 1500
 // A host may be a Raspberry Pi; do not retain dozens of parsed transcripts.
 const DOCUMENT_CACHE_ENTRIES = 4
@@ -45,17 +46,37 @@ const idOf = (st: { mtimeMs: number, ino?: number, size: number }) => `${st.ino 
 const genOf = (db: { mtimeMs: number, ino?: number, size: number }, wal: { mtimeMs: number, ino?: number, size: number } | null) =>
   hash12(`${idOf(db)}:${wal ? idOf(wal) : '-'}`)
 const hash12 = (s: string) => createHash('sha1').update(s).digest('hex').slice(0, 12)
-const clip = (s: unknown) => typeof s === 'string' ? s.slice(0, MAX_TEXT) : ''
 const HEAD = /^(.*):(\d+):(null|\d+):([0-9a-f]{12})(?=[/~#]|$)/
 const ANCHOR = /\/(\d+)\.([0-9a-f]{12})(?=[~#]|$)/
 const AGY_SESSION = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i
+// Prefix of the kept copies in the temp dir (conv.db and conv.db-wal each),
+// followed by the owning process's pid: `wherdr-agy-<pid>-XXXXXX`.
+const KEPT_PREFIX = 'wherdr-agy-'
+const KEPT_NAME = /^wherdr-agy-(\d+)-/
 
-function isMissing(e: unknown): boolean {
-  const err = e as { code?: string, message?: string } | null
-  if (!err) return false
-  if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return true
-  return err.code === 'remote' && /no such file|not a directory|introuvable/i.test(err.message || '')
+// Whether a process with this pid exists: another user's (EPERM) counts as
+// alive, only a missing one (ESRCH) does not.
+function alive(pid: number): boolean {
+  try { process.kill(pid, 0); return true } catch (e) { return (e as { code?: string } | null)?.code !== 'ESRCH' }
 }
+
+// A kept copy of a previous run (a restart while one was open) stays in the
+// temp dir — often tmpfs — up to the snapshot limit each. Called once at
+// startup (server/plugins/poller.ts): only a folder whose pid no longer runs is
+// removed, so a second server sharing the temp dir keeps the copies it is
+// reading. A reused pid only delays the cleanup to a later start. Anything
+// else in the temp dir is left alone.
+export function sweepAgyCopies(dir = tmpdir()): void {
+  let names: string[]
+  try { names = readdirSync(dir) } catch { return }
+  for (const name of names) {
+    const found = KEPT_NAME.exec(name)
+    const pid = found ? Number(found[1]) : 0
+    if (!pid || !Number.isSafeInteger(pid) || alive(pid)) continue
+    try { rmSync(path.join(dir, name), { recursive: true, force: true }) } catch { /* held by another process */ }
+  }
+}
+
 
 // End of the last whole WAL frame a file of `keptSize` bytes holds
 // (32 + n * (24 + page size)); the page size sits in the WAL header's
@@ -253,6 +274,8 @@ interface SnapBase {
   walSize: number
   walHead: Buffer | null
   refs: number
+  // Its pane is gone: the directory goes as soon as no read holds it.
+  gone: boolean
   queue: Promise<void>
 }
 
@@ -362,58 +385,20 @@ export function createAgyTranscripts({
     return at !== undefined && now() - at < failQuietMs
   }
 
-  // `size` bytes of `src` (or its tail from `start`) in bounded chunks. A
-  // short read means the file shrank under the copy: a move, to be retried.
-  async function readAll(src: string, size: number, start = 0): Promise<Buffer> {
-    const chunks: Buffer[] = []
-    for (let pos = start; pos < size; pos += READ_CHUNK_BYTES) {
-      const len = Math.min(READ_CHUNK_BYTES, size - pos)
-      const chunk = await fs.read(src, pos, len)
-      if (chunk.length !== len) throw moved('Incomplete Antigravity conversation read')
-      chunks.push(chunk)
-    }
-    return Buffer.concat(chunks, size - start)
-  }
-
-  // A consistent snapshot of the database on local disk: its WAL sidecar
-  // comes along so committed frames are visible to node:sqlite. After the
-  // copy both files are stat'ed again *fresh* — never through the stat
-  // cache, which could answer with the pre-copy state: a move under the
-  // copy or a WAL from another generation retries instead of opening a
-  // torn pair.
-  async function snapshot(file: string, dbSt: FsStat, walSt: FsStat | null): Promise<{ dir: string, db: string }> {
-    if (dbSt.size + (walSt?.size ?? 0) > MAX_SNAPSHOT_BYTES) throw new Error('Antigravity conversation exceeds the supported size limit')
-    const dir = mkdtempSync(path.join(tmpdir(), 'wherdr-agy-'))
-    const db = path.join(dir, 'conv.db')
-    const walPath = `${file}-wal`
-    const copied = walSt && walSt.size > 0 ? walSt.size : 0
+  // `size` bytes of `src` (or its tail from `start`) written to `dest` as they
+  // arrive, in bounded chunks: a conversation at the snapshot limit never sits
+  // in memory. A short read means the file shrank under the copy — a move, to
+  // be retried.
+  async function copyInto(src: string, size: number, dest: string, start = 0, append = false): Promise<void> {
+    const fd = openSync(dest, append ? 'a' : 'w')
     try {
-      writeFileSync(db, await readAll(file, dbSt.size))
-      if (copied) writeFileSync(`${db}-wal`, await readAll(walPath, copied))
-      const dbNow = await fs.stat(file, { fresh: true }).catch(e => { if (isMissing(e)) return null; throw e })
-      if (!dbNow?.isFile || idOf(dbNow) !== idOf(dbSt)) throw moved('Antigravity conversation changed during the read')
-      const walNow = await fs.stat(walPath, { fresh: true }).catch(e => { if (isMissing(e)) return null; throw e })
-      const liveNow = walNow?.isFile && walNow.size > 0 ? walNow : null
-      if (!liveNow || !copied) {
-        if (liveNow || copied) throw moved('Antigravity conversation changed during the read')
-      } else {
-        // A grown WAL is fine — the copied prefix is a consistent read —
-        // a shrunk or restarted one is not.
-        if (liveNow.size < copied) throw moved('Antigravity conversation changed during the read')
-        const head = await fs.read(walPath, 0, Math.min(WAL_HEADER_BYTES, copied)).catch(e => {
-          if (isMissing(e)) throw moved('Antigravity conversation changed during the read')
-          throw e
-        })
-        const expected = readFileSync(`${db}-wal`).subarray(0, Math.min(WAL_HEADER_BYTES, copied))
-        if (head.length < expected.length || !head.subarray(0, expected.length).equals(expected)) {
-          throw moved('Antigravity conversation changed during the read')
-        }
+      for (let pos = start; pos < size; pos += READ_CHUNK_BYTES) {
+        const len = Math.min(READ_CHUNK_BYTES, size - pos)
+        const chunk = await fs.read(src, pos, len)
+        if (chunk.length !== len) throw moved('Incomplete Antigravity conversation read')
+        writeSync(fd, chunk)
       }
-      return { dir, db }
-    } catch (e) {
-      rmSync(dir, { recursive: true, force: true })
-      throw e
-    }
+    } finally { closeSync(fd) }
   }
 
   const bases = new Map<string, SnapBase>()
@@ -424,9 +409,9 @@ export function createAgyTranscripts({
   function acquireBase(file: string): SnapBase {
     let base = bases.get(file)
     if (!base) {
-      const dir = mkdtempSync(path.join(tmpdir(), 'wherdr-agy-'))
+      const dir = mkdtempSync(path.join(tmpdir(), `${KEPT_PREFIX}${process.pid}-`))
       const db = path.join(dir, 'conv.db')
-      base = { dir, db, wal: `${db}-wal`, shm: `${db}-shm`, dbId: null, walSize: 0, walHead: null, refs: 0, queue: Promise.resolve() }
+      base = { dir, db, wal: `${db}-wal`, shm: `${db}-shm`, dbId: null, walSize: 0, walHead: null, refs: 0, gone: false, queue: Promise.resolve() }
     }
     bases.delete(file)
     bases.set(file, base)
@@ -439,6 +424,21 @@ export function createAgyTranscripts({
     return base
   }
 
+  // The pane left the state: its copy is dropped now, or as soon as the read
+  // holding it lets go (a read still needs the pair on disk).
+  function forgetFile(file: string): void {
+    const base = bases.get(file)
+    if (!base) return
+    base.gone = true
+    if (base.refs) return
+    dropBase(file, base)
+  }
+
+  function dropBase(file: string, base: SnapBase): void {
+    if (bases.get(file) === base) bases.delete(file)
+    rmSync(base.dir, { recursive: true, force: true })
+  }
+
   async function lockBase(file: string): Promise<{ base: SnapBase, unlock: () => void }> {
     const base = acquireBase(file)
     base.refs++
@@ -446,7 +446,14 @@ export function createAgyTranscripts({
     let release = () => {}
     base.queue = new Promise<void>(resolve => { release = resolve })
     await prev
-    return { base, unlock: () => { base.refs--; release() } }
+    return {
+      base,
+      unlock: () => {
+        base.refs--
+        release()
+        if (base.gone && !base.refs) dropBase(file, base)
+      },
+    }
   }
 
   // Brings the kept copy to the remote state dbSt/walSt describe, then stats
@@ -458,7 +465,11 @@ export function createAgyTranscripts({
     const walPath = `${file}-wal`
     try {
       if (base.dbId !== idOf(dbSt)) {
-        writeFileSync(base.db, await readAll(file, dbSt.size))
+        // The copy truncates the kept file before its first chunk: until it
+        // completes, the kept state must not claim the old database is there,
+        // or a failure would leave the next read appending to a partial copy.
+        base.dbId = null
+        await copyInto(file, dbSt.size, base.db)
         base.dbId = idOf(dbSt)
       }
       const live = walSt && walSt.size > 0 ? walSt : null
@@ -476,15 +487,24 @@ export function createAgyTranscripts({
         const current = !!probe && (await fs.read(walPath, probe.start, probe.len))
           .equals(localSlice(base.wal, probe.start, probe.len))
         if (current && live.size > base.walSize) {
-          appendFileSync(base.wal, await readAll(walPath, live.size, base.walSize))
+          // A failed tail leaves the kept file where it was: the next attempt
+          // appends from the same offset, never after half a chunk.
+          try { await copyInto(walPath, live.size, base.wal, base.walSize, true) } catch (e) {
+            truncateSync(base.wal, base.walSize)
+            throw e
+          }
           base.walSize = live.size
         } else if (!current || live.size !== base.walSize) {
           // No WAL yet, a shrink, a restart (another header) or a kept frame
-          // rewritten in place: full copy.
-          const buf = await readAll(walPath, live.size)
-          writeFileSync(base.wal, buf)
+          // rewritten in place: full copy. It truncates the kept file before
+          // its first chunk, so the kept state is emptied first: a failure
+          // here can only lead to another full copy, never to a tail appended
+          // after the bytes the failure left behind.
+          base.walSize = 0
+          base.walHead = null
+          await copyInto(walPath, live.size, base.wal)
           base.walSize = live.size
-          base.walHead = Buffer.from(buf.subarray(0, Math.min(WAL_HEADER_BYTES, buf.length)))
+          base.walHead = localSlice(base.wal, 0, Math.min(WAL_HEADER_BYTES, live.size))
         }
         // Either path can end mid-frame — a frame's 24-byte header and its
         // page are separate writes — and a later rewrite starts exactly at
@@ -558,10 +578,12 @@ export function createAgyTranscripts({
     if (known) return known
     const work = (async () => {
       const Db = await ctor()
-      // Local, live database: try a plain read-only open first (each statement
-      // sees a consistent WAL snapshot); fall back to a byte copy when WAL or
-      // shm permissions refuse it. Remote machines always take the copy path.
-      if (fs === localFs) {
+      // Local database: a plain read-only open in place, only while agy holds
+      // both sidecars. node:sqlite (Node 24) creates a missing -wal and -shm
+      // even for a read-only open and leaves them in agy's folder. Otherwise
+      // (agy not running, or a sidecar refused) read the kept copy; remote
+      // machines always take the copy path.
+      if (fs === localFs && walSt && existsSync(`${file}-shm`)) {
         try {
           const db = new Db(file, { readOnly: true })
           try {
@@ -629,62 +651,6 @@ export function createAgyTranscripts({
     const { db, wal, gen } = await statDb(file)
     const got = await readDoc(file, session, db, wal, gen)
     return { st: { size: got.size, gen: got.gen }, file, doc: got.doc }
-  }
-
-  async function exists(file: string | null) {
-    if (!file) return false
-    try { return (await fs.stat(file)).isFile }
-    catch (e) {
-      if (isMissing(e)) return false
-      throw e
-    }
-  }
-
-  // Last resort for a live pane whose descriptors could not be read: the
-  // summaries database is trusted only when a single top-level conversation
-  // claims this folder and no other agy pane on the machine does.
-  async function summariesSession(pane: { cwd?: string | null, bornAt?: number | null }, competing: boolean): Promise<string | null> {
-    if (competing || !pane.cwd || !(await ready())) return null
-    const file = path.join(agyCliDir(home, honorEnv), 'conversation_summaries.db')
-    const cwdUri = `file://${pane.cwd.replace(/\/+$/, '')}`
-    const rows: { id: string, uris: string, modified: string }[] = []
-    const Db = await ctor()
-    const collect = (db: DatabaseSync) => {
-      for (const r of db.prepare(`SELECT conversation_id id, workspace_uris uris, last_modified_time modified FROM conversation_summaries WHERE COALESCE(nesting_depth, 0) = 0 AND COALESCE(killed, 0) IN (0, 'false')`).all() as { id?: unknown, uris?: unknown, modified?: unknown }[]) {
-        const id = String(r.id || '')
-        if (AGY_SESSION.test(id)) rows.push({ id, uris: String(r.uris || ''), modified: String(r.modified || '') })
-      }
-    }
-    try {
-      const st = await fs.stat(file)
-      if (!st.isFile) return null
-      if (fs === localFs) {
-        const db = new Db(file, { readOnly: true })
-        try { collect(db) } finally { db.close() }
-      } else {
-        const wal = await fs.stat(`${file}-wal`).catch(() => null)
-        const snap = await snapshot(file, st, wal?.isFile ? wal : null)
-        try {
-          const db = new Db(snap.db, { readOnly: true })
-          collect(db)
-          db.close()
-        } finally { rmSync(snap.dir, { recursive: true, force: true }) }
-      }
-    } catch (e) {
-      if (isMissing(e) || isMoved(e) || isSqliteUnsupported(e)) return null
-      throw e
-    }
-    const matches = rows.filter(r => {
-      try { return (JSON.parse(r.uris) as unknown[]).some(u => typeof u === 'string' && u.replace(/\/+$/, '') === cwdUri) } catch { return false }
-    })
-    if (matches.length !== 1) return null
-    const m = matches[0]!
-    // A conversation untouched since the pane started belongs to an older run.
-    if (pane.bornAt) {
-      const touched = Date.parse(m.modified.replace(' ', 'T'))
-      if (Number.isFinite(touched) && touched < pane.bornAt - 120_000) return null
-    }
-    return await exists(conversationPath(home, m.id, honorEnv)) ? m.id : null
   }
 
   async function chat(pane: TranscriptPane, opts: AgyOptions = {}): Promise<ChatResponse> {
@@ -804,5 +770,5 @@ export function createAgyTranscripts({
     }
   }
 
-  return { chat, image, search, model, pathOf, summariesSession }
+  return { chat, image, search, model, pathOf, forgetFile }
 }

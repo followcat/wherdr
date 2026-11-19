@@ -13,16 +13,29 @@ import type { CoreAdminDeps } from './coreCreate'
 import { HerdrError } from './herdr'
 import { addAdopted, checkAdoption } from './pmAdopt'
 import { writeMapFile } from './pmMap'
+import { readPlanFile } from './pmPlan'
 import type { PmStore } from './pmStore'
 
 type Deps = CoreAdminDeps & { store: PmStore }
 
-export async function splitFeature(deps: Deps, ws: Project | undefined, feature: Task, input: unknown, { by, origin }: { by: string, origin: 'user' | 'coordinator' }, start: (t: Task) => Promise<unknown>) {
+// from: the plan's file (--from, a path under the workspace's root) instead of input.
+export async function splitFeature(deps: Deps, ws: Project | undefined, feature: Task, input: unknown, { by, origin, from }: { by: string, origin: 'user' | 'coordinator', from?: string }, start: (t: Task) => Promise<unknown>) {
   if (!ws || !isWorkspace(ws) || feature.kind !== 'feature') throw new HerdrError('bad_input', `${feature.id} is not a workspace's feature`)
+  let text = String(input ?? '')
+  if (from) {
+    const read = await readPlanFile(deps, ws, from, 1_000_000)
+    if ('why' in read) throw new HerdrError('bad_input', `--from: ${read.why}`)
+    text = read.text
+  }
   let raw: unknown
-  try { raw = JSON.parse(String(input ?? '')) } catch { throw new HerdrError('bad_input', 'The plan is not valid JSON (on stdin)') }
+  try { raw = JSON.parse(text) } catch { throw new HerdrError('bad_input', `The plan is not valid JSON (${from ? from : 'on stdin'})`) }
   const plan = parsePlan(raw)
   if ('error' in plan) throw new HerdrError('bad_input', plan.error)
+  // The plan file the refs name: under the root, there (symlinks resolved).
+  if (plan.file) {
+    const read = await readPlanFile(deps, ws, plan.file)
+    if ('why' in read) throw new HerdrError('bad_input', `plan: ${read.why}`)
+  }
   const { store } = deps
   const all = await store.tasks(), list = await store.projects()
   if (feature.closed || subTasks(feature, all).length) throw new HerdrError('refused', feature.closed ? `${feature.id} is closed` : `${feature.id} is already split: add a sub-task with task add --feature ${feature.id}`)
@@ -52,14 +65,14 @@ export async function splitFeature(deps: Deps, ws: Project | undefined, feature:
     const keyOf = (w: typeof where[number]) => ('key' in w ? w.key : adopted.find(a => a.repo === w.repo)!.key)
     const index = (repo: string) => plan.tasks.findIndex(t => t.repo === repo)
     const { feature: split, tasks } = await store.splitFeature(feature.id, plan.tasks.map((t, i) => ({
-      project: keyOf(where[i]!), title: t.title, type: t.type, description: t.description, files: t.files, origin, addedBy: ws.key,
+      project: keyOf(where[i]!), title: t.title, type: t.type, description: t.description, files: t.files, refs: t.refs, origin, addedBy: ws.key,
       after: t.after.filter(a => index(a) < 0).join(','), afterIndex: t.after.map(index).filter(x => x >= 0),
       mergeAfter: t.mergeAfter.filter(a => index(a) < 0).join(','), mergeAfterIndex: t.mergeAfter.map(index).filter(x => x >= 0),
-    })), plan.order, by)
+    })), plan.order, by, plan.file)
     // A start that fails leaves its sub-task to do, as task start would: the split stays.
     const started: string[] = [], notStarted: Record<string, string> = {}
     for (const t of tasks.filter(x => !x.after)) await start(t).then(() => started.push(t.id), (e: Error) => { notStarted[t.id] = e.message })
-    return { feature: split, tasks: tasks.map(t => ({ id: t.id, project: t.project, title: t.title, ...(t.after ? { after: t.after } : {}), ...(t.mergeAfter ? { mergeAfter: t.mergeAfter } : {}) })), ...(adopted.length ? { adopted: adopted.map(a => a.key) } : {}), started, ...(Object.keys(notStarted).length ? { notStarted } : {}) }
+    return { feature: split, ...(plan.file ? { planFile: plan.file } : {}), tasks: tasks.map(t => ({ id: t.id, project: t.project, title: t.title, ...(t.refs ? { refs: t.refs } : {}), ...(t.after ? { after: t.after } : {}), ...(t.mergeAfter ? { mergeAfter: t.mergeAfter } : {}) })), ...(adopted.length ? { adopted: adopted.map(a => a.key) } : {}), started, ...(Object.keys(notStarted).length ? { notStarted } : {}) }
   } catch (e) {
     await dropAdopted(deps, ws, adopted, by, feature.id)
     throw e

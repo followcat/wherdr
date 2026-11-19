@@ -21,7 +21,7 @@ let mounted: { unmount: () => void } | null = null
 afterEach(() => { mounted?.unmount(); mounted = null; coordinators.value = []; navigate.mockClear(); document.body.innerHTML = '' })
 const mount = async () => (mounted = await mountSuspended(ProjectWorkflow, {
   attachTo: document.body,
-  props: { project, workflow: { ...wherdr, version: 2 }, log: [], templates: [] },
+  props: { project, workflow: { ...wherdr, version: 2 }, log: [] },
 }))
 type W = Awaited<ReturnType<typeof mount>>
 const nodes = (w: W) => w.findAll('[data-testid="wf-node"]').map(n => ({
@@ -91,4 +91,12 @@ it('shows the user step\'s real button, and branch protection apart from who mer
   expect(await guard({ protected: ['next'], merge: { protected: 'engine', others: 'engine' } })).toBe('next is protected: the engine merges')
   expect(await guard({ protected: ['main'], merge: { protected: 'user', others: 'user' } })).toBe('next is not protected: you merge')
   expect(await guard({ protected: ['next'], merge: { protected: 'user', others: 'engine' } })).toBe('next is protected: you merge')
+})
+
+// WHR-473: no template library: a project without a workflow only asks its coordinator.
+it('has no template library: without a workflow, only Ask the coordinator; the ⋯ menu holds the change log', async () => {
+  const w = mounted = await mountSuspended(ProjectWorkflow, { props: { project, workflow: null, log: [] } })
+  expect(w.text()).not.toMatch(/template/i)
+  expect(w.find('[data-testid="wf-ask"]').exists()).toBe(true)
+  expect((w.vm as unknown as { menu: () => { label?: string }[] }).menu().map(m => m.label)).toEqual(['Change log'])
 })

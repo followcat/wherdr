@@ -8,6 +8,19 @@ export interface ClientPluginInfo {
   description: string
   // Bundle file, relative to the plugin's folder.
   main: string
+  // Installed from GitHub (pluginInstall.ts): the repo, the ref asked ('' = the
+  // latest release, else the default branch) and the exact commit.
+  source?: PluginSource
+}
+
+export interface PluginSource { repo: string, ref: string, commit: string }
+// Next to the plugin's files; a dot file, so never served nor taken from a repo.
+export const SOURCE_FILE = '.source.json'
+
+export function parseSource(raw: unknown): PluginSource | null {
+  const s = raw as Partial<PluginSource> | null
+  if (!s || typeof s.repo !== 'string' || typeof s.commit !== 'string') return null
+  return { repo: s.repo, ref: typeof s.ref === 'string' ? s.ref : '', commit: s.commit }
 }
 
 export const PLUGIN_ID_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/
@@ -40,4 +53,11 @@ export function readPrefs(raw: string | null): PluginPrefs {
     for (const [k, v] of Object.entries(p.failed && typeof p.failed === 'object' ? p.failed : {})) if (typeof v === 'string') failed[k] = v.slice(0, 300)
     return { off: Array.isArray(p.off) ? p.off.filter((x): x is string => typeof x === 'string') : [], failed }
   } catch { return { off: [], failed: {} } }
+}
+
+// The Community plugins switch, one for the server (settings.json). Unset is
+// an install from before the switch: on when its plugins folder already holds
+// plugins (they keep loading after the update), off otherwise.
+export function communityOn(raw: string | null | undefined, installed: number): boolean {
+  return raw === '1' || (raw !== '0' && installed > 0)
 }

@@ -1,7 +1,8 @@
 // Tasks and the agent runs that work on them. A run's terminal carries
 // wherdr.* labels on herdr-core, so the engine finds it again after a restart.
 import type { Project } from './project'
-import { MODEL_RE, PROGRAMS, reviewerCheck, type Prefs, type Step, type Template, type Weight } from './workflow'
+import { MODEL_RE, PROGRAMS, reviewerCheck, type ContextSpec, type Prefs, type Step, type Template, type Weight } from './workflow'
+import type { ContextFolder } from './context'
 import { fillBase, planSteps, type StepState } from './steps'
 import { needsShots, shotMode } from './shots'
 import type { Stopped } from './stop'
@@ -13,7 +14,9 @@ import type { Sentinel } from './sentinel'
 import { isPublic, publicWorkerSection } from './visibility'
 import { CODEX_NO_UPDATE } from '../codexLaunch'
 import type { Recovery } from './incident'
+import type { Parked } from './park'
 import { uiGuide } from './uiGuide'
+import type { StateEvent } from './onState'
 
 // Who made a task: the user (the board, their turn), the coordinator in a
 // wake, an automation, a mission.
@@ -30,6 +33,7 @@ export interface Task {
   waitKind?: 'question' | 'permission' | 'auth' // what it waits for
   answered?: number // when a coordinator's tell answered its question; cleared once the agent's question is gone (no second wake: autopilot.ts)
   mech?: Record<string, number> // the engine's mechanical moves made (key → when): never twice
+  stateRan?: Partial<Record<StateEvent, number>> // the state changes seen (onState.ts), each once: when
   ci?: { head: string, red: boolean, running?: true } // its PR's CI at the task's commit, as the engine last read it
   prBase?: { base: string, commits?: number } // its PR's base and commit count, as the engine last read them: kept once done
   queue?: number // its place in its project's merge queue (mergeQueue.ts), 1: merging now
@@ -55,13 +59,16 @@ export interface Task {
   log?: TaskLogEntry[] // who changed what, newest last
   specNotes?: SpecNote[] // spec changes added after its description (task note, tell --spec), newest last
   wsFiles?: { names: string[], hash: string, worker?: string } // the workspace instructions files its agents got last (WS_FILES_SCRIPT); worker: the hash its worker got
-  specPass?: { at: number, step: string, reason: string } // the coordinator's last pass on a spec change, shown in Decisions for a day
   marks?: Mark[] // when its step or turn changed, added by the store (times.ts)
   after?: string // tasks of the same project or workspace, comma-separated: this one starts once they are done
+  parked?: Parked // its worker said it is blocked on another task or repository (park.ts): no agent, no stall, until that is done
   mergeAfter?: string // tasks of the same project or workspace, comma-separated: its PR merges once they are done (mergeQueue.ts)
   kind?: 'feature' // a workspace's task: it runs no agent (feature.ts)
   feature?: string // the feature this sub-task of a member belongs to (its <WS-n>)
-  plan?: { order: string } // a feature's split: the coordinator's one-line reason for its order
+  plan?: { order: string, file?: string } // a feature's split: the coordinator's one-line reason for its order; file: its plan file (a spec's tasks.md) under the workspace's root, whose lines its sub-tasks' refs name (planRefs.ts)
+  refs?: string[] // a sub-task's plan lines (IDs such as T010 in its feature's plan file): ticked once it is done
+  planTick?: { at: number, ticked?: string[], skipped?: string } // its refs written to the plan file (pmPlan.ts): when, which lines, or why not (kept: never tried twice)
+  planTries?: { n: number, first: number, at: number, why?: string, offline?: true } // the write-back waiting on something that passes (a lock, a merge or rebase under way, a file changed meanwhile): its tries so far, bounded; offline: its machine is unreachable, said once
   closed?: { at: number, by: string, reason?: string } // a feature its coordinator closed: done
   stopped?: Stopped // who stopped it and why (stop.ts): it waits for the user
   autopilot?: true // started or added by the coordinator in a wake: its autopilot's own
@@ -73,6 +80,7 @@ export interface Task {
   sentinel?: Sentinel // the liveness sentinel's tries at its current step (sentinel.ts)
   reviewWait?: string // the reviewer account its review waits on, in that account's queue (reviewQueue.ts)
   files?: string[] // the files or folders it plans to change (files.ts)
+  context?: ContextSpec // read-only context folders of the workspace's other members for its agents (context.ts); wins over its task type's
   changed?: string[] // what it changed since its branch started, as the engine last read it
   sameFiles?: string // the started task its start waits behind: same files (files.ts)
   cleanup?: { done?: true, skipped?: string } // its worktree removed, or why it stays (cleanup.ts)
@@ -121,7 +129,7 @@ export interface Run {
   id: string
   task: string
   role: 'worker' | 'reviewer'
-  program: string // claude or codex
+  program: string // claude, codex or omp
   model: string // pinned at launch
   machine: string // herdr-core machine key, '' = the wherdr host
   worktree: string
@@ -135,6 +143,7 @@ export interface Run {
   endedAt?: number // when the engine released it (release.ts)
   peakMb?: number // the most its worktree's processes took, sampled each tick (peaks.ts)
   session?: string // Claude's conversation id, pinned at launch: a resume takes it up again
+  context?: ContextFolder[] // the read-only context folders it was given (context.ts): cleanup keeps them while its task is not done
 }
 
 export const LABEL = { install: 'wherdr.install', task: 'wherdr.task', run: 'wherdr.run', role: 'wherdr.role', report: 'wherdr.report' } as const
@@ -202,15 +211,27 @@ const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
 // session (Claude only): the conversation's id, new (--session-id), or taken
 // up again (--resume) with `resume` as its first message.
 // then: said after the instructions, in the same first message.
-export function agentLine(program: string, model: string, instructions: string, session?: { id: string, resume?: string }, then?: string) {
+// dirs: read-only context folders (context.ts) the agent may read (see dirArgs).
+export function agentLine(program: string, model: string, instructions: string, session?: { id: string, resume?: string }, then?: string, dirs: string[] = []) {
   const own = program === 'claude' && session ? (session.resume ? ['--resume', session.id] : ['--session-id', session.id]) : []
   const first = own[0] === '--resume' ? session!.resume! : `Read ${instructions} and follow it.${then ? ` ${then}` : ''}`
-  return ['exec', program, ...(program === 'codex' ? CODEX_NO_UPDATE : []), '--model', model, ...own, first].map((s, i) => (i < 2 ? s : quote(s))).join(' ')
+  return ['exec', program, ...(program === 'codex' ? CODEX_NO_UPDATE : []), ...dirArgs(program, dirs), '--model', model, ...own, first].map((s, i) => (i < 2 ? s : quote(s))).join(' ')
+}
+
+// How a program gets access to folders beside its worktree: the one place that
+// knows each program. Claude: one --add-dir per folder, each followed by an
+// option (the flag takes a list: a word after it would be read as a folder, the
+// first message included); omp the same (--add-dir, repeatable). Codex: its sandbox
+// already reads everywhere, and --add-dir would make the folder writable.
+export function dirArgs(program: string, dirs: string[]): string[] {
+  return program === 'claude' || program === 'omp' ? dirs.flatMap(d => ['--add-dir', d]) : []
 }
 
 // A task's working branch: the one it started with, else its project's now.
 export const taskBase = (task: Pick<Task, 'base'>, p?: Pick<Project, 'base'>) =>
-  (task.base !== undefined ? task.base : p?.base) || undefined
+  realBase(task.base !== undefined ? task.base : p?.base)
+// A branch name, never a placeholder ({base} unresolved: none, the repository's current branch).
+const realBase = (b?: string) => (b && !b.includes('{') ? b : undefined)
 
 // The branch a task type's workflow opens its PR to or merges into (github.pr
 // base, git.land or git.verify-merged target), when a step names one.
@@ -218,7 +239,7 @@ export function workflowBase(t: Template | null | undefined, type: string): stri
   for (const s of t ? typeSteps(t, type) : []) {
     const a = s.action
     const b = a?.kind === 'github.pr' ? a.base : a?.kind === 'git.land' || a?.kind === 'git.verify-merged' ? a.target : undefined
-    if (b) return b
+    if (realBase(b)) return b
   }
 }
 
@@ -234,6 +255,8 @@ export function startBase(t: Template | null | undefined, task: Pick<Task, 'base
 
 // The project log line when a base comes from the workflow (once per project and branch).
 export const workflowBaseNote = (base: string) => `no working branch set: using ${base} from the workflow`
+// The task log line when the workspace's working branch is not in a member's repository.
+export const missingBaseNote = (base: string, current: string) => `${base} not found in this repository: using ${current || 'its current branch'}`
 
 // A task's planned steps, with its working branch.
 export const taskPlan = (t: Template, task: Pick<Task, 'type' | 'prefs' | 'base'>, p?: Pick<Project, 'base'>) =>
@@ -250,7 +273,7 @@ export function workerPlan(t: Template, task: Task): { program: string, model: s
   if (!typeSteps(t, task.type).some(s => s.holder === 'worker')) return { reason: `Task type "${task.type}" has no worker step` }
   const pick = (k: 'agent' | 'model') => task.prefs?.[k] || tt.prefs?.[k] || t.prefs?.[k] || ''
   const program = pick('agent'), model = pick('model')
-  if (!(PROGRAMS as readonly string[]).includes(program)) return { reason: program ? `The engine cannot start "${program}": claude or codex` : 'No agent set: add prefs.agent to the template' }
+  if (!(PROGRAMS as readonly string[]).includes(program)) return { reason: program ? `The engine cannot start "${program}": claude, codex or omp` : 'No agent set: add prefs.agent to the template' }
   if (!MODEL_RE.test(model)) return { reason: model ? `Invalid model "${model}"` : 'No model set: add prefs.model to the template (the model is always pinned)' }
   return { program, model }
 }
@@ -279,7 +302,8 @@ export const prefOf = (t: Template, task: Pick<Task, 'type' | 'prefs'>, k: keyof
   task.prefs?.[k] || t.taskTypes[task.type]?.prefs?.[k] || t.prefs?.[k] || ''
 
 // Why the review agent cannot take a review: its account at its limit until `until` (local time).
-export const programName = (program: string) => `${program.charAt(0).toUpperCase()}${program.slice(1)}`
+// As the interface names it (KIND_LABEL in app/utils/format.ts): omp is "OMP".
+export const programName = (program: string) => (program === 'omp' ? 'OMP' : `${program.charAt(0).toUpperCase()}${program.slice(1)}`)
 export const quotaOut = (program: string, until: number) => `${programName(program)} out of quota until ${new Date(until).toTimeString().slice(0, 5)}`
 
 // The last reviewer start in a task's log, when the fallback took it: why, and by whom.
@@ -331,14 +355,16 @@ export function parseWsFiles(out: string, cap: number, first = false): WsFiles {
 export const wsFilesSection = (files: WsFiles['files']) => files.flatMap(f => [`## Workspace instructions (${f.path})`, '', f.text || '(empty)', ''])
 
 // The instructions file: the task, then every level's instructions, broadest
-// first, then the workspace's instructions files (ws), then how to upload screenshots when a worker step asks for them, then
-// a public repository's rule (leakCheck: its own check, see ownLeakCheck).
-export function instructionsText(p: Project, t: Template, task: Task, run: Pick<Run, 'worktree' | 'branch'>, shots?: { base: string, token: string }, leakCheck?: string, ws: string[] = []) {
+// first, then the workspace's instructions files and the context folders (ws), then how to upload screenshots when a worker step asks for them, then
+// a public repository's rule (leakCheck: its own check, see ownLeakCheck). plan: the path of its
+// feature's plan file, when the task names lines of it (refs).
+export function instructionsText(p: Project, t: Template, task: Task, run: Pick<Run, 'worktree' | 'branch'>, shots?: { base: string, token: string }, leakCheck?: string, ws: string[] = [], plan?: string) {
   const step = typeSteps(t, task.type).find(s => s.holder === 'worker')
   const parts = [t.instructions, t.taskTypes[task.type]?.instructions, step?.instructions].map(s => s?.trim()).filter(Boolean).map(s => fillBase(s!, taskBase(task, p)))
   const visual = shotStep(t, task.type)
   return [
     `# ${task.id}: ${task.title}`, '', specText(task), '',
+    ...(plan && task.refs?.length ? [`Plan lines: ${task.refs.join(', ')} in ${plan}`, `These lines of the workspace's plan file are the part of the plan this task covers. wherdr ticks them itself once the task is done: never edit that file.`, ''] : []),
     '## Instructions', '', ...(parts.length ? parts : ['(none)']), '',
     ...ws,
     ...(visual && shots ? shotsSection(visual, task, shots) : []),
@@ -360,6 +386,13 @@ export function reconcile(runs: Run[], terminals: LabelledTerminal[], install: s
     return t.state === 'finished' ? { run, state: 'exit' } : { run, terminal: t.address, state: 'running' }
   })
 }
+
+// While wherdr runs: a run still 'starting' this long after its start was never
+// confirmed (terminal.run timed out or herdr-core dropped). Found by its labels,
+// it goes on; else it is lost (its task's watchdog starts the agent again).
+export const STARTING_MS = 60_000
+export const staleStarts = (runs: Run[], terminals: LabelledTerminal[], install: string, now: number) =>
+  reconcile(runs.filter(r => r.state === 'starting' && now - r.startedAt > STARTING_MS), terminals, install)
 
 // Two live agents of one role on a task (two starts that raced): the one the
 // engine tracks stays (the task's run, else its newest unended run), the others end.

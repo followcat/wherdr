@@ -9,12 +9,13 @@ export default defineApi(async (event, b) => {
     if (quiet === undefined || (b.scope !== 'device' && b.scope !== 'all')) throw new HerdrError('bad_quiet', 'Invalid quiet setting')
     if (b.scope === 'all') await writeGlobalQuiet(quiet)
     else {
-      const subs = await readSubs()
-      const sub = subs.find(s => s.endpoint === endpoint)
-      if (!sub) throw new HerdrError('no_sub', 'Notifications are not enabled on this device')
-      if (quiet) sub.quiet = quiet
-      else delete sub.quiet
-      await writeSubs(subs)
+      await updateSubs((subs) => {
+        const sub = subs.find(s => s.endpoint === endpoint)
+        if (!sub) throw new HerdrError('no_sub', 'Notifications are not enabled on this device')
+        if (quiet) sub.quiet = quiet
+        else delete sub.quiet
+        return subs
+      })
     }
     log(`push: quiet ${b.scope === 'all' ? 'all devices' : 'one device'} ${quiet ? (quiet.until ? `until ${new Date(quiet.until).toISOString()}` : 'until turned back on') : 'off'}`)
   }

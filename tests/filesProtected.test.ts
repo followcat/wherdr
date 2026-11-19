@@ -1,5 +1,6 @@
 // The file browser never shows wherdr's data folder (auth.json: the lock's
-// signing secret), ~/.ssh or ~/.config/herdr: neither as a path written in a
+// signing secret), ~/.ssh, ~/.config/herdr, agents' credentials or herdr-core's
+// state (but its uploads): neither as a path written in a
 // conversation, nor in a project that contains them, nor through a symlink.
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -39,6 +40,12 @@ beforeAll(async () => {
   symlinkSync(path.join(app, 'data/auth.json'), path.join(home, 'project/auth-link.json'))
   symlinkSync(path.join(home, '.ssh'), path.join(home, 'project/keys'))
   symlinkSync('data/auth.json', path.join(app, 'secret-link'))
+  // Agents' credentials, gh's tokens and herdr-core's state, but its uploads.
+  for (const [f, body] of [['.claude/.credentials.json', '{}'], ['.codex/auth.json', '{}'], ['.config/gh/hosts.yml', 'x'],
+    ['.local/state/herdr-core/default/default.sock', 'x'], ['.local/state/herdr-core/default/files/t1/photo.txt', 'photo']]) {
+    mkdirSync(path.dirname(path.join(home, f)), { recursive: true })
+    writeFileSync(path.join(home, f), `${body}\n`)
+  }
   files = await import('../server/utils/files')
 })
 afterAll(() => {
@@ -96,5 +103,17 @@ describe('protected folders in the file browser', () => {
     await expect(files.readFilePreview(m, custom, 'wherdr.env')).rejects.toMatchObject({ code: 'protected' })
     // The rest of the folder stays readable.
     expect(await files.readFilePreview(m, app, 'wherdr.log')).toMatchObject({ kind: 'text', text: 'log\n' })
+  })
+
+  it('refuses agents\' credentials, gh and herdr-core\'s state, but shows an upload under it', async () => {
+    const state = '~/.local/state/herdr-core'
+    for (const p of ['~/.claude/.credentials.json', '~/.codex/auth.json', '~/.config/gh/hosts.yml', `${state}/default/default.sock`, `${state}/default/files`]) {
+      await expect(files.readWrittenPreview(m, home, p), p).rejects.toMatchObject({ code: 'protected' })
+    }
+    // Browsed as a project: checked on the machine.
+    await expect(files.readFilePreview(m, home, '.codex/auth.json')).rejects.toMatchObject({ code: 'protected' })
+    await expect(files.readFilePreview(m, home, '.local/state/herdr-core/default/default.sock')).rejects.toMatchObject({ code: 'protected' })
+    expect(await files.readWrittenPreview(m, home, `${state}/default/files/t1/photo.txt`)).toMatchObject({ kind: 'text', text: 'photo\n' })
+    expect(await files.readFilePreview(m, home, '.local/state/herdr-core/default/files/t1/photo.txt')).toMatchObject({ kind: 'text', text: 'photo\n' })
   })
 })

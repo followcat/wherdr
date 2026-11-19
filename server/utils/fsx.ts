@@ -31,6 +31,9 @@ export interface MachineFs {
   // Paths a process holds open (/proc/<pid>/fd targets, `lsof -Fn` output);
   // null means the scan could not run, never "no files".
   readProcessFiles?: (pid: number) => Promise<string[] | null>
+  // Remote machines only: runs `script` (sh) there and returns its output;
+  // rejects like the other operations when it fails.
+  run?: (script: string, args: string[], opts?: { input?: Buffer, timeoutMs?: number, maxBytes?: number }) => Promise<Buffer>
 }
 
 // ---------------------------------------------------------------- disque local
@@ -175,15 +178,20 @@ for f; do
 done`
 
 // Open files of a process: /proc/<pid>/fd targets on Linux, `lsof -Fn` on
-// macOS (its `n` lines hold the paths). `!` alone when the machine has neither:
-// an unavailable scan must never pass for "no files".
+// macOS (its `n` lines hold the paths). `!` alone when neither can be read: an
+// unavailable scan must never pass for "no files".
 const PROCESS_FILES_SCRIPT = `if [ -d "/proc/$1/fd" ]; then
+  # An unlistable fd folder (another user, hidepid, a process that just exited)
+  # cannot answer "no files": say the scan is unknown.
+  ls -1A "/proc/$1/fd" >/dev/null 2>&1 || { echo '!'; exit 0; }
   for f in "/proc/$1/fd"/*; do
     [ -e "$f" ] || continue
     readlink "$f" 2>/dev/null || true
   done
 elif command -v lsof >/dev/null 2>&1; then
-  lsof -Fn -p "$1" 2>/dev/null | sed -n 's/^n//p' | sed -n '/^\\//p'
+  # lsof exits non-zero when it could not inspect the pid.
+  out=$(lsof -Fn -p "$1" 2>/dev/null) || { echo '!'; exit 0; }
+  echo "$out" | sed -n 's/^n//p' | sed -n '/^\\//p'
 else
   echo '!'
 fi`
@@ -290,6 +298,7 @@ export function createShellFs(exec: ShellExec, opts: { statTtlMs?: number, readC
       if (raw.trim() === '!') return null
       return raw.split('\n').filter(l => l.startsWith('/'))
     },
+    run: (script, args, opts = {}) => run(script, args, opts.timeoutMs, opts.input, opts.maxBytes),
     async readFile(p) {
       return (await run(REQUIRE_PATH + 'cat "$1"', [p])).toString('utf8')
     },

@@ -5,14 +5,15 @@ import MachineCard from '~/components/MachineCard.vue'
 import type { AwakeState } from '#shared/awake'
 
 const awake: AwakeState = { supported: true, platform: 'mac', active: true, until: null, battery: { percent: 40, source: 'battery' }, lidClosed: false, eveningPast: false }
-registerEndpoint('/api/machine/awake', () => awake)
+let hold: Promise<void> | null = null
+registerEndpoint('/api/machine/awake', async () => { await hold; return awake })
 let sent: unknown[] = []
 registerEndpoint('/api/machine/memory', { method: 'POST', handler: async (event) => { sent.push(await readBody(event)); return { machines: [] } } })
 
 const memory: MemoryRow = { key: 'machine-b', label: 'machine-b', mem: null, settings: { minFreeMb: 2048 }, agents: 1, cap: 5, line: 'Available · 6 GB free · 1 agent' }
 const remote = { key: 'machine-b', label: 'machine-b', local: false, status: 'online' as const, error: null }
 let mounted: { unmount: () => void } | null = null
-afterEach(() => { mounted?.unmount(); mounted = null; sent = []; awakeByMachine.value = {} })
+afterEach(() => { mounted?.unmount(); mounted = null; sent = []; hold = null; awakeByMachine.value = {}; awakeBusy.value = {} })
 async function mount(props: InstanceType<typeof MachineCard>['$props']) {
   const w = await mountSuspended(MachineCard, { props })
   mounted = w
@@ -48,6 +49,19 @@ describe('machine card', () => {
     expect(w.find('[data-testid="memory-auto-hint"]').exists()).toBe(true)
     await cap.setValue('')
     await vi.waitFor(() => expect(sent).toEqual([{ key: 'machine-b', maxAgents: null }]))
+  })
+  it('keep awake spins from the tap until the machine answers, and a second tap does nothing', async () => {
+    const w = await mount({ machine: remote, memory })
+    let answer!: () => void
+    hold = new Promise(r => { answer = r })
+    const button = w.find('[data-testid="machine-awake-open"]')
+    const first = openAwake(remote)
+    await vi.waitFor(() => expect(button.attributes('disabled')).toBeDefined())
+    expect(button.find('.animate-spin').exists()).toBe(true)
+    await openAwake(remote)
+    answer()
+    await first
+    await vi.waitFor(() => expect(button.attributes('disabled')).toBeUndefined())
   })
   it('an offline machine keeps the keep-awake slot empty and offers Reconnect', async () => {
     const w = await mount({ machine: { ...remote, status: 'offline', error: 'unreachable' } })

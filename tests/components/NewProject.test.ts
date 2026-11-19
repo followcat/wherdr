@@ -72,9 +72,19 @@ it('opens on adding a project; below, only the projects whose coordinator does n
   await vi.waitFor(() => expect(w.findAll('[data-repo]')).toHaveLength(2))
   expect(w.find('[data-testid="project-template"]').exists()).toBe(false)
   expect(w.find('#newPrompt').exists()).toBe(false)
-  // CO runs (the sidebar has it), Alfred has its own row.
+  // CO runs (the sidebar has it), Alfred has its own row; collapsed until opened.
+  const toggle = w.get('[data-testid="project-restart-toggle"]')
+  expect(toggle.text()).toBe('Restart a coordinator · 2')
+  expect(w.find('[data-testid="project-existing"]').exists()).toBe(false)
+  // A folder picked: the agent picker still sits below the section, as for a project to restart.
+  await w.get('[data-repo]').trigger('click')
+  const below = (a: Element, b: Element) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+  expect(below(toggle.element, w.get('[data-agent]').element)).toBe(true)
+  await toggle.trigger('click')
+  await vi.waitFor(() => expect(w.find('[data-testid="project-existing"]').exists()).toBe(true))
   expect(w.get('[data-testid="project-existing"]').findAll('[data-project]').map(b => b.text())).toEqual(['WEBWebsite', 'DOCDocs'])
   await w.get('[data-project="WEB"]').trigger('click')
+  expect(below(toggle.element, w.get('[data-agent]').element)).toBe(true)
   expect(w.get('[data-testid="coordinator-start"]').text()).toBe('Start with Codex')
   await w.get('[data-agent="claude"]').trigger('click')
   expect(w.text()).toContain('The default stays Codex.')
@@ -85,10 +95,10 @@ it('opens on adding a project; below, only the projects whose coordinator does n
   w.unmount()
 })
 
-it('no existing project to start again: no Existing projects heading', async () => {
+it('no project to start again: no Restart a coordinator section', async () => {
   const w = await openSheet([{ project: 'CO', name: 'Company', agent: opus, ran: opus, terminal: 'host/t1' }], [running])
-  expect(w.find('[data-testid="project-existing"]').exists()).toBe(false)
-  expect(w.text()).not.toContain('Existing projects')
+  expect(w.find('[data-testid="project-restart"]').exists()).toBe(false)
+  expect(w.text()).not.toContain('Restart a coordinator')
   w.unmount()
 })
 
@@ -137,6 +147,24 @@ it('a browsed folder fills name and key, shows as ~/…, is probed and can start
   expect((w.get('#projectName').element as HTMLInputElement).value).toBe('clients')
   expect((w.get('#projectKey').element as HTMLInputElement).value).toBe('CLN')
   expect(w.get('[data-testid="project-start"]').attributes('disabled')).toBeUndefined()
+  w.unmount()
+})
+
+it('its Workspace side shows the shared workspace form; Create adds it as Add workspace does, then opens its coordinator', async () => {
+  const w = await openSheet([{ project: '_main', name: 'Main coordinator', main: true, agent: opus }])
+  expect(w.find('[data-testid="add-workspace"]').exists()).toBe(false)
+  await w.get('[data-side="workspace"]').trigger('click')
+  expect(w.find('[data-testid="coordinator-form"]').exists()).toBe(false)
+  await w.get('#new-workspace-name').setValue('Payroll apps')
+  await w.get('[data-agent="codex"]').trigger('click')
+  await w.get('form').trigger('submit')
+  await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('/a/w2%3Ap1'))
+  // The sheet's machine (this one) checked first: the home.
+  expect(posts).toEqual([
+    { url: '/api/pm/project', body: { key: 'PA', name: 'Payroll apps', machine: '', path: '~/work', kind: 'workspace', plain: true } },
+    { url: '/api/pm/coordinator-start', body: { project: 'PA', program: 'codex' } },
+  ])
+  expect(newAgentOpen.value).toBe(false)
   w.unmount()
 })
 

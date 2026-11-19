@@ -10,7 +10,7 @@
 // limit. The end-of-week burn lifts all of it in the other modes, from the
 // moment the user turns it on until the weekly reset, where it turns off.
 import type { Quota, QuotaWindow } from '../types'
-import { limitEnds, limitState } from '../quotaLimit'
+import { hoursAgo, limitEnds, limitState } from '../quotaLimit'
 
 export type PaceMode = 'unlimited' | 'workdays' | 'everyday' | 'free'
 
@@ -40,8 +40,8 @@ export const DEFAULT_PACE: PacePolicy = {
 export type PaceReason = 'limited' | 'ahead' | 'reserveWeek' | 'reserve5h' | 'stale'
 export type PaceIntent = 'auto' | 'user'
 export type PaceVerdict =
-  | { go: true, warn?: PaceReason, unknown?: true, burning?: true } // unknown: no reading, only the task-count limits apply; burning: tasks at once are Auto
-  | { go: false, reason: PaceReason, until: number | null } // until: ms, null = on the next reading
+  | { go: true, warn?: PaceReason, unknown?: true, burning?: true, probe?: true } // unknown: no reading, only the task-count limits apply; burning: tasks at once are Auto; probe: one start to find out whether a stale limit still holds
+  | { go: false, reason: PaceReason, until: number | null, readAgo?: string } // until: ms, null = on the next reading; readAgo: a stale limit's age ("16 h")
 
 const DAY = 86_400_000
 
@@ -109,13 +109,20 @@ function weekCheck(p: PacePolicy, w: { used: number, resetsAt: number }, now: nu
   return { reason: 'ahead', room: targetLine(p, R, now) - p.margin - w.used, until }
 }
 
-export function paceVerdict(policy: PacePolicy, quota: Quota | null, now: number, intent: PaceIntent = 'auto'): PaceVerdict {
+// `probed`: an agent of the account started since the reading (pmPace): a
+// stale "limit reached" lets one start through to find out, not more.
+export function paceVerdict(policy: PacePolicy, quota: Quota | null, now: number, intent: PaceIntent = 'auto', probed = false): PaceVerdict {
   const refuse = (reason: PaceReason, until: number | null): PaceVerdict =>
     intent === 'user' ? { go: true, warn: reason } : { go: false, reason, until }
   const burns = policy.mode !== 'unlimited' && burning(policy.burn, now)
   if (!quota) return { go: true, unknown: true, ...(burns ? { burning: true as const } : {}) }
   // A limit past its reset, or one the account's credits cover, holds nothing.
-  if (limitState(quota, now) === 'reached') return refuse('limited', limitEnds(quota))
+  const limit = limitState(quota, now)
+  if (limit === 'reached') return refuse('limited', limitEnds(quota))
+  if (limit === 'stale') {
+    if (!probed || intent === 'user') return { go: true, probe: true }
+    return { go: false, reason: 'limited', until: limitEnds(quota), readAgo: hoursAgo(quota.at, now) }
+  }
   if (policy.mode === 'unlimited') return { go: true }
   // Burning: no pacing at all, only the account's own limit above.
   if (burns) return { go: true, burning: true }

@@ -32,8 +32,11 @@ export const onlyImageTags = (text: string) => imageTagCount(text) > 0 && !Strin
 // long multi-line part as one "[Pasted text #N +K lines]", and wraps it
 // (spaces aside). `exact`: the field holds it and nothing else; otherwise it
 // starts with it (more text may follow). A field with a paste stand-in is
-// only matched exactly: what it stands for is unknown.
-const fieldForm = (t: string) => String(t || '').replace(IMAGE_TAG, '[Image]').replace(/\s+/g, '')
+// only matched exactly: what it stands for is unknown. Claude draws its
+// "[Image #N]" tags before the text, wherever the photo lines were (wherdr
+// sends them last): only their count is compared, not their place (WHR-440).
+const tagsFirst = (t: string, n: number) => '[Image]'.repeat(n) + t.replace(IMAGE_TAG, '').replace(/\s+/g, '')
+const fieldForm = (t: string) => tagsFirst(String(t || ''), imageTagCount(t))
 // The conversation's own matching (`loose`): photos left out on both sides.
 // Claude's field may show fewer "[Image #N]" than the message has photo lines
 // (a photo it did not turn into an image, or a tag drawn on another line);
@@ -44,11 +47,27 @@ const fieldForm = (t: string) => String(t || '').replace(IMAGE_TAG, '[Image]').r
 const PHOTO_PATH = /(?:~|\/)\S*\/(?:\.cache\/herdr-web\/uploads\/\S+|\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-f]{6}\.(?:jpg|png|webp|gif|heic))/g
 const looseForm = (t: string) => String(t || '').replace(IMAGE_TAG, '').replace(PHOTO_PATH, '').replace(/\s+/g, '')
 const PASTE_TAG = /\[Pasted text #\d+(?: \+\d+ lines)?\]/
-const messageForm = (text: string) => fieldForm(String(text || '').split('\n').map(l => (isUploadLine(l) ? '[Image]' : l)).join('\n'))
+const messageForm = (text: string) => tagsFirst(withoutUploads(text), uploadNames(text).length + imageTagCount(text))
+// Claude's field holds this message alone with at least one photo still as
+// its path (the others as "[Image #N]"), the lone "\" aside: Claude took the
+// path as typed text and will not turn it into an image any more (WHR-454).
+// Collapsed into "[Pasted text #N +K lines]", the paths are not on screen: a
+// photo missing from its "[Image #N]" tags is inside it as its path (Claude
+// turns them into images when it takes the paste, never later; WHR-472).
+export function fieldHoldsRawPhoto(field: string | null | undefined, text: string): boolean {
+  const f = String(field || '').replace(/\\\s*$/, '')
+  if (PASTE_TAG.test(f)) return imageTagCount(f) < uploadNames(text).length && fieldHolds(f, text, true, true)
+  const raw = (f.match(PHOTO_PATH) || []).length
+  return raw > 0 && raw + imageTagCount(f) === uploadNames(text).length
+    && looseForm(f) === looseForm(withoutUploads(text))
+}
 // Why a field does not hold a message, for the server log: sizes, never text.
 export const fieldGap = (field: string, text: string) =>
   `${fieldForm(field).length} chars, ${imageTagCount(field)} images${PASTE_TAG.test(field) ? ', a paste stand-in' : ''}; expected ${messageForm(text).length} chars, ${uploadNames(text).length} images, ${text.split('\n').length} lines`
 export function fieldHolds(field: string | null | undefined, text: string, exact = false, loose = false): boolean {
+  // The lone "\" a photo message is sent with (holdEnter in coreInput.ts), left
+  // there when Claude dropped core's Enter: not part of the message.
+  field = String(field || '').replace(/\\\s*$/, '')
   // Photos alone: only their tags tell them apart, so they are counted.
   const free = loose && Boolean(withoutUploads(text))
   const form = free ? looseForm : fieldForm
@@ -57,8 +76,11 @@ export function fieldHolds(field: string | null | undefined, text: string, exact
   if (!m || !form(field || '')) return false
   if (parts.length === 1) return exact ? parts[0] === m : m.length > 0 && parts[0]!.startsWith(m)
   // One paste stand-in, for a multi-line message: the text around it is ours,
-  // and it stands for at least one character of it.
+  // and it stands for at least one character of it. The server's own match
+  // (exact, not loose) counts the photos' tags: one missing is a path inside
+  // the stand-in (fieldHoldsRawPhoto).
   if (parts.length !== 2 || !withoutUploads(text).includes('\n')) return false
+  if (exact && !loose && imageTagCount(field) !== uploadNames(text).length + imageTagCount(text)) return false
   const [before, after] = parts as [string, string]
   return m.length > before.length + after.length && m.startsWith(before) && m.endsWith(after)
 }

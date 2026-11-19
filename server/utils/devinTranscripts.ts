@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import path from 'node:path'
+import { machinePath } from './machinePath'
 import { clearTimeout, setTimeout } from 'node:timers'
 import type { ChatItem, ChatResponse, ModelInfo } from '../../shared/types'
 import type { TranscriptPane } from './transcripts'
@@ -54,12 +55,12 @@ export function cliDir(home: string, honorEnv = true): string {
     const xdg = process.env.XDG_DATA_HOME
     if (xdg) return path.join(xdg, 'devin/cli')
   }
-  return path.join(home, '.local/share/devin/cli')
+  return machinePath(home).join(home, '.local/share/devin/cli')
 }
 
 export function transcriptPath(home: string, session: string, honorEnv = true): string | null {
   if (!session || /[/\\]|\0/.test(session)) return null
-  return path.join(cliDir(home, honorEnv), 'transcripts', `${session}.json`)
+  return machinePath(home).join(cliDir(home, honorEnv), 'transcripts', `${session}.json`)
 }
 
 function asList(value: unknown): Json[] {

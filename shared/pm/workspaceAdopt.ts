@@ -9,8 +9,12 @@ import { cloneOn, type Project } from './project'
 
 export type RepoCommand = { name: 'repo adopt', repo: string }
 
+// The workspace's root itself, as a repository path: a root that is a git
+// repository may be a member too (its tasks get worktrees of the root only).
+export const ROOT_REPO = '.'
+
 export const REPO_COMMANDS = [
-  { usage: 'repo adopt <repo>', does: 'make a repository under the workspace\'s root one of its member projects (<repo>: its path under the root, such as payroll-api, or its full path); key and color are picked for it, it takes the workspace\'s settings and workflow, and its visibility is checked. Refused outside the root, for a folder already a project, without git, or without an origin when the workflow pushes or opens pull requests. Nothing is cloned: it runs only on machines with its clone under their root. Written to the workspace\'s log' },
+  { usage: 'repo adopt <repo>', does: 'make a repository under the workspace\'s root one of its member projects (<repo>: its path under the root, such as payroll-api, or its full path; `.` for the root itself when it is a git repository); key and color are picked for it, it runs on the workspace\'s settings and workflow (shared, never copied: a later change to them reaches it), and its visibility is checked. Refused outside the root, for a folder already a project, without git, or without an origin when the workflow pushes or opens pull requests. Nothing is cloned: it runs only on machines with its clone under their root. Written to the workspace\'s log' },
 ]
 
 // `repo …` words (after `repo`) → a command, or why not.
@@ -21,11 +25,15 @@ export function parseRepo(words: string[]): RepoCommand | { error: string } {
 }
 
 const trim = (p: string) => p.replace(/\/+$/, '')
+// A repository's folder under a root (the root itself for ROOT_REPO).
+export const underRoot = (root: string, repo: string) => (repo === ROOT_REPO ? trim(root) : `${trim(root)}/${repo}`)
 
 // The repository's path under the root, from a path under it (payroll-api,
-// apps/web-app) or a full one (~/… needs home); refused outside the root.
+// apps/web-app) or a full one (~/… needs home); `.` or the root's own path:
+// the root (ROOT_REPO); refused outside the root.
 export function repoUnder(arg: string, root: string, home = ''): string | { error: string } {
   const base = trim(root), full = trim(arg.trim().replace(/^~(?=\/|$)/, trim(home) || '~'))
+  if (full === '.' || full === base) return ROOT_REPO
   const rel = full.startsWith('/') || full.startsWith('~') ? (full.startsWith(`${base}/`) ? full.slice(base.length + 1) : null) : full
   if (rel === null || rel.split('/').includes('..')) return { error: `${arg} is outside the workspace's root ${base}: adopt a repository under it` }
   return isRepo(rel) ? rel : { error: `${arg} is not a repository path under the root (payroll-api, apps/web-app; 4 folders at most)` }
@@ -41,6 +49,7 @@ export const REAL_SCRIPT = `r=$(cd "$1" 2>/dev/null && pwd -P); f=$(cd "$2" 2>/d
 export function realRepo(rel: string, realRoot: string, realFolder: string): string | { error: string } {
   if (!realFolder) return rel // missing: the probe says so
   const base = trim(realRoot), folder = trim(realFolder)
+  if (base && folder === base) return ROOT_REPO
   const real = base && folder.startsWith(`${base}/`) ? folder.slice(base.length + 1) : null
   if (real === null) return { error: `${rel} leads outside the workspace's root (to ${folder}): adopt a repository under it` }
   return isRepo(real) ? real : { error: `${rel} is not a repository path under the root (4 folders at most)` }
@@ -58,10 +67,11 @@ export const realLines = (out: string, n: number) => {
 }
 
 // The member to add: on the workspace's machine, its key and name from the folder.
+// The root's own repository: named after the root's folder, at the root.
 export function adoptedMember(ws: Project, repo: string, projects: Project[]) {
-  const name = proposeName(repo)
+  const name = proposeName(repo === ROOT_REPO ? trim(ws.path).split('/').pop()! : repo)
   const taken = projects.flatMap(p => [p.key, ...(p.aliases ?? [])])
-  return { key: proposeKey(name, taken), name, machine: ws.machine, path: `${trim(ws.path)}/${repo}`, workspace: ws.key }
+  return { key: proposeKey(name, taken), name, machine: ws.machine, path: underRoot(ws.path, repo), workspace: ws.key }
 }
 
 // Why the folder cannot be adopted ('' when it can). folders: its paths on the

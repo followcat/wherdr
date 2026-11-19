@@ -3,7 +3,7 @@
 // conversation. Pure: the link's checks and the event the server sends on
 // /ws/events (server/utils/uiOpen.ts; AgentView.vue shows it).
 // Opening is all it does: it never changes a setting.
-import { isAppLink, SETTINGS_SECTIONS } from './appLinks'
+import { isAppLink, REVIEW_PATHS, SETTINGS_SECTIONS } from './appLinks'
 import { PROJECT_TABS, projectPlace as projectSheet, type ProjectTab } from './pm/places'
 import type { Turn } from './pm/coordinator'
 import { projectOf, shownKey, storedTaskId } from './pm/projectKey'
@@ -100,7 +100,7 @@ export function uiOpenArgs(link: string | undefined, extra: string | undefined, 
 
 // A project coordinator's places: its own board, tasks and sheet, and the
 // Settings sections that are not about projects. Everything else (another
-// project, every project, Home, Decisions) is Alfred's to open. A link may
+// project, every project, Home, Tasks to review) is Alfred's to open. A link may
 // name the project by any of its keys (a renamed project shows CMP for CP).
 function projectPlace(link: string, own: OwnProject): boolean {
   const ours = (k: string | null) => !!projectOf([own], k)
@@ -146,5 +146,5 @@ export function uiPlaceLabel(link: string): string {
     const task = q.get('task'), project = q.get('project'), tag = q.get('tag')
     return task ? `Task ${task}` : ['Board', project, tag].filter(Boolean).join(' › ')
   }
-  return path === '/decisions' ? 'Decisions' : path === '/' || !path ? 'Home' : path.slice(1)
+  return REVIEW_PATHS.includes(path!) ? 'Tasks to review' : path === '/' || !path ? 'Home' : path.slice(1)
 }

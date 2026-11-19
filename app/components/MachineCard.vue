@@ -8,6 +8,7 @@ const props = defineProps<{ machine: Pick<MachineInfo, 'key' | 'label' | 'local'
 const emit = defineEmits<{ edit: [], cancel: [], save: [name: string], forget: [], reconnect: [] }>()
 const STATE: Record<string, string> = { online: 'Connected', connecting: 'Connecting…', offline: 'Offline' }
 const online = computed(() => props.machine.local || props.machine.status === 'online')
+const awakeLoading = computed(() => Boolean(awakeBusy.value[props.machine.key]))
 const newName = ref('')
 watch(() => props.editing, (on) => { if (on) newName.value = props.machine.label })
 const gb = (mb: number) => Math.round(mb / 102.4) / 10
@@ -31,7 +32,7 @@ const time = (r: MemoryRow, field: 'from' | 'to', e: Event) => saveHours(r, { [f
       <b class="machine-name" :title="machine.label">{{ machine.label }}</b>
       <span class="mono-label machine-state" :data-status="machine.local ? 'local' : machine.status" data-testid="machine-state">{{ machine.local ? t('Host') : t(STATE[machine.status] || machine.status) }}</span>
       <span class="machine-actions">
-        <UButton v-if="online" color="neutral" variant="ghost" size="sm" icon="i-lucide-sun" :aria-label="t('Keep awake')" data-testid="machine-awake-open" @click="openAwake(machine)" />
+        <UButton v-if="online" color="neutral" variant="ghost" size="sm" icon="i-lucide-sun" :loading="awakeLoading" :aria-label="t('Keep awake')" data-testid="machine-awake-open" @click="openAwake(machine)" />
         <i v-else />
         <template v-if="!machine.local">
           <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-pencil" :aria-label="t('Rename')" data-testid="machine-rename" @click="emit('edit')" />

@@ -49,7 +49,8 @@ export const doneTurnRepair = (task: Task): Task | undefined =>
 // Why the task may not be taken up that way, or undefined. The coordinator
 // only continues (its `task start`), and in a wake only its autopilot's tasks.
 export function resumeRefusal(task: Task, how: Resume, by: Stopper, step: PlannedStep | undefined): string | undefined {
-  if (!task.stopped) return `${task.id} is not stopped`
+  // Paused for room (park.ts): continued now, past its machine's cap.
+  if (!task.stopped) return task.parked?.room && how === 'continue' ? undefined : `${task.id} is not stopped`
   if (!RESUMES.includes(how)) return `How to go on: ${RESUMES.join(', ')}`
   if (by.who === 'coordinator' && how !== 'continue') return 'Taking a stopped task as it is, or archiving it, is the user\'s'
   if (by.who === 'coordinator' && by.wake && (!autopilots(task) || task.stopped.by === 'the user')) return `${task.id} was stopped by ${task.stopped.by}: going on is the user's call`

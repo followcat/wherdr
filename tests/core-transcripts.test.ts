@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { agentDescendants, coreFailureKind, coreShell, createCoreTranscripts, machineOfAddress, processInfo } from '../server/utils/coreTranscripts'
+import { agentChildren, agentDescendants, coreFailureKind, coreShell, createCoreTranscripts, machineOfAddress, processInfo } from '../server/utils/coreTranscripts'
 import { createShellFs } from '../server/utils/fsx'
 import { DEVIN_PROCESS_SCRIPT } from '../server/utils/devinProcesses'
 import { CoreError } from '../server/utils/core'
@@ -206,6 +206,35 @@ describe('Devin core transcripts', () => {
     expect(r.items?.at(-1)?.text).toContain('all 12 tests pass')
   })
 
+  it('matches the engine child only, not a Devin started below it', async () => {
+    // A second Devin under the engine (started from its shell) holds its own
+    // lock; only the launcher's direct Devin child names this session.
+    const home = mkdtempSync(path.join(tmpdir(), 'hw-remote-devin-nested-'))
+    const root = path.join(home, '.local/share/devin/cli')
+    mkdirSync(path.join(root, 'session_locks'), { recursive: true })
+    mkdirSync(path.join(root, 'transcripts'))
+    const doc = JSON.parse(fx('devin-atif-v1.7-real.json'))
+    writeFileSync(path.join(root, 'session_locks', `${doc.session_id}.lock`), '51\n')
+    writeFileSync(path.join(root, 'transcripts', `${doc.session_id}.json`), JSON.stringify(doc))
+    writeFileSync(path.join(root, 'session_locks', 'nested-session.lock'), '54\n')
+    writeFileSync(path.join(root, 'transcripts', 'nested-session.json'), JSON.stringify({ ...doc, session_id: 'nested-session' }))
+    const core = fakeCore({ 'host-a/t1': { pid: 10, argv: ['sh'], foreground: { pid: 50, name: 'devin', argv: ['devin', '--prompt-file', 'brief.md'] } } })
+    const snap = (pid: string, argv: string[]) => `${pid} 100 100 1767225600 100.00 1767225700.001 ${Buffer.from(argv.join('\0') + '\0').toString('base64')}`
+    const ps = '10 1 sh\n50 10 devin --prompt-file brief.md\n51 50 /opt/devin acp\n53 51 zsh\n54 53 devin -r nested-session\n'
+    const call = vi.fn(async (method: string, params: any): Promise<any> => {
+      if (params.argv?.[0] === 'ps') return { stdout: Buffer.from(ps).toString('base64') }
+      if (params.argv?.[2] === DEVIN_PROCESS_SCRIPT) {
+        const lines = params.argv.slice(4).map((pid: string) => snap(pid, ['devin', '--prompt-file', 'brief.md']))
+        return { stdout: Buffer.from(lines.join('\n') + '\n').toString('base64') }
+      }
+      if (params.argv?.[2] === 'printf %s "$HOME"') return { code: 0, stdout: Buffer.from(home).toString('base64') }
+      return core.call(method, params)
+    })
+    const p = pane('devin', 'host-a/t1', 'devin', '/work/proj')
+    const t = createCoreTranscripts({ call, pane: () => p, localHome: '/unrelated' })
+    expect((await t.chat(p)).session).toBe(doc.session_id)
+  })
+
   it('reads a resumed Devin transcript from the foreground process without hooks', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'hw-core-devin-'))
     const dir = path.join(home, '.local/share/devin/cli/transcripts')
@@ -226,6 +255,11 @@ describe('Devin core transcripts', () => {
 
   it('finds Devin under a shell and ignores unrelated processes', () => {
     expect(agentDescendants('10 1 sh\n12 10 /opt/devin -r example\n20 1 devin\n', 10).map(p => p.pid)).toEqual([12])
+  })
+
+  it('lists only the direct agent children of a process', () => {
+    const ps = '50 10 devin\n51 50 /opt/devin acp\n52 51 zsh\n53 52 devin -r other\n54 50 sh\n'
+    expect(agentChildren(ps, 50).map(p => p.pid)).toEqual([51])
   })
 })
 

@@ -13,7 +13,7 @@ function setup(load: HostDeps['load']) {
   const navs = new Set<(p: string) => void>()
   let prefs = { off: [] as string[], failed: {} as Record<string, string> }
   const host = createPluginHost({
-    list: async () => [{ id: 'hello-mic', name: 'Hello mic', version: '1.0.0', description: '', main: 'index.js' }],
+    list: async () => ({ plugins: [{ id: 'hello-mic', name: 'Hello mic', version: '1.0.0', description: '', main: 'index.js' }], enabled: true }),
     load,
     insertDraft: insert,
     currentAgent: () => null,

@@ -117,9 +117,10 @@ export function isRepeat(list: RecentSend[], text: string, now: number): boolean
 // one whatever its outcome, so a message behind a failed one still goes. A
 // send with no answer after SEND_DEADLINE_MS fails ("Not sent", Retry /
 // Cancel), so the ones behind it never wait for good. The server answers
-// within about 45 s (herdr-core's own deadlines): this only catches a request
-// lost on the way.
-export const SEND_DEADLINE_MS = 60000
+// within about 80 s at worst (herdr-core's send, the wait for a photo, the
+// Enters, WHR-454): this only catches a request lost on the way. The send
+// itself runs on the server and goes on whatever the page does.
+export const SEND_DEADLINE_MS = 120000
 
 export class SendTimeout extends Error {
   constructor() {

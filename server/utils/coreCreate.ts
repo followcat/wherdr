@@ -40,7 +40,7 @@ export interface CoreAdminDeps {
   // A first message to Codex: held like any message (coreHeld.ts), so that it comes back into
   // the field if Codex exits first. `byHolder`: behind a dialog, typed here until handOver.
   hold?: (pane: Pane, text: string, byHolder?: boolean) => QueuedMessage
-  handOver?: (address: string, id: string, typed: boolean) => void
+  handOver?: (address: string, id: string, typed: boolean | 'unseen') => void
 }
 
 const REQUEST_LABEL = 'wherdr-request'
@@ -51,14 +51,14 @@ const TARGET_RE = /^[A-Za-z0-9_][A-Za-z0-9_.@:%[\]-]{0,199}$/
 const NAME_RE = /^[a-z0-9_][a-z0-9_.-]{0,31}$/
 
 // Machine of a request (key '' = this one): its `on` name, or undefined for the local core.
-export function machineOn(deps: CoreAdminDeps, key: unknown): { m: MachineInfo, on?: string } {
+export function machineOn(deps: Pick<CoreAdminDeps, 'machines'>, key: unknown): { m: MachineInfo, on?: string } {
   const m = deps.machines().find(x => x.key === String(key || ''))
   if (!m) throw new HerdrError('bad_machine', 'unknown machine')
   if (!m.local && m.status !== 'online') throw new HerdrError('unreachable', fmt('{machine} is unreachable', { machine: m.label }))
   return { m, on: m.local ? undefined : m.label }
 }
 
-async function exec(deps: CoreAdminDeps, on: string | undefined, script: string, args: string[] = []) {
+async function exec(deps: Pick<CoreAdminDeps, 'call'>, on: string | undefined, script: string, args: string[] = []) {
   try {
     const r = await deps.call<{ code: number | null, stdout: string, timed_out?: boolean }>('machine.exec',
       { argv: ['sh', '-c', script, 'sh', ...args], ...(on ? { on } : {}), timeout: 10 }, 15000)
@@ -67,7 +67,7 @@ async function exec(deps: CoreAdminDeps, on: string | undefined, script: string,
   } catch (e) { return failure(e) }
 }
 
-export async function homeOf(deps: CoreAdminDeps, on?: string) {
+export async function homeOf(deps: Pick<CoreAdminDeps, 'call'>, on?: string) {
   const r = await exec(deps, on, 'printf %s "$HOME"')
   return r.code === 0 ? r.stdout.trim() : ''
 }
@@ -157,7 +157,8 @@ const STILL_POLLS = 6
 // Never retried or replayed: a program that ends or stays busy past the deadline gets
 // nothing ('skipped'); one that shows a dialog or blocks is 'dialog' (see sendAfterDialog).
 // Codex installing or updating itself (its title or status says so): 'installing'.
-export async function sendFirstMessage(deps: CoreAdminDeps, address: string, text: string): Promise<'sent' | 'skipped' | 'dialog' | 'installing'> {
+// A send that timed out or lost core may have been typed: 'uncertain', never sent again.
+export async function sendFirstMessage(deps: CoreAdminDeps, address: string, text: string): Promise<'sent' | 'skipped' | 'dialog' | 'installing' | 'uncertain'> {
   const step = deps.pollMs ?? 500
   const end = Date.now() + (deps.readyWatchMs ?? 15000)
   let last = '', stable = 0, sawStatus = false
@@ -174,17 +175,19 @@ export async function sendFirstMessage(deps: CoreAdminDeps, address: string, tex
     last = screen
     // done is a rest state too (Devin, Antigravity): at rest it accepts input.
     if (state === 'idle' || state === 'done' ? stable >= 2 : !sawStatus && stable >= STILL_POLLS) {
-      try { await deps.call('terminal.send', { terminal: address, text }, 30000); return 'sent' } catch { return 'skipped' }
+      try { await deps.call('terminal.send', { terminal: address, text }, 30000); return 'sent' } catch (e) { return mayHaveBeenSent(e) ? 'uncertain' : 'skipped' }
     }
     await new Promise(r => setTimeout(r, step))
   }
   return 'skipped'
 }
 
+const mayHaveBeenSent = (e: unknown) => e instanceof CoreError && (e.kind === 'timeout' || e.kind === 'disconnected')
+
 // The first message of a program that opened on a dialog (trust this folder): waits in the
 // background until the person has answered it, then sends it once. Gives up after queueWatchMs.
 // `stopOnInstall`: returns 'installing' when Codex starts installing (the held queue takes it).
-export async function sendAfterDialog(deps: CoreAdminDeps, address: string, text: string, stopOnInstall = false): Promise<'sent' | 'skipped' | 'installing'> {
+export async function sendAfterDialog(deps: CoreAdminDeps, address: string, text: string, stopOnInstall = false): Promise<'sent' | 'skipped' | 'installing' | 'uncertain'> {
   const end = Date.now() + (deps.queueWatchMs ?? 600_000)
   while (Date.now() < end) {
     await new Promise(r => setTimeout(r, (deps.pollMs ?? 500) * 2))
@@ -267,7 +270,7 @@ export async function coreCreate(deps: CoreAdminDeps, body: CreateBody) {
   if (!pane) throw new HerdrError('uncertain', 'Created, but not in the list yet: check the list before creating it again')
   // The program needs time to start: wait for it so that the sheet can say when nothing was
   // typed. A failure here must not undo the creation.
-  let sent: 'sent' | 'skipped' | 'queued' | null = null
+  let sent: 'sent' | 'skipped' | 'queued' | 'uncertain' | null = null
   let queued: QueuedMessage | undefined
   if (first) {
     const r = await sendFirstMessage(deps, address, first).catch(() => 'skipped' as const)
@@ -279,7 +282,7 @@ export async function coreCreate(deps: CoreAdminDeps, body: CreateBody) {
       // Codex behind a dialog: held too (it may install next, or exit), typed here once answered.
       const q = held ? deps.hold!(pane, first, true) : undefined
       const watch = sendAfterDialog(deps, address, first, Boolean(q))
-        .then((res) => { if (q) deps.handOver!(address, q.id, res === 'sent'); return res })
+        .then((res) => { if (q) deps.handOver!(address, q.id, res === 'uncertain' ? 'unseen' : res === 'sent'); return res })
       queued = q
       deps.onQueued?.(watch)
     }

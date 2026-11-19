@@ -3,9 +3,10 @@ import { inspect, probe, publishArgs, publishCommand, runTailscale, serveError, 
 import { phoneReach } from '../../shared/phone'
 import { qrSvg } from '../../shared/qr'
 import type { PhoneError, PhoneResult, PhoneStatus } from '../../shared/phone'
-import { APP_URL_FILE, BOOT_APP_URL, DATA_DIR, ENV_APP_URL, TAILNET_REFRESH_MS, log } from './env'
+import { APP_URL_FILE, BOOT_APP_URL, ENV_APP_URL, TAILNET_REFRESH_MS, log } from './env'
 import { setServedHosts } from './hosts'
 import { initVapid } from './push'
+import { writeJsonAtomicSync } from './atomicWrite'
 
 const PORT = String(process.env.NITRO_PORT || process.env.PORT || 3000)
 
@@ -19,8 +20,7 @@ let adopted = (() => {
 // startup, env.ts), used at once for allowed hosts and Web Push.
 function saveAppUrl(url: string, fromServe = false) {
   if (process.env.APP_URL === url && (adopted || !fromServe)) return
-  fs.mkdirSync(DATA_DIR, { recursive: true })
-  fs.writeFileSync(APP_URL_FILE, `${JSON.stringify(fromServe ? { url, source: 'serve' } : { url }, null, 2)}\n`)
+  writeJsonAtomicSync(APP_URL_FILE, fromServe ? { url, source: 'serve' } : { url })
   adopted = fromServe
   if (process.env.APP_URL === url) return
   process.env.APP_URL = url

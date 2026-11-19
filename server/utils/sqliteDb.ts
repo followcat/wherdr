@@ -17,6 +17,7 @@ export const isSqliteUnsupported = (e: unknown) =>
 // reference to `node:sqlite` is needed for types.
 export interface DatabaseSync {
   prepare(sql: string): { get(...args: unknown[]): unknown, all(...args: unknown[]): unknown }
+  exec(sql: string): void
   close(): void
 }
 export interface DatabaseSyncCtor {

@@ -135,3 +135,19 @@ describe('Web Push after Lock all devices', () => {
     expect(await push.pushSend({ title: 't', body: 'b', tag: 'x', url: '/' }, undefined, true)).toBe(1)
   })
 })
+
+describe('subscriptions file', () => {
+  it('devices subscribing at the same time all stay listed', async () => {
+    await push.writeSubs([])
+    await Promise.all(['a', 'b', 'c'].map(n => push.updateSubs(all => [...all, sub(`https://push.example/${n}`)])))
+    expect((await push.readSubs()).map(s => s.endpoint).sort()).toEqual(['a', 'b', 'c'].map(n => `https://push.example/${n}`))
+  })
+  it('an unreadable file is never written over with an empty list', async () => {
+    const file = path.join(dir, 'push.json')
+    fs.writeFileSync(file, '{"subs":[{"endpoint":"https://push.example/a"')
+    await expect(push.dropAllSubs()).rejects.toThrow()
+    await expect(push.updateSubs(all => all)).rejects.toThrow()
+    expect(fs.readFileSync(file, 'utf8')).toBe('{"subs":[{"endpoint":"https://push.example/a"')
+    expect(await push.readSubs()).toEqual([])
+  })
+})

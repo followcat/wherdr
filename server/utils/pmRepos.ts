@@ -42,16 +42,25 @@ export async function findRepos(deps: CoreAdminDeps, machine: string, { refresh 
 }
 
 // The remote branches of a project's repository (origin, as last fetched),
-// for its working branch field. A repository without origin: none.
+// for its working branch field (a repository without origin: none), then its
+// current branch and its local ones, to say when a workspace's branch is missing.
 export const BRANCHES_SCRIPT = `git -C "$1" for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin 2>/dev/null | grep -vx HEAD | head -n ${MAX}
+printf '\\036%s\\n' "$(git -C "$1" branch --show-current 2>/dev/null)"
+git -C "$1" for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | head -n ${MAX} | while IFS= read -r b; do printf '\\037%s\\n' "$b"; done
 exit 0`
-export const parseBranches = (out: string) => [...new Set(out.split('\n').map(l => l.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+// The remote branches (sorted); then the current branch ("\x1e" line) and the local ones ("\x1f" lines).
+export const parseBranches = (out: string) => [...new Set(out.split('\n').map(l => l.trim()).filter(l => l && !/^[\x1e\x1f]/.test(l)))].sort((a, b) => a.localeCompare(b))
+export const parseRepoHead = (out: string) => ({
+  current: out.split('\n').find(l => l.startsWith('\x1e'))?.slice(1).trim() ?? '',
+  local: out.split('\n').filter(l => l.startsWith('\x1f')).map(l => l.slice(1).trim()).filter(Boolean),
+})
 
-export async function remoteBranches(deps: CoreAdminDeps, p: Pick<Project, 'machine' | 'path'>) {
+// The repository's remote branches, its current branch and its local ones.
+export async function repoBranches(deps: CoreAdminDeps, p: Pick<Project, 'machine' | 'path'>) {
   const { on } = machineOn(deps, p.machine)
   const r = await exec(deps, on, BRANCHES_SCRIPT, [p.path])
   if (r.code !== 0) throw new HerdrError('core', 'Could not read the branches of this repository')
-  return parseBranches(r.out)
+  return { branches: parseBranches(r.out), ...parseRepoHead(r.out) }
 }
 
 // A workspace's repositories (`wherdr pm map list`, pmMap.ts): every git

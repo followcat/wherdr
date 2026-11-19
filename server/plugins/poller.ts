@@ -3,8 +3,10 @@
 // and attached files older than 7 days, and of the pasted texts kept for 30 days;
 // leftover worktrees of done or archived tasks (server/utils/pmCleanup.ts), and
 // done tasks past their project's delay, archived off the board (archiveDone);
-// messages to Claude a restart interrupted while submitting (submitting.ts).
+// messages to Claude a restart interrupted while submitting (submitting.ts);
+// the Antigravity conversation copies a restart left in the temp dir.
 import { coreAdminDeps } from '../utils/coreAdminDeps'
+import { sweepAgyCopies } from '../utils/agyTranscripts'
 import { sweepWorktrees } from '../utils/pmCleanup'
 import { pmStore } from '../utils/pmStore'
 import { archiveDone } from '../utils/pmBoard'
@@ -14,6 +16,7 @@ export default defineNitroPlugin((nitroApp) => {
   initVapid()
   startPolling()
   startTailnetWatch()
+  sweepAgyCopies()
   cleanUploads()
   cleanAttachments()
   purgePastes()

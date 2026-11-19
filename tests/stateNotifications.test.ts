@@ -31,7 +31,7 @@ it('pushes nothing for a viewed agent, a muted one or an unknown terminal', asyn
     expect(d.pushSend).not.toHaveBeenCalled()
   }
 })
-it('leaves a project task\'s agent waiting for you to the grouped Decisions push', async () => {
+it('leaves a project task\'s agent waiting for you to the grouped push of what waits for you', async () => {
   const d = coreDelivery({ taskAgent: true })
   await d.notify('m/t1', 'needs-you')
   expect(d.pushSend).not.toHaveBeenCalled()

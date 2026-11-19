@@ -34,6 +34,8 @@ export const SYNCED_SETTINGS = [
   'chatFilesLevel', 'chatFilesProtected',
   // Keyboard shortcuts changed by the user (app/utils/shortcuts.ts)
   'shortcutBindings',
+  // Community plugins: '1' lets the wherdr plugins load (shared/clientPlugins.ts)
+  'communityPlugins',
 ] as const
 
 export type SyncedSetting = typeof SYNCED_SETTINGS[number]

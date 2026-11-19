@@ -9,7 +9,9 @@
 // its default) or stops it. Hidden while project management is off.
 // A workspace's coordinator (workspaces.md) shows as its workspace's row, under
 // its tab group: its members' tasks working and waiting for the user, and their
-// key badges, which a tap expands into the list (one tap opens a member's board).
+// key badges (a small square on one with a task waiting), which a tap expands into
+// the list (one tap opens a member's board), each member with its own counts.
+// "n waiting for you" leads to the waiting task (openWaiting).
 // Their order is the user's (drag a row by its handle, or long press it on a
 // phone), and Move to hidden (or a drop on the group) puts one in the Hidden
 // group at the end, collapsed; one there that needs the user shows above.
@@ -82,34 +84,36 @@ const sub = (c: CoordinatorView) => {
   if (coordinatorStopped(c)) return `${program} · ${tl('Stopped')}`
   return tl(`Start with ${program}`, `Lancer avec ${program}`)
 }
-const counts = (c: CoordinatorView) => {
-  const ws = c.workspace
-  return ws ? [ws.working ? tl(`${ws.working} working`) : '', ws.waiting ? tl(`${ws.waiting} waiting for you`) : ''].filter(Boolean).join(' · ') : ''
+// "n waiting for you" tapped: one task opens its sheet; several, a member's open
+// Tasks to review on that project, a workspace's its board (Tasks to review has no workspace filter).
+function openWaiting(ids: string[], project: string, member: boolean) {
+  if (dnd.swallowClick()) return
+  if (ids.length === 1) return openTaskSheet(ids[0]!)
+  if (!member) return navigateTo(coordinatorBoardPath(project))
+  reviewFilter.value = `p:${project}`
+  reviewOpen.value = true
 }
+// Under a workspace's row: its members' badges, and its counts (its own features' too, members or not).
+const hasStrip = (c: CoordinatorView) => !!c.workspace && (!!c.workspace.members.length || !!c.workspace.working || !!c.workspace.waiting.length)
 // The workspace whose members are listed (one at a time).
 const membersOpen = ref('')
 function toggleMembers(c: CoordinatorView) {
   if (dnd.swallowClick()) return
   membersOpen.value = membersOpen.value === c.project ? '' : c.project
 }
-const boardPath = (key: string) => `/board?project=${encodeURIComponent(key)}`
 
 // Restart with…: the offered agents that can run this project's coordinator.
 const rowMenu = useRowMenu()
 const restarting = ref<CoordinatorView | null>(null)
 const pick = ref('')
 const choices = computed(() => (restarting.value ? offerCoordinators(undefined, restarting.value.project) : []))
-const settingsPath = (c: CoordinatorView, tab: string) => `/settings?section=projects&project=${encodeURIComponent(c.project)}&tab=${tab}`
 const menu = (c: CoordinatorView) => (): MenuItem[] => {
   const p = coordinatorPane(c)
-  const pilot = !!c.autopilot?.on
   return [
     // Its first message never reached its session (coordinatorFirst.ts): typed again once it is
     // ready; its session ended: a new conversation that gets it.
     ...(c.undelivered ? [{ label: tl('Send again'), icon: 'i-lucide-send', run: () => run(c, async () => { await api('/api/pm/coordinator-start', { project: c.project, resend: true }); await loadCoordinators() }) }, { kind: 'separator' as const }] : []),
-    { label: t('Open the board'), icon: 'i-lucide-kanban', run: () => navigateTo(boardPath(c.project)) },
-    { label: c.workspace ? t('Workspace settings') : t('Project settings'), icon: 'i-lucide-settings-2', run: () => navigateTo(settingsPath(c, 'general')) },
-    { label: t('Autopilot'), icon: pilot ? 'i-lucide-check' : 'i-lucide-plane', desc: pilot ? t('On') : t('Off'), run: () => navigateTo(settingsPath(c, 'autopilot')) },
+    ...coordinatorPlaceItems(c),
     { kind: 'separator' },
     { label: t('Rename…'), icon: 'i-lucide-pencil', run: () => startRename(c) },
     // The conversation header's mute: a coordinator's exception, kept across its restarts.
@@ -150,7 +154,7 @@ async function stop(c: CoordinatorView, p: Pane) {
 function choose(c: CoordinatorView) {
   restarting.value = c
   const now = (c.ran ?? coordinatorAgent(c))?.program
-  pick.value = now && choices.value.includes(now) ? now : choices.value[0] ?? ''
+  pick.value = now && choices.value.includes(now) ? now : defaultProjectChoice(choices.value)
 }
 async function restart() {
   const c = restarting.value
@@ -200,7 +204,7 @@ onUnmounted(() => clearInterval(timer))
               <UInput v-model="newName" autofocus size="lg" class="w-full" maxlength="80" :placeholder="c.name" :aria-label="t('Coordinator name')" @blur="rename(c)" @keydown.esc.prevent="renaming = ''" />
             </form>
             <button
-              v-else type="button" class="coord-row" :class="{ on: !!coordinatorPane(c), sel: selected(c), aside: g.key === 'hidden', joined: !!c.workspace?.members.length }" :aria-current="selected(c) ? 'page' : undefined"
+              v-else type="button" class="coord-row" :class="{ on: !!coordinatorPane(c), sel: selected(c), aside: g.key === 'hidden', joined: hasStrip(c) }" :aria-current="selected(c) ? 'page' : undefined"
               :disabled="!!busy" data-testid="coordinator-row" :title="c.main ? undefined : tl(`Coordinator of ${c.name}`)" v-on="rowMenu.on(menu(c), coordinatorName(c))" @click="open(c)"
             >
               <i class="coord-dot" aria-hidden="true" />
@@ -208,18 +212,21 @@ onUnmounted(() => clearInterval(timer))
               <UIcon :name="coordinatorPane(c) ? 'i-lucide-chevron-right' : 'i-lucide-play'" class="coord-go" />
             </button>
             </UContextMenu>
-            <template v-if="c.workspace?.members.length">
+            <template v-if="c.workspace && hasStrip(c)">
+              <div class="ws-strip" :class="{ aside: g.key === 'hidden' }">
               <button
-                type="button" class="ws-members" :class="{ aside: g.key === 'hidden' }" :aria-expanded="membersOpen === c.project"
+                v-if="c.workspace.members.length" type="button" class="ws-members" :aria-expanded="membersOpen === c.project"
                 :aria-label="tl(`Members of ${coordinatorName(c)}`)" data-testid="workspace-members" @click="toggleMembers(c)"
               >
-                <ProjectBadge v-for="m in c.workspace.members" :key="m.key" :text="m.label ?? m.key" :color="m.color" />
+                <span v-for="m in c.workspace.members" :key="m.key" class="ws-badge" :class="{ waits: m.waiting.length }"><ProjectBadge :text="m.label ?? m.key" :color="m.color" /></span>
                 <UIcon name="i-lucide-chevron-down" class="ws-chevron" :class="{ open: membersOpen === c.project }" />
-                <small v-if="counts(c)" class="ws-counts" data-testid="workspace-counts">{{ counts(c) }}</small>
               </button>
+              <WorkspaceCounts :counts="c.workspace" class="ws-counts" @open="ids => openWaiting(ids, c.project, false)" />
+              </div>
               <ul v-if="membersOpen === c.project" class="ws-member-list" data-testid="workspace-member-list">
-                <li v-for="m in c.workspace.members" :key="m.key">
-                  <NuxtLink :to="boardPath(m.key)" class="ws-member"><ProjectBadge :text="m.label ?? m.key" :color="m.color" /><span>{{ m.name }}</span></NuxtLink>
+                <li v-for="m in c.workspace.members" :key="m.key" class="ws-member-row" data-testid="workspace-member">
+                  <NuxtLink :to="coordinatorBoardPath(m.key)" class="ws-member"><ProjectBadge :text="m.label ?? m.key" :color="m.color" /><span>{{ m.name }}</span></NuxtLink>
+                  <WorkspaceCounts :counts="m" class="ws-member-counts" @open="ids => openWaiting(ids, m.key, true)" />
                 </li>
               </ul>
             </template>
@@ -296,17 +303,25 @@ onUnmounted(() => clearInterval(timer))
 .coord-rename { cursor: default; }
 /* A workspace's members: badges under its name, inside the row's box. */
 .coord-row.joined { border-bottom-width: 0; padding-bottom: 2px; }
-.ws-members { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; width: 100%; padding: 0 12px 8px 30px; border: 1px solid var(--line); border-top-width: 0; background: var(--surface); cursor: pointer; }
-.ws-members.aside { opacity: .7; }
-@media (hover: hover) { .ws-members:hover { background: var(--surface-2); } }
-.ws-counts { margin-left: auto; padding-left: 8px; color: var(--muted); font: 12px/1.4 var(--mono); white-space: nowrap; }
+.ws-strip { display: flex; flex-wrap: wrap; align-items: flex-start; border: 1px solid var(--line); border-top-width: 0; background: var(--surface); }
+.ws-members { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; padding: 0 0 8px 30px; border: 0; background: none; cursor: pointer; }
+/* A member with a task waiting for the user: a small square on its badge, seen collapsed. */
+.ws-badge { position: relative; display: inline-flex; }
+.ws-badge.waits::after { content: ''; position: absolute; top: -2px; right: -2px; width: 5px; height: 5px; background: var(--blocked); box-shadow: 0 0 0 1px var(--surface); }
+.ws-strip.aside { opacity: .7; }
+@media (hover: hover) { .ws-strip:has(.ws-members:hover) { background: var(--surface-2); } }
+/* Beside the strip's button, which cannot hold the link. */
+.ws-counts { flex: none; margin-left: auto; padding: 0 12px 8px 8px; line-height: 20px; }
 .ws-members:focus-visible { outline: 1px solid var(--mauve); outline-offset: -1px; }
 .ws-chevron { color: var(--dim); transition: transform .15s; }
 .ws-chevron.open { transform: rotate(180deg); }
 .ws-member-list { margin: 0; padding: 0 0 4px; list-style: none; border: 1px solid var(--line); border-top-width: 0; background: var(--surface); }
-.ws-member { display: flex; align-items: center; gap: var(--badge-gap); min-height: 40px; padding: 4px 12px 4px 30px; color: var(--text-2); font-size: 13px; }
+.ws-member-row { display: flex; align-items: center; }
+@media (hover: hover) { .ws-member-row:hover { background: var(--surface-2); } }
+.ws-member-counts { flex: none; padding-right: 12px; }
+.ws-member { display: flex; flex: 1; align-items: center; gap: var(--badge-gap); min-width: 0; min-height: 40px; padding: 4px 12px 4px 30px; color: var(--text-2); font-size: 13px; }
 .ws-member > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ws-member:hover { background: var(--surface-2); color: var(--text); }
+.ws-member:hover { color: var(--text); }
 .coord-error { margin: 6px 0 0; }
 .coord-stopped { display: grid; gap: 10px; }
 .coord-stopped .coord-note { margin-bottom: 4px; }

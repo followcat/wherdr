@@ -3,7 +3,7 @@
 // the server (server/utils/pmCoordinator.ts) reads and writes.
 import { isGitBranch, type Project } from './project'
 import { reachLines } from './reach'
-import { WEIGHTS, isDefaultWorkflow, isWeight, type Holder, type Template, type Weight } from './workflow'
+import { WEIGHTS, isDefaultWorkflow, isWeight, isContextError, parseContext, type ContextSpec, type Holder, type Template, type Weight } from './workflow'
 import { SPEC_RULE, type Run, type Task } from './run'
 import { wasReleased } from './release'
 import { CODEX_NO_UPDATE } from '../codexLaunch'
@@ -33,10 +33,11 @@ import { MERGE_METHODS, contributorPrsLine, type MergeMethod } from './contribut
 import { MAP_COMMANDS, parseMap, type MapCommand } from './workspaceMap'
 import { REPO_COMMANDS, parseRepo, type RepoCommand } from './workspaceAdopt'
 import { FEATURE_COMMANDS, parseFeature, type FeatureCommand } from './feature'
+import { parseRefs } from './planRefs'
 
 // The agent of a coordinator: the project's default, and the one its kept
 // conversation ran with (changing it starts a new conversation, never a
-// resume of another program's session). model: passed to Claude or Codex at
+// resume of another program's session). model: passed to Claude, Codex or omp at
 // its start; none, the harness's default (changed inside the agent).
 export interface CoordinatorAgent { program: CoordinatorProgram, model?: string }
 // The harnesses that can carry a coordinator or Alfred: each reads its role
@@ -47,11 +48,22 @@ export type CoordinatorProgram = typeof COORDINATOR_PROGRAMS[number]
 export const isCoordinatorProgram = (v: unknown): v is CoordinatorProgram => COORDINATOR_PROGRAMS.includes(v as CoordinatorProgram)
 // A project's coordinator must not change the project's repository: only
 // Claude (Edit deny rule in .claude/settings.json) and Codex (its sandbox) can
-// be held to that. The others start bare, so they run Alfred (its own home,
+// be held to that by wherdr. omp has no such rule: it is held by its tool list
+// (OMP_COORDINATOR_TOOLS), without edit or write tools. Like Claude's Edit
+// deny, that leaves the shell able to write: an omp coordinator is the opt-in,
+// never the default. The others start bare, so they run Alfred (its own home,
 // no repository) but not a project coordinator.
 export const GUARDED_PROGRAMS = ['claude', 'codex'] as const satisfies readonly CoordinatorProgram[]
+export const TOOL_GUARDED_PROGRAMS = ['omp'] as const satisfies readonly CoordinatorProgram[]
 export const canRunCoordinator = (program: unknown, key: string): program is CoordinatorProgram =>
-  key === MAIN ? isCoordinatorProgram(program) : (GUARDED_PROGRAMS as readonly unknown[]).includes(program)
+  key === MAIN ? isCoordinatorProgram(program) : ([...GUARDED_PROGRAMS, ...TOOL_GUARDED_PROGRAMS] as readonly unknown[]).includes(program)
+// The program a project coordinator starts with when nobody chose one: the first
+// of the offered programs (the user's order) that wherdr itself guards, and only
+// when none is offered, the first tool-guarded one (omp is never the default).
+export function defaultProjectProgram(offered: readonly string[]): CoordinatorProgram | undefined {
+  const among = (list: readonly CoordinatorProgram[]) => offered.find((p): p is CoordinatorProgram => (list as readonly string[]).includes(p))
+  return among(GUARDED_PROGRAMS) ?? among(TOOL_GUARDED_PROGRAMS)
+}
 // Each harness's own instructions file, pointing to AGENTS.md.
 export const ROLE_POINTERS: Record<string, string> = { 'CLAUDE.md': '@AGENTS.md\n', 'GEMINI.md': '@AGENTS.md\n', 'QWEN.md': '@AGENTS.md\n' }
 
@@ -113,27 +125,39 @@ export interface CoordinatorView {
   // A workspace's coordinator (workspace.ts): its tab group, its members and their tasks at work or waiting for the user.
   workspace?: WorkspaceView
 }
-export interface WorkspaceView { group?: string, members: { key: string, name: string, label?: string, color?: ProjectColor }[], working: number, waiting: number }
+// Tasks at work (stalled ones too), and the ids of those waiting for the user.
+export interface WorkCounts { working: number, waiting: string[] }
+export interface WorkspaceView extends WorkCounts { group?: string, members: ({ key: string, name: string, label?: string, color?: ProjectColor } & WorkCounts)[] }
 
-// The sidebar's workspace row: its members (in the order they were added), and
-// how many of their tasks work (stalled ones too) or wait for the user.
+const workCounts = (tasks: Task[]): WorkCounts => {
+  const by = tasks.map(t => ({ id: t.id, s: taskStatus(t) }))
+  return { working: by.filter(x => x.s === 'working' || x.s === 'stalled').length, waiting: by.filter(x => x.s === 'waiting' || x.s === 'ready').map(x => x.id) }
+}
+
+// The sidebar's workspace row: its members (in the order they were added), each
+// with its own counts, and the total: theirs plus the workspace's own tasks (its features).
 export function workspaceView(ws: Pick<Project, 'key' | 'group'>, projects: Project[], tasks: Task[]): WorkspaceView {
   const members = projects.filter(p => p.workspace === ws.key)
-  const states = tasks.filter(t => members.some(m => m.key === t.project)).map(taskStatus)
   return {
     ...(ws.group ? { group: ws.group } : {}),
-    members: members.map(m => ({ key: m.key, name: m.name, ...(m.label ? { label: m.label } : {}), ...(m.color ? { color: m.color } : {}) })),
-    working: states.filter(s => s === 'working' || s === 'stalled').length,
-    waiting: states.filter(s => s === 'waiting' || s === 'ready').length,
+    members: members.map(m => ({ key: m.key, name: m.name, ...(m.label ? { label: m.label } : {}), ...(m.color ? { color: m.color } : {}), ...workCounts(tasks.filter(t => t.project === m.key)) })),
+    ...workCounts(tasks.filter(t => t.project === ws.key || members.some(m => m.key === t.project))),
   }
 }
 
 // Where the coordinator's current turn comes from: a message the user sent
 // from the interface, an engine wake, or nothing known (refused like a wake).
-export type Turn = 'user' | 'wake' | 'none'
+// relay: Alfred's `tell` in its own user turn: the user's request reaches the
+// coordinator, never the user's yes (every user-only gate refuses it; it may
+// add the task asked for). card: the user's click on one of its cards (Cancel
+// too): it may propose the next card, nothing more.
+export type Turn = 'user' | 'wake' | 'relay' | 'card' | 'none'
+export type NotedTurn = Exclude<Turn, 'none'>
+// A card is proposed in a turn of the user, or right after their click on the last one.
+export const cardTurn = (t: Turn) => t === 'user' || t === 'card'
 
 export type Command =
-  | { name: 'help' } | { name: 'list', archived?: true } | { name: 'plan' } | { name: 'template show' } | { name: 'autopilot show' }
+  | { name: 'help' } | { name: 'docs', page?: string } | { name: 'list', archived?: true } | { name: 'plan' } | { name: 'template show' } | { name: 'autopilot show' }
   | { name: 'automation list' } | { name: 'incidents', since?: number }
   | { name: 'show', task: string }
   | { name: 'template edit' } // the new template comes as the call's input (JSON)
@@ -146,15 +170,15 @@ export type Command =
   | { name: 'ack', wakes: string[] } | { name: 'automation show', id: string }
   | { name: 'automation propose', id?: string, remove?: true } // a new or changed one comes as the call's input (JSON)
   | { name: 'tell', task: string, text: string, to?: AgentRole, fix?: FixKind, reason?: string, spec?: true }
-  | { name: 'task edit', task: string, title?: string, description?: string, after?: string, mergeAfter?: string, reason: string }
+  | { name: 'task edit', task: string, title?: string, description?: string, after?: string, mergeAfter?: string, context?: ContextSpec | null, reason: string } // context: null puts back its task type's
   | { name: 'task note', task: string, text: string }
   | { name: 'read', task: string, to?: AgentRole, lines?: number }
   | { name: 'task start', task: string, on?: string }
   | { name: 'task check', task: string }
-  | { name: 'task stop', task: string, reason: string }
+  | { name: 'task stop', task: string, reason: string, forRoom?: true }
   | { name: 'task remove', task: string, reason: string }
   | { name: 'task order', task: string, tasks: string[] } // task: the first, for its project
-  | { name: 'task add', title: string, type: string, after?: string, mergeAfter?: string, description?: string, weight?: Weight, files?: string[], fromBranch?: string, feature?: string }
+  | { name: 'task add', title: string, type: string, after?: string, mergeAfter?: string, description?: string, weight?: Weight, files?: string[], fromBranch?: string, feature?: string, refs?: string[], context?: ContextSpec }
   | { name: 'pr merge', pr: number, userSaid: string, method?: MergeMethod }
   | { name: 'report back' | 'report close', task: string, text: string }
   // Show a place beside the coordinator's conversation (shared/uiOpen.ts).
@@ -174,7 +198,7 @@ export const COMMANDS: { usage: string, does: string }[] = [
   { usage: 'list [--archived] [--project <KEY>]', does: 'the project\'s tasks, their step and what waits for the user; archived tasks (done, off the board) only with --archived' },
   { usage: 'show <task>', does: 'one task, its weight, the machine it runs on, its plan and its log' },
   { usage: 'plan [--project <KEY>]', does: 'the resolved plan of each task type' },
-  { usage: 'template show', does: 'the project\'s own workflow (JSON): a minimal default (version 0) until the user accepts one' },
+  { usage: 'template show [--project <KEY>]', does: 'the workflow the project runs (JSON): its own, a minimal default (version 0) until the user accepts one; a workspace\'s member without one of its own runs the workspace\'s, and the answer says so (runs). Never a copy: a change to the workspace\'s workflow reaches every member that runs it' },
   { usage: 'template edit < template.json', does: 'propose a new workflow for the project; only in a turn that comes from the user, guards unchanged (unless the project has no accepted workflow yet); the user accepts or refuses its diff in wherdr' },
   { usage: 'task tag <task> <text>', does: 'a short tag on the card (a ticket key, a client)' },
   { usage: 'task link <task> <url> --label <label>', does: 'a link on the card (PR, ticket, pipeline)' },
@@ -182,7 +206,7 @@ export const COMMANDS: { usage: string, does: string }[] = [
   { usage: 'step wait <task> (--for <duration> | --until-user) --reason "<one sentence>"', does: 'when a recheck of a step you hold finds nothing new, postpone the next one: --for sets it (30m, 2h, up to 1d), --until-user stops rechecks until the user writes to you or acts on the task. Without it, each recheck with no news doubles the next interval, up to 1h; any news on the task starts it over. Written to the task\'s log' },
   { usage: 'step done <task> --user-said "<their words>"', does: 'end a step that waits for the user, with the user\'s own words; only in a turn that comes from the user' },
   { usage: 'step back <task> "<what to change>" --user-said "<their words>"', does: 'send a step that waits for the user (a visual merge in Tasks to review) back to the worker, as the sheet\'s Send back does: the approval drops, the worker gets what to change and redoes the screenshots it touches, and the task leaves Tasks to review until its next review is done; only in a turn that comes from the user' },
-  { usage: 'task decide <task> <choice> --reason "<one sentence>"', does: 'after N send-backs, pick one of the engine\'s options. Also pass when each remaining finding contradicts a spec change recorded on the task (task edit, task note, tell --spec), the reason citing it (its date YYYY-MM-DD or its words); never before a merge only the user may do nor on a critical finding with proof. Written to the task\'s log and shown in the user\'s Decisions: tell the user in your next message' },
+  { usage: 'task decide <task> <choice> --reason "<one sentence>"', does: 'after N send-backs, pick one of the engine\'s options. Also pass when each remaining finding contradicts a spec change recorded on the task (task edit, task note, tell --spec), the reason citing it (its date YYYY-MM-DD or its words); never before a merge only the user may do nor on a critical finding with proof. Written to the task\'s log: tell the user in your next message' },
   { usage: 'ack <wake> [<wake>…]', does: 'say you handled a wake (each wake ends with its id); unacked, it comes back once, then the user is told' },
   { usage: 'autopilot show', does: 'your autopilot\'s goal, hours, whether it looks for new work (and how many tasks those wakes may still add today), the scheduled wakes skipped today (nothing to do, or ahead of the pace), what is left of today\'s limits, the pacing of your worker\'s account (go, or what automatic work waits for), each machine the project allows (online or offline, its available hours, memory, cores and load, its agents at work by weight, the heaviest weight it takes now or why none) the weights (what each counts, the weight of each task type) and the last open incident (why agents were gone, see incidents)' },
   { usage: 'incidents [--since 2h|3d|<ISO date>] [--project <KEY>]', does: 'why agents were gone, as the engine diagnosed it from facts (machine offline or unreachable, herdr-core or wherdr restarted, agent killed or crashed, out of memory, account limit, or unknown): when, the machine, the cause, the facts it used, the tasks and agents hit, open until those tasks run again; newest first, the last 7 days by default. Tell the user this cause, never a guess' },
@@ -191,12 +215,12 @@ export const COMMANDS: { usage: string, does: string }[] = [
   { usage: 'automation propose [<automation>] [--remove] < automation.json', does: 'propose a new automation (no id), a change to one (its id) or its removal (--remove, no input); only in a turn that comes from the user. The JSON: {"name", "prompt" (the task\'s description), "type"? (a task type, else the first), "schedule" (every 2h, daily 09:00, mon,thu 09:00 or a cron) or "event" (added, approval, review-failed, failed, needs-you, merged) with "filter"? (a title glob: docs*)}. The user accepts or refuses it from a card in your reply and in the project\'s Automations tab; an accepted new one starts switched on, and the user alone switches one on or off' },
   { usage: 'task start <task> [--on <machine>]', does: 'start a task to do, or one stopped on a failure again, or continue a stopped one (in a wake, only twice); in a turn of the user at any time, past the autopilot\'s limits and hours (the output says when: "started; past the autopilot\'s limit of 3 at once"; the start still counts in them), in a wake only with the autopilot on, within its limits and hours; a task with "after" waits until those tasks are done (the engine then starts it itself). --on picks one of the machines the project allows, by its name, for a task never started (default: the project\'s own); it is refused while that machine is not ready, with what fails there; while it is offline the task goes to another allowed machine that fits, else waits for it. A started task always goes back to its own machine' },
   { usage: 'task check <task>', does: 'read the task\'s PR on GitHub now, for a task at its merge step or archived with a PR: merged, its merge step ends as merged and the task goes on; open, why it waits; closed without a merge, said (the user may archive it). At any time, when the user asks to unblock a task' },
-  { usage: 'task stop <task> --reason "<one sentence>"', does: 'end the task\'s agent; its worktree, branch and work stay, and it waits for the user (or your `task start` to continue it); in a turn of the user at any time, in a wake only a task your autopilot started' },
+  { usage: 'task stop <task> [--for-room] --reason "<one sentence>"', does: 'end the task\'s agent; its worktree, branch and work stay, and it waits for the user (or your `task start` to continue it); in a turn of the user at any time, in a wake only a task your autopilot started. --for-room only frees its machine, for any task at its worker\'s step whose worker is a Claude agent (its conversation is taken up again), in a turn of the user or a wake: the task is paused (its card says it waits for room), it asks the user nothing, and the engine continues it in the same worktree and conversation once that machine has room, before any new task starts there, in board order' },
   { usage: 'task remove <task> --reason "<one sentence>"', does: 'remove a task never started (a duplicate, one no longer needed) from the board; refused while other tasks wait for it (after); written to the project\'s log; in a turn of the user at any time, in a wake only a task your autopilot added' },
   { usage: 'task order <task> [<task>…]', does: 'put these tasks first in their column (To do, Your turn…), in this order; the others keep their order after them. Keep the board busy starts to-do tasks in board order, and the merge queue takes approved merges in it. A done task is refused. In a turn of the user at any time, in a wake only with the autopilot on; written to the project\'s log' },
-  { usage: 'task edit <task> [--title "<text>"] [--description "<text>"] [--after <task>,<task>] [--merge-after <task>,<task>] --reason "<one sentence>"', does: 'change the task\'s title or description when the user changes direction; only in a turn that comes from the user. Written to the task\'s log with the reason and a short diff; its running agent is told at once, and the worker and the reviewer read the new spec from their next step or round. --after alone changes the tasks it starts after ("" for none), for a task not started yet: tasks of its project or workspace, never a cycle; in a wake only with the autopilot on. --merge-after alone changes the tasks its PR merges after ("" for none), for a task not done yet, under the same rules' },
+  { usage: 'task edit <task> [--title "<text>"] [--description "<text>"] [--after <task>,<task>] [--merge-after <task>,<task>] [--context <member>,<member>|all|none] --reason "<one sentence>"', does: 'change the task\'s title or description when the user changes direction; only in a turn that comes from the user. Written to the task\'s log with the reason and a short diff; its running agent is told at once, and the worker and the reviewer read the new spec from their next step or round. --after alone changes the tasks it starts after ("" for none), for a task not started yet: tasks of its project or workspace, never a cycle; in a wake only with the autopilot on. --merge-after alone changes the tasks its PR merges after ("" for none), for a task not done yet, under the same rules. --context alone changes the read-only context folders its agents get from their next start ("" puts back its task type\'s; none, all or members: see task add), for a task not done yet, under the same rules as --after' },
   { usage: 'task note <task> "<text>"', does: `add a dated spec change to the task, under its description; only in a turn that comes from the user. The worker\'s and the reviewer\'s instructions give every note, newest last, with the rule "${SPEC_RULE}"; its running agent is told at once` },
-  { usage: 'task add "<title>" --type <type> [--after <task>,<task>] [--merge-after <task>,<task>] [--description "<text>"] [--weight light|standard|heavy] [--files <path>,<path>] [--from-branch <branch>] [--feature <feature>] [--project <KEY>]', does: 'add a task to do; in a turn of the user at any time, in a wake only with the autopilot on; with --after, the engine starts it once those tasks are done. --weight says what it needs of a machine (light: docs, a study; standard: tests and typecheck; heavy: a build, e2e, screenshots); left out, it comes from its task type and steps (show gives it). --files: the files or folders it will change, so that its start waits behind a started task that touches them. --from-branch: an existing branch its worker continues (a v2 task\'s), when the remote still has it at its start; else it starts from the base. --feature: a sub-task of one of the workspace\'s features (--after may then name tasks of its other projects). --merge-after: its PR merges only once those tasks are done (their whole workflow); it waits out of line in the merge queue meanwhile' },
+  { usage: 'task add "<title>" --type <type> [--after <task>,<task>] [--merge-after <task>,<task>] [--description "<text>"] [--weight light|standard|heavy] [--files <path>,<path>] [--from-branch <branch>] [--feature <feature> [--refs T010,T011]] [--context <member>,<member>|all|none] [--project <KEY>]', does: 'add a task to do; in a turn of the user at any time, in a wake only with the autopilot on; with --after, the engine starts it once those tasks are done. --weight says what it needs of a machine (light: docs, a study; standard: tests and typecheck; heavy: a build, e2e, screenshots); left out, it comes from its task type and steps (show gives it). --files: the files or folders it will change, so that its start waits behind a started task that touches them. --from-branch: an existing branch its worker continues (a v2 task\'s), when the remote still has it at its start; else it starts from the base. --feature: a sub-task of one of the workspace\'s features (--after may then name tasks of its other projects). --refs: the plan lines (T010, T011 of the feature\'s tasks.md) it covers, for a feature split with a plan file; wherdr ticks them once the task is done. --merge-after: its PR merges only once those tasks are done (their whole workflow); it waits out of line in the merge queue meanwhile. --context: read-only snapshots, at their base branch, of other members of the task\'s workspace, which its worker and reviewer may read ("cite path:line"): member keys (PAY,WEB), all (every other member) or none (none, whatever its task type says); only for a member project of a workspace; a member without a clone on the task\'s machine is skipped' },
   { usage: 'report back <task> "<what to fix>"', does: 'on a problem the user reported: send their step back to the worker with precise fixes, and close the report' },
   { usage: 'report close <task> "<what you did>"', does: 'close a problem the user reported once handled (you told the agent, added a follow-up task, or it is fine); the merge it blocked is free again' },
   { usage: 'tell <task> "<text>" [--to worker|reviewer] [--spec] [--fix base|ci|machine|stall --reason "<one sentence>"]', does: `a message to one of the task\'s agents: the one that holds its current step, else (a step held by nobody or by you: pr, merge, a user step) its worker; --to picks it. The answer says which agent got it. --spec also records it as a spec note (task note), so that the reviewer reviews against it; only in a turn that comes from the user. In a wake, only to answer its question, or with --fix to unblock a mechanical block (${FIX_KINDS.map(k => `${k}: ${FIX_TEXT[k]}`).join('; ')}): a worker that was let go or has ended starts again with your message, a reviewer not running at the review step starts the review again; with the autopilot on, a task of your project, at most ${FIXES_PER_STEP} times per task and step, written to its log with the reason; past that, tell the user. A permission request is always the user\'s` },
@@ -206,6 +230,7 @@ export const COMMANDS: { usage: string, does: string }[] = [
   { usage: 'ui action resume|step|open <task>', does: 'a button in your reply that the user clicks: resume (continue a stopped task), step (the button of the step that waits for the user: "Merge", "Approve screenshots"), open (its sheet); only in a turn that comes from the user. Only their click runs it, through the task sheet\'s own action, and only if the task still waits the same way; end your reply with the block the answer gives, and never say it is done before the card shows it' },
   { usage: 'ui show file <path> | shots <task>', does: 'show a file of your folder (a path relative to it; an .html page runs as a page, self-contained only: inline its CSS, scripts and images, https CDN links load, files next to it do not), or a task\'s screenshots (before and after side by side, toggled on a phone), beside your conversation (a card on a phone); only in a turn that comes from the user. It only shows: for the user\'s approval, add ui action step <task>; end your reply with the block the answer gives' },
   { usage: 'help', does: 'this list: the commands of the wherdr that runs now' },
+  { usage: 'docs [<page>[#<section>]]', does: 'the docs of the wherdr that runs now, from any machine: alone, the index (llms.txt); with a page (workspaces.md), that page; with a section (workspaces.md#shared-workflow, the anchor of the index\'s link), only that section. Read-only, in a wake too; a long page is cut: ask for a section' },
   ...MAP_COMMANDS,
   ...REPO_COMMANDS,
   ...FEATURE_COMMANDS,
@@ -236,6 +261,8 @@ const TASK_RE = /^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/
 const KEY_RE = /^[A-Z][A-Z0-9]{1,9}$/
 // The main coordinator names the project with --project <KEY>; a task names its own.
 const PROJECT_VERBS = ['list', 'plan', 'template show', 'autopilot show', 'incidents', 'automation list', 'automation show', 'automation propose', 'task add', 'map show', 'map list', 'map set', 'map remove', 'repo adopt', 'feature add']
+// template edit --project: a member's own workflow is the user's (docs/workspaces.md).
+const MEMBER_WORKFLOW_EDIT = 'template edit changes your own project\'s workflow only, never another project\'s or a member\'s (no --project): a member\'s own workflow is the user\'s, set in its Workflow tab. To change what members run, propose a change to the workspace\'s workflow (template edit, no --project): every member without its own runs it'
 const URL_RE = /^https?:\/\/\S{1,2000}$/
 
 // argv after `wherdr pm` → a command, or the reason it is not one.
@@ -245,6 +272,7 @@ export function parseCommand(argv: unknown): (Command & { project?: string }) | 
   const i = argv.indexOf('--project'), project = i >= 0 ? String(argv[i + 1] ?? '') : undefined
   // ui open: --project is already in the target's link.
   if (project === undefined || r.name === 'ui open') return r
+  if (r.name === 'template edit') return { error: MEMBER_WORKFLOW_EDIT }
   if (!PROJECT_VERBS.includes(r.name)) return { error: `--project is for ${PROJECT_VERBS.join(', ')}` }
   return KEY_RE.test(project) ? { ...r, project } : { error: '--project is a project key: 2 to 10 letters or digits' }
 }
@@ -263,7 +291,7 @@ function parseWords(argv: unknown): Command | { error: string } {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string
     if (!a.startsWith('--')) { words.push(a); continue }
-    if (a === '--spec' || a === '--archived' || a === '--remove' || a === '--until-user' || a === '--refresh') { flags[a.slice(2)] = 'yes'; continue } // the options without a value
+    if (a === '--spec' || a === '--archived' || a === '--remove' || a === '--until-user' || a === '--refresh' || a === '--for-room' || a === '--anyway') { flags[a.slice(2)] = 'yes'; continue } // the options without a value
     const v = argv[i + 1] as string | undefined
     if (v === undefined) return { error: `${a} needs a value` }
     flags[a.slice(2)] = v
@@ -277,7 +305,7 @@ function parseWords(argv: unknown): Command | { error: string } {
   const verb = [w0, w1].join(' '), task = w2 ?? ''
   const usage = (u: string) => ({ error: `usage: wherdr pm ${COMMANDS.find(c => c.usage.startsWith(u))!.usage}` })
   const known = (...k: string[]) => Object.keys(flags).find(f => !k.includes(f))
-  const extra = known('project', ...({ 'tell': ['to', 'fix', 'reason', 'spec'], 'task edit': ['title', 'description', 'after', 'merge-after', 'reason'], 'read': ['to', 'lines'], 'pr merge': ['user-said', 'method'], 'task link': ['label'], 'step done': ['user-said', 'link'], 'step back': ['user-said'], 'step wait': ['for', 'until-user', 'reason'], 'task decide': ['reason'], 'task stop': ['reason'], 'task remove': ['reason'], 'task add': ['type', 'after', 'merge-after', 'description', 'weight', 'files', 'from-branch', 'feature'], 'feature add': ['description'], 'feature close': ['reason'], 'task start': ['on'], 'list': ['archived'], 'automation propose': ['remove'], 'incidents': ['since'], 'ui open': ['target'], 'map set': ['does', 'talks', 'used-by'], 'map list': ['refresh'] }[w0 === 'tell' || w0 === 'read' || w0 === 'incidents' || w0 === 'list' ? w0 : verb] ?? []))
+  const extra = known('project', ...({ 'tell': ['to', 'fix', 'reason', 'spec'], 'task edit': ['title', 'description', 'after', 'merge-after', 'context', 'reason'], 'read': ['to', 'lines'], 'pr merge': ['user-said', 'method'], 'task link': ['label'], 'step done': ['user-said', 'link'], 'step back': ['user-said'], 'step wait': ['for', 'until-user', 'reason'], 'task decide': ['reason'], 'task stop': ['reason', 'for-room'], 'task remove': ['reason'], 'task add': ['type', 'after', 'merge-after', 'description', 'weight', 'files', 'from-branch', 'feature', 'refs', 'context'], 'feature add': ['description'], 'feature split': ['from'], 'feature close': ['reason', 'anyway'], 'task start': ['on'], 'list': ['archived'], 'automation propose': ['remove'], 'incidents': ['since'], 'ui open': ['target'], 'map set': ['does', 'talks', 'used-by'], 'map list': ['refresh'] }[w0 === 'tell' || w0 === 'read' || w0 === 'incidents' || w0 === 'list' ? w0 : verb] ?? []))
   if (extra) return { error: `unknown option --${extra}` }
   if (w0 === 'map') return parseMap(words.slice(1), flags)
   if (w0 === 'repo') return parseRepo(words.slice(1))
@@ -322,6 +350,7 @@ function parseWords(argv: unknown): Command | { error: string } {
   if (verb === 'ui targets') return w2 ? usage(verb) : { name: verb }
   if (verb === 'ui show') return uiShowArgs(w2, w3 === undefined ? [] : [w3, ...rest], TASK_RE, usage(verb))
   if (verb === 'ui action') return isUiAction(w2) && w3 && TASK_RE.test(w3) && !rest.length ? { name: verb, action: w2, task: w3 } : usage(verb)
+  if (w0 === 'docs') return w2 ? { error: `unexpected argument: ${w2}` } : { name: w0, ...(w1 ? { page: w1 } : {}) }
   if (w0 === 'help' || w0 === 'list' || w0 === 'plan') return w1 ? { error: `unexpected argument: ${w1}` } : { name: w0, ...(w0 === 'list' && flags.archived ? { archived: true as const } : {}) }
   if (w0 === 'show') return w1 && TASK_RE.test(w1) && !w2 ? { name: 'show', task: w1 } : usage('show')
   if (verb === 'template show' || verb === 'template edit') return w2 ? { error: `unexpected argument: ${w2}` } : { name: verb }
@@ -340,7 +369,12 @@ function parseWords(argv: unknown): Command | { error: string } {
     if (fromBranch !== undefined && !isGitBranch(fromBranch)) return { error: '--from-branch is a branch name' }
     const feature = flags.feature?.trim()
     if (feature !== undefined && !TASK_RE.test(feature)) return { error: '--feature is a feature: WS-1' }
-    return { name: verb, title, type, ...(feature ? { feature } : {}), ...(after ? { after } : {}), ...(mergeAfter ? { mergeAfter } : {}), ...(description ? { description } : {}), ...(weight ? { weight } : {}), ...(files.length ? { files } : {}), ...(fromBranch ? { fromBranch } : {}) }
+    const context = flags.context === undefined ? undefined : parseContext(flags.context)
+    if (isContextError(context)) return { error: `--${context.error}` }
+    const refs = parseRefs(flags.refs)
+    if ('error' in refs) return { error: `--refs: ${refs.error}` }
+    if (refs.length && !feature) return { error: '--refs needs --feature: the plan lines belong to a feature\'s plan file' }
+    return { name: verb, title, type, ...(context ? { context } : {}), ...(feature ? { feature } : {}), ...(refs.length ? { refs } : {}), ...(after ? { after } : {}), ...(mergeAfter ? { mergeAfter } : {}), ...(description ? { description } : {}), ...(weight ? { weight } : {}), ...(files.length ? { files } : {}), ...(fromBranch ? { fromBranch } : {}) }
   }
   if (verb === 'pr merge') {
     const said = flags['user-said']?.trim(), method = flags.method as MergeMethod | undefined
@@ -360,13 +394,16 @@ function parseWords(argv: unknown): Command | { error: string } {
   }
   if (verb === 'task edit') {
     const title = flags.title?.trim(), description = flags.description?.trim(), reason = (flags.reason ?? '').trim(), after = flags.after?.trim(), mergeAfter = flags['merge-after']?.trim()
-    if (!TASK_RE.test(task) || w3 || !reason || (title === undefined && description === undefined && after === undefined && mergeAfter === undefined)) return usage(verb)
+    // --context "" puts back the task type's setting.
+    const context = flags.context === undefined ? undefined : flags.context.trim() === '' ? null : parseContext(flags.context)
+    if (!TASK_RE.test(task) || w3 || !reason || (title === undefined && description === undefined && after === undefined && mergeAfter === undefined && context === undefined)) return usage(verb)
+    if (isContextError(context)) return { error: `--${context.error}` }
     if (after && !after.split(',').every(a => TASK_RE.test(a.trim()))) return { error: '--after is a list of tasks: A-1,A-2 ("" for none)' }
     if (mergeAfter && !mergeAfter.split(',').every(a => TASK_RE.test(a.trim()))) return { error: '--merge-after is a list of tasks: A-1,A-2 ("" for none)' }
     if (title !== undefined && (!title || title.length > 200)) return { error: '--title is 1 to 200 characters' }
     if (description !== undefined && description.length > 20000) return { error: '--description is 20000 characters at most' }
     if (reason.length > 300 || reason.includes('\n')) return { error: '--reason is one sentence (300 characters at most)' }
-    return { name: verb, task, ...(title !== undefined ? { title } : {}), ...(description !== undefined ? { description } : {}), ...(after !== undefined ? { after } : {}), ...(mergeAfter !== undefined ? { mergeAfter } : {}), reason }
+    return { name: verb, task, ...(title !== undefined ? { title } : {}), ...(description !== undefined ? { description } : {}), ...(after !== undefined ? { after } : {}), ...(mergeAfter !== undefined ? { mergeAfter } : {}), ...(context !== undefined ? { context } : {}), reason }
   }
   if (verb === 'task note') {
     const text = words.slice(3).join(' ').trim()
@@ -376,7 +413,7 @@ function parseWords(argv: unknown): Command | { error: string } {
   if (verb === 'task stop' || verb === 'task remove') {
     const reason = (flags.reason ?? '').trim()
     if (!TASK_RE.test(task) || w3 || !reason) return usage(verb)
-    return reason.length <= 300 && !reason.includes('\n') ? { name: verb, task, reason } : { error: '--reason is one sentence (300 characters at most)' }
+    return reason.length <= 300 && !reason.includes('\n') ? { name: verb, task, reason, ...(flags['for-room'] && verb === 'task stop' ? { forRoom: true as const } : {}) } : { error: '--reason is one sentence (300 characters at most)' }
   }
   if (verb === 'step wait') {
     const reason = (flags.reason ?? '').trim(), d = flags.for?.trim()
@@ -424,7 +461,7 @@ export const sameGuards = (a: Template | null, b: Template | null) => guardsOf(a
 // change only through the user's own gesture in the interface. key: the project's.
 export function templateEditRefusal(old: Template | null, next: Template, turn: Turn, key?: string): string | undefined {
   if (turn !== 'user') return 'template edit is only for a turn that comes from the user: propose the change and wait for their yes'
-  if (!old) return `The project has no workflow: the user starts it from a template in ${projectPlace(key, 'workflow', true)}`
+  if (!old) return `The project has no workflow: ask the user, or Alfred, to start one in ${projectPlace(key, 'workflow', true)}`
   if (next?.id !== old.id) return `The coordinator edits its project's workflow only (${old.id})`
   // The first workflow brings its guards: the user's yes to it sets them.
   if (!isDefaultWorkflow(old) && !sameGuards(old, next)) return `Guards (protected branches, who merges) are changed by the user in ${projectPlace(key ?? old.id, 'guards', true)}, or by Alfred, never with a project coordinator's token`
@@ -499,13 +536,28 @@ export function citedSpecChange(task: Pick<Task, 'specNotes' | 'log'>, reason: s
 // What a running agent of the task reads at once when its spec changed.
 export const specChangedText = (what: string) => `The task's spec changed: ${what}\n\n${SPEC_RULE} Follow the new spec from now on.`
 
+// The tools of an omp project coordinator: it reads, searches and runs the shell
+// (`wherdr pm`). No edit, ast_edit, eval, task, debug or lsp tool (lsp can apply
+// edits: rename, code actions). Verified on omp 18.20: with this list omp has no
+// edit tool, and its `write` tool refuses filesystem paths (it writes only its
+// internal xd:// devices and local:// session scratch). The shell can still
+// write, as with Claude: the guard is the list.
+// omp refuses to start when a listed tool is unknown or unavailable, so the list
+// keeps to its core tools: no `find` (a semantic search on some versions, missing
+// when omp has no model for it, as on 18.11 without a login); glob and grep find files.
+export const OMP_COORDINATOR_TOOLS = 'read,grep,glob,bash,todo,ask,web_search,wait'
+
 // How the coordinator starts, in its own folder, with its harness's default
 // model. Claude: the repo added with --add-dir, its edits denied in the
 // folder's .claude/settings.json. Codex: its --add-dir makes a folder
 // writable, so none. Its `workspace-write` sandbox has no network, which
 // `wherdr pm` needs: a permission profile given only by -c (nothing in
 // ~/.codex) extends :workspace (reads everywhere, writes in its folder and
-// temp folders) with the network on. The others start bare in the folder.
+// temp folders) with the network on. omp: its --tools list (OMP_COORDINATOR_TOOLS)
+// has no edit, write, ast_edit, eval, task or debug, and its repo or workspace
+// root is added with --add-dir; the shell can still write, as with Claude's Edit
+// deny, so the guard is the list. A plain folder (works) and Alfred (no repo)
+// keep omp's default tools. The others start bare in the folder.
 // Devin answers its workspace-trust check itself with --respect-workspace-trust
 // (its home is wherdr's own folder, made by wherdr). Cursor Agent's binary is
 // cursor-agent; --trust skips its workspace-trust box (its MCP approval box, a
@@ -515,7 +567,9 @@ export const specChangedText = (what: string) => `The task's spec changed: ${wha
 // without git, not a workspace: Codex keeps a workspace's root read-only, since a
 // writable --add-dir would open its members too).
 // resume: its last conversation again, the last one started in its own folder
-// (the programs of canResume), with the same options.
+// (the programs of canResume), with the same options: omp's
+// `--continue` takes up the last conversation of its working folder, which is
+// the coordinator's own (its resume is for a project's coordinator, not Alfred).
 export function coordinatorArgs(program: CoordinatorProgram, folder: string, repo?: string, works = false, resume = false, model?: string): string[] {
   const m = model ? ['--model', model] : []
   if (program === 'claude') return ['claude', ...m, ...(resume ? ['--continue'] : []), ...(repo ? ['--add-dir', repo] : [])]
@@ -523,12 +577,17 @@ export function coordinatorArgs(program: CoordinatorProgram, folder: string, rep
   if (program === 'devin') return ['devin', '--respect-workspace-trust', 'false', ...(resume ? ['-c'] : [])]
   if (program === 'cursor') return ['cursor-agent', '--trust', ...(resume ? ['--continue'] : [])]
   if (program === 'agy') return ['agy', ...(resume ? ['-c'] : [])]
+  if (program === 'omp') return ['omp', ...m, ...(repo && !works ? ['--tools', OMP_COORDINATOR_TOOLS] : []), ...(repo ? ['--add-dir', repo] : []), ...(resume ? ['--continue'] : [])]
   return [program]
 }
-export const canResume = (program: CoordinatorProgram) => program === 'claude' || program === 'codex' || program === 'devin' || program === 'cursor' || program === 'agy'
-// Claude, Codex, Devin and Antigravity take the first message as an argument;
-// the others get it typed once they are ready.
-export const promptAsArg = (program: CoordinatorProgram) => program === 'claude' || program === 'codex' || program === 'devin' || program === 'agy'
+// Claude, Codex, Devin, Cursor and Antigravity, and omp for a project's
+// coordinator, can take up their last conversation again. Alfred on omp stays
+// as before: always a new conversation.
+export const canResume = (program: CoordinatorProgram, key: string) => program === 'claude' || program === 'codex' || program === 'devin' || program === 'cursor' || program === 'agy' || (program === 'omp' && key !== MAIN)
+// Claude, Codex, Devin and Antigravity, and omp for a project's coordinator,
+// take the first message as an argument; the others (Alfred on omp too) get it
+// typed once they are ready.
+export const promptAsArg = (program: CoordinatorProgram, key: string) => program === 'claude' || program === 'codex' || program === 'devin' || program === 'agy' || (program === 'omp' && key !== MAIN)
 // The flag a program's command-line first message follows (Devin's `--`).
 export const PROMPT_ARG_FLAG: Partial<Record<CoordinatorProgram, string>> = { devin: '--', agy: '-i' }
 // Antigravity loads no file by itself outside a git worktree (its home has
@@ -556,7 +615,7 @@ b64() { base64 | tr -d '\\n'; }
 body='{"argv64":[' sep=
 for a in "$@"; do body="$body$sep\\"$(printf %s "$a" | b64)\\"" sep=,; done
 body="$body]"
-case "$route $1 $2 $3 $4" in "pm/cli template edit"*|"alfred/cli project workflow edit"*|"alfred/cli project memory "*|"pm/cli automation propose"*|*" notes add"*|*" notes edit "*|*" notes file put "*) case " $* " in *" --remove "*) ;; *) body="$body,\\"input64\\":\\"$(b64)\\"" ;; esac ;; esac
+case "$route $1 $2 $3 $4" in "pm/cli template edit"*|"pm/cli feature split"*|"alfred/cli project workflow edit"*|"alfred/cli project memory "*|"alfred/cli theme propose"*|"pm/cli automation propose"*|*" notes add"*|*" notes edit "*|*" notes file put "*) case " $* " in *" --remove "*|*" --from "*) ;; *) body="$body,\\"input64\\":\\"$(b64)\\"" ;; esac ;; esac
 out=$(mktemp) hdr=$(mktemp) || exit 1
 code=$(printf '%s}' "$body" | curl -sS -D "$hdr" -o "$out" -w '%{http_code}' -X POST --data-binary @- \\
   -H 'content-type: application/json' -H "origin: $WHERDR_URL" -H "authorization: Bearer $tok" "$WHERDR_URL/api/$route")
@@ -577,7 +636,7 @@ export function docsRule(docs: string | undefined, help: string, open: { cmd: st
     'Never explain wherdr\'s interface or commands from memory: wherdr changes with each update.',
     docs
       ? `First read \`${docs}/llms.txt\` (the index), then only the section(s) that answer, and the sections their "Needs:" line names.`
-      : 'wherdr\'s docs are on wherdr\'s machine: say so, and answer only what the docs index (docs/llms.txt in wherdr\'s repository) and your commands confirm.',
+      : 'wherdr\'s docs are on wherdr\'s machine: read them with `wherdr pm docs` (the index, llms.txt), then `wherdr pm docs <page>#<section>` for only the section(s) that answer (the anchor of the index\'s link), and the sections their "Needs:" line names. They are the docs of the wherdr that runs, never a repository checkout\'s.',
     `The current commands: ${help}.`, '',
     '## Links into wherdr', '',
     'Whenever you send the user somewhere in wherdr ("open Settings › Phone"), give the in-app link too, as inline code (`#/settings?section=phone`) or a Markdown link ([Phone settings](#/settings?section=phone)): the chat opens it in place. Only these addresses (KEY: a project key, TAG: a tag, ID: a task id):',
@@ -661,13 +720,14 @@ export function roleFiles(p: Project, t: Template | null, examples: Template[], 
   const members = ws.members ?? [], rules = rootRules(ws.rules ?? [])
   // A folder without git (not a workspace): no task worktree, the coordinator does the work there itself.
   const plain = isPlainFolder(p), workspace = p.kind === 'workspace'
+  const rootMember = workspace ? members.find(m => m.path.replace(/\/+$/, '') === p.path.replace(/\/+$/, '')) : undefined
   const plans = t ? Object.entries(t.taskTypes).flatMap(([type]) => [`### ${type}`, ...planSteps(t, { type }, p.base).map(stepLine), '']) : ['(no template yet)']
   // No accepted workflow yet: the coordinator's first conversation sets one up.
   const firstTalk = p.git !== false && isDefaultWorkflow(t) ? ['## Your first conversation', '',
     `This project has no accepted workflow yet: its tasks follow a minimal default (one type \`task\`: todo → work → done). Your first reply proposes one:`,
     '1. Before it, look at the repository: README, docs, stack, tests, CI files, branches, recent commits, and where its PRs go (GitHub, Bitbucket, none: `git remote -v` shows no origin).',
     `2. Introduce yourself as the coordinator of project ${p.key} and say in a few lines what you understood of the project. An empty or nearly empty repository: say so, and ask what the user wants to build after your proposal.`,
-    '3. In that same first reply, propose a workflow with `template edit` (its diff is against the default), with the guards that fit; start from the example of the template library below closest to what you saw, and adapt it. Say in a few lines why: what you saw that led to each choice (the checks before a merge, the reviews, who merges). A repository with no origin remote: propose the local-merge flow (branches merged on this machine, no PR), never a PR flow it cannot run.',
+    '3. In that same first reply, propose a workflow with `template edit` (its diff is against the default), with the guards that fit; start from the example below closest to what you saw, and adapt it. Say in a few lines why: what you saw that led to each choice (the checks before a merge, the reviews, who merges). A repository with no origin remote: propose the local-merge flow (branches merged on this machine, no PR), never a PR flow it cannot run.',
     '4. The user accepts or refuses its diff in wherdr. Then ask, as `choices`, what they would change (stricter: PRs, reviews, CI checks, the user merges; or lighter: fewer checks, wherdr merges), and propose again.',
     'Note their answers in memory.md. This section goes away once the user accepts a workflow.', ''] : []
   const own = t ? [t.instructions, ...Object.entries(t.taskTypes).map(([k, tt]) => tt.instructions && `${k}: ${tt.instructions}`)].filter(Boolean).map(s => `- ${s}`) : []
@@ -676,7 +736,7 @@ export function roleFiles(p: Project, t: Template | null, examples: Template[], 
     plain
       ? `You coordinate project ${p.key} only. Its folder is ${p.path}, without git: its tasks cannot start (a task needs git for its own worktree), so you do the work yourself, directly in that folder: read and change its files as the user asks. Add no task for that work.`
       : workspace
-      ? `You coordinate workspace ${p.key} and its member projects. Its root is ${p.path}, without git: read any repository under it; plan there (specs, notes), outside the members' folders (in your own folder when your harness keeps the root read-only). Never change a member's repository yourself: every code change in a member goes through tasks (\`feature split\` of a feature, \`task add --feature\`), done by task agents in their own worktrees.`
+      ? `You coordinate workspace ${p.key} and its member projects. Its root is ${p.path}${rootMember ? `, itself a git repository: member project ${rootMember.key}, whose files (specs, docs, shared rules) change through its tasks like any member's; its tasks' worktrees hold the root's own files only, never the repositories under it. Read any repository under the root; plan in your own folder` : `: read any repository under it; plan there (specs, notes), outside the members' folders (in your own folder when your harness keeps the root read-only)`}. Never change a member's repository yourself: every code change in a member goes through tasks (\`feature split\` of a feature, \`task add --feature\`), done by task agents in their own worktrees. When you split a feature, a contract both sides need (proto, API, schema) is its own first task. When the plan comes from a spec's tasks.md, give the split \`"plan"\` (its path under the root) and each entry \`"refs"\` (the IDs of the lines it covers, such as T010): wherdr ticks those lines itself once the sub-task is done, so never tick them yourself.`
       : `You coordinate project ${p.key} only. Its repository is ${p.path}: read it, never change it; task agents do the work in their own worktrees.`,
     'Wakes are messages sent by wherdr, not the user; the first line names who sends it. The server knows which, and refuses what a wake may not do:',
     '- "Autopilot:": your autopilot (an agent\'s question, a choice after N send-backs, the routine events the user turned on, the user\'s "run now"). "Autopilot: scheduled wake" is its schedule (Every, At): your goal, then a short summary of your project (tasks done since the last one, waiting for the user, stuck for long, machines idle while to-do tasks wait). When nothing in it needs you, ack at once with no further work: look into a line only when it needs you;',
@@ -687,7 +747,7 @@ export function roleFiles(p: Project, t: Template | null, examples: Template[], 
     ...firstTalk,
     '## Your memory', '',
     `\`memory.md\` in your folder is yours: wherdr creates it once and never rewrites it, so it outlives a restart and a change of program. Read it first, at each start, and follow it: the user's decisions and preferences there come before your defaults. Note there, as you go, each decision or preference the user gives you, one fact per line; nothing a command or the board already says. Keep it clean: merge duplicates, drop stale lines, stay under ${MEMORY_CAP} characters.`, '',
-    ...(members.length ? ['## Members', '', `This workspace's member projects: ${members.map(m => m.key).join(', ')}. They have no coordinator: you act on each (Act level: \`--project <KEY>\`), their tasks count in your autopilot's limits, and their wakes come to you.`, ''] : []),
+    ...(members.length ? ['## Members', '', `This workspace's member projects: ${members.map(m => m.key).join(', ')}. They have no coordinator: you act on each (Act level: \`--project <KEY>\`), their tasks count in your autopilot's limits, and their wakes come to you. Each runs the workspace's workflow (never a copy: a change to it reaches them) unless the user gave it its own; \`template show --project <KEY>\` and \`plan --project <KEY>\` say which. A member's own workflow is the user's.`, ''] : []),
     ...(p.kind === 'workspace' ? ['## The workspace map', '',
       `\`map.md\` in your folder is the workspace's map: what each repository under ${p.path} does, what it talks to and what uses it. wherdr writes it from \`wherdr pm map set\`; read it at each start, like your memory. Nobody reads every repository up front: the map fills as tasks touch them.`,
       '- The first time a task touches a repository not on the map, write its line: `map set <repo> --does "<one line>" [--talks a,b] [--used-by c]`. Correct a line that turns out wrong.',
@@ -715,7 +775,7 @@ export function roleFiles(p: Project, t: Template | null, examples: Template[], 
     '## Machines', '',
     'The engine places each start on one of the machines the project allows (the user allows them in its settings), by the project\'s placement strategy, which the user sets (by default heavy work on the strongest that has room, light and standard work on the project\'s own machine when it has room). `autopilot show` gives the strategy, each machine and what it takes now. Leave placement to the engine; `task start <task> --on <machine>` picks one by its name when the user asks or a task needs that machine. A started task always stays on its machine (`show` gives it).',
     'A task\'s weight says what it needs of a machine: light (docs, a study), standard (tests and typecheck), heavy (a build, e2e, screenshots). It comes from its task type and steps; set `task add --weight` only when the task differs from its type (a docs-only change in a type that takes screenshots: light).', '',
-    '## Plans of this project\'s task types', '', `Workflow: ${isDefaultWorkflow(t) ? 'the minimal default, none accepted yet' : t ? `v${t.version ?? 1}${p.from ? `, copied from template ${p.from.template} v${p.from.version} (the template library never changes it)` : ''}` : 'none'}`, `Working branch: ${p.base || 'none set'}`, '', ...plans]),
+    '## Plans of this project\'s task types', '', `Workflow: ${isDefaultWorkflow(t) ? 'the minimal default, none accepted yet' : t ? `v${t.version ?? 1}${p.from ? `, copied from template ${p.from.template} v${p.from.version} (the original never changes it)` : ''}` : 'none'}`, `Working branch: ${p.base || 'none set'}`, '', ...plans]),
     ...rules,
     '## Turning a workflow request into steps', '',
     'You are the one who writes this project\'s workflow: wherdr only shows it to the user, who asks you for every change and accepts or refuses your proposal.',

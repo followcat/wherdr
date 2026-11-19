@@ -49,3 +49,24 @@ it('reads every task list again as soon as a task\'s agent goes back to work (an
   expect(taskSheetTick.value).toBe(from + 2) // not a session without a task
   vi.useRealTimers()
 })
+
+it('the pressed answer alone loads while it is sent, the others disabled, then it shows sent', async () => {
+  const w = await mountSuspended(ReviewQuestion, { props: { card, busy: false } })
+  const choice = (i: number) => w.findAll('[data-testid="review-choice"]')[i]!
+  const send = () => w.get('[data-testid="review-other-send"]')
+  await choice(1).trigger('click')
+  await w.setProps({ busy: true }) // the sheet's request on its way
+  expect([0, 1, 2].map(i => choice(i).html().includes('animate-spin'))).toEqual([false, true, false])
+  expect([0, 1, 2].map(i => choice(i).attributes('disabled'))).toEqual(['', '', ''])
+  expect(send().html()).not.toContain('animate-spin')
+  await w.setProps({ busy: false, sent: 'Write it without testing' })
+  expect([choice(1).classes().includes('confirmed'), choice(1).html().includes('animate-spin')]).toEqual([true, false])
+  // Another answer: Send loads, no choice does; then Sent.
+  await w.setProps({ sent: undefined })
+  await w.find('[data-testid="review-other"] textarea').setValue('Use the CI')
+  await w.find('[data-testid="review-other"]').trigger('submit')
+  await w.setProps({ busy: true })
+  expect([send().html().includes('animate-spin'), choice(1).html().includes('animate-spin')]).toEqual([true, false])
+  await w.setProps({ busy: false, sent: 'Use the CI' })
+  expect([send().text(), send().classes().includes('confirmed')]).toEqual(['Sent', true])
+})

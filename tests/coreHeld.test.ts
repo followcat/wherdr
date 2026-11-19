@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createHeld } from '../server/utils/coreHeld'
+import { createHeld, type HeldSaved } from '../server/utils/coreHeld'
 import { codexLine } from '../shared/codexLaunch'
 import { addSending, prune, returnHeld, settle } from '../app/utils/outbox'
 import type { Pane } from '../shared/types'
@@ -70,6 +70,44 @@ describe('a message sent while Codex installs or updates itself', () => {
     await new Promise(r => setTimeout(r, 0))
     held.apply(ready())
     expect(tries).toBe(before)
+  })
+  it('survives a restart: still typed once Codex is ready; one cut while typing is never typed again', async () => {
+    let saved: HeldSaved | null = null
+    const store = { load: () => saved, save: (x: HeldSaved) => { saved = JSON.parse(JSON.stringify(x)) } }
+    const first = createHeld(() => new Promise(() => {}), () => 5, store)
+    first.hold(pane(), 'Hi', 'w-abc')
+    first.hold(pane({ id: 'p2', coreAddress: 't2' }), 'Typing', 'w-def')
+    first.apply([pane(), pane({ id: 'p2', coreAddress: 't2', installing: undefined })])
+    // A first message its holder (coreCreate.ts) may be typing behind a dialog.
+    first.hold(pane({ id: 'p3', coreAddress: 't3' }), 'First', undefined, true)
+    // wherdr restarts.
+    const sent: string[] = []
+    const second = createHeld(async (_p, q) => { sent.push(q.text) }, () => 6, store)
+    const panes = [pane({ installing: undefined }), pane({ id: 'p2', coreAddress: 't2', installing: undefined }), pane({ id: 'p3', coreAddress: 't3', installing: undefined })]
+    second.apply(panes)
+    expect(sent).toEqual(['Hi'])
+    expect(panes[1]!.queued).toMatchObject([{ id: 'w-def', state: 'failed', reason: 'unseen' }])
+    expect(panes[2]!.queued).toMatchObject([{ text: 'First', state: 'failed', reason: 'unseen' }])
+  })
+  it('a message sent again (its answer lost) is held once, and typed once', async () => {
+    const sent: string[] = []
+    const held = createHeld(async (_p, q) => { sent.push(q.text) })
+    const q = held.hold(pane(), 'Hi', 'w-abc')
+    expect(held.hold(pane(), 'Hi', 'w-abc')).toEqual(q)
+    held.apply([pane({ installing: undefined })])
+    await new Promise(r => setTimeout(r, 0))
+    held.apply([pane({ installing: undefined })])
+    expect(sent).toEqual(['Hi'])
+  })
+  it('a first message whose holder may have typed it is never typed again', () => {
+    const sent: string[] = []
+    const held = createHeld(async (_p, q) => { sent.push(q.text) })
+    const q = held.hold(pane(), 'Hi', undefined, true)
+    held.handOver('t1', q.id, 'unseen')
+    const panes = [pane({ installing: undefined })]
+    held.apply(panes)
+    expect(sent).toEqual([])
+    expect(panes[0]!.queued).toMatchObject([{ state: 'failed', reason: 'unseen' }])
   })
   it('types a first message held behind a dialog only once its holder hands it over', async () => {
     const sent: string[] = []

@@ -13,13 +13,13 @@ Each step does the thing in place; Next waits until it is done, and Back shows
 only when there is a step to go back to (never on the first). While no project
 went through every step, the **Board** header shows *Finish setup (2/3)*,
 which opens it at the first step left; once one project's coordinator runs,
-the button is gone. **Settings › Projects › Set up a project** opens it too, on
-the first project with a step left, and *Add project* opens it on a new
-project.
+the button is gone. Home's *Open the setup window* opens it too.
+**Settings › Projects › Add project** adds a project with the New sheet's
+*Project* form instead (see below).
 
 There is no workflow to pick here: the project's coordinator sets it up with
-you, and you change it any time by talking to it or to Alfred. Templates stay
-in the project's [Workflow](#workflow) tab for advanced use.
+you, and you change it any time by talking to it or to Alfred. To start from
+another project's workflow, ask Alfred: it reads that one and proposes it.
 
 1. **Turn on project management.** Off, wherdr changes nothing. *Turn on* is
    the main button; under it, a quieter *Let Alfred guide me*: it opens Alfred's conversation
@@ -30,7 +30,7 @@ in the project's [Workflow](#workflow) tab for advanced use.
    repository is public; correct it if the check is wrong (until it is
    checked, it says *not checked* and nothing more). Then name its coordinator
    (prefilled with the project's name), pick its
-   coordinator's agent and, for Claude or Codex, its model (empty: the agent's
+   coordinator's agent and, for Claude, Codex or omp, its model (empty: the agent's
    default; you can also change it later in its conversation). Both are kept as
    the project's coordinator default, so a restart uses them again. With several projects, pick the one to set up,
    or add another.
@@ -60,11 +60,13 @@ in the project's [Workflow](#workflow) tab for advanced use.
    Codex…).
 
 Projects imported from v2 ([Migrate from v2](migrate-from-v2.md)) have no
-workflow either: ask their coordinator, or open the project, then
-*Workflow › Start from a template*. There, an example that needs a remote
-warns when the repository has none.
+workflow either: ask their coordinator to propose one (*Workflow › Ask the
+coordinator*). To reuse another project's workflow, ask Alfred: it reads that
+one and proposes it for this project.
 
-**New › Project** opens straight on adding a project: the machine tabs (with
+**New › Project** opens straight on adding a project (its *Project |
+Workspace* switch at the top: *Workspace* shows the
+[workspace form](workspaces.md#creating-a-workspace) instead): the machine tabs (with
 several machines), that machine's git repositories with a search, then *Or
 any folder* with **Browse**: a new or empty folder (created at start, `git
 init` offered), or any folder without git (a folder of several projects, for
@@ -75,13 +77,15 @@ with the agent you chose (*Start with Claude*, *Codex*…), and its first
 message proposes a workflow ([its first
 conversation](#the-coordinators-first-conversation)). A folder without git
 needs no workflow: it has no tasks (a task needs git for its own worktree),
-and its coordinator does the work in it directly. Below, *Existing projects*
-lists the projects whose coordinator does not run, to start it again; those
-running are in the sidebar, and with none stopped the heading is hidden. On a
+and its coordinator does the work in it directly. Below, *Restart a
+coordinator* (with their number, collapsed until you open it) lists the
+projects whose coordinator does not run, to start it again; those running are
+in the sidebar, and with none stopped the section is hidden. The agent
+picker comes after it, for a new folder as for a project to restart. On a
 computer the sheet is wider, with a taller repository list.
 
 Then ask the coordinator for tasks, and answer what shows under *Your turn* and
-*Decisions*.
+[Tasks to review](#tasks-to-review).
 
 ### The coordinator's first conversation
 
@@ -94,7 +98,7 @@ a first message, and its instructions say its first reply proposes one:
    what it understood of the project; on an empty or nearly empty repository,
    it says so and asks what you want to build.
 3. In that same reply, it proposes a workflow (`wherdr pm template edit`),
-   often from the closest example of the template library, its diff against
+   often from the closest built-in example, its diff against
    the minimal default, with the [guards](#guards) that fit, and says in a few
    lines why (what it saw). Starting the coordinator counts as your request,
    so it needs no message from you first. You accept or refuse it in the
@@ -115,7 +119,9 @@ message still does not get through, the coordinator's row says *First message
 not delivered* (a stopped one too), its menu offers *Send again* (a new
 conversation when its session ended), and Alfred tells you
 (`wherdr alfred coordinator resend <KEY>`). Its next start, whichever, gives
-it the message again.
+it the message again. When herdr-core does not confirm the message was typed
+(it did not answer in time), it is never typed a second time on its own: it
+shows as not delivered, so check the conversation before *Send again*.
 
 Along the way, the coordinator (and Alfred) may suggest a setting you may like,
 or one that solves a problem you mention: once, highlighted with
@@ -126,16 +132,38 @@ data, and post it only on your yes.
 
 ## Projects
 
-**Settings › Projects** holds the *Project management* switch, *Set up a project*,
-the project list and the [template library](#template-library): each row shows
-the name (with a **Public** badge for a public repository), the key, the machine
-and the folder. *Add project* opens the setup window on a new project; *Open the
+**Settings › Projects** holds the *Project management* switch, then two
+sections: **Workspaces**, each [workspace](workspaces.md)'s row with its member
+projects indented under it, and **Projects**, those outside any workspace.
+A workspace folds or
+opens with the chevron on its left (open by default; the choice stays on the
+device). Each row is compact: the key as its colored badge, the name (with a
+**Public** badge for a public repository) and the machine on one line, the
+folder small under it; a long name or folder ends with an ellipsis. *Add
+workspace* sits in the Workspaces header, *Add project* and *Open the board* in
+the Projects header. *Add project* opens the **New** sheet on its *Project* form, as the sidebar's
+New › Project does; *Open the
 board* goes to the board. Until the list is read, the switch and the rows show
 as grey blocks and both buttons wait; a failed read says why, with *Try again*. A row opens the
 project's sheet, with five tabs: General, Workflow, Guards, Automations and
 Autopilot; on a computer it is a wide window, and its General fields pair up
 side by side (name and key, worker and reviewer). Its ⋯ menu removes the project from wherdr, after a confirmation:
-its folder, branches and task worktrees stay on the machine.
+its folder, branches and task worktrees stay on the machine. Removing is refused,
+with why, while the project has open tasks (finish, abandon or close them first)
+and, for a workspace, while it still has member projects (remove them first). A
+task chained after a task whose project is gone anyway waits for you, its card
+saying so, instead of staying to do forever. A project whose workflow cannot be
+read starts none of its tasks; its log says why once, and every other project's
+tasks start as usual.
+
+Above the list, a tab filter picks which projects it shows, with the sidebar's
+home tabs: *Follow tab* (the default: the projects of the home tab open now, the
+same rule as the board's *Follow machine tab*), *All*, then each machine tab
+and tab group. The choice stays on the device. Past 8 projects under the filter,
+a search field finds a project by name, key (a former one too) or folder, any
+case. A member the filter or search keeps shows under its workspace, the
+workspace's row shown with it (a folded workspace opens while you search). When nothing shows, the list says so with *Show all tabs*. A link that
+names a project (`?project=KEY`) opens it even when the filter hides it.
 
 A project can also be a [workspace](workspaces.md): a folder without git whose
 coordinator runs several linked repositories, each one a member project that
@@ -172,6 +200,10 @@ its message under the field and keeps what you typed.
   `git.verify-merged` target), which the tab names (*No working branch set: using
   v3 from the workflow*, also written once in the project's log); with none, the
   repository's default branch. A running task keeps the branch it started with.
+  A `{base}` left in the workflow (a PR base, a merge target) is never taken as
+  a branch: with no working branch set, tasks start from the repository's
+  current branch. A [workspace](workspaces.md#shared-settings)'s member takes
+  its workspace's unless it sets its own.
 - **Branch name**: the template each new task's branch is named from, for
   repositories that require names such as `feature/PROJ-12-fix-login`. Fields:
   `{id}` (the task id), `{tag}` (the card's ticket key, such as `PROJ-12`, else
@@ -184,6 +216,37 @@ its message under the field and keeps what you typed.
   `Branch: <name>` line or a link with `?source=<branch>`, as a Bitbucket pull
   request link), wherdr follows that branch: its pushes, PR and merge checks
   use it, never the old one.
+- **Commit message**: the template of the commit title of a squash merge
+  (`github.merge` or `bitbucket.merge` with `method: "squash"`) and of the merge
+  commit `git.land` makes when the target moved on, for teams that require a
+  ticket key prefix. Fields: those of the branch name (`{tag}` without the task
+  id fallback) and `{title}` (the task's title). Example: `{tag}: {title}`, so a
+  task tagged `ABC-123` lands as `ABC-123: Fix the login`. A field left empty
+  drops with the separator next to it: without a tag, the same task lands as
+  `Fix the login`. Empty: the usual message (GitHub's or Bitbucket's, git's
+  *Merge branch…*). A merge commit or rebase on GitHub or Bitbucket keeps its
+  own message.
+- **On state change**: a shell command run on the project's home machine, in
+  its clone, when one of its tasks **starts**, **waits for you**, is **done**,
+  or **fails or is stopped** (tick the events you want), to keep an external
+  tracker in sync. Each event runs at most once per task. The facts come as
+  environment variables, never written into the command line:
+  `WHERDR_TASK_ID` (as shown on the card), `WHERDR_TASK_TAG` (the card's ticket
+  key, else its first tag), `WHERDR_TASK_TITLE`, `WHERDR_TASK_STATE` (`started`,
+  `waits`, `done`, `failed` or `stopped`), `WHERDR_TASK_PR` (its PR's address,
+  else empty) and `WHERDR_PROJECT`. It runs in the background, 30 s at most,
+  and never holds the task: its exit code and first lines of output go to the
+  task's log (*on state change (done): exit 0*), a failure or timeout is logged
+  and never tried again. It runs with your rights on that machine, so only you
+  set it here: a coordinator's or Alfred's request to change it is refused.
+  Example, a Jira transition (placeholders):
+
+  ```sh
+  [ -n "$WHERDR_TASK_TAG" ] && [ "$WHERDR_TASK_STATE" = done ] && curl -s -u "user@example.com:$JIRA_TOKEN" -H 'Content-Type: application/json' -d '{"transition":{"id":"31"}}' "https://example.atlassian.net/rest/api/3/issue/$WHERDR_TASK_TAG/transitions"
+  ```
+
+  A longer one goes in a script of the repository, such as
+  `./scripts/tracker-sync.sh`.
 - **Archive done tasks after**: 1, 3, 7 (the default), 14 or 30 days, or
   *Never*. A done task stays in the Done column that long, then the engine
   archives it (see [Archived tasks](#archived-tasks)). A shorter delay archives
@@ -309,8 +372,11 @@ Nothing in the tab edits the workflow. To create or change one, *Ask the
 coordinator* opens the project's coordinator with a first message to complete;
 it writes the new workflow (`wherdr pm template edit`) and you accept or refuse
 it (below). A project without an accepted workflow says its tasks follow a
-minimal one (*to do → work → done*) and shows *Start from a template*: pick a
-template or an example to start from, or ask the coordinator to propose one.
+minimal one (*to do → work → done*) and shows only *Ask the coordinator*: its
+coordinator proposes the first workflow (it already does in its first reply).
+To give a project another project's workflow, ask Alfred (or a coordinator
+that may read that project): it reads it (`wherdr pm template show --project
+<KEY>`) and proposes it.
 
 What a workflow holds: its task types, and the steps of each. Each step
 has an id, a column on the board, who holds it (worker, reviewer, coordinator
@@ -365,6 +431,9 @@ and the task's log says why (*kept the remote branch task/WHR-12: commit
 archived task, keeps its branch.
 In JSON, a task type may set `weight` (`light`, `standard` or `heavy`, see
 *Add task* under [Board](#board)).
+In a workspace's member project, a task type may also set `context` (`"all"` or
+a list of member keys): the task's agents get read-only snapshots of those other
+members ([Context folders](workspaces.md#context-folders)).
 
 **Bitbucket Cloud.** A worker step can open the PR with the agent's own
 Bitbucket tool (`evidence: ["link"]`). Then either a step that ends with you and
@@ -378,10 +447,10 @@ PR into a protected branch waits for you, as on GitHub, and a merge Bitbucket
 refuses (approvals, branch restrictions) says why. The credentials come from
 the machine that runs the task: `BITBUCKET_TOKEN` (an access token), or
 `BITBUCKET_USERNAME` with `BITBUCKET_APP_PASSWORD`, in the environment
-herdr-core runs with; wherdr never stores them.
+herdr-core runs with; wherdr never stores them. A squash takes the project's
+[commit message](#general) template when it has one.
 
-The ⋯ menu adds *Change log* and *Save as template* (copies the saved workflow
-into your templates; the project is untouched).
+The ⋯ menu adds *Change log*.
 
 An accepted workflow change reaches the tasks already under way: each stays on its step,
 found by its id. A task whose step is gone goes on to the first step of the new
@@ -405,7 +474,7 @@ or timeout) framed and named, a legend, and one line on what changes for that
 type's tasks (*For feature tasks: review changes its model; a new step shots*).
 *List* shows the same change as a list (merge rule, guards; instructions as a
 text diff), *JSON* the raw diff. A proposal made before the workflow changed again is refused, and the
-review says so: ask the coordinator to propose again. The *Decisions* view links to this review. [Alfred](alfred.md) can propose
+review says so: ask the coordinator to propose again. The proposal's card in the coordinator's chat links to this review. [Alfred](alfred.md) can propose
 a change too, on your request in its chat: you answer it in the same review.
 
 In the coordinator's conversation, a *Workflow change* card sits under the last
@@ -419,6 +488,20 @@ time and *Go to message* (back to it in the conversation), *Accept*, *Refuse*
 and *See all changes* (the review). Once answered, the card shows the outcome, by whom and
 when; each proposal keeps its own card, one the coordinator replaced before you
 answered says *Replaced*.
+
+#### Worker and reviewer agents
+
+`agent` and `reviewAgent` (and `reviewFallbackAgent`) are `claude`, `codex` or
+`omp`: the programs the engine starts with a pinned model and a first message
+(`exec omp --model <model> '<message>'`; an omp model may be a fuzzy name or
+`provider/model`). An omp task's conversation is not taken up again after a
+restart (it starts a new agent with a handover note, as
+[below](#the-engine-resumes-the-work)), and it cannot be paused for room. omp has
+no quota reading, so its account is never *out* and the [pace](quotas.md#pace)
+never holds it: only the autopilot's task-count limits apply, and a reviewer
+fallback is never started because of an omp reviewer's quota. An omp agent on a
+login prompt opens no login incident (wherdr knows no credentials file for omp):
+its task waits for you like for any prompt.
 
 #### Reviewer fallback
 
@@ -471,6 +554,12 @@ commits since the review go back to a short re-review of those commits only;
 commits that only merge the base, the task's own change unchanged, and
 changes to comments only are not reviewed again (the same rule
 as for your approval; a comment-only change is said in the log).
+
+The worker's report (`report.md` in the task's folder) grows by one section
+per round: each step handed back to the worker keeps the earlier report and
+adds the round's section at its end, under its own heading. Only that section
+gives the step's proofs (an earlier link proves nothing); a worker that
+rewrote the file gets the earlier report back on top.
 
 ### Guards
 
@@ -543,17 +632,6 @@ The project coordinator's [autopilot](#autopilot), as in its window, under its
 line (*when the project works without you*) and a link to the Workflow tab
 (the tasks it starts follow it), and a link to the [pace](quotas.md#pace) of
 every account.
-
-### Template library
-
-**Settings › Projects › Template library** lists your saved templates (each
-with its version) and the built-in examples. Tap one to read it: the plan of
-each task type, then its JSON. A saved template's ⋯ menu renames it (its version
-and change log come along) or deletes it, after a confirmation. A project never
-follows the library: it starts from a copy (*Add project*, or *Workflow › Start
-from a template* when it has none), so renaming or deleting a template changes no
-project. To change a template, have a project's coordinator change
-its workflow, then *Save as template*.
 
 ## Autopilot
 
@@ -677,7 +755,7 @@ more than one line, or a question is never folded. Consecutive routine wakes (no
 nor `wherdr pm` command beyond `ack`, `read`, `list`, `show`, `incidents`,
 `help`; a one-line answer that asks nothing) fold into one row, *3 routine checks ·
 last: "WHR-12 merged"*, 08:00–11:00, with the first line of the last answer in
-it, that opens on tap. The fold holds only the wakes and their own turns. An incident, or a wake whose answer asks you
+it, that opens on tap. The fold holds only the wakes and their own turns. A message of yours that Claude took in the same turn as a wake (sent at the same moment) stays your own bubble, with its photos, beside the wake's row, in the order Claude got them; that turn's answer is yours too and shows in full. wherdr does not send a wake while your message is still being typed into the coordinator. An incident, or a wake whose answer asks you
 something, keeps its row (in its stronger colour); an answer that asks you
 stays a full reply, with its answer buttons:
 
@@ -759,7 +837,10 @@ section: a table of situations, each with the tool to use and an example, so
 agents show you things rather than describe them.
 
 - Every agent: a `wherdr` block with `choices "A" | "B"` when it needs one
-  choice from you (`choices "OK"` alone for a one-click confirm), and `task <ID>` for a task's live card when its state matters.
+  choice from you (`choices "OK"` alone for a one-click confirm), a
+  `questions` card when it has several questions at once (never a numbered
+  list of them: you answer all of them in one message, a line each: `1A Postgres`, `2B No`),
+  and `task <ID>` for a task's live card when its state matters.
 - Alfred and coordinators also: a setting highlighted (`ui open --target`), a
   live `status` card, and buttons you click (`ui action step|resume|open`),
   screenshots beside the chat (`ui show shots`). Alfred proposes a setting
@@ -802,7 +883,8 @@ projects and their level from its next start.
 
 ## Board
 
-The header has **Decisions** (with a count when some wait), **Add task**, the
+The header has **To review** (with the count of what waits for you, the same
+as [Tasks to review](#tasks-to-review); it opens that sheet), **Add task**, the
 project picker, a tag filter when tasks have tags, and,
 with one project picked, its [Autopilot](#autopilot) button. The picker offers
 *Follow machine tab* (the projects the [home tab](home.md#machines-as-tabs) picked
@@ -865,6 +947,10 @@ task type's `weight` when the workflow sets one, else heavy when a worker step
 asks for screenshots, light when the type lands no code (no commit, link or git
 action), standard otherwise. The coordinator does the same with `task add
 --weight`, and `show <task>` gives it.
+In a workspace's member project, the coordinator can also give a task read-only
+context folders: `task add … --context PAY,WEB` (or `all`, or `none`), changed
+with `task edit <task> --context … --reason …` ([Context
+folders](workspaces.md#context-folders)).
 
 ### Archived tasks
 
@@ -928,8 +1014,7 @@ when the engine does not offer *pass*: `wherdr pm task decide <task> pass
 change or the reason cites none, and then the choice stays yours. It only ends
 the review loop: a merge only you may do still waits for you, and a critical
 finding with proof stays yours. The pass is
-written to the task's log, the coordinator tells you in its next message, and
-*Decisions* shows it for a day under *Passed on a spec change*.
+written to the task's log, the coordinator tells you in its next message.
 
 ### Tasks that touch the same files
 
@@ -956,7 +1041,7 @@ them too.
 
 ## Task sheet
 
-A card opens the task's sheet. Tasks to review, Decisions' *Open task* and a task
+A card opens the task's sheet. Tasks to review and a task
 link in the chat (`#/board?task=ID`) open it over the page you are on (a bottom
 sheet on a phone), with `?task=ID` added to that page's address, so it survives a
 reload and can be shared; closing it leaves the page as it was. The sheet shows its id badge by the title (a tap copies it; on a phone a long title takes two lines at most, cut with an ellipsis, a tap shows it whole, and one line once the sheet is scrolled or you type) and step, a note when it waits or was
@@ -1042,7 +1127,9 @@ that agent's conversation, its question last; anything else opens the sheet on
 agent that is not on screen here opens the sheet instead.
 
 <a id="tasks-to-review"></a>**Tasks to review.** To clear a morning's work in a
-few minutes, tap Home's **Tasks to review** card: it shows what waits for you
+few minutes, tap Home's **Tasks to review** card or the board's **To review**
+(a link: `#/review`; the former `#/decisions` and the grouped notification of
+what waits for you open it too, over the page you are on): it shows what waits for you
 one at a time. A task to approve shows its key (a tap copies it, as on the task
 sheet), title and project, its
 [TL;DR](#tldr), its newest screenshots (the sheet's viewer, before and after
@@ -1080,13 +1167,19 @@ Anything else that waits (a failure, a decision, another
 step of yours such as *Create these tasks*) shows the answers of its To do tab
 (its choices, *Try again* for a failed action), and *Open the task*. A block its
 worker could fix has **Ask the agent to fix it** first (*Try again* then
-secondary): *The agent is fixing it* for a moment, then it leaves the list, back
+secondary; a failure outside the code, such as herdr-core or the network, has
+only *Try again*): *The agent is fixing it* for a moment, then it leaves the list, back
 at its end only with the agent's question or the fix's new failure; *Open the
 agent* works again once its worker runs. Every
 task, whatever its step, also has *Open the agent*, as on the [task
 sheet](#task-sheet): its agent's conversation, *Worker* or *Reviewer* when both
 run, disabled with *Agent is terminated* once it ended. *3 of 12* with previous and next: a task you pass over stays in the list.
-On a computer, → next, ← previous, A approve, R reject. Approve and Send back
+On a computer, → next, ← previous, A approve, R reject. Every button that sends
+something (Approve, Send back, an answer's choice or *Send*, *Ask the
+coordinator*, *Try again*…) shows a loader from the tap until the server
+answered, on that button and that task only, the others disabled meanwhile, so
+a second tap sends nothing; the task sheet's To do tab does the same, a check on
+the button once it went through. Approve and Send back
 say so on their button (*Approved*, *Sent back*) for a moment, then the next
 task slides in (the arrows slide too, without it; a fade if your system reduces
 motion); a failed action keeps the task with its error. After the last one:
@@ -1171,9 +1264,15 @@ it follows you across devices like the Board's picker.
   8 minutes later), then the error ends with the last lines of the output,
   private parts masked.
 - **Ask the agent to fix it**: on a block the task's worker could fix (a
-  failed step action such as a conflict, red checks or an unreadable PR, a
-  stalled or ended worker, a step past its time limit), this is the first
-  button; *Try again* stays, secondary. The worker gets the block's exact
+  failed step action such as a conflict, red checks, a refused push or new
+  commits to review, a stalled or ended worker, a step past its time limit),
+  this is the first button; *Try again* stays, secondary. An action that failed
+  outside the code (herdr-core or a machine refused the call, the network, a
+  timeout, the Git host's server error or rate limit, a machine offline) has
+  only *Try again*, first; its reason keeps herdr-core's error kind and hint,
+  as in *herdr-core rejected the request (unavailable: …)*. An action that
+  failed for a reason the engine does not know has *Try again* first and *Ask
+  the agent to fix it* second. The worker gets the block's exact
   reason (started again in its worktree if it ended, as a coordinator's
   `tell --fix` does): fix it if it can (merge the base and solve the conflict,
   fix the CI, push), then say it is done; if it needs a decision or access only
@@ -1410,6 +1509,52 @@ its clock stops: such a task never shows *over 3h*, it shows what it waits
 for, and the limit goes on from where it stopped once the agent can work
 again. The time in step shown on the card stays the real time.
 
+### A task waiting for another task
+
+A worker that finds halfway that it needs something from another task or
+repository says so: `hc label "$HC_TERMINAL_ID" "wherdr.report=blocked:on WHR-12: the new /api/items endpoint"`
+(its instructions say how). The task is then **parked**:
+
+- a task named becomes one of its `after` tasks;
+- its agents end, so its machine slot is free; it is never nudged, restarted
+  or counted as stalled, and its step's clock stops;
+- its card says *Waits for WHR-12: the new /api/items endpoint*;
+- its coordinator is woken once with the need. Named a repository that no
+  task covers, the coordinator adds a task there and links it with
+  `wherdr pm task edit <task> --after <new task>` (allowed on a parked task).
+
+Once every task it waits for is done, the worker's conversation is taken up
+again (the same Claude session, not a fresh start), told what changed: each
+task's title, PR and report. A task that would close a cycle (WHR-12 already
+waits for this one, directly or not) is refused: this task is not parked, its
+worker is told, and the coordinator gets one wake with a decision: pull the
+shared contract (proto, API, schema) into its own task both wait for, or merge
+the two tasks into one. If it cannot decide, it tells you both options and leaves the wake unanswered:
+you also get the *coordinator is not answering* notification.
+
+### A task paused for room
+
+A coordinator that only needs to free a crowded machine pauses a started task
+instead of stopping it: `wherdr pm task stop <task> --for-room --reason "machine over its cap"`,
+in your turn or in a wake, for a task at its worker's step that does not wait
+for you, and whose worker's conversation can be taken up again (a Claude worker;
+another is refused: stop it instead). The task is **parked** the same way:
+
+- its agents end, so its machine slot is free; it is never nudged, restarted
+  or counted as stalled;
+- its card says *Paused: waiting for room on <machine>*; it asks you nothing:
+  it is not in **Tasks to review** or **Your turn**.
+
+The engine continues it by itself (same worktree, the same conversation, told
+why it paused) once its machine has room, keeping the machine's cap, in board
+order, and before any new task starts on that machine. A paused or parked task
+takes no slot of the autopilot's **At once** limit. If its worker cannot start
+then, the task stays paused and the engine tries again 10 minutes later; at the
+third failure the pause ends: the task waits with the real reason (a program
+missing, a setup that failed…), the machine takes new tasks again, and the
+coordinator is woken. From its sheet you can
+still **Resume now** (past the cap) or **Stop** it.
+
 ### Why agents are gone
 
 When a task's agents are gone (after a restart, or while wherdr runs), the
@@ -1460,7 +1605,7 @@ Once the cause is gone, the engine resumes it by itself, every minute:
   its card meanwhile *Waiting for login*;
 - **how**: its worker starts again in its worktree. A Claude worker takes its
   conversation up again (`--resume`, its session id kept from its start) with
-  *You were interrupted (…): check git status and continue*; Codex, or a
+  *You were interrupted (…): check git status and continue*; Codex, omp, or a
   conversation that cannot be resumed, gets a new agent that reads its
   instructions with a handover note saying the same. A task stopped at the
   review gets its reviewer again. After a login incident, the restarted agent
@@ -1519,6 +1664,27 @@ it stays when wherdr ends idle agents, for the ones started again later.
 Before it starts an agent, wherdr checks the machine's `/tmp`: with less than
 500 MB free, the agent is not started and the task waits with the reason
 (free some space, then start it again).
+
+### A done task's worktree
+
+Once a done task's agents have ended, wherdr removes its worktree on the
+machine its worker ran on (`git worktree remove`, then `git worktree prune`),
+after killing what still works in it, and writes in the task's log what it
+did and the size freed (*removed its worktree (612 MB freed)*). Its local
+branch goes with it when *Delete the task's branch after its merge* is on; an
+archived task keeps its branch. A squash merge leaves the branch's commits on
+no other branch once its remote branch is deleted: the commit a merge step
+recorded as merged (*I merged it*, *Check on GitHub*, the engine's merge) and
+its history count as merged; a commit added after it still keeps the worktree. The worktree stays, with the reason in the task's log, while
+the task is not done (stopped, failed, waiting for you, its PR not merged),
+while an agent runs on it, with uncommitted changes, with commits neither
+pushed nor merged, or outside `~/.wherdr/pm/worktrees`. At start and every few
+hours, a sweep does the same for every done or archived task whose worktree is
+still there, on every machine that ran one. A removal has 10 minutes (a
+worktree of several GB with its `node_modules` takes a while) and locks the
+worktree first, so no `git worktree prune` forgets it: one a removal left
+halfway, its tracked files only deleted, is finished by the next sweep; one
+with a file changed or added stays, as one locked by you does.
 
 ### Processes an agent leaves behind
 
@@ -1587,7 +1753,8 @@ its worker or reviewer, which wherdr starts again at once, also a worker that
 had ended (on its own, or by a stop the task went on from). As a safety net,
 wherdr also watches every task under way: when the agent that holds its
 current step has not been running for 3 minutes (released, ended on its own,
-or gone in a wherdr restart), wherdr starts it again in its worktree, with a
+gone in a wherdr restart, or a start herdr-core never confirmed: found by its
+labels after a minute, else counted gone), wherdr starts it again in its worktree, with a
 note on where the work stands, and the log says so. When it cannot, the card's
 status says why (*Waits for its machine (offline)*, *Waits for its machine
 (paused)*, no room on the machine), wherdr tries again every 3 minutes, and at

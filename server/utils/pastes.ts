@@ -9,9 +9,8 @@
 // goes 30 days after it was last sent, and their messages become plain text
 // again.
 import fs from 'node:fs'
-import fsp from 'node:fs/promises'
 import path from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { writeFileAtomic } from './atomicWrite'
 import type { QueuedMessage } from '../../shared/types'
 import { isLongPaste, splitPasted } from '../../shared/pastedText'
 import { DATA_DIR } from './env'
@@ -128,15 +127,10 @@ function save() {
   writing = writing.then(async () => {
     const list = kept
     if (!list || list === saved) return
-    const temp = `${PASTES_FILE}.${randomUUID()}.tmp`
     try {
-      await fsp.mkdir(DATA_DIR, { recursive: true })
-      await fsp.writeFile(temp, JSON.stringify(list) + '\n', { mode: 0o600 })
-      await fsp.rename(temp, PASTES_FILE)
+      await writeFileAtomic(PASTES_FILE, JSON.stringify(list) + '\n')
       saved = list
-    } catch {
-      await fsp.rm(temp, { force: true }).catch(() => {})
-    }
+    } catch { /* kept in memory, saved on the next change */ }
   })
 }
 

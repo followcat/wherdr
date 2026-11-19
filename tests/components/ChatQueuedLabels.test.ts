@@ -1,6 +1,7 @@
 // Messages sent while Claude works: "Queued by Claude" while its transcript
-// still lists them in its queue. When a message counts as taken ("Read by the
-// agent") is decided lower, in tests/pendingLabel.test.ts.
+// still lists them in its queue; otherwise "Sending…" with a loader until the
+// transcript has them (WHR-471). The rules are decided lower, in
+// tests/pendingLabel.test.ts.
 import { afterEach, describe, expect, it } from 'vitest'
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import ChatView from '~/components/ChatView.vue'
@@ -18,13 +19,14 @@ const sent = [
   { id: 'b', text: TWO, at: Date.now() - 1000, settledAt: Date.now() - 900 },
 ]
 
-async function tags(q: ClaudeQueueEntry[], p: Pane, expected: string[]) {
+async function tags(q: ClaudeQueueEntry[], p: Pane, expected: string[], loaders = 0) {
   queue = q
   herdrState.value = { ok: true, workspaces: [], panes: [p] }
   const w = await mountSuspended(ChatView, { props: { pane: p, localQueued: sent } })
   try {
     await expect.poll(() => w.find('.chat').text()).toContain('Fix the page title')
     await expect.poll(() => w.findAll('.queued-list .queued-tag').map(t => t.text())).toEqual(expected)
+    expect(w.findAll('.queued-list .queued-tag .spin')).toHaveLength(loaders)
   } finally { w.unmount() }
 }
 
@@ -34,5 +36,9 @@ describe('labels of messages sent while Claude works', () => {
   it('still in Claude\'s queue: queued by Claude, not read', async () => {
     await tags([{ text: ONE, ts: '2026-01-01T00:00:01Z' }, { text: TWO, ts: '2026-01-01T00:00:02Z' }], pane,
       ['Queued by Claude · sent when it finishes', 'Queued by Claude · sent when it finishes'])
+  })
+
+  it('send answered, Claude idle, not in the transcript yet: sending, with a loader', async () => {
+    await tags([], { ...pane, status: 'idle' }, ['Sending…', 'Sending…'], 2)
   })
 })

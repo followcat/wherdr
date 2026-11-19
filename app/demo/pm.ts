@@ -3,7 +3,6 @@
 // the server does. The user's button and an answer to an agent's question move a
 // task like the real engine; nothing runs and nothing leaves the page.
 import { boardColumns, cardOf, toHandle, type Board, type Card } from '../../shared/pm/board'
-import { decisionsOf } from '../../shared/pm/decisions'
 import { onEvent, planSteps } from '../../shared/pm/steps'
 import { publicTask, taskPlan, type Task } from '../../shared/pm/run'
 import { MAIN, type CoordinatorView } from '../../shared/pm/coordinator'
@@ -51,7 +50,6 @@ export class DemoPm {
       case '/api/pm/overview': return ok({ enabled: true, projects: this.projects, templates: [{ id: 'standard', version: 1 }] })
       case '/api/pm/board': return ok(this.board())
       case '/api/pm/handle': return ok(toHandle(this.board().cards))
-      case '/api/pm/decisions': return ok(decisionsOf({ cards: this.board().cards, tasks: this.tasks, coordinators: [], wakes: [], now: this.clock.now() }))
       case '/api/pm/logins': return ok([])
     }
     return null

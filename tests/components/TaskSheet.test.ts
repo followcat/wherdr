@@ -100,12 +100,21 @@ it('a link proof that is a PR shows Open the PR at the merge step and on the car
 })
 
 let sentBack: unknown
-registerEndpoint('/api/pm/step-back', { method: 'POST', handler: async (e) => { sentBack = await readBody(e); return { task: {} } } })
-it('a visual merge is sent back with a note', async () => {
+let backGo: () => void = () => {}
+registerEndpoint('/api/pm/step-back', { method: 'POST', handler: async (e) => { sentBack = await readBody(e); await new Promise<void>((r) => { backGo = r }); return { task: {} } } })
+it('a visual merge is sent back with a note: Send back alone loads until the server answered, then says Sent back', async () => {
   const w = await mountSuspended(TaskSheet, { props: { card: cases[0]![1] }, global: { stubs } })
   await w.get('textarea[data-testid="todo-back-note"]').setValue('The button is cut on the phone')
   await w.get('[data-testid="todo-back"]').trigger('submit')
+  const send = () => w.get('[data-testid="todo-back-send"]')
+  // At once, before the server answered: loading and disabled; the step's button disabled, not loading.
+  expect([send().html().includes('animate-spin'), send().attributes('disabled')]).toEqual([true, ''])
+  expect([w.get('[data-testid="step-user"]').html().includes('animate-spin'), w.get('[data-testid="step-user"]').attributes('disabled')]).toEqual([false, ''])
   await vi.waitFor(() => expect(sentBack).toEqual({ id: 'WHR-1', note: 'The button is cut on the phone' }))
+  backGo()
+  await vi.waitFor(() => expect(send().text()).toBe('Sent back'))
+  expect([send().classes().includes('confirmed'), send().html().includes('animate-spin')]).toEqual([true, false])
+  await vi.waitFor(() => expect(send().text()).toBe('Send back'))
   w.unmount()
 })
 

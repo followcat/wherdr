@@ -130,6 +130,8 @@ it('cleans up on the run\'s machine, in its clone there; a machine with no known
   await cleanTask(deps(), t.id)
   expect(execs().length).toBeGreaterThan(1)
   expect(execs().every(on => on === 'machine-b')).toBe(true)
+  // A removal of several GB takes minutes: its own timeout, not exec's minute.
+  expect(calls.find(([, p]) => String((p.argv as string[] | undefined)?.[2]).includes('worktree remove'))?.[1]).toMatchObject({ timeout: 600 })
   expect(calls.filter(([, p]) => String((p.argv as string[])[2]).includes('git -C')).every(([, p]) => (p.argv as string[]).includes('/h/src-b'))).toBe(true)
   expect((await store().task(t.id))!.cleanup).toEqual({ done: true })
 })

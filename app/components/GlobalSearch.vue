@@ -88,7 +88,7 @@ function move(step: number) {
   nextTick(() => document.getElementById(hitId(active.value))?.scrollIntoView({ block: 'nearest' }))
 }
 function onKey(e: KeyboardEvent) {
-  if (e.isComposing) return
+  if (imeComposing(e)) return
   if (e.key === 'ArrowDown') { e.preventDefault(); move(1) }
   else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1) }
   else if (e.key === 'Enter') {

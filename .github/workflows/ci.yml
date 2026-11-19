@@ -20,11 +20,18 @@ concurrency:
 
 env:
   GITLEAKS_VERSION: 8.28.0
+  # Playwright's own image: Chromium, WebKit and their system libraries are baked in, so
+  # the e2e steps download no apt packages (a slow Ubuntu mirror used to stall the WebKit
+  # install). Keep its tag on the @playwright/test version in package-lock.json.
+  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.63.0-noble
 
 jobs:
   smoke:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # Safety net, about 3x a normal run (4-7 min). It stays above the point where a hung
+    # install step hits its own limit (~4 min in + 10), so that step fails the run first:
+    # a job timeout ends as "cancelled", a step timeout as "failed", which is re-run.
+    timeout-minutes: 16
     steps:
       - uses: actions/checkout@v7
 
@@ -53,18 +60,23 @@ jobs:
       - name: Build (herdr-core)
         run: npm run build
 
-      # The runner image already has Chromium's libraries; --with-deps would only
-      # add fonts through apt, which can stall for minutes on an unreachable mirror.
-      - name: Install Chromium
-        run: npx playwright install chromium
+      # One image pull from Microsoft's registry instead of a browser download and apt.
+      - name: Pull Playwright image
+        timeout-minutes: 10
+        run: docker pull "$PLAYWRIGHT_IMAGE"
 
+      # Only the browsers run in the image; the unit tests above need the runner's tools.
+      # The workspace (node_modules, the build) is mounted as the runner's user.
       - name: E2e (core, Chromium)
-        run: npx playwright test --project=chromium-phone
+        run: >-
+          docker run --rm --init --ipc=host --network=host --user "$(id -u):$(id -g)"
+          -e CI -e HOME=/tmp -v "$PWD:$PWD" -w "$PWD" "$PLAYWRIGHT_IMAGE"
+          npx playwright test --project=chromium-phone
 
       # Safari's engine: catches what iOS rejects and Chromium accepts (the /ws/events
       # handshake). The project's spec list lives in playwright.config.ts.
-      - name: Install WebKit
-        run: npx playwright install --with-deps webkit
-
       - name: E2e (core smoke, WebKit)
-        run: npx playwright test --project=webkit-phone
+        run: >-
+          docker run --rm --init --ipc=host --network=host --user "$(id -u):$(id -g)"
+          -e CI -e HOME=/tmp -v "$PWD:$PWD" -w "$PWD" "$PLAYWRIGHT_IMAGE"
+          npx playwright test --project=webkit-phone

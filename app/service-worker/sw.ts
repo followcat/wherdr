@@ -73,10 +73,13 @@ sw.addEventListener('fetch', (e) => {
   if (req.method !== 'GET' || url.origin !== sw.location.origin
     || url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws/') || url.pathname.startsWith('/uploads/')
     // Dictation files: the dictation worker keeps them in its own wherdr-asr-* caches.
-    || url.pathname.startsWith('/models/')) return
+    || url.pathname.startsWith('/models/')
+    // The build-version check (useAppVersion): a new ?<time> URL each time,
+    // each one would stay in the cache forever.
+    || url.pathname.startsWith('/_nuxt/builds/')) return
   // Fingerprinted build files never change under their name: once cached, no
   // round trip (a silent server would otherwise hold up each file of the shell).
-  if (url.pathname.startsWith('/_nuxt/') && !url.pathname.startsWith('/_nuxt/builds/')) {
+  if (url.pathname.startsWith('/_nuxt/')) {
     const cached = caches.match(req).catch(() => undefined)
     const fresh = cached.then(hit => (hit ? undefined : fetch(req)))
     // Not cached yet: stored before the worker may stop (iOS stops it early).

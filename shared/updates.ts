@@ -3,7 +3,9 @@
 
 // wherdr 3 installs from source only (git clone, npm ci, npm run build): no npm
 // package, Homebrew formula or one-tap update (docs/installation.md#updating).
-export const UPDATE_COMMAND = 'git pull && npm ci && npm run build'
+// The installer's update.sh with the version offered: it checks out its tag (its
+// checkout is detached, where `git pull` fails); no version, the branch tip.
+export const updateCommand = (version?: string | null) => version ? `update.sh ${version}` : 'update.sh'
 
 export interface UpdateInfo {
   current: string

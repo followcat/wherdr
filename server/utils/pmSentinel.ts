@@ -5,6 +5,7 @@
 import { READ_HOLD, SENTINEL_LOG, SENTINEL_MS, isReadHold, seenBy, sentinelDue, sentinelFired, strandedAction } from '../../shared/pm/sentinel'
 import { taskPlan, type Task } from '../../shared/pm/run'
 import { showIds } from '../../shared/pm/projectKey'
+import { thrownReason } from '../../shared/pm/refusal'
 import { actionRunning, startAction } from './pmBoard'
 import { wakeCoordinators } from './pmWakes'
 import type { PmLaunchDeps } from './pmLaunch'
@@ -14,7 +15,7 @@ import type { PmStore } from './pmStore'
 const said = new Map<string, string>()
 
 export async function noteTaskError(store: PmStore, id: string, e: unknown) {
-  const text = `the engine hit an error on this task: ${e instanceof Error ? e.message : String(e)}`.slice(0, 400)
+  const text = `the engine hit an error on this task: ${e instanceof Error ? thrownReason(e) : String(e)}`.slice(0, 400)
   if (said.get(id) === text) return
   said.set(id, text)
   const task = await store.task(id).catch(() => null)

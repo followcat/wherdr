@@ -11,9 +11,14 @@ const files = (dir: string): string[] => readdirSync(dir, { withFileTypes: true 
 
 // A renamed or moved setting fails here, not for the user.
 it('marks each registry target exactly once in app/, and nothing outside the registry', () => {
-  const marks = files('app').flatMap(f => [...readFileSync(f, 'utf8').matchAll(/data-ui-target="([^"$]+)"/g)].map(m => m[1]))
+  const marks = files('app').flatMap(f => [...readFileSync(f, 'utf8').matchAll(/(?<!:)data-ui-target="([^"$]+)"/g)].map(m => m[1]))
   const ids = Object.keys(UI_TARGETS)
   expect([...marks].sort()).toEqual([...ids].sort())
+  // A bound mark (`:data-ui-target`) is a second place shown instead of the first one
+  // (projects.setup: the switch while projects are off): its quoted ids are in the registry too.
+  const bound = files('app').flatMap(f => [...readFileSync(f, 'utf8').matchAll(/:data-ui-target="([^"]+)"/g)].flatMap(m => [...m[1].matchAll(/'([^']+)'/g)].map(q => q[1])))
+  expect(bound).toEqual(['projects.setup'])
+  for (const id of bound) expect(ids).toContain(id)
 })
 
 it('links each target to its section with a target parameter, named on the card', () => {

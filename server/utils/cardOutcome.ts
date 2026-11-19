@@ -16,8 +16,9 @@ export async function tellCardOutcome(deps: Pick<CoreAdminDeps, 'call'> & { stor
   if (live) {
     try {
       await deps.call('terminal.send', { terminal: c.terminal, text }, 30000)
-      // Its turn now follows the user's click: it may propose the next card.
-      await noteTurn(deps.store, key, 'user', text)
+      // Its turn now follows the user's click: it may propose the next card, never
+      // act on the user's yes (a Cancel is no yes; Apply already made the change).
+      await noteTurn(deps.store, key, 'card', text)
       return
     }
     catch {}

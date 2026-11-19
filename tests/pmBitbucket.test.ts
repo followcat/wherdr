@@ -64,6 +64,9 @@ describe('bitbucket.merge', () => {
     expect(main.calls.some(c => c[0] === 'POST')).toBe(false)
     expect(await main.go({ kind: 'bitbucket.merge', method: 'squash' }, { by: 'user', attempt: 2 })).toMatchObject({ ok: true })
     expect(JSON.parse(main.calls.find(c => c[0] === 'POST')![2]!)).toMatchObject({ merge_strategy: 'squash' })
+    const titled = fakeBitbucket({ prs: [pr()] })
+    expect(await titled.go({ kind: 'bitbucket.merge', method: 'squash' }, { message: 'ABC-123: Fix it' })).toMatchObject({ ok: true })
+    expect(JSON.parse(titled.calls.find(c => c[0] === 'POST')![2]!)).toMatchObject({ merge_strategy: 'squash', message: 'ABC-123: Fix it' })
     expect(await fakeBitbucket({ prs: [pr({ state: 'MERGED' })] }).go()).toMatchObject({ ok: true, note: 'already merged on Bitbucket' })
   })
 

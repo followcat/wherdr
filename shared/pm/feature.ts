@@ -5,19 +5,20 @@
 // them all in one call; the feature's state is derived from them.
 import { afterIds, mergeAfterIds } from './advance'
 import { parseFiles } from './files'
+import { parsePlanPath, parseRefs } from './planRefs'
 import { coordinatorKey } from './workspace'
 import type { Project } from './project'
 import type { Task } from './run'
 
 export type FeatureCommand =
   | { name: 'feature add', title: string, description?: string }
-  | { name: 'feature split', task: string } // the plan comes as the call's input (JSON)
-  | { name: 'feature close', task: string, reason?: string }
+  | { name: 'feature split', task: string, from?: string } // the plan comes as the call's input (JSON), or from the file --from names
+  | { name: 'feature close', task: string, reason?: string, anyway?: true }
 
 export const FEATURE_COMMANDS = [
   { usage: 'feature add "<title>" [--description "<text>"]', does: 'add a feature to the workspace: it runs no agent; split it into sub-tasks of its repositories with feature split' },
-  { usage: 'feature split <feature> < plan.json', does: 'in one call: adopt the repositories it needs, add one sub-task per repository, chain them and start those that wait for nothing; all or nothing. The plan: {"order": "<why this order, one line>", "tasks": [{"repo" (its path under the root, or a member\'s key), "title", "type", "description"?, "files"?: [...], "after"?: [<repo of the plan>, <task>…], "mergeAfter"?: [<repo of the plan>, <task>…]}]}: after orders the starts, mergeAfter the merges (its PR merges once those are done). Later changes: task add --feature, task edit --after/--merge-after' },
-  { usage: 'feature close <feature> [--reason "<one sentence>"]', does: 'close a feature once each of its sub-tasks is done or abandoned: it shows as done' },
+  { usage: 'feature split <feature> [--from <path>] < plan.json', does: 'in one call: adopt the repositories it needs, add one sub-task per repository, chain them and start those that wait for nothing; all or nothing. The plan, on stdin or in the file --from names (a path under the workspace\'s root): {"order": "<why this order, one line>", "plan"?: "<the spec\'s tasks.md, its path under the root>", "tasks": [{"repo" (its path under the root, or a member\'s key), "title", "type", "description"?, "files"?: [...], "refs"?: ["T010", "T011"], "after"?: [<repo of the plan>, <task>…], "mergeAfter"?: [<repo of the plan>, <task>…]}]}: after orders the starts, mergeAfter the merges (its PR merges once those are done). plan and refs: the lines (`- [ ] T010 …`) of that tasks.md each sub-task covers; wherdr ticks them itself once the sub-task is done (put refs on every entry when the plan comes from a tasks.md; refs need plan). Later changes: task add --feature [--refs T1,T2], task edit --after/--merge-after' },
+  { usage: 'feature close <feature> [--reason "<one sentence>"] [--anyway]', does: 'close a feature once each of its sub-tasks is done or abandoned: it shows as done. A feature with a plan file is refused while lines of it are still unticked (they are listed): ask the user, then add --anyway' },
 ]
 
 const TASK_RE = /^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/
@@ -33,15 +34,19 @@ export function parseFeature(words: string[], flags: Record<string, string>): Fe
     return { name: 'feature add', title, ...(description ? { description } : {}) }
   }
   const [task, extra] = rest
-  if (verb === 'split') return task && TASK_RE.test(task) && !extra ? { name: 'feature split', task } : usage(1)
+  if (verb === 'split') {
+    const from = flags.from?.trim()
+    if (flags.from !== undefined && (!from || from.length > 1024 || /[\x00-\x1f]/.test(from))) return { error: '--from is the path of a plan file under the workspace\'s root' }
+    return task && TASK_RE.test(task) && !extra ? { name: 'feature split', task, ...(from ? { from } : {}) } : usage(1)
+  }
   if (verb !== 'close' || !task || !TASK_RE.test(task) || extra) return usage(2)
   const reason = flags.reason?.trim()
   if (reason !== undefined && (!reason || reason.length > 300 || reason.includes('\n'))) return { error: '--reason is one sentence (300 characters at most)' }
-  return { name: 'feature close', task, ...(reason ? { reason } : {}) }
+  return { name: 'feature close', task, ...(reason ? { reason } : {}), ...(flags.anyway ? { anyway: true as const } : {}) }
 }
 
-export interface PlanTask { repo: string, title: string, type: string, description: string, files: string[], after: string[], mergeAfter: string[] }
-export interface Plan { order: string, tasks: PlanTask[] }
+export interface PlanTask { repo: string, title: string, type: string, description: string, files: string[], refs: string[], after: string[], mergeAfter: string[] }
+export interface Plan { order: string, tasks: PlanTask[], file?: string } // file: the plan file (tasks.md) under the root, whose lines the tasks' refs name
 
 // The split's JSON → its sub-tasks in start order (each after the plan's
 // repositories it names), or why not: a repository twice, an unknown one, a cycle.
@@ -54,11 +59,16 @@ export function parsePlan(raw: unknown): Plan | { error: string } {
   const tasks: PlanTask[] = []
   for (const [i, x] of (o.tasks as Record<string, unknown>[]).entries()) {
     const list = (v: unknown) => (Array.isArray(v) ? v.map(str).filter(Boolean) : [])
-    const t = { repo: str(x?.repo), title: str(x?.title), type: str(x?.type), description: str(x?.description).slice(0, 20000), files: parseFiles(x?.files), after: list(x?.after), mergeAfter: list(x?.mergeAfter) }
+    const refs = parseRefs(x?.refs)
+    if ('error' in refs) return { error: `plan.tasks[${i}].refs: ${refs.error}` }
+    const t = { repo: str(x?.repo), title: str(x?.title), type: str(x?.type), description: str(x?.description).slice(0, 20000), files: parseFiles(x?.files), refs, after: list(x?.after), mergeAfter: list(x?.mergeAfter) }
     if (!t.repo || !t.type || !t.title || t.title.length > 200) return { error: `plan.tasks[${i}]: repo, title (1 to 200 characters) and type are required` }
+    if (t.refs.length && o.plan === undefined) return { error: `plan.tasks[${i}].refs: refs name lines of a plan file: add "plan": "<its path under the root>"` }
     if (tasks.some(y => y.repo === t.repo)) return { error: `plan.tasks[${i}]: ${t.repo} twice: one sub-task per repository` }
     tasks.push(t)
   }
+  const file = o.plan === undefined ? undefined : parsePlanPath(o.plan)
+  if (typeof file === 'object') return file
   const repos = new Set(tasks.map(t => t.repo))
   for (const k of ['after', 'mergeAfter'] as const) {
     const bad = tasks.flatMap(t => t[k]).find(a => !repos.has(a) && !TASK_RE.test(a))
@@ -79,7 +89,7 @@ export function parsePlan(raw: unknown): Plan | { error: string } {
   const sorted = ranked(t => t.after, 'after')
   if ('error' in sorted) return sorted
   const both = ranked(t => [...t.after, ...t.mergeAfter], 'after and mergeAfter')
-  return 'error' in both ? both : { order, tasks: sorted }
+  return 'error' in both ? both : { order, tasks: sorted, ...(file ? { file } : {}) }
 }
 
 // Why `after` (or `mergeAfter`) may not link this task (self: its id, once it

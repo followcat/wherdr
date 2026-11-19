@@ -8,6 +8,9 @@ import { syncedRef } from './useSyncedSettings'
 export const REVIEW_FOLLOW = 'follow'
 export const REVIEW_ALL = 'all'
 export const reviewOpen = ref(false)
+export const showReview = (v = true) => { reviewOpen.value = v }
+// A card the sheet lists (before what it handled itself): the board's To review counts the same.
+export const reviewWaits = (c: Card) => !!c.yourTurn && !c.state?.done
 export const reviewFilter = syncedRef<string | null>('reviewFilter', raw => raw || null, v => v || null)
 
 // The filter as it applies: a group or project removed since it was picked falls back to the default.
@@ -23,7 +26,7 @@ export function reviewShows(pick: string, project: string) {
   if (pick === REVIEW_FOLLOW) return projectOnBar(project)
   if (pick.startsWith('p:')) return pick.slice(2) === project
   const group = machineGroups.value.find(g => g.id === pick)
-  return !group || projectOnTab(projectTabPlaces.value.get(project) ?? null, group.machines)
+  return !group || projectOnBarItem(project, pick)
 }
 
 // What happened to a task that left the open list elsewhere (`was` as last shown,

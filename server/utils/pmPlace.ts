@@ -35,6 +35,8 @@ export async function paceOf(store: PmStore, p: Project, task?: Pick<Task, 'type
 }
 
 const anywayLogged = new Set<string>()
+// Machines where a task paused for room waits to go on (pmPark.ts resumeParked): a new task starts elsewhere or waits.
+export const roomWaits = new Map<string, string>()
 // asked: the machine the user or the coordinator named (refused when the
 // project does not allow it, or the task started elsewhere); offline, a new task goes elsewhere. waits: machines
 // that take nothing now (paceOf). weight: what this start does, when it is not
@@ -61,7 +63,7 @@ export async function placeFor(deps: PmLaunchDeps, task: Task, { asked, waits = 
     const paused = fresh && isPaused(p, key)
     // Another machine than home, before the task's first start there: ready for the project?
     const notReady = online && fresh && !paused && key !== p.machine ? await readiness(deps, p, t, task, key).catch((e: Error) => e.message) : ''
-    const wait = paused ? PAUSED : waits[key] ?? (notReady ? `not ready (${notReady})` : undefined)
+    const wait = paused ? PAUSED : waits[key] ?? (fresh ? roomWaits.get(key) : undefined) ?? (notReady ? `not ready (${notReady})` : undefined)
     return {
       key, label: m?.label ?? key, online, ...(wait ? { wait } : {}), settings: settings[key] ?? DEFAULT_MEMORY,
       capacity: online ? await machineCapacity(deps, key) : null, running: online ? await atWork(deps.store, key) : [],

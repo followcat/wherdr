@@ -21,23 +21,27 @@ function setup(running: boolean) {
     await addChangeCard(store as never, { turn: 'user', by: 'Alfred', change, label: 'Project WEB › Guards' })
     return rec.cards![0]!.id
   }
-  return { rec, sent, card, deps: (applyChange: (a: string[], l: string[]) => Promise<string[] | null>) => ({ store, call, applyChange }) as never }
+  return { rec, store, sent, card, deps: (applyChange: (a: string[], l: string[]) => Promise<string[] | null>) => ({ store, call, applyChange }) as never }
 }
 
 describe('a card\'s outcome told to its agent', () => {
-  it('Apply sends one message, and its turn follows the user', async () => {
-    const { rec, sent, card, deps } = setup(true)
+  it('Apply sends one message; its turn follows the click (a card turn, never the user\'s yes)', async () => {
+    const { rec, store, sent, card, deps } = setup(true)
     const id = await card()
     await actOnCard(deps(async () => []), id, undefined)
     await actOnCard(deps(async () => []), id, undefined) // a second click changes nothing
     expect(sent).toEqual(['From the card: Applied: Project WEB › Guards'])
-    expect(rec.turn?.kind).toBe('user')
+    expect(rec.turn?.kind).toBe('card')
+    // WHR-512: it may propose the next card.
+    await addChangeCard(store as never, { turn: 'card', by: 'Alfred', change, label: 'Next' })
+    expect(rec.cards!.map(c => c.label)).toContain('Next')
   })
 
-  it('Cancel sends one message', async () => {
-    const { sent, card, deps } = setup(true)
+  it('Cancel sends one message, and gives no user turn', async () => {
+    const { rec, sent, card, deps } = setup(true)
     await actOnCard(deps(async () => []), await card(), undefined, true)
     expect(sent).toEqual(['From the card: Cancelled: Project WEB › Guards'])
+    expect(rec.turn?.kind).toBe('card')
   })
 
   it('a failed or stale apply says it was not applied, and why', async () => {

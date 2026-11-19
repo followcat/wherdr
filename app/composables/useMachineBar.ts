@@ -3,7 +3,7 @@
 import { flag, syncedRef } from './useSyncedSettings'
 import { readProjectTabs } from '#shared/settings'
 import { BAR_ALL, groupedBarItems, barMachineSelection, barPick, readBarList, readBarPick, readMachineGroups } from '~/utils/machineBar'
-import { projectOnTab, projectTabMachines } from '~/utils/projectTabs'
+import { projectTabMachines, tabHolds } from '~/utils/projectTabs'
 import { projectCoordinators } from './useCoordinators'
 
 const store = {
@@ -57,9 +57,15 @@ export const projectTabs = syncedRef('projectTabs', readProjectTabs, v => JSON.s
 export const projectTabPlaces = computed(() => new Map(projectCoordinators.value.map(c =>
   [c.project, projectTabMachines({ machines: c.machines ?? [], paused: c.paused, busy: c.busy }, projectTabs.value[c.project] ?? c.workspace?.group, machineGroups.value)])))
 // The home tab picked shows this project (a project not loaded yet shows).
-export const projectOnBar = (project: string) => {
-  const m = projectTabPlaces.value.get(project)
-  return m === undefined || projectOnTab(m, machineBarSelection.value)
+export const projectOnBar = (project: string) => tabHolds(projectTabPlaces.value.get(project), machineBarSelection.value)
+// Whether a bar item (its id) holds a project.
+export const projectOnBarItem = (project: string, id: string) => tabHolds(projectTabPlaces.value.get(project), barMachineSelection(id, machineGroups.value))
+// A bar item's name: All, a group's name, or its machine's.
+export function barItemLabel(id: string) {
+  if (id === BAR_ALL) return t('All')
+  const group = machineGroups.value.find(g => g.id === id)
+  const m = machines.value.find(x => (x.baseKey ?? x.key) === id)
+  return group?.name || (m && machineName(m.key)) || id || t('This machine')
 }
 // Where each running coordinator's conversation belongs (machineConversation.ts).
 export const coordinatorPlaces = computed(() => projectCoordinators.value.flatMap(c =>

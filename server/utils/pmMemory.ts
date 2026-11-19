@@ -12,6 +12,7 @@ import { exec } from './pmLaunch'
 import { leftoversKilled } from './pmProcs'
 import type { PmStore } from './pmStore'
 import { DATA_DIR } from './env'
+import { readJsonOrMissing } from './atomicWrite'
 import { agentsAtWork } from '../../shared/pm/release'
 import { taskPlan } from '../../shared/pm/run'
 import { weightOf, type Weight } from '../../shared/pm/weight'
@@ -21,17 +22,20 @@ import type { Estimate } from '../../shared/pm/placement'
 
 export const MEMORY_FILE = path.join(DATA_DIR, 'machine-memory.json')
 
-export async function readMemorySettings(file = MEMORY_FILE): Promise<Record<string, MemorySettings>> {
-  try {
-    const raw = JSON.parse(await fs.readFile(file, 'utf8'))?.machines
-    return Object.fromEntries(Object.entries(raw && typeof raw === 'object' ? raw : {}).map(([k, v]) => [k, mergeMemory(DEFAULT_MEMORY, v && typeof v === 'object' ? { ...(typeof (v as MemorySettings).minFreeMb === 'number' ? { minFreeGb: (v as MemorySettings).minFreeMb! / 1024 } : {}), maxAgents: (v as MemorySettings).maxAgents, hours: (v as MemorySettings).hours } : {})]))
-  } catch { return {} }
+// Strict: only a missing file is empty; anything else throws (a change written
+// over {} would reset every other machine to Auto).
+async function loadMemorySettings(file: string): Promise<Record<string, MemorySettings>> {
+  const raw = ((await readJsonOrMissing(file)) as { machines?: unknown } | undefined)?.machines
+  return Object.fromEntries(Object.entries(raw && typeof raw === 'object' ? raw : {}).map(([k, v]) => [k, mergeMemory(DEFAULT_MEMORY, v && typeof v === 'object' ? { ...(typeof (v as MemorySettings).minFreeMb === 'number' ? { minFreeGb: (v as MemorySettings).minFreeMb! / 1024 } : {}), maxAgents: (v as MemorySettings).maxAgents, hours: (v as MemorySettings).hours } : {})]))
 }
+
+// For reading: an unreadable file shows Auto everywhere.
+export const readMemorySettings = (file = MEMORY_FILE) => loadMemorySettings(file).catch(() => ({}) as Record<string, MemorySettings>)
 
 let queue: Promise<unknown> = Promise.resolve()
 export function setMemorySettings(key: string, patch: unknown, file = MEMORY_FILE): Promise<MemorySettings> {
   const run = queue.then(async () => {
-    const all = await readMemorySettings(file)
+    const all = await loadMemorySettings(file)
     const s = all[key] = mergeMemory(all[key] ?? DEFAULT_MEMORY, patch)
     await fs.mkdir(path.dirname(file), { recursive: true })
     const temp = `${file}.${randomUUID()}.tmp`
@@ -55,8 +59,14 @@ export const forgetMemory = (machine: string) => read.delete(machine)
 export async function machineCapacity(deps: CoreAdminDeps, machine: string, now = Date.now()) {
   const hit = read.get(machine)
   if (hit && now - hit.at < 20_000) return hit.mem
-  let mem: MachineCapacity | null = null
-  try { mem = parseCapacity((await exec(deps, machineOn(deps, machine).on, CAPACITY_SCRIPT, [], undefined, 10)).out) } catch {}
+  let mem: MachineCapacity | null = null, why = ''
+  try {
+    const r = await exec(deps, machineOn(deps, machine).on, CAPACITY_SCRIPT, [], undefined, 10)
+    mem = parseCapacity(r.out)
+    if (!mem) why = r.code === null ? 'no answer in 10 s' : `exit ${r.code}${r.err ? `: ${r.err.split('\n').pop()}` : ''}`
+  } catch (e) { why = (e as Error).message || String(e) }
+  // "Memory unknown": why, in the server log, once per failure streak.
+  if (why && hit?.mem !== null) console.warn(`[memory] ${machine || "this machine"}: could not read its memory: ${why}`)
   read.set(machine, { at: now, mem })
   return mem
 }

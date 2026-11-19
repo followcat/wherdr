@@ -17,6 +17,13 @@ describe('pasted message', () => {
       .toBe('[Image #1]\n/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.png\nlook')
   })
 
+  it('removes the hc wrapper whatever its attributes', () => {
+    expect(unwrapPasted('<hc from="t7" reach="all">/srv/a.png\nlook\n</hc>')).toBe('/srv/a.png\nlook')
+    expect(unwrapPasted('<hc reach="all" from="t7">hi</hc>')).toBe('hi')
+    expect(unwrapPasted('use <hc> or <hc reach="x"> here')).toBe('use <hc> or <hc reach="x"> here')
+    expect(unwrapPasted('use <hc data-from="x">literal</hc> here')).toBe('use <hc data-from="x">literal</hc> here')
+  })
+
   it('shows the message as a user message, reply in its place', () => {
     expect(seq).toEqual([
       'user:Vérifie le calcul',
