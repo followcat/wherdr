@@ -22,6 +22,10 @@ function heap() {
   return n
 }
 
+// A macrotask lets a queued {t:'cancel'} run; awaiting ORT promises alone can
+// starve the worker's message queue for a whole sentence.
+const yieldNow = () => new Promise(resolve => setTimeout(resolve, 0))
+
 function randomFloats(n) {
   const u = new Uint32Array(n)
   self.crypto.getRandomValues(u)
@@ -120,6 +124,7 @@ async function createRunner({ ort, base, msg, openFile }) {
       input_ids: new ort.Tensor('int32', flat, [1, n, width]),
       attention_mask: new ort.Tensor('int32', mask, [1, n]),
     })
+    if (cancelled?.()) throw CANCELLED
     let hidden = pf.global_hidden.data.subarray((n - 1) * 768)
     const pastKeys = []
     const pastValues = []
@@ -132,6 +137,7 @@ async function createRunner({ ort, base, msg, openFile }) {
     const frames = []
     let truncated = false
     for (let f = 0; f < maxFrames; f++) {
+      if (f % 4 === 0) await yieldNow()
       if (cancelled?.()) throw CANCELLED
       const fr = await local.run({
         global_hidden: new ort.Tensor('float32', hidden, [1, 768]),

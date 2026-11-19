@@ -85,6 +85,7 @@ async function speak(msg, job) {
   const groups = text.groupWords(words, { cap: 48, firstCap: 24 })
   post({ t: 'parts', id: msg.id, count: groups.length })
   for (let i = 0; i < groups.length; i++) {
+    await new Promise(resolve => setTimeout(resolve, 0))
     if (job.cancelled) throw CANCELLED
     const group = groups[i]
     const synth = async (g) => runner.synthesize(encoder.encodePhonemes(text.safePrepare(g.pieces.join(' '))), {
