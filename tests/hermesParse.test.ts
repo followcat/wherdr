@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { afterAll, describe, expect, it } from 'vitest'
 import { HERMES_COLUMNS, HERMES_POLICY_PREFIX, type HermesMessage, type HermesSession, hermesLineage, hermesVisible, parseHermes } from '../server/utils/hermesParse'
+import { decodeSqliteText, sqliteTextAsBlob } from '../server/utils/sqliteDb'
 // @ts-expect-error untyped test helper
 import { writeHermesFixture } from './helpers/hermes-fixture.mjs'
 
@@ -17,7 +18,16 @@ function read(legacy = false, from?: string) {
     const sessions = db.prepare('SELECT * FROM sessions').all() as unknown as HermesSession[]
     const receipt = (db.prepare('SELECT value FROM state_meta WHERE key = ?').get(HERMES_POLICY_PREFIX + fx.id) as { value?: string } | undefined)?.value
     const lineage = hermesLineage(from || fx.current, sessions, receipt)
-    const rows = db.prepare(`SELECT * FROM messages WHERE session_id IN (${lineage.map(() => '?').join(',')})`).all(...lineage) as unknown as HermesMessage[]
+    // `content` holds Hermes' "\x00json:" multimodal messages: read it as a
+    // BLOB and decode it, or node:sqlite before 24.19 stops at the NUL.
+    const cols = HERMES_COLUMNS.messages
+      .filter(c => !legacy || c !== 'message_uid')
+      .map(c => (c === 'content' ? sqliteTextAsBlob(c) : c))
+    const rows = db.prepare(`SELECT ${cols.join(', ')} FROM messages WHERE session_id IN (${lineage.map(() => '?').join(',')})`).all(...lineage)
+      .map((row) => {
+        const r = row as Record<string, unknown>
+        return r.content instanceof Uint8Array ? { ...r, content: decodeSqliteText(r.content) } : r
+      }) as unknown as HermesMessage[]
     return { fx, lineage, items: parseHermes(hermesVisible(rows), sessions) }
   } finally { db.close() }
 }

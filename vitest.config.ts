@@ -1,5 +1,15 @@
+import { realpathSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 import { defineVitestProject } from '@nuxt/test-utils/config'
+
+// A worktree may share `node_modules` through a symlink to another checkout.
+// Nuxt's own runtime entry then resolves outside the project, which Vite
+// refuses by default (the workspace root): allow the real path too. On a
+// normal install it sits inside the project root.
+const root = fileURLToPath(new URL('.', import.meta.url))
+const modules = realpathSync(join(root, 'node_modules'))
 
 // Two projects:
 // - unit: pure server / shared / app / website modules, plain Node (fast, no Nuxt).
@@ -27,6 +37,7 @@ export default defineConfig({
         },
       },
       await defineVitestProject({
+        server: { fs: { allow: [root, modules] } },
         test: {
           name: 'components',
           include: ['tests/components/**/*.test.ts'],

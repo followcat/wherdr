@@ -25,6 +25,20 @@ export interface DatabaseSyncCtor {
 }
 interface SqliteModule { DatabaseSync?: DatabaseSyncCtor }
 
+// Exact bytes of a TEXT column through node:sqlite. Before Node 24.19, a TEXT
+// value read by the builtin stops at its first NUL byte: Hermes Agent's
+// multimodal messages ("\x00json:" + JSON) then read as "". Selecting the
+// column as a BLOB (CAST keeps the stored bytes; Node 24.19+ returns the same
+// bytes) and decoding them gives the value unchanged on every Node release.
+// The expression names its column, so it goes in a SELECT list in place of the
+// bare column. Remote reads (Python's sqlite3) never had the truncation.
+export const sqliteTextAsBlob = (column: string) =>
+  `CASE WHEN typeof(${column}) = 'text' THEN CAST(${column} AS BLOB) ELSE ${column} END AS ${column}`
+const utf8 = new TextDecoder('utf-8', { fatal: false })
+export function decodeSqliteText(value: unknown): unknown {
+  return value instanceof Uint8Array ? utf8.decode(value) : value
+}
+
 const loadSqlite = () => import('node:sqlite') as Promise<SqliteModule>
 
 let ctor: DatabaseSyncCtor | null | undefined

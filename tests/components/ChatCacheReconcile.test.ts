@@ -3,6 +3,7 @@
 // elements, and a reply that arrived meanwhile comes in as a live one would.
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { mountSuspended } from '@nuxt/test-utils/runtime'
+import { flushPromises } from '@vue/test-utils'
 import ChatView from '~/components/ChatView.vue'
 import { cachedAt, eventsOpen, herdrState, locked, netDown } from '~/composables/useHerdr'
 import { setOfflineAccess } from '~/utils/offlineAccess'
@@ -104,6 +105,10 @@ it('keeps the kept end through "not found" answers of a server that just restart
   try {
     const reads = () => vi.mocked(fetch).mock.calls.filter(([p]) => String(p).startsWith('/api/chat?')).length
     await expect.poll(() => w.text()).toContain('Add a note to the changelog.')
+    // The mount's first read answers `not_found` too: let it settle before a
+    // status change asks for the next one (the loader drops a call while a
+    // read is in flight, see createTailLoader).
+    await flushPromises()
     for (const [n, status] of [[2, 'working'], [3, 'idle']] as const) {
       await w.setProps({ pane: { ...pane, status } })
       await expect.poll(reads).toBe(n)

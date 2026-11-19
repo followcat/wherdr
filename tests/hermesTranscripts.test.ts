@@ -26,6 +26,8 @@ it('reads a conversation without creating sidecars, then a live one while its ga
   const loc = { db: fx.file, session: fx.id }
   const r = await reader.chat(loc)
   expect(texts(r)).toEqual(WHOLE)
+  // "\x00json:" multimodal content: read losslessly through node:sqlite.
+  expect(r.items?.find(i => i.text === 'What is this?')).toMatchObject({ role: 'user', images: 1 })
   expect(fs.readdirSync(fx.dir)).toEqual(['state.db'])
   expect(await reader.chat(loc, { since: r.token })).toMatchObject({ unchanged: true })
   expect(await reader.model(loc)).toEqual({ id: 'test-model', label: expect.any(String) })
