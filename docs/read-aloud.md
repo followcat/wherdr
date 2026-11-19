@@ -15,6 +15,7 @@ to Off and the device's own voices. How the engine works (worker, streaming, mem
 | Cori (`en_GB-cori-medium`) | English (UK), default | 64 MB | Public domain (LibriVox recordings, [voice page](https://brycebeattie.com/files/tts/)) | Yes, as a courtesy: Bryce Beattie |
 | MLS (`fr_FR-mls-medium`) | French, fallback, not offered in Settings | 78 MB | CC BY 4.0 ([MLS](https://openslr.org/94/)) | In the catalog: Vineel Pratap et al. (Meta AI) |
 | Canto (`canto-tts-nano-int8`) | Cantonese (`zh-HK`), default | 247 MB (233 MiB weights + 3.5 MiB G2P and OpenCC) | Apache-2.0 (model, codec, G2P code, OpenCC); rime-cantonese CC BY 4.0 (G2P data) | Yes, required: canto-tts-nano by typangaa (Apache-2.0), fine-tuned from MOSS-TTS-Nano by OpenMOSS (Apache-2.0); int8 conversion by dandelionchase (Apache-2.0, see its NOTICE); G2P canto-hk-g2p (Apache-2.0) with rime-cantonese (CC BY 4.0, CanCLID) and Unihan (Unicode License v3); OpenCC (Apache-2.0). Training data: privately sourced and not released, for copyright reasons. |
+| Canto GPU (`canto-nano-fp16-gpu`) | Cantonese (`zh-HK`), experimental, not default | 363 MB (360 MB fp16 weights + 3.5 MB G2P and OpenCC) | Apache-2.0; fp16 conversion by followcat (Apache-2.0) | Yes, required: as Canto, and the fp16 conversion by followcat. Training data: privately sourced and not released, for copyright reasons. |
 
 Each row of the setting shows its attribution, read from `app/utils/speech/voices.json`. The
 French and English voices are Piper models packaged by sherpa-onnx; the Cantonese voice is the
@@ -45,6 +46,22 @@ first, 48 for the rest) so the codec's full decode stays bounded; a part that st
 synthesised one sentence at a time, at most one sentence ahead, and each sentence's KV cache,
 frames and audio are dropped after it plays.
 
+**Canto GPU (experimental).** `canto-nano-fp16-gpu` is the float16 conversion of the same model
+(`followcat/canto-tts-nano-fp16` at `e89ed00`), for GPUs. It runs only when `navigator.gpu` gives
+an adapter with `shader-f16`; otherwise its settings row says **Needs WebGPU with shader-f16: not
+available on this device** and offers nothing, and it never falls back to WASM. It shares the
+G2P and OpenCC files with the INT8 voice. Choose it with **Use**; the INT8 voice stays the
+default. The settings row of each Canto voice shows the last reply's execution provider, phase
+(CPU-side I/O or GPU KV), load time, first-audio time and real-time factor, so the two can be
+compared: install both, Use one, play a reply or Test, read the row, then Use the other.
+
+On this desktop (Chromium 153, Intel Iris Xe through Vulkan, 2026-11-19) the GPU voice was
+**slower** than the INT8: RTF 5.7–6.4 with CPU-side I/O and 4.5–6.2 with the per-frame KV kept on
+the GPU, against 1.4–1.9 for the INT8. Its WASM heap was 33–58 MiB because the fp16 weights stay
+on the GPU; the GPU memory itself is not measured. The phone is the test that matters, and it is
+not measured. The three example sentences and both phases were written as WAVs for the check
+(short, medium and English code-switching); listen before choosing.
+
 Measured on a desktop (Chromium 141, Playwright chromium-1243, Linux, 2026-11-19), **not on a
 phone**:
 
@@ -54,6 +71,11 @@ phone**:
 | Real-time factor | 2.18 (1.23.2 worker; 1.31.1 was 1.37 in the same test) |
 | Worker WASM heap, sample | 496 MiB (1.23.2); 515 MiB (1.31.1) |
 | Catalog `memory` | 624 MiB (WASM + OpenCC maps + PCM + 10%); desktop basis, not a phone |
+| Canto GPU download | 363 MB |
+| Canto GPU load | 10.4–10.6 s (desktop) |
+| Canto GPU first audio (example) | 10.2–18.9 s (desktop) |
+| Canto GPU real-time factor | 5.7–6.4 CPU I/O, 4.5–6.2 GPU KV (desktop; INT8 1.4–1.9) |
+| Canto GPU heap | 33–58 MiB WASM (the weights are on the GPU); catalog 64 MiB |
 
 Synthesis is slower than playback on this desktop, so replies may pause between parts on a
 phone. The voice never lowers the model or its quality to go faster. The memory is compared to
@@ -140,7 +162,10 @@ measured yet (step 3 below). MLS has no phone figures yet and keeps the estimate
    before the download.
 2. Tap **Test** right after a reload (cold start). When it ends, the row shows **Load** (the
    worker: runtime, files and model), **First sentence** (tap to the first audio), **Real-time
-   factor** and **Heap** (the largest WASM heap seen). A second Test gives the warm figures.
+   factor** and **Heap** (the largest WASM heap seen). A second Test gives the warm figures. For
+   the two Canto voices the row also shows the execution provider and phase; Use one, play a
+   reply (not only Test), and read its row, then Use the other. On a phone without WebGPU with
+   shader-f16 the GPU row says so and is not usable.
 3. For the page's memory while speaking and after release (the worker is closed 60 s after the
    last speech), use Safari's Web Inspector (Timelines › Memory) with the phone plugged into a
    Mac.

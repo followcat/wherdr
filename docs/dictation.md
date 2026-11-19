@@ -537,6 +537,12 @@ part, a 48-frame cap); the parts play back to back. Stop cancels between ORT cal
 is terminated only when it does not answer. The voice's licences, training-data note, desktop
 figures and limits are in [Read aloud › Cantonese voice](read-aloud.md#cantonese-voice).
 
+The experimental GPU voice uses the same worker and protocol. Its runner takes the fp16
+external-data names, float16 graph tensors and the `webgpu` provider; the worker binds ORT's
+device creation to the adapter checked for `shader-f16` and never falls back to WASM. The
+per-frame KV tensors may stay on the GPU (`preferredOutputLocation: 'gpu-buffer'`). Each Canto
+row shows the last reply's provider, phase, load, first-audio time and real-time factor.
+
 ## Known limits
 
 - No published speed figures exist for speech models in a phone browser; speed ratings stay
