@@ -1,8 +1,9 @@
 import { coreCall } from './core'
 import { readCoreDocs } from './readCoreDocs'
+import { clearBacklotDocs } from './backlotDocs'
 import type { CoreSession } from './coreSession'
 import { coreState, type CoreMachine } from '../../shared/coreState'
-import type { CoreInventory } from '../../shared/coreInventory'
+import type { CoreInventory, CoreTerminal } from '../../shared/coreInventory'
 import { liveTerminals } from '../../shared/coreEvents'
 import type { HerdrState } from '../../shared/types'
 import { localMachineLabel } from './machines'
@@ -16,7 +17,13 @@ let cache: { at: number; machines: CoreMachine[]; docs: Awaited<ReturnType<typeo
 export const useCoreSession = (s: CoreSession | null) => { session = s; cache = null }
 // A read already in flight when this runs must not refill the cache with what it saw before.
 let generation = 0
-export const staleCoreDocs = () => { generation++; cache = null }
+export const staleCoreDocs = () => { generation++; cache = null; clearBacklotDocs() }
+
+// The live terminals of every machine, from the events session when it holds a
+// snapshot, else one terminal.list. Read-only (the Studio view).
+export async function coreTerminals(endpoint: string): Promise<CoreTerminal[]> {
+  return session?.snapshot() ?? (await coreCall<CoreInventory>(endpoint, 'terminal.list')).terminals
+}
 
 export async function readCoreState(previous: HerdrState): Promise<HerdrState> {
   try {
