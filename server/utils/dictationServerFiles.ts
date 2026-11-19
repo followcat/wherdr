@@ -11,7 +11,7 @@ import { CATALOG, SETS, VOICES, fetchEntry } from '../../scripts/dictation-files
 import type { FetchEntry, FetchOptions } from '../../scripts/dictation-files.mjs'
 import { HerdrError } from './herdr'
 
-interface CatalogModel { id: string, set: string, dir: string, files: { path: string, bytes: number }[] }
+interface CatalogModel { id: string, set: string, dir: string, files: { path: string, bytes: number }[], kind?: string }
 
 export type ServerFilesState =
   | { state: 'ready' }
@@ -34,7 +34,7 @@ export function createServerFiles(deps: ServerFilesDeps) {
   // Voices list their files as `members`; ids are unique across both catalogs.
   const models = deps.models ?? [
     ...(CATALOG.models as CatalogModel[]),
-    ...VOICES.voices.map(v => ({ id: v.id, set: v.set, dir: v.dir, files: v.members })),
+    ...VOICES.voices.map(v => ({ id: v.id, set: v.set, dir: v.dir, files: v.members, kind: (v as { kind?: string }).kind })),
   ]
   const sets = deps.sets ?? (SETS as Record<string, FetchEntry[]>)
   const jobs = new Map<string, Job>()
@@ -56,7 +56,8 @@ export function createServerFiles(deps: ServerFilesDeps) {
     return stamp.trim() === e.sha256
   }
 
-  const entriesOf = (m: CatalogModel) => [...(sets.runtime ?? []), ...(sets[m.set] ?? [])]
+  // The Canto voice runs on its own ORT set, not the sherpa-onnx runtime.
+  const entriesOf = (m: CatalogModel) => [...(m.kind === 'cantoNano' ? [] : (sets.runtime ?? [])), ...(sets[m.set] ?? [])]
 
   async function missingOf(m: CatalogModel) {
     const out: FetchEntry[] = []

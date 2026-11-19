@@ -29,7 +29,9 @@ function server(data: Buffer) {
 describe('the pinned files', () => {
   it('each has an https URL, a sha256 and a place inside the models folder', () => {
     const places = new Set<string>()
-    for (const entry of Object.values(SETS).flat() as Entry[]) {
+    // ort is shared: the Canto voice's set includes it, and the named set is
+    // the same entries (the fetch skips files already in place).
+    for (const entry of Object.entries(SETS).filter(([name]) => name !== 'ort').flatMap(([, entries]) => entries) as Entry[]) {
       expect(entry.url).toMatch(/^https:\/\//)
       expect(entry.sha256).toMatch(/^[0-9a-f]{64}$/)
       const place = entry.to || entry.dir!
