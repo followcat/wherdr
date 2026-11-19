@@ -544,6 +544,7 @@ function resetListWidth() {
       <LoginIncidentBanner v-if="st.ok" />
       <OpenNetworkBanner />
       <UpdateBanner v-if="updateBanner" :info="updateBanner" dismissible />
+      <BacklotSection v-if="st.ok" />
 
       <p v-if="machineBarSelection?.length === 0" class="machine-empty">{{ tl('No machines in this group.', 'Aucune machine dans ce groupe.') }}</p>
       <section v-for="g in stateGroups" :key="g.key" class="agent-group state-group" :class="g.key">
