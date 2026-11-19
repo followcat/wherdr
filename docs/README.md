@@ -38,7 +38,7 @@ Questions and feedback: [Discord](https://discord.gg/ky36WYmtVE); bugs: [GitHub 
 - [Install as an app](phone.md) — Add wherdr to your home screen on a phone or install it in a desktop browser.
 - [Plugins](plugins.md) — [wherdr plugins](plugins.md#wherdr-plugins): optional page plugins and `data-wherdr` markers. Example: [hello-mic](examples/plugins/hello-mic/README.md), a microphone button.
 - [Security](security.md) — Remote-shell access, passkeys and network restrictions. Read this before enabling remote access.
-- [Read aloud: the voice of wherdr](read-aloud.md) — The on-device neural voices, their licences and attributions, the espeak-ng note, and their measured (for now estimated) phone figures.
+- [Read aloud: the voice of wherdr](read-aloud.md) — The on-device neural voices (French, English and Cantonese), their licences and attributions, the espeak-ng note, and their measured (for now estimated) phone figures; the Cantonese voice's desktop figures and limits.
 - [Dictation design](dictation.md) — For contributors: the engine interface, capture pipeline, OpenRouter relay, on-device models and how to add one.
 - [Design rules](design.md) — The single reference for interface styling, state indicators, controls and responsive checks.
 - [Development and tests](development.md) — Run from source and test the core build.

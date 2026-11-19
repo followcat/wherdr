@@ -414,11 +414,14 @@ loss or a cached initialization failure; old runtime references are dropped for 
 
 ### Content Security Policy
 
-Only the dictation workers' own responses (`/workers/dictation-worker.js` and
-`/workers/dictation-webgpu-worker.js`, separate route rules in `nuxt.config.ts`) carry
-`'wasm-unsafe-eval'` in `script-src` (`CSP_DICTATION_WORKER` and `CSP_WEBGPU_WORKER` in
-`server/utils/csp.ts`): a worker follows its script's policy, not the page's. It lets each worker
-compile its WebAssembly runtime (sherpa-onnx, onnxruntime-web) served from `/models/runtime/`.
+Only the dictation and read-aloud workers' own responses (`/workers/dictation-worker.js`,
+`/workers/dictation-webgpu-worker.js`, `/workers/tts-worker.js` and
+`/workers/canto-tts-worker.js`, separate route rules in `nuxt.config.ts`) carry
+`'wasm-unsafe-eval'` in `script-src` (`CSP_DICTATION_WORKER`, `CSP_WEBGPU_WORKER`,
+`CSP_TTS_WORKER` and `CSP_CANTO_TTS_WORKER` in `server/utils/csp.ts`): a worker follows its
+script's policy, not the page's. It lets each worker compile its WebAssembly runtime
+(sherpa-onnx, onnxruntime-web, canto-hk-g2p) served from `/models/runtime/` and, for the G2P
+wasm, `/workers/canto/`.
 The page itself cannot compile WebAssembly, and `eval()` of JavaScript is never allowed:
 `'unsafe-eval'` stays out.
 Runtimes and workers load from `'self'` only (`worker-src 'self' blob:`, `connect-src 'self'`):
@@ -485,6 +488,7 @@ is kept).
 | `app/utils/speech/lowQualityVoices.ts` | Names of Apple's novelty, MacinTalk and Eloquence voices, hidden by default |
 | `app/components/ReadAloudButton.vue`, `ReadAloudSettings.vue` | Play / Stop under a reply; the settings (language filter, hide low-quality voices, voice search in sections, Test) |
 | `app/components/ReadAloudNeuralVoices.vue` | The Voice of wherdr settings: one row per language voice (name, size, attribution, Install / progress / Cancel / Delete, Test) |
+| `public/workers/canto-tts-worker.js`, `public/workers/canto/` | The Cantonese worker: onnxruntime-web, the int8 canto-tts-nano graphs, the canto-hk-g2p WASM text front end, OpenCC s2t and the model's BPE |
 
 Every piece is queued in the tap itself: iOS only speaks from a user gesture. iOS may stop
 speech when the screen locks or the app goes to the background, without an `end` event; a check
@@ -513,14 +517,25 @@ so Stop never waits behind a long queue; the pieces play back to back through We
 dropped. The worker and the `AudioContext` are released after 60 s without speech and on
 `pagehide`. `tests/neuralVoice.test.ts` covers it with a fake worker.
 
-With **Voice of wherdr** chosen, the settings list one voice per language, Siwis (French) and
-Cori (English), each with its size and attribution and its own Install, Cancel, Delete and Test.
+With **Voice of wherdr** chosen, the settings list one voice per language, Siwis (French),
+Cori (English) and Canto (Cantonese), each with its size and attribution and its own Install,
+Cancel, Delete and Test.
 Install and Test then show what they measured on the device (download, load, first sentence,
 real-time factor, heap; see [How to measure](read-aloud.md#how-to-measure)).
 Each reply is read by the voice of its language: `replyLanguage()` guesses French or English from
-common short words and French accents. A reply whose voice is not installed is read by the
-device's voices. An OpenRouter engine
+common short words and French accents, and Cantonese when the reply is mostly Han characters
+(kana means Japanese and is never sent to the Cantonese voice). A reply whose voice is not
+installed is read by the device's voices. An OpenRouter engine
 (`POST /api/v1/audio/speech`, relayed by the server like dictation) is a planned follow-up.
+
+The Cantonese worker is `public/workers/canto-tts-worker.js`; it keeps the TTS worker's protocol
+and adds `parts`/`part` and `cancel`. It runs onnxruntime-web 1.23.2 (the existing `ort` set,
+CPU/WASM, one thread), the int8 canto-tts-nano graphs, the canto-hk-g2p WASM text front end
+(built from its pinned PyPI sdist), OpenCC `s2t` phrases and characters, and the model's
+SentencePiece BPE. A sentence is split at the G2P's word boundaries into parts (a short first
+part, a 48-frame cap); the parts play back to back. Stop cancels between ORT calls and the worker
+is terminated only when it does not answer. The voice's licences, training-data note, desktop
+figures and limits are in [Read aloud › Cantonese voice](read-aloud.md#cantonese-voice).
 
 ## Known limits
 
