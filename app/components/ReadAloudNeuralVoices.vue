@@ -20,11 +20,12 @@ const errors = reactive<Record<string, string>>({})
 const downloadMs = reactive<Record<string, number>>({})
 const measured = reactive<Record<string, VoiceStats>>({})
 const canKeep = typeof caches !== 'undefined'
-const LANGS: Record<string, string> = { fr: 'French', en: 'English' }
+const LANGS: Record<string, string> = { fr: 'French', en: 'English', yue: 'Cantonese' }
 // Spoken in the voice's own language: sample speech, not interface text.
 const SAMPLES: Record<string, string> = {
   fr: 'Bonjour ! Voici comment les réponses en français seront lues.',
   en: 'Hello! This is how replies in English will sound.',
+  yue: '今日天氣幾好，我想出街行吓。',
 }
 
 const installed = (v: Voice) => (have[v.id] ?? 0) >= voiceBytes(v)
@@ -132,7 +133,7 @@ const pct = (p: Progress) => Math.floor((p.got / Math.max(1, p.total)) * 100)
         <small v-if="errors[v.id]" class="neural-voice-error" role="status">{{ errors[v.id] }}</small>
       </div>
     </div>
-    <p class="muted settings-hint">{{ t('Each reply is read by the voice of its language, French or English. Until that voice is installed, the device’s voices read it. The text never leaves this device.') }}</p>
+    <p class="muted settings-hint">{{ t('Each reply is read by the voice of its language, French, English or Cantonese. Until that voice is installed, the device’s voices read it. The text never leaves this device.') }}</p>
   </div>
 </template>
 

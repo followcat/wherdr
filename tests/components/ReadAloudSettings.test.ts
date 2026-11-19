@@ -107,9 +107,11 @@ describe('ReadAloudSettings voice of wherdr', () => {
     await w.find('[role="radio"][value="wherdr"]').trigger('click')
     await flushPromises()
     expect(localStorage.getItem('readAloud')).toBe('wherdr')
-    expect(w.findAll('[data-voice] b').map(b => b.text())).toEqual(['Siwis · French', 'Cori · English'])
+    expect(w.findAll('[data-voice] b').map(b => b.text())).toEqual(['Siwis · French', 'Cori · English', 'Canto · Cantonese'])
     expect(row(w, 'siwis-medium').find('[data-testid="voice-attribution"]').text()).toContain('SIWIS French Speech Synthesis Database')
     expect(state(w, 'siwis-medium')).toMatch(/^Install · \d+ MB$/)
+    expect(row(w, 'canto-nano-int8').find('[data-testid="voice-attribution"]').text()).toContain('canto-tts-nano')
+    expect(state(w, 'canto-nano-int8')).toMatch(/^Install · \d+ MB$/)
     w.unmount()
   })
 

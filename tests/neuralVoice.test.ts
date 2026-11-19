@@ -2,10 +2,11 @@
 // worker that speaks the TTS worker's protocol and a fake WebAudio clock.
 import { afterEach, describe, expect, it } from 'vitest'
 import { DEVICE_CACHE } from '../app/utils/dictation/deviceModels'
-import { LOOKAHEAD, VOICES, createNeuralVoice, defaultVoice, heapEstimate, heapNeeded, replyLanguage } from '../app/utils/speech/neuralVoice'
+import { CANTO_WORKER_URL, LOOKAHEAD, VOICES, createNeuralVoice, defaultVoice, heapEstimate, heapNeeded, replyLanguage } from '../app/utils/speech/neuralVoice'
 import { fakeCaches } from './fakeModelCache'
 
 const siwis = VOICES.find(v => v.id === 'siwis-medium')!
+const canto = VOICES.find(v => v.id === 'canto-nano-int8')!
 
 class FakeWorker {
   static made: FakeWorker[] = []
@@ -182,7 +183,35 @@ describe('the neural voice', () => {
   it('picks the default voice of the first device language it speaks, else English, and guesses a reply’s language', () => {
     expect(defaultVoice(['de-DE', 'fr-FR']).id).toBe('siwis-medium')
     expect(defaultVoice(['de-DE']).id).toBe('cori-medium')
+    expect(defaultVoice(['yue']).id).toBe('canto-nano-int8')
     expect(replyLanguage('Le build est passé, je relance les tests.')).toBe('fr')
     expect(replyLanguage('The build passed; I rerun the tests and push the fix.')).toBe('en')
+    expect(replyLanguage('今日天氣幾好，我想出街行吓。')).toBe('yue')
+    // Kana means Japanese: the Cantonese voice is not chosen.
+    expect(replyLanguage('今日はいい天気ですね。')).not.toBe('yue')
+  })
+
+  it('selects the Canto worker with its kind and runtime', async () => {
+    const caches = fakeCaches()
+    const cache = await caches.open(DEVICE_CACHE)
+    for (const m of canto.members) await cache.put(`/models/${canto.dir}/${m.path}`, new Response(''))
+    let url = ''
+    const voice = createNeuralVoice({
+      caches,
+      budget: null,
+      worker: (u) => { url = u; return new FakeWorker() as unknown as Worker },
+      audio: () => new FakeAudio() as unknown as AudioContext,
+    })
+    await voice.refresh()
+    const { opts } = reply(['One.'])
+    opts.voice = canto
+    expect(voice.speak(opts)).toBe(true)
+    expect(url).toBe(CANTO_WORKER_URL)
+    expect(FakeWorker.made[0]!.got[0]).toMatchObject({
+      t: 'load',
+      kind: 'cantoNano',
+      runtime: '/models/runtime/onnxruntime-web-1.23.2/',
+      base: `/models/${canto.dir}`,
+    })
   })
 })
