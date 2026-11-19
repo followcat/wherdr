@@ -17,7 +17,7 @@ import { HerdrError } from './herdr'
 import { HERMES_POLICY_PREFIX, type HermesMessage, type HermesSession, hermesLineage, hermesVisible, parseHermes } from './hermesParse'
 import { HERMES_ENVIRON_SH, type HermesEnv, hermesHome, hermesNodeEnviron, hermesToolbarSession, hermesTuiSession, parseEnviron } from './hermesSessions'
 import { ompModelLabel } from './models'
-import { type DatabaseSyncCtor, SQLITE_UNSUPPORTED, databaseSyncCtor, isSqliteUnsupported } from './sqliteDb'
+import { type DatabaseSyncCtor, SQLITE_UNSUPPORTED, databaseSyncCtor, decodeSqliteText, isSqliteUnsupported, sqliteTextAsBlob } from './sqliteDb'
 import { type PageOptions, type PageStep, hash12, pageSteps } from './stepPages'
 import { isMissing } from './transcripts'
 
@@ -31,26 +31,30 @@ type Query = [sql: string, params: unknown[]]
 const CACHE_ENTRIES = 8
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 
-// Sessions of the conversation `?1`: its compression ancestors, its compression
-// continuations, and the lineage of its state_meta receipt (`?2`).
+// Sessions of the conversation (the session id, twice) plus the lineage of its
+// state_meta receipt (the receipt key): compression ancestors, compression
+// continuations, and the receipt's own lineage.
 const FAMILY = `WITH RECURSIVE up(id) AS (
-  SELECT id FROM sessions WHERE id = ?1
+  SELECT id FROM sessions WHERE id = ?
   UNION SELECT p.id FROM up JOIN sessions s ON s.id = up.id JOIN sessions p ON p.id = s.parent_session_id WHERE p.end_reason = 'compression'
 ), down(id) AS (
-  SELECT id FROM sessions WHERE id = ?1
+  SELECT id FROM sessions WHERE id = ?
   UNION SELECT s.id FROM down JOIN sessions p ON p.id = down.id JOIN sessions s ON s.parent_session_id = p.id WHERE p.end_reason = 'compression'
 ), family(id) AS (
   SELECT id FROM up UNION SELECT id FROM down
-  UNION SELECT value FROM json_each(COALESCE((SELECT json_extract(value, '$.lineage') FROM state_meta WHERE key = ?2), '[]'))
+  UNION SELECT value FROM json_each(COALESCE((SELECT json_extract(value, '$.lineage') FROM state_meta WHERE key = ?), '[]'))
 )`
-const MESSAGE_COLUMNS = 'id, session_id, role, content, tool_call_id, tool_calls, tool_name, timestamp, reasoning, reasoning_content, active, compacted, display_metadata'
 
-function queries(session: string, uid: boolean): Query[] {
-  const params = [session, HERMES_POLICY_PREFIX + session]
+function queries(session: string, uid: boolean, blobContent: boolean): Query[] {
+  const policy = HERMES_POLICY_PREFIX + session
+  // One `?` per occurrence: numbered parameters (?1) are not bound by
+  // node:sqlite before Node 24.11 ("column index out of range").
+  const params = [session, session, policy]
+  const content = blobContent ? sqliteTextAsBlob('content') : 'content'
   return [
     [`${FAMILY} SELECT id, parent_session_id, end_reason, started_at, model FROM sessions WHERE id IN (SELECT id FROM family)`, params],
-    ['SELECT value FROM state_meta WHERE key = ?', [params[1]]],
-    [`${FAMILY} SELECT ${MESSAGE_COLUMNS}${uid ? ', message_uid' : ''} FROM messages WHERE session_id IN (SELECT id FROM family) ORDER BY id`, params],
+    ['SELECT value FROM state_meta WHERE key = ?', [policy]],
+    [`${FAMILY} SELECT id, session_id, role, ${content}, tool_call_id, tool_calls, tool_name, timestamp, reasoning, reasoning_content, active, compacted, display_metadata${uid ? ', message_uid' : ''} FROM messages WHERE session_id IN (SELECT id FROM family) ORDER BY id`, params],
   ]
 }
 
@@ -123,6 +127,11 @@ export function createHermesTranscripts({ fs = localFs, sqlite }: {
     if (sqlite === null) throw Object.assign(new Error('node:sqlite is not available'), { code: SQLITE_UNSUPPORTED })
     const Db = sqlite ?? await databaseSyncCtor()
     const live = () => existsSync(`${db}-wal`) && existsSync(`${db}-shm`)
+    // `content` is selected as a BLOB (see sqliteTextAsBlob): decode its bytes.
+    const decode = (row: unknown) => {
+      const r = row as { content?: unknown }
+      return r.content instanceof Uint8Array ? { ...r, content: decodeSqliteText(r.content) } : row
+    }
     for (let attempt = 0; attempt < 2; attempt++) {
       if (!existsSync(db)) throw missing()
       const held = live()
@@ -130,7 +139,7 @@ export function createHermesTranscripts({ fs = localFs, sqlite }: {
       let out: unknown[][]
       try {
         conn.exec('BEGIN')
-        out = list.map(([sql, params]) => conn.prepare(sql).all(...params) as unknown[])
+        out = list.map(([sql, params]) => (conn.prepare(sql).all(...params) as unknown[]).map(decode))
       } finally { conn.close() }
       // A gateway that opened the database during an immutable read may have
       // changed pages under it: read again, in place.
@@ -149,12 +158,15 @@ export function createHermesTranscripts({ fs = localFs, sqlite }: {
   }
 
   async function read(loc: HermesLoc): Promise<HermesDoc | null> {
-    const run = (list: Query[]) => (fs === localFs ? local(loc.db, list) : remote(loc, list))
+    // Local node:sqlite reads `content` as a BLOB to keep NUL bytes intact;
+    // remote reads keep the TEXT value (Python never truncated it).
+    const blobContent = fs === localFs
+    const run = (list: Query[]) => (blobContent ? local(loc.db, list) : remote(loc, list))
     let res: unknown[][]
-    try { res = await run(queries(loc.session, !oldSchema.has(loc.db))) } catch (e) {
+    try { res = await run(queries(loc.session, !oldSchema.has(loc.db), blobContent)) } catch (e) {
       if (!isOldSchema(e)) throw e
       oldSchema.add(loc.db)
-      res = await run(queries(loc.session, false))
+      res = await run(queries(loc.session, false, blobContent))
     }
     const sessions = res[0] as HermesSession[]
     if (!sessions.some(s => s.id === loc.session)) return null
