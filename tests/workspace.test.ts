@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Project } from '../shared/pm/project'
-import { WORKSPACE_FIRST, workspaceInput, workspaceInstructions, cleanWorkspaceFields, effectiveProject, effectiveWorkflow, memberOverrides, workflowOverrides, workspaceErrors, workspaceTaskError } from '../shared/pm/workspace'
+import { WORKSPACE_FIRST, workspaceInput, workspaceInstructions, cleanWorkspaceFields, effectiveProject, effectiveWorkflow, followShared, liftShared, memberOverrides, workflowOverrides, workspaceErrors, workspaceTaskError } from '../shared/pm/workspace'
 import { defaultWorkflow, type Template } from '../shared/pm/workflow'
 import { taskGuards } from '../shared/pm/actions'
 import { cleanProjectUpdate } from '../shared/pm/project'
@@ -36,6 +36,8 @@ describe('workspaces', () => {
     expect(effectiveWorkflow('PAY', null, member, ws)).toMatchObject({ prefs: ws.shared!.prefs, worktree: ws.shared!.worktree })
     // Not a member: as is.
     expect(effectiveProject({ ...member, workspace: undefined }, ws)).toEqual({ ...member, workspace: undefined })
+    // The workspace's sheet shows them from its shared settings.
+    expect(liftShared(ws)).toMatchObject({ placement: 'balance', base: 'develop', branchName: 'ws/{id}', archiveAfter: 30, deleteBranch: false })
   })
 
   it('an override wins, and clearing it falls back to the shared value', () => {
@@ -49,6 +51,11 @@ describe('workspaces', () => {
     expect(cleared.overrides).toEqual(['machines', 'placement', 'prefs'])
     expect(effectiveProject(cleared, ws).base).toBe('develop')
     expect(memberOverrides(member, { archiveAfter: 0 })).toEqual({ overrides: ['archiveAfter'] })
+    // "Use <workspace>'s" on one field: that one alone back on the workspace's.
+    const placed = followShared(own, 'placement')
+    expect(placed).toMatchObject({ base: 'main', machines: ['home'], overrides: ['base', 'machines', 'prefs'] })
+    expect(effectiveProject(placed, ws).placement).toBe(ws.shared?.placement)
+    expect(followShared(followShared(placed, 'machines'), 'base')).not.toHaveProperty('machines')
   })
 
   it('keeps the workspace\'s pause on a member\'s home machine, and a workflow differing from the shared one is an override', () => {
@@ -73,6 +80,22 @@ describe('workspaces', () => {
     expect(effectiveWorkflow('PAY', null, { ...member, workspace: undefined }, ws, shared)).toEqual(defaultWorkflow('PAY'))
   })
 
+  it('a member without its own worktree setup runs the workspace\'s, wherever the workspace keeps it', () => {
+    const bare: Project = { ...ws, shared: {} }, file: Template = { id: 'ws', version: 1, taskTypes: {}, worktree: { copy: ['.env'] } }
+    // In the workspace's workflow file (where its sheet saves it), its shared settings first.
+    expect(effectiveWorkflow('PAY', null, member, bare, file).worktree).toEqual({ copy: ['.env'] })
+    expect(effectiveWorkflow('PAY', null, member, ws, file).worktree).toEqual(ws.shared!.worktree)
+    // The member's own file without an override: still the workspace's.
+    expect(effectiveWorkflow('PAY', { id: 'pay', version: 1, taskTypes: {} }, member, bare, file).worktree).toEqual({ copy: ['.env'] })
+    // A member override wins; the same setup as the workspace's file is none.
+    const own = { ...member, overrides: ['worktree' as const], worktree: { setup: 'npm ci' } }
+    expect(effectiveWorkflow('PAY', null, own, bare, file).worktree).toEqual({ setup: 'npm ci' })
+    expect(workflowOverrides(member, bare, { worktree: { copy: ['.env'] } }, file)).toEqual({})
+    // The machines set on the workspace's sheet (on itself) reach its members too.
+    const machines: Project = { ...bare, machines: ['home', 'big'], clones: { big: '/srv/work' } }
+    expect(effectiveProject(member, machines)).toMatchObject({ machines: ['home', 'big'], clones: { big: '/srv/work/payroll-api' } })
+  })
+
   it('a workspace refuses a normal task, a project takes it', () => {
     expect(workspaceTaskError(ws, 'task')).toMatch(/features only/)
     expect(workspaceTaskError(ws, 'feature')).toBe('')
@@ -81,7 +104,7 @@ describe('workspaces', () => {
 
   it('refuses a workspace with git, an unknown workspace, a nested one and an unknown override', () => {
     expect(workspaceErrors([ws, member])).toEqual([])
-    expect(workspaceErrors([{ ...ws, git: undefined }])).toEqual(['Workspace WS is a folder without git'])
+    expect(workspaceErrors([{ ...ws, git: undefined }])).toEqual(['Workspace WS is stored without git (git: false): a git repository at its root is a member project'])
     expect(workspaceErrors([member])).toEqual(['PAY names no existing workspace'])
     expect(workspaceErrors([ws, { ...member, workspace: 'PAY' }, { ...member, key: 'X', workspace: 'WS' }])).toEqual(['PAY names no existing workspace'])
     expect(workspaceErrors([ws, { ...ws, key: 'W2', workspace: 'WS' }])).toEqual(['Workspace W2 cannot be in a workspace'])

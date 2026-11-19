@@ -13,6 +13,7 @@ import { adoptRepo } from '../server/utils/pmAdopt'
 import { PREPARE_SCRIPT, PROBE_SCRIPT } from '../server/utils/pmFolder'
 import { REMOTE_SCRIPT } from '../server/utils/pmVisibility'
 import type { Project } from '../shared/pm/project'
+import { workspaceInput, workspaceInstructions } from '../shared/pm/workspace'
 
 const ws = { key: 'WS', name: 'Work', machine: 'home', path: '/h/work', kind: 'workspace', git: false, addedAt: 1 } as Project
 
@@ -22,7 +23,9 @@ describe('repo adopt: what it refuses', () => {
     expect(parseCommand(['repo', 'adopt'])).toEqual({ error: expect.stringMatching(/usage: wherdr pm repo adopt/) })
     expect(repoUnder('apps/web-app/', '/h/work')).toBe('apps/web-app')
     expect(repoUnder('~/work/payroll-api', '/h/work/', '/h')).toBe('payroll-api')
-    for (const out of ['/h/other/api', '../api', '/h/work', '~/api']) expect(repoUnder(out, '/h/work', '/h')).toEqual({ error: expect.stringMatching(/outside the workspace's root/) })
+    // The root itself, when it is a git repository.
+    for (const root of ['.', '/h/work/', '~/work']) expect(repoUnder(root, '/h/work', '/h')).toBe('.')
+    for (const out of ['/h/other/api', '../api', '/h/workshop', '~/api']) expect(repoUnder(out, '/h/work', '/h')).toEqual({ error: expect.stringMatching(/outside the workspace's root/) })
   })
 
   it('refuses a folder already a project (of any workspace), without git, or without the origin its workflow needs', () => {
@@ -34,6 +37,10 @@ describe('repo adopt: what it refuses', () => {
     expect(adoptRefusal(['/h/work/ledger'], own([other]), { ...repo, exists: false }, true)).toMatch(/does not exist/)
     expect(adoptRefusal(['/h/work/ledger'], own([other]), { ...repo, remote: false }, true)).toMatch(/no origin/)
     expect(adoptRefusal(['/h/work/ledger'], own([other]), { ...repo, remote: false }, false)).toBe('')
+    // The root's own repository without an origin: refused only for a workflow that pushes; never as the workspace's folder.
+    expect(adoptRefusal(['/h/work'], own([other]), { ...repo, remote: false }, true)).toMatch(/^\/h\/work has no origin, and the workflow its tasks would run pushes or opens pull requests/)
+    expect(adoptRefusal(['/h/work'], own([other]), { ...repo, remote: false }, false)).toBe('')
+    expect(adoptRefusal(['/h/work'], own([ws]), repo, false)).toMatch(/already project WS/)
     // Another project's clone on this machine (~ expanded), its home elsewhere.
     const cloned = { key: 'LED', name: 'Ledger', machine: 'box', path: '/srv/ledger', machines: ['box', 'home'], clones: { home: '~/work/ledger/' }, addedAt: 1 } as Project
     expect(adoptRefusal(['/h/work/ledger'], own([cloned]), repo, true)).toMatch(/already project LED/)
@@ -91,6 +98,26 @@ describe('repo adopt: the new member', () => {
     expect(adoptedSince(log, Date.now() + 1)).toEqual([])
     // Again: already a project.
     await expect(adoptRepo(deps, ws, await store.projects(), { name: 'repo adopt', repo: '/h/work/payroll-api' }, 'WS coordinator')).rejects.toThrow(/already project PA/)
+  })
+
+  it('a workspace on a git root: the root\'s own repository becomes a member at the root', async () => {
+    const store = createPmStore(dir)
+    await store.setEnabled(true)
+    // The root is a git repository: the workspace is still stored without git.
+    const added = await store.addProject({ ...workspaceInput({ key: 'WS', name: 'Work', roots: [['home', '/h/work'], ['box', '/srv/work']] }), plain: true }, async (_m, f) => ({ path: f, git: true }))
+    expect(added).toMatchObject({ kind: 'workspace', git: false })
+    const call = async (_m: string, p: { argv: string[] }) => {
+      const [, , script] = p.argv
+      const out = script === REAL_ALL_SCRIPT ? (p.argv.slice(4).map(a => `x${a}`).join('\n')) : script === REAL_SCRIPT ? '/h/work\n/h/work' : script === PROBE_SCRIPT ? 'dir\ngit' : script === PREPARE_SCRIPT ? 'git' : script!.includes('$HOME') ? '/h' : ''
+      return { code: 0, stdout: Buffer.from(out).toString('base64') }
+    }
+    const deps = { store, call, machines: () => [{ key: 'home', label: 'home', local: true }] } as unknown as Parameters<typeof adoptRepo>[0]
+    const r = await adoptRepo(deps, added, await store.projects(), { name: 'repo adopt', repo: '.' }, 'WS coordinator')
+    expect(r.adopted).toMatchObject({ key: 'WRK', name: 'work', repo: '.', path: '/h/work' })
+    // Its clone elsewhere is that machine's root; its tasks get no workspace instructions (their worktree holds them).
+    expect(await store.project('WRK')).toMatchObject({ workspace: 'WS', path: '/h/work', machines: ['home', 'box'], clones: { box: '/srv/work' } })
+    expect(workspaceInstructions((await store.project('WRK'))!, await store.projects())).toBeUndefined()
+    await expect(adoptRepo(deps, added, await store.projects(), { name: 'repo adopt', repo: '/h/work' }, 'WS coordinator')).rejects.toThrow(/already project WRK/)
   })
 
   it('leaves out of placement a machine without the clone under its root', () => {

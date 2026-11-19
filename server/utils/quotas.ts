@@ -36,6 +36,8 @@ import { coreQuotaMachines } from './coreQuotaMachines'
 import { coreFailureKind } from './coreTranscripts'
 import { fmt } from '../../shared/message'
 import { type KnownWeek, type WeekReading, codexWeekWindow } from '../../shared/codexStatus'
+import { limitState } from '../../shared/quotaLimit'
+import { codexLimitsLine, mayRefresh, runCodexLimits } from './codexLimitsRead'
 
 // What a quota reading needs of a machine (core's machines, coreQuotaMachines.ts).
 export type QuotaMachine = Pick<Machine, 'key' | 'label' | 'local' | 'status' | 'home' | 'fs' | 'exec'>
@@ -428,6 +430,33 @@ function failedSession(e: unknown): '' {
   return ''
 }
 
+// The reading of Codex limits (a conversation's, or the app-server's answer,
+// codexLimitsRead.ts); `at` when they carry no time.
+function codexReading(hit: CodexLimits, at: number): Quota | null {
+  const t = hit.at || at
+  const read = hit.limited ? { five: null, week: null, at: t, limited: hit.limited } : codexQuota(hit.rl, t)
+  return read && hit.credits ? { ...read, credits: hit.credits } : read
+}
+
+// A machine's stale "limit reached" (shared/quotaLimit.ts): ask its Codex for
+// the current limits (codexLimitsRead.ts), in the background; the answer
+// stands for the machine's reading until a newer one comes, and the next read
+// shows it.
+const refreshed = new Map<string, CodexAccountReading>()
+function refreshCodex(m: QuotaMachine, q: CodexAccountReading | null, now: number): CodexAccountReading | null {
+  const r = refreshed.get(m.key)
+  const best = r && (!q || r.at > q.at) ? { ...r, account: q?.account ?? r.account, ...(q?.lastAccount ? { lastAccount: q.lastAccount } : {}) } : q
+  if (!m.home || (!m.local && !m.exec) || !best || limitState(best, now) !== 'stale' || !mayRefresh(best.account ?? best.lastAccount ?? m.key, now)) return best
+  void runCodexLimits(script => (m.local ? runLocal(script, m.home!, 30000) : m.exec!('exec sh -s', [], { input: Buffer.from(script), timeoutMs: 30000 }))).then((out) => {
+    const at = Date.now(), line = codexLimitsLine(out, at), hit = line && lastCodexLimits(line)
+    const read = hit && codexReading(hit, at)
+    if (!read) return
+    refreshed.set(m.key, { ...read, account: best.account })
+    forgetQuotas()
+  })
+  return best
+}
+
 export async function readCodex(fs: MachineFs, home: string): Promise<CodexAccountReading | null> {
   return (await readCodexMachine(fs, home)).q
 }
@@ -463,8 +492,7 @@ export async function readCodexMachine(fs: MachineFs, home: string, memo?: Codex
       const len = Math.min(s!.size, max)
       try {
         const hit = lastCodexLimits((await fs.read(f, s!.size - len, len)).toString('utf8'))
-        const read = hit && (hit.limited ? { five: null, week: null, at: hit.at || s!.mtimeMs, limited: hit.limited } : codexQuota(hit.rl, hit.at || s!.mtimeMs))
-        const q = read && hit!.credits ? { ...read, credits: hit!.credits } : read
+        const q = hit && codexReading(hit, s!.mtimeMs)
         if (q) return { q, stamp: Math.max(started, hit!.at || s!.mtimeMs), account }
       } catch (e) {
         failedSession(e)
@@ -657,7 +685,8 @@ export async function readQuotas(force = false): Promise<Quotas> {
       m.home ? readCodexMachine(m.fs, m.home, codexMemo(m.key)).catch(() => null) : null,
     ])
     const claude = lastGoodRead(claudeGood, m.key, claudeRead, version)
-    const { q: rolled, seen: codexSeen } = lastGoodRead(codexGood, m.key, codexRead, version) ?? { q: null, seen: true }
+    const { q: read, seen: codexSeen } = lastGoodRead(codexGood, m.key, codexRead, version) ?? { q: null, seen: true }
+    const rolled = refreshCodex(m, read, Date.now())
     const kept = { claude: !claudeRead, codex: !codexRead }
     const week = rolled?.week ? { used: rolled.week.used, resetsAt: rolled.week.resetsAt, at: rolled.at, account: rolled.account } : null
     const known = knownWeek ? await knownWeek(m.key, week).catch(() => null) : null

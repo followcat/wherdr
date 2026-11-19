@@ -6,7 +6,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createPmStore } from '../server/utils/pmStore'
 import { ALFRED_TOKEN_FILE, issueAlfredToken, issueToken } from '../server/utils/pmCoordinator'
-import { guardsAuthor, projectView, saveProjectGuards, saveProjectWorkflow, templateFromProject, updateProject } from '../server/utils/pmProject'
+import { guardsAuthor, projectView, resetMemberWorkflow, saveProjectGuards, saveProjectWorkflow, updateProject } from '../server/utils/pmProject'
 import { common, company, vibe } from '../shared/pm/examples'
 import { templateDiff } from '../shared/pm/coordinator'
 import { startOverFrom } from '../shared/pm/workflow'
@@ -117,14 +117,6 @@ describe('project settings', () => {
     expect(back).not.toHaveProperty('clones')
   })
 
-  it('saves the workflow as a library template; the project is untouched, a taken id refused', async () => {
-    const before = (await store.workflow('CO'))!
-    expect(await templateFromProject(store, 'CO', 'co-flow')).toEqual({ template: { id: 'co-flow', version: 1 } })
-    expect(await store.template('co-flow')).toMatchObject({ id: 'co-flow', taskTypes: before.taskTypes, guards: before.guards })
-    expect(await store.workflow('CO')).toEqual(before)
-    await expect(templateFromProject(store, 'CO', 'common')).rejects.toThrow('A template already has this id')
-  })
-
   it('previews a start over: the kept guards and worktree setup are not in the diff, only what changes', () => {
     const own = { ...company, id: 'co', guards, worktree: { copy: ['.env'] } }
     const next = { ...startOverFrom(vibe, own), id: 'co' }
@@ -150,5 +142,33 @@ describe('a member project\'s sheet', () => {
     expect(v.workflow).not.toHaveProperty('workspaceGuards')
     await saveProjectGuards(store, 'PAY', guards, 'user')
     expect(await projectView(store, 'PAY')).not.toHaveProperty('inherited')
+    // Back to the workspace's: its own file removed, said in its log.
+    await resetMemberWorkflow(store, 'PAY')
+    expect(await projectView(store, 'PAY')).toMatchObject({ inherited: 'WS' })
+    expect((await store.projectLog('PAY')).map(e => e.text)).toEqual(["its own workflow removed: it follows workspace WS's again"])
+    await expect(resetMemberWorkflow(store, 'PAY')).rejects.toThrow('already follows')
+  })
+
+  it('takes the workspace\'s shared fields; a General save of its own never copies the workspace\'s workflow', async () => {
+    const ok = async (_m: string, f: string) => ({ path: f, git: !f.endsWith('work') })
+    await store.addProject({ key: 'WS', name: 'Work', machine: '', path: '~/work', kind: 'workspace' }, ok)
+    await store.addProject({ key: 'PAY', machine: '', path: '~/work/payroll-api', workspace: 'WS' }, ok)
+    await store.saveWorkflow('WS', { ...company, id: 'ws', prefs: { agent: 'claude', model: 'opus' } })
+    await updateProject(store, 'WS', { base: 'develop', branchName: 'feat/{id}', archiveAfter: 3, deleteBranch: false })
+    const raw = JSON.parse(await fs.readFile(store.files.projects, 'utf8')).projects.find((x: { key: string }) => x.key === 'WS')
+    expect(raw).not.toHaveProperty('base')
+    expect(raw.shared).toEqual({ base: 'develop', branchName: 'feat/{id}', archiveAfter: 3, deleteBranch: false })
+    expect(await store.project('PAY')).toMatchObject({ base: 'develop', branchName: 'feat/{id}', archiveAfter: 3, deleteBranch: false })
+    expect((await store.project('WS'))?.base).toBeUndefined() // the workspace runs no task of its own
+    // Its own branch: an override, never a workflow.
+    await updateProject(store, 'PAY', { base: 'main' })
+    // Its own agents: kept on it, never a copy of the workspace's workflow; the same as the workspace's: back to it.
+    await updateProject(store, 'PAY', { prefs: { agent: 'codex', model: 'gpt-5' } })
+    expect(await store.savedWorkflow('PAY')).toBeNull()
+    expect(await store.project('PAY')).toMatchObject({ base: 'main', overrides: ['base', 'prefs'], prefs: { agent: 'codex', model: 'gpt-5' } })
+    expect((await store.workflow('PAY'))?.prefs).toEqual({ agent: 'codex', model: 'gpt-5' })
+    await updateProject(store, 'PAY', { prefs: {} })
+    expect(await store.project('PAY')).toMatchObject({ overrides: ['base'] })
+    expect((await store.workflow('PAY'))?.prefs).toEqual({ agent: 'claude', model: 'opus' })
   })
 })

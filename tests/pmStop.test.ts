@@ -72,7 +72,7 @@ describe('who may remove', () => {
 })
 
 describe('a stopped task', () => {
-  it('waits for the user, its chained task too, with the reason; on the card and in Decisions', () => {
+  it('waits for the user, its chained task too, with the reason; on the card and in the grouped push', () => {
     const t = stop(working())
     expect(t).toMatchObject({ state: 'waiting', waitKind: undefined, waiting: 'Stopped by the user: loops on the same test' })
     const next: Task = { ...working({ id: 'WH-2', state: 'todo', step: undefined }), after: 'WH-1' }

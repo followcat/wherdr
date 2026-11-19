@@ -66,6 +66,44 @@ export const wakeKindOf = (text: string): WakeKind | null => {
   return m ? (Object.keys(WAKE_LABEL) as WakeKind[]).find(k => WAKE_LABEL[k] === m[1]) ?? null : null
 }
 
+// A user turn split into the user's own parts and its wakes, in order. Claude
+// may take a wake and a message sent at the same moment as one turn: each wake
+// runs from its head line (`<Kind>: …wake <id>`, maybe in a <pasted_content>
+// wrapper) to its own ack line (else to the next head or the end); the rest is
+// the user's. A turn without a wake: one user part.
+export interface TurnPart { wake: boolean, text: string }
+const LINE_HEAD_RE = new RegExp(`^\\s*(?:<pasted_content[^>]*>\\s*)?(?:${Object.values(WAKE_LABEL).join('|')}): (?:.*, )?(?:scheduled )?wake (\\S+)`)
+const PASTE_OPEN = /^\s*<pasted_content[^>]*>\s*$/
+export function splitWakes(text: string): TurnPart[] {
+  const lines = text.split('\n')
+  const parts: TurnPart[] = []
+  let user: string[] = []
+  const endUser = () => {
+    const t = user.join('\n').trim()
+    if (t) parts.push({ wake: false, text: t })
+    user = []
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const m = LINE_HEAD_RE.exec(lines[i]!)
+    if (!m) { user.push(lines[i]!); continue }
+    // A wrapper opened on the line before belongs to the wake.
+    const k = user.findLastIndex(l => l.trim())
+    const open = k >= 0 && PASTE_OPEN.test(user[k]!) ? user.splice(k).filter(l => l.trim()) : []
+    endUser()
+    const ack = `When you have handled this, run: wherdr pm ack ${m[1]}`
+    let end = i + 1
+    while (end < lines.length && lines[end]!.trim() !== ack && !LINE_HEAD_RE.test(lines[end]!)) end++
+    if (end < lines.length && lines[end]!.trim() === ack) end++
+    // Its wrapper's closing tag goes with it.
+    const close = lines.slice(end).findIndex(l => l.trim())
+    if ((open.length || lines[i]!.includes('<pasted_content')) && close >= 0 && lines[end + close]!.trim() === '</pasted_content>') end += close + 1
+    parts.push({ wake: true, text: [...open, ...lines.slice(i, end)].join('\n').trim() })
+    i = end - 1
+  }
+  endUser()
+  return parts
+}
+
 // The coordinators (keys: the task's project, the main one) that get the
 // engine's give-up on a block (selfFix.ts): each running with its autopilot
 // on, in its hours. A give-up needs judgment: it wakes whatever the events.

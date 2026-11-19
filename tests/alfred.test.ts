@@ -32,8 +32,10 @@ describe('alfredFiles', () => {
     expect(a).toContain('This wherdr answers at http://127.0.0.1:7684 on its machine.')
     expect(alfredFiles({ ...ctx, address: { local: 'http://127.0.0.1:7684', remote: 'https://wherdr.example.ts.net' } }, [])['AGENTS.md']).toContain('and at https://wherdr.example.ts.net from the user\'s other devices')
     expect(a).toContain('never in a shell block (its *Run* button would run it here)')
+    // WHR-514: the update page's update.sh is run during an update, never forbidden by the next line.
+    expect(a).toMatch(/follow that page step by step[^\n]*\n'?Outside an update, commands for the wherdr server itself/)
     expect(a).toContain('only after the user\'s yes')
-    expect(a).toContain('`wherdr alfred project add <KEY> --machine <key> --path <folder> [--name <name>] [--template <id>] [--apply|--propose]`')
+    expect(a).toContain('`wherdr alfred project add <KEY> --machine <key> --path <folder> [--name <name>] [--template example:<id>] [--apply|--propose]`')
     expect(a).toContain('with `--apply` only after their yes in this chat')
     expect(a).toContain('No `wherdr alfred` command deletes anything')
     expect(a).toContain('The one removal you have is `wherdr pm task remove`')
@@ -78,7 +80,7 @@ it('greets with the rename question on the first start only', () => {
 // WHR-243: a new user with no project is offered the first one's setup.
 // WHR-349: one question per message: with an offer, the name question waits for its own message.
 it('offers the v2 projects or the first project alone, the name question in a later message', () => {
-  const offer = /no project yet.*set up the first one.*setup window/
+  const offer = /no project yet.*set up the first one.*New › Project form/
   const later = `Once this offer is answered (done or declined), ask in a message of its own: "Would you like to give me another name?"`
   const v2 = startPrompt(true, ALFRED, true)
   expect(v2).toMatch(new RegExp(`run \`wherdr alfred v2\` and say exactly: "${GREETING}" .*set up those projects.*its own choices block`))

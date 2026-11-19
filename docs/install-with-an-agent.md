@@ -73,7 +73,7 @@ Rules:
 Steps:
 1. Find how v3 runs: systemctl --user cat wherdr-v3 (or the unit whose ExecStart runs .output/server/index.mjs with HC_SOCKET), its WorkingDirectory, DATA_DIR and PORT. Note the version: curl -fsS http://127.0.0.1:<port>/api/health.
 2. Back up the data folder: cp -a <DATA_DIR> <DATA_DIR>.bak-$(date +%F).
-3. If the install folder has update.sh (made by install-v3-beside-v2.sh), run it. Otherwise, in the checkout: git pull, npm ci, npm run build, then systemctl --user restart <unit>. The build needs about 1.5 GB of Node heap: if node -p 'require("v8").getHeapStatistics().heap_size_limit' is smaller, build with NODE_OPTIONS=--max-old-space-size=1536 (update.sh does it itself).
+3. If the install folder has update.sh (made by install-v3-beside-v2.sh), run it with the version: update.sh <version> checks out the tag v<version> (never git pull in its checkout: it is detached). Otherwise, in a checkout of your own: git fetch --tags, git checkout v<version>, npm ci, npm run build, then systemctl --user restart <unit>. The build needs about 1.5 GB of Node heap: if node -p 'require("v8").getHeapStatistics().heap_size_limit' is smaller, build with NODE_OPTIONS=--max-old-space-size=1536 (update.sh does it itself).
 4. Check: the health URL answers, the HTTPS address answers, systemctl --user status <unit> is active, and journalctl --user -u <unit> -n 50 shows no error.
 5. End with a short summary: old and new version (git commit), URLs checked, the backup's path, and anything I must do.
 ```

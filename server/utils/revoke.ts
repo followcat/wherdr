@@ -4,9 +4,13 @@
 // network reading. Returns how many WebSockets were closed.
 import { dropAllSubs } from './push'
 import { revalidatePeers } from './ws'
+import { log } from './env'
 
+// A subscription file that cannot be read never stops the WebSockets from
+// being judged: the authentication already changed, and a subscription left
+// from the old generation is never sent to (push.ts, staleSub).
 export async function revokeEverywhere(peers?: Parameters<typeof revalidatePeers>[0]): Promise<number> {
-  await dropAllSubs()
+  await dropAllSubs().catch(error => log(`push: subscriptions not dropped (${String(error)}); stale ones are skipped when sending`))
   return peers ? revalidatePeers(peers) : revalidatePeers()
 }
 

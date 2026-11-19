@@ -4,7 +4,7 @@
 // run one after another.
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { writeFileAtomic } from './atomicWrite'
 import { type PacingEntry, LOG_KEEP_MS, changed, keepRecent, lastByAccount, parseEntry, usedToday } from '../../shared/pacingLog'
 import { DATA_DIR } from './env'
 
@@ -26,16 +26,7 @@ async function load(file: string): Promise<PacingEntry[]> {
 
 const lines = (entries: PacingEntry[]) => entries.map(e => JSON.stringify(e) + '\n').join('')
 
-async function rewrite(file: string, entries: PacingEntry[]) {
-  const temp = `${file}.${randomUUID()}.tmp`
-  try {
-    await fs.writeFile(temp, lines(entries), { mode: 0o600 })
-    await fs.rename(temp, file)
-  } catch (error) {
-    await fs.rm(temp, { force: true }).catch(() => {})
-    throw error
-  }
-}
+const rewrite = (file: string, entries: PacingEntry[]) => writeFileAtomic(file, lines(entries))
 
 // Adds the readings that changed; purges past 8 days (a rewrite, at most once
 // an hour: the oldest line must be an hour past the limit). Returns the

@@ -222,12 +222,12 @@ const placeholder = computed(() => {
 // Enter: UChatPrompt only sends text; a photo alone, or an empty field
 // while the agent is working (Stop), go through here.
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Tab' && !e.shiftKey && !e.isComposing && suggestion.value && !text.value) {
+  if (e.key === 'Tab' && !e.shiftKey && !imeComposing(e) && suggestion.value && !text.value) {
     e.preventDefault()
     useSuggestion()
     return
   }
-  if (enterSends.value && e.key === 'Enter' && !e.shiftKey && !e.isComposing && !text.value.trim()) {
+  if (enterSends.value && e.key === 'Enter' && !e.shiftKey && !imeComposing(e) && !text.value.trim()) {
     // Nothing to send (no Stop, no attachment; UChatPrompt's own submit-on-enter
     // is off then): Enter goes on to a "Your turn" card (useCardKeys on
     // document); onEmptyEnter drops the newline otherwise.
@@ -237,7 +237,7 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 function onEmptyEnter(e: KeyboardEvent) {
-  if (e.defaultPrevented || e.target !== ta.value || e.key !== 'Enter' || e.shiftKey || e.isComposing || !enterSends.value || typedText.value.trim()) return
+  if (e.defaultPrevented || e.target !== ta.value || e.key !== 'Enter' || e.shiftKey || imeComposing(e) || !enterSends.value || typedText.value.trim()) return
   e.preventDefault()
 }
 onMounted(() => window.addEventListener('keydown', onEmptyEnter))

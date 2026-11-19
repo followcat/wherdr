@@ -8,6 +8,8 @@ import { onEvent } from '../../shared/pm/steps'
 import { archivedStep, doneTurnRepair, handoverText, removeRefusal, resumeRefusal, stopRefusal, stoppedTask, type Resume, type Stopper } from '../../shared/pm/stop'
 import { taskPlan, type Task } from '../../shared/pm/run'
 import { killTerminal } from './pmProcs'
+import { roomParked, roomPauseRefusal, roomResumeText } from '../../shared/pm/park'
+import { currentStep } from '../../shared/pm/steps'
 
 export async function load(deps: PmLaunchDeps, id: unknown) {
   const task = await deps.store.task(id)
@@ -27,6 +29,22 @@ export async function stopTask(deps: PmLaunchDeps, id: unknown, by: Stopper, why
   // Saved first: from now on the engine's passes leave the task alone.
   const saved = await store.logTask(stoppedTask(task, { by: by.who === 'user' ? 'the user' : 'the coordinator', why: reason, at: Date.now() }), logBy, `stopped: ${reason}`)
   return endAgents(deps, saved, 'stopped')
+}
+
+// A coordinator pauses a started task to free its machine (task stop --for-room):
+// parked, its agents end, nothing asked of the user; resumeParked (pmPark.ts) takes it up again once there is room.
+export async function pauseForRoom(deps: PmLaunchDeps, id: string, why: string, by: string) {
+  const { store } = deps
+  const { task, plan } = await load(deps, id)
+  const holder = task.step ? currentStep(plan, task.step)?.holder : undefined
+  const live = (await store.runs()).filter(r => r.task === task.id && r.state !== 'ended').sort((a, b) => b.startedAt - a.startedAt)
+  const refused = roomPauseRefusal(task, holder, live)
+  if (refused) throw new HerdrError('refused', refused)
+  const machine = (live.find(r => r.role === 'worker') ?? live[0])!.machine
+  const label = deps.machines().find(m => m.key === machine)?.label || machine || 'its machine'
+  const reason = why.trim().slice(0, 300) || 'no reason given'
+  const saved = await store.logTask(roomParked(task, machine, label, reason, Date.now()), by, `paused for room on ${label}: ${reason}`)
+  return endAgents(deps, saved, 'released', ' to free room on its machine')
 }
 
 // Ends the task's agents through herdr-core, one log line each; the worktree,
@@ -68,7 +86,9 @@ export async function resumeTask(deps: PmLaunchDeps, id: unknown, how: Resume, b
   const s = task.step!
   const refused = resumeRefusal(task, how, by, plan[s?.at ?? -1])
   if (refused) throw new HerdrError('refused', refused)
-  const going = { ...task, stopped: undefined, waiting: undefined, waitKind: undefined }
+  // Paused for room (park.ts): no longer once it goes on, whichever way.
+  const room = task.parked?.room ? task.parked : undefined
+  const going = { ...task, stopped: undefined, waiting: undefined, waitKind: undefined, ...(room ? { parked: undefined } : {}) }
   if (how === 'archive') {
     const archived = await store.logTask({ ...going, state: 'working', step: archivedStep(s) }, logBy, 'archived; its worktree goes, its branch stays')
     void cleanTask(deps, task.id).catch(() => {})
@@ -82,8 +102,12 @@ export async function resumeTask(deps: PmLaunchDeps, id: unknown, how: Resume, b
   }
   // Continue: a new agent for the step, in the same worktree; a worker reads a handover note first.
   const worker = (await store.runs()).filter(r => r.task === task.id && r.role === 'worker').sort((a, b) => b.startedAt - a.startedAt)[0]
-  const handover = plan[s.at]?.holder === 'worker' && worker ? handoverText(task, plan, worker.branch) : undefined
-  let started = await startTask(deps, task.id, { handover, by: logBy })
+  const paused = room && !task.stopped ? { ...task, stopped: { by: 'the coordinator', why: `it paused the task to free room on ${room.room}: ${room.need}`, at: room.at } } : undefined
+  const handover = plan[s.at]?.holder === 'worker' && worker ? handoverText(paused ?? task, plan, worker.branch) : undefined
+  // Paused, not stopped: still working, its worker started again (the same conversation when it can).
+  if (paused) await store.saveTask(going)
+  let started = await startTask(deps, task.id, { handover, by: logBy, ...(paused ? { revive: true as const, ...(worker?.session ? { resume: { session: worker.session, text: roomResumeText(room!) } } : {}) } : {}) })
+  if (paused && started.state !== 'working') started = await store.saveTask({ ...started, parked: room })
   // It could not start: now a failure of its own, no longer the stop.
   if (started.stopped) started = await store.saveTask({ ...started, stopped: undefined })
   return store.logTask(started, logBy, started.state === 'working' ? `${plan[s.at]?.id ?? 'step'}: continued` : `could not continue: ${started.waiting ?? ''}`)

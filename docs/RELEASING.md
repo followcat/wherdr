@@ -25,9 +25,13 @@ Steps:
 
 1. On `v3`, set the version (`X.Y.Z`, without `-dev`) in `package.json`,
    `package-lock.json` and `herdr-plugin.toml`, and move the Unreleased changelog into a
-   dated entry.
-2. Create the GitHub release as a **draft** with notes following the
-   [checklist](#release-notes-checklist) (with its `## Upgrade notes` when an update needs a
+   dated entry (built from `git log vPREVIOUS..origin/v3`) under an empty `## [Unreleased]`.
+   Write the release text in `docs/release-notes-X.Y.Z.md`, linked from that entry and
+   listed in `docs/README.md` (`docs/llms.txt` leaves release notes out), and check it with
+   `scripts/check-release-notes.mjs` (see the [checklist](#release-notes-checklist)).
+2. Create the GitHub release as a **draft** from that file
+   (`gh release create vX.Y.Z --draft --title "wherdr X.Y.Z" --notes-file docs/release-notes-X.Y.Z.md`),
+   with notes following the [checklist](#release-notes-checklist) (with its `## Upgrade notes` when an update needs a
    manual step), then push the `v3.Y.Z` tag. `release.yml` checks that the tag matches
    `package.json`.
 3. Right after the release, bump `v3` to the next development version
@@ -189,8 +193,8 @@ missing one.
 
 A manual run (`workflow_dispatch`, on `develop` only) builds the head of `develop` under the
 same gate, so it too needs a green CI run for that commit. Runs never overlap and are never
-cancelled halfway. GitHub reads `workflow_run` triggers from the default branch (`main`): a
-change to this trigger takes effect once it is released to `main`.
+cancelled halfway. GitHub reads `workflow_run` triggers from the default branch (`v3` since 3.0.0): a
+change to this trigger takes effect once it is on `v3`.
 It always publishes the fixed tag **`develop`**, including stable package versions.
 The package version stays unchanged; `COMMIT` identifies the build. Existing
 `vX.Y.Z-dev` prereleases are left alone.

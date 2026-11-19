@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { PANE_RE, machineOf, splitId } from '../shared/ids'
-import { type ShellExec, createShellFs, LIST_DIRS_SCRIPT, parseDirList, parseStatLine, shq } from '../server/utils/fsx'
+import { type ShellExec, createShellFs, LIST_DIRS_SCRIPT, localFs, parseDirList, parseStatLine, shq } from '../server/utils/fsx'
 import { createTranscripts, isMissing } from '../server/utils/transcripts'
 import { FsError } from '../server/utils/fsx'
 
@@ -141,6 +141,29 @@ describe('files of a remote machine (shell)', () => {
     // Same contract when the marker comes from a distant shell verbatim.
     const fs = createShellFs(async () => ({ code: 0, stdout: Buffer.from('!\n'), stderr: '' }))
     expect(await fs.readProcessFiles!(1)).toBeNull()
+  })
+
+  it('readProcessFiles: an unreadable scan answers unknown, locally and remotely', async () => {
+    // No /proc entry (a process that just exited): the local reader says
+    // "unknown", never "no files".
+    const gone = 4194303
+    expect(await localFs.readProcessFiles!(gone)).toBeNull()
+    // The remote script must answer the same when lsof cannot inspect the pid
+    // (gone, another user, hidepid) instead of printing nothing.
+    const bin = mkdtempSync(path.join(tmpdir(), 'hw-lsof-'))
+    try {
+      writeFileSync(path.join(bin, 'lsof'), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+      const lsofFailsSh: ShellExec = (script, args = []) => new Promise((resolve) => {
+        const child = spawn('env', ['-i', `PATH=${bin}:/usr/bin:/bin`, '/bin/sh', '-c', script, 'sh', ...args], { stdio: ['pipe', 'pipe', 'pipe'] })
+        const out: Buffer[] = []
+        let err = ''
+        child.stdout.on('data', (b: Buffer) => out.push(b))
+        child.stderr.on('data', (b: Buffer) => { err += b.toString() })
+        child.on('close', code => resolve({ code, stdout: Buffer.concat(out), stderr: err }))
+        child.stdin.end()
+      })
+      expect(await createShellFs(lsofFailsSh).readProcessFiles!(gone)).toBeNull()
+    } finally { rmSync(bin, { recursive: true, force: true }) }
   })
 
   it('re-reads a remote transcript like a local one', async () => {

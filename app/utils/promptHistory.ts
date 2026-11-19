@@ -1,5 +1,6 @@
 import { isRefLine } from '../../shared/reference'
 import type { KeyInfo } from './cardKeys'
+import { imeComposing } from './shortcuts'
 
 export const PROMPT_HISTORY_MAX = 100
 export interface HistoryDraft { text: string, start: number, end: number }
@@ -15,8 +16,8 @@ export function addPromptHistory(entries: string[], text: string): string[] {
 
 // Selection, modified arrows and IME belong to the editor. Up recalls only on
 // the first visual line and Down only on the last: `onEdge` checks wrapping.
-export function historyDirection(e: KeyInfo & { keyCode?: number }, draft: HistoryDraft, onEdge: (direction: -1 | 1) => boolean = () => true): -1 | 1 | null {
-  if (e.defaultPrevented || e.isComposing || e.keyCode === 229 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || draft.start !== draft.end) return null
+export function historyDirection(e: KeyInfo, draft: HistoryDraft, onEdge: (direction: -1 | 1) => boolean = () => true): -1 | 1 | null {
+  if (e.defaultPrevented || imeComposing(e) || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || draft.start !== draft.end) return null
   if (e.key === 'ArrowUp' && !draft.text.slice(0, draft.start).includes('\n') && onEdge(-1)) return -1
   if (e.key === 'ArrowDown' && !draft.text.slice(draft.end).includes('\n') && onEdge(1)) return 1
   return null

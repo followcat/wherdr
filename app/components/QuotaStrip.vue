@@ -15,7 +15,9 @@
 // label in place of the gauges, never a warning colour.
 // Codex "limit reached" (shared/quotaLimit.ts): blocked until its reset; with
 // credits on the account, work goes on with them; once its reset has passed,
-// the reading no longer says blocked. The account's credits show under the row.
+// the reading no longer says blocked. Read over an hour ago and not reset yet
+// ('stale'): muted, not red, "may have reset", with how to refresh it. The
+// account's credits show under the row.
 import type { Quota, QuotaWindow } from '#shared/types'
 import { limitState } from '#shared/quotaLimit'
 import { type QuotaRow, creditsText, quotaLevel, quotaShown, resetText, STALE_MS, windowStale } from '~/utils/quotas'
@@ -47,6 +49,7 @@ function limitedLabel(q: Quota) {
   }
   const state = limit(q)
   if (state === 'expired') return text ? tl(`Reset since the last reading (limit lifted ${text})`) : tl('Limit over since the last reading')
+  if (state === 'stale') return tl(`Limit reached ${ago(q.at)} · may have reset${text ? ` (resets ${text})` : ''}`)
   if (state === 'credits') return tl(`Limit reached · work goes on with ${creditsText(q.credits!)}`)
   return text ? tl(`Limit reached · resets ${text}`, `Limite atteinte · réinitialisation ${text}`) : tl('Limit reached', 'Limite atteinte')
 }

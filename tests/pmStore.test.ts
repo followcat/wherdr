@@ -96,6 +96,24 @@ describe('pm store', () => {
   })
 })
 
+describe('removing a project (WHR-513)', () => {
+  it('is refused while a workspace has members or a project has open tasks', async () => {
+    const store = createPmStore(dir)
+    await store.setEnabled(true)
+    await fs.writeFile(store.files.projects, JSON.stringify({ v: 1, projects: [
+      { key: 'WS', name: 'Work', machine: '', path: '/src/work', kind: 'workspace', git: false, addedAt: 1 },
+      { key: 'API', name: 'Api', machine: '', path: '/src/work/api', workspace: 'WS', addedAt: 1 },
+    ] }))
+    await expect(store.removeProject('WS')).rejects.toMatchObject({ code: 'refused', message: 'Workspace WS still has projects API: remove them first' })
+    const t = await store.addTask({ project: 'API', title: 'Running', type: 'simple' })
+    await expect(store.removeProject('API')).rejects.toMatchObject({ code: 'refused', message: `API has open tasks (${t.id}): finish, abandon or close them first` })
+    await store.saveTask({ ...t, step: { ...initialState(), started: true, done: true, abandoned: true } })
+    await store.removeProject('API')
+    await store.removeProject('WS')
+    expect(await store.projects()).toEqual([])
+  })
+})
+
 describe('runs', () => {
   it('reads a run file again only when it changed', async () => {
     const store = createPmStore(dir)
@@ -116,6 +134,22 @@ describe('runs', () => {
 })
 
 describe('workflows migration', () => {
+  it('logs and skips a migration that cannot save, and keeps serving the projects as stored', async () => {
+    const store = createPmStore(dir)
+    await store.setEnabled(true)
+    // A member of a workspace that does not exist: saveProjects refuses the list.
+    const list = [{ key: 'WEB', name: 'Web', machine: '', path: '/w', addedAt: 1, workspace: 'GONE' }]
+    await fs.writeFile(store.files.projects, JSON.stringify({ v: 1, projects: list }))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(await store.projects()).toEqual(list)
+      expect(await store.projects()).toEqual(list)
+      // Each migration once, not at every call.
+      expect(warn.mock.calls.map(c => String(c[0]).replace(/: .*/, ''))).toEqual(['[pm] workflow migration skipped', '[pm] color migration skipped'])
+      expect(warn.mock.calls[1]![0]).toContain('names no existing workspace')
+    } finally { warn.mockRestore() }
+  })
+
   it('copies each project\'s template and log into its own workflow, once, leaving the library as is', async () => {
     const store = createPmStore(dir)
     await store.setEnabled(true)
@@ -141,25 +175,26 @@ describe('workflows migration', () => {
   })
 })
 
-describe('template library', () => {
-  it('renames a template with its version and log, and deletes it; the project keeps its own workflow', async () => {
+describe('workspace settings migration', () => {
+  it('moves a workspace\'s working branch and the like kept on itself into shared, once', async () => {
     const store = createPmStore(dir)
     await store.setEnabled(true)
-    await store.saveTemplate(template)
-    await store.addProject(input, okFolder)
-    await store.saveTemplate({ ...template, id: 'other' })
-    await expect(store.renameTemplate('vibe', 'other')).rejects.toMatchObject({ code: 'exists' })
-    await expect(store.renameTemplate('vibe', 'Bad Id')).rejects.toMatchObject({ code: 'bad_input' })
-    await store.renameTemplate('vibe', 'team')
-    expect((await store.overview()).templates).toEqual([{ id: 'other', version: 1 }, { id: 'team', version: 1 }])
-    expect((await store.templateLog('team')).map(e => e.changes)).toEqual([[], ['renamed from vibe']])
-    expect((await store.project('WEB'))?.from).toEqual({ template: 'team', version: 1 }) // "Based on" follows the name
-    await store.removeTemplate('team')
-    await expect(store.removeTemplate('team')).rejects.toMatchObject({ code: 'not_found' })
-    expect(await store.templateLog('team')).toEqual([])
-    expect(await store.workflow('WEB')).toMatchObject({ id: 'web' })
+    await fs.writeFile(store.files.projects, JSON.stringify({ v: 1, projects: [
+      { key: 'WS', name: 'Work', machine: '', path: '/w', addedAt: 1, color: 'red', kind: 'workspace', git: false, base: 'develop', placement: 'balance', shared: { commitMessage: '{title}' } },
+      { key: 'PAY', name: 'Pay', machine: '', path: '/w/pay', addedAt: 1, color: 'red', workspace: 'WS' },
+    ] }))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(await store.project('PAY')).toMatchObject({ base: 'develop', placement: 'balance' })
+      const raw = JSON.parse(await fs.readFile(store.files.projects, 'utf8')).projects[0]
+      expect(raw).not.toHaveProperty('base')
+      expect(raw.shared).toEqual({ commitMessage: '{title}', base: 'develop', placement: 'balance' })
+      expect(warn.mock.calls.map(c => String(c[0]))).toEqual(['[pm] workspace settings moved into shared, for their members: WS'])
+    } finally { warn.mockRestore() }
   })
+})
 
+describe('workspace members', () => {
   it('stores a member\'s own fields only, serves it with its workspace\'s settings, and refuses what breaks a workspace', async () => {
     const store = createPmStore(dir)
     await store.setEnabled(true)
@@ -177,6 +212,12 @@ describe('template library', () => {
     expect(await store.project('PAY')).toMatchObject({ base: 'main', overrides: ['base'] })
     await store.updateProject('PAY', { base: '' })
     expect((await store.project('PAY'))?.base).toBe('develop')
+    // The workspace's commit message template is shared: its members take it, '' clears it.
+    await store.updateProject('WS', { commitMessage: '{tag}: {title}' })
+    expect((await store.project('WS'))?.shared).toMatchObject({ base: 'develop', commitMessage: '{tag}: {title}' })
+    expect((await store.project('PAY'))?.commitMessage).toBe('{tag}: {title}')
+    await store.updateProject('WS', { commitMessage: '' })
+    expect((await store.project('PAY'))?.commitMessage).toBeUndefined()
     await store.setBase('PAY', 'main')
     expect((await store.project('PAY'))?.base).toBe('main')
     await store.setBase('PAY', '')

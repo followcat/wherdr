@@ -25,7 +25,7 @@ export function statedReason(task: Task, plan: PlannedStep[]): string | undefine
   const s = task.step
   if (task.state !== 'working') return task.waiting || task.state
   if (task.stopped) return 'stopped'
-  const why = task.held || task.queueOut || task.reviewWait || task.machineWait || s?.yourTurn?.badge || s?.agent?.waits
+  const why = (task.parked && `waits for ${task.parked.on}`) || task.held || task.queueOut || task.reviewWait || task.machineWait || s?.yourTurn?.badge || s?.agent?.waits
   if (why) return why
   if ((task.queue ?? 1) > 1) return 'waits for its turn in the merge queue'
   if (task.ci?.running) return 'its checks run'

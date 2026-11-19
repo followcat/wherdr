@@ -39,8 +39,16 @@ reading without an account key) keeps a block of its own, titled with the machin
   When Codex's session files say the account has credits (`rate_limits.credits`: a balance, or
   unlimited), the row shows them (**Credits: 120 credits**), and a reached limit reads
   **Limit reached · work goes on with 120 credits**: automatic work is not held either.
-- **A value no longer known** (its window has reset since the reading, or the reading is older
-  than the window lasts: 5 hours, a week) shows **?** on a dashed bar, at the same height as any
+  A **Limit reached** read over an hour ago is no longer stated as fact (the provider may reset
+  an account early): the row is muted, not red, and reads **Limit reached 16 h ago · may have
+  reset (resets 7:51 PM)**, with how to refresh it on hover. wherdr then asks that machine's Codex
+  for the account's current limits (the app-server's `account/rateLimits/read`: no model turn,
+  no quota spent), at most once every 15 minutes per account, and the row updates. Until a fresh
+  reading comes, automatic work is not held by the old limit outright: one agent may start to
+  find out; if it hits the limit, the fresh reading holds work again, and until then the wait
+  reads **the account hit its limit (last read 16 h ago)**.
+- **A value no longer known** (its window has reset since the reading, the reading is older
+  than the window lasts: 5 hours, a week, or a window read at 100 % over an hour ago) shows **?** on a dashed bar, at the same height as any
   row; hovering it, or tapping it on a phone, says **Last read 2 d ago: send a message to a Codex
   agent to refresh** (Claude rows the same, with a Claude agent). Nothing is written under the row.
 - **A failed read** (a machine's files could not be read, a core machine slow to answer) keeps that
@@ -119,8 +127,10 @@ yourself, in a terminal, when no conversation needs it.
 - **A message sent while Codex installs or updates itself** is never typed into it: it waits
   as **Queued · sent when Codex is ready** and is typed once Codex is ready. If Codex exits
   instead, it comes back into the message field. The first message of a new Codex agent waits
-  the same way, also behind its startup dialog. If typing it times out, it may have reached
-  Codex: it is never typed again, and comes back into the field for you to check.
+  the same way, also behind its startup dialog. Waiting messages survive a restart of wherdr,
+  and sending one again (its answer lost) never queues it twice. If typing it times out, or
+  wherdr restarts while typing it, it may have reached Codex: it is never typed again, and
+  comes back into the field for you to check.
 - **If Codex still updates itself and exits** (a new version once it has stopped), the space
   stays open: its terminal becomes a plain `sh`, and the conversation shows a **Your turn**
   card with **Resume conversation** (the same session; Codex's picker when wherdr cannot

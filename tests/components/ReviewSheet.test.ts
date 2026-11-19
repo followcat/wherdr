@@ -6,14 +6,19 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { createError, readBody } from 'h3'
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
+import { defineComponent, h } from 'vue'
 import ReviewCard from '~/components/ReviewCard.vue'
+import ReviewSheet from '~/components/ReviewSheet.vue'
 import { coordinators } from '~/composables/useCoordinators'
 import { machineBarSaved, machineGroups } from '~/composables/useMachineBar'
-import { reviewFilter, reviewOpen } from '~/composables/useReview'
+import { reviewFilter, reviewOpen, showReview } from '~/composables/useReview'
 import { lightboxSrc } from '~/composables/useUi'
 import { taskSheetTick } from '~/composables/useTaskSheet'
 import { setToaster } from '~/composables/useHerdr'
 import { toHandle, type Card } from '#shared/pm/board'
+
+// Home's card, and the sheet as app.vue shows it.
+const Home = defineComponent({ setup: () => () => [h(ReviewCard), reviewOpen.value ? h(ReviewSheet, { onClosed: () => showReview(false) }) : null] })
 
 const plan = [{ id: 'work', holder: 'worker', ends: 'report' }, { id: 'review', holder: 'reviewer', ends: 'verdict' }, { id: 'merge', holder: 'user', ends: 'user', action: { kind: 'github.merge' } }]
 const card = (id: string, project: string, over: Partial<Card> = {}): Card => ({
@@ -46,7 +51,7 @@ const progress = () => q('review-progress')?.textContent
 it('counts what waits on Home and reviews it one by one: Approve, Reject, the others\' own answers, previous, next and the keys', async () => {
   cards = [card('HO-1', 'home'), card('HO-2', 'home', { tldr: undefined, state: { at: 2, started: true, proofs: {}, rounds: {}, yourTurn: { reason: 'user', badge: 'Merge' } } }),
     card('HO-3', 'home', { yourTurn: 'Merge refused: conflict', state: { at: 2, started: true, proofs: {}, rounds: {}, yourTurn: { reason: 'action', badge: 'Merge refused: conflict' } } })]
-  const w = await mountSuspended(ReviewCard)
+  const w = await mountSuspended(Home)
   await expect.poll(() => w.find('[data-testid="review-count"]').exists() && w.find('[data-testid="review-count"]').text()).toBe('3')
   // The card names them: each id as its project's key badge.
   expect(w.findAll('[data-testid="review-ids"] [data-testid="project-badge"]').map(b => b.text())).toEqual(['HO-1', 'HO-2', 'HO-3'])
@@ -108,7 +113,7 @@ it('follows the group tab by default, and keeps the filter picked', async () => 
   try {
     machineBarSaved.value = '*group:personal'
     reviewOpen.value = true
-    const w = await mountSuspended(ReviewCard)
+    const w = await mountSuspended(Home)
     await expect.poll(() => w.find('[data-testid="review-count"]').exists() && w.find('[data-testid="review-count"]').text()).toBe('2')
     await expect.poll(shown).toBe('HO-1')
     q('review-next')!.click()
@@ -141,7 +146,7 @@ it('follows the group tab by default, and keeps the filter picked', async () => 
 it('confirms Approve, then slides to the next task; a failure stays put; reduced motion fades', async () => {
   cards = [card('HO-1', 'home'), card('HO-X', 'home'), card('HO-3', 'home')]
   reviewOpen.value = true
-  const w = await mountSuspended(ReviewCard)
+  const w = await mountSuspended(Home)
   await expect.poll(shown).toBe('HO-1')
   expect(q('review-stage')!.dataset.motion).toBe('slide')
   q('review-approve')!.click()
@@ -158,7 +163,7 @@ it('confirms Approve, then slides to the next task; a failure stays put; reduced
 
   const mm = vi.spyOn(window, 'matchMedia').mockImplementation(query => ({ matches: query.includes('reduced-motion'), media: query, addEventListener() {}, removeEventListener() {} }) as unknown as MediaQueryList)
   try {
-    const r = await mountSuspended(ReviewCard)
+    const r = await mountSuspended(Home)
     await expect.poll(() => q('review-stage')?.dataset.motion).toBe('fade')
     r.unmount()
   } finally { mm.mockRestore() }
@@ -167,7 +172,7 @@ it('confirms Approve, then slides to the next task; a failure stays put; reduced
 it('keeps its order while open: a new task goes at the end, the one on screen stays, handled elsewhere with a muted line', async () => {
   cards = [card('HO-1', 'home'), card('HO-2', 'home'), card('HO-3', 'home')]
   reviewOpen.value = true
-  const w = await mountSuspended(ReviewCard)
+  const w = await mountSuspended(Home)
   await expect.poll(shown).toBe('HO-1')
   q('review-next')!.click()
   await expect.poll(shown).toBe('HO-2')
@@ -204,7 +209,7 @@ it('keeps its order while open: a new task goes at the end, the one on screen st
   expect(shown()).toBe('HO-R')
   w.unmount()
   // Closed and opened again: the board's order.
-  const again = await mountSuspended(ReviewCard)
+  const again = await mountSuspended(Home)
   await expect.poll(shown).toBe('HO-0')
   expect(progress()).toBe('1 of 2')
   again.unmount()
@@ -217,7 +222,7 @@ it('asks the agent to fix a blocked merge: it leaves at once, and comes back on 
   const asked: string[] = []
   registerEndpoint('/api/pm/agent-fix', { method: 'POST', handler: async (e) => { asked.push((await readBody(e) as { id: string }).id); return { task: {} } } })
   reviewOpen.value = true
-  const w = await mountSuspended(ReviewCard)
+  const w = await mountSuspended(Home)
   await expect.poll(shown).toBe('HO-F')
   // Ask the agent to fix it first; Try again stays, secondary.
   expect(q('todo-fix')?.textContent).toBe('Ask the agent to fix it')
@@ -233,13 +238,30 @@ it('asks the agent to fix a blocked merge: it leaves at once, and comes back on 
   w.unmount()
 })
 
+it('a merge refused outside the code (herdr-core, the network) has Try again first, and no Ask the agent to fix it', async () => {
+  const error = 'merge: herdr-core rejected the request (unavailable)', badge = `Merge: ${error}`
+  cards = [card('HO-C', 'home', { yourTurn: badge, state: { at: 2, started: true, proofs: {}, rounds: {}, yourTurn: { reason: 'action', badge, error } } })]
+  reviewOpen.value = true
+  const w = await mountSuspended(Home)
+  await expect.poll(shown).toBe('HO-C')
+  expect(q('review-retry')?.className).toContain('bg-primary')
+  expect(q('todo-fix')).toBeNull()
+  // Failed for a reason nobody knows: Try again first, the agent second.
+  cards = [card('HO-C', 'home', { yourTurn: 'Merge: merge: exit code 1', state: { at: 2, started: true, proofs: {}, rounds: {}, yourTurn: { reason: 'action', badge: 'Merge: merge: exit code 1', error: 'merge: exit code 1' } } })]
+  taskSheetTick.value++
+  await expect.poll(() => !!q('todo-fix')).toBe(true)
+  expect(q('todo-fix')?.className).not.toContain('bg-primary')
+  expect(q('review-retry')?.className).toContain('bg-primary')
+  w.unmount()
+})
+
 it('copies the task id from its badge, with the Copied toast, and the task stays on screen', async () => {
   cards = [card('HO-1', 'home'), card('HO-2', 'home')]
   const writeText = vi.fn(async () => {})
   vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
   const added: { title: string }[] = []
   setToaster({ add: (x: { title: string }) => added.push(x), clear: () => {} } as unknown as Parameters<typeof setToaster>[0])
-  const w = await mountSuspended(ReviewCard)
+  const w = await mountSuspended(Home)
   await expect.poll(() => w.find('[data-testid="review-open"]').exists()).toBe(true)
   await w.find('[data-testid="review-open"]').trigger('click')
   await expect.poll(shown).toBe('HO-1')

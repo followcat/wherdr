@@ -5,6 +5,7 @@
 //    account under its header (collapsed with it), nothing left of that agent at the top.
 import type { ClaudeSetup, Quota, QuotaCredits, QuotaWindow, Quotas } from '../../shared/types'
 import { defaultAccountName } from '../../shared/quotaAccount'
+import { STALE_MS } from '../../shared/quotaLimit'
 import installer from '../../scripts/install-claude-statusline.sh?raw'
 
 // `account`, `name`: the account key and the user's name for it (machine rows).
@@ -126,14 +127,16 @@ export const quotaLevel = (w: QuotaWindow, now: number) => {
   return l <= 15 ? 'hi' : l <= 40 ? 'mid' : 'lo'
 }
 
-// Reading older than an hour: numbers to take with caution.
-export const STALE_MS = 3600000
+// Reading older than an hour: numbers to take with caution (one rule, shared/quotaLimit.ts).
+export { STALE_MS }
 
-// A window whose value is no longer known: reset since the reading, or read
-// longer ago than the window lasts. Its bar shows dashed and `?` stands for
-// the number, with how to refresh it in a tooltip (QuotaStrip).
+// A window whose value is no longer known: reset since the reading, read
+// longer ago than the window lasts, or exhausted when read over STALE_MS ago
+// (the provider may have reset it early, like a stale "limit reached"). Its
+// bar shows dashed and `?` stands for the number, with how to refresh it in a
+// tooltip (QuotaStrip).
 export const windowStale = (w: QuotaWindow, at: number, now: number) =>
-  Boolean(w.resetsAt && w.resetsAt <= now) || (w.minutes > 0 && now - at > w.minutes * 60000)
+  Boolean(w.resetsAt && w.resetsAt <= now) || (w.minutes > 0 && now - at > w.minutes * 60000) || (w.used >= 100 && now - at > STALE_MS)
 
 // "120 credits", "unlimited credits", "credits" (no balance given).
 export const creditsText = (c: QuotaCredits) =>

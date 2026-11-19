@@ -3,7 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { applySettingsPatch, cleanSettingsPatch, SETTING_MAX } from '../shared/settings'
-import { onSettingsChange, patchSettings, readSettings } from '../server/utils/settings'
+import { loadSettings, onSettingsChange, patchSettings, readSettings } from '../server/utils/settings'
+import { chatFilesPolicy } from '../server/utils/chatFiles'
 
 describe('settings patch', () => {
   it('keeps known keys with text or null, drops the rest', () => {
@@ -50,6 +51,9 @@ describe('settings file', () => {
     await expect(patchSettings({ theme: 'paper' }, { file })).rejects.toMatchObject({ code: 'settings_unreadable' })
     expect((await fs.stat(file)).isDirectory()).toBe(true)
     expect(await readSettings(file)).toEqual({})
+    // GET /api/settings and every decision read through loadSettings: an error, never {}.
+    await expect(loadSettings(file)).rejects.toMatchObject({ code: 'settings_unreadable' })
+    expect(await chatFilesPolicy(file)).toEqual({ level: 'home', protected: false })
   })
   it('writes atomically, private, and leaves no temporary file', async () => {
     await patchSettings({ theme: 'nord' }, { file })

@@ -75,8 +75,7 @@ function cancelFree() {
   else editing.value = null
 }
 function onFreeKey(e: KeyboardEvent, i: number, label: string) {
-  // 229: the Enter that confirms a composition (IME) in Safari.
-  if (e.isComposing || e.keyCode === 229) return
+  if (imeComposing(e)) return
   if (e.key === 'Escape') {
     e.preventDefault()
     e.stopPropagation()

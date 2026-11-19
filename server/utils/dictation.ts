@@ -8,6 +8,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { HerdrError } from './herdr'
 import { createRateLimit } from './rateLimit'
+import { writeFileAtomicSync } from './atomicWrite'
 import { DEFAULT_CLOUD_MODEL, FALLBACK_CLOUD_MODELS, cheapestTextModel, sttModels, textModels, type DictationModel, type TextModel } from '../../shared/dictationModels'
 import { REWRITE_TEXT_MAX, rewriteAnswer, rewriteMessages } from '../../shared/dictationRewrite'
 
@@ -60,10 +61,7 @@ export function createDictation(o: { dataDir: string, envKey?: string, fetch?: t
   function saveKey(raw: unknown): DictationStatus {
     const k = typeof raw === 'string' ? raw.trim() : ''
     if (!KEY_RE.test(k)) throw new HerdrError('bad_key', 'This does not look like an OpenRouter key')
-    fs.mkdirSync(o.dataDir, { recursive: true })
-    const tmp = `${file}.${process.pid}.tmp`
-    fs.writeFileSync(tmp, `${JSON.stringify({ key: k })}\n`, { mode: 0o600 })
-    fs.renameSync(tmp, file)
+    writeFileAtomicSync(file, `${JSON.stringify({ key: k })}\n`)
     fs.chmodSync(file, 0o600)
     return status()
   }

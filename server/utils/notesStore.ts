@@ -63,8 +63,12 @@ export function notesStore(folder = path.join(DATA_DIR, 'notes')) {
       const all = await fs.readdir(dir, { recursive: true }).catch(() => [] as string[])
       return all.map(f => f.split(path.sep).join('/')).filter(filePath).sort()
     },
+    // Only a file that stays in the notes folder once symlinks are resolved:
+    // a link never opens a file elsewhere (~/.ssh, outside the allowed folders).
     async readFile(rel: string): Promise<string | null> {
-      return filePath(rel) ? fs.readFile(at(rel), 'utf8').catch(() => null) : null
+      if (!filePath(rel)) return null
+      const [real, root] = await Promise.all([fs.realpath(at(rel)).catch(() => ''), fs.realpath(dir).catch(() => '')])
+      return real && root && real.startsWith(root + path.sep) ? fs.readFile(real, 'utf8').catch(() => null) : null
     },
     add: (n: { title: string, scope: NoteScope, body: string }, by: string) => serial(dir, async (): Promise<Note> => {
       const now = new Date().toISOString()

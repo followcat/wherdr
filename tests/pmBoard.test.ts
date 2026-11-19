@@ -153,7 +153,7 @@ it('a workflow change that replaces pr and merge with a landing moves the task o
   expect(moved.step?.yourTurn).toBeUndefined()
   expect(moved.log!.at(-1)).toMatchObject({ by: 'engine', text: 'workflow changed: pr is gone, on to land' })
   const after = await stepAction(deps, id, 'engine')
-  expect(scripts[0]).toEqual(['/w', 'develop'])
+  expect(scripts[0]).toEqual(['/w', 'develop', ''])
   expect(after.step).toMatchObject({ done: true, proofs: { land: { commit: 'abc123' } } })
 })
 

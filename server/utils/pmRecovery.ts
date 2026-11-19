@@ -30,9 +30,17 @@ export async function interruptTask(deps: PmLaunchDeps, task: Task, i: Incident,
   return deps.store.logTask(r.task, 'engine', `not resumed again: the same cause right after a resume; the coordinators are told in incident ${i.id}'s wake`)
 }
 
+// Programs whose credentials file wherdr knows (CREDENTIALS below): only their
+// renewal can be seen, so only they get a login incident.
+const LOGIN_PROGRAMS = ['claude', 'codex']
+
 // A running agent on its login prompt: the open login incident of its
 // machine and program takes it (one notice for them all), else a new one.
+// false: no incident (the program has no known credentials file, so its renewal
+// would never be seen: the task waits for the user like any prompt, and goes on
+// when they answer).
 export async function loginExpired(deps: PmLaunchDeps, task: Task, run: Run, now = Date.now()) {
+  if (!LOGIN_PROGRAMS.includes(run.program)) return false
   const { store } = deps
   const tasks = await store.tasks()
   let i = (await store.incidents()).find(x => x.cause === 'login' && x.machine === run.machine && x.program === run.program && !x.renewed && isOpen(x, tasks))
@@ -41,6 +49,7 @@ export async function loginExpired(deps: PmLaunchDeps, task: Task, run: Run, now
   else i = (await store.addIncidents([{ at: now, machine: run.machine, label, cause: 'login', program: run.program, evidence: [`${task.id} ${run.role}: its terminal shows the login prompt at ${new Date(now).toISOString()}`], tasks: [task.id], runs: [run.id] }]))[0]!
   const t = await interruptTask(deps, task, i, now)
   await store.logTask(t, 'engine', `incident ${i.id} on ${label}: ${run.program}'s login expired; restarted once the login is renewed`)
+  return true
 }
 
 // The login renewed on the machine: its credentials file changed after the incident (mtime in seconds).

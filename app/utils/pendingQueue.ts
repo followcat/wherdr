@@ -154,7 +154,6 @@ export const inputShown = (list: Pick<PendingMessage, 'raw' | 'inInput' | 'state
 // What a waiting message is waiting on (see waitingOn in ChatView.vue).
 export type WaitingOn = 'stopped' | 'question' | 'working' | 'sending' | 'installing'
 export type PendingLabel =
-  | { kind: 'read' }
   | { kind: 'sending' }
   | { kind: 'stopped' }
   | { kind: 'installing' }
@@ -163,16 +162,21 @@ export type PendingLabel =
   | { kind: 'queued' }
   | { kind: 'input' }
 
-// The tag under a waiting message. "Read" only once the agent took it: a
-// message the agent holds in its own queue says so (it is sent when the turn
-// ends, or at its next step).
-export function pendingLabel(q: Pick<PendingMessage, 'phase' | 'state' | 'inAgentQueue' | 'inInput'>, waitFor: WaitingOn, agent: string | null | undefined): PendingLabel {
+// The tag under a waiting message: only what the app knows (WHR-471). Until
+// the message is in the agent's transcript (then it is no longer waiting), it
+// is "sending", whatever the server's send call returned or the screen shows:
+// never "read". A message the agent holds in its own queue says so (read from
+// its transcript queue). Left in the agent's input field: "sending" while the
+// server still submits it (`serverSending`, Pane.sending: its Enters), "Not
+// sent" only once the server is done and it is still there.
+export function pendingLabel(q: Pick<PendingMessage, 'phase' | 'state' | 'inAgentQueue' | 'inInput'>, waitFor: WaitingOn, agent: string | null | undefined, serverSending = false): PendingLabel {
   if (q.state === 'sending') return { kind: 'sending' }
-  if (q.inInput) return { kind: 'input' }
-  if (q.phase === 'sent' && !q.inAgentQueue) return { kind: 'read' }
+  if (q.inInput) return serverSending ? { kind: 'sending' } : { kind: 'input' }
+  if (q.phase === 'sent' && !q.inAgentQueue) return { kind: 'sending' }
   if (waitFor === 'stopped') return { kind: 'stopped' }
   if (waitFor === 'installing') return { kind: 'installing' }
   if (waitFor === 'question') return { kind: 'question' }
   if (q.inAgentQueue) return { kind: 'agent-queue', agent: agent || '' }
-  return waitFor === 'working' ? { kind: 'queued' } : { kind: 'sending' }
+  // Held on the server (a known state); anything else is unconfirmed: sending.
+  return q.state === 'held' && waitFor === 'working' ? { kind: 'queued' } : { kind: 'sending' }
 }

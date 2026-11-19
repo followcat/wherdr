@@ -31,6 +31,9 @@ export interface MachineFs {
   // Paths a process holds open (/proc/<pid>/fd targets, `lsof -Fn` output);
   // null means the scan could not run, never "no files".
   readProcessFiles?: (pid: number) => Promise<string[] | null>
+  // Remote machines only: runs `script` (sh) there and returns its output;
+  // rejects like the other operations when it fails.
+  run?: (script: string, args: string[], opts?: { input?: Buffer, timeoutMs?: number, maxBytes?: number }) => Promise<Buffer>
 }
 
 // ---------------------------------------------------------------- disque local
@@ -65,6 +68,11 @@ export const localFs: MachineFs = {
       return bytesRead < len ? buf.subarray(0, bytesRead) : buf
     } finally { await fh.close() }
   },
+  async digest(p, len) {
+    const h = createHash('sha1')
+    if (len > 0) for await (const b of fs.createReadStream(p, { start: 0, end: len - 1 })) h.update(b as Buffer)
+    return h.digest('hex')
+  },
   async readProcessFiles(pid) {
     if (process.platform === 'linux') {
       const dir = `/proc/${pid}/fd`
@@ -80,11 +88,6 @@ export const localFs: MachineFs = {
         resolve(stdout.split('\n').filter(l => l.startsWith('n/')).map(l => l.slice(1)))
       })
     })
-  },
-  async digest(p, len) {
-    const h = createHash('sha1')
-    if (len > 0) for await (const b of fs.createReadStream(p, { start: 0, end: len - 1 })) h.update(b as Buffer)
-    return h.digest('hex')
   },
 }
 
@@ -175,15 +178,20 @@ for f; do
 done`
 
 // Open files of a process: /proc/<pid>/fd targets on Linux, `lsof -Fn` on
-// macOS (its `n` lines hold the paths). `!` alone when the machine has neither:
-// an unavailable scan must never pass for "no files".
+// macOS (its `n` lines hold the paths). `!` alone when neither can be read: an
+// unavailable scan must never pass for "no files".
 const PROCESS_FILES_SCRIPT = `if [ -d "/proc/$1/fd" ]; then
+  # An unlistable fd folder (another user, hidepid, a process that just exited)
+  # cannot answer "no files": say the scan is unknown.
+  ls -1A "/proc/$1/fd" >/dev/null 2>&1 || { echo '!'; exit 0; }
   for f in "/proc/$1/fd"/*; do
     [ -e "$f" ] || continue
     readlink "$f" 2>/dev/null || true
   done
 elif command -v lsof >/dev/null 2>&1; then
-  lsof -Fn -p "$1" 2>/dev/null | sed -n 's/^n//p' | sed -n '/^\\//p'
+  # lsof exits non-zero when it could not inspect the pid.
+  out=$(lsof -Fn -p "$1" 2>/dev/null) || { echo '!'; exit 0; }
+  echo "$out" | sed -n 's/^n//p' | sed -n '/^\\//p'
 else
   echo '!'
 fi`
@@ -211,11 +219,6 @@ export const READ_CHUNK = 4 * 1024 * 1024
 
 export function createShellFs(exec: ShellExec, opts: { statTtlMs?: number, readChunk?: number } = {}): MachineFs {
   const ttl = opts.statTtlMs ?? 700
-  // A provided chunk must be a safe positive integer: an Infinity or a
-  // fraction would silently defeat the per-reply bounds it exists for.
-  if (opts.readChunk !== undefined && (!Number.isSafeInteger(opts.readChunk) || opts.readChunk <= 0)) {
-    throw new FsError('remote', 'invalid readChunk')
-  }
   const chunk = opts.readChunk ?? READ_CHUNK
   // Small cache (and grouping of simultaneous requests): the previews, the
   // model and the open conversation each run their `stat` every second.
@@ -223,7 +226,6 @@ export function createShellFs(exec: ShellExec, opts: { statTtlMs?: number, readC
 
   // `ENOENT` for a missing file (as on the local disk), `unreachable` when the
   // session itself failed (ssh 255, timeout): the file's state is unknown.
-  // `maxBytes` bounds the exec's own stdout on the wire.
   async function run(script: string, args: string[], timeoutMs = 15000, input?: Buffer, maxBytes?: number) {
     const r = await exec(script, args, { timeoutMs, input, ...(maxBytes ? { maxBytes } : {}) })
     if (r.code !== 0) {
@@ -231,9 +233,6 @@ export function createShellFs(exec: ShellExec, opts: { statTtlMs?: number, readC
       const code = r.code === 255 || r.code === 124 ? 'unreachable' : r.code === MISSING_PATH_EXIT || /no such file/i.test(r.stderr) ? 'ENOENT' : 'remote'
       throw new FsError(code, reason)
     }
-    // The bound is enforced here too: a ShellExec that ignores maxBytes can
-    // never over-serve a caller.
-    if (maxBytes && r.stdout.length > maxBytes) throw new FsError('remote', 'reply exceeds requested chunk')
     return r.stdout
   }
 
@@ -290,40 +289,27 @@ export function createShellFs(exec: ShellExec, opts: { statTtlMs?: number, readC
       if (raw.trim() === '!') return null
       return raw.split('\n').filter(l => l.startsWith('/'))
     },
+    run: (script, args, opts = {}) => run(script, args, opts.timeoutMs, opts.input, opts.maxBytes),
     async readFile(p) {
       return (await run(REQUIRE_PATH + 'cat "$1"', [p])).toString('utf8')
     },
     async read(p, start, len, timeoutMs) {
+      if (len <= 0) return Buffer.alloc(0)
       // tail -c +N jumps straight to byte N (regular file); head cuts.
       // Open before the pipeline so a failed open cannot be hidden by head's
       // successful exit (POSIX sh has no portable pipefail).
-      if (len <= 0) {
-        if (!Number.isSafeInteger(len)) throw new FsError('remote', 'invalid read length')
-        return Buffer.alloc(0)
-      }
-      if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(start + len)) {
-        throw new FsError('remote', 'invalid read range')
-      }
-      if (len > READ_LIMIT) throw new FsError('remote', 'read too large')
-      const script = REQUIRE_PATH + 'exec 3< "$1" || exit $?\ntail -c +"$2" <&3 | head -c "$3"'
       // In chunks (READ_CHUNK), each one refused rather than cut if the exec
-      // keeps less (maxBytes): a short result only ever means the end of the
-      // file, an error means no read at all. One deadline across all chunks,
-      // never a timeout per chunk that grows with the file.
-      const out = Buffer.alloc(len)
-      const deadline = Date.now() + (timeoutMs || 60000)
+      // keeps less (maxBytes): a short result only ever means the end of the file.
+      const parts: Buffer[] = []
       let got = 0
       while (got < len) {
         const n = Math.min(chunk, len - got)
-        const left = deadline - Date.now()
-        if (left <= 0) throw new FsError('unreachable', 'read timed out')
-        const b = await run(script, [p, String(start + got + 1), String(n)], left, undefined, n)
-        if (!b.length) break
-        b.copy(out, got)
+        const b = await run(REQUIRE_PATH + 'exec 3< "$1" || exit $?\ntail -c +"$2" <&3 | head -c "$3"', [p, String(start + got + 1), String(n)], timeoutMs || 60000, undefined, n)
+        parts.push(b)
         got += b.length
         if (b.length < n) break
       }
-      return got < len ? out.subarray(0, got) : out
+      return parts.length === 1 ? parts[0]! : Buffer.concat(parts)
     },
     async digest(p, len) {
       const out = await run(REQUIRE_PATH + 'exec 3< "$1" || exit $?\nhead -c "$2" <&3 | cksum', [p, String(Math.max(0, len))], 60000)

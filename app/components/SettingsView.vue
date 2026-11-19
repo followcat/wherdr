@@ -44,9 +44,6 @@ const sectionLabels: Record<SettingsSection, string> = {
 }
 const sections = computed(() => SETTINGS_SECTIONS
   .filter(id => id !== 'shortcuts' || (desk.value && !coarse.value))
-  // Plugins are on hold: the section shows only once a plugin is installed
-  // (DATA_DIR/plugins). Drop this line to always show it again.
-  .filter(id => id !== 'plugins' || clientPlugins.value.length > 0)
   .map(id => ({ id, label: t(sectionLabels[id]), icon: sectionIcons[id] })))
 const activeSection = computed<SettingsSection | null>(() => {
   if (section.value && sections.value.some(s => s.id === section.value)) return section.value
@@ -451,7 +448,7 @@ onMounted(() => {
             <!-- Collapsed by default: the current theme shows, a tap expands the list. -->
             <button type="button" class="theme-opt theme-current" :aria-expanded="themesOpen" @click="themesOpen = !themesOpen">
               <span class="theme-sw"><i v-for="(c, i) in currentTheme ? swatches(currentTheme) : []" :key="i" :style="{ background: c }" /></span>
-              <span class="theme-name">{{ currentLabel }}<small>{{ t(themesOpen ? 'Hide themes' : 'Change theme') }}</small></span>
+              <span class="theme-name"><span class="theme-label" :title="currentLabel">{{ currentLabel }}</span><small>{{ t(themesOpen ? 'Hide themes' : 'Change theme') }}</small></span>
               <UIcon :name="themesOpen ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'" class="theme-check" />
             </button>
             <div v-show="themesOpen" class="theme-list" role="radiogroup" :aria-label="t('Theme')">
@@ -461,7 +458,7 @@ onMounted(() => {
                   <div v-for="th in sec.group === 'custom' ? sec.themes : []" :key="th.id" class="theme-custom">
                     <button type="button" role="radio" class="theme-opt" :class="{ on: themeChoice === th.id }" :aria-checked="themeChoice === th.id" @click="pickTheme(th.id)">
                       <span class="theme-sw"><i v-for="(c, i) in swatches(th)" :key="i" :style="{ background: c }" /></span>
-                      <span class="theme-name">{{ th.label }}<small v-if="th.author">{{ th.author }}</small></span>
+                      <span class="theme-name"><span class="theme-label" :title="th.label">{{ th.label }}</span><small v-if="th.author">{{ th.author }}</small></span>
                     </button>
                     <button type="button" class="icon-btn" :aria-label="tl(`Edit ${th.label}`)" data-testid="theme-edit" @click="openEditor(th)"><UIcon name="i-lucide-pencil" /></button>
                   </div>

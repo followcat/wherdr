@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { findDocsDir } from '../server/utils/wherdrDocs'
+import { findDocsDir, readDocs } from '../server/utils/wherdrDocs'
 
 const dirs: string[] = []
 afterEach(() => { for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true }) })
@@ -34,5 +34,32 @@ describe('findDocsDir', () => {
 
   it('no docs anywhere: the working folder\'s docs/', () => {
     expect(findDocsDir({}, undefined, '/nowhere')).toBe(path.join('/nowhere', 'docs'))
+  })
+})
+
+describe('readDocs: wherdr pm docs (WHR-444)', () => {
+  const docs = () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'wherdr-docs-'))
+    dirs.push(d)
+    fs.writeFileSync(path.join(d, 'llms.txt'), '# wherdr\n- [Workspaces](docs/workspaces.md)\n')
+    fs.writeFileSync(path.join(d, 'workspaces.md'), '# Workspaces\n\nIntro.\n\n## Shared workflow\n\nA member runs it.\n\n```sh\n# not a heading\n```\n\n### Its guards\n\nStrictest wins.\n\n## Features\n\nLater.\n')
+    return d
+  }
+
+  it('the index, a page, a section with its sub-sections', () => {
+    const d = docs()
+    expect(readDocs(d)).toEqual({ page: 'llms.txt', text: '# wherdr\n- [Workspaces](docs/workspaces.md)\n' })
+    expect(readDocs(d, 'docs/workspaces.md').text).toContain('## Features')
+    const s = readDocs(d, 'workspaces.md#shared-workflow').text
+    expect(s.startsWith('## Shared workflow')).toBe(true)
+    expect(s).toContain('Strictest wins.')
+    expect(s).not.toContain('Features')
+  })
+
+  it('an unknown page or section says so; a path is refused', () => {
+    const d = docs()
+    expect(() => readDocs(d, 'nope.md')).toThrow('No docs page nope.md')
+    expect(() => readDocs(d, 'workspaces.md#nope')).toThrow('#shared-workflow, #its-guards')
+    for (const bad of ['../package.json', '/etc/passwd', 'sub/x.md', '..md']) expect(() => readDocs(d, bad)).toThrow('is not a docs page')
   })
 })

@@ -1,11 +1,12 @@
 // A managed project: a folder (git, unless git: false) on a machine reached through herdr-core,
 // and its own workflow (DATA_DIR/projects/workflows/<KEY>.json), which its tasks follow. Stored in DATA_DIR/projects/projects.json.
-import { isRelPath, type WorkflowError } from './workflow'
+import { isRelPath, type Prefs, type WorkflowError, type WorktreeSetup } from './workflow'
 import type { Task } from './run'
 import type { RepoVisibility } from './visibility'
 import { isProjectColor, type ProjectColor } from './projectKey'
 import { PAUSED, isStrategy, type Strategy } from './placement'
-import { branchNameError } from './branchName'
+import { branchNameError, commitMessageError } from './branchName'
+import { cleanOnState, type OnStateChange } from './onState'
 import { ARCHIVE_DAYS } from './archive'
 import { cleanReach, type Reach } from './reach'
 import type { SharedField, WorkspaceShared } from './workspace'
@@ -32,6 +33,8 @@ export interface Project {
   // when the step names no branch. Default: the repo's current branch, no default.
   base?: string
   branchName?: string // its tasks' branch template (branchName.ts); missing: task/{id}
+  commitMessage?: string // its squash merges' and git.land's commit message template (branchName.ts); missing: the usual message
+  onStateChange?: OnStateChange // the user's command run when a task changes state (onState.ts); missing: none
   // The library template (or example) its workflow was copied from: information
   // only, never followed. None: no workflow yet, no task can start.
   from?: { template: string, version: number }
@@ -47,6 +50,8 @@ export interface Project {
   shared?: WorkspaceShared
   workspace?: string
   overrides?: SharedField[]
+  prefs?: Prefs // a member's own agents, set in its General tab without a workflow of its own (overrides: prefs)
+  worktree?: WorktreeSetup // the same for its worktree setup
   instructionsFiles?: string[] // a member's own workspace instructions files, when it overrides them ([]: none)
   addedAt: number
 }
@@ -70,7 +75,7 @@ export const isGitBranch = (b: string) => b !== '' && b !== '@' && !/[\x00-\x20\
 export const isTemplateId = (id: unknown): id is string => typeof id === 'string' && ID_RE.test(id)
 
 const KEY_HINT = '2 to 10 letters or digits, starting with a letter'
-export interface ProjectUpdate { name?: string, coordinatorName?: string, base?: string, key?: string, color?: ProjectColor, machines?: string[], clones?: Record<string, string>, paused?: string[], placement?: Strategy, branchName?: string, archiveAfter?: number, deleteBranch?: boolean, reach?: Reach[], instructionsFiles?: string[] | null }
+export interface ProjectUpdate { name?: string, coordinatorName?: string, base?: string, key?: string, color?: ProjectColor, machines?: string[], clones?: Record<string, string>, paused?: string[], placement?: Strategy, branchName?: string, commitMessage?: string, onStateChange?: OnStateChange | '', archiveAfter?: number, deleteBranch?: boolean, reach?: Reach[], instructionsFiles?: string[] | null, rootSkills?: boolean }
 
 // A project's coordinator is named after the project unless the user named it.
 export const projectCoordinatorName = (p: { name: string, coordinatorName?: string }) => p.coordinatorName || p.name
@@ -167,6 +172,14 @@ export function cleanProjectUpdate(raw: unknown): { update?: ProjectUpdate, erro
     if (why) errors.push({ path: 'branchName', message: why })
     else update.branchName = tpl
   }
+  if (o.commitMessage !== undefined) {
+    const tpl = typeof o.commitMessage === 'string' ? o.commitMessage.trim() : ''
+    const why = tpl && commitMessageError(tpl)
+    if (why) errors.push({ path: 'commitMessage', message: why })
+    else update.commitMessage = tpl
+  }
+  const onState = cleanOnState(o.onStateChange, errors)
+  if (onState !== undefined) update.onStateChange = onState
   const isKey = (m: unknown): m is string => typeof m === 'string' && m.length <= 64
   if (o.machines !== undefined) {
     if (!Array.isArray(o.machines) || o.machines.length > 16 || !o.machines.every(isKey)) errors.push({ path: 'machines', message: 'a list of machine keys' })
@@ -193,6 +206,11 @@ export function cleanProjectUpdate(raw: unknown): { update?: ProjectUpdate, erro
     const v = o.instructionsFiles
     if (v !== null && !(Array.isArray(v) && v.length <= 10 && v.every(isRelPath))) errors.push({ path: 'instructionsFiles', message: 'up to 10 paths under the workspace\'s root (no *, no .., not absolute)' })
     else update.instructionsFiles = v === null ? null : [...new Set(v as string[])]
+  }
+  // A workspace's root skills (workspace.ts workspaceSkills): false turns them off.
+  if (o.rootSkills !== undefined) {
+    if (typeof o.rootSkills !== 'boolean') errors.push({ path: 'rootSkills', message: 'true or false' })
+    else update.rootSkills = o.rootSkills
   }
   if (o.reach !== undefined) {
     const r = cleanReach(o.reach)

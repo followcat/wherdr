@@ -25,7 +25,7 @@ export interface Stall { cause: string, reason: string, since: number }
 
 const current = (task: Task, plan: PlannedStep[]) => {
   const s = task.step
-  return s?.started && !s.done && !task.stopped && task.state === 'working' && !s.yourTurn ? { s, step: plan[s.at] } : undefined
+  return s?.started && !s.done && !task.stopped && !task.parked && task.state === 'working' && !s.yourTurn ? { s, step: plan[s.at] } : undefined
 }
 
 // The step waits for its holder's report or verdict, and its instructions were delivered.
@@ -112,7 +112,7 @@ export const nudgeText = (s: Stall, tests: string[] = []) => s.cause.startsWith(
 export const stallTurn = (s: Stall) => `Stalled: ${s.reason}`
 
 // The step's holder cannot work (pauseClock): the task waits for room, a machine
-// or the pace (held), for the engine to resume it after an incident, or the
+// or the pace (held), for another task (parked, park.ts), for the engine to resume it after an incident, or the
 // machine its agent runs on is offline or unreachable.
-export const clockStops = (task: Pick<Task, 'state' | 'run' | 'recovery' | 'stopped' | 'waitKind' | 'held'>, machineOffline: boolean) =>
-  machineOffline || recovering(task) || (!!task.held && (task.state === 'todo' || task.state === 'working'))
+export const clockStops = (task: Pick<Task, 'state' | 'run' | 'recovery' | 'stopped' | 'waitKind' | 'held' | 'parked'>, machineOffline: boolean) =>
+  machineOffline || !!task.parked || recovering(task) || (!!task.held && (task.state === 'todo' || task.state === 'working'))

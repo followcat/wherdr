@@ -6,12 +6,13 @@
 // every 30 s, the coordinators' wake queue ticks (pmWakes.ts), and every
 // minute the engine makes its mechanical moves (pmMechanic.ts), its step actions
 // started outside the tick (pmBoard.ts startAction). Every 30 s,
-// one grouped push for new Decisions (pmDecisions.ts), and the projects'
+// one grouped push for what newly waits for the user (pmDecisions.ts), and the projects'
 // automations fire (pmAutomations.ts). Every minute, one task's TL;DR is
 // written again after a significant change (pmSummary.ts). At start and every
 // 5 minutes, the processes left in the worktrees of tasks with no live agent
 // are killed (pmProcs.ts). A merge cut by the last restart goes on
-// (resumeMerges), and a shutdown first waits a little for a merge that runs.
+// (resumeMerges), coordinators' first messages cut by it are typed (resumeFirst),
+// and a shutdown first waits a little for a merge that runs.
 import { coreAdminDeps } from '../utils/coreAdminDeps'
 import { reconcileRuns } from '../utils/pmLaunch'
 import { rewriteRoleFiles } from '../utils/pmCoordinator'
@@ -27,6 +28,8 @@ import { mergesSettled } from '../utils/pmActions'
 import { sweepOrphans } from '../utils/pmProcs'
 import { summaryTick } from '../utils/pmSummary'
 import { Holds } from '../utils/pmHold'
+import { runOnState } from '../utils/pmOnState'
+import { resumeFirst } from '../utils/coordinatorFirst'
 
 // Under Nitro's 30 s shutdown and the updater's wait before it kills the server.
 const MERGE_WAIT_MS = 20_000
@@ -49,6 +52,8 @@ const every = (name: string, ms: number, fn: (doing: (what: string) => void) => 
 }
 
 export default defineNitroPlugin((nitroApp) => {
+  // A project's On state change command, in the background (pmOnState.ts).
+  pmStore().onStateChanges((t, states) => { void runOnState({ ...coreAdminDeps(), store: pmStore() }, t, states).catch(() => {}) })
   void repairDoneTasks(pmStore()).catch(() => {})
   let tries = 0
   const timer = setInterval(() => {
@@ -59,6 +64,7 @@ export default defineNitroPlugin((nitroApp) => {
       void rewriteRoleFiles({ ...coreAdminDeps(), store: pmStore() }).catch(() => {})
       void resumeMerges({ ...coreAdminDeps(), store: pmStore() }).catch(() => {})
       void sweepOrphans({ ...coreAdminDeps(), store: pmStore() }).catch(() => {})
+      void resumeFirst({ ...coreAdminDeps(), store: pmStore() }).catch(() => {})
     }, () => {})
   }, 10_000)
   const wakes = every('wakes', 30_000, () => wakeTick({ ...coreAdminDeps(), store: pmStore() }))

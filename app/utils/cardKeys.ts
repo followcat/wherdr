@@ -11,6 +11,8 @@
 // Focus on a button: Enter / Space keep their native effect (the click).
 export type CardKey = { kind: 'nav', key: 'up' | 'down' | 'enter' | 'esc' } | { kind: 'digit', n: number } | { kind: 'tab', dir: 1 | -1 }
 
+import { imeComposing } from './shortcuts'
+
 export interface FocusInfo {
   // Champ de saisie (input texte, textarea, contenteditable).
   editable: boolean
@@ -25,14 +27,14 @@ export interface FocusInfo {
   own?: boolean
 }
 
-export interface KeyInfo { key: string, code?: string, ctrlKey?: boolean, metaKey?: boolean, altKey?: boolean, shiftKey?: boolean, isComposing?: boolean, defaultPrevented?: boolean }
+export interface KeyInfo { key: string, code?: string, ctrlKey?: boolean, metaKey?: boolean, altKey?: boolean, shiftKey?: boolean, isComposing?: boolean, keyCode?: number, defaultPrevented?: boolean }
 
 const NAV: Record<string, 'up' | 'down' | 'enter' | 'esc'> = { ArrowUp: 'up', ArrowDown: 'down', Enter: 'enter', Escape: 'esc' }
 
 export interface CardKeyOpts { digits: number, enter: boolean, tabs?: boolean }
 
 export function cardKey(e: KeyInfo, f: FocusInfo, opts: CardKeyOpts): CardKey | null {
-  if (e.defaultPrevented || e.isComposing) return null
+  if (e.defaultPrevented || imeComposing(e)) return null
   if (e.ctrlKey || e.metaKey || e.altKey || f.overlay) return null
   const nav = NAV[e.key]
   if (f.own && (nav === 'up' || nav === 'down') && !e.shiftKey) return { kind: 'nav', key: nav }

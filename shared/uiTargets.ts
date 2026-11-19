@@ -24,7 +24,7 @@ export const UI_TARGETS = {
   'security.passkey': { link: '#/settings?section=security', label: 'Security › Passkey' },
   'machines.add': { link: '#/settings?section=machines', label: 'Machines › Add machine' },
   'phone.setup': { link: '#/settings?section=phone', label: 'Phone › Use it on your phone' },
-  'projects.setup': { link: '#/settings?section=projects', label: 'Projects › Set up a project' },
+  'projects.setup': { link: '#/settings?section=projects', label: 'Projects › Add project' },
   // A project's sheet (project: true): the link names the project too.
   'project.machines': { link: '#/settings?section=projects&tab=general', label: 'Project › Machines', project: true },
   'project.instructions': { link: '#/settings?section=projects&tab=general', label: 'Project › Workspace instructions files', project: true },

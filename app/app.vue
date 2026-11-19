@@ -117,6 +117,8 @@ onUnmounted(() => {
     <UiShowPanel />
     <NotesPanel />
     <TaskSheetHost />
+    <!-- Tasks to review: Home's card, the board's To review, a #/review link. -->
+    <ReviewSheet v-if="reviewOpen" @closed="showReview(false)" />
     <NewAgentSheet />
     <MenuSheet />
     <RenameSheet />

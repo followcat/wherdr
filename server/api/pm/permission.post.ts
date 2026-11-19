@@ -1,4 +1,4 @@
-// { id, allow }: the user's answer to a task agent's permission request (Decisions).
+// { id, allow }: the user's answer to a task agent's permission request.
 import { coreAdminDeps } from '../../utils/coreAdminDeps'
 import { answerPermission } from '../../utils/pmPermission'
 import { pmStore } from '../../utils/pmStore'

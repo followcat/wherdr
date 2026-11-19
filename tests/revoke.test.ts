@@ -1,6 +1,6 @@
 // Lock all devices: an old cookie, an open WebSocket and a push subscription
 // stop working at once (server/utils/revoke.ts).
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -46,6 +46,12 @@ describe('Lock all devices', () => {
     expect(await revoke.revokeEverywhere([open])).toBe(1)
     expect(open.close).toHaveBeenCalledWith(1008, expect.any(String))
     expect(await push.readSubs()).toEqual([])
+
+    // An unreadable subscriptions file still lets the WebSockets be judged.
+    const again = peer()
+    writeFileSync(path.join(data, 'push.json'), '{"subs":[')
+    expect(await revoke.revokeEverywhere([again])).toBe(1)
+    expect(again.close).toHaveBeenCalledWith(1008, expect.any(String))
   })
 
   it('asks every open app to post its push subscription again once the lock is off', () => {

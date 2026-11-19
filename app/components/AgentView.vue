@@ -497,7 +497,8 @@ watch(headerEl, (el, old) => {
 onBeforeUnmount(() => headerObserver?.disconnect())
 const notesInHeader = computed(() => !compactPhone.value && (!headerWidth.value || headerWidth.value >= NOTES_HEADER_MIN))
 const notesItem = computed<MenuItem>(() => ({ label: t('Notes'), icon: 'i-lucide-sticky-note', kbds: desk.value ? shortcutKbds('notes') : undefined, run: toggleNotes }))
-const agentMenu = computed<MenuItem[]>(() => [...(notesInHeader.value ? [] : [notesItem.value]), ...coreMenuItems(pane.value)])
+// A project's or workspace's coordinator: its board, settings and autopilot first, as on its sidebar row.
+const agentMenu = computed<MenuItem[]>(() => [...paneCoordinatorItems(pane.value), ...(notesInHeader.value ? [] : [notesItem.value]), ...coreMenuItems(pane.value)])
 const dropdownItems = computed(() => toDropdown(agentMenu.value))
 function openAgentMenu() { openMenu(agentMenu.value) }
 

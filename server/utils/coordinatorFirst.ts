@@ -2,7 +2,9 @@
 // card notes): typed one after another once its session is ready, however long it takes
 // to start (bounded by queueWatchMs), never dropped silently. Each outcome goes to the
 // project's log; one not delivered stays on its record (undelivered) so that the
-// coordinator row and Alfred say so, with Send again (resendFirst).
+// coordinator row and Alfred say so, with Send again (resendFirst). Typed ones wait on
+// the record (undelivered, queued) until each is sent, so that a wherdr restart during
+// the watch delivers what is left (resumeFirst) instead of losing them.
 // Coordinators start one after another: each start waits until the one before is up
 // (its first message typed or failed), at most startGapMs, so that several Claude
 // sessions starting at once (the v2 import card) do not slow each other past the bound.
@@ -10,8 +12,9 @@ import { HerdrError } from './herdr'
 import { sendFirstMessage, type CoreAdminDeps } from './coreCreate'
 import type { PmStore } from './pmStore'
 
-export type FirstDeps = CoreAdminDeps & { store: Pick<PmStore, 'coordinator' | 'saveCoordinator' | 'logProject'>, startGapMs?: number }
-export interface Undelivered { texts: string[], why: string, at: number }
+export type FirstDeps = CoreAdminDeps & { store: FirstStore, startGapMs?: number }
+export interface Undelivered { texts: string[], why: string, at: number, queued?: true }
+export type FirstStore = Pick<PmStore, 'coordinator' | 'saveCoordinator' | 'logProject'>
 
 const BY = 'wherdr'
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
@@ -25,11 +28,21 @@ async function mark(deps: FirstDeps, key: string, address: string, undelivered?:
   await deps.store.saveCoordinator({ ...rest, ...(undelivered ? { undelivered } : {}) })
 }
 
+// Still queued: what is left to type, kept on its record (a restart delivers it).
+async function left(deps: FirstDeps, key: string, address: string, texts: string[]) {
+  const rec = await deps.store.coordinator(key)
+  if (rec?.terminal === address && rec.undelivered?.queued) await deps.store.saveCoordinator({ ...rec, undelivered: { ...rec.undelivered, texts } })
+}
+
+// What a record's start would still type: queued, not given up.
+export const queuedFirst = (texts: string[], at = Date.now()): Undelivered => ({ texts, why: 'not typed yet', at, queued: true })
+
+const UNSURE = 'herdr-core did not confirm it was typed: check the conversation before sending it again'
 const WHY = { dialog: 'a dialog waits for an answer', installing: 'it is installing an update', skipped: 'not ready yet', unreachable: 'its machine does not answer' }
 const statusOf = (t: { status?: string | { state?: string } | null }) => (typeof t.status === 'string' ? t.status : t.status?.state)
 
 // up: called once with the first outcome (the session is up, or gone).
-// inArgv: the messages went on its command line (a fresh Claude or Codex): only watched
+// inArgv: the messages went on its command line (a fresh Claude, Codex or omp): only watched
 // until its session is up (idle or working), so that a start that never comes up says so.
 // A terminal.get that fails (a timeout, the machine briefly unreachable) is retried.
 export async function deliverFirst(deps: FirstDeps, key: string, address: string, texts: string[], up: () => void = () => {}, inArgv = false): Promise<'sent' | 'failed'> {
@@ -47,8 +60,11 @@ export async function deliverFirst(deps: FirstDeps, key: string, address: string
         if (s === 'idle' || s === 'working' || s === 'done') break
         r = s === 'blocked' ? 'dialog' : 'skipped'
       } else {
-        r = await sendFirstMessage(deps, address, texts[i]!).catch(() => 'skipped' as const)
-        if (r === 'sent') { i++; up(); continue }
+        const sent = await sendFirstMessage(deps, address, texts[i]!).catch(() => 'skipped' as const)
+        if (sent === 'sent') { i++; up(); if (i < texts.length) await left(deps, key, address, texts.slice(i)); continue }
+        // Maybe typed (core did not answer in time): never typed again here, left to Send again.
+        if (sent === 'uncertain') { why = UNSURE; break }
+        r = sent
       }
     }
     if (Date.now() >= end) { why = `it was not ready after ${Math.round(limit / 60_000)} min`; break }
@@ -88,11 +104,27 @@ export async function startTurn(deps: Pick<FirstDeps, 'startGapMs'>): Promise<()
 // (startCoordinator replays a record's undelivered messages at any start).
 export async function resendFirst(deps: FirstDeps, key: string, restart: () => Promise<unknown>) {
   const rec = await deps.store.coordinator(key)
-  if (!rec?.undelivered) throw new HerdrError('not_found', 'No first message waits to be sent again')
+  if (!rec?.undelivered || rec.undelivered.queued) throw new HerdrError('not_found', 'No first message waits to be sent again')
   const t = !rec.terminal ? null : await deps.call<{ state?: string }>('terminal.get', { terminal: rec.terminal }, 3000).catch(() => null)
   if (!rec.terminal || !t?.state || t.state === 'finished') return restart().then(() => ({ restarted: true, queued: rec.undelivered!.texts.length }))
   const { undelivered, ...rest } = rec
-  await deps.store.saveCoordinator(rest)
+  await deps.store.saveCoordinator({ ...rest, undelivered: queuedFirst(undelivered.texts) })
   void deliverFirst(deps, key, rec.terminal!, undelivered.texts)
   return { queued: undelivered.texts.length }
+}
+
+// After a wherdr restart: first messages still queued are typed into their running
+// conversation; its session gone, they are given up (logged, kept for Send again).
+export async function resumeFirst(deps: CoreAdminDeps & { store: FirstStore & Pick<PmStore, 'coordinators'> }) {
+  for (const rec of await deps.store.coordinators()) {
+    const q = rec.undelivered
+    if (!q?.queued) continue
+    // A lookup that fails (a timeout, its machine briefly unreachable) is no ended session:
+    // deliverFirst retries it within its bound, and records the outcome.
+    const t = !rec.terminal ? null : await deps.call<{ state?: string }>('terminal.get', { terminal: rec.terminal }, 3000).catch(() => undefined)
+    if (rec.terminal && (t === undefined || (t?.state && t.state !== 'finished'))) { void deliverFirst(deps, rec.project, rec.terminal, q.texts).catch(() => {}); continue }
+    const why = 'its session ended while wherdr restarted'
+    await log(deps, rec.project, `first message given up: ${why}`)
+    await deps.store.saveCoordinator({ ...rec, undelivered: { texts: q.texts, why, at: Date.now() } })
+  }
 }

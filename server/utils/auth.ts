@@ -66,6 +66,15 @@ interface Credential {
 // cut a session in use before OVERRUN_MS has passed).
 interface AuthDb { secret: string | null, generation: string, credentials: Credential[], maxSessionDays?: MaxSessionDays, maxSessionChangedAt?: number }
 
+// Flushes a folder's entries (the rename above). Windows refuses to fsync a
+// folder (EPERM) and NTFS keeps a rename without it: skipped there.
+type DirFs = Pick<typeof fs, 'openSync' | 'fsyncSync' | 'closeSync'>
+export function syncDir(dir: string, platform: NodeJS.Platform = process.platform, fsx: DirFs = fs) {
+  if (platform === 'win32') return
+  const fd = fsx.openSync(dir, 'r')
+  try { fsx.fsyncSync(fd) } finally { fsx.closeSync(fd) }
+}
+
 export class AuthError extends Error {
   code: string
   constructor(code: string, message: string) {
@@ -111,8 +120,7 @@ export function createAuth({ dataDir, log = () => {}, passkeyUser = 'herdr' }: {
       fs.rmSync(temp, { force: true })
       throw error
     }
-    const dir = fs.openSync(dataDir, 'r')
-    try { fs.fsyncSync(dir) } finally { fs.closeSync(dir) }
+    syncDir(dataDir)
   }
   if (damaged) log(`lock: ${FILE} cannot be read. ${DAMAGED_MESSAGE}`)
   // New secret and generation: every cookie signed before is worthless.

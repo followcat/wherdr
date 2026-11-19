@@ -23,9 +23,9 @@ it('reads status lines, and leaves any other block as code', () => {
 })
 
 it('shows a machine and a quota from what the app reads, unavailable when gone', () => {
-  const G = 2 ** 30
-  const rows = [{ key: 'm1', label: 'Studio', agents: 3, mem: { cores: 8, total: 16 * G, available: 7 * G, swapTotal: 0, swapFree: 0, load1: 4 } }]
-  expect(machineView(rows, 'studio')).toEqual({ title: 'Studio', state: 'online', tone: 'ok', lines: ['RAM 7.0 GB free of 16 GB · load 50 %', '3 agents'] })
+  // MachineCapacity holds megabytes, as Settings › Machines formats them.
+  const rows = [{ key: 'm1', label: 'Studio', agents: 3, mem: { cores: 8, total: 6860, available: 2800, swapTotal: 0, swapFree: 0, load1: 4 } }]
+  expect(machineView(rows, 'studio')).toEqual({ title: 'Studio', state: 'online', tone: 'ok', lines: ['RAM 2.7 GB free of 6.7 GB · load 50 %', '3 agents'] })
   expect(machineView([{ ...rows[0]!, mem: null }], 'm1')?.state).toBe('offline')
   expect(machineView(rows, 'other')).toBeNull()
   const now = 1000

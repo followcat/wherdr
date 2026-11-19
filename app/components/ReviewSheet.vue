@@ -10,7 +10,7 @@
 // shows its To do tab's answers (TaskTodo, the same actions as the task's sheet,
 // useTaskActions), Try again for a failed action, and Open the task. An agent's
 // question (ReviewQuestion) is answered here; a block its worker could fix has Ask
-// the agent to fix it (TaskTodo, Try again then secondary): it leaves with The agent is
+// the agent to fix it (TaskTodo, Try again then secondary; Try again first when the failure may be outside the code, none when it is): it leaves with The agent is
 // fixing it, back only once its badge changes (the agent's question, a new failure);: its choices or another answer go
 // to the agent (POST /api/pm/answer), it leaves the list like an approved one;
 // Open the task stays. Open the agent (AgentButton) is on every task, whatever
@@ -59,7 +59,7 @@ const fixing = ref<Record<string, string>>({})
 // Answered here from its To do (Try again, a choice): it leaves as the board says, not as handled
 // elsewhere. Only the task on screen, after an action that went through (a refusal clears it).
 let acted = ''
-const waiting = computed(() => (data.value?.cards ?? []).filter(c => c.yourTurn && !c.state?.done && !handled.value.includes(c.id) && fixing.value[c.id] !== c.yourTurn))
+const waiting = computed(() => (data.value?.cards ?? []).filter(c => reviewWaits(c) && !handled.value.includes(c.id) && fixing.value[c.id] !== c.yourTurn))
 const live = computed(() => waiting.value.filter(c => reviewShows(filter.value, c.project)))
 // The list while the sheet is open, in a stable order (the board's again once
 // closed): a task that arrives goes at the end, one that leaves drops out, but
@@ -77,6 +77,8 @@ function sync() {
   const next = order.value.filter(id => !handled.value.includes(id) && (ids.has(id) || (id === cur && id !== acted)))
   for (const c of live.value) if (!next.includes(c.id)) next.push(c.id)
   seen.value = { ...seen.value, ...Object.fromEntries(live.value.map(c => [c.id, c])) }
+  // One that left the list takes its pending action's state with it.
+  for (const id of order.value) if (!next.includes(id)) forget(id)
   order.value = next
   const i = cur ? next.indexOf(cur) : -1
   at.value = i >= 0 ? i : Math.min(at.value, next.length)
@@ -106,7 +108,7 @@ const motion = computed(() => (still.value || !card.value ? 'review-fade' : dir.
 const kind = computed(() => (card.value ? taskTodo(card.value) : undefined))
 // Only a merge to accept: another step of the user's (Create these tasks…) keeps its own button, in the task's sheet.
 const approves = computed(() => !!card.value && (kind.value === 'merge' || kind.value === 'step') && mayAccept(card.value))
-const fixes = computed(() => !!card.value && fixable(card.value, kind.value))
+const fixes = computed(() => !!card.value && fixFirst(card.value, kind.value))
 const acts = computed(() => approves.value && !gone.value)
 const row = computed<ToHandle | undefined>(() => (card.value ? taskRow(card.value) : undefined))
 const shotStep = computed(() => (card.value ? shotSteps(card.value)[0] : undefined))
@@ -117,13 +119,13 @@ const verdict = computed(() => (card.value && state.value ? reviewLine(card.valu
 const notes = computed(() => (card.value && state.value ? { worker: workerNote(card.value.plan, state.value), review: reviewNote(card.value.plan, state.value) } : {}))
 
 const pane = computed(() => (card.value?.terminal ? herdrState.value?.panes.find(p => p.coreAddress === card.value!.terminal) : undefined))
-const { busy, error, pressing, refused, press, start, resume, decide, sendBack, restartReview, startWorker, askFix } = useTaskActions(() => card.value, () => { acted = card.value && !refused.value ? card.value.id : ''; taskChanged() })
+// Each task's own busy, error and refusal: an action still running on one never shows on the next.
+const { busy, error, pressing, refused, failed, forget, press, start, resume, decide, sendBack, restartReview, startWorker, askCoordinator, askFix } = useTaskActions(() => card.value, (id) => { acted = !failed(id) ? id : ''; taskChanged() })
 const rejecting = ref(false)
-watch(() => card.value?.id, () => { error.value = ''; rejecting.value = false; acted = '' })
-const DONE_MS = 400
+watch(() => card.value?.id, () => { rejecting.value = false; acted = '' })
 // Done with the current one: its confirmation, then off the list, the next one shows.
 async function leave(c: Card, how: 'approved' | 'sent' | 'answered' | 'fixing') {
-  if (error.value || refused.value) return
+  if (failed(c.id)) return
   heldAt.value = progress.value
   held.value = c
   done.value = how
@@ -143,7 +145,7 @@ async function approve() {
 }
 async function reject(note: string, shots: string[]) {
   const c = card.value
-  if (!c || done.value) return
+  if (!c || busy.value || done.value) return
   await sendBack(note, shots)
   if (!error.value) rejecting.value = false
   await leave(c, 'sent')
@@ -222,8 +224,8 @@ function onKey(e: KeyboardEvent) {
           </p>
         </template>
         <ReviewQuestion v-else-if="asked" :card="card" :busy="answering || !!gone" :sent="answered" @send="reply" />
-        <TaskTodo v-else-if="kind" :card="card" :kind="kind" :pane="pane" :busy="busy || !!gone" :pressing="pressing" :refused="refused"
-          @press="press" @start="start" @resume="resume" @decide="decide" @back="sendBack" @review="restartReview" @worker="startWorker" @fix="fix" @comments="answer()" />
+        <TaskTodo v-else-if="kind" :card="card" :kind="kind" :pane="pane" :busy="busy || !!gone" :pressing="pressing" :refused="refused" :failed="!!error || !!refused"
+          @press="press" @start="start" @resume="resume" @decide="decide" @back="reject($event, [])" @review="restartReview" @worker="startWorker" @ask="askCoordinator" @fix="fix" @comments="answer()" />
         <ReviewReject v-if="acts && rejecting" :card="card" :busy="busy" @send="reject" @cancel="rejecting = false" />
         <p v-if="error" class="error" role="alert" data-testid="review-error">{{ error }}</p>
         <p v-if="approves && refused" class="error" role="alert" data-testid="review-refused">{{ stepRefusalText(refused) }}</p>
@@ -249,7 +251,7 @@ function onKey(e: KeyboardEvent) {
             <UButton color="error" variant="outline" size="xl" :icon="done === 'sent' ? 'i-lucide-check' : 'i-lucide-undo-2'" :class="{ confirmed: done === 'sent' }" :disabled="busy || rejecting || done === 'approved'" data-testid="review-reject-open" @click="!done && (rejecting = true)">{{ done === 'sent' ? tl('Sent back') : tl('Reject') }}</UButton>
           </template>
           <template v-else>
-            <UButton v-if="kind === 'refused' && !gone" :color="fixes ? 'neutral' : 'primary'" :variant="fixes ? 'outline' : 'solid'" size="xl" icon="i-lucide-rotate-ccw" :loading="busy" data-testid="review-retry" @click="press">{{ tl('Try again') }}</UButton>
+            <UButton v-if="kind === 'refused' && !gone" :color="fixes ? 'neutral' : 'primary'" :variant="fixes ? 'outline' : 'solid'" size="xl" icon="i-lucide-rotate-ccw" :loading="pressing" :disabled="busy" data-testid="review-retry" @click="press">{{ tl('Try again') }}</UButton>
             <UButton color="neutral" variant="outline" size="xl" icon="i-lucide-square-arrow-out-up-right" data-testid="review-answer" @click="answer()">{{ tl('Open the task') }}</UButton>
           </template>
           <AgentButton :card="card" @opened="open = false" />

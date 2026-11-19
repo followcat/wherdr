@@ -2,12 +2,22 @@
 // local branch go. Archived: its worktree goes, its branch stays. Pure: which
 // worktree may go and why not; server/utils/pmCleanup.ts runs git.
 import type { Run, Task } from './run'
+import type { PlannedStep } from './steps'
 
 export type Cleanup = 'worktree+branch' | 'worktree'
 
 // What a task's end allows: nothing while it is not done.
 export const cleanupOf = (task: Task): Cleanup | undefined =>
   !task.step?.done ? undefined : task.step.abandoned ? 'worktree' : 'worktree+branch'
+
+// The steps that merge a task's PR, and whether one of them proved it merged.
+export const MERGE_KINDS = ['github.merge', 'bitbucket.merge', 'git.verify-merged']
+export const mergedByStep = (plan: PlannedStep[], s: Task['step']) =>
+  !!s?.done && plan.some(p => p.action && MERGE_KINDS.includes(p.action.kind) && Object.keys(s.proofs?.[p.id] ?? {}).length > 0)
+// The commit a merge step proved merged (the PR's head it merged), when done: the
+// probe counts what is in it as merged. A commit added after it still counts.
+export const mergedCommit = (plan: PlannedStep[], s: Task['step']) =>
+  s?.done ? plan.filter(p => p.action && MERGE_KINDS.includes(p.action.kind)).map(p => s.proofs?.[p.id]?.commit).findLast(c => !!c && /^[0-9a-f]{7,64}$/.test(c)) : undefined
 
 // dir is root itself or deeper, with no '..' or '.' segment to climb out.
 export function underRoot(dir: string, root: string) {
@@ -26,7 +36,8 @@ export function cleanupRefusal(task: Task, runs: Run[], dir: string, root: strin
 
 // What the probe found in the worktree. listed: git knows it as a worktree of
 // the project. dirty: changed or untracked files. unique: commits on its HEAD
-// or branch that no remote branch and no other local branch has.
+// or branch that no remote branch, no other local branch and not the commit
+// its merge step proved merged has (a squash merge leaves them on no branch).
 export interface Facts { exists: boolean, listed: boolean, dirty: number, unique: number }
 
 // Why the worktree stays (or, already gone, its branch), or undefined: it may go.

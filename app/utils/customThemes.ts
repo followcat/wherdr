@@ -58,12 +58,33 @@ export function readThemeFile(v: unknown, id: string): ThemeDef | string {
 
 export const newCustomId = () => `custom-${Math.random().toString(36).slice(2, 10)}`
 
-// Pasted or picked text: size, JSON, then the format.
-export function importThemeText(text: string): ThemeDef | string {
+// Pasted, picked or edited text: size, JSON, then the format.
+export function importThemeText(text: string, id = newCustomId()): ThemeDef | string {
   if (new Blob([text]).size > THEME_FILE_MAX) return `The file is larger than ${THEME_FILE_MAX / 1024} KB`
   let v: unknown
   try { v = JSON.parse(text) } catch { return 'Not valid JSON' }
-  return readThemeFile(v, newCustomId())
+  return readThemeFile(v, id)
+}
+
+// The line an importThemeText error points at, when it can be found: the
+// parser's position for invalid JSON, else the key the message names.
+export function themeErrorLine(text: string, error: string): number | undefined {
+  let at = -1
+  if (error === 'Not valid JSON') {
+    try { JSON.parse(text) } catch (e) {
+      const msg = String(e)
+      const line = /line (\d+)/.exec(msg)
+      if (line) return Number(line[1])
+      at = Number(/position (\d+)/.exec(msg)?.[1] ?? -1)
+    }
+  } else {
+    const color = /"(dark|light)\.(\w+)"/.exec(error)
+    const key = color?.[1] ?? /\b(name|author|version)\b/.exec(error)?.[1]
+    if (key) at = text.search(new RegExp(`"${key}"\\s*:`))
+    const inside = at >= 0 && color && !error.endsWith('missing') ? text.indexOf(`"${color[2]}"`, at) : -1
+    if (inside >= 0) at = inside
+  }
+  return at < 0 ? undefined : text.slice(0, at).split('\n').length
 }
 
 // The synced setting: an array of theme files with their id; invalid entries are dropped.

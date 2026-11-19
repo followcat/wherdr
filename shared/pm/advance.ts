@@ -10,6 +10,7 @@ import { publicReviewSection } from './visibility'
 import { earlierCommit, needsShots } from './shots'
 import { recovering } from './incident'
 import type { PlannedStep, StepEvent, StepState } from './steps'
+import { blockedOnLine } from './park'
 
 // The agent's own end signal, typed in its terminal (hc sets HC_TERMINAL_ID).
 export const DONE_CMD = `hc label "$HC_TERMINAL_ID" ${LABEL.report}=done`
@@ -18,19 +19,34 @@ const ASK_CMD = `hc label "$HC_TERMINAL_ID" ${LABEL.report}=blocked:question`
 // The files of a task's run, beside its instructions file.
 export const runFiles = (instructions: string) => {
   const dir = instructions.replace(/\/[^/]+$/, '')
-  return { note: `${dir}/report.md`, review: `${dir}/review.md`, verdict: `${dir}/verdict.json`, files: `${dir}/files.txt` }
+  return { note: `${dir}/report.md`, before: `${dir}/report.before.md`, review: `${dir}/review.md`, verdict: `${dir}/verdict.json`, files: `${dir}/files.txt` }
+}
+
+// The report file holds one section per round: what the worker is told each time it gets a step back.
+export const appendLine = (note: string) =>
+  `Your report: keep ${note} as it is and add this round's section at its end, under its own heading (a link the step asks for goes on its first line).`
+
+// A report file after a round, against its copy from before the round: the
+// whole report, and the round's own section (this step's proofs come from it
+// alone, an earlier link proves nothing). A worker that rewrote the file: the
+// earlier report goes back on top (rewrote), never lost.
+export function roundNote(note: string, before: string): { whole: string, fresh: string, rewrote?: true } {
+  if (!before || note === before) return { whole: note || before, fresh: before ? '' : note }
+  if (note.startsWith(before)) return { whole: note, fresh: note.slice(before.length).trim() }
+  return { whole: note ? `${before}\n\n${note}` : before, fresh: note, rewrote: true }
 }
 
 // How a worker ends its step: the last section of its instructions file.
 export const doneSection = (note: string) => [
   '## When you are done', '',
-  `Commit your work, write your closing note to ${note} (a link the step asks for goes on its first line), then run:`, '',
+  `Commit your work, write your closing note to ${note} (a link the step asks for goes on its first line; if the file already holds a report, keep it and add yours at its end, under its own heading), then run:`, '',
   `    ${DONE_CMD}`, '',
   `If you need the user's answer to go on, ask in your last message, then run \`${ASK_CMD}\`.`, '',
+  blockedOnLine(), '',
 ]
 
 // The reviewer's instructions file: the task, what to review, the workspace's
-// instructions files (ws, wsFilesSection), how to answer.
+// instructions files and the context folders (ws: wsFilesSection, contextSection), how to answer.
 export function reviewFile(task: Pick<Task, 'id' | 'title' | 'description' | 'specNotes'>, run: Pick<Run, 'worktree' | 'branch'>, text: string, verdict: string, publicRepo = false, ws: string[] = []) {
   return [
     `# Review of ${task.id}: ${task.title}`, '', specText(task), '',
@@ -45,17 +61,19 @@ export function reviewFile(task: Pick<Task, 'id' | 'title' | 'description' | 'sp
 }
 
 // What the engine read after a signal: the task's commit, the size of its
-// diff, the worker's note and the reviewer's verdict file.
+// diff, the worker's note (this round's section; whole: the report file with
+// the earlier rounds, rewrote: to write back, roundNote) and the reviewer's verdict file.
 // branch: the worktree's checked-out one; work: its own commits and files since its fork from the base (Task.work).
-export interface SignalRead { head?: string, diffLines?: number, note: string, verdict: string, branch?: string, work?: Work }
+export interface SignalRead { head?: string, diffLines?: number, note: string, whole?: string, rewrote?: true, verdict: string, branch?: string, work?: Work }
 export const READ_SEP = '--wherdr-read--'
 export type Work = NonNullable<Task['work']>
 export function parseRead(out: string): SignalRead {
-  const [head = '', lines = '', note = '', verdict = '', branch = '', commits = '', numstat = ''] = out.split(`${READ_SEP}\n`)
+  const [head = '', lines = '', note = '', verdict = '', branch = '', commits = '', numstat = '', before = ''] = out.split(`${READ_SEP}\n`)
   const n = Number.parseInt(lines, 10)
   const files = numstat.split('\n').map(l => l.split('\t')).filter(c => c.length >= 3)
     .map(([a, d, ...p]) => ({ path: p.join('\t'), add: Number(a) || 0, del: Number(d) || 0 })).slice(0, 200)
-  return { ...(head.trim() ? { head: head.trim() } : {}), ...(Number.isFinite(n) ? { diffLines: n } : {}), note: note.trim(), verdict: verdict.trim(), ...(branch.trim() ? { branch: branch.trim() } : {}),
+  const r = roundNote(note.trim(), before.trim())
+  return { ...(head.trim() ? { head: head.trim() } : {}), ...(Number.isFinite(n) ? { diffLines: n } : {}), note: r.fresh, ...(r.whole !== r.fresh ? { whole: r.whole } : {}), ...(r.rewrote ? { rewrote: r.rewrote } : {}), verdict: verdict.trim(), ...(branch.trim() ? { branch: branch.trim() } : {}),
     ...(commits.trim() ? { work: { commits: commits.trim(), files } } : {}) }
 }
 
@@ -68,11 +86,11 @@ export function signalKept(task: Task, step: string, ev: { kind: string }, read:
   return { ...(read.work ? { work: { ...read.work, ...(reviewed ? { reviewed } : {}) } } : {}), ...(report ? { workReports: report } : {}) }
 }
 
-// The note gives the proofs a report needs: itself, and its first link
+// The note gives the proofs a report needs: itself (the whole report file), and its first link
 // (without the sentence's closing punctuation: 'PR: <url>.').
 export function proofsOf(r: SignalRead): Partial<Record<Evidence, string>> {
   const link = /https?:\/\/[^\s)>\]]+/.exec(r.note)?.[0].replace(/[.,;:!?'"]+$/, '')
-  return { ...(r.note ? { report: r.note, 'proposed-tasks': r.note } : {}), ...(link ? { link } : {}), ...(r.head ? { commit: r.head } : {}) }
+  return { ...(r.note ? { report: r.whole ?? r.note, 'proposed-tasks': r.note } : {}), ...(link ? { link } : {}), ...(r.head ? { commit: r.head } : {}) }
 }
 
 // A run's "done" → the engine's event for the current step; what to fix, told
@@ -129,14 +147,16 @@ export const CHAIN_WAIT = 'which this task starts after'
 // Where a chained task stands: 'go' once all its tasks are done (merged, or
 // their report finished); a reason to wait for the user when one failed or
 // stopped; resumes: one the engine resumes after an incident (recovery.ts),
-// waited for quietly; undefined while they still run.
-export function chainState(task: Task, tasks: Task[]): 'go' | { wait: string } | { resumes: string } | undefined {
+// waited for quietly; undefined while they still run. projects: the keys that
+// exist; an open task of a project removed since waits for the user too.
+export function chainState(task: Task, tasks: Task[], projects?: { key: string }[]): 'go' | { wait: string } | { resumes: string } | undefined {
   let open = false, resumes: string | undefined
   for (const id of afterIds(task)) {
     const t = tasks.find(x => x.id === id)
     if (!t) return { wait: `${id}, ${CHAIN_WAIT}, does not exist` }
     if (t.step?.abandoned) return { wait: `${id}, ${CHAIN_WAIT}, was abandoned` }
     if (t.step?.done) continue
+    if (projects && !projects.some(p => p.key === t.project)) return { wait: `${id}, ${CHAIN_WAIT}, belongs to project ${t.project}, which was removed` }
     if (recovering(t)) { resumes ??= id; continue }
     // Stopped: waiting, not on an agent's question but on a failure.
     if (t.state === 'waiting' && !t.waitKind) return { wait: `${id}, ${CHAIN_WAIT}, stopped: ${t.waiting?.split('\n')[0] ?? ''}` }

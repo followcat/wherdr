@@ -147,20 +147,21 @@ export const taskStatus = (t: Task): TaskStatus =>
 // A working task whose step holds no agent (a PR or merge waiting for checks
 // or the queue, a user step) takes no slot, unless the engine handed its
 // worker work on its own (a catch-up, red CI). Without its plan: it holds one.
+// A parked task (waiting for another task, or paused for room) runs no agent: none either.
 export const holdsSlot = (t: Task, plan?: Pick<PlannedStep, 'holder'>[]) =>
-  !plan || !t.step || !!t.step.agent || (plan[t.step.at]?.holder ?? 'none') !== 'none'
+  !t.parked && (!plan || !t.step || !!t.step.agent || (plan[t.step.at]?.holder ?? 'none') !== 'none')
 export type SlotOf = (t: Task) => boolean
 
 // What is left of today's limits. Started today: tasks whose first worker run
 // started since local midnight. Working: only tasks that hold a slot (holds:
-// holdsSlot with each task's plan).
+// holdsSlot with each task's plan), never a parked one.
 export function limitsLeft(ap: Autopilot, tasks: Task[], runs: Run[], now: number, holds: SlotOf = () => true) {
   const midnight = new Date(now).setHours(0, 0, 0, 0)
   const ids = new Set(tasks.map(t => t.id))
   const first = new Map<string, number>()
   for (const r of runs) if (ids.has(r.task) && r.role === 'worker') first.set(r.task, Math.min(first.get(r.task) ?? Infinity, r.startedAt))
   const started = [...first.values()].filter(at => at >= midnight).length
-  const working = tasks.filter(t => ['working', 'stalled'].includes(taskStatus(t)) && holds(t)).length
+  const working = tasks.filter(t => ['working', 'stalled'].includes(taskStatus(t)) && !t.parked && holds(t)).length
   return { started, perDay: ap.perDay, startLeft: Math.max(0, Math.min((ap.perDay ?? Infinity) - started, (ap.atOnce ?? Infinity) - working)), working, atOnce: ap.atOnce }
 }
 
@@ -323,7 +324,7 @@ export function autopilotEvents(ap: Autopilot, tasks: Task[], seen: Record<strin
 // Commands that are the user's only, whatever the turn: the coordinator's
 // token never merges, approves, changes settings or its own limits.
 export const USER_ONLY: Record<string, string> = {
-  approve: 'Approving is the user\'s: it waits in their Decisions',
+  approve: 'Approving is the user\'s: it waits in their Tasks to review',
   merge: 'Merging is the user\'s gesture, or the engine\'s where the branch rule allows it',
   settings: 'Settings change only in wherdr, by the user',
   'autopilot set': 'The autopilot\'s goal and limits change only in wherdr, by the user',

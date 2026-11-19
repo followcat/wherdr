@@ -66,9 +66,20 @@ const appButton = (href: string, label: string) => `<a href="${escHtml(href)}" c
 //   ```
 // - `task WHR-12`: the task's live card, read from the board
 //   (ChatTaskCard.vue); a tap opens its sheet.
+// - `questions`, then one numbered line per question (1 to 8, numbered in
+//   order), the question then its 2 to 4 options: one card
+//   (QuestionsCard.vue) where the user picks one answer per question, or
+//   types another, and one Send sends them all in one message.
+//   ```wherdr
+//   questions
+//   1 "Which database?" | "Postgres" | "SQLite"
+//   2 "Keep the old API?" | "Yes" | "No, remove it"
+//   ```
 export interface WherdrChoices { kind: 'choices', options: string[] }
 export interface WherdrTask { kind: 'task', id: string }
-export type WherdrElement = WherdrChoices | WherdrTask
+export interface WherdrQuestion { q: string, options: string[] }
+export interface WherdrQuestions { kind: 'questions', items: WherdrQuestion[] }
+export type WherdrElement = WherdrChoices | WherdrTask | WherdrQuestions
 export const CHOICES_MIN = 1
 export const CHOICES_MAX = 4
 const CHOICE_MAX_CHARS = 80
@@ -82,19 +93,44 @@ function parseChoices(arg: string): WherdrChoices | null {
   }
   return options.length >= CHOICES_MIN && options.length <= CHOICES_MAX ? { kind: 'choices', options } : null
 }
+export const QUESTIONS_MAX = 8
+const QUESTION_MAX_CHARS = 200
+// One numbered line of a `questions` element: `2 "Keep the old API?" | "Yes" | "No"`.
+function parseQuestion(line: string, n: number): WherdrQuestion | null {
+  const m = /^\s*(\d+)[.)]?\s+(.*)$/.exec(line)
+  if (!m || Number(m[1]) !== n) return null
+  const [head, ...rest] = m[2]!.split('|')
+  const q = CHOICE.exec(head!)?.[1]?.replace(/\s+/g, ' ').trim() || ''
+  const choices = rest.length ? parseChoices(rest.join('|')) : null
+  return q && q.length <= QUESTION_MAX_CHARS && choices && choices.options.length >= 2 ? { q, options: choices.options } : null
+}
 const TASK_ID = /^[A-Za-z][\w.-]*-\d+$/
 const parseTask = (arg: string): WherdrTask | null => TASK_ID.test(arg.trim()) ? { kind: 'task', id: arg.trim() } : null
 const KINDS: Record<string, (arg: string) => WherdrElement | null> = { choices: parseChoices, task: parseTask }
 export function parseWherdrBlock(text: string): WherdrElement[] | null {
   const out: WherdrElement[] = []
+  // The `questions` element being read: its numbered lines follow it.
+  let open: WherdrQuestions | null = null
   for (const line of String(text || '').split('\n')) {
     if (!line.trim()) continue
+    if (/^\s*questions\s*$/.test(line)) {
+      open = { kind: 'questions', items: [] }
+      out.push(open)
+      continue
+    }
+    if (open && /^\s*\d/.test(line)) {
+      const q = parseQuestion(line, open.items.length + 1)
+      if (!q || open.items.length >= QUESTIONS_MAX) return null
+      open.items.push(q)
+      continue
+    }
+    open = null
     const m = /^\s*([a-z]+)\s+(.*)$/.exec(line)
     const el = m && Object.hasOwn(KINDS, m[1]!) ? KINDS[m[1]!]!(m[2]!) : null
     if (!el) return null
     out.push(el)
   }
-  return out.length ? out : null
+  return out.length && out.every(e => e.kind !== 'questions' || e.items.length) ? out : null
 }
 // The options of a message's last `choices` line (Tasks to review's buttons).
 export function messageChoices(text: string): string[] {
@@ -115,6 +151,13 @@ function wherdrHtml(els: WherdrElement[]): string {
   for (const el of els) {
     if (el.kind === 'task') { tasks += taskHtml(el.id); continue }
     if (tasks) { html += `<div class="wherdr-block">${tasks}</div>`; tasks = '' }
+    // A placeholder that ChatMarkdown.vue fills with QuestionsCard.vue; until
+    // then, and where there is none, the questions as text.
+    if (el.kind === 'questions') {
+      html += `<div class="w-questions" data-questions="${escHtml(JSON.stringify(el.items))}">${el.items.map((q, i) =>
+        `<p>${i + 1}. ${escHtml(q.q)} (${q.options.map(escHtml).join(' / ')})</p>`).join('')}</div>`
+      continue
+    }
     html += `<div class="w-choices" role="group">${el.options.map(o =>
       `<button type="button" class="q-choice" data-a="${escHtml(o)}">${escHtml(o)}</button>`).join('')}</div>`
   }

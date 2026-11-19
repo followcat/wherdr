@@ -1,4 +1,4 @@
-// { id, choice }: the user's answer to a review handed to them (Decisions).
+// { id, choice }: the user's answer to a review handed to them (Tasks to review, the task's sheet).
 import { userDecide } from '../../utils/pmBoard'
 import { pmStore } from '../../utils/pmStore'
 import { publicTask } from '../../../shared/pm/run'

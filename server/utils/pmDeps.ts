@@ -15,19 +15,26 @@ import { exec } from './pmLaunch'
 
 // Arguments: clone, worktree, lockfile, then the files to copy and the
 // folders to share, each list one path per line. Prints one line per path,
-// `copy ok|kept|tracked|missing|failed <path>` and `share ok|kept <path>` or
-// `share no <path> nolock|differs|absent|stale|failed`, then `need` when the
+// `copy ok|kept|tracked|missing|nested|failed <path>` (nested: in or holding
+// another git repository, such as a workspace member under its root's own) and `share ok|kept <path>` or
+// `share no <path> nolock|differs|absent|nested|stale|failed`, then `need` when the
 // setup command is due: a folder was not shared, or none is listed, and the
 // command has not succeeded in this worktree yet (a marker in its git folder).
 export const SETUP_SCRIPT = `repo=$1 dir=$2 lock=$3 copy=$4 share=$5
 g=$(git -C "$dir" rev-parse --absolute-git-dir) || exit 1
+top=$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null)
 need=; [ -n "$share" ] || need=1
+# In or holding another git repository than the clone's (a workspace member under its root's own).
+nested() { [ -d "$1" ] && in=$1 || in=$(dirname "$1")
+  [ "$(git -C "$in" rev-parse --show-toplevel 2>/dev/null)" != "$top" ] || { [ -d "$1" ] && [ -n "$(find "$1" -mindepth 1 -name .git -print -quit 2>/dev/null)" ]; }; }
 IFS='
 '
 for f in $copy; do
+  src=$repo/$f
   if git -C "$dir" ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then echo "copy tracked $f"
   elif [ -e "$dir/$f" ]; then echo "copy kept $f"
-  elif [ ! -e "$repo/$f" ]; then echo "copy missing $f"
+  elif [ ! -e "$src" ]; then echo "copy missing $f"
+  elif nested "$src"; then echo "copy nested $f"
   elif mkdir -p "$(dirname "$dir/$f")" && cp -Rp "$repo/$f" "$dir/$f"; then echo "copy ok $f"
   else echo "copy failed $f"; fi
 done
@@ -37,6 +44,7 @@ for f in $share; do
   if [ ! -f "$dir/$lock" ]; then why=nolock
   elif ! cmp -s "$repo/$lock" "$dir/$lock"; then why=differs
   elif [ ! -e "$src" ]; then why=absent
+  elif nested "$src"; then why=nested
   elif [ "$repo/$lock" -nt "$mark" ]; then why=stale
   else
     why=failed tmp=$dir/$f.wherdr-partial
@@ -79,7 +87,7 @@ export interface SetupResult {
 export function setupOf(out: string, w: WorktreeSetup): SetupResult {
   const r: SetupResult = { copied: [], skipped: [], shared: [], notShared: [], need: false }
   const lock = lockOf(w)
-  const WHY: Record<string, string> = { nolock: `no ${lock}`, differs: `${lock} differs from the clone's`, absent: 'not in the clone', stale: `not installed for its ${lock} in the clone`, failed: 'the copy failed', tracked: 'tracked by git', missing: 'not in the clone' }
+  const WHY: Record<string, string> = { nolock: `no ${lock}`, differs: `${lock} differs from the clone's`, absent: 'not in the clone', stale: `not installed for its ${lock} in the clone`, failed: 'the copy failed', tracked: 'tracked by git', missing: 'not in the clone', nested: 'another git repository' }
   for (const line of out.split('\n')) {
     const [kind, how, ...rest] = line.trim().split(' ')
     if (kind === 'need') r.need = true

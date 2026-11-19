@@ -77,7 +77,7 @@ function saveCoordName() {
   const v = coordName.value.trim()
   if (p.value && v !== (p.value.coordinatorName || p.value.name)) run(() => api('/api/pm/project-update', { key: key.value, coordinatorName: v === p.value!.name ? '' : v }))
 }
-watch(agents, a => { if (!a.some(x => x === agent.value)) agent.value = a[0] ?? '' }, { immediate: true })
+watch(agents, a => { if (!a.some(x => x === agent.value)) agent.value = defaultProjectChoice(a) }, { immediate: true })
 
 // 3. Its coordinator: started with that agent, asked to set up how the user
 // works, then its conversation; while it runs, its conversation only.

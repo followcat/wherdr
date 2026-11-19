@@ -1,14 +1,27 @@
 // Keep a machine awake: its state per machine key (Settings › Machines cards and
 // the machine tabs' menu read the same one) and the choices sheet.
-import type { AwakeMode, AwakeState } from '#shared/awake'
-import { awakeWarning } from '#shared/awake'
+import type { AwakeMode, AwakeRead, AwakeState } from '#shared/awake'
+import { awakeRefusal, awakeWarning } from '#shared/awake'
 
 export const awakeByMachine = ref<Record<string, AwakeState>>({})
+// A tap under way per machine key (its read, or a menu choice being applied): the
+// sun button spins, Home shows AwakePending, and a second tap does nothing.
+export const awakeBusy = ref<Record<string, { label: string, what: 'read' | 'set' }>>({})
 
-export async function refreshAwake(key: string) {
-  try { awakeByMachine.value[key] = await api<AwakeState>(`/api/machine/awake?key=${encodeURIComponent(key)}`) }
-  catch { delete awakeByMachine.value[key] }
-  return awakeByMachine.value[key]
+// A failed read is { error }: the machine did not answer, which is not "no tool".
+export async function refreshAwake(key: string): Promise<AwakeRead> {
+  try { return awakeByMachine.value[key] = await api<AwakeState>(`/api/machine/awake?key=${encodeURIComponent(key)}`) }
+  catch (err) {
+    delete awakeByMachine.value[key]
+    return { error: (err as Error).message || 'no answer' }
+  }
+}
+
+async function busy(key: string, label: string, what: 'read' | 'set', fn: () => Promise<void>) {
+  if (awakeBusy.value[key]) return
+  awakeBusy.value[key] = { label, what }
+  try { await fn() }
+  finally { delete awakeBusy.value[key] }
 }
 
 // "Awake until 18:00", "Awake until turned off", '' when it sleeps normally.
@@ -17,16 +30,28 @@ export function awakeLabel(s: AwakeState | undefined) {
   return s.until ? tl(`Awake until ${fmtTime(s.until)}`) : t('Awake until turned off')
 }
 
-async function choose(key: string, mode: AwakeMode | 'off') {
-  try { awakeByMachine.value[key] = await api<AwakeState>('/api/machine/awake', { key, mode }) }
-  catch (err) { toast(t((err as Error).message)) }
+function choose(key: string, label: string, mode: AwakeMode | 'off') {
+  return busy(key, label, 'set', async () => {
+    try { awakeByMachine.value[key] = await api<AwakeState>('/api/machine/awake', { key, mode }) }
+    catch (err) { toast(t((err as Error).message)) }
+  })
 }
 
-export async function openAwake(m: { key: string, label: string }) {
+export function openAwake(m: { key: string, label: string }) {
   haptic()
-  const s = await refreshAwake(m.key)
-  if (!s?.supported) { toast(t('Sleep control is not available on this machine')); return }
-  const pick = (mode: AwakeMode | 'off') => () => choose(m.key, mode)
+  return busy(m.key, m.label, 'read', async () => {
+    const read = await refreshAwake(m.key)
+    const refusal = t(awakeRefusal(m.label, read))
+    if (refusal) {
+      toast(refusal, 'error' in read, undefined, 'error' in read ? { label: t('Try again'), icon: 'i-lucide-rotate-cw', run: () => openAwake(m) } : undefined)
+      return
+    }
+    showMenu(m, read as AwakeState)
+  })
+}
+
+function showMenu(m: { key: string, label: string }, s: AwakeState) {
+  const pick = (mode: AwakeMode | 'off') => () => choose(m.key, m.label, mode)
   const notes = [
     awakeLabel(s) || t('Normal sleep'),
     s.battery && tl(`Battery ${s.battery.percent}%${s.battery.source === 'ac' ? ' · power adapter' : ''}`),

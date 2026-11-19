@@ -17,7 +17,7 @@ export function paneAgentKind(raw: Json, entry?: Json | null): string | null {
 // Agents whose transcript wherdr reads ("Conversation" view, previews, search).
 // OpenCode has no transcript file: its pane's service session is read
 // through the OpenCode transport (server/utils/opencodeTranscripts.ts).
-export const TRANSCRIPT_AGENTS = ['claude', 'codex', 'omp', 'devin', 'cmd', 'opencode', 'agy', 'cline'] as const
+export const TRANSCRIPT_AGENTS = ['claude', 'codex', 'omp', 'devin', 'cmd', 'opencode', 'agy', 'cline', 'hermes'] as const
 export type TranscriptAgent = typeof TRANSCRIPT_AGENTS[number]
 export const hasTranscript = (kind: string | null | undefined): kind is TranscriptAgent =>
   (TRANSCRIPT_AGENTS as readonly string[]).includes(kind || '')

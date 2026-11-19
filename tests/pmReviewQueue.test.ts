@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { reviewCap, reviewTurn, reviewerOut, runningReviews } from '../shared/pm/reviewQueue'
+import { reviewAccount, reviewCap, reviewTurn, reviewerOut, runningReviews } from '../shared/pm/reviewQueue'
+import { accountOut } from '../shared/pm/pace'
 import { reviewText } from '../shared/pm/verdict'
 import { DEFAULT_PACE } from '../shared/pm/pacing'
 import type { Quotas } from '../shared/types'
@@ -27,6 +28,17 @@ describe('the review queue of one account', () => {
     // One running review ends: the oldest waiting one goes, the next still waits.
     expect(reviewTurn(tasks[3]!, 'codex', tasks, 1, 2)).toEqual({ go: true })
     expect(reviewTurn(tasks[2]!, 'codex', tasks, 1, 2)).toEqual({ ahead: 2 })
+  })
+})
+
+describe('a reviewer on omp (no quota reading)', () => {
+  it('is never out of quota or held by a pace: only the task-count limits apply', () => {
+    // Even with a reading of the other programs, and a strict pace.
+    const paced = { ...DEFAULT_PACE, mode: 'everyday' as const, reserve5h: 30 }
+    expect(accountOut(codex(99), 'omp', '', now)).toBeUndefined()
+    expect(reviewAccount(codex(99), 'omp', '')).toEqual({ key: 'omp', name: 'OMP', quota: null })
+    expect(reviewerOut(codex(99), 'omp', '', () => paced, now)).toBeUndefined()
+    expect(reviewerOut(null, 'omp', '', () => paced, now)).toBeUndefined()
   })
 })
 

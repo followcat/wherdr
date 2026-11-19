@@ -127,6 +127,20 @@ describe('Composer send', () => {
     w.unmount()
   })
 
+  // Safari (iPhone) reports the Enter that confirms an IME candidate with isComposing false.
+  it('the Enter that confirms an IME candidate (keyCode 229) does not send; the next Enter does', async () => {
+    prompts.length = 0
+    const { w, field } = await mount('w1:ime')
+    await field.trigger('keydown', { key: 'Enter', keyCode: 229 })
+    await flushPromises()
+    expect(outboxFor('w1:ime')).toHaveLength(0)
+    await field.trigger('keydown', { key: 'Enter' })
+    await releaseNext()
+    await flushPromises()
+    expect(prompts).toEqual(['Fix the cache'])
+    w.unmount()
+  })
+
   it('keeps paragraph spacing in the outgoing message', async () => {
     const { w, field } = await mount('w1:p3')
     const text = 'First paragraph.\n\nSecond paragraph.\n\n\nThird paragraph.'

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BAR_ALL, barMachineSelection, type MachineGroup } from '../app/utils/machineBar'
-import { countsTotal, projectOnTab, projectTabMachines, tabCounts } from '../app/utils/projectTabs'
+import { countsTotal, projectOnTab, projectsMatching, projectTabMachines, tabCounts, tabHolds } from '../app/utils/projectTabs'
 import { readProjectTabs } from '../shared/settings'
 
 const groups: MachineGroup[] = [
@@ -96,5 +96,30 @@ describe('tab counts', () => {
   it('a tab badge is its counters total', () => {
     expect(countsTotal(tab(BAR_ALL))).toBe(6)
     expect(countsTotal(tab('*group:work'))).toBe(3)
+  })
+})
+
+// Settings › Projects' list (WHR-442): the tab filter's rule, then its search.
+describe('projects on a tab, then searched', () => {
+  const places = new Map<string, string[] | null>([['HOME', ['']], ['WORK', ['devbox']], ['ALF', null]])
+  const holds = (key: string, pick: string) => tabHolds(places.get(key), barMachineSelection(pick, groups))
+  it('All holds every project; a tab holds those on its machines, one on every tab, and one not loaded yet', () => {
+    expect(['HOME', 'WORK', 'ALF', 'NEW'].map(k => holds(k, BAR_ALL))).toEqual([true, true, true, true])
+    expect(['HOME', 'WORK', 'ALF', 'NEW'].map(k => holds(k, '*group:work'))).toEqual([false, true, true, true])
+    expect(['HOME', 'WORK', 'ALF', 'NEW'].map(k => holds(k, 'laptop'))).toEqual([false, false, true, true])
+  })
+  const projects = [
+    { key: 'WEB', name: 'Website', path: '~/src/site' },
+    { key: 'API', label: 'SRV', aliases: ['OLD'], name: 'Backend', path: '~/src/api' },
+  ]
+  const found = (q: string) => projectsMatching(projects, q).map(p => p.key)
+  it('searches by name, key (shown, fixed or former) and path, any case; empty finds all', () => {
+    expect(found('webs')).toEqual(['WEB'])
+    expect(found('srv')).toEqual(['API'])
+    expect(found('api')).toEqual(['API'])
+    expect(found('old')).toEqual(['API'])
+    expect(found('SRC/SITE')).toEqual(['WEB'])
+    expect(found('  ')).toEqual(['WEB', 'API'])
+    expect(found('nothing')).toEqual([])
   })
 })

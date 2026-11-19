@@ -58,7 +58,7 @@ for (const r of ROWS) watch(() => form.merge[r.k], () => { if (!filling) auto.ch
     </div>
     <p v-if="auto.errors.protected" class="form-error" role="alert">{{ t(auto.errors.protected) }}</p>
     <span class="guard-add">
-      <UInput v-model="adding" size="lg" class="mono" :placeholder="tl('Add a branch')" :aria-label="tl('Branch to protect')" maxlength="200" data-testid="guard-add" @keydown.enter.prevent="add" />
+      <UInput v-model="adding" size="lg" class="mono" :placeholder="tl('Add a branch')" :aria-label="tl('Branch to protect')" maxlength="200" data-testid="guard-add" @keydown.enter="!imeComposing($event) && ($event.preventDefault(), add())" />
       <UButton size="lg" color="neutral" variant="outline" icon="i-lucide-plus" :disabled="!adding.trim()" data-testid="guard-add-button" @click="add">{{ tl('Add') }}</UButton>
     </span>
 

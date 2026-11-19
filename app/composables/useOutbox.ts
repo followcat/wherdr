@@ -64,7 +64,7 @@ function deliver(p: Pane | undefined, paneId: string, id: string, text: string):
   )
 }
 
-// A message: its bubble at once ("Queued · sending…"), then the send.
+// A message: its bubble at once ("Sending…"), then the send.
 export function outboxSend(p: Pane | undefined, paneId: string, text: string): Promise<QueuedMessage | null> {
   const id = newOutboxId()
   update(paneId, l => addSending(l, id, text, Date.now()))

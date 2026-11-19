@@ -12,10 +12,18 @@
 - <a id="custom-themes"></a>**Custom themes** (Settings › Appearance › Theme › **Create theme**): start
   from any theme and change its colors (background, sidebar, surface, borders, text, muted text,
   accent, success, warning, danger, and the 16 terminal colors) for Dark and Light, with a live
-  preview and the WCAG AA contrast check. Custom themes form a **Custom** group (up to 10), follow
-  you across devices, and are edited, duplicated, exported or deleted from their pencil button.
+  preview (a miniature of the whole app: sidebar with counters and agents, a conversation with a
+  code block and the composer, a settings panel, and a terminal strip in the 16 terminal colors)
+  and the WCAG AA contrast check. The **JSON** tab beside Dark and Light shows the theme as its
+  file (the format below) to edit or paste whole: checked as you type like an import, a valid edit
+  updates the swatches and the preview; an invalid one shows the reason and its line, keeps the
+  last valid theme in the preview and disables Save. Custom themes form a **Custom** group (up to 10), follow
+  you across devices, and are edited, duplicated, exported or deleted from their pencil button; a
+  name too long for its row ends with an ellipsis (the full name shows on hover).
   **Export** downloads a JSON file or copies it; **Import theme** takes a pasted or picked file
   (8 KB at most), refused with the reason if invalid. There is no sharing service: share the file.
+  Alfred makes one on request: describe it and it answers with a card to preview, edit or apply
+  (`wherdr alfred theme propose`, [Alfred's command](alfred.md)).
   The format, every color `#rrggbb`:
   ```json
   { "wherdr": "theme", "version": 1, "name": "My theme", "author": "optional",
@@ -63,7 +71,7 @@ unit: see [Installation](installation.md#keep-it-running)), read at each start.
 | `HERDR_WEB_HERDR_NOTIFICATIONS` | `off` to stop relaying `herdr notification show` as push. |
 
 In the app, **Settings** has these sections: Appearance, Conversation, Terminal, Agents
-(Machines, Claude quotas), Notifications, Plugins (only once a plugin is installed), Phone, Security, Shortcuts (computer)
+(Machines, Claude quotas), Notifications, Plugins, Phone, Security, Shortcuts (computer)
 and About. **Settings** holds display preferences such as theme, typing effect and what the
 home screen shows; these follow you across devices through `settings.json`. Notifications, terminal text size and renderer remain device-specific. The passkey lock is
 managed under Settings › Security.

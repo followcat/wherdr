@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// Menu as a sheet: actions (rename, close…), agent commands.
+// Menu as a sheet: actions (rename, close…), agent commands. `top`: it opens
+// from inside other sheets (a project sheet's ⋯), so it shows above them.
 function run(item: MenuItem) {
   if (item.disabled) return
   menuState.open = false
@@ -8,7 +9,7 @@ function run(item: MenuItem) {
 </script>
 
 <template>
-  <AppSheet v-model:open="menuState.open" :title="menuState.title">
+  <AppSheet v-model:open="menuState.open" :title="menuState.title" top>
     <div class="menu">
       <template v-for="(it, i) in menuState.items" :key="i">
         <div v-if="it.kind === 'separator'" class="menu-sep" />

@@ -28,13 +28,14 @@ import { createCodexStatus, dirWritable } from './codexStatus'
 import { runLocal, setCodexKnownWeek } from './quotas'
 import { pmStore } from './pmStore'
 import { projectCoordinatorName } from '../../shared/pm/project'
-import { createHeld } from './coreHeld'
+import { createHeld, heldFile } from './coreHeld'
 import { coreInputDeps, coreSend } from './coreInput'
 import { devinCards } from './devinCards'
 import { createModelCtl, createModelRefresh } from './modelctl'
 import { createCoreModelCtl } from './coreModelctl'
 import { coreFilesMachine } from './coreFilesMachine'
 import { createShellFs } from './fsx'
+import { onSubmittingChange } from './submitting'
 
 const fsp = fs.promises
 const hcCall = <T>(method: string, params: object, timeout: number) => coreCall<T>(process.env.HC_SOCKET || '', method, params, timeout)
@@ -224,14 +225,16 @@ export function takeBackFromClaude(p: Pane, io: { screen: () => Promise<string>,
 }
 
 // ---------------------------------------------------------------- held messages
-// Sent while Codex installs or updates itself: typed once it is ready (coreHeld.ts).
-export const heldMessages = createHeld((p, q) => coreSend(coreInputDeps(), { pane_id: p.id, text: q.text }))
+// Sent while Codex installs or updates itself: typed once it is ready (coreHeld.ts),
+// kept on disk so that a restart of wherdr resumes them.
+export const heldMessages = createHeld((p, q) => coreSend(coreInputDeps(), { pane_id: p.id, text: q.text }), Date.now, heldFile(path.join(DATA_DIR, 'held.json')))
 
 // ---------------------------------------------------------------- poll
 export async function poll() {
   lastCorePoll = Date.now()
   state = await readCoreState(state)
-  heldMessages.apply(state.panes)
+  // Core unreadable (its panes are the last known, none at startup): nothing is dropped.
+  if (state.ok !== false) heldMessages.apply(state.panes)
   await coreScreens().enrich(state.panes).catch(() => {})
   void coreTranscriptsOf().observe(state.panes)
   corePreviews().apply(state.panes)
@@ -297,6 +300,8 @@ export const wakeCorePoll = () => scheduleCorePoll()
 
 export function startPolling() {
   stopped = false
+  // A send to Claude starts or ends: its "Sending…" changes on every open page now.
+  onSubmittingChange(scheduleCorePoll)
   const endpoint = process.env.HC_SOCKET
   if (endpoint) {
     coreAlerts = createCoreAlerts({ settleMs: NOTIFY_SETTLE_MS, current: a => coreSession?.get(a), send: (a, k) => { notifyCorePane(a, k).catch(e => log('notification:', e.message)) } })
@@ -333,7 +338,7 @@ export function stopPolling() {
 }
 
 // ---------------------------------------------------------------- notifications
-const AGENT_LABEL: Record<string, string> = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', opencode: 'OpenCode', cursor: 'Cursor', agy: 'Antigravity' }
+const AGENT_LABEL: Record<string, string> = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', opencode: 'OpenCode', cursor: 'Cursor', omp: 'OMP', agy: 'Antigravity' }
 const agentLabel = (k: string | null) => (k && AGENT_LABEL[k]) || (k ? k[0]!.toUpperCase() + k.slice(1) : 'Agent')
 const notificationTitle = (title: string | null) => (title || '').replace(/^[^\p{L}\p{N}]+/u, '').trim()
 
@@ -357,7 +362,7 @@ const coordinatorAt = async (address: string) => {
 async function notifyCorePane(address: string, kind: CoreAlertKind) {
   const p = state.panes.find(x => x.coreAddress === address)
   if (!p || isViewed(p.id)) return
-  // A project task's agent waiting for the user goes into the grouped Decisions push.
+  // A project task's agent waiting for the user goes into the grouped push of what waits for the user (pmDecisions.ts).
   if (kind === 'needs-you' && await isTaskAgent(address)) return
   const event: NotificationEvent = kind === 'needs-you' ? 'needs-you' : 'finished'
   const coordinator = await coordinatorAt(address)

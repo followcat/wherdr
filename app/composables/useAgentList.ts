@@ -1,7 +1,7 @@
 // The agents the user offers (Settings › Agents), for every picker: the
 // programs installed on the reachable machines, in the user's order, minus
 // those unchecked. The first is the default everywhere.
-import { MAIN, canRunCoordinator, isCoordinatorProgram, type CoordinatorAgent, type CoordinatorView } from '#shared/pm/coordinator'
+import { MAIN, canRunCoordinator, defaultProjectProgram, isCoordinatorProgram, type CoordinatorAgent, type CoordinatorView } from '#shared/pm/coordinator'
 import { offeredAgents, orderAgents } from '~/utils/agentChoices'
 
 // The reachable machines and what each has installed.
@@ -15,19 +15,26 @@ export const installedAgents = computed(() => orderAgents(agentMachines.value.fl
 // The offered programs among `installed` (one machine's), or among all of them.
 export const offerAgents = (installed: readonly string[] = installedAgents.value) => offeredAgents(installed, hiddenAgents.value, agentOrder.value)
 // The offered programs that can run Alfred (the main coordinator), or with a
-// project key, that project's coordinator (Claude and Codex: see canRunCoordinator).
+// project key, that project's coordinator (Claude, Codex and omp: see canRunCoordinator).
 export const offerCoordinators = (installed?: readonly string[], project: string = MAIN) =>
   offerAgents(installed).filter(isCoordinatorProgram).filter(p => canRunCoordinator(p, project))
+
+// The agent a project coordinator picker starts on among its `choices`: a Claude
+// or Codex before omp, which is only ever picked on purpose.
+export const defaultProjectChoice = (choices: readonly string[]) => defaultProjectProgram(choices) ?? ''
 
 // The offered agents installed on wherdr's own machine, where Alfred runs.
 export const alfredPrograms = computed(() => offerCoordinators(appConfig.value.machines?.find(m => m.local)?.kinds ?? appConfig.value.kinds))
 
 // A coordinator's agent: the default the user set for it while still offered,
-// else their first agent that can coordinate. Alfred keeps the one the user
-// chose, offered or not: wherdr never moves it to another program on its own.
+// else their first agent that can coordinate, a Claude or Codex before omp
+// (a project coordinator on omp is the user's explicit choice, never the default).
+// Alfred keeps the one the user chose, offered or not: wherdr never moves it to
+// another program on its own.
 export function coordinatorAgent(c: Pick<CoordinatorView, 'agent' | 'project'>): CoordinatorAgent | undefined {
   if (c.project === MAIN && c.agent) return c.agent
   const offered = offerCoordinators(undefined, c.project)
   if (c.agent && offered.includes(c.agent.program)) return c.agent
-  return offered[0] ? { program: offered[0] } : c.agent
+  const program = c.project === MAIN ? offered[0] : defaultProjectProgram(offered)
+  return program ? { program } : c.agent
 }

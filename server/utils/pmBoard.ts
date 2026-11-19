@@ -12,10 +12,12 @@ import { allowedMachines, type Project } from '../../shared/pm/project'
 import type { MachineInfo } from '../../shared/types'
 import { lastReadiness } from './pmReady'
 import { showIds, shownTaskId } from '../../shared/pm/projectKey'
+import { commitMessageFor } from '../../shared/pm/branchName'
 import { taskAgents, type TaskAgent } from '../../shared/pm/taskAgents'
 import { CHOICES, type Choice } from '../../shared/pm/verdict'
 import { tellTarget } from '../../shared/pm/coordinator'
 import { actionShell, dropMergedBranch, runAction } from './pmActions'
+import { thrownReason } from '../../shared/pm/refusal'
 import type { CoreAdminDeps } from './coreCreate'
 import { runOn, wherdrBase } from './pmLaunch'
 import { HerdrError } from './herdr'
@@ -171,6 +173,12 @@ export function startAction(deps: CoreAdminDeps & { store: PmStore }, id: string
 // The step actions started so far, settled (tests, and a shutdown that waits).
 export const actionsSettled = async () => { while (started.size) await Promise.allSettled([...started]) }
 
+// A squash merge's or git.land's commit message from the project's template, when it has one.
+const messageOf = (p: Project | undefined, task: Task) => {
+  const message = commitMessageFor(p?.commitMessage, { ...task, id: shownTaskId(p ? [p] : [], task.id) })
+  return message ? { message } : {}
+}
+
 // lost: its hold went past its limit; another run of the step may have ended it since.
 async function stepActionOf(deps: CoreAdminDeps & { store: PmStore }, task: Task, by: MergeBy, userSaid: boolean, lost: () => boolean): Promise<Task> {
   const { store } = deps
@@ -200,10 +208,10 @@ async function stepActionOf(deps: CoreAdminDeps & { store: PmStore }, task: Task
     const run = await workerRun(store, task.id)
     let result: ActionResult = run
       ? await runAction({ store, sh: actionShell(deps, runOn(deps, run)) }, {
-          task, shown: shownTaskId(p ? [p] : [], task.id), step: act.step, attempt: act.attempt, action: act.action, by: approved ? 'user' : by, guards: taskGuards(t, task.type), worktree: run.worktree, branch: run.branch,
+          task, shown: shownTaskId(p ? [p] : [], task.id), ...messageOf(p, task), step: act.step, attempt: act.attempt, action: act.action, by: approved ? 'user' : by, guards: taskGuards(t, task.type), worktree: run.worktree, branch: run.branch,
           reviewed: reviewedCommit(plan, state), ...(approved && state.approved!.commit ? { approved: state.approved!.commit } : {}),
           halted: async () => !!(await store.task(task.id))?.stopped,
-        }).catch((e: Error) => ({ ok: false, error: e.message }))
+        }).catch((e: Error) => ({ ok: false, error: thrownReason(e) }))
       : { ok: false, error: 'No worktree: the task never started' }
     // Past its time limit, the step was the engine's again: this late result is only said.
     if (lost()) return store.logTask(await fresh(), 'engine', `${act.step}: a run past its time limit ended (${result.ok ? 'done' : result.error ?? 'failed'}): its result is dropped`)
@@ -274,7 +282,7 @@ export async function resumeMerges(deps: CoreAdminDeps & { store: PmStore }) {
   }
 }
 
-// The user's choice on a review the after-N rule handed to them (Decisions):
+// The user's choice on a review the after-N rule handed to them (Tasks to review, the task's sheet):
 // any choice, like the coordinator's `task decide` but not limited to its options.
 export async function userDecide(store: PmStore, id: unknown, choice: unknown) {
   if (!CHOICES.includes(choice as Choice)) throw new HerdrError('bad_input', `choice: one of ${CHOICES.join(', ')}`)

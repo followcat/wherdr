@@ -15,6 +15,7 @@ import { nextTick } from 'vue'
 import { pick, select, selectLabels, selectValue } from '../helpers/select'
 import { boardProject } from '~/composables/useBoardProject'
 import { machineBarSaved, machineGroups } from '~/composables/useMachineBar'
+import { reviewOpen } from '~/composables/useReview'
 
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }))
 mockNuxtImport('navigateTo', () => navigate)
@@ -91,6 +92,21 @@ it('shows the columns of a template without review, and of all projects', async 
 })
 
 const shown = (w: Awaited<ReturnType<typeof mount>>) => w.findAll('[data-testid="board-card"]').map(c => c.attributes('data-task')).sort()
+
+it('To review counts what Tasks to review lists and opens it; neutral when nothing waits', async () => {
+  const w = await mount()
+  const button = w.find('[data-testid="board-review"]')
+  expect(button.text()).toBe('To review· 1')
+  await button.trigger('click')
+  expect(reviewOpen.value).toBe(true)
+  reviewOpen.value = false
+  board.cards = board.cards.filter(c => c.id !== 'CO-2')
+  w.unmount()
+  const empty = mounted = await mountSuspended(BoardView)
+  await vi.waitFor(() => expect(empty.findAll('[data-testid="board-card"]')).toHaveLength(2))
+  expect(empty.find('[data-testid="board-review"]').text()).toBe('To review')
+  expect(empty.find('[data-testid="board-review-n"]').exists()).toBe(false)
+})
 
 it('the project picker: All projects without groups; Follow machine tab once groups exist, in step with the home tab; the pick is kept', async () => {
   let w = await mount()

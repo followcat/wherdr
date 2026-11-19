@@ -11,7 +11,8 @@ import { MACHINE_OFFLINE, MACHINE_PAUSED, RELEASE_IDLE_MS } from '../shared/pm/r
 import { restartReview, watchAgents } from '../server/utils/pmWatchdog'
 import { AGENTLESS_MS, reviewRestarted } from '../shared/pm/watchdog'
 import { loginRestartText } from '../shared/pm/recovery'
-import type { Task } from '../shared/pm/run'
+import { LABEL, STARTING_MS, type Task } from '../shared/pm/run'
+import { CoreError } from '../server/utils/core'
 import type { Template } from '../shared/pm/workflow'
 
 // Work, a review the user decides on past its round, then more work by the worker.
@@ -35,7 +36,7 @@ describe('released agents start again', () => {
     await store.saveTemplate(flow)
     await store.addProject({ key: 'WH', machine: 'm1', path: '/home/u/wh', template: 'flow' }, async (_m, p) => p)
     await store.addTask({ project: 'WH', title: 'Fix it', type: 'simple' })
-    const env = { calls: [] as [string, Record<string, unknown>][], live: new Set<string>(), online: true }
+    const env = { calls: [] as [string, Record<string, unknown>][], live: new Set<string>(), online: true, runError: undefined as Error | undefined, labels: {} as Record<string, Record<string, string>> }
     const out = (code: number, text: string) => ({ code, stdout: Buffer.from(text).toString('base64') })
     const call = async (method: string, p: Record<string, unknown>) => {
       env.calls.push([method, p])
@@ -46,12 +47,13 @@ describe('released agents start again', () => {
         return out(0, '')
       }
       if (method === 'terminal.run') {
+        if (env.runError) throw env.runError
         const address = `m1/t${env.calls.filter(c => c[0] === 'terminal.run').length}`
         env.live.add(address)
         return { address }
       }
       if (method === 'terminal.kill') env.live.delete(String(p.terminal))
-      if (method === 'terminal.list') return { terminals: [...env.live].map(address => ({ address, labels: {}, state: 'running', status: { state: 'idle' } })) }
+      if (method === 'terminal.list') return { terminals: [...env.live].map(address => ({ address, labels: env.labels[address] ?? {}, state: 'running', status: { state: 'idle' } })) }
       return { state: env.live.has(String(p.terminal)) ? 'running' : 'finished' }
     }
     const deps = { call, store, machines: () => [{ key: 'm1', label: 'm1', local: false, status: env.online ? 'online' : 'offline' }], launchWatchMs: 0 } as unknown as PmLaunchDeps
@@ -86,6 +88,45 @@ describe('released agents start again', () => {
     expect(starts()).toBe(2)
     expect(await log()).toContain('started the worker again in its worktree: its agent was not running')
     expect(await watchAgents(deps, wake, 3 * AGENTLESS_MS)).toEqual([]) // it runs
+  })
+
+  it('a start never confirmed is not "starting" forever: its terminal adopted by its labels, else lost and started again', async () => {
+    const { store, deps, env, starts } = await setup()
+    const task = (await store.task('WH-1'))!, now = Date.now()
+    await store.saveTask({ ...task, step: { ...task.step!, at: 2, since: now } })
+    const reviewer = async () => (await store.runs()).filter(r => r.role === 'reviewer').sort((a, b) => b.startedAt - a.startedAt)[0]!
+    // herdr-core dropped during the reviewer's terminal.run: unconfirmed, left starting.
+    env.runError = new CoreError('timeout', 'no answer')
+    await advanceTick(deps)
+    const lost = await reviewer()
+    expect(lost).toMatchObject({ state: 'starting' })
+    env.runError = undefined
+    const wake = async () => ['x']
+    await watchAgents(deps, wake, lost.startedAt + STARTING_MS - 1)
+    expect((await reviewer()).state).toBe('starting')
+    // Past STARTING_MS with no terminal of its label: lost; the watchdog's watch begins.
+    await watchAgents(deps, wake, lost.startedAt + STARTING_MS + 1)
+    expect((await store.runs()).find(r => r.id === lost.id)).toMatchObject({ state: 'ended', endedBy: 'lost' })
+    expect(await watchAgents(deps, wake, lost.startedAt + STARTING_MS + 1 + AGENTLESS_MS)).toEqual(['WH-1'])
+    await advanceTick(deps)
+    expect((await reviewer()).state).toBe('running')
+    // One that did start is adopted: its terminal found by its run label.
+    const started = { ...(await reviewer()), id: 'rv2', state: 'starting' as const, terminal: undefined, startedAt: 0 }
+    await store.saveRun(started)
+    env.live.add('m1/x'); env.labels['m1/x'] = { [LABEL.install]: await store.install(), [LABEL.run]: 'rv2' }
+    await watchAgents(deps, wake, STARTING_MS + 1)
+    expect((await store.runs()).find(r => r.id === 'rv2')).toMatchObject({ state: 'running', terminal: 'm1/x' })
+  })
+
+  it('a reviewer start refused outright: its run ends, the task waits with why', async () => {
+    const { store, deps, env, starts } = await setup()
+    const task = (await store.task('WH-1'))!
+    await store.saveTask({ ...task, step: { ...task.step!, at: 2, since: Date.now() } })
+    env.runError = new Error('no such program')
+    await advanceTick(deps)
+    expect(starts()).toBe(2)
+    expect((await store.runs()).find(r => r.role === 'reviewer')).toMatchObject({ state: 'ended', endedBy: 'exit' })
+    expect((await store.task('WH-1'))!).toMatchObject({ state: 'waiting', waiting: expect.stringContaining('herdr-core refused to start the reviewer') })
   })
 
   it('Restart the review: the reviewer past its time ends, a new one starts on the next pass; refused off the review step', async () => {

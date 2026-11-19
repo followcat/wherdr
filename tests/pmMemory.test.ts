@@ -96,3 +96,28 @@ describe('the memory hold', () => {
     } finally { await fs.rm(dir, { recursive: true, force: true }) }
   })
 })
+
+it('a store that cannot be read is never written over from empty', async () => {
+  const { readMemorySettings, setMemorySettings } = await import('../server/utils/pmMemory')
+  const { setAccountName } = await import('../server/utils/accountNames')
+  const { setPolicy } = await import('../server/utils/pacingPolicies')
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wherdr-stores-'))
+  try {
+    const memory = path.join(dir, 'machine-memory.json')
+    await setMemorySettings('x', { maxAgents: 2 }, memory)
+    await setMemorySettings('y', { maxAgents: 3 }, memory)
+    const before = await fs.readFile(memory, 'utf8')
+    await fs.writeFile(memory, before.slice(0, -5)) // damaged (a cut write)
+    await expect(setMemorySettings('x', { maxAgents: 4 }, memory)).rejects.toThrow()
+    expect(await readMemorySettings(memory)).toEqual({})
+    await fs.writeFile(memory, before)
+    expect((await readMemorySettings(memory)).y?.maxAgents).toBe(3)
+    // EISDIR stands for EMFILE, EIO or EACCES.
+    const names = path.join(dir, 'account-names.json'), pacing = path.join(dir, 'pacing.json')
+    await fs.mkdir(names)
+    await fs.mkdir(pacing)
+    await expect(setAccountName('claude:a1b2c3d4', 'Work', names)).rejects.toThrow()
+    await expect(setPolicy('claude:a1b2c3d4', { mode: 'everyday' }, pacing)).rejects.toThrow()
+    expect((await fs.stat(names)).isDirectory() && (await fs.stat(pacing)).isDirectory()).toBe(true)
+  } finally { await fs.rm(dir, { recursive: true, force: true }) }
+})

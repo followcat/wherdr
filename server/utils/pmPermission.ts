@@ -1,4 +1,4 @@
-// One tap on an agent's permission request in Decisions: the agent's screen
+// One tap on an agent's permission request: the agent's screen
 // is read again and its prompt's own Yes or No option is chosen through
 // herdr-core, as when the user answers in the agent's terminal.
 import type { Choices } from '../../shared/types'

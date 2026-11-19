@@ -1,5 +1,5 @@
 // Start a task by hand, stop it and take a stopped one up again, from the
-// board, the task sheet and Decisions (server/utils/pmStop.ts). Archive asks
+// board, the task sheet (server/utils/pmStop.ts). Archive asks
 // first: the task ends. Delete asks first too: a task never started leaves the board.
 // A task whose PR was closed without a merge is archived the same way.
 import type { Resume } from '#shared/pm/stop'

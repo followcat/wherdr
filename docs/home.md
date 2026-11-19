@@ -88,8 +88,8 @@ sent by wherdr* line, never as your message nor as the conversation's title. Alf
 change first and makes it only after your yes.
 
 With no project yet, Alfred's first message also offers to set up the first one
-with you: here, one question at a time, or in the setup window, which it can open
-for you (Settings › Projects › *Set up a project*). A user coming from wherdr v2 gets
+with you: here, one question at a time, or with the New › Project form, which it can open
+for you (Settings › Projects › *Add project*). A user coming from wherdr v2 gets
 the offer to set up their v2 projects instead. Alfred asks one question per message: with
 such an offer, it asks whether you want to give it another name only once the offer is answered.
 Home's empty list says so too: *Set up a project with Alfred* opens Alfred's conversation with the
@@ -115,13 +115,18 @@ phone, where it opens as a sheet) offers, in order: *Open the board* (filtered o
 with…*, which picks another agent that becomes its default (its folder and memory stay, the
 current session stops), and *Stop the coordinator*, after a short confirm: its agent ends and it
 starts again on the next message or wake. Mute and Stop show while it runs. Alfred's row keeps
-its own menu. A coordinator shows only in its own row, never again among the agents.
+its own menu. A coordinator shows only in its own row, never again among the agents. Its
+conversation header's ⋯ menu (on a phone and a computer) starts with the same three entries,
+*Open the board*, *Project settings* (*Workspace settings* for a workspace) and *Autopilot*,
+before the conversation's own; Alfred's and other agents' menus have none of them.
 
 A [workspace](workspaces.md)'s coordinator is its **workspace row**, in the same list (its
-members have none of their own): its key badge and name, its coordinator's state, then how many
-of its members' tasks are *working* and *waiting for you* (*Claude · Idle · 2 working · 1
-waiting for you*). Under its name, its members' key badges; a tap lists them, each opening its
-member's board. Its menu is a coordinator's, with *Workspace settings* for *Project settings*;
+members have none of their own): its key badge and name, its coordinator's state, then its
+members' key badges with how many tasks are *working* and *waiting for you* (*2 working · 1
+waiting for you*: its members' and its own features'). A member with a task waiting has a small
+orange square on its badge. A tap on the badges lists the members, each opening its board and
+showing its own counts. *n waiting for you* is a link: one task opens its sheet; several open
+the workspace's board, or, on a member's line, *Tasks to review* filtered to that member. Its menu is a coordinator's, with *Workspace settings* for *Project settings*;
 *Open the board* shows the workspace's features and every member's tasks. It reorders and hides
 like any coordinator.
 
@@ -158,8 +163,13 @@ a row by its ⠿ handle (or use its arrows) to reorder: the first is the default
 in every picker. Programs only: each starts with its own default model, changed inside the
 agent. Alfred runs with any of Claude, Codex, OMP, Pi, OpenCode, Kimi, Gemini CLI, Qwen Code,
 Copilot, Amp, Droid, Devin, Cursor Agent and Antigravity CLI (other programs are left out of its picker: wherdr knows no instructions
-file they read). A project's coordinator runs with Claude or Codex only: they are the ones wherdr
-can keep out of the project's repository (a deny rule for Claude, the sandbox for Codex). Choices and order follow you on every device.
+file they read). A project's coordinator runs with Claude, Codex or omp only: those are the ones that
+can be kept out of the project's repository. wherdr does it for Claude (a deny rule) and Codex (the
+sandbox). omp is kept out by its tool list: it starts without an edit tool (and without
+`ast_edit`, `eval`, `task`, `debug` and `lsp`; the `write` tool left only reaches omp's internal devices, not files), but its shell can still write, as Claude's can. So omp
+is offered for a project's coordinator but never picked for you: with no explicit choice, the first
+offered Claude or Codex is the default, even when omp is first in your order (omp is the default
+only when neither is offered). Choices and order follow you on every device.
 
 ### Proxies
 
@@ -235,10 +245,11 @@ Codex agents of online machines. Choosing a result opens it.
 The Notes button in a conversation's header, beside Search (Mod+Alt+P on a computer), opens
 and closes the [notes](alfred.md#notes); it shows as pressed while they are open. When the
 header is narrow (a phone, a side-by-side cell, a narrow window) Notes is the first entry of
-the header's ⋯ menu instead. Alfred and the coordinators write them for you:
+the header's ⋯ menu instead (after a coordinator's board, settings and autopilot entries). Alfred and the coordinators write them for you:
 read-only, a short whiteboard. On a computer of
 at least 1280 px they open beside the conversation or Home's list, like Settings (drag the panel's left edge
-to resize it); otherwise in a sheet. The panel stays open after a reload, on the linked file it
+to resize it); otherwise in a sheet. On a page without the panel (the board, a settings page) the open
+panel hides rather than turning into a sheet, and is back beside the next conversation. The panel stays open after a reload, on the linked file it
 showed if that file still exists, kept on each device (the sheet does not reopen). They follow the home tab by default (**Follow
 tab**), with a muted line saying which (*Work · following the tab*); the menu at the top shows
 **All** or one tab instead (every group and every machine shown as its own tab, in the bar's
@@ -246,7 +257,7 @@ order), and the choice follows you across devices. A tab shows its own notes and
 scoped All; a group's tab also shows the notes of its machines, so a machine's note stays
 there when the machine joins a group. A tab with no note of its own says so (*No notes for
 Work yet*) above the All notes. Each note shows its title, its
-scope and its lines: checkboxes you cannot tick, project key badges (a task id opens its
+scope and its lines: headings, `---` separators drawn as a thin rule, checkboxes you cannot tick, project key badges (a task id opens its
 sheet), the agents' own badges, and links. A link to a place in wherdr opens it in place, a
 link to another note scrolls to it. A link to a Markdown file the agents wrote under the
 notes folder (`plans/x.md`, see [notes file put](alfred.md#notes)) opens it rendered in the

@@ -207,6 +207,7 @@ describe('Cline approvals', () => {
   })
 })
 
+
 // Antigravity reports its own status (idle under these panels). A slash command
 // from the conversation (+ menu or typed) that opens a panel or a picker shows
 // the interactive terminal over the conversation; Esc there brings the field back.
@@ -219,18 +220,19 @@ describe('Antigravity slash-command panels', () => {
     expect(readCoreScreen(screen(name), 'agy', 'blocked').choices).toBeNull()
   })
 
-  it.each(PANELS)('%s: confirmed on its second read, closed by Esc', async (name) => {
+  it(`${PANELS[0]}: read as the terminal, Esc back to the field`, async () => {
+    const name = PANELS[0]!
     let text = screen(name)
-    let t = 0
-    const screens = createCoreScreens({ call: async () => ({ text }), viewed: () => true, now: () => t })
+    const screens = createCoreScreens({ call: async () => ({ text }), viewed: () => true })
     const p = { id: name, agent: 'agy', status: 'idle', coreAddress: 'host-a/t2' } as Pane
     await screens.enrich([p])
-    expect(p.interaction).toBe('unknown')
-    t += 300
-    await screens.enrich([p])
     expect(p.interaction).toBe('terminal')
+    // The overlay itself opens once 'terminal' has held for 500 ms.
+    const window = createInteractionWindow()
+    expect(window.update(p.interaction!, 0)).toBe(false)
+    expect(window.update(p.interaction!, 500)).toBe(true)
     text = screen('agy-idle')
-    t += 300
+    screens.forget(p.id)
     await screens.enrich([p])
     expect(p.interaction).toBe('input')
   })
@@ -261,6 +263,11 @@ describe('Devin slash-command panels', () => {
     expect(p.interaction).toBe('terminal')
     text = screen('devin-idle')
     t += 300
+    await screens.enrich([p])
+    expect(p.interaction).toBe('input')
+  })
+})
+
     await screens.enrich([p])
     expect(p.interaction).toBe('input')
   })

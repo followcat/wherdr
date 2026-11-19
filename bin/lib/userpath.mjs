@@ -32,18 +32,35 @@ export const TAIL_BIN_DIRS = ['/usr/bin', '/bin', '/usr/local/sbin', '/usr/sbin'
 export const SYSTEM_BIN_DIRS = [...LEAD_BIN_DIRS, ...TAIL_BIN_DIRS]
 
 // Joins PATH strings or folder lists into one PATH: absolute folders only,
-// each once, in the order first seen.
-export function mergePath(...parts) {
-  const seen = new Set()
+// each once, in the order first seen. On Windows (`platform` 'win32') a PATH
+// is split and joined with ';', an absolute folder has a drive letter
+// (C:\x, C:/x) or is a UNC share (\\server\share), and folders that differ
+// only in case are the same one.
+export function mergePathOn(platform, ...parts) {
+  const win = platform === 'win32'
+  const sep = win ? ';' : ':'
+  const seen = new Map()
   for (const part of parts) {
-    const list = Array.isArray(part) ? part : String(part || '').split(':')
+    const list = Array.isArray(part) ? part : String(part || '').split(sep)
     for (const raw of list) {
-      const dir = String(raw || '').trim()
-      if (dir && dir.startsWith('/') && !dir.includes('\n')) seen.add(dir.replace(/(.)\/+$/, '$1'))
+      let dir = String(raw || '').trim()
+      if (win) dir = dir.replace(/^"(.*)"$/, '$1').trim()
+      if (!dir || dir.includes('\n') || !(win ? isWinAbsolute(dir) : dir.startsWith('/'))) continue
+      dir = win ? dir.replace(/([^:\\/])[\\/]+$/, '$1') : dir.replace(/(.)\/+$/, '$1')
+      const key = win ? dir.replace(/\//g, '\\').toLowerCase() : dir
+      if (!seen.has(key)) seen.set(key, dir)
     }
   }
-  return [...seen].join(':')
+  return [...seen.values()].join(sep)
 }
+
+// mergePathOn for the platform wherdr runs on.
+export function mergePath(...parts) {
+  return mergePathOn(process.platform, ...parts)
+}
+
+// A Windows absolute folder: drive letter then a slash, or a UNC share.
+const isWinAbsolute = (dir) => /^[A-Za-z]:[\\/]/.test(dir) || /^[\\/]{2}[^\\/]+[\\/][^\\/]+/.test(dir)
 
 const isDir = (p) => { try { return statSync(p).isDirectory() } catch { return false } }
 
@@ -100,9 +117,22 @@ export function loginShellPath(env = process.env, run = spawnSync) {
 // The PATH for the server and the commands it runs.
 // `first`: folders to put before everything (the runtime's own folder).
 // `login`: the login shell's PATH, when it was asked.
-export function userPath({ env = process.env, home = os.homedir(), first = [], login = '', exists = isDir } = {}) {
-  const lead = [...USER_BIN_DIRS.map(d => path.join(home, d)), ...LEAD_BIN_DIRS].filter(d => exists(d))
-  return mergePath(first, login, projectsEnvPath(env, home), lead, env.PATH || '', TAIL_BIN_DIRS.filter(d => exists(d)))
+export function userPath({ env = process.env, home = os.homedir(), first = [], login = '', exists = isDir, platform = process.platform } = {}) {
+  const inherited = env.PATH || ''
+  let merged
+  if (platform === 'win32') {
+    // No Unix system folders, and herdr-projects' record (from a Unix login
+    // shell) has no Windows folder: the runtime's folder, the user folders
+    // that exist, then the inherited PATH in its order.
+    const lead = USER_BIN_DIRS.map(d => path.win32.join(home, d)).filter(d => exists(d))
+    merged = mergePathOn('win32', first, login, lead, inherited)
+  } else {
+    const lead = [...USER_BIN_DIRS.map(d => path.join(home, d)), ...LEAD_BIN_DIRS].filter(d => exists(d))
+    merged = mergePathOn(platform, first, login, projectsEnvPath(env, home), lead, inherited, TAIL_BIN_DIRS.filter(d => exists(d)))
+  }
+  // Never an empty PATH where the inherited one had something: what wherdr
+  // runs by name would not be found at all.
+  return merged || inherited
 }
 
 // The value of the first "PATH" key of a JSON file (env.json), its escapes

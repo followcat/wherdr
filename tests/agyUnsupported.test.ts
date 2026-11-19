@@ -1,8 +1,7 @@
 // A Node before 22.13 has no usable node:sqlite: the agy pane must stay in
-// Terminal mode with `unsupported`, never a crash — chat, model, search and
-// the summaries fallback all degrade. `sqlite: null` injects the missing
-// builtin; the fixture still writes a real database so every read path is
-// actually attempted.
+// Terminal mode with `unsupported`, never a crash — chat, model and search all
+// degrade. `sqlite: null` injects the missing builtin; the fixture still
+// writes a real database so every read path is actually attempted.
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -22,5 +21,4 @@ it('a Node without node:sqlite answers unsupported everywhere, never a crash', a
   expect(await agy.chat(pane)).toMatchObject({ available: false, reason: 'unsupported' })
   expect(await agy.model(pane)).toBeNull()
   expect((await agy.search(pane, 'Hi', Date.now() + 5000)).hits).toEqual([])
-  expect(await agy.summariesSession({ cwd: '/work/acme-shop' }, false)).toBeNull()
 })

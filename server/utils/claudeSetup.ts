@@ -5,6 +5,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { DATA_DIR } from './env'
+import { writeJsonAtomicSync } from './atomicWrite'
 import { MACHINE_KEY_RE } from '../../shared/ids'
 
 export const CLAUDE_SETUP_FILE = path.join(DATA_DIR, 'claude-quotas.json')
@@ -27,7 +28,6 @@ export function writeDismissed(keys: readonly string[], dismissed: boolean, file
     else set.delete(k)
   }
   const list = [...set].sort()
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, `${JSON.stringify({ dismissed: list }, null, 2)}\n`)
+  writeJsonAtomicSync(file, { dismissed: list })
   return list
 }

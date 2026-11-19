@@ -227,9 +227,11 @@ terminal.
 
 Antigravity CLI (`agy`, tested with 1.5.8) is read through its saved
 conversations at `~/.gemini/antigravity-cli/conversations/<uuid>.db` (SQLite,
-WAL mode; the database and its `-wal` sidecar are copied to a snapshot before
-`node:sqlite` opens them, so remote machines read a consistent view through
-`machine.exec`, and 256 MiB is the snapshot limit). A remote conversation keeps
+WAL mode; locally it is opened in place, read-only, only while agy holds both
+`-wal` and `-shm` sidecars — a read-only open creates them otherwise and would
+leave them in agy's folder. Otherwise the database and its `-wal` sidecar are
+copied to a snapshot before `node:sqlite` opens them, so remote machines read a
+consistent view through `machine.exec`, and 256 MiB is the snapshot limit). A remote conversation keeps
 one local base copy between reads: the main file ships over again only when
 its own identity moves, a WAL still under the same 32-byte header ships only
 its grown tail and is appended to the kept copy — but only after the last
@@ -243,17 +245,21 @@ opening a torn pair.
 A WAL-mode checkpoint rewrites the database file, so the next read ships it
 in full again; a page-level delta would need a page-hash helper on the remote
 machine (no such primitive exists on `MachineFs` today), which is why the
-copy stays whole — bounded by the snapshot limit — until one lands. Step
+copy stays whole — bounded by the snapshot limit — until one lands. Kept
+copies live in the system temp dir under `wherdr-agy-<pid>-*` (often tmpfs, up
+to 256 MiB each): a restart removes the folders whose process no longer runs
+(so a second server on the same host keeps its own), and a pane that goes
+takes its copy with it. Step
 payloads are protobuf blobs decoded by a small bounds-checked reader
 (`server/utils/agyProtobuf.ts`).
 The session is resolved fail-closed from what the `agy` process holds open —
 `conversations/<uuid>.db`, its WAL/SHM sidecars or `presence/<uuid>.lock` —
-checked on Linux through `/proc/<pid>/fd` and elsewhere through `lsof`, with the
-exact `--conversation <uuid>` launch argument as fallback. Descriptors naming
-two conversations resolve to nothing rather than a wrong conversation; the
-`conversation_summaries.db` index only stands in for an unmatched process when
-one top-level live conversation claims the pane's folder. Local
-`ANTIGRAVITY_APP_DATA_DIR` is honored; remote machines use their home and the
+checked on Linux through `/proc/<pid>/fd` and elsewhere through `lsof`, then the
+exact `--conversation <uuid>` launch argument, then nothing: a descriptor set
+naming two conversations resolves to nothing rather than a wrong conversation,
+and the `conversation_summaries.db` index is never used (a relaunched `agy` in
+the same folder would show its previous conversation until the new one is
+written). Local `ANTIGRAVITY_APP_DATA_DIR` is honored; remote machines use their home and the
 default path. Checkpoints and internal system steps are not rendered; a tool
 result stored in a later step invalidates the pages that held the call, and
 model metadata comes from `gen_metadata`. `node:sqlite` needs Node 22.13 or
@@ -281,6 +287,21 @@ the model and the auto-approve state, a braille spinner while a turn runs, and a
 permission box (`Approve tool call?`, its tool, `[y] Approve` / `[n] Deny`) answered
 with its own letters rather than a cursor.
 
+Hermes Agent (`hermes`, NousResearch/hermes-agent) is read from its profile's
+`state.db` (SQLite, WAL), built from Hermes' source (v0.23.2, schema 33) and
+**not yet tested with a real Hermes**: feedback welcome on
+[issue #48](https://github.com/afloury/wherdr/issues/48). The session is the
+one the pane shows, never a guess: the TUI's active-session file (named in its
+Node process's environment, Linux only), else the session id on the classic
+CLI's bottom bar (a bar cut off by a narrow pane gives none). The profile comes
+from `-p`/`--profile`, `HERMES_HOME` or `active_profile`, as Hermes resolves
+it. Messages are read across compression and `/reset` segments, with rewound
+turns and model-only summaries hidden. The database is never written and never
+gets sidecars: it opens read-only in place only while Hermes' gateway holds
+`-wal` and `-shm`, otherwise with `immutable=1`. Locally through `node:sqlite`
+(Node 22.13 or later); on another machine the same read runs there through
+Hermes' own Python, without copying the database.
+
 Text left unsent in Claude Code's own input box (a draft or paste never submitted, or the
 prompt Claude puts back after an interrupt) shows at the end of the conversation as
 **Not sent** once it has stayed unchanged for two seconds and the colored screen (the first
@@ -298,9 +319,36 @@ shows, and an Enter pressed before that is lost; after a long idle, Claude may a
 Enter for a few seconds with the placeholder already shown) is submitted by wherdr. After
 every send to Claude, idle or busy, whatever core reports, wherdr looks at the box: empty,
 the message was taken (but an empty box with *Pasting…* under it is Claude still reading
-the photos, several seconds for three large ones: wherdr keeps waiting); otherwise it waits up to about 24 seconds for the box to hold that
-message alone, each photo as its placeholder, presses Enter, and presses it again while the
-message is still there (up to ten times over about 16 seconds). This also holds for a
+the photos, several seconds for three large ones: wherdr keeps waiting); otherwise it waits up to 18 seconds from the paste for the box to hold that
+message alone, each photo as its placeholder (Claude draws the placeholders before the
+text; only their count is compared), presses Enter, and presses it again while the
+message is still there (up to ten times over about 16 seconds). A message with photos ends
+with a lone `\` on its last line: core presses Enter right after its paste, and Claude,
+before it has turned a photo path into `[Image #N]`, would submit the path as plain text;
+`\` + Enter is a new line in Claude, so the message waits in the box for wherdr's Enter.
+Claude Code checks and reads a pasted photo path within one second, or keeps it as typed text
+for good (after an idle, on a loaded machine): a message whose photo shows as its path is
+cleared and pasted once more, only once its field is seen empty; a field that does not empty,
+or can no longer be read, after that clear refuses the send (**Not sent**, with Retry for the
+whole message), never submitting part of it. A multi-line message shows in the box as
+`[Pasted text #N +K lines]`, its photo paths hidden inside: a photo missing from the
+`[Image #N]` tags before it is such a path, and is pasted once more the same way.
+The 18 seconds count from the first paste, clears and the second paste included: the message
+is pasted again only with 6 seconds still left, otherwise it goes as it is at once.
+A photo still shown as its path after that, or when the wait ends, is never left there: wherdr takes the
+`\` out (Backspace, only while the box ends with it), presses Enter, and the message goes
+with its path, which the agent can still open; this leaves one line in the server log (the
+wait's duration and the sizes, never the text). A box that never holds the message alone
+when the wait ends (part of it, or other text) gets no Enter: the send is refused, so the
+message reads **Not sent** with Retry, and that text shows with **Send now** / **Clear**. The whole send (paste, wait, Enters) runs
+on the server: switching conversation, closing the page or a phone going to sleep never
+stops it. Meanwhile a photo message reads **Sending… adding the photo**, also on another device
+or after a reload (the server marks the terminal as sending, with the message), never **Not sent**, and
+**Send now** / **Clear** are not offered; the box's text shows as the user's own message, never as
+Claude's `[Pasted text #N]` stand-in, also once the send is over and the message is still there. Every change (sending, sent, refused) reaches the open
+conversation at once, without leaving it.
+A message whose photo still reached Claude as its path is shown as sent, its photo as a
+photo, and leaves one line in the server log (photo count and text size, never the text). This also holds for a
 message sent while Claude works or ends its turn: Enter then puts it in Claude's own queue.
 Enter is only pressed on a box that holds that message alone, so it is never sent twice. A
 send that needed more than one Enter, or stayed in the box, leaves one line in the server
@@ -308,10 +356,17 @@ log (terminal and Enter count; when it failed, the sizes of what the box held an
 was expected: characters, images, lines, never the text). A send in progress is noted in
 `data/submitting.json` until it ends: if wherdr restarts meanwhile (an update), it resumes
 it at startup, the same way and only on a box that holds that message alone.
-A message another terminal sent with `hc send` (wrapped in `<hc from="…">`) is shown
+A message another terminal sent with `hc send` (wrapped in `<hc from="…">`, whatever its other attributes) is shown
 without that wrapper, its photos as photos.
-Until the send answers, the bubble reads **sending…**, not **Not sent**. While it stays there, its bubble reads **Not sent yet · waiting in
-the agent's input**, never **Read by the agent**, and the box's own bubble is not shown
+A message only tells what wherdr knows: from the tap until it is in the agent's transcript,
+its bubble reads **Sending…** with a small turning loader, whatever the send answered or the
+screen shows, also on another device or after a reload (the server marks the terminal as
+sending while it submits a message, text or photos); it never claims the agent read it.
+Held in Claude's own queue, it reads **Queued by Claude · sent when it finishes**. Once in
+the transcript, the transcript's own message replaces it. Only once the server is done
+(its Enters over) and the message is still in the box does its bubble read **Not sent yet ·
+waiting in the agent's input** (the box's **Not sent — still in Claude's input**, with
+**Send now** / **Clear**), never while the server still tries; and the box's own bubble is not shown
 twice: the box is matched to the message by its text alone, whitespace, `[Image #N]`
 placeholders and photo paths left out, since the box may show fewer placeholders than the
 message has photos, or a photo still as its path. A new message is never typed into a box that holds text: Claude would submit both

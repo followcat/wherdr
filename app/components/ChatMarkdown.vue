@@ -17,6 +17,8 @@ import StatusCard from './StatusCard.vue'
 import UiOpenCard from './UiOpenCard.vue'
 import UiShowCard from './UiShowCard.vue'
 import ActionCard from './ActionCard.vue'
+import { QUESTIONS_HOST, type QuestionsHost } from '~/utils/questionsCard'
+import type { WherdrQuestion } from '~/utils/markdown'
 import { h, render } from 'vue'
 
 // `cipher` must default to undefined, not false: Vue casts a missing Boolean
@@ -33,7 +35,7 @@ let raf = 0
 // Reveal the SVG card and the choice buttons atomically so typing never rewrites their source or controls.
 const atomic = (n: RevealNode) => {
   const classes = (n as unknown as Element).classList
-  return Boolean(classes?.contains('code-head') || classes?.contains('svg-block') || classes?.contains('w-choices') || classes?.contains('wherdr-block'))
+  return Boolean(classes?.contains('code-head') || classes?.contains('svg-block') || classes?.contains('w-choices') || classes?.contains('w-questions') || classes?.contains('wherdr-block'))
 }
 const keep = (n: RevealNode) => /^T[DH]$/.test((n as unknown as Element).tagName || '')
 
@@ -193,7 +195,24 @@ function fillTaskSlots() {
   const found = Array.from(el.value?.querySelectorAll<HTMLElement>('.wd-task[data-task]') ?? [])
   for (const to of found) to.replaceChildren()
   taskSlots.value = found.map(to => ({ to, id: to.dataset.task! }))
+  fillQuestionSlots()
 }
+// Its `questions` cards (QuestionsCard.vue): whether one is live, the reply it
+// got and its Send come from the view around (ChatView, ReviewQuestion); with
+// none, the card only shows.
+const questionsHost = inject<QuestionsHost | null>(QUESTIONS_HOST, null)
+const questionSlots = shallowRef<{ to: HTMLElement, items: WherdrQuestion[] }[]>([])
+function fillQuestionSlots() {
+  const found = Array.from(el.value?.querySelectorAll<HTMLElement>('.w-questions[data-questions]') ?? [])
+  questionSlots.value = found.flatMap((to) => {
+    try {
+      const items = JSON.parse(to.dataset.questions!) as WherdrQuestion[]
+      to.replaceChildren()
+      return [{ to, items }]
+    } catch { return [] }
+  })
+}
+const questionsState = (to: HTMLElement) => questionsHost?.state(to) ?? { live: false, given: null }
 function onClick() {
   if (plan) {
     stop()
@@ -300,6 +319,9 @@ onBeforeUnmount(() => {
   <div ref="el" v-bind="$attrs" class="md-body" :class="{ typing: typing !== null }" @click.capture="onClick" @click="onAppLink($event); onSvgToggle($event)" @keydown="onKey" @error.capture="onImageError" v-html="html" />
   <Teleport v-for="(s, i) in taskSlots" :key="`${i}:${s.id}`" :to="s.to">
     <ChatTaskCard :id="s.id" />
+  </Teleport>
+  <Teleport v-for="(s, i) in questionSlots" :key="`q${i}`" :to="s.to">
+    <QuestionsCard :items="s.items" v-bind="questionsState(s.to)" @send="questionsHost?.send(s.to, $event)" />
   </Teleport>
 </template>
 

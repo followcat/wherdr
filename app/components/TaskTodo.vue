@@ -10,6 +10,8 @@
 // the merge ends, what it waits for said under it; while its checks are red, it is on hold
 // instead, with why (the worker fixes them, or waits to). A step the coordinator holds that
 // waits on the user says what waits, and Ask the coordinator sends it the user's message.
+// The button pressed alone shows it sends (loading) until the server answered, the others
+// disabled meanwhile; once through, a check on it for a moment (DONE_MS), Send back's says Sent back.
 import { adviceChoices } from '#shared/pm/decisions'
 import { canStart, coordinatorWait, mayAccept, mergeGoesNow, mergeStuck, mergeWaits, prLink, prUpdating, type Card } from '#shared/pm/board'
 import { stepLabels } from '#shared/pm/steps'
@@ -22,7 +24,7 @@ import type { Pane } from '#shared/types'
 import type { WaitKind } from '#shared/pm/run'
 import type { TodoKind } from '~/utils/taskTodo'
 
-const props = defineProps<{ card: Card, kind: TodoKind, pane?: Pane, busy: boolean, pressing: boolean, refused: string, waitsFor?: string[] }>()
+const props = defineProps<{ card: Card, kind: TodoKind, pane?: Pane, busy: boolean, pressing: boolean, refused: string, failed?: boolean, waitsFor?: string[] }>()
 const emit = defineEmits<{ press: [], start: [], resume: [how: Resume], decide: [choice: Choice], back: [note: string], review: [], worker: [], ask: [], fix: [], comments: [] }>()
 
 // Where the engine's catch-up of a conflict stands: the agent on it, or done.
@@ -65,8 +67,29 @@ const reviewSay = computed(() => (props.card.terminal
 const coord = computed(() => (props.kind === 'coordinator' ? coordinatorWait(props.card) : undefined))
 const coordFor = computed(() => (coord.value ? fmtDuration(Math.floor((Date.now() - coord.value.since) / 60_000) * 60) : ''))
 
-// A block its worker could fix: Ask the agent to fix it, the step's first button.
+// A block its worker could fix: Ask the agent to fix it, the step's first button
+// unless the failure may be outside the code (fixFirst: Try again first).
 const fixes = computed(() => fixable(props.card, props.kind))
+const fixesFirst = computed(() => fixFirst(props.card, props.kind))
+
+// The button pressed on this task: loading while its action runs, then done for a moment.
+const pressed = ref('')
+const confirmed = ref('')
+const act = (key: string, fire: () => void) => { if (props.busy || confirmed.value) return; pressed.value = key; fire() }
+const sending = (key: string) => props.busy && pressed.value === key
+let doneTimer: ReturnType<typeof setTimeout> | undefined
+watch(() => props.busy, (b, was) => {
+  if (b || !was || !pressed.value) return
+  if (!props.failed) {
+    confirmed.value = pressed.value
+    if (pressed.value === 'back') note.value = ''
+    clearTimeout(doneTimer)
+    doneTimer = setTimeout(() => { confirmed.value = '' }, DONE_MS)
+  }
+  pressed.value = ''
+})
+watch(() => props.card.id, () => { pressed.value = ''; confirmed.value = '' })
+onBeforeUnmount(() => clearTimeout(doneTimer))
 
 const ASK_LABEL: Record<WaitKind, [string, string]> = { question: ['Its agent asks a question', 'Son agent pose une question'], permission: ['Its agent asks for a permission', 'Son agent demande une autorisation'], auth: ['Its agent needs its login again', 'Son agent doit se reconnecter'] }
 </script>
@@ -119,7 +142,7 @@ const ASK_LABEL: Record<WaitKind, [string, string]> = { question: ['Its agent as
     <div class="todo-actions">
       <template v-if="kind === 'decide'">
         <div v-for="o in choices.options" :key="o" class="todo-choice">
-          <UButton size="xl" :color="o === choices.recommend ? 'primary' : 'neutral'" :variant="o === choices.recommend ? 'solid' : 'outline'" :disabled="busy" :data-choice="o" @click="emit('decide', o)">
+          <UButton size="xl" :color="o === choices.recommend ? 'primary' : 'neutral'" :variant="o === choices.recommend ? 'solid' : 'outline'" :class="{ confirmed: confirmed === `decide:${o}` }" :icon="confirmed === `decide:${o}` ? 'i-lucide-check' : undefined" :loading="sending(`decide:${o}`)" :disabled="busy" :data-choice="o" @click="act(`decide:${o}`, () => emit('decide', o))">
             {{ tl(...CHOICE_LABEL[o]) }}<template v-if="o === choices.recommend"> · {{ tl('recommended', 'conseillé') }}</template>
           </UButton>
           <small class="muted">{{ tl(CHOICE_MEANING[o]) }}</small>
@@ -127,19 +150,19 @@ const ASK_LABEL: Record<WaitKind, [string, string]> = { question: ['Its agent as
       </template>
       <template v-else-if="kind === 'stopped'">
         <div v-for="how in RESUMES" :key="how" class="todo-choice">
-          <UButton size="xl" :color="how === 'continue' ? 'primary' : 'neutral'" :variant="how === 'continue' ? 'solid' : 'outline'" :disabled="busy" :data-resume="how" @click="emit('resume', how)">{{ tl(...RESUME_LABEL[how]) }}</UButton>
+          <UButton size="xl" :color="how === 'continue' ? 'primary' : 'neutral'" :variant="how === 'continue' ? 'solid' : 'outline'" :class="{ confirmed: confirmed === `resume:${how}` }" :icon="confirmed === `resume:${how}` ? 'i-lucide-check' : undefined" :loading="sending(`resume:${how}`)" :disabled="busy" :data-resume="how" @click="act(`resume:${how}`, () => emit('resume', how))">{{ tl(...RESUME_LABEL[how]) }}</UButton>
           <small class="muted">{{ tl(RESUME_MEANING[how]) }}</small>
         </div>
       </template>
       <div v-else class="task-sheet-actions todo-buttons">
         <!-- A refused action is tried again from the sheet's top (Try again). -->
-        <UButton v-if="fixes" color="primary" size="xl" icon="i-lucide-wrench" :loading="busy" data-testid="todo-fix" @click="emit('fix')">{{ tl('Ask the agent to fix it') }}</UButton>
-        <UButton v-if="card.userLabel && kind !== 'refused'" color="primary" size="xl" :loading="busy || goes" :disabled="!open && (!!stuck || (waits !== undefined && !goes))" data-testid="step-user" @click="emit('press')">{{ waits !== undefined && !stuck ? tl('Merging') : card.userLabel }}</UButton>
+        <UButton v-if="fixes" :color="fixesFirst ? 'primary' : 'neutral'" :variant="fixesFirst ? 'solid' : 'outline'" size="xl" :icon="confirmed === 'fix' ? 'i-lucide-check' : 'i-lucide-wrench'" :class="{ confirmed: confirmed === 'fix' }" :loading="sending('fix')" :disabled="busy" data-testid="todo-fix" @click="act('fix', () => emit('fix'))">{{ tl('Ask the agent to fix it') }}</UButton>
+        <UButton v-if="card.userLabel && kind !== 'refused'" color="primary" size="xl" :loading="sending('press') || goes" :disabled="busy || (!open && (!!stuck || (waits !== undefined && !goes)))" data-testid="step-user" @click="act('press', () => emit('press'))">{{ waits !== undefined && !stuck ? tl('Merging') : card.userLabel }}</UButton>
         <UButton v-if="pr" color="neutral" variant="outline" size="xl" icon="i-lucide-square-arrow-out-up-right" :to="pr.url" target="_blank" data-testid="todo-pr">{{ tl('Open the PR') }}</UButton>
-        <UButton v-if="stuck" color="primary" size="xl" icon="i-lucide-play" :loading="busy" data-testid="todo-worker-start" @click="emit('worker')">{{ tl('Start the worker') }}</UButton>
-        <UButton v-if="kind === 'review'" color="primary" size="xl" icon="i-lucide-rotate-ccw" :loading="busy" data-testid="todo-review-restart" @click="emit('review')">{{ tl('Restart the review') }}</UButton>
-        <UButton v-if="coord" color="primary" size="xl" :icon="coord.asked ? 'i-lucide-check' : 'i-lucide-message-circle'" :loading="busy" :disabled="coord.asked !== undefined" data-testid="todo-ask-coordinator" @click="emit('ask')">{{ coord.asked ? tl('Asked') : tl('Ask the coordinator') }}</UButton>
-        <UButton v-if="kind === 'blocked' && canStart(card) && !waitsFor?.length" color="primary" size="xl" icon="i-lucide-play" :loading="busy" data-testid="task-start" @click="emit('start')">{{ tl('Start', 'Lancer') }}</UButton>
+        <UButton v-if="stuck" color="primary" size="xl" :icon="confirmed === 'worker' ? 'i-lucide-check' : 'i-lucide-play'" :class="{ confirmed: confirmed === 'worker' }" :loading="sending('worker')" :disabled="busy" data-testid="todo-worker-start" @click="act('worker', () => emit('worker'))">{{ tl('Start the worker') }}</UButton>
+        <UButton v-if="kind === 'review'" color="primary" size="xl" :icon="confirmed === 'review' ? 'i-lucide-check' : 'i-lucide-rotate-ccw'" :class="{ confirmed: confirmed === 'review' }" :loading="sending('review')" :disabled="busy" data-testid="todo-review-restart" @click="act('review', () => emit('review'))">{{ tl('Restart the review') }}</UButton>
+        <UButton v-if="coord" color="primary" size="xl" :icon="coord.asked ? 'i-lucide-check' : 'i-lucide-message-circle'" :loading="sending('ask')" :disabled="busy || coord.asked !== undefined" data-testid="todo-ask-coordinator" @click="act('ask', () => emit('ask'))">{{ coord.asked ? tl('Asked') : tl('Ask the coordinator') }}</UButton>
+        <UButton v-if="kind === 'blocked' && canStart(card) && !waitsFor?.length" color="primary" size="xl" :icon="confirmed === 'start' ? 'i-lucide-check' : 'i-lucide-play'" :class="{ confirmed: confirmed === 'start' }" :loading="sending('start')" :disabled="busy" data-testid="task-start" @click="act('start', () => emit('start'))">{{ tl('Start', 'Lancer') }}</UButton>
         <!-- Open the agent: next to the task's other buttons (AgentButton), not here. -->
       </div>
     </div>
@@ -150,9 +173,9 @@ const ASK_LABEL: Record<WaitKind, [string, string]> = { question: ['Its agent as
     <p v-else-if="coord?.asked" class="muted" role="status" data-testid="todo-asked">{{ tl('Sent as your message. The coordinator checks it now; the task comes back here at its next time limit.') }}</p>
     <p v-else-if="refused" class="error" role="alert" :title="refused" data-testid="step-user-refused">{{ stepRefusalText(refused, told) }}</p>
 
-    <form v-if="kind === 'merge'" class="todo-back" data-testid="todo-back" @submit.prevent="emit('back', note.trim())">
+    <form v-if="kind === 'merge'" class="todo-back" data-testid="todo-back" @submit.prevent="note.trim() && act('back', () => emit('back', note.trim()))">
       <UTextarea v-model="note" :rows="2" autoresize maxlength="2000" size="xl" :placeholder="tl('What to change')" data-testid="todo-back-note" />
-      <UButton type="submit" color="neutral" variant="outline" size="xl" icon="i-lucide-undo-2" :disabled="busy || !note.trim()" data-testid="todo-back-send">{{ tl('Send back') }}</UButton>
+      <UButton type="submit" color="neutral" variant="outline" size="xl" :icon="confirmed === 'back' ? 'i-lucide-check' : 'i-lucide-undo-2'" :class="{ confirmed: confirmed === 'back' }" :loading="sending('back')" :disabled="busy || (!note.trim() && confirmed !== 'back')" data-testid="todo-back-send">{{ confirmed === 'back' ? tl('Sent back') : tl('Send back') }}</UButton>
     </form>
   </div>
 </template>
@@ -193,5 +216,7 @@ const ASK_LABEL: Record<WaitKind, [string, string]> = { question: ['Its agent as
   .todo-shots li { min-width: 0; justify-items: start; }
 }
 .todo-back { display: grid; gap: 8px; }
+/* Done (DONE_MS): as Approve in Tasks to review. */
+.todo .confirmed { pointer-events: none; border-color: var(--done); background: var(--done); color: var(--bg); }
 .todo-back > button { justify-self: start; }
 </style>

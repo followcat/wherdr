@@ -22,7 +22,8 @@
 - **"File too large for herdr-core (8 MB max)"**: attachments go through `terminal.put`, limited
   to 8 MB per file.
 - **The first message was not sent**: the program opened on a dialog or was busy. Answer it in
-  the terminal, then send the message again.
+  the terminal, then send the message again. When herdr-core did not confirm it was typed (it
+  did not answer in time), it may have arrived: check the conversation before sending it again.
 - **A core machine is offline**: Settings › Machines shows its last error; **Reconnect**
   tries again. Check that this host can log in with `ssh -o BatchMode=yes <target> true` and that
   herdr-core is installed there ([Machines](machines.md)).

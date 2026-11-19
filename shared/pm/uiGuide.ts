@@ -32,6 +32,7 @@ export function uiGuideRows(role: UiRole, o: { pm?: boolean, key?: string } = {}
   const task = `${o.key || 'ABC'}-12`
   const blocks: UiGuideRow[] = [
     { when: 'You need one choice among 2 to 4', use: { block: 'choices "Squash" | "Merge commit" | "Rebase"' }, not: 'a numbered list ("reply 1, 2 or 3")' },
+    { when: 'You need several answers at once (2 to 8 questions, 2 to 4 options each)', use: { block: 'questions\n1 "Which database?" | "Postgres" | "SQLite"\n2 "Keep the old API?" | "Yes" | "No, remove it"' }, not: 'a numbered list of questions, or one message per question' },
     { when: 'You need a yes to one proposal', use: { block: 'choices "OK, fix the test"' }, not: '"reply OK to go on"' },
     { when: 'You name a task whose state matters', use: { block: `task ${task}` }, not: 'its state copied in a sentence (a bare id in passing is fine)' },
   ]
@@ -52,7 +53,7 @@ export function uiGuideRows(role: UiRole, o: { pm?: boolean, key?: string } = {}
 const quoted = (w: string) => (/^[\w.:/@=-]+$/.test(w) ? w : `'${w.replace(/'/g, '\'\\\'\'')}'`)
 // A block's example goes below the table, as a fenced block to copy as is: in a
 // table cell its | would need escaping (choices), and the copy would not parse.
-const kind = (b: string) => b.split(' ')[0]
+const kind = (b: string) => b.split(/\s/)[0]
 const useText = (u: UiExample) => ('block' in u
   ? `a \`${kind(u.block)}\` line in a \`wherdr\` block (example below)`
   : `\`wherdr ${u.cli} ${u.argv.map(quoted).join(' ')}\``)
@@ -66,12 +67,12 @@ export function uiGuide(role: UiRole, o: { pm?: boolean, key?: string } = {}): s
     return ['## Showing instead of telling', '',
       'When you ask the user something, the chat can draw it: a fenced code block in the language `wherdr`, one line per element. You have no `ui` command: these blocks only show.', '',
       ...table, '', ...examples,
-      'Choices only in a question you are blocked on. One block per message, after the sentence that explains it.', '']
+      'Choices only in a question you are blocked on. One block per message, after the sentence that explains it. The user answers a `questions` card in one message, one line per question: `1A Postgres`, `2B No, remove it`, `3 <their own words>` or `3 skip`.', '']
   }
   return ['## Showing instead of telling', '',
     'Show the user what you mean instead of describing it. A `wherdr` block is a fenced code block in the language `wherdr`, one line per element, one kind per block: the chat draws it with live data (never what you wrote about it).', '',
     ...table, '', ...examples,
-    '- At most one card or button group per message, after the sentence that explains it; never a card with no sentence.',
+    '- At most one card or button group per message, after the sentence that explains it; never a card with no sentence. Several questions go in one `questions` card, answered in one message, one line per question: `1A Postgres`, `2B No, remove it`, `3 <their own words>` or `3 skip`.',
     '- In a wake: `wherdr` blocks only. A `ui` command or `--propose` is refused there: tell the user what you would show instead of trying.',
     '- A refusal (no open wherdr: `not_found`, or not in the user\'s turn) → give the in-app link in text. Never retry in a loop.',
     '- Only the user\'s click acts: never say a button\'s action is done ("I merged it") before its card shows the outcome.', '']

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { branchFor, branchNameError, followedBranch, reportedBranch, slugOf } from '../shared/pm/branchName'
+import { branchFor, branchNameError, commitMessageError, commitMessageFor, followedBranch, reportedBranch, slugOf } from '../shared/pm/branchName'
 import { cleanProjectUpdate } from '../shared/pm/project'
 
 const task = { id: 'WHR-12', title: 'Fix the login page', type: 'bug', tags: ['PROJ-345'] }
@@ -48,5 +48,23 @@ describe('the branch the worker pushed', () => {
     // Pushed without a checkout: followed, and a later report without the line keeps it.
     expect(followedBranch(start, { note: 'Branch: bugfix/PROJ-2', branch: start }, start)).toBe('bugfix/PROJ-2')
     expect(followedBranch('bugfix/PROJ-2', { note: 'Fixed the findings.', branch: start }, start)).toBeUndefined()
+  })
+})
+
+describe('commit message template', () => {
+  it('fills {tag} and {title}; a missing tag drops with its separator; none set: no message', () => {
+    expect(commitMessageFor('{tag}: {title}', { ...task, tags: ['ABC-123'] })).toBe('ABC-123: Fix the login page')
+    expect(commitMessageFor('{tag}: {title}', { ...task, tags: [] })).toBe('Fix the login page')
+    expect(commitMessageFor('[{tag}] {title} ({id})', { ...task, tags: undefined })).toBe('Fix the login page (WHR-12)')
+    expect(commitMessageFor('{title} - {tag}', { ...task, tags: [] })).toBe('Fix the login page')
+    expect(commitMessageFor(undefined, task)).toBeUndefined()
+    expect(commitMessageFor('', task)).toBeUndefined()
+  })
+
+  it('refuses an unknown field or a second line', () => {
+    expect(commitMessageError('{tag}: {name}')).toMatch(/unknown field \{name\}/)
+    expect(commitMessageError('{tag}\n{title}')).toBe('one line')
+    expect(cleanProjectUpdate({ commitMessage: ' {tag}: {title} ' }).update?.commitMessage).toBe('{tag}: {title}')
+    expect(cleanProjectUpdate({ commitMessage: '{x}' }).errors[0]?.path).toBe('commitMessage')
   })
 })

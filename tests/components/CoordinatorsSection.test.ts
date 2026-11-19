@@ -9,6 +9,7 @@ import { nextTick } from 'vue'
 import { appConfig, coarse, curPane, desk, herdrState } from '~/composables/useHerdr'
 import { alfred, coordinatorOrder, coordinators, coordinatorsHidden, loadCoordinators, paneCoordinatorName } from '~/composables/useCoordinators'
 import { answerConfirm, confirmState, menuState } from '~/composables/useUi'
+import { reviewFilter, reviewOpen } from '~/composables/useReview'
 import { paneNotificationsMuted } from '~/composables/useNotificationRules'
 import { machineBarSaved, machineGroups } from '~/composables/useMachineBar'
 import { MAIN, type CoordinatorView } from '#shared/pm/coordinator'
@@ -259,8 +260,8 @@ it('a hidden coordinator that needs the user shows in the main list (WHR-331)', 
 
 it("a workspace's row: under its tab group, its members' counts, their badges expanding to the list, its own menu (WHR-384)", async () => {
   herdrState.value = { ok: true, workspaces: [], panes: [pane('w:p1', 'host/t1'), pane('w:p2', 'host/t2')] }
-  const members = [{ key: 'PA', name: 'payroll-api', color: 'teal' as const }, { key: 'WA', name: 'web-app' }]
-  views = [view('WS', { terminal: 'host/t1', machines: ['laptop'], workspace: { group: '*group:work', members, working: 2, waiting: 1 } }), view('HOME', { terminal: 'host/t2', machines: ['laptop'] })]
+  const members = [{ key: 'PA', name: 'payroll-api', color: 'teal' as const, working: 2, waiting: [] }, { key: 'WA', name: 'web-app', working: 0, waiting: ['WA-3'] }]
+  views = [view('WS', { terminal: 'host/t1', machines: ['laptop'], workspace: { group: '*group:work', members, working: 2, waiting: ['WA-3'] } }), view('HOME', { terminal: 'host/t2', machines: ['laptop'] })]
   machineGroups.value = [{ id: '*group:personal', name: 'Personal', machines: ['laptop'] }, { id: '*group:work', name: 'Work', machines: ['office'] }]
   desk.value = true
   coarse.value = false
@@ -273,14 +274,49 @@ it("a workspace's row: under its tab group, its members' counts, their badges ex
     machineBarSaved.value = '*group:work'
     await vi.waitFor(() => expect(names()).toEqual(['ws app']))
     expect(w.find('[data-testid="workspace-counts"]').text()).toBe('2 working · 1 waiting for you')
-    // Its members' badges; a tap lists them, each opening its board.
+    // Its members' badges, a square on the one waiting; a tap lists them, each opening its board, with its own counts.
     const strip = w.find('[data-testid="workspace-members"]')
     expect(strip.findAll('[data-testid="project-badge"]').map(b => b.text())).toEqual(['PA', 'WA'])
+    expect(strip.findAll('.ws-badge').map(b => b.classes().includes('waits'))).toEqual([false, true])
     expect(w.find('[data-testid="workspace-member-list"]').exists()).toBe(false)
     await strip.trigger('click')
     const list = w.find('[data-testid="workspace-member-list"]')
     expect(list.findAll('a').map(a => [a.text(), a.attributes('href')])).toEqual([['PApayroll-api', '#/board?project=PA'], ['WAweb-app', '#/board?project=WA']])
+    expect(list.findAll('[data-testid="workspace-member"]').map(m => m.find('[data-testid="workspace-counts"]').exists() ? m.find('[data-testid="workspace-counts"]').text() : '')).toEqual(['2 working', '1 waiting for you'])
     const items = () => w!.findComponent({ name: 'UContextMenu' }).props('items').flat() as { label: string }[]
     expect(items().map(i => i.label)).toEqual(['Open the board', 'Workspace settings', 'Autopilot', 'Rename…', 'Mute notifications', 'Move to hidden', 'Restart with…', 'Stop the coordinator'])
   } finally { machineGroups.value = []; machineBarSaved.value = null }
+})
+
+it("'n waiting for you' opens the one waiting task, or several: a member's Tasks to review, the workspace's board (WHR-480)", async () => {
+  herdrState.value = { ok: true, workspaces: [], panes: [pane('w:p1', 'host/t1')] }
+  // WA waits twice; PA once; the workspace's own feature once (on its row only).
+  const members = [{ key: 'PA', name: 'payroll-api', working: 0, waiting: ['PA-1'] }, { key: 'WA', name: 'web-app', working: 0, waiting: ['WA-3', 'WA-4'] }]
+  views = [view('WS', { terminal: 'host/t1', workspace: { members, working: 0, waiting: ['WS-1', 'PA-1', 'WA-3', 'WA-4'] } })]
+  const router = useRouter()
+  try {
+    w = await mountSuspended(CoordinatorsSection)
+    await vi.waitFor(() => expect(w!.find('[data-testid="workspace-counts"]').text()).toBe('4 waiting for you'))
+    await w.find('[data-testid="workspace-waiting"]').trigger('click')
+    expect(navigate).toHaveBeenCalledWith('/board?project=WS')
+    await w.find('[data-testid="workspace-members"]').trigger('click')
+    const waiting = () => w!.findAll('[data-testid="workspace-member"] [data-testid="workspace-waiting"]')
+    await waiting()[0]!.trigger('click')
+    await vi.waitFor(() => expect(router.currentRoute.value.query.task).toBe('PA-1'))
+    await waiting()[1]!.trigger('click')
+    expect([reviewFilter.value, reviewOpen.value]).toEqual(['p:WA', true])
+  } finally { reviewOpen.value = false; reviewFilter.value = null; await router.replace('/') }
+})
+
+it("a workspace with no members still shows its own waiting feature, one tap from its sheet (WHR-480)", async () => {
+  herdrState.value = { ok: true, workspaces: [], panes: [pane('w:p1', 'host/t1')] }
+  views = [view('WS', { terminal: 'host/t1', workspace: { members: [], working: 0, waiting: ['WS-1'] } })]
+  const router = useRouter()
+  try {
+    w = await mountSuspended(CoordinatorsSection)
+    await vi.waitFor(() => expect(w!.find('[data-testid="workspace-counts"]').text()).toBe('1 waiting for you'))
+    expect(w.find('[data-testid="workspace-members"]').exists()).toBe(false)
+    await w.find('[data-testid="workspace-waiting"]').trigger('click')
+    await vi.waitFor(() => expect(router.currentRoute.value.query.task).toBe('WS-1'))
+  } finally { await router.replace('/') }
 })

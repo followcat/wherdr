@@ -1,7 +1,7 @@
 // Latest wherdr release on GitHub, checked at most once a day
 // (public API without a token, nothing is sent). WHERDR_UPDATE_CHECK=off disables the call.
 import pkg from '../../package.json'
-import { compareVersions, isNewerRelease, UPDATE_COMMAND, type UpdateInfo } from '../../shared/updates'
+import { compareVersions, isNewerRelease, updateCommand, type UpdateInfo } from '../../shared/updates'
 
 export const REPO = 'afloury/wherdr'
 export const RELEASES_URL = `https://api.github.com/repos/${REPO}/releases?per_page=100`
@@ -50,14 +50,14 @@ export function createUpdateChecker(opts: {
   }
 
   return async function check(): Promise<UpdateInfo> {
-    const base = { current: opts.current, command: UPDATE_COMMAND, behind: 0, missed: [] as string[], behindAtLeast: false }
+    const base = { current: opts.current, command: updateCommand(), behind: 0, missed: [] as string[], behindAtLeast: false }
     if (String(opts.env.WHERDR_UPDATE_CHECK || '').toLowerCase() === 'off') return { ...base, latest: null, url: null, notes: null, checked: false }
     if (now() >= nextAt) {
       pending ??= refresh().finally(() => { pending = null })
       await pending
     }
     const newer = cached && isNewerRelease(cached.version, opts.current)
-    return { ...base, latest: newer ? cached!.version : null, url: newer ? cached!.url || null : null, notes: newer ? cached!.notes || null : null, checked: !!cached,
+    return { ...base, ...(newer ? { command: updateCommand(cached!.version) } : {}), latest: newer ? cached!.version : null, url: newer ? cached!.url || null : null, notes: newer ? cached!.notes || null : null, checked: !!cached,
       ...(newer ? { behind: cached!.missed.length, missed: cached!.missed.slice(0, 5), behindAtLeast: cached!.truncated } : {}) }
   }
 }

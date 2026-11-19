@@ -84,6 +84,10 @@ describe('autopilot limits', () => {
     expect(startRefusal(ap, tasks.slice(0, 2), [], at(12), undefined, holds)).toBeUndefined()
     // Without its plan, a task holds its slot.
     expect(holdsSlot(tasks[1]!)).toBe(true)
+    // Parked (waiting for another task, or paused for room): no agent, no slot, so the task it waits for can start.
+    const parked = task(4, { ...step(0), parked: { on: 'WH-9', need: 'its API', at: 0, before: [] } })
+    expect(holdsSlot(parked, plan)).toBe(false)
+    expect(startRefusal({ ...ap, atOnce: 1 }, [parked], [], at(12))).toBeUndefined()
   })
 
   it('counts the tasks started since midnight, a task once', () => {

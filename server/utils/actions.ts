@@ -4,6 +4,7 @@ import path from 'node:path'
 import { DATA_DIR, HOME, UPLOAD_DIR, UPLOAD_TTL_MS } from './env'
 import { type Machine, getMachine } from './machines'
 import { inProjectsHome } from '../../bin/lib/userpath.mjs'
+import { writeJsonAtomic } from './atomicWrite'
 
 const fsp = fs.promises
 const px = path.posix
@@ -33,8 +34,7 @@ export async function rememberDir(d: string, m: DirsOwner) {
   const dirs = [d, ...(await recentDirs(m)).filter(x => x !== d)].slice(0, 30)
   if (m.local) f.dirs = dirs
   else f.machines = { ...(f.machines || {}), [dirsKey(m)]: dirs }
-  await fsp.mkdir(DATA_DIR, { recursive: true })
-  await fsp.writeFile(DIRS_FILE, JSON.stringify(f, null, 2) + '\n')
+  await writeJsonAtomic(DIRS_FILE, f)
 }
 
 // --- Photos ----------------------------------------------------------------

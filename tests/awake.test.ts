@@ -3,7 +3,10 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { STATUS_SCRIPT, awakeWarning, controlScript, inhibitorLaunch, parseAwakeStatus, parseControl } from '../shared/awake'
+import { STATUS_SCRIPT, awakeRefusal, awakeWarning, inhibitorLaunch, parseAwakeStatus, parseControl, setScript } from '../shared/awake'
+import { CoreError } from '../server/utils/core'
+import { coreAwakeStatus, coreSetAwake } from '../server/utils/coreAwake'
+import type { CoreAdminDeps } from '../server/utils/coreCreate'
 
 describe('keep awake: command and state', () => {
   it('builds the inhibitor per platform, detached from the exec that starts it', () => {
@@ -33,13 +36,37 @@ describe('keep awake: command and state', () => {
   })
 })
 
+describe('keep awake: a failed read is not "not available"', () => {
+  const machines = () => [{ key: 'machine-b', label: 'machine-b', local: false, status: 'online' as const, error: null }]
+  const deps = (call: (method: string, params: Record<string, unknown>) => unknown) =>
+    ({ machines, call: async (m: string, p: Record<string, unknown>) => call(m, p) }) as unknown as CoreAdminDeps
+  const reason = (p: Promise<unknown>) => p.then(() => '', (e: Error) => e.message)
+
+  it('a timeout or a core error gives the reason; only supported: false says "not available"', async () => {
+    const timedOut = deps(() => ({ code: null, stdout: '', timed_out: true }))
+    expect(await reason(coreAwakeStatus(timedOut, 'machine-b'))).toBe('no answer in 8 s')
+    const lost = deps(() => { throw new CoreError('unreachable', 'connection lost') })
+    expect(await reason(coreAwakeStatus(lost, 'machine-b'))).toBe('herdr-core: connection lost')
+    expect(awakeRefusal('machine-b', { error: 'no answer in 8 s' })).toBe('Could not reach machine-b: no answer in 8 s')
+    expect(awakeRefusal('machine-b', parseAwakeStatus('platform=linux\n'))).toBe('Sleep control is not available on this machine')
+    expect(awakeRefusal('machine-b', parseAwakeStatus('platform=mac\n'))).toBe('')
+  })
+  it('a change is one exec, then one read', async () => {
+    const calls: Record<string, unknown>[] = []
+    const out = (s: string) => ({ code: 0, stdout: Buffer.from(s).toString('base64') })
+    const d = deps((_m, p) => { calls.push(p); return out(calls.length === 1 ? 'started=42\n' : 'platform=mac\nawake=42|0\n') })
+    expect(await coreSetAwake(d, { key: 'machine-b', mode: 'untilOff' })).toMatchObject({ active: true, until: null })
+    expect(calls.map(p => [(p.argv as string[]).at(-1), p.timeout, p.on])).toEqual([['untilOff', 15, 'machine-b'], ['sh', 8, 'machine-b']])
+  })
+})
+
 // The real scripts (macOS launch: real perl, a fake caffeinate) in a temporary HOME.
 let root: string, home: string, bin: string, log: string
 let spawned: number[] = []
 const pidFile = () => join(home, '.cache/herdr-web/awake.pid')
 const env = () => ({ PATH: `${bin}:/usr/bin:/bin`, HOME: home })
 function control(mode: string) {
-  const out = execFileSync('sh', ['-c', controlScript('mac'), 'sh', mode], { env: env(), encoding: 'utf8' })
+  const out = execFileSync('sh', ['-c', setScript(), 'sh', mode], { env: env(), encoding: 'utf8' })
   const pid = Number(/^started=(\d+)$/m.exec(out)?.[1])
   if (pid) spawned.push(pid)
   return out
@@ -52,9 +79,14 @@ function alive(pid: number) {
   try { return !/^\d+ \(.*\) Z/.test(readFileSync(`/proc/${pid}/stat`, 'utf8')) }
   catch { return true }
 }
+// Seen dead once is enough: a second look could catch a zombie reaped between
+// its kill(0) and its /proc read, and wrongly read it as alive.
 async function gone(pid: number) {
-  for (let i = 0; i < 50 && alive(pid); i++) await new Promise(r => setTimeout(r, 100))
-  return !alive(pid)
+  for (let i = 0; i < 50; i++) {
+    if (!alive(pid)) return true
+    await new Promise(r => setTimeout(r, 100))
+  }
+  return false
 }
 const events = () => readFileSync(log, 'utf8').trim().split('\n')
 

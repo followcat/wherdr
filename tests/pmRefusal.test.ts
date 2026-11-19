@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest'
-import { agentCatchingUp, refusalSaid, turnText } from '../shared/pm/refusal'
+import { actionFix, agentCatchingUp, refusalSaid, thrownReason, turnText } from '../shared/pm/refusal'
+import { CoreError } from '../bin/lib/hc.mjs'
 import { initialState } from '../shared/pm/steps'
 
 it('says each merge refusal in plain words, never a command', () => {
@@ -39,4 +40,22 @@ it('drops the user\'s turn while the agent fixes the conflict, and gives it back
   }
   expect(agentCatchingUp({ ...card, log: [{ at: 5, by: 'engine', text: 'catch-up: sent to the agent' }] })).toBeUndefined() // before this step
   expect(turnText({ yourTurn: 'Look at the screenshots, then merge' })).toBe('Look at the screenshots, then merge')
+})
+
+it('tells a failed action its worker can fix from one outside the code', () => {
+  // The branch or PR needs work: the agent first.
+  for (const e of ['merge: the PR conflicts with v3', 'merge: 2 check(s) failed', 'push: push to task/x refused: non-fast-forward', 'merge: new commits since the review (abc..def)',
+    'push: ! [rejected] task/WHR-503 -> task/WHR-503 (fetch first)', 'merge: the PR #504 conflicts with v3'])
+    expect(actionFix(e)).toBe('code')
+  // herdr-core, a machine, the network, the Git host: Try again only.
+  for (const e of ['merge: herdr-core rejected the request (unavailable)', 'box is unreachable', 'merge: timed out', 'merge: HTTP 502 Bad Gateway', 'push: could not resolve host: github.com', 'merge: API rate limit exceeded', 'github.merge was interrupted before its result was known: check by hand, then try again'])
+    expect(actionFix(e)).toBe('outside')
+  expect(actionFix('merge: exit code 1')).toBe('unknown')
+  expect(actionFix(undefined)).toBe('unknown')
+})
+
+it('keeps herdr-core\'s kind and hint in a thrown action\'s reason', () => {
+  expect(thrownReason(new CoreError('unavailable', 'herdr-core rejected the request', 'machine box is offline'))).toBe('herdr-core rejected the request (unavailable: machine box is offline)')
+  expect(thrownReason(new CoreError('rpc', 'herdr-core rejected the request'))).toBe('herdr-core rejected the request')
+  expect(thrownReason(new Error('No worktree'))).toBe('No worktree')
 })

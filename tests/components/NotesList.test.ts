@@ -43,6 +43,15 @@ it('follows the tab, renders badges and keeps checkboxes read-only', async () =>
   w.unmount()
 })
 
+it('renders --- as a separator and a heading after a list item outside the list', async () => {
+  notes.value = [note('shaped', 'all', '- a\n## Next\nText\n---\nMore')]
+  const w = await mountSuspended(NotesList)
+  await nextTick()
+  const kids = [...w.find('#note-shaped .note-body').element.children].map(e => e.tagName)
+  expect(kids.slice(-4)).toEqual(['H2', 'P', 'HR', 'P']) // the heading at the body's level, not in the list
+  w.unmount()
+})
+
 it('says which machine tab it follows, and when that tab has no note of its own', async () => {
   machineBarSaved.value = '' // the only machine, shown as its own tab
   notes.value = [note('everywhere', 'all', 'x')]
@@ -97,5 +106,18 @@ it('opens a linked file in place, follows its links, mutes the missing and the e
   expect(w.find('[data-testid=note-file]').exists()).toBe(false)
   expect(w.find('.notes-index').attributes('style') ?? '').not.toContain('display: none')
   expect(w.find('#note-home a[href="plans/lost.md"]').classes()).toContain('note-link-missing') // marked from the folder again
+  w.unmount()
+})
+
+// WHR-455: inline code naming a notes file opens it like a link; a missing one stays plain code.
+it('opens a notes file named in inline code', async () => {
+  notes.value = [note('home', 'all', 'Read `plans/steps.md`, not `plans/lost.md`')]
+  noteFiles.value = Object.keys(FILES)
+  const w = await mountSuspended(NotesList)
+  await nextTick()
+  const codes = w.findAll('#note-home code')
+  expect(codes.map(c => c.classes().includes('note-path-link'))).toEqual([true, false])
+  await codes[0]!.trigger('click')
+  await vi.waitFor(() => expect(w.find('.note-file-body').text()).toMatch(/^Steps/))
   w.unmount()
 })

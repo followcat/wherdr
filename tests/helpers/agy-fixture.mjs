@@ -77,13 +77,24 @@ function createConversation(file, session) {
 }
 
 function insertRows(db, rows, offset = 0) {
+  if (!rows.length) return
   const ins = db.prepare(`INSERT INTO steps (idx, step_type, status, has_subtrajectory, metadata, error_details, permissions, task_details, render_info, step_payload, step_format)
     VALUES (?, ?, ?, 0, ?, NULL, NULL, NULL, NULL, ?, 0)`)
-  rows.forEach((row, i) => {
-    const idx = row.idx ?? offset + i
-    const { type, metadata, payload } = stepBlobs(row, idx)
-    ins.run(idx, type, row.status ?? 3, metadata, payload)
-  })
+  // One transaction per write: a commit per row took seconds for a page of
+  // 280 rows. A savepoint nests inside the spill test's own open transaction.
+  db.exec('SAVEPOINT wherdr_fixture')
+  try {
+    rows.forEach((row, i) => {
+      const idx = row.idx ?? offset + i
+      const { type, metadata, payload } = stepBlobs(row, idx)
+      ins.run(idx, type, row.status ?? 3, metadata, payload)
+    })
+    db.exec('RELEASE wherdr_fixture')
+  } catch (e) {
+    db.exec('ROLLBACK TO wherdr_fixture')
+    db.exec('RELEASE wherdr_fixture')
+    throw e
+  }
 }
 
 // gen_metadata.data blob for a model id and its display label.

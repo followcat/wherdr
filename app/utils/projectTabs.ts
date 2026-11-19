@@ -36,3 +36,14 @@ export function tabCounts(rows: readonly (TabCounted & { base: string })[], coor
   return counts
 }
 export const countsTotal = (c: Record<CountGroup, number>) => c.blocked + c.working + c.ready
+
+// Whether a home tab holds a project (selection as projectOnTab's): a project
+// whose tab machines are not known yet (undefined: not loaded) shows. The rule
+// of the sidebar (projectOnBar), the board's Follow machine tab and Settings › Projects.
+export const tabHolds = (tabMachines: readonly string[] | null | undefined, selection: readonly string[] | null) =>
+  tabMachines === undefined || projectOnTab(tabMachines, selection)
+// Settings › Projects' search: by name, key (shown, fixed or former) or path, any case.
+export function projectsMatching<P extends { key: string, name: string, path: string, label?: string, aliases?: readonly string[] }>(projects: readonly P[], query: string): P[] {
+  const q = query.trim().toLowerCase()
+  return q ? projects.filter(p => [p.name, p.key, p.label ?? '', ...(p.aliases ?? []), p.path].some(s => s.toLowerCase().includes(q))) : [...projects]
+}

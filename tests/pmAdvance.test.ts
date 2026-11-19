@@ -139,6 +139,19 @@ describe('end signals', () => {
     expect(w.work).toEqual({ commits: '123 45', files: [{ path: 'src/a.ts', add: 3, del: 1 }, { path: 'logo.png', add: 0, del: 0 }] })
   })
 
+  it('a send-back round adds its section to the report: both stay, the proofs come from the round alone', () => {
+    const first = '## Report\n\nCause found. https://example.com/issue/1'
+    const out = (note: string) => parseRead(['abc1234', '5', note, '', '', '', '', first].join(`\n${READ_SEP}\n`))
+    const appended = out(`${first}\n\n## Review round 1\n\nFixed the test.`)
+    expect(appended).toMatchObject({ note: '## Review round 1\n\nFixed the test.', whole: `${first}\n\n## Review round 1\n\nFixed the test.` })
+    expect(appended.rewrote).toBeUndefined()
+    expect(proofsOf(appended)).toMatchObject({ report: appended.whole })
+    expect(proofsOf(appended).link).toBeUndefined()
+    // The worker rewrote the file: the first report goes back on top.
+    const replaced = out('## Review round 1\n\nFixed the test.')
+    expect(replaced).toMatchObject({ rewrote: true, whole: `${first}\n\n## Review round 1\n\nFixed the test.` })
+  })
+
   it('keeps each worker report as it arrives, and the commits a verdict read', () => {
     const w = (commits: string) => ({ commits, files: [] })
     const base = { id: 'X-1', project: 'X', title: 't', description: '', type: 'feature', state: 'working' } as Task
@@ -179,6 +192,9 @@ describe('chained tasks', () => {
     expect(chainState(next, [finished('CO-1'), task('CO-2', { state: 'waiting', waiting: 'git worktree failed\nmore' }), next]))
       .toEqual({ wait: 'CO-2, which this task starts after, stopped: git worktree failed' })
     expect(chainState(next, [finished('CO-1'), next])).toEqual({ wait: 'CO-2, which this task starts after, does not exist' })
+    // Its project removed since (WHR-513): waits for the user, never forever with no word.
+    expect(chainState(next, [finished('CO-1'), task('CO-2', { project: 'API', state: 'working' }), next], [{ key: 'CO' }]))
+      .toEqual({ wait: 'CO-2, which this task starts after, belongs to project API, which was removed' })
   })
 })
 
@@ -431,7 +447,7 @@ describe('advanceTick (store and a fake herdr-core)', () => {
       await tick(deps) // nothing new: told once
       expect(calls.filter(([m]) => m === 'terminal.run')).toHaveLength(1)
 
-      // A major finding: back to the worker, its old note removed (a stale link proves nothing).
+      // A major finding: back to the worker, its report kept and copied (the round adds its section).
       verdict = major
       terms['h/t2']!['wherdr.report'] = 'done'
       await tick(deps)
@@ -439,7 +455,8 @@ describe('advanceTick (store and a fake herdr-core)', () => {
       await tick(deps)
       const sent = calls.filter(([m, p]) => m === 'terminal.send' && p.terminal === 'h/t1').map(([, p]) => p.text as string)
       expect(sent.at(-1)).toContain('no-test [major] No test')
-      expect(calls.some(([m, p]) => m === 'machine.exec' && (p.argv as string[]).includes('/h/.wherdr/pm/tasks/CO-1/report.md') && (p.argv as string[])[2] === 'rm -f "$1"')).toBe(true)
+      expect(sent.at(-1)).toContain('keep /h/.wherdr/pm/tasks/CO-1/report.md as it is and add this round\'s section at its end')
+      expect(calls.some(([m, p]) => m === 'machine.exec' && (p.argv as string[]).includes('/h/.wherdr/pm/tasks/CO-1/report.before.md') && (p.argv as string[])[2]!.includes('cp -f'))).toBe(true)
       // The fix, then the review again in the same reviewer's terminal.
       terms['h/t1']!['wherdr.report'] = 'done'
       await tick(deps) // the PR again (same branch), then the review

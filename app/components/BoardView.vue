@@ -38,14 +38,13 @@ const shownProject = (key: string) => (workspace.value ? inWorkspace(key) : proj
 const projectPick = computed({ get: () => boardPick.value, set: (v: string) => { linked.value = ''; boardProject.value = v } })
 const tag = ref(queried(route.query.tag)) // '' = every tag
 watch(() => queried(route.query.tag), (g) => { tag.value = g })
-// The task to show, also from Decisions' "Open task" (/board?task=CO-1).
+// The task to show, also from a link (/board?task=CO-1).
 const open = ref<string | null>(typeof route.query.task === 'string' ? route.query.task : null)
 // Also when the board is already open (the sidebar's Tasks to handle).
 watch(() => route.query.task, (id) => { if (typeof id === 'string') open.value = id })
-const decisions = ref(0) // what waits for the user's choice, on the Decisions screen
 
 async function load() {
-  try { data.value = await api<Board>('/api/pm/board'); error.value = ''; loadCoordinators(); api<unknown[]>('/api/pm/decisions').then((d) => { decisions.value = d.length }, () => {}) }
+  try { data.value = await api<Board>('/api/pm/board'); error.value = ''; loadCoordinators()}
   catch (e) { error.value = (e as Error).message }
 }
 let timer: ReturnType<typeof setInterval> | undefined
@@ -149,6 +148,9 @@ const shownKeys = computed(() => (data.value?.projects ?? []).map(p => p.key).fi
 const archivedCount = computed(() => shownKeys.value.reduce((n, k) => n + (data.value?.archived?.[k] ?? 0), 0))
 const archiveOpen = ref(false)
 const openArchived = (c: Card) => { keepArchivedCard(c); show(c.id) }
+// To review: what Tasks to review lists under its own filter (useReview.ts); the button opens it.
+const reviewKnown = (v: string) => (v.startsWith('p:') ? known(v.slice(2)) : machineGroups.value.some(g => g.id === v))
+const toReview = computed(() => { const pick = reviewPick(reviewKnown); return (data.value?.cards ?? []).filter(c => reviewWaits(c) && reviewShows(pick, c.project)).length })
 </script>
 
 <template>
@@ -157,8 +159,8 @@ const openArchived = (c: Card) => { keepArchivedCard(c); show(c.id) }
       <UButton icon="i-lucide-chevron-left" color="neutral" variant="ghost" size="lg" class="icon-btn back" :aria-label="t('Back')" to="/" />
       <h1 class="display">{{ tl('Board', 'Tableau') }}</h1>
       <SetupButton />
-      <UButton :color="decisions ? 'warning' : 'neutral'" :variant="decisions ? 'solid' : 'outline'" size="lg" to="/decisions" data-testid="board-decisions">
-        {{ tl('Decisions', 'Décisions') }}<span v-if="decisions" class="mono-label board-decisions-n">{{ decisions }}</span>
+      <UButton :color="toReview ? 'warning' : 'neutral'" :variant="toReview ? 'solid' : 'outline'" size="lg" data-testid="board-review" @click="showReview()">
+        {{ tl('To review') }}<span v-if="toReview" class="mono-label board-review-n" data-testid="board-review-n">· {{ toReview }}</span>
       </UButton>
       <UButton icon="i-lucide-plus" color="neutral" variant="outline" size="lg" class="board-add" :aria-label="tl('Add a task', 'Ajouter une tâche')" :disabled="!data?.projects.length" data-testid="board-add" @click="adding = true">
         <span class="board-add-label">{{ tl('Add task', 'Ajouter') }}</span>
@@ -198,6 +200,8 @@ const openArchived = (c: Card) => { keepArchivedCard(c); show(c.id) }
           <!-- An accepted merge on its way: Merging until it ends, what it waits for on the status line above (none while its checks are red). -->
           <span v-else-if="mergeGoesNow(c)" class="board-badge board-merging" role="status" :aria-label="`${tl('Merging')}: ${mergeWaits(c)}`" data-testid="board-merging"><UIcon name="i-lucide-loader-circle" class="spin" aria-hidden="true" />{{ tl('Merging') }}</span>
           <small v-if="c.report" class="board-status wait" :title="c.report.text" data-testid="board-report">{{ tl('Problem reported') }} {{ fmtTime(c.report.at) }}</small>
+          <small v-else-if="c.parked?.room" class="muted" :title="c.parked.need" data-testid="board-parked">{{ tl(`Paused: waiting for room on ${c.parked.room}`) }}</small>
+          <small v-else-if="c.parked" class="muted" :title="c.parked.need" data-testid="board-parked">{{ tl('Waits for', 'Attend') }} {{ shownTaskId(data?.projects ?? [], c.parked.on) }}: {{ c.parked.need }}</small>
           <small v-else-if="waiting(c).length" class="muted" data-testid="board-waits">{{ tl('Waits for', 'Attend') }} {{ waiting(c).map(id => shownTaskId(data?.projects ?? [], id)).join(', ') }}</small>
           <!-- Stalled, the machine may still fix it: a warning only; after 30 min it is Your turn. -->
           <small v-if="c.stall && !c.yourTurn" class="board-stall" :title="c.stall.reason" data-testid="board-stall"><UIcon name="i-lucide-triangle-alert" aria-hidden="true" />{{ t(c.stall.reason) }}</small>
@@ -231,13 +235,14 @@ const openArchived = (c: Card) => { keepArchivedCard(c); show(c.id) }
 .board { color: var(--text); }
 .board-top { flex: none; display: flex; align-items: center; gap: 8px; min-height: calc(44px + var(--safe-top, 0px)); padding: var(--safe-top, 0px) 8px 0; border-bottom: 1px solid var(--line); }
 .board-top h1 { flex: 1; margin: 0; font-size: 20px; }
-.board-decisions-n { margin-left: 6px; color: inherit; }
+.board-review-n { margin-left: 6px; color: inherit; }
+.board-top [data-testid="board-review"] { flex: none; white-space: nowrap; }
 /* Phone: Add is an icon, and the heading is for screen readers only, so the project picker keeps its room. */
 @media (max-width: 899px) {
   .board-add { width: 44px; justify-content: center; }
   .board-add-label { display: none; }
   .board-top h1 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-  .board-top [data-testid="board-decisions"] { margin-right: auto; }
+  .board-top [data-testid="board-review"] { margin-right: auto; }
   /* A picked project (its badge, then its name, cut with an ellipsis) and Autopilot crowd the
      header: it wraps to a second row instead of running off the screen. */
   .board-top:has(.project-select-value) { flex-wrap: wrap; row-gap: 4px; padding-bottom: 4px; }

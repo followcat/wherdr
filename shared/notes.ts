@@ -34,11 +34,15 @@ export type NotesCommand =
   | { verb: 'remove', id: string }
   | { verb: 'file put' | 'file remove', path: string } // put: the file's text on input
 
+export const MAX_LINES = 12
+export const MAX_BODY = 1500
+export const NOTE_LIMIT = `at most ${MAX_LINES} content lines (blank lines, --- separators and # headings do not count) and ${MAX_BODY} characters`
+
 export const NOTES_COMMANDS: { usage: string, does: string }[] = [
   { usage: 'notes list [--scope all|<tab>]', does: 'every note (id, title, scope, dates), or one scope\'s, and the linked files' },
   { usage: 'notes show <id|path>', does: 'one note, or one linked file' },
-  { usage: 'notes add "<title>" [--scope all|<tab>] < lines.md', does: 'add a note: a title and a few short Markdown lines on stdin (checkboxes, links to another note `other-note.md`, a file `plans/x.md` or an in-app place `#/board?task=ID`); scope all (every tab) or one home tab (a tab group or a machine shown as its own tab), by name; left out, the tab your project shows in' },
-  { usage: 'notes edit <id> [--title "<title>"] [--scope all|<tab>] < lines.md', does: 'change a note: new lines on stdin replace its own (empty stdin keeps them); --scope moves it. Rewrite a note to keep it short rather than add another' },
+  { usage: 'notes add "<title>" [--scope all|<tab>] < lines.md', does: `add a note: a title and a few short Markdown lines on stdin, ${NOTE_LIMIT}` + ' (checkboxes, links to another note `other-note.md`, a file `plans/x.md` or an in-app place `#/board?task=ID`); scope all (every tab) or one home tab (a tab group or a machine shown as its own tab), by name; left out, the tab your project shows in' },
+  { usage: 'notes edit <id> [--title "<title>"] [--scope all|<tab>] < lines.md', does: 'change a note: new lines on stdin replace its own, same limit (empty stdin keeps them); --scope moves it. Rewrite a note to keep it short rather than add another' },
   { usage: 'notes remove <id>', does: 'remove a note once its subject is decided or done' },
   { usage: 'notes file put <folder/name.md> < file.md', does: 'write a Markdown file under a folder of the notes (plans/x.md), for content too long for a note: link it from a note' },
   { usage: 'notes file remove <folder/name.md>', does: 'remove a linked file no note needs any more' },
@@ -89,8 +93,6 @@ export function notesShown(notes: readonly Note[], filter: string, followed: Not
   return notes.filter(n => n.scope === 'all' || n.scope === tab || members.includes(scopeMachine(n.scope) ?? '\0'))
 }
 
-export const MAX_LINES = 12
-export const MAX_BODY = 1500
 export const MAX_FILE = 200_000
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,47}$/
 const SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
@@ -134,13 +136,32 @@ export function filePath(p: string): boolean {
   return parts.length >= 2 && parts.length <= 4 && parts.every(s => SEGMENT_RE.test(s) && !s.includes('..')) && p.endsWith('.md')
 }
 
+// A separator line (---, *** or ___) and a heading line (# to ####).
+const RULE_RE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/
+const HEADING_RE = /^ {0,3}#{1,4}(?:[ \t]|$)/
+// The lines that count toward MAX_LINES: blank lines, separators and
+// headings only give the note its shape.
+export const contentLines = (lines: readonly string[]) => lines.filter(l => l.trim() && !RULE_RE.test(l) && !HEADING_RE.test(l)).length
+
 // A note's lines: short, the whiteboard has no room for more.
 export function noteBody(input: unknown): string | { error: string } {
   const lines = String(input ?? '').split(/\r?\n/).map(l => l.trimEnd())
   while (lines.length && !lines[lines.length - 1]) lines.pop()
   while (lines.length && !lines[0]) lines.shift()
-  if (lines.length > MAX_LINES || lines.join('\n').length > MAX_BODY) return { error: `A note holds at most ${MAX_LINES} lines and ${MAX_BODY} characters: move the details to a linked file (notes file put plans/<name>.md) and keep one line that links to it` }
+  if (contentLines(lines) > MAX_LINES || lines.join('\n').length > MAX_BODY) return { error: `A note holds ${NOTE_LIMIT}: move the details to a linked file (notes file put plans/<name>.md) and keep one line that links to it` }
   return lines.join('\n')
+}
+
+// A note's Markdown as it renders: a separator line stands apart (blank lines
+// around it), so `text` then `---` is a rule, never a heading over the text.
+// Code blocks are left as they are.
+export function noteMarkdown(body: string): string {
+  let fence = ''
+  return body.split('\n').map((l) => {
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(l)?.[1]
+    if (f && (!fence || (f[0] === fence[0] && f.length >= fence.length))) fence = fence ? '' : f
+    return !fence && RULE_RE.test(l) ? `\n${l.trim()}\n` : l
+  }).join('\n')
 }
 
 // The note-folder targets a body links to, as paths from the folder: a note

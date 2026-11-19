@@ -141,6 +141,14 @@ describe('readings', () => {
     const credits = quota(null, null, now, { limited: { resetsAt: now + 3_600_000 }, credits: { unlimited: false, balance: 120 } })
     expect(paceVerdict(workdays, credits, now)).toEqual({ go: true, unknown: true })
   })
+
+  it('a stale limit lets one probe start through, then waits; a fresh one refuses', () => {
+    const stale = quota(null, null, now - 16 * 3_600_000, { limited: { resetsAt: now + 3_600_000 } })
+    expect(paceVerdict(workdays, stale, now)).toEqual({ go: true, probe: true })
+    expect(paceVerdict(workdays, stale, now, 'auto', true)).toEqual({ go: false, reason: 'limited', until: now + 3_600_000, readAgo: '16 h' })
+    expect(paceVerdict(workdays, { ...stale, at: now - 60_000 }, now, 'auto', true)).toMatchObject({ go: false, reason: 'limited' })
+    expect(paceVerdict(workdays, { ...stale, at: now - 60_000 }, now)).toMatchObject({ go: false, reason: 'limited' })
+  })
 })
 
 describe('user requests', () => {

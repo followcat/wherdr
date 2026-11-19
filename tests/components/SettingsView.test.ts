@@ -8,6 +8,8 @@ import SettingsView from '~/components/SettingsView.vue'
 import ShortcutsSheet from '~/components/ShortcutsSheet.vue'
 import ShortcutsReference from '~/components/ShortcutsReference.vue'
 import { shortcutBindings, shortcutKbds } from '~/composables/useShortcuts'
+import { customThemes } from '~/composables/useTheme'
+import { themeById } from '~/utils/themes'
 import { coarse, defaultViewMode, desk, encryptedText, reducedMotion, sidePanelRoom, smoothTouchScrolling, typewriterSpeed, uiScale } from '~/composables/useHerdr'
 
 const global = { stubs: { UTooltip: { template: '<span><slot /></span>' } } }
@@ -355,4 +357,20 @@ it('points at a target: opens its tab, highlights it until a click, and says so 
     document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
     expect(el.classes()).not.toContain('ui-halo')
   } finally { w.unmount() }
+})
+
+it('Appearance: a long custom theme name sits beside its Edit button, ellipsized with the full name in a title', async () => {
+  const label = 'My very long custom theme name'
+  customThemes.value = [{ ...themeById('gruvbox')!, id: 'custom-long', label, group: 'custom' }]
+  const w = await mountSuspended(SettingsView, { route: '/settings?section=appearance', global })
+  try {
+    const row = w.get('.theme-custom')
+    const name = row.get('.theme-label')
+    expect(name.text()).toBe(label)
+    expect(name.attributes('title')).toBe(label)
+    expect(row.find('[data-testid="theme-edit"]').exists()).toBe(true)
+    // Built-in rows keep their plain name.
+    expect(w.findAll('.theme-grid > .theme-opt .theme-label')).toHaveLength(0)
+  }
+  finally { w.unmount(); customThemes.value = [] }
 })

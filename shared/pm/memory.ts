@@ -62,7 +62,8 @@ export const memoryLabel = (mem: MachineCapacity) =>
 export const agentCap = (s: MemorySettings, mem: MachineCapacity | null) =>
   s.maxAgents ?? (mem ? Math.max(1, Math.floor(mem.total / MB_PER_AGENT)) : undefined)
 
-const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`
+// Megabytes (as MachineCapacity holds them) as "6.7 GB".
+export const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`
 const swapUsed = (m: MachineCapacity) => (m.swapTotal ? (m.swapTotal - m.swapFree) / m.swapTotal : 0)
 
 // Why the machine's memory takes no more work beyond its free figure, or

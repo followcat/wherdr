@@ -1,7 +1,7 @@
 // omp's file commands (~/.omp/agent/commands, and those of Claude Code, Codex
 // and ~/.agents that it also discovers), read on the pane's machine so the
 // conversation can show "/name args" instead of the text omp sent.
-import path from 'node:path'
+import { machinePath } from './machinePath'
 import type { MachineFs } from './fsx'
 
 async function ls(fs: MachineFs, d: string) {
@@ -16,7 +16,7 @@ async function read(fs: MachineFs, f: string) {
 // omp's user config folders (~/.omp/agent for omp itself), from highest to
 // lowest priority.
 function ompConfigDirs(home: string) {
-  return ['.omp/agent', '.agents', '.agent', '.claude', '.codex'].map(r => path.join(home, r))
+  return ['.omp/agent', '.agents', '.agent', '.claude', '.codex'].map(r => machinePath(home).join(home, r))
 }
 
 // Text of omp's file commands (without frontmatter), the user's ones:
@@ -25,6 +25,7 @@ function ompConfigDirs(home: string) {
 export interface CommandTemplate { name: string, body: string }
 export async function ompCommandTemplates(fs: MachineFs, home: string): Promise<CommandTemplate[]> {
   const out: CommandTemplate[] = []
+  const path = machinePath(home)
   for (const d of ompConfigDirs(home)) {
     for (const n of await ls(fs, path.join(d, 'commands'))) {
       if (!n.endsWith('.md')) continue

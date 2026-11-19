@@ -158,6 +158,10 @@ describe('release and restart on the server', () => {
     const runs = calls.filter(c => c[0] === 'terminal.run')
     expect(runs).toHaveLength(2)
     expect(runs[1]![1]).toMatchObject({ cwd: '/home/u/.wherdr/pm/worktrees/WH-1' })
+    // The report is copied before the revive: the round's section adds to it (parseRead).
+    const copy = calls.findIndex(c => c[0] === 'machine.exec' && String((c[1].argv as string[])[2]).includes('cp -f') && (c[1].argv as string[]).includes('/home/u/.wherdr/pm/tasks/WH-1/report.before.md'))
+    expect(copy).toBeGreaterThan(-1)
+    expect(copy).toBeLessThan(calls.indexOf(runs[1]!))
     expect(files['/home/u/.wherdr/pm/tasks/WH-1/instructions.md']).toMatch(/## Handover[\s\S]*idle for 10 minutes[\s\S]*No test/)
     const back = (await store.task('WH-1'))!
     expect(back.step).toMatchObject({ at: 1, told: 50 }) // the handover gave it: not sent again
@@ -380,6 +384,8 @@ describe('ask the agent to fix it', () => {
     const at = (s: Partial<Task['step']>, over: Partial<Task> = {}) => task({ step: { ...task().step!, ...s }, ...over })
     const refused = at({ at: 1, yourTurn: { reason: 'action', badge: 'Merge: conflict', error: 'The PR conflicts with v3' } })
     expect(fixableBlock(refused)).toBe('The PR conflicts with v3')
+    // Refused outside the code (herdr-core, the network): nothing for its agent.
+    expect(fixableBlock(at({ at: 1, yourTurn: { reason: 'action', badge: 'Merge: x', error: 'merge: herdr-core rejected the request (unavailable)' } }))).toBeUndefined()
     expect(fixableBlock(at({ yourTurn: { reason: 'timeout', badge: 'Check work: over 2h' } }))).toBe('Check work: over 2h')
     expect(fixableBlock(task({ state: 'waiting', waiting: 'claude stopped' }))).toBe('claude stopped')
     // A stall (an idle worker, red CI with no new push): the board's own words.

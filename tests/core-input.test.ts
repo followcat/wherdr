@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+// The send notes itself in DATA_DIR/submitting.json: a folder of this test's own.
+vi.hoisted(async () => { const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); process.env.DATA_DIR = mkdtempSync(`${tmpdir()}/wherdr-core-input-`) })
 import { CoreError } from '../server/utils/core'
-import { coreInput, coreInterrupt, coreKeepGet, coreKeepSet, coreKill, coreSend, resumeSubmitting, type CoreInputDeps } from '../server/utils/coreInput'
-import { isBareBang } from '../shared/queuedMatch'
+import { coreInput, coreInterrupt, coreKeepGet, coreKeepSet, coreKill, coreSend, holdEnter, resumeSubmitting, type CoreInputDeps } from '../server/utils/coreInput'
+import { fieldHolds, isBareBang } from '../shared/queuedMatch'
 import { takingTurns } from '../server/utils/terminalTurns'
+import { noteSubmitting, onSubmittingChange, sendingText, sendingTo } from '../server/utils/submitting'
 import { HerdrError } from '../server/utils/herdr'
 import type { Pane } from '../shared/types'
 
@@ -118,7 +121,7 @@ describe('core input routes', () => {
     release()
     await delivering
     expect(await sending).toEqual({ ok: true, started: true })
-    expect(t.calls.map(c => c[1].text)).toEqual(['Autopilot wake', 'look\n/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.png'])
+    expect(t.calls.map(c => c[1].text)).toEqual(['Autopilot wake', 'look\n/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.png\n\\'])
   })
 
   it('a send right after a wake was delivered: typed once the field is empty, once, nothing left in it', async () => {
@@ -135,7 +138,7 @@ describe('core input routes', () => {
     const sending = coreSend(t.d, { pane_id: 't1', text: photos })
     await sending
     expect(Date.now() - done).toBeGreaterThanOrEqual(35)
-    expect(t.calls).toEqual([['terminal.send', { terminal: 'm/t9', text: photos }, 30000]])
+    expect(t.calls).toEqual([['terminal.send', { terminal: 'm/t9', text: `${photos}\n\\` }, 30000]])
     expect(await t.d.field!(t.d.pane('t1')!)).toBeNull()
   })
 
@@ -150,9 +153,200 @@ describe('core input routes', () => {
       const t = deps((m) => { if (m === 'terminal.keys') entered = true; return m === 'terminal.send' ? { started: false } : {} })
       t.d.settleMs = 1
       t.d.field = async () => (reads++ && !entered ? after : null)
-      await coreSend(t.d, { pane_id: 't1', text })
+      // Other text there when the wait ends: no Enter, refused for the conversation's "Not sent" (WHR-472).
+      const sent = coreSend(t.d, { pane_id: 't1', text })
+      if (after.endsWith('more')) await expect(sent).rejects.toMatchObject({ code: 'not_submitted' })
+      else await sent
       expect(t.calls.filter(c => c[0] === 'terminal.keys')).toHaveLength(enters)
     }
+  })
+
+  it('text + photo: sent with a lone "\\" (core\'s Enter is a new line), submitted once Claude shows the tag, drawn first', async () => {
+    const msg = 'look\n/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.png'
+    expect(holdEnter('no photo')).toBe('no photo')
+    // Claude reads the photo (its path still there), then draws "[Image #4]" before
+    // the text; the "\" stays while no Enter came after it.
+    const screens = [null, `${msg}\n\\`, '[Image #4]look\n\\']
+    let looks = 0
+    let enters = 0
+    const t = deps((m) => { if (m === 'terminal.keys') enters++; return m === 'terminal.send' ? { started: false } : {} })
+    t.d.settleMs = 1
+    t.d.field = async () => (enters ? null : screens[Math.min(looks++, 2)]!)
+    expect(await coreSend(t.d, { pane_id: 't1', text: msg })).toEqual({ ok: true, started: null })
+    expect(t.calls[0]![1].text).toBe(`${msg}\n\\`)
+    expect(enters).toBe(1)
+    expect(fieldHolds('[Image #4] look', msg, true)).toBe(true)
+  })
+
+  // Claude Code 2.1.319 reads a pasted photo path within 1 s, or keeps it as typed text for good.
+  it('a photo Claude leaves as its path: cleared and pasted once more; still a path, the "\\" is taken out and Enter pressed', async () => {
+    const msg = 'look at this\n/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.png'
+    const run = async (second: string) => {
+      const keys: string[] = []
+      let field: string | null = null
+      let sends = 0
+      const t = deps((m, params) => {
+        if (m === 'terminal.send') { sends++; field = sends === 1 ? `${msg}\n\\` : second }
+        if (m === 'terminal.keys') {
+          keys.push(...params.keys)
+          if (params.keys[0] === 'ctrl+u') field = null
+          if (params.keys[0] === 'backspace' && params.keys.length === 1) field = field!.replace(/\n?\\$/, '')
+          if (params.keys[0] === 'enter') field = null
+        }
+        return m === 'terminal.send' ? { started: false } : {}
+      })
+      t.d.settleMs = 1
+      let looks = 0
+      t.d.field = async () => (looks++ ? field : null)
+      const logs: string[] = []
+      const warn = console.warn
+      console.warn = (l: string) => { logs.push(l) }
+      try {
+        expect(await coreSend(t.d, { pane_id: 't1', text: msg })).toEqual({ ok: true, started: null })
+      } finally { console.warn = warn }
+      return { keys, sends, logs, cleared: keys.includes('ctrl+u') }
+    }
+    // The second paste becomes an image: Enter on it.
+    const warm = await run('[Image #2]look at this\n\\')
+    expect(warm.sends).toBe(2)
+    expect(warm.cleared).toBe(true)
+    expect(warm.keys.at(-1)).toBe('enter')
+    expect(warm.logs).toEqual([expect.stringMatching(/a photo stayed a path after \d+ ms, pasted again$/)])
+    // A path again: sent as it is, its "\\" taken out; one more log line, sizes only.
+    const cold = await run(`${msg}\n\\`)
+    expect(cold.sends).toBe(2)
+    expect(cold.keys.slice(-2)).toEqual(['backspace', 'enter'])
+    expect(cold.logs).toHaveLength(2)
+    expect(cold.logs[1]).toMatch(/a photo stayed a path, sent as it is after \d+ ms: field held \d+ chars, 0 images; expected \d+ chars, 1 images, 2 lines$/)
+    expect(cold.logs.join('\n')).not.toMatch(/look|srv/)
+  })
+
+  it('a photo path cleared to be pasted again: never sent in part, nor lost when the field cannot be read', async () => {
+    const msg = 'important instructions\n/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.png'
+    // `cleared`: the field after each clear (a clear that leaves part of the text, or a field no longer readable).
+    const run = async (cleared: () => string | null | Error) => {
+      const keys: string[] = []
+      let field: string | null | Error = null
+      let sends = 0
+      const t = deps((m, params) => {
+        if (m === 'terminal.send') { sends++; field = `${msg}\n\\` }
+        if (m === 'terminal.keys') { keys.push(...params.keys); if (params.keys[0] === 'ctrl+u') field = cleared() }
+        return m === 'terminal.send' ? { started: false } : {}
+      })
+      t.d.settleMs = 1
+      let looks = 0
+      t.d.field = async () => { if (!looks++) return null; if (field instanceof Error) throw field; return field }
+      const warn = console.warn
+      console.warn = () => {}
+      try {
+        await expect(coreSend(t.d, { pane_id: 't1', text: msg })).rejects.toMatchObject({ code: 'not_submitted' })
+      } finally { console.warn = warn }
+      // Never Enter on what is left, never pasted again into it: the conversation offers Retry with the whole message.
+      expect(keys).not.toContain('enter')
+      expect(sends).toBe(1)
+      return keys.filter(k => k === 'ctrl+u').length
+    }
+    // Each clear leaves "important": cleared again (bounded), then refused.
+    expect(await run(() => 'important')).toBeGreaterThan(1)
+    // Cleared, but the field is no longer readable: refused too.
+    expect(await run(() => new Error('paint'))).toBeGreaterThan(0)
+  })
+
+  // WHR-472, on Claude Code 2.1.319: a multi-line message is collapsed into
+  // "[Pasted text #N +K lines]"; a photo Claude missed is inside it as its
+  // path, so no "[Image #N]" shows for it. Pasted again, it shows.
+  it('a photo inside a collapsed paste: pasted again, then sent as it is; the wait is capped; each start and end is pushed', async () => {
+    const msg = 'Three things to check:\nthe header\nthe menu\nthe list\n/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.png'
+    const run = async (second: string) => {
+      const keys: string[] = []
+      let field: string | null = null
+      let sends = 0
+      const t = deps((m, params) => {
+        if (m === 'terminal.send') { sends++; field = sends === 1 ? '[Pasted text #12 +4 lines]' : second }
+        if (m === 'terminal.keys') { keys.push(...params.keys); if (['ctrl+u', 'enter'].includes(params.keys[0])) field = null }
+        return m === 'terminal.send' ? { started: false } : {}
+      })
+      t.d.settleMs = 1
+      t.d.submitting = noteSubmitting
+      const pushed: (string | undefined)[] = []
+      onSubmittingChange(() => pushed.push(sendingText('m/t1')))
+      let looks = 0
+      t.d.field = async () => (looks++ ? field : null)
+      const warn = console.warn
+      console.warn = () => {}
+      try {
+        expect(await coreSend(t.d, { pane_id: 't1', text: msg })).toEqual({ ok: true, started: null })
+      } finally { console.warn = warn; onSubmittingChange(() => {}) }
+      // The open pages hear of the send and of its end at once, the user's text with it.
+      expect(pushed).toEqual([msg, undefined])
+      return { keys, sends }
+    }
+    const warm = await run('[Image #13][Pasted text #14 +4 lines]')
+    expect(warm.sends).toBe(2)
+    expect(warm.keys).toContain('ctrl+u')
+    expect(warm.keys.at(-1)).toBe('enter')
+    // Still no tag: Enter, the photo goes as its path (no "\" to take out of a stand-in).
+    const cold = await run('[Pasted text #14 +4 lines]')
+    expect(cold.sends).toBe(2)
+    expect(cold.keys.slice(-1)).toEqual(['enter'])
+    expect(cold.keys.filter(k => k === 'backspace')).toHaveLength(cold.keys.filter(k => k === 'ctrl+u').length)
+    // A field that never holds the message alone, read slowly: refused once the wait ends, not after its 60 looks.
+    const t = deps(m => (m === 'terminal.send' ? { started: false } : {}))
+    t.d.settleMs = 1
+    t.d.photoWaitMs = 100
+    let looks = 0
+    t.d.field = async () => { await new Promise(r => setTimeout(r, 40)); return looks++ ? 'Three things to check:' : null }
+    const warn = console.warn
+    console.warn = () => {}
+    const at = Date.now()
+    try {
+      await expect(coreSend(t.d, { pane_id: 't1', text: msg })).rejects.toMatchObject({ code: 'not_submitted' })
+    } finally { console.warn = warn }
+    expect(Date.now() - at).toBeLessThan(1000)
+    expect(t.calls.some(c => c[0] === 'terminal.keys')).toBe(false)
+  })
+
+  it('slow field reads: too little of the wait left to paste again, the message goes as it is, Enter within the wait from the paste', async () => {
+    const msg = 'Three things to check:\nthe header\nthe menu\nthe list\n/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.png'
+    const keys: string[] = []
+    let enterAt = 0
+    let field: string | null = null
+    const t = deps((m, params) => {
+      if (m === 'terminal.send') field = '[Pasted text #12 +4 lines]'
+      if (m === 'terminal.keys') { keys.push(...params.keys); if (params.keys[0] === 'enter') { enterAt ||= Date.now(); field = null } }
+      return m === 'terminal.send' ? { started: false } : {}
+    })
+    t.d.settleMs = 1
+    t.d.photoWaitMs = 600
+    let looks = 0
+    // Each read takes 120 ms: the fourth look at the missing photo comes with about a sixth of the wait left.
+    t.d.field = async () => { if (!looks++) return null; await new Promise(r => setTimeout(r, 120)); return field }
+    const warn = console.warn
+    console.warn = () => {}
+    const at = Date.now()
+    try {
+      expect(await coreSend(t.d, { pane_id: 't1', text: msg })).toEqual({ ok: true, started: null })
+    } finally { console.warn = warn }
+    expect(keys).not.toContain('ctrl+u')
+    expect(t.calls.filter(c => c[0] === 'terminal.send')).toHaveLength(1)
+    expect(enterAt - at).toBeLessThan(600 + 200)
+  })
+
+  it('no client after the first request: the send still runs to its Enter, its terminal shown as sending until then', async () => {
+    const msg = 'look at this\n/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.png'
+    let enters = 0
+    let sendingAtEnter = false
+    const t = deps((m) => { if (m === 'terminal.keys') { enters++; sendingAtEnter = sendingTo('m/t1') } return m === 'terminal.send' ? { started: false } : {} })
+    t.d.settleMs = 1
+    t.d.submitting = noteSubmitting
+    let looks = 0
+    t.d.field = async () => (looks++ === 0 ? null : enters ? null : looks < 5 ? `${msg}\n\\` : '[Image #2]look at this\n\\')
+    // The page sends, then leaves: nobody awaits or reads the answer.
+    const run = coreSend(t.d, { pane_id: 't1', text: msg })
+    await run
+    expect(enters).toBe(1)
+    expect(sendingAtEnter).toBe(true)
+    expect(sendingTo('m/t1')).toBe(false)
   })
 
   it('a photo message: Enter only once Claude shows its placeholder, again while it stays (bounded)', async () => {
@@ -176,8 +370,8 @@ describe('core input routes', () => {
     expect(dropped.seen).toEqual([tag, tag, tag])
     // Never taken: at most ten Enters, then the field's own "Not sent".
     expect((await run({ started: false }, n => (n ? tag : null))).seen).toHaveLength(10)
-    // A large photo whose placeholder shows after about 20 s (50 looks): still submitted, once.
-    expect((await run({ started: false }, (n, e) => (n === 0 ? null : n < 50 ? path : e ? null : tag))).seen).toEqual([tag])
+    // A large photo whose placeholder shows after about 20 s (50 looks, the field empty meanwhile): still submitted, once.
+    expect((await run({ started: false }, (n, e) => { if (n > 0 && n < 50) throw new HerdrError('pasting', 'Claude is still pasting'); return n && !e ? tag : null })).seen).toEqual([tag])
   })
 
   it('sent while Claude works: core says started, yet its Enter came before the placeholder; it is submitted once', async () => {

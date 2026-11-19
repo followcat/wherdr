@@ -24,6 +24,7 @@ import { pushSend } from './push'
 import { HerdrError } from './herdr'
 import { projectOf, shownKey, showIds } from '../../shared/pm/projectKey'
 import { coordinatorKey, handledBy } from '../../shared/pm/workspace'
+import { typingInto } from './terminalTurns'
 
 export interface WakeDeps extends CoreAdminDeps { store: PmStore, notify?: (title: string, body: string, project: string) => Promise<unknown> }
 const newId = () => randomUUID().replace(/-/g, '').slice(0, 8)
@@ -82,7 +83,11 @@ async function gather(deps: WakeDeps, now: number) {
     if (JSON.stringify(w.state) === JSON.stringify(task.step)) continue
     // No coordinator: the tick still counts (timeouts), the step start stays to announce.
     const has = !!coord?.terminal
-    await store.saveTask({ ...task, step: has ? w.state : { ...w.state, told: task.step.told } })
+    // Saved on the task as it is now: a step the user moved since this tick's
+    // read (approved, done) is kept, and this tick's news for it dropped.
+    const step0 = JSON.stringify(task.step)
+    const saved = await store.updateTask(task.id, cur => JSON.stringify(cur.step) === step0 ? { ...cur, step: has ? w.state : { ...w.state, told: task.step!.told } } : null)
+    if (!saved) continue
     const step = currentStep(plan, task.step)
     if (has) add(ck, w.texts.map(x => `${task.id} (${task.title}): ${x}`), { kind: 'step', about: `${task.id} (${step?.id ?? 'step'})` })
   }
@@ -171,7 +176,9 @@ export async function wakeTick(deps: WakeDeps, now = Date.now()) {
   const shown = (k: string) => { const p = projectOf(projects, k); return p ? shownKey(p) : k }
   for (const key of new Set(queue.filter(w => !w.ackedAt && w.ended !== 'unanswered' && w.ended !== 'merged').map(w => w.coordinator))) {
     const c = await store.coordinator(key)
-    const status = await statusOf(deps, c?.terminal)
+    // A message being typed into it now (the user's, see terminalTurns.ts): not
+    // idle, so the wake is not queued behind it and taken by Claude in the same turn.
+    const status = c?.terminal && typingInto(c.terminal) ? 'working' : await statusOf(deps, c?.terminal)
     if (!status) continue
     const r = tickWakes(queue, key, { status, lastUserAt: c?.userAt, now })
     if (r.deliver) {

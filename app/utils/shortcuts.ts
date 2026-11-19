@@ -147,6 +147,9 @@ export function findConflict(table: readonly Shortcut[], id: ShortcutId, kbds: s
 }
 
 // `keyCode` 229: the key that ends an IME composition in Safari (isComposing already false).
+// Every Enter that sends or submits checks this first.
+export const imeComposing = (e: { isComposing?: boolean, keyCode?: number }) => Boolean(e.isComposing || e.keyCode === 229)
+
 export interface KeyInput { key?: string, code?: string, keyCode?: number, ctrlKey?: boolean, metaKey?: boolean, altKey?: boolean, shiftKey?: boolean, isComposing?: boolean, defaultPrevented?: boolean, repeat?: boolean }
 
 export interface ShortcutFocus {
@@ -189,7 +192,7 @@ function keysMatch(s: Shortcut, e: KeyInput, key: string, c: ShortcutContext): b
 }
 
 export function matchShortcut(e: KeyInput, f: ShortcutFocus, c: ShortcutContext, table: readonly Shortcut[] = SHORTCUTS): ShortcutId | null {
-  if (typeof e.key !== 'string' || e.isComposing || e.keyCode === 229 || (c.phase === 'bubble' && e.defaultPrevented)) return null
+  if (typeof e.key !== 'string' || imeComposing(e) || (c.phase === 'bubble' && e.defaultPrevented)) return null
   const key = e.key.toLowerCase()
   const s = table.find(x => Boolean(x.capture) === (c.phase === 'capture') && keysMatch(x, e, key, c))
   if (!s) return null

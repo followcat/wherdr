@@ -967,6 +967,9 @@ body.short-bottom { --safe-bottom: 0px; }
 .note-body { font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
 .note-body :is(p, ul, ol) { margin: 0; }
 .note-body :is(ul, ol) { padding-left: 20px; }
+.note-body :is(h1, h2, h3, h4) { margin: 8px 0 2px; font: 650 14px/1.35 var(--sans); color: var(--text-strong); }
+.note-body > :first-child { margin-top: 0; }
+.note-body hr { border: 0; border-top: 1px solid var(--line); margin: 8px 0; }
 .note-body ul:has(> li > input[type=checkbox]) { padding-left: 0; list-style: none; }
 .note-body input[type=checkbox] { margin-right: 6px; vertical-align: -1px; pointer-events: none; }
 .note-body a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
@@ -981,6 +984,7 @@ body.short-bottom { --safe-bottom: 0px; }
 .note-file-body pre { max-width: 100%; overflow-x: auto; }
 /* A link that leads nowhere or out of the notes folder: muted, its title says why. */
 .notes-wrap a.note-link-missing { color: var(--dim); text-decoration-style: dotted; cursor: not-allowed; }
+.notes-wrap code.note-path-link { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 .notes-empty { padding: 12px 0; border-top: 1px solid var(--line); }
 /* The tab the list follows: a muted line under the filter. */
 .notes-following { margin-top: -8px; font-size: 13px; overflow-wrap: anywhere; }
@@ -1191,6 +1195,8 @@ body.short-bottom { --safe-bottom: 0px; }
 }
 .chat-list .md-body .md-path:hover { text-decoration-style: solid; text-decoration-color: var(--lav); background: color-mix(in srgb, var(--lav) 14%, var(--surface-2)); }
 .chat-list .md-body .md-path:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+/* A path found in none of the agent's folders (ChatView.vue markPaths): muted, no underline. */
+.chat-list .md-body .md-path.md-path-missing { text-decoration: none; opacity: .6; }
 /* Command in a reply (utils/shellCommand.ts): the same, in the command's green;
    its menu copies it and, where the agent can run it, runs it. */
 .chat-list .md-body .md-cmd {
@@ -2421,6 +2427,11 @@ body.kb .composer { padding-bottom: 8px; }
 /* A custom theme: the radio and its Edit button side by side. */
 .theme-custom { display: flex; align-items: center; min-width: 0; border-top: 1px solid var(--line-soft); }
 .theme-custom .theme-opt { flex: 1; min-width: 0; border-top: 0; }
+/* Its name (and the current theme's) takes the room left and ends with an ellipsis,
+   never under the Edit button or the chevron; the full name is in its title. */
+.theme-label { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The Edit button: a 44 px target, its pencil where the other rows' check mark sits. */
+.theme-custom .icon-btn { width: 44px; height: 44px; margin-right: 1px; }
 .theme-grid .theme-custom:first-child { border-top: 0; }
 .theme-tools { display: flex; flex-wrap: wrap; gap: 8px; }
 @media (min-width: 900px), (min-width: 700px) and (min-height: 700px), (min-width: 700px) and (min-device-width: 700px) and (min-device-height: 700px) and (pointer: coarse) { .theme-grid { grid-template-columns: 1fr 1fr; } .theme-grid > :nth-child(2) { border-top: 0; } .theme-grid > :nth-child(even) { border-left: 1px solid var(--line-soft); } }

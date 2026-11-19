@@ -1,10 +1,11 @@
-// The user's Decisions (GET /api/pm/decisions), and one grouped push every
-// 30 s for what is new among them (server/plugins/pm.ts), instead of one per item.
+// What waits for the user's choice, and one grouped push every 30 s for what is
+// new among it (server/plugins/pm.ts), instead of one per item. A tap opens Tasks to review.
 import { decisionsOf, decisionsPush } from '../../shared/pm/decisions'
 import { board } from './pmBoard'
 import type { PmStore } from './pmStore'
 import { pushSend } from './push'
 import { showIds } from '../../shared/pm/projectKey'
+import { REVIEW_LINK } from '../../shared/appLinks'
 
 export async function decisions(store: PmStore) {
   if (!(await store.enabled())) return []
@@ -20,7 +21,7 @@ export async function decisions(store: PmStore) {
 // waits (a restart does not push the same decisions again).
 let told: Set<string> | null = null
 type Notify = (p: { title: string, titleFr: string, body: string }, badge: number) => Promise<unknown>
-const pushNotify: Notify = (p, badge) => pushSend({ ...p, tag: 'pm-decisions', url: '/#/decisions', badge })
+const pushNotify: Notify = (p, badge) => pushSend({ ...p, tag: 'pm-decisions', url: `/${REVIEW_LINK}`, badge })
 
 export async function decisionsTick(store: PmStore, notify: Notify = pushNotify) {
   const ds = await decisions(store)

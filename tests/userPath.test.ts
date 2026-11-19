@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { USER_PATH_SH, loginShellPath, mergePath, pathFromEnvOutput, projectsEnvPath, userPath } from '../bin/lib/userpath.mjs'
+import { USER_PATH_SH, loginShellPath, mergePath, mergePathOn, pathFromEnvOutput, projectsEnvPath, userPath } from '../bin/lib/userpath.mjs'
 import { servicePath } from '../bin/lib/commands.mjs'
 import { enableLinger, lingerOn, systemdUnit } from '../bin/lib/service.mjs'
 
@@ -28,6 +28,28 @@ describe('mergePath', () => {
   it('keeps the first place of each folder, absolute folders only', () => {
     expect(mergePath('/a:/b', ['/b', '/c'], ':relative::/a/', '')).toBe('/a:/b:/c')
     expect(mergePath(undefined, null, '/x')).toBe('/x')
+  })
+})
+
+describe('a Windows PATH (#870)', () => {
+  const win = (PATH: string, first: string[] = []) => userPath({ env: { PATH }, home: 'C:/Users/test', first, exists: () => false, platform: 'win32' })
+
+  it('keeps drive-letter and UNC folders, in order, with `first` in front', () => {
+    expect(win('C:/Windows/System32;C:/Windows/System32/OpenSSH', ['C:/Runtime'])).toBe('C:/Runtime;C:/Windows/System32;C:/Windows/System32/OpenSSH')
+    expect(win('C:\\Tools\\;relative;\\\\server\\share\\bin;"D:\\Program Files\\Git\\cmd";C:\\')).toBe('C:\\Tools;\\\\server\\share\\bin;D:\\Program Files\\Git\\cmd;C:\\')
+  })
+
+  it('counts folders that differ in case or slash as one', () => {
+    expect(win('C:\\Windows\\System32;c:/windows/system32/;C:/Git', ['C:/WINDOWS/System32'])).toBe('C:/WINDOWS/System32;C:/Git')
+  })
+
+  it('falls back to the inherited PATH rather than an empty one', () => {
+    expect(win('relative;also-relative')).toBe('relative;also-relative')
+  })
+
+  it('leaves a Unix PATH as it was', () => {
+    expect(mergePathOn('linux', '/a:/b/', 'C:/x:/c')).toBe('/a:/b:/x:/c')
+    expect(mergePathOn('linux', '/a:/b/', 'C:/x:/c')).toBe(mergePathOn('darwin', '/a:/b/', 'C:/x:/c'))
   })
 })
 

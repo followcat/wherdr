@@ -1,4 +1,4 @@
-import path from 'node:path'
+import { machinePath } from './machinePath'
 import type { MachineFs } from './fsx'
 import { cliDir, transcriptPath } from './devinTranscripts'
 
@@ -25,7 +25,7 @@ export function devinResume(argv: string[]): string | null {
 
 export async function devinSession(fs: MachineFs, home: string, proc: DevinProcess, honorEnv: boolean): Promise<string | null> {
   if (!Number.isSafeInteger(proc.pid) || proc.pid! <= 0) return null
-  const dir = path.join(cliDir(home, honorEnv), 'session_locks')
+  const dir = machinePath(home).join(cliDir(home, honorEnv), 'session_locks')
   if (proc.startedAt != null) {
     if (!fs.readPidLocks) return null
     const entries = await fs.readPidLocks(dir).catch(e => {

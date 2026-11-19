@@ -8,7 +8,7 @@ import type { Wake } from '#shared/pm/wakes'
 const posts: Record<string, unknown>[] = []
 registerEndpoint('/api/pm/coordinators', () => [])
 let refuse = ''
-// Registered when this file runs: another file's mock of the same URL (DecisionsView) is not used.
+// Registered when this file runs: another file's mock of the same URL (another component's test) is not used.
 beforeAll(() => registerEndpoint('/api/pm/autopilot', { method: 'POST', handler: async (e) => {
   const body = await readBody(e)
   posts.push(body)

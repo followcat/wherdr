@@ -493,6 +493,7 @@ function resetListWidth() {
       </div>
     </header>
 
+    <AwakePending />
     <nav v-if="barShown" class="machine-bar" :aria-label="tl('Machines shown', 'Machines affichées')" @wheel="onBarWheel">
       <UContextMenu
         v-for="b in barEntries" :key="b.id" :disabled="sheetMenus || b.id === BAR_ALL"

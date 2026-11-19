@@ -5,8 +5,9 @@
 // memory, quotas, the board), so an agent never writes the state itself.
 // A block with any other line is not a status block: it stays code.
 import type { Quota, Quotas } from './types'
-import { limitState } from './quotaLimit'
+import { hoursAgo, limitState } from './quotaLimit'
 import type { MachineCapacity } from './pm/capacity'
+import { gb } from './pm/memory'
 import { cardStatus, prLink, type Card } from './pm/board'
 import { actionLabel } from './pm/describe'
 
@@ -45,7 +46,6 @@ export interface StatusView {
   task?: string // the task to open on a tap
 }
 
-const gb = (bytes: number) => `${(bytes / 2 ** 30).toFixed(bytes < 10 * 2 ** 30 ? 1 : 0)} GB`
 export interface MachineRow { key: string, label: string, mem: MachineCapacity | null, agents: number }
 export function machineView(rows: MachineRow[] | null, arg: string): StatusView | null {
   const a = arg.toLowerCase()
@@ -71,6 +71,7 @@ export function quotaView(q: Quotas | null, arg: string, now: number): StatusVie
   if (!r) return null
   const limit = limitState(r, now)
   if (limit === 'reached') return { title, state: 'limit reached', tone: 'bad', lines: [] }
+  if (limit === 'stale') return { title, state: `limit reached ${hoursAgo(r.at, now)} ago, may have reset`, tone: 'off', lines: [] }
   if (limit === 'credits') return { title, state: 'limit reached, on credits', tone: 'wait', lines: [] }
   if (limit === 'expired') return { title, state: 'reset since the last reading', tone: 'ok', lines: [] }
   // A window the account does not have (Claude Ultra, Codex Plus: no 5 h) gets no bar.

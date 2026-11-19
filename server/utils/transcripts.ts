@@ -1,12 +1,12 @@
 import { createHash, type Hash } from 'node:crypto'
-import path from 'node:path'
-import { imageTagCount } from '../../shared/queuedMatch'
+import { imageTagCount, uploadNames, withoutUploads } from '../../shared/queuedMatch'
 import type { ChatItem, ChatResponse, ClaudeQueueEntry, CommandCodeToolUpdate, ModelInfo, PromptDetail } from '../../shared/types'
 import { ompToolCall, ompToolResult, ompUserRun } from './ompTools'
 import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDetail'
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
 import { cleanModelName, lastModel, mergeOmpModel, ompLastModel, ompModelComplete, ompModelLabel, ompModelResult } from './models'
 import { type FsStat, type MachineFs, type ShellExec, localFs } from './fsx'
+import { machinePath } from './machinePath'
 import { fingerprintRefs, type CommandCodeResultRef } from './commandCodeWatch'
 import { createCommandCodeState, type CommandCodeFileHandle, type CommandCodeObservation } from './commandCodeState'
 import { searchFile } from './conversationSearch'
@@ -24,6 +24,7 @@ import { createClineTranscripts } from './clineTranscripts'
 import { clineSession } from './clineSessions'
 import { codexDaemonReplyKey, type CodexHistory } from './codexDaemon'
 import { clip, isNoise } from './transcriptText'
+import { type HermesLoc, createHermesTranscripts, locateHermes } from './hermesTranscripts'
 
 // Backward reading by windows until there are enough messages: Claude's
 // transcripts embed images in base64, a few screenshots
@@ -43,7 +44,8 @@ export interface TranscriptPane {
   title?: string | null
 }
 
-export interface Loc { file: string, session: string, guessed?: boolean }
+export interface Loc { file: string, session: string, guessed?: boolean, python?: string }
+const hermesLoc = (loc: Loc): HermesLoc => ({ db: loc.file, session: loc.session, ...(loc.python ? { python: loc.python } : {}) })
 interface CodexRollout { file: string, id: string, ts: number, mtimeMs: number }
 // Window in which a Codex's conversation is created around its appearance.
 const CODEX_BIRTH_BEFORE = 5000
@@ -117,10 +119,12 @@ const stripImageTags = (t: unknown) => String(t || '').replace(/\[Image #\d+(?:,
 // real user message: we keep the text, without the tags; the long blocks
 // pasted next to typed words are also listed (`pasted`) to be shown as cards.
 // A message from another terminal (`hc send` from an agent) comes wrapped in
-// <hc from="t7">…</hc>: left out too, so a photo path right after the opening
-// tag is a line of its own again, shown as a photo.
-const PASTED = /<pasted_content(?:\s[^>]*)?>\n?|\n?<\/pasted_content(?:\s[^>]*)?>|<hc from="[^"]*">|<\/hc>/g
-export const unwrapPasted = (t: string) => (/<pasted_content|<hc from="/.test(t) ? t.replace(PASTED, '').trim() : t)
+// <hc from="t7" reach="…">…</hc> (any attributes, in any order, as long as
+// one is `from`): left out too, so a photo path right after the opening tag is
+// a line of its own again, shown as a photo.
+const HC_OPEN = /<hc\s(?=(?:[^>]*\s)?from=")[^>]*>/
+const PASTED = new RegExp(`<pasted_content(?:\\s[^>]*)?>\\n?|\\n?<\\/pasted_content(?:\\s[^>]*)?>|${HC_OPEN.source}|<\\/hc>`, 'g')
+export const unwrapPasted = (t: string) => (/<pasted_content/.test(t) || HC_OPEN.test(t) ? t.replace(PASTED, '').trim() : t)
 // Prompt of a scheduled task (CronCreate, /loop…) wrapped by Claude Code.
 const SCHEDULED = /^\s*<scheduled-task(?:\s[^>]*)?>\n?([\s\S]*?)\n?<\/scheduled-task>\s*$/
 // A background task's notification (Claude Code), as a string or a text part.
@@ -142,6 +146,17 @@ const pastedOf = (...parts: string[]) => {
 // Same message? (spaces, case and images ignored; Claude may group
 // several into one turn, hence inclusion rather than equality).
 const normMsg = (t: string) => stripImageTags(t).replace(/\s+/g, ' ').trim().toLowerCase()
+// A message from wherdr whose photos reached Claude as their paths, not as
+// images (WHR-440): one server log line per message, sizes only, so a
+// recurrence shows. Recent ones only: a parse of old history logs nothing.
+const PHOTO_PATHS_LOGGED = new Set<string>()
+function notePhotoPaths(uuid: unknown, ts: string | null, text: string) {
+  const photos = uploadNames(text).length
+  if (!photos || typeof uuid !== 'string' || PHOTO_PATHS_LOGGED.has(uuid) || !ts || Date.now() - Date.parse(ts) > 10 * 60_000) return
+  PHOTO_PATHS_LOGGED.add(uuid)
+  if (PHOTO_PATHS_LOGGED.size > 200) PHOTO_PATHS_LOGGED.delete(PHOTO_PATHS_LOGGED.values().next().value!)
+  console.warn(`[wherdr] message matched by its text only: ${photos} photo(s) reached Claude as paths, not images (${withoutUploads(text).length} chars of text)`)
+}
 export function sameMsg(queued: string, said: string): boolean {
   const q = normMsg(queued).slice(0, 60)
   return Boolean(q) && normMsg(said).includes(q)
@@ -485,6 +500,7 @@ export function claudeParser(home = '') {
           } else {
             const text = humanText(content)
             if (text) {
+              notePhotoPaths(d.uuid, ts, text)
               items.push({ role: 'user', text: clip(text), ts, ...pastedOf(content) })
               pendingCmd = null
               said(text, ts)
@@ -1445,6 +1461,8 @@ export function isMissing(e: unknown): boolean {
 }
 
 export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, locateCommandCode, locateOpencode, ocExec, codexHistory }: { home: string, herdr: HerdrCall, fs?: MachineFs, now?: () => number, locateCommandCode?: (pane: TranscriptPane) => Promise<Loc | null>, locateOpencode?: (pane: TranscriptPane) => Promise<Loc | null>, ocExec?: ShellExec, codexHistory?: CodexHistory }) {
+  // The machine's paths (POSIX for a remote Linux machine, even from a Windows host).
+  const path = machinePath(home)
   // Devin's store reader runs its python3 query on the machine owning the
   // store: spawned locally, or through the machine's shell channel (the one
   // createShellFs is built on) for a remote core machine.
@@ -1461,6 +1479,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   // Cline: one JSON document per session, rewritten whole on every update (see
   // clineTranscripts.ts).
   const cline = createClineTranscripts({ home, fs, now })
+  const hermes = createHermesTranscripts({ fs })
   // File -> state (size, generation) and when this server first saw it, for
   // whole-second mtimes (see SETTLE_MS); `file|size|gen` -> checksum of the
   // file at first sight (null: could not be taken).
@@ -1550,13 +1569,15 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
 
   // ------------------------------------------------------------ localisation
   // Antigravity's binary and core's agent label use several names.
-  const PROCESS_NAMES: Record<string, string[]> = { agy: ['agy', 'antigravity', 'antigravity-cli'] }
+  const PROCESS_NAMES: Record<string, string[]> = { agy: ['agy', 'antigravity', 'antigravity-cli'], hermes: ['hermes'] }
   async function paneProcess(paneId: string, kind: string) {
     const r = await herdr('pane.process_info', { pane_id: paneId }, 4000)
     const procs: Json[] = (r.process_info && r.process_info.foreground_processes) || []
     const names = PROCESS_NAMES[kind] || [kind]
-    const match = procs.find(p => names.includes(p.name) || names.includes(path.basename((p.argv && p.argv[0]) || '')))
-    return match || (kind === 'devin' || kind === 'agy' ? null : procs[0]) || null
+    // Hermes is a Python script: `python …/bin/hermes`.
+    const match = procs.find(p => names.includes(p.name) || names.includes(path.basename((p.argv && p.argv[0]) || ''))
+      || (kind === 'hermes' && names.includes(path.basename((p.argv && p.argv[1]) || ''))))
+    return match || (kind === 'devin' || kind === 'agy' || kind === 'hermes' ? null : procs[0]) || null
   }
   // Cline's pane runs `node …/bin/cline -i …` (its argv[1] names the program)
   // with the engine `.cline` under it: the pane's whole family counts, from
@@ -1707,16 +1728,11 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
 
   // Codex panes of the machine (kept up to date by the state): for the claims.
   const codexPeers = new Map<string, TranscriptPane>()
-  // Live agy panes: a summaries fallback is only unambiguous when no peer
-  // shares the pane's folder on this machine.
-  const agyPeers = new Map<string, TranscriptPane>()
   // Agents seen at work: they have a conversation (see shared/integrations.ts).
   const activity = createActivity()
   function observe(panes: TranscriptPane[]) {
     codexPeers.clear()
     for (const p of panes) if (p.agent === 'codex') codexPeers.set(p.id, p)
-    agyPeers.clear()
-    for (const p of panes) if (p.agent === 'agy') agyPeers.set(p.id, p)
     const live = new Set(panes.map(p => p.id))
     activity.prune(id => live.has(id))
     // Agents come and go all day (the board's tasks): what was kept for a pane
@@ -1808,11 +1824,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       } else if (pane.agent === 'agy') {
         const proc = await paneProcess(pane.id, 'agy')
         const guess = proc ? await agySession(fs, home, proc, fs === localFs) : null
-        let id = guess ? guess.id : pane.agentSession
-        if (!id && proc && guess && !guess.ambiguous) {
-          const competing = [...agyPeers.values()].some(o => o.id !== pane.id && o.cwd === pane.cwd)
-          id = await agy.summariesSession(pane, competing)
-        }
+        const id = guess ? guess.id : pane.agentSession
         const file = id && agy.pathOf(id)
         if (file) loc = { file, session: id! }
       } else if (pane.agent === 'cline') {
@@ -1821,6 +1833,12 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
           ? await clineSession(fs, home, procs, { cwd: pane.cwd, bornAt: pane.bornAt }, fs === localFs)
           : null
         if (guess) loc = { file: guess.file, session: guess.id }
+      } else if (pane.agent === 'hermes') {
+        // Never the integration's session: only what the pane shows now.
+        const proc = await paneProcess(pane.id, 'hermes')
+        const screen = async () => String((await herdr('pane.screen', { pane_id: pane.id }, 4000)).text || '')
+        const h = proc ? await locateHermes(fs, home, proc, screen) : null
+        if (h) loc = { file: h.db, session: h.session, ...(h.python ? { python: h.python } : {}) }
       } else if (pane.agent === 'codex') loc = await locateCodexPane(pane)
       else if (pane.agentSession) {
         const f = await findSessionFile(pane.agent, pane.agentSession)
@@ -2208,6 +2226,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     if (pane.agent === 'devin') return devin.search({ ...pane, agentSession: loc.session }, query, deadline)
     if (pane.agent === 'agy') return agy.search({ ...pane, agentSession: loc.session }, query, deadline)
     if (pane.agent === 'cline') return cline.search({ ...pane, agentSession: loc.session }, loc.file, query, deadline)
+    if (pane.agent === 'hermes') return hermes.search(hermesLoc(loc), query, deadline)
     if (pane.agent === 'opencode') {
       const r = oc ? await oc.search(pane, loc, query, deadline) : { hits: [], limited: false, kind: 'opencode' }
       // The known-selection veto: hits of a selection observed moving or
@@ -2300,6 +2319,11 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
         contexts.set(r, { file, live: () => true })
       }
       for (const item of r.items || []) if (item.role === 'assistant' && item.ref) replyKeys.set(item, `opencode:${r.session}:${item.ref}`)
+      return r
+    }
+    if (pane.agent === 'hermes') {
+      const r = await hermes.chat(hermesLoc(loc), opts)
+      for (const item of r.items || []) if (item.role === 'assistant' && item.ref) replyKeys.set(item, `hermes:${r.session}:${item.ref}`)
       return r
     }
     // The transcript path tells the real kind: a pane whose agent changed while
@@ -2467,7 +2491,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     // short-preview path carries generation evidence (4d-3). OpenCode has
     // no file tail: previews come from the same verified chat.
     if (pane.agent === 'cmd' || pane.agent === 'opencode') return null
-    if (pane.agent === 'agy') return null // Antigravity conversations are a SQLite database, not JSONL.
+    if (pane.agent === 'agy' || pane.agent === 'hermes') return null // A SQLite database, not JSONL.
     if (pane.agent === 'cline') return null // Cline rewrites one JSON document on every update.
     if (!hasTranscript(pane.agent)) return null
     const loc = await locate(pane)
@@ -2524,6 +2548,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     if (path.basename(loc.file) !== fileId) return null
     if (pane.agent === 'agy') return agy.image({ ...pane, agentSession: loc.session }, fileId, ref, index)
     if (pane.agent === 'cline') return null // Cline's messages hold no images.
+    if (pane.agent === 'hermes') return null
     const m = /^(\d+):(\d+)$/.exec(String(ref || ''))
     if (!m) return null
     const off = Number(m[1])
@@ -2604,6 +2629,10 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       // A selection observed moving while the session record awaited is
       // another conversation's model — none.
       return m && selections.get(pane.id)?.file === loc.file ? m : null
+    }
+    if (pane.agent === 'hermes') {
+      const loc = await locate(pane)
+      return loc ? hermes.model(hermesLoc(loc)) : null
     }
     if (!pane.agent || !['claude', 'codex', 'omp', 'cmd'].includes(pane.agent)) return null
     const loc = await locate(pane)
@@ -2772,6 +2801,9 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
 
   function forget(paneId: string) {
     oc?.forget(paneId)
+    // The conversation's kept copy leaves with the pane (agyTranscripts).
+    const last = lastLoc.get(paneId)
+    if (last) agy.forgetFile(last.file)
     locCache.delete(paneId)
     lastLoc.delete(paneId)
     selections.delete(paneId)

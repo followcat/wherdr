@@ -21,3 +21,13 @@ it('builds each address, and lists only addresses the app reads', () => {
   for (const q of quoted) expect(isAppLink(q), q).toBe(true)
   for (const s of [...SETTINGS_SECTIONS, ...PROJECT_TABS, ...CONVERSATION_TABS]) expect(list).toContain(s)
 })
+
+it('#/review and the former #/decisions open Tasks to review over the page shown, over Home at start', async () => {
+  const { reviewRoute } = await import('../app/utils/reviewLink')
+  expect(appLinkList()[0]).toContain('Tasks to review (what waits for the user\'s choice): `#/review`')
+  for (const to of ['/review', '/decisions']) {
+    expect(reviewRoute(to, '/board?project=CO')).toBe('/board?project=CO')
+    expect(reviewRoute(to, null)).toBe('/')
+  }
+  expect(reviewRoute('/board', null)).toBeNull()
+})

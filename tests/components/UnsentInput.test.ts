@@ -54,6 +54,33 @@ describe('text left unsent in Claude’s input', () => {
     } finally { w.unmount() }
   })
 
+  it('still being submitted by the server (a photo becoming an image): on its way, never "Not sent", no actions', async () => {
+    const w = await mount({ ...base, sending: true, draft: { text: 'look at this\n~/files/2026-01-01T10-00-00-000Z-a1b2c3.png', lines: 2 } })
+    try {
+      const box = w.find('[data-testid="unsent-input"]')
+      expect(box.find('[data-testid="unsent-sending"]').text()).toBe('Sending… adding the photo')
+      expect(box.text()).not.toContain('Not sent')
+      expect(box.findAll('button')).toHaveLength(0)
+    } finally { w.unmount() }
+  })
+
+  it('a multi-line message Claude shows as "[Pasted text #N]": the user’s own text, and the end of the send shows live (WHR-472)', async () => {
+    const own = 'Three things to check:\nthe header\nthe menu\nthe list\n/srv/core/files/t2/2026-01-01T10-00-00-000Z-a1b2c3.png'
+    const draft = { text: '[Pasted text #12 +3 lines]', lines: 1 }
+    const w = await mount({ ...base, sending: true, inputText: own, draft })
+    try {
+      const box = () => w.find('[data-testid="unsent-input"]')
+      expect(box().find('.unsent-text').text()).toBe('Three things to check:\nthe header\nthe menu\nthe list')
+      expect(box().find('[data-testid="unsent-sending"]').text()).toBe('Sending… adding the photo')
+      // The server gave up: the same field, no longer sending, without leaving the conversation.
+      await w.setProps({ pane: { ...base, inputText: own, draft } })
+      await expect.poll(() => box().text()).toContain('Not sent — still in Claude’s input')
+      expect(box().find('[data-testid="unsent-sending"]').exists()).toBe(false)
+      // Still the user's text, not the stand-in.
+      expect(box().find('.unsent-text').text()).toBe('Three things to check:\nthe header\nthe menu\nthe list')
+    } finally { w.unmount() }
+  })
+
   it('Send now for Claude’s queue: loading at once, one send, until the queue is taken', async () => {
     let release!: () => void
     answer = () => new Promise(r => { release = () => r({ ok: true }) })

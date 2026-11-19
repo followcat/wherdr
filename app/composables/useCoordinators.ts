@@ -83,6 +83,25 @@ export function coordinatorNameOf(project: string) {
   const c = coordinators.value.find(x => x.project === project)
   return c ? coordinatorName(c) : ''
 }
+// A project's or workspace's coordinator: its board, its settings sheet (Project or
+// Workspace settings) and its Autopilot tab with its On/Off. The sidebar row's menu
+// and its conversation header's ⋯ menu both start with these.
+export const coordinatorBoardPath = (project: string) => `/board?project=${encodeURIComponent(project)}`
+const coordinatorSettingsPath = (project: string, tab: string) => `/settings?section=projects&project=${encodeURIComponent(project)}&tab=${tab}`
+export function coordinatorPlaceItems(c: CoordinatorView): MenuItem[] {
+  const pilot = !!c.autopilot?.on
+  return [
+    { label: t('Open the board'), icon: 'i-lucide-kanban', run: () => navigateTo(coordinatorBoardPath(c.project)) },
+    { label: c.workspace ? t('Workspace settings') : t('Project settings'), icon: 'i-lucide-settings-2', run: () => navigateTo(coordinatorSettingsPath(c.project, 'general')) },
+    { label: t('Autopilot'), icon: pilot ? 'i-lucide-check' : 'i-lucide-plane', desc: pilot ? t('On') : t('Off'), run: () => navigateTo(coordinatorSettingsPath(c.project, 'autopilot')) },
+  ]
+}
+// The same items for a pane that is a project's or workspace's coordinator, then a
+// separator; none for Alfred or any other pane.
+export function paneCoordinatorItems(p?: Pane | null): MenuItem[] {
+  const c = coordinatorOf(p)
+  return c && !c.main ? [...coordinatorPlaceItems(c), { kind: 'separator' }] : []
+}
 // The pane of a coordinator's kept conversation, while it runs.
 export const coordinatorPane = (c: CoordinatorView) => (c.terminal ? herdrState.value?.panes.find(p => p.coreAddress === c.terminal) : undefined)
 // Its conversation stopped (its terminal ended: its machine restarted, say):

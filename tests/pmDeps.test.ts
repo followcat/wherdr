@@ -44,6 +44,16 @@ describe('worktree setup', () => {
     expect((await prepare({ copy: ['.env'] })).log).toBe('')
   })
 
+  it('never copies another git repository under the clone (a workspace member under its root\'s own) into the worktree', async () => {
+    const nested = path.join(repo, 'services', 'api')
+    await fs.mkdir(nested, { recursive: true })
+    await fs.writeFile(path.join(nested, '.env'), 'API=1')
+    git(nested, 'init', '-q')
+    const r = await prepare({ share: ['services'], copy: ['services', 'services/api/.env', '.env'] })
+    expect(r.log).toBe('worktree setup: copied .env; not copied services (another git repository), services/api/.env (another git repository); not shared services (another git repository)')
+    await expect(fs.access(path.join(wt, 'services'))).rejects.toThrow()
+  })
+
   it('shares a folder only while the lockfile matches the clone\'s, else runs the command once', async () => {
     const w = { command: 'mkdir node_modules && echo installed > node_modules/x', lockfile: 'package-lock.json' }
     expect((await prepare(w)).log).toBe('worktree setup: shared node_modules from the clone')

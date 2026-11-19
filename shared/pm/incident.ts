@@ -2,7 +2,7 @@
 // read (herdr-core's machines and terminals, the account's limit data), never
 // a guess, and records it as an incident per machine. No fact that decides:
 // 'unknown', said as such.
-import type { Run, Task } from './run'
+import { programName, type Run, type Task } from './run'
 import type { Quota } from '../types'
 import { limitState } from '../quotaLimit'
 
@@ -122,12 +122,11 @@ export const isOpen = (i: Incident, tasks: TaskState[]) =>
 
 // The line a task waits with.
 export const incidentLine = (i: Pick<Incident, 'cause' | 'label'> & { program?: string }) =>
-  i.cause === 'login' ? `Waiting for login: ${programName(i.program)} login expired on ${i.label}` : `The agent's terminal is gone: ${CAUSE_TEXT[i.cause]} (${i.label})`
-const programName = (p?: string) => (p === 'codex' ? 'Codex' : 'Claude')
+  i.cause === 'login' ? `Waiting for login: ${programName(i.program ?? 'claude')} login expired on ${i.label}` : `The agent's terminal is gone: ${CAUSE_TEXT[i.cause]} (${i.label})`
 
 // The login incidents still holding tasks, for the home's one notice per machine and account.
 export const openLogins = (incidents: Incident[], tasks: TaskState[]) =>
-  incidents.filter(i => i.cause === 'login' && isOpen(i, tasks)).map(i => ({ id: i.id, program: programName(i.program), machine: i.label, tasks: i.tasks.length, ...(i.renewed ? { renewed: i.renewed } : {}) }))
+  incidents.filter(i => i.cause === 'login' && isOpen(i, tasks)).map(i => ({ id: i.id, program: programName(i.program ?? 'claude'), machine: i.label, tasks: i.tasks.length, ...(i.renewed ? { renewed: i.renewed } : {}) }))
 
 // What the coordinator reads.
 export const incidentView = (i: Incident, tasks: TaskState[]) =>
