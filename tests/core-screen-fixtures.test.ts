@@ -268,11 +268,6 @@ describe('Devin slash-command panels', () => {
   })
 })
 
-    await screens.enrich([p])
-    expect(p.interaction).toBe('input')
-  })
-})
-
 describe('enrich + card preview on recorded screens', () => {
   it('keeps an idle Devin at its input without opening the terminal window', async () => {
     const text = screen('devin-idle')
