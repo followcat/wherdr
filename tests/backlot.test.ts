@@ -4,7 +4,7 @@ import {
   buildBacklotCommand, parseBacklotDoc, roleVisualState, studioVisualState, studioWaitingAttentions, validateBacklotAction,
 } from '../shared/backlot'
 import { readBacklotDocs, clearBacklotDocs } from '../server/utils/backlotDocs'
-import { BACKLOT_FAILED, BACKLOT_NOT_FOUND, BACKLOT_TIMEOUT, runBacklotAction } from '../server/utils/backlotActions'
+import { BACKLOT_NOT_FOUND, BACKLOT_TIMEOUT, runBacklotAction } from '../server/utils/backlotActions'
 
 const role = (more: Partial<BacklotRole> = {}): BacklotRole => ({ role: 'dev', name: 'alice', state: 'live', ...more })
 const studio = (more: Partial<BacklotStudio> = {}): BacklotStudio => ({
@@ -192,24 +192,26 @@ describe('readBacklotDocs', () => {
 })
 
 describe('runBacklotAction', () => {
-  const runner = (step: () => unknown, output = 'ok\n') => {
+  const runner = (result: unknown) => {
     const calls: { method: string, params: Record<string, unknown> }[] = []
     const call = vi.fn(async (method: string, params: Record<string, unknown>) => {
       calls.push({ method, params })
-      if (method === 'terminal.run') return { address: 't9' }
-      if (method === 'terminal.get') return step()
-      if (method === 'terminal.read') return { text: output }
-      return {}
+      return method === 'terminal.run' ? result : {}
     })
-    return { call, calls, clearDocs: vi.fn(), sleep: async () => {} }
+    return { call, calls, clearDocs: vi.fn() }
   }
+  // The real herdr-core RunResult with `wait` (tests/fixtures/core-0.1.17.json).
+  const done = (exit: number, output = 'ok\n') => ({
+    address: 'host-b/t9', state: 'finished', exit_code: exit, output,
+    wait: { terminal: 'host-b/t9', ended: true, exit_code: exit, reason: 'exit', turn: 1, children: [] },
+  })
 
-  it('runs a remote action in a quoted one-off terminal and clears the documents', async () => {
-    const deps = runner(() => ({ state: 'finished', exit_code: 0 }), 'applied c1\n')
+  it('waits for a remote action, reads its RunResult and clears the documents', async () => {
+    const deps = runner(done(0, 'applied c1\n'))
     const r = await runBacklotAction(deps, { kind: 'card-apply', machine: 'host-b', cardId: 'c1' })
     expect(r).toEqual({ ok: true, output: 'applied c1' })
     const run = deps.calls.find(c => c.method === 'terminal.run')!.params
-    expect(run).toMatchObject({ on: 'host-b', rm: true, no_parent: true, no_notify: true, labels: { 'backlot.web_action': '1' } })
+    expect(run).toMatchObject({ on: 'host-b', wait: true, timeout: 8, rm: true, no_parent: true, no_notify: true, labels: { 'backlot.web_action': '1' } })
     expect(String(run.line)).toContain(`'card' 'apply' 'c1'`)
     expect(String(run.line)).toContain('command -v backlot')
     expect(String(run.line)).toContain('$HOME/.local/bin/backlot')
@@ -217,34 +219,57 @@ describe('runBacklotAction', () => {
   })
 
   it("omits `on` for this machine and quotes a text that tries to break out", async () => {
-    const deps = runner(() => ({ state: 'finished', exit_code: 0 }))
+    const deps = runner(done(0))
     await runBacklotAction(deps, { kind: 'tell', machine: '', studio: 'shop', role: 'dev', text: `it's done; id` })
     const run = deps.calls.find(c => c.method === 'terminal.run')!.params
     expect(run.on).toBeUndefined()
+    expect(run.wait).toBe(true)
     expect(String(run.line)).toContain(`'--text' 'it'\\''s done; id'`)
   })
 
   it('refuses an invalid action without running anything', async () => {
-    const deps = runner(() => ({ state: 'finished', exit_code: 0 }))
+    const deps = runner(done(0))
     await expect(runBacklotAction(deps, { kind: 'tell', machine: '', studio: 'shop', role: 'dev', text: '' })).resolves
       .toEqual({ ok: false, status: 400, error: 'Invalid action' })
     expect(deps.calls).toEqual([])
   })
 
-  it('reports a missing backlot, a failure and a timeout', async () => {
-    const missing = runner(() => ({ state: 'finished', exit_code: 127 }))
-    await expect(runBacklotAction(missing, { kind: 'stage-start', machine: '' })).resolves
-      .toEqual({ ok: false, status: 400, error: BACKLOT_NOT_FOUND })
-    expect(missing.clearDocs).not.toHaveBeenCalled()
+  it('maps exit 126/127 to a missing backlot', async () => {
+    for (const code of [126, 127]) {
+      const deps = runner(done(code, 'command not found\n'))
+      await expect(runBacklotAction(deps, { kind: 'stage-start', machine: '' })).resolves
+        .toEqual({ ok: false, status: 400, error: BACKLOT_NOT_FOUND, output: 'command not found' })
+      expect(deps.clearDocs).not.toHaveBeenCalled()
+    }
+  })
 
-    const failed = runner(() => ({ state: 'finished', exit_code: 2 }))
-    await expect(runBacklotAction(failed, { kind: 'stage-start', machine: '' })).resolves
-      .toEqual({ ok: false, status: 502, error: BACKLOT_FAILED })
+  it('reports the first output line of a failed command', async () => {
+    const deps = runner(done(2, 'E_BACKLOT: refused\nmore detail\n'))
+    await expect(runBacklotAction(deps, { kind: 'stage-start', machine: '' })).resolves
+      .toEqual({ ok: false, status: 502, error: 'E_BACKLOT: refused', output: 'E_BACKLOT: refused\nmore detail' })
+    expect(deps.clearDocs).not.toHaveBeenCalled()
+  })
 
-    const slow = runner(() => ({ state: 'live' }))
-    await expect(runBacklotAction({ ...slow, waitMs: 0 }, { kind: 'stage-start', machine: '' })).resolves
+  it('kills and removes a command still running when the wait times out', async () => {
+    const deps = runner({
+      address: 't9', state: 'live', exit_code: null, output: null,
+      wait: { terminal: 't9', ended: false, reason: 'timeout', turn: 0, children: [] },
+    })
+    await expect(runBacklotAction({ ...deps, waitMs: 0 }, { kind: 'stage-start', machine: '' })).resolves
       .toEqual({ ok: false, status: 502, error: BACKLOT_TIMEOUT })
-    expect(slow.calls.some(c => c.method === 'terminal.rm')).toBe(true)
-    expect(slow.clearDocs).not.toHaveBeenCalled()
+    const methods = deps.calls.map(c => c.method)
+    expect(methods).toContain('terminal.kill')
+    expect(methods).toContain('terminal.rm')
+    expect(methods.indexOf('terminal.kill')).toBeLessThan(methods.indexOf('terminal.rm'))
+    expect(deps.calls.find(c => c.method === 'terminal.run')!.params.timeout).toBe(1)
+    expect(deps.clearDocs).not.toHaveBeenCalled()
+  })
+
+  it('reads an older RunResult without wait and reaps its terminal', async () => {
+    const deps = runner({ address: 't9', state: 'finished', exit_code: 0, output: 'done\n' })
+    await expect(runBacklotAction(deps, { kind: 'stage-start', machine: '' })).resolves
+      .toEqual({ ok: true, output: 'done' })
+    expect(deps.calls.filter(c => c.method === 'terminal.rm')).toHaveLength(1)
+    expect(deps.clearDocs).toHaveBeenCalledOnce()
   })
 })

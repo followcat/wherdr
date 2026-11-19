@@ -9,10 +9,8 @@ type Call = <T>(method: string, params: object, timeout: number) => Promise<T>
 export interface BacklotActionDeps {
   call: Call
   clearDocs: () => void
-  sleep?: (ms: number) => Promise<void>
-  pollMs?: number
+  // How long terminal.run waits for the command (default 8 s).
   waitMs?: number
-  now?: () => number
 }
 
 export interface BacklotActionResult {
@@ -20,6 +18,16 @@ export interface BacklotActionResult {
   output?: string
   error?: string
   status?: number
+}
+
+// herdr-core's terminal.run answer (RunResult in tests/fixtures/core-0.1.17.json).
+// With `wait`, `wait` tells how the wait ended and `output` holds the screen.
+export interface BacklotRunResult {
+  address: string
+  state?: string
+  exit_code?: number | null
+  output?: string | null
+  wait?: { ended: boolean, exit_code?: number | null } | null
 }
 
 export const BACKLOT_LABEL = 'backlot.web_action'
@@ -47,6 +55,7 @@ const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g
 const concise = (text: string) => text.replace(ANSI, '').split('\n').map(l => l.trimEnd()).filter(Boolean).slice(-20).join('\n').slice(-4000)
 
 const unreachable = (e: unknown) => e instanceof CoreError && ['unavailable', 'disconnected', 'unreachable', 'timeout', 'protocol'].includes(e.kind)
+const missing = (code: number | null) => code === 126 || code === 127
 
 export async function runBacklotAction(deps: BacklotActionDeps, input: unknown): Promise<BacklotActionResult> {
   const action = validateBacklotAction(input)
@@ -55,38 +64,43 @@ export async function runBacklotAction(deps: BacklotActionDeps, input: unknown):
   const params = {
     line: backlotLine(args),
     ...(action.machine ? { on: action.machine } : {}),
+    // `rm` reaps the terminal only once a waiting parent has its exit code:
+    // without `wait`, a fast command vanishes before we can read its result.
+    wait: true,
+    timeout: Math.max(1, Math.ceil((deps.waitMs ?? 8000) / 1000)),
     rm: true,
     no_parent: true,
     no_notify: true,
     labels: { [BACKLOT_LABEL]: '1' },
   }
-  let address: string
+  let r: BacklotRunResult
   try {
-    address = (await deps.call<{ address: string }>('terminal.run', params, 30000)).address
+    r = await deps.call<BacklotRunResult>('terminal.run', params, 30000)
   } catch (e) {
     return { ok: false, status: 502, error: unreachable(e) ? BACKLOT_UNREACHABLE : BACKLOT_FAILED }
   }
 
-  const now = deps.now ?? Date.now
-  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)))
-  const deadline = now() + (deps.waitMs ?? 8000)
-  let finished = false
-  let exit: number | null = null
-  for (;;) {
-    const t = await deps.call<{ state?: string, exit_code?: number | null }>('terminal.get', { terminal: address }, 3000).catch(() => null)
-    if (!t) break
-    if (t.state === 'finished') { finished = true; exit = t.exit_code ?? null; break }
-    if (now() >= deadline) break
-    await sleep(deps.pollMs ?? 250)
-  }
-  const output = concise(String((await deps.call<{ text?: string }>('terminal.read', { terminal: address, lines: 60 }, 3000).catch(() => null))?.text || ''))
-  if (!finished) {
-    await deps.call('terminal.rm', { terminal: address }, 3000).catch(() => {})
+  // Older cores answered without `wait`: the terminal's state then says how it ended.
+  const ended = r.wait ? r.wait.ended : r.state === 'finished'
+  const exitCode = r.wait?.exit_code ?? r.exit_code ?? null
+  const output = concise(r.output ?? '')
+
+  if (!ended) {
+    await deps.call('terminal.kill', { terminal: r.address }, 3000).catch(() => {})
+    await deps.call('terminal.rm', { terminal: r.address }, 3000).catch(() => {})
     return { ok: false, status: 502, error: BACKLOT_TIMEOUT }
   }
-  if (exit !== 0) {
-    return { ok: false, status: exit === 127 ? 400 : 502, error: exit === 127 ? BACKLOT_NOT_FOUND : BACKLOT_FAILED }
+  if (exitCode !== 0) {
+    const first = output.split('\n')[0]?.trim() || ''
+    return {
+      ok: false,
+      status: missing(exitCode) ? 400 : 502,
+      error: missing(exitCode) ? BACKLOT_NOT_FOUND : first || BACKLOT_FAILED,
+      ...(output ? { output } : {}),
+    }
   }
+  // A core too old to report `wait` did not necessarily reap the terminal after `rm`.
+  if (!r.wait) await deps.call('terminal.rm', { terminal: r.address }, 3000).catch(() => {})
   deps.clearDocs()
   return { ok: true, output }
 }
