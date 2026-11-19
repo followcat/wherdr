@@ -29,8 +29,19 @@ export interface Voice {
   kind?: 'cantoNano'
   set: string
   dir: string
+  // Where the shared G2P/OpenCC files live (the Canto voices share them).
+  textDir?: string
+  // The device the voice needs (the GPU voice needs WebGPU and shader-f16).
+  requires?: ('webgpu' | 'shader-f16')[]
+  // How the Canto runner is configured for this voice (dtype, providers, files).
+  runner?: {
+    dtype?: 'float32' | 'float16'
+    providers?: ('wasm' | 'webgpu')[]
+    kvGpu?: boolean
+    external?: { tts?: string, local?: string, codec?: string }
+  }
   model?: string
-  members: { path: string, bytes: number }[]
+  members: { path: string, bytes: number, dir?: string, from?: string }[]
   attribution: string
   // Measured on a phone (docs/read-aloud.md): WASM heap after load and while
   // speaking, and the real-time factor. Absent until measured.
@@ -46,6 +57,9 @@ export interface VoiceStats {
   genMs: number // time spent generating speech
   audioMs: number // length of the speech generated
   heap: number // largest WASM heap seen, bytes
+  provider?: string // what the session actually ran on (wasm or webgpu)
+  phase?: string // 'cpu-io' or 'gpu-kv' for the GPU voice
+  dtype?: string // float32 or float16
 }
 
 export const VOICES = catalog.voices as Voice[]
@@ -118,9 +132,9 @@ export interface NeuralVoiceDeps {
 
 type FromWorker =
   | { t: 'phase' | 'dl' }
-  | { t: 'ready', heap: number, ms?: number }
+  | { t: 'ready', heap: number, ms?: number, provider?: string, phase?: string, dtype?: string }
   | { t: 'parts', id: string, count: number }
-  | { t: 'audio', id: string, part?: number, parts?: number, pcm: ArrayBuffer, sampleRate: number, ms?: number, heap?: number }
+  | { t: 'audio', id: string, part?: number, parts?: number, pcm: ArrayBuffer, sampleRate: number, ms?: number, heap?: number, ep?: string }
   | { t: 'cancelled', id: string }
   | { t: 'error', id?: string, error: string }
 
@@ -159,12 +173,30 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
   let idle: ReturnType<typeof setTimeout> | undefined
   let stopTimer: ReturnType<typeof setTimeout> | undefined
   let stats: VoiceStats | null = null
+  const lastStats = new Map<string, VoiceStats>()
+  const voiceLoad = new Map<string, number>()
+  const voiceProvider = new Map<string, { provider?: string, phase?: string, dtype?: string }>()
   let tapAt = 0
   const now = () => globalThis.performance?.now() ?? Date.now()
   const sawHeap = (h?: number) => { if (stats && h) stats.heap = Math.max(stats.heap, h) }
 
+  type GpuNavigator = { gpu?: { requestAdapter: () => Promise<{ features: Set<string> } | null> } }
+  let gpuReady: boolean | null = null
+  async function gpuCheck(): Promise<boolean> {
+    if (gpuReady !== null) return gpuReady
+    try {
+      const adapter = await (globalThis.navigator as GpuNavigator | undefined)?.gpu?.requestAdapter()
+      gpuReady = !!adapter && adapter.features.has('shader-f16')
+    }
+    catch { gpuReady = false }
+    return gpuReady
+  }
+  // The picker can say a voice is unavailable before a tap; the worker also
+  // asks for one provider only, so a WebGPU voice never falls back to WASM.
+  const supports = (v: Voice) => !v.requires?.includes('webgpu') || gpuReady === true
   const fits = (v: Voice) => !crashedModels()[v.id] && (budget == null || heapNeeded(v) <= budget)
-  const usable = (v: Voice) => installed.has(v.id) && fits(v)
+  const usable = (v: Voice) => installed.has(v.id) && fits(v) && supports(v)
+  void gpuCheck()
 
   // Which voices this device holds whole: speak() decides from this, in the tap.
   async function refresh() {
@@ -180,10 +212,16 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
     installed.add(v.id)
   }
 
+  const textStored = (v: Voice) => ({ id: v.textDir!, dir: v.textDir!, set: 'canto-text', files: v.members.filter(m => m.dir === v.textDir) })
   async function remove(v: Voice) {
     installed.delete(v.id)
     if (loaded?.id === v.id) release()
     await deleteModel(asStored(v), store)
+    // The shared G2P/OpenCC files go only when no other Canto voice uses them.
+    if (v.kind === 'cantoNano' && v.textDir) {
+      const others = VOICES.filter(o => o.kind === 'cantoNano' && o.id !== v.id && installed.has(o.id))
+      if (!others.length) await deleteModel(textStored(v), store)
+    }
   }
 
   function stop() {
@@ -242,7 +280,14 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
         if (budget != null && m.heap > budget) return fail(`out of memory: the voice takes ${m.heap} bytes`)
         ready = true
         markLoading(null)
-        if (stats) stats.loadMs = m.ms
+        if (m.ms != null) voiceLoad.set(v.id, m.ms)
+        voiceProvider.set(v.id, { provider: m.provider, phase: m.phase, dtype: m.dtype })
+        if (stats) {
+          if (m.ms != null) stats.loadMs = m.ms
+          stats.provider = m.provider
+          stats.phase = m.phase
+          stats.dtype = m.dtype
+        }
         sawHeap(m.heap)
         pump()
       }
@@ -263,12 +308,14 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
       t: 'load',
       runtime: `/models/runtime/${v.kind === 'cantoNano' ? CANTO_RUNTIME : DEVICE_RUNTIME}/`,
       base: `/models/${v.dir}`,
+      textBase: v.textDir ? `/models/${v.textDir}` : `/models/${v.dir}`,
       files: v.members.map(m => m.path),
       bytes: v.members.map(m => m.bytes),
       chunk: CHUNK,
       cache: DEVICE_CACHE,
       kind: v.kind,
       model: v.model,
+      runner: v.runner,
     }
     w.postMessage(load)
   }
@@ -298,7 +345,7 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
     schedule(j)
   }
 
-  function onAudio(id: string, a: { pcm: ArrayBuffer, sampleRate: number, part?: number, parts?: number, ms?: number, heap?: number }) {
+  function onAudio(id: string, a: { pcm: ArrayBuffer, sampleRate: number, part?: number, parts?: number, ms?: number, heap?: number, ep?: string }) {
     const [g, i] = id.split('.').map(Number)
     const j = job
     if (!j || !ctx || g !== j.gen) return // late audio of a stopped reply
@@ -306,6 +353,7 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
       stats.firstMs ??= Math.round(now() - tapAt)
       stats.genMs += a.ms ?? 0
       stats.audioMs += Math.round(a.pcm.byteLength / 4 / a.sampleRate * 1000)
+      if (a.ep) stats.provider = a.ep
       sawHeap(a.heap)
     }
     if (budget != null && a.heap && a.heap > budget) return fail(`out of memory: the voice takes ${a.heap} bytes`)
@@ -342,6 +390,7 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
         if (j.endedSentences < j.opts.chunks.length) return pump()
         job = null
         armIdle()
+        if (stats) lastStats.set(j.voice.id, { ...stats })
         j.opts.onEnd()
       }
       j.playPart++
@@ -370,7 +419,8 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
       sources: [],
       at: 0,
     }
-    stats = { voice: opts.voice.id, genMs: 0, audioMs: 0, heap: 0 }
+    const known = voiceProvider.get(opts.voice.id)
+    stats = { voice: opts.voice.id, genMs: 0, audioMs: 0, heap: 0, loadMs: voiceLoad.get(opts.voice.id), provider: known?.provider, phase: known?.phase, dtype: known?.dtype }
     tapAt = now()
     startWorker(opts.voice)
     pump()
@@ -379,7 +429,7 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
 
   globalThis.addEventListener?.('pagehide', release)
 
-  return { speak, stop, release, refresh, install, remove, usable, fits, stats: () => stats }
+  return { speak, stop, release, refresh, install, remove, usable, fits, supports, gpuCheck, stats: () => stats, statsFor: (id: string) => lastStats.get(id) ?? null }
 }
 
 export type NeuralVoice = ReturnType<typeof createNeuralVoice>

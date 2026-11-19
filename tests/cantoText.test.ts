@@ -13,7 +13,8 @@ import spm from './fixtures/cantoSpm.json'
 
 const root = process.cwd()
 const modelDir = path.join(root, 'data/models/canto-tts-nano-int8-01f53d9')
-const present = existsSync(path.join(modelDir, 'tokenizer.model')) && existsSync(path.join(modelDir, 's2t/STPhrases.txt'))
+const textDir = path.join(root, 'data/models/canto-text-2.6.1')
+const present = existsSync(path.join(modelDir, 'tokenizer.model')) && existsSync(path.join(textDir, 's2t/STPhrases.txt'))
 
 function loadText() {
   const ctx = { console, TextEncoder, TextDecoder, Uint8Array, ArrayBuffer, DataView, Map, Set, Number, Object, String, RegExp, Math, Error, JSON, Promise }
@@ -54,8 +55,8 @@ describe('the Cantonese text front end', () => {
     if (!present) return
     const text = loadText()
     const s2t = text.parseS2T(
-      readFileSync(path.join(modelDir, 's2t/STPhrases.txt'), 'utf8'),
-      readFileSync(path.join(modelDir, 's2t/STCharacters.txt'), 'utf8'),
+      readFileSync(path.join(textDir, 's2t/STPhrases.txt'), 'utf8'),
+      readFileSync(path.join(textDir, 's2t/STCharacters.txt'), 'utf8'),
     )
     const cases: [string, string][] = [
       ['一只猫', '一隻貓'],

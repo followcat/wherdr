@@ -30,6 +30,7 @@ WebAssembly.Memory = class extends OrigMemory {
 importScripts(
   '/workers/model-files.js',
   '/workers/canto/normalize.js',
+  '/workers/canto/fp16.js',
   '/workers/canto/canto_g2p.js',
   '/workers/canto/text.js',
   '/workers/canto/runner.js',
@@ -112,6 +113,7 @@ async function speak(msg, job) {
       ms: out.ms,
       heap: out.heap,
       truncated: out.truncated,
+      ep: runner.provider,
     }, [out.pcm.buffer])
   }
 }
@@ -132,12 +134,13 @@ async function load(msg) {
 
     post({ t: 'phase', phase: 'fetch' })
     const base = msg.base
+    const textBase = msg.textBase || base
     const [word, char, separable, slang, classifier] = await Promise.all([
-      readFile(msg, base, 'g2p/data/word.bin'),
-      readFile(msg, base, 'g2p/data/char.bin'),
-      readFile(msg, base, 'g2p/data/separable.bin'),
-      readFile(msg, base, 'g2p/data/romanized_slang.bin'),
-      readFile(msg, base, 'g2p/data/classifier_words.bin'),
+      readFile(msg, textBase, 'g2p/data/word.bin'),
+      readFile(msg, textBase, 'g2p/data/char.bin'),
+      readFile(msg, textBase, 'g2p/data/separable.bin'),
+      readFile(msg, textBase, 'g2p/data/romanized_slang.bin'),
+      readFile(msg, textBase, 'g2p/data/classifier_words.bin'),
     ])
     const g2pWasm = new Uint8Array(await (await fetch('/workers/canto/canto_g2p_bg.wasm')).arrayBuffer())
     await wasm_bindgen({ module_or_path: g2pWasm })
@@ -146,17 +149,45 @@ async function load(msg) {
 
     const tokenizer = await readFile(msg, base, 'tokenizer.model')
     const added = JSON.parse(dec.decode(await readFile(msg, base, 'added_tokens.json')))
-    const phrases = dec.decode(await readFile(msg, base, 's2t/STPhrases.txt'))
-    const chars = dec.decode(await readFile(msg, base, 's2t/STCharacters.txt'))
+    const phrases = dec.decode(await readFile(msg, textBase, 's2t/STPhrases.txt'))
+    const chars = dec.decode(await readFile(msg, textBase, 's2t/STCharacters.txt'))
     encoder = text.encoder(tokenizer, added)
     s2t = text.parseS2T(phrases, chars)
     if (job.cancelled) throw CANCELLED
 
+    // ORT's native WebGPU path ignores env.webgpu.adapter: bind its adapter
+    // and device creation to the checked one and require shader-f16. A GPU
+    // voice never falls back to WASM.
+    if (msg.runner?.providers?.includes('webgpu')) {
+      const gpu = navigator.gpu
+      const requestAdapter = gpu?.requestAdapter
+      const adapter = await requestAdapter?.call(gpu)
+      if (!adapter || !adapter.features.has('shader-f16')) {
+        throw new Error('this voice needs WebGPU with shader-f16')
+      }
+      const requestDevice = adapter.requestDevice
+      gpu.requestAdapter = async () => adapter
+      adapter.requestDevice = async (descriptor = {}) => requestDevice.call(adapter, {
+        ...descriptor,
+        requiredFeatures: [...new Set([...(descriptor.requiredFeatures || []), 'shader-f16'])],
+      })
+      ortRuntime.env.webgpu.adapter = adapter
+    }
+
     post({ t: 'phase', phase: 'create' })
-    runner = await runnerApi.createRunner({ ort: ortRuntime, base, msg, openFile })
+    runner = await runnerApi.createRunner({ ort: ortRuntime, base, msg, openFile, options: msg.runner })
     if (job.cancelled) throw CANCELLED
     loaded = true
-    post({ t: 'ready', ms: Math.round(performance.now() - t0), heap: runner.heap(), sampleRate: 48000, threads: ortRuntime.env.wasm.numThreads })
+    post({
+      t: 'ready',
+      ms: Math.round(performance.now() - t0),
+      heap: runner.heap(),
+      sampleRate: 48000,
+      threads: ortRuntime.env.wasm.numThreads,
+      provider: runner.provider,
+      phase: runner.phase,
+      dtype: runner.dtype,
+    })
   } finally {
     if (loading === job) loading = null
   }

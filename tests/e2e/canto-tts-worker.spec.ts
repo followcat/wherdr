@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import path from 'node:path'
@@ -20,6 +20,18 @@ const present = existsSync(path.join(modelsDir, voice.dir, 'MOSS-TTS-Nano-cantop
   && existsSync(path.join(modelsDir, runtime, 'ort.webgpu.min.js'))
 const SENTENCE = '今日天氣幾好，我想出街行吓，再去茶餐廳食個早餐。'
 const LONG = `${SENTENCE}你食咗飯未呀？如果未食，不如一齊去啦。`
+const voiceGpu = VOICES.voices.find(v => v.id === 'canto-nano-fp16-gpu')!
+const presentGpu = existsSync(path.join(modelsDir, voiceGpu.dir, 'MOSS-TTS-Nano-cantophon-ONNX/moss_tts_prefill.onnx'))
+  && existsSync(path.join(modelsDir, runtime, 'ort.webgpu.min.js'))
+  && existsSync(path.join(modelsDir, voiceGpu.textDir!, 'g2p/data/word.bin'))
+
+// Full Chromium (the headless shell has no WebGPU), with the Vulkan ANGLE
+// backend that exposes shader-f16 on the Intel Iris Xe. The GPU test skips
+// when no adapter with shader-f16 exists (CI, or the headless shell).
+test.use({
+  channel: 'chromium',
+  launchOptions: { args: ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-angle=vulkan'] },
+})
 
 async function startServer() {
   const workers = path.resolve('public/workers')
@@ -42,7 +54,7 @@ async function startServer() {
   return { url: `http://localhost:${(server.address() as AddressInfo).port}/`, close: () => server.close() }
 }
 
-const loadArgs = { dir: voice.dir, files: voice.members.map(m => m.path), bytes: voice.members.map(m => m.bytes), runtime }
+const loadArgs = { dir: voice.dir, textBase: voice.textDir ? `/models/${voice.textDir}` : `/models/${voice.dir}`, files: voice.members.map(m => m.path), bytes: voice.members.map(m => m.bytes), runtime }
 
 test('the Canto worker speaks a Cantonese sentence without cross-origin isolation', async ({ page }, testInfo) => {
   test.skip(!present, `no Canto model under ${modelsDir}`)
@@ -51,7 +63,7 @@ test('the Canto worker speaks a Cantonese sentence without cross-origin isolatio
   try {
     await page.goto(server.url)
     const isolated = await page.evaluate(() => crossOriginIsolated)
-    const result = await page.evaluate(async ({ dir, files, bytes, runtime, text }) => {
+    const result = await page.evaluate(async ({ dir, textBase, files, bytes, runtime, text }) => {
       const worker = new Worker('/workers/canto-tts-worker.js')
       const messages: Record<string, unknown>[] = []
       worker.addEventListener('message', (e) => messages.push(e.data))
@@ -62,7 +74,7 @@ test('the Canto worker speaks a Cantonese sentence without cross-origin isolatio
         }
         worker.addEventListener('message', on)
       })
-      worker.postMessage({ t: 'load', runtime: `/models/${runtime}`, base: `/models/${dir}`, files, bytes, chunk: 8 * 1024 * 1024, cache: '' })
+      worker.postMessage({ t: 'load', runtime: `/models/${runtime}`, base: `/models/${dir}`, textBase, files, bytes, chunk: 8 * 1024 * 1024, cache: '' })
       const loaded = await ready
       const parts: Record<string, unknown>[] = []
       let total = 0
@@ -127,7 +139,7 @@ test('stop cancels a synthesis at a word boundary and posts no more audio', asyn
   const server = await startServer()
   try {
     await page.goto(server.url)
-    const result = await page.evaluate(async ({ dir, files, bytes, runtime, text }) => {
+    const result = await page.evaluate(async ({ dir, textBase, files, bytes, runtime, text }) => {
       const worker = new Worker('/workers/canto-tts-worker.js')
       const ready = new Promise<void>((resolve, reject) => {
         const on = (e: MessageEvent) => {
@@ -136,7 +148,7 @@ test('stop cancels a synthesis at a word boundary and posts no more audio', asyn
         }
         worker.addEventListener('message', on)
       })
-      worker.postMessage({ t: 'load', runtime: `/models/${runtime}`, base: `/models/${dir}`, files, bytes, chunk: 8 * 1024 * 1024, cache: '' })
+      worker.postMessage({ t: 'load', runtime: `/models/${runtime}`, base: `/models/${dir}`, textBase, files, bytes, chunk: 8 * 1024 * 1024, cache: '' })
       await ready
       let total = 0
       const audio: number[] = []
@@ -173,7 +185,7 @@ test('stop during a load is acknowledged before the voice is ready', async ({ pa
   const server = await startServer()
   try {
     await page.goto(server.url)
-    const result = await page.evaluate(async ({ dir, files, bytes, runtime }) => {
+    const result = await page.evaluate(async ({ dir, textBase, files, bytes, runtime }) => {
       const worker = new Worker('/workers/canto-tts-worker.js')
       let ready = false
       const outcome = new Promise<{ cancelled: boolean }>((resolve) => {
@@ -185,7 +197,7 @@ test('stop during a load is acknowledged before the voice is ready', async ({ pa
         }
         worker.addEventListener('message', on)
       })
-      worker.postMessage({ t: 'load', runtime: `/models/${runtime}`, base: `/models/${dir}`, files, bytes, chunk: 8 * 1024 * 1024, cache: '' })
+      worker.postMessage({ t: 'load', runtime: `/models/${runtime}`, base: `/models/${dir}`, textBase, files, bytes, chunk: 8 * 1024 * 1024, cache: '' })
       worker.postMessage({ t: 'cancel', id: 'load', gen: 1 })
       const out = await outcome
       worker.postMessage({ t: 'dispose' })
@@ -193,6 +205,137 @@ test('stop during a load is acknowledged before the voice is ready', async ({ pa
     }, loadArgs)
     expect(result.cancelled).toBe(true)
     expect(result.ready).toBe(false)
+  }
+  finally { server.close() }
+})
+
+test('the GPU voice speaks on WebGPU with shader-f16, CPU I/O and GPU KV', async ({ page }, testInfo) => {
+  test.skip(!presentGpu, `no fp16 Canto model under ${modelsDir}`)
+  test.setTimeout(900_000)
+  const server = await startServer()
+  try {
+    await page.goto(server.url)
+    const support = await page.evaluate(async () => {
+      const adapter = await navigator.gpu?.requestAdapter()
+      return !!adapter && adapter.features.has('shader-f16')
+    })
+    test.skip(!support, 'no WebGPU adapter with shader-f16')
+    const texts = { short: '今日天氣幾好。', medium: '今日天氣幾好，我想出街行吓，再去茶餐廳食個早餐。', english: '我哋一齊去 IFC food court 食飯。' }
+    const result = await page.evaluate(async ({ int8, gpu, texts }) => {
+      const runs = [
+        { name: 'int8', voice: int8, runner: undefined },
+        { name: 'gpu-cpu-io', voice: gpu, runner: gpu.runner },
+        { name: 'gpu-gpu-kv', voice: gpu, runner: { ...gpu.runner, kvGpu: true } },
+      ]
+      const load = (worker: Worker, run: { voice: { dir: string, textDir: string, members: { path: string, bytes: number }[] }, runner: unknown }) => new Promise<Record<string, unknown>>((resolve, reject) => {
+        const on = (e: MessageEvent) => {
+          if (e.data.t === 'ready') { worker.removeEventListener('message', on); resolve(e.data) }
+          else if (e.data.t === 'error') { worker.removeEventListener('message', on); reject(new Error(e.data.error)) }
+        }
+        worker.addEventListener('message', on)
+        worker.postMessage({
+          t: 'load',
+          runtime: '/models/runtime/onnxruntime-web-1.23.2/',
+          base: `/models/${run.voice.dir}`,
+          textBase: `/models/${run.voice.textDir}`,
+          files: run.voice.members.map(m => m.path),
+          bytes: run.voice.members.map(m => m.bytes),
+          chunk: 8 * 1024 * 1024,
+          cache: '',
+          kind: 'cantoNano',
+          runner: run.runner,
+        })
+      })
+      const speak = (worker: Worker, text: string) => new Promise<{ parts: Record<string, unknown>[], firstMs: number }>((resolve, reject) => {
+        const parts: Record<string, unknown>[] = []
+        let total = 0
+        let firstMs: number | null = null
+        const t0 = performance.now()
+        const on = (e: MessageEvent) => {
+          if (e.data.id !== '1.0') return
+          if (e.data.t === 'parts') total = e.data.count
+          else if (e.data.t === 'audio') {
+            if (firstMs === null) firstMs = Math.round(performance.now() - t0)
+            parts.push(e.data)
+            if (parts.length === total) { worker.removeEventListener('message', on); resolve({ parts, firstMs }) }
+          }
+          else if (e.data.t === 'error') { worker.removeEventListener('message', on); reject(new Error(e.data.error)) }
+        }
+        worker.addEventListener('message', on)
+        worker.postMessage({ t: 'speak', id: '1.0', text })
+      })
+      const out: Record<string, any> = {}
+      for (const run of runs) {
+        const worker = new Worker('/workers/canto-tts-worker.js')
+        const ready = await load(worker, run)
+        out[run.name + ':ready'] = { provider: ready.provider, phase: ready.phase, dtype: ready.dtype, loadMs: ready.ms, heap: ready.heap, threads: ready.threads }
+        for (const [name, text] of Object.entries(texts)) {
+          const { parts, firstMs } = await speak(worker, text)
+          let samples = 0
+          let genMs = 0
+          let heap = 0
+          let sampleRate = 0
+          let peak = 0
+          const pcm: number[] = []
+          for (const p of parts) {
+            const f = new Float32Array(p.pcm as ArrayBuffer)
+            for (const s of f) { pcm.push(s); peak = Math.max(peak, Math.abs(s)) }
+            samples += f.length
+            sampleRate = Number(p.sampleRate)
+            genMs += Number(p.ms) || 0
+            heap = Math.max(heap, Number(p.heap) || 0)
+          }
+          out[run.name + ':' + name] = {
+            text,
+            firstMs,
+            seconds: samples / sampleRate,
+            genMs,
+            rtf: genMs / 1000 / (samples / sampleRate),
+            sampleRate,
+            peak,
+            heap,
+            parts: parts.length,
+            truncated: parts.some(p => p.truncated),
+            pcm,
+          }
+        }
+        worker.postMessage({ t: 'dispose' })
+      }
+      return out
+    }, { int8: { dir: voice.dir, textDir: voice.textDir, members: voice.members }, gpu: { ...voiceGpu }, texts })
+    const samplesDir = path.resolve('../briefs/canto-tts/samples-fp16')
+    mkdirSync(samplesDir, { recursive: true })
+    const wav = (values: Float32Array, sampleRate: number) => {
+      const buf = Buffer.alloc(44 + values.length * 2)
+      buf.write('RIFF', 0); buf.writeUInt32LE(36 + values.length * 2, 4); buf.write('WAVE', 8)
+      buf.write('fmt ', 12); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20); buf.writeUInt16LE(1, 22)
+      buf.writeUInt32LE(sampleRate, 24); buf.writeUInt32LE(sampleRate * 2, 28); buf.writeUInt16LE(2, 32); buf.writeUInt16LE(16, 34)
+      buf.write('data', 36); buf.writeUInt32LE(values.length * 2, 40)
+      for (let i = 0; i < values.length; i++) buf.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(values[i]! * 32767))), 44 + i * 2)
+      return buf
+    }
+    const lines: string[] = []
+    for (const [key, value] of Object.entries(result) as [string, any][]) {
+      if (!value.text) {
+        lines.push(`${key}: provider ${value.provider}, phase ${value.phase}, dtype ${value.dtype}, load ${value.loadMs} ms, heap ${Math.round(value.heap / 2 ** 20)} MiB, threads ${value.threads}`)
+        continue
+      }
+      writeFileSync(path.join(samplesDir, key.replace(':', '-') + '.wav'), wav(Float32Array.from(value.pcm), value.sampleRate))
+      const line = `${key}: ${value.seconds.toFixed(2)} s, first ${value.firstMs} ms, generation ${value.genMs} ms (RTF ${value.rtf.toFixed(2)}), peak ${value.peak.toFixed(2)}, heap ${Math.round(value.heap / 2 ** 20)} MiB, parts ${value.parts}, truncated ${value.truncated}`
+      lines.push(line)
+      console.log(line)
+    }
+    console.log(lines.join('\n'))
+    testInfo.annotations.push({ type: 'canto-gpu', description: lines.join(' | ') })
+    expect(result['int8:ready'].provider).toBe('wasm')
+    expect(result['gpu-cpu-io:ready'].provider).toBe('webgpu')
+    expect(result['gpu-cpu-io:ready'].dtype).toBe('float16')
+    expect(result['gpu-cpu-io:ready'].phase).toBe('cpu-io')
+    expect(result['gpu-gpu-kv:ready'].phase).toBe('gpu-kv')
+    for (const key of ['int8:short', 'gpu-cpu-io:short', 'gpu-gpu-kv:short', 'int8:medium', 'gpu-cpu-io:medium', 'gpu-gpu-kv:medium', 'int8:english', 'gpu-cpu-io:english', 'gpu-gpu-kv:english']) {
+      expect(result[key].peak, key).toBeGreaterThan(0.05)
+      expect(result[key].seconds, key).toBeGreaterThan(0.5)
+    }
   }
   finally { server.close() }
 })

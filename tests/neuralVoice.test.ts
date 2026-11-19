@@ -1,12 +1,13 @@
 // The neural read-aloud engine (app/utils/speech/neuralVoice.ts) against a
 // worker that speaks the TTS worker's protocol and a fake WebAudio clock.
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEVICE_CACHE } from '../app/utils/dictation/deviceModels'
 import { CANTO_WORKER_URL, LOOKAHEAD, VOICES, createNeuralVoice, defaultVoice, heapEstimate, heapNeeded, replyLanguage } from '../app/utils/speech/neuralVoice'
 import { fakeCaches } from './fakeModelCache'
 
 const siwis = VOICES.find(v => v.id === 'siwis-medium')!
 const canto = VOICES.find(v => v.id === 'canto-nano-int8')!
+const cantoGpu = VOICES.find(v => v.id === 'canto-nano-fp16-gpu')!
 
 class FakeWorker {
   static made: FakeWorker[] = []
@@ -76,6 +77,7 @@ function reply(chunks: string[]) {
 afterEach(() => {
   FakeWorker.made = []
   FakeAudio.made = []
+  vi.unstubAllGlobals()
 })
 
 describe('the neural voice', () => {
@@ -191,10 +193,30 @@ describe('the neural voice', () => {
     expect(replyLanguage('今日はいい天気ですね。')).not.toBe('yue')
   })
 
+  it('accepts the GPU voice only with WebGPU and shader-f16', async () => {
+    const make = async (features: string[]) => {
+      vi.stubGlobal('navigator', { gpu: { requestAdapter: async () => ({ features: new Set(features) }) } })
+      const voice = createNeuralVoice({
+        caches: fakeCaches(),
+        budget: null,
+        worker: () => new FakeWorker() as unknown as Worker,
+        audio: () => new FakeAudio() as unknown as AudioContext,
+      })
+      return { voice, ok: await voice.gpuCheck() }
+    }
+    const without = await make([])
+    expect(without.ok).toBe(false)
+    expect(without.voice.supports(cantoGpu)).toBe(false)
+    expect(without.voice.supports(canto)).toBe(true)
+    const withF16 = await make(['shader-f16'])
+    expect(withF16.ok).toBe(true)
+    expect(withF16.voice.supports(cantoGpu)).toBe(true)
+  })
+
   it('selects the Canto worker with its kind and runtime', async () => {
     const caches = fakeCaches()
     const cache = await caches.open(DEVICE_CACHE)
-    for (const m of canto.members) await cache.put(`/models/${canto.dir}/${m.path}`, new Response(''))
+    for (const m of canto.members) await cache.put(`/models/${(m as { dir?: string }).dir ?? canto.dir}/${m.path}`, new Response(''))
     let url = ''
     const voice = createNeuralVoice({
       caches,

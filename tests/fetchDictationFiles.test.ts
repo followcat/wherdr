@@ -28,17 +28,20 @@ function server(data: Buffer) {
 
 describe('the pinned files', () => {
   it('each has an https URL, a sha256 and a place inside the models folder', () => {
-    const places = new Set<string>()
-    // ort is shared: the Canto voice's set includes it, and the named set is
-    // the same entries (the fetch skips files already in place).
+    const places = new Map<string, string>()
+    // ort is shared: the Canto voices' sets include it, and the named set is
+    // the same entries (the fetch skips files already in place). The G2P and
+    // OpenCC files are shared by the INT8 and GPU Cantonese voices too; only
+    // identical entries may repeat a place.
     for (const entry of Object.entries(SETS).filter(([name]) => name !== 'ort').flatMap(([, entries]) => entries) as Entry[]) {
       expect(entry.url).toMatch(/^https:\/\//)
       expect(entry.sha256).toMatch(/^[0-9a-f]{64}$/)
       const place = entry.to || entry.dir!
       expect(path.posix.normalize(place)).toBe(place)
       expect(place.startsWith('..') || path.isAbsolute(place)).toBe(false)
-      expect(places.has(place)).toBe(false)
-      places.add(place)
+      const key = [entry.url, entry.sha256, entry.to, entry.dir, (entry.members || []).join(','), entry.strip].join('|')
+      if (places.has(place)) expect(places.get(place)).toBe(key)
+      places.set(place, key)
     }
     // Runtimes are pinned to a version or a commit, and sit under runtime/.
     for (const e of [...SETS.runtime, ...SETS.ort] as Entry[]) expect(e.to).toMatch(/^runtime\/[^/]+-[0-9a-f.]{5,}\//)

@@ -319,43 +319,50 @@
           "path": "g2p/data/word.bin",
           "bytes": 1785754,
           "sha256": "839593ec3a019956ebce7d75cbaf405d4f7a5b771653afb7341ba9b3ff4ebd98",
-          "from": "g2p"
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
         },
         {
           "path": "g2p/data/char.bin",
           "bytes": 631002,
           "sha256": "509bc281ddaf4d3fb09163d67484de603dbf46427f20219b9cca0837000726d6",
-          "from": "g2p"
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
         },
         {
           "path": "g2p/data/separable.bin",
           "bytes": 44,
           "sha256": "c597decbbed63f3f0949f89fd42443abdea4c234accfa1b3d93a98d2bb61af0b",
-          "from": "g2p"
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
         },
         {
           "path": "g2p/data/romanized_slang.bin",
           "bytes": 37,
           "sha256": "eaa5c2b5667b586d79a843cb4372a2054cbc2233df9ea4a82e731b903889bbb6",
-          "from": "g2p"
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
         },
         {
           "path": "g2p/data/classifier_words.bin",
           "bytes": 178,
           "sha256": "91d5e6949691b01c6cedba84e0e5363f17e98a358b58e76c2637f009464fac24",
-          "from": "g2p"
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
         },
         {
           "path": "s2t/STPhrases.txt",
           "bytes": 1006868,
           "sha256": "1ce1869151530b6ea388ace1ae4efb3d51d1faa6e01c957f8d60313083a3969f",
-          "from": "s2t"
+          "from": "s2t",
+          "dir": "canto-text-2.6.1"
         },
         {
           "path": "s2t/STCharacters.txt",
           "bytes": 34615,
           "sha256": "9cedfb8bf13a220087103d9a96d9f56050c341c24a809cbce5c85c9045456557",
-          "from": "s2t"
+          "from": "s2t",
+          "dir": "canto-text-2.6.1"
         }
       ],
       "source": {
@@ -364,7 +371,7 @@
           {
             "url": "https://files.pythonhosted.org/packages/b6/89/792dd5d4297a421d0de8616df7230e192e0f25d9b9a6f3d1862494657404/canto_hk_g2p-2.6.1.tar.gz",
             "sha256": "65490fad35541c438e4d490664fe453554a89eb1708cf0620004de0c55482183",
-            "dir": "canto-tts-nano-int8-01f53d9/g2p",
+            "dir": "canto-text-2.6.1/g2p",
             "strip": 3,
             "members": [
               "python/canto_hk_g2p/data/word.bin",
@@ -377,12 +384,12 @@
           {
             "url": "https://raw.githubusercontent.com/BYVoid/OpenCC/ver.1.2.0/data/dictionary/STPhrases.txt",
             "sha256": "1ce1869151530b6ea388ace1ae4efb3d51d1faa6e01c957f8d60313083a3969f",
-            "to": "canto-tts-nano-int8-01f53d9/s2t/STPhrases.txt"
+            "to": "canto-text-2.6.1/s2t/STPhrases.txt"
           },
           {
             "url": "https://raw.githubusercontent.com/BYVoid/OpenCC/ver.1.2.0/data/dictionary/STCharacters.txt",
             "sha256": "9cedfb8bf13a220087103d9a96d9f56050c341c24a809cbce5c85c9045456557",
-            "to": "canto-tts-nano-int8-01f53d9/s2t/STCharacters.txt"
+            "to": "canto-text-2.6.1/s2t/STCharacters.txt"
           }
         ]
       },
@@ -402,6 +409,191 @@
       "speed": {
         "rtf": 2.18,
         "basis": "Chromium 141 (Playwright chromium-1243), Linux, 2026-11-19: generation time / audio length for the sample in the worker; desktop, not a phone."
+      },
+      "textDir": "canto-text-2.6.1"
+    },
+    {
+      "id": "canto-nano-fp16-gpu",
+      "name": "Canto GPU",
+      "lang": "yue",
+      "locale": "zh-HK",
+      "kind": "cantoNano",
+      "speakers": 1,
+      "sampleRate": 48000,
+      "set": "tts-canto-nano-fp16",
+      "dir": "canto-tts-nano-fp16-e89ed00",
+      "textDir": "canto-text-2.6.1",
+      "requires": [
+        "webgpu",
+        "shader-f16"
+      ],
+      "runner": {
+        "dtype": "float16",
+        "providers": [
+          "webgpu"
+        ],
+        "kvGpu": false,
+        "external": {
+          "tts": "moss_tts_global_shared.data",
+          "local": "moss_tts_local_shared.data",
+          "codec": "moss_audio_tokenizer_decode_shared.data"
+        }
+      },
+      "members": [
+        {
+          "path": "browser_poc_manifest.json",
+          "bytes": 11740,
+          "sha256": "db6c56a975ae5b6fa8bc00933cc1eb7046a4d74a00b04c51a7fce0584b5bbfd1"
+        },
+        {
+          "path": "tokenizer.model",
+          "bytes": 470897,
+          "sha256": "c353ee1479b536bf414c1b247f5542b6607fb8ae91320e5af1781fee200fddff"
+        },
+        {
+          "path": "added_tokens.json",
+          "bytes": 1677,
+          "sha256": "32eea80bb2cee76ecfb423ab8be32dbdc70c2ee6b319670e212f9be4fab26e98"
+        },
+        {
+          "path": "MOSS-TTS-Nano-cantophon-ONNX/tts_browser_onnx_meta.json",
+          "bytes": 4304,
+          "sha256": "b263ee5d650a6b34e69fea3cc0373ec6838adad8ee5633954faa2af0dd146823"
+        },
+        {
+          "path": "MOSS-TTS-Nano-cantophon-ONNX/moss_tts_prefill.onnx",
+          "bytes": 282296,
+          "sha256": "77c3be1768face09fae1df1984fed74ea82997022060f963e4faf99eb4dc7264"
+        },
+        {
+          "path": "MOSS-TTS-Nano-cantophon-ONNX/moss_tts_decode_step.onnx",
+          "bytes": 291393,
+          "sha256": "58c378c74f85c9fbda6edabc708696bee1064f6465b66170742d73c1d730717f"
+        },
+        {
+          "path": "MOSS-TTS-Nano-cantophon-ONNX/moss_tts_local_fixed_sampled_frame.onnx",
+          "bytes": 481288,
+          "sha256": "0c160439049ae83001089f83eee321edb2a1fd258c1565d0e7dc660c3a221872"
+        },
+        {
+          "path": "MOSS-TTS-Nano-cantophon-ONNX/moss_tts_global_shared.data",
+          "bytes": 220541952,
+          "sha256": "3cb0298cf4ac70c8abf71bf504da65190164a4fc83fba5ceddc8e2a4bac39861"
+        },
+        {
+          "path": "MOSS-TTS-Nano-cantophon-ONNX/moss_tts_local_shared.data",
+          "bytes": 115109376,
+          "sha256": "c1ed8c7df8a4a98bbaed25a7f5d94ee2d4585485262616a9c3e4434237e8b6dd"
+        },
+        {
+          "path": "MOSS-Audio-Tokenizer-Nano-ONNX/codec_browser_onnx_meta.json",
+          "bytes": 16462,
+          "sha256": "385f31b17ad8c0de2a9b8c9d38cf0083515735be85ba30b9e7882ab368fe884d"
+        },
+        {
+          "path": "MOSS-Audio-Tokenizer-Nano-ONNX/moss_audio_tokenizer_decode_full.onnx",
+          "bytes": 730295,
+          "sha256": "2d6ad1e49e458f552752affec88fed04b7d12b2dcc605c69e8275ecb41eb14f0"
+        },
+        {
+          "path": "MOSS-Audio-Tokenizer-Nano-ONNX/moss_audio_tokenizer_decode_shared.data",
+          "bytes": 22062592,
+          "sha256": "60e4e2dd7c317f247e0c4362ae96cf216193359d57ba9dd970850c734738d78e"
+        },
+        {
+          "path": "g2p/data/word.bin",
+          "bytes": 1785754,
+          "sha256": "839593ec3a019956ebce7d75cbaf405d4f7a5b771653afb7341ba9b3ff4ebd98",
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
+        },
+        {
+          "path": "g2p/data/char.bin",
+          "bytes": 631002,
+          "sha256": "509bc281ddaf4d3fb09163d67484de603dbf46427f20219b9cca0837000726d6",
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
+        },
+        {
+          "path": "g2p/data/separable.bin",
+          "bytes": 44,
+          "sha256": "c597decbbed63f3f0949f89fd42443abdea4c234accfa1b3d93a98d2bb61af0b",
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
+        },
+        {
+          "path": "g2p/data/romanized_slang.bin",
+          "bytes": 37,
+          "sha256": "eaa5c2b5667b586d79a843cb4372a2054cbc2233df9ea4a82e731b903889bbb6",
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
+        },
+        {
+          "path": "g2p/data/classifier_words.bin",
+          "bytes": 178,
+          "sha256": "91d5e6949691b01c6cedba84e0e5363f17e98a358b58e76c2637f009464fac24",
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
+        },
+        {
+          "path": "s2t/STPhrases.txt",
+          "bytes": 1006868,
+          "sha256": "1ce1869151530b6ea388ace1ae4efb3d51d1faa6e01c957f8d60313083a3969f",
+          "from": "s2t",
+          "dir": "canto-text-2.6.1"
+        },
+        {
+          "path": "s2t/STCharacters.txt",
+          "bytes": 34615,
+          "sha256": "9cedfb8bf13a220087103d9a96d9f56050c341c24a809cbce5c85c9045456557",
+          "from": "s2t",
+          "dir": "canto-text-2.6.1"
+        }
+      ],
+      "source": {
+        "base": "https://huggingface.co/followcat/canto-tts-nano-fp16/resolve/e89ed002b1881e4b7c4f52469adeab9d83806450/",
+        "extras": [
+          {
+            "url": "https://files.pythonhosted.org/packages/b6/89/792dd5d4297a421d0de8616df7230e192e0f25d9b9a6f3d1862494657404/canto_hk_g2p-2.6.1.tar.gz",
+            "sha256": "65490fad35541c438e4d490664fe453554a89eb1708cf0620004de0c55482183",
+            "dir": "canto-text-2.6.1/g2p",
+            "strip": 3,
+            "members": [
+              "python/canto_hk_g2p/data/word.bin",
+              "python/canto_hk_g2p/data/char.bin",
+              "python/canto_hk_g2p/data/separable.bin",
+              "python/canto_hk_g2p/data/romanized_slang.bin",
+              "python/canto_hk_g2p/data/classifier_words.bin"
+            ]
+          },
+          {
+            "url": "https://raw.githubusercontent.com/BYVoid/OpenCC/ver.1.2.0/data/dictionary/STPhrases.txt",
+            "sha256": "1ce1869151530b6ea388ace1ae4efb3d51d1faa6e01c957f8d60313083a3969f",
+            "to": "canto-text-2.6.1/s2t/STPhrases.txt"
+          },
+          {
+            "url": "https://raw.githubusercontent.com/BYVoid/OpenCC/ver.1.2.0/data/dictionary/STCharacters.txt",
+            "sha256": "9cedfb8bf13a220087103d9a96d9f56050c341c24a809cbce5c85c9045456557",
+            "to": "canto-text-2.6.1/s2t/STCharacters.txt"
+          }
+        ]
+      },
+      "extraSets": [
+        "ort"
+      ],
+      "license": {
+        "id": "Apache-2.0",
+        "url": "https://huggingface.co/followcat/canto-tts-nano-fp16"
+      },
+      "attribution": "canto-tts-nano by typangaa (Apache-2.0), fine-tuned from MOSS-TTS-Nano by OpenMOSS (Apache-2.0); int8 conversion by dandelionchase; fp16 conversion by followcat (Apache-2.0, see its NOTICE); audio codec by OpenMOSS. G2P canto-hk-g2p (Apache-2.0), rime-cantonese (CC BY 4.0, CanCLID), Unihan (Unicode License v3). Training data: privately sourced and not released, for copyright reasons.",
+      "memory": {
+        "heap": 67108864,
+        "speaking": 67108864,
+        "basis": "Chromium 153 (channel chromium, --enable-unsafe-webgpu --enable-features=Vulkan --use-angle=vulkan), Linux, 2026-11-19: the worker WASM heap with the fp16 WebGPU sessions (33-58 MiB) plus the JS maps/PCM and 10%. The fp16 weights stay on the GPU, outside the WASM heap; the phone is not measured."
+      },
+      "speed": {
+        "rtf": 5.7,
+        "basis": "Chromium 153 desktop WebGPU, 2026-11-19: phase 1 RTF 5.70-6.40, phase 2 (GPU KV) 4.53-6.20, versus the INT8 1.40-1.88 on the same desktop. Slower than playback; not a phone figure."
       }
     }
   ]

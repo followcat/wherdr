@@ -13,7 +13,7 @@ const voice = (id: string) => VOICES.voices.find(v => v.id === id)!
 
 describe('the voice catalog', () => {
   it('has the chosen voices: Siwis for French, Cori for English, MLS as the French fallback, Canto for Cantonese', () => {
-    expect(VOICES.voices.map(v => v.id)).toEqual(['siwis-medium', 'cori-medium', 'mls-medium', 'canto-nano-int8'])
+    expect(VOICES.voices.map(v => v.id)).toEqual(['siwis-medium', 'cori-medium', 'mls-medium', 'canto-nano-int8', 'canto-nano-fp16-gpu'])
     const defaults = VOICES.voices.filter(v => 'default' in v && v.default).map(v => [v.lang, v.id])
     expect(defaults).toEqual([['fr', 'siwis-medium'], ['en', 'cori-medium'], ['yue', 'canto-nano-int8']])
   })
@@ -89,16 +89,38 @@ describe('the voice sets', () => {
   })
 
   it('fetches the Canto model, its G2P data, the OpenCC tables and the ORT runtime into the voice folder', () => {
-    const canto = voice('canto-nano-int8')
-    const set = SETS['tts-canto-nano-int8']!
-    const loose = canto.members.filter(m => !('from' in m)).map(m => `${canto.dir}/${m.path}`)
-    expect(set.filter(e => e.to).map(e => e.to)).toEqual(expect.arrayContaining(loose))
-    expect(set.some(e => e.dir === `${canto.dir}/g2p` && e.strip === 3)).toBe(true)
-    expect(set.map(e => e.to)).toEqual(expect.arrayContaining([
-      `${canto.dir}/s2t/STPhrases.txt`,
-      `${canto.dir}/s2t/STCharacters.txt`,
-      'runtime/onnxruntime-web-1.23.2/ort.webgpu.min.js',
-    ]))
+    const text = 'canto-text-2.6.1'
+    for (const id of ['canto-nano-int8', 'canto-nano-fp16-gpu']) {
+      const canto = voice(id)
+      const set = SETS[id === 'canto-nano-int8' ? 'tts-canto-nano-int8' : 'tts-canto-nano-fp16']!
+      const loose = canto.members.filter(m => !('from' in m)).map(m => `${canto.dir}/${m.path}`)
+      expect(set.filter(e => e.to).map(e => e.to)).toEqual(expect.arrayContaining(loose))
+      expect(set.some(e => e.dir === `${text}/g2p` && e.strip === 3)).toBe(true)
+      expect(set.map(e => e.to)).toEqual(expect.arrayContaining([
+        `${text}/s2t/STPhrases.txt`,
+        `${text}/s2t/STCharacters.txt`,
+        'runtime/onnxruntime-web-1.23.2/ort.webgpu.min.js',
+      ]))
+    }
+  })
+
+  it('adds the GPU voice as an explicit WebGPU choice sharing the G2P and OpenCC files', () => {
+    const int8 = voice('canto-nano-int8') as unknown as {
+      textDir: string, members: { path: string, dir?: string, from?: string, sha256?: string }[]
+    }
+    const gpu = voice('canto-nano-fp16-gpu') as unknown as {
+      default?: boolean, dir: string, textDir: string, requires: string[], runner: { dtype: string, providers: string[], external: Record<string, string> },
+      members: { path: string, dir?: string, from?: string, sha256?: string }[]
+    }
+    expect(gpu.default ?? false).toBe(false)
+    expect(gpu.dir).toBe('canto-tts-nano-fp16-e89ed00')
+    expect(gpu.requires).toEqual(['webgpu', 'shader-f16'])
+    expect(gpu.runner.dtype).toBe('float16')
+    expect(gpu.runner.providers).toEqual(['webgpu'])
+    expect(gpu.runner.external).toMatchObject({ tts: 'moss_tts_global_shared.data', local: 'moss_tts_local_shared.data', codec: 'moss_audio_tokenizer_decode_shared.data' })
+    expect(gpu.textDir).toBe('canto-text-2.6.1')
+    const shared = (v: { members: { path: string, dir?: string, from?: string, sha256?: string }[] }) => v.members.filter(m => m.from).map(m => [m.path, m.dir, m.sha256])
+    expect(shared(gpu)).toEqual(shared(int8))
   })
 
   it('lets the server prepare a voice by its id, distinct from the dictation models', async () => {
@@ -109,6 +131,7 @@ describe('the voice sets', () => {
       const files = createServerFiles({ modelsDir: dir })
       expect(await files.prepare('siwis-medium', false)).toEqual({ state: 'missing' })
       expect(await files.prepare('canto-nano-int8', false)).toEqual({ state: 'missing' })
+      expect(await files.prepare('canto-nano-fp16-gpu', false)).toEqual({ state: 'missing' })
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })

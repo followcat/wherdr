@@ -7,7 +7,7 @@
 // is not installed. Both are free and never go through the wherdr server.
 // Choice and voice are kept on this device.
 import { sentenceChunks, speakableText, speechChunks } from '~/utils/speech/plainText'
-import { createNeuralVoice, defaultVoice, replyLanguage } from '~/utils/speech/neuralVoice'
+import { createNeuralVoice, defaultVoice, replyLanguage, VOICES } from '~/utils/speech/neuralVoice'
 import type { Voice } from '~/utils/speech/neuralVoice'
 import { toast } from './useHerdr'
 
@@ -16,6 +16,7 @@ export const READ_ALOUD_KEY = 'readAloud'
 export const READ_ALOUD_VOICE_KEY = 'readAloudVoice'
 export const READ_ALOUD_LANG_KEY = 'readAloudVoiceLang'
 export const READ_ALOUD_HIDE_LOW_KEY = 'readAloudHideLow'
+export const READ_ALOUD_NEURAL_KEY = 'readAloudNeural'
 
 const store = {
   get: (k: string) => { try { return localStorage.getItem(k) } catch { return null } },
@@ -41,6 +42,16 @@ watch(readAloudVoice, v => store.set(READ_ALOUD_VOICE_KEY, v))
 // A voice switch stops the reply that is playing.
 watch(readAloudEngine, () => stopSpeaking())
 watch(readAloudVoice, () => stopSpeaking())
+// The neural voice chosen for replies (the INT8 Canto voice when empty or when
+// the chosen one cannot run here). The GPU voice is this explicit choice.
+export const readAloudNeural = ref(store.get(READ_ALOUD_NEURAL_KEY) || '')
+watch(readAloudNeural, v => store.set(READ_ALOUD_NEURAL_KEY, v))
+watch(readAloudNeural, () => stopSpeaking())
+export function setNeuralVoice(id: string) { readAloudNeural.value = id }
+export function neuralVoiceFor(lang: string): Voice {
+  const chosen = readAloudNeural.value ? VOICES.find(v => v.id === readAloudNeural.value && v.lang === lang) : undefined
+  return chosen && neuralVoice?.usable(chosen) ? chosen : defaultVoice([lang])
+}
 // Voice list filters (utils/speech/voicePicker.ts): 'mine' (the user's
 // languages), 'all' or a language code; low-quality voices hidden by default.
 export const readAloudVoiceLang = ref(store.get(READ_ALOUD_LANG_KEY) || 'mine')
@@ -84,7 +95,7 @@ export function speak(id: string, md: string, neural?: Voice) {
   s?.cancel()
   neuralVoice?.stop()
   const text = speakableText(md, tl('Code block.', 'Bloc de code.'))
-  const voice = neural ?? defaultVoice([replyLanguage(text)])
+  const voice = neural ?? neuralVoiceFor(replyLanguage(text))
   const canto = voice.kind === 'cantoNano'
   const chunks = canto ? sentenceChunks(text) : speechChunks(text)
   if (!chunks.length) return done(g)
