@@ -113,7 +113,7 @@ describe('ReadAloudSettings voice of wherdr', () => {
     expect(row(w, 'canto-nano-int8').find('[data-testid="voice-attribution"]').text()).toContain('canto-tts-nano')
     expect(state(w, 'canto-nano-int8')).toMatch(/^Install · \d+ MB$/)
     // The GPU voice needs WebGPU with shader-f16; the test browser has none.
-    expect(row(w, 'canto-nano-fp16-gpu').find('[data-testid="voice-attribution"]').text()).toContain('fp16 conversion by followcat')
+    expect(row(w, 'canto-nano-fp16-gpu').find('[data-testid="voice-attribution"]').text()).toContain('fp16 conversion by @followcat')
     expect(state(w, 'canto-nano-fp16-gpu')).toContain('Needs WebGPU with shader-f16: not available on this device.')
     w.unmount()
   })

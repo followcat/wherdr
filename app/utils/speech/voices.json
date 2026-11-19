@@ -585,7 +585,7 @@
         "id": "Apache-2.0",
         "url": "https://huggingface.co/followcat/canto-tts-nano-fp16"
       },
-      "attribution": "canto-tts-nano by typangaa (Apache-2.0), fine-tuned from MOSS-TTS-Nano by OpenMOSS (Apache-2.0); int8 conversion by dandelionchase; fp16 conversion by followcat (Apache-2.0, see its NOTICE); audio codec by OpenMOSS. G2P canto-hk-g2p (Apache-2.0), rime-cantonese (CC BY 4.0, CanCLID), Unihan (Unicode License v3). Training data: privately sourced and not released, for copyright reasons.",
+      "attribution": "canto-tts-nano by typangaa (Apache-2.0), fine-tuned from MOSS-TTS-Nano by OpenMOSS (Apache-2.0); int8 conversion by dandelionchase; fp16 conversion by @followcat (Apache-2.0, see its NOTICE); audio codec by OpenMOSS. G2P canto-hk-g2p (Apache-2.0), rime-cantonese (CC BY 4.0, CanCLID), Unihan (Unicode License v3). Training data: privately sourced and not released, for copyright reasons.",
       "memory": {
         "heap": 67108864,
         "speaking": 67108864,
