@@ -192,8 +192,10 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
     return gpuReady
   }
   // The picker can say a voice is unavailable before a tap; the worker also
-  // asks for one provider only, so a WebGPU voice never falls back to WASM.
-  const supports = (v: Voice) => !v.requires?.includes('webgpu') || gpuReady === true
+  // asks for one provider only, so a WebGPU voice never falls back to WASM. A
+  // pending check is not a refusal (a tap right after the page loads): the
+  // worker's own adapter check answers and its error is shown.
+  const supports = (v: Voice) => !v.requires?.includes('webgpu') || gpuReady !== false
   const fits = (v: Voice) => !crashedModels()[v.id] && (budget == null || heapNeeded(v) <= budget)
   const usable = (v: Voice) => installed.has(v.id) && fits(v) && supports(v)
   void gpuCheck()
@@ -363,12 +365,29 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
     schedule(j)
   }
 
+  // A sentence is done: one more is asked for, or the reply ends.
+  function sentenceEnded(j: Job) {
+    j.endedSentences++
+    if (j.endedSentences < j.opts.chunks.length) return pump()
+    job = null
+    armIdle()
+    if (stats) lastStats.set(j.voice.id, { ...stats })
+    j.opts.onEnd()
+  }
+
   // Play the next available part, in order, gapless; a sentence ends after its
   // last part, then one more sentence is asked for.
   function schedule(j: Job) {
     if (!j || !ctx) return
     for (;;) {
       const s = j.audio.get(j.playSent)
+      if (s?.total === 0) {
+        // A sentence the text front end gave no word has no part at all.
+        j.playSent++
+        sentenceEnded(j)
+        if (job !== j) return
+        continue
+      }
       const p = s?.parts[j.playPart]
       if (!s || !p) return
       const pcm = new Float32Array(p.pcm)
@@ -386,16 +405,26 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
         if (job !== j) return
         j.sources.shift()
         if (!last) return
-        j.endedSentences++
-        if (j.endedSentences < j.opts.chunks.length) return pump()
-        job = null
-        armIdle()
-        if (stats) lastStats.set(j.voice.id, { ...stats })
-        j.opts.onEnd()
+        sentenceEnded(j)
       }
       j.playPart++
       if (j.playPart >= (s.total ?? 1)) { j.playSent++; j.playPart = 0 }
     }
+  }
+
+  // The voice a reply in `lang` is read by: the choice kept for that language
+  // when it can run here, else its catalog default when it can run, else
+  // another offered voice of the language that can — a language whose only
+  // installed voice is not the default is still read by it. Last the catalog
+  // default itself, usable or not: speak() then refuses it and the caller
+  // falls back to the device's voices.
+  function voiceFor(lang: string, chosenId = ''): Voice {
+    const own = (v: Voice | undefined): v is Voice => !!v && v.lang === lang && usable(v)
+    const chosen = VOICES.find(v => v.id === chosenId)
+    if (own(chosen)) return chosen
+    const dflt = defaultVoice([lang])
+    if (own(dflt)) return dflt
+    return VOICES.find(v => own(v) && (v.default || v.requires?.length)) ?? dflt
   }
 
   // Called from the tap. false: this voice cannot speak here (not installed,
@@ -429,7 +458,7 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
 
   globalThis.addEventListener?.('pagehide', release)
 
-  return { speak, stop, release, refresh, install, remove, usable, fits, supports, gpuCheck, stats: () => stats, statsFor: (id: string) => lastStats.get(id) ?? null }
+  return { speak, stop, release, refresh, install, remove, usable, fits, supports, gpuCheck, voiceFor, stats: () => stats, statsFor: (id: string) => lastStats.get(id) ?? null }
 }
 
 export type NeuralVoice = ReturnType<typeof createNeuralVoice>

@@ -524,8 +524,12 @@ Install and Test then show what they measured on the device (download, load, fir
 real-time factor, heap; see [How to measure](read-aloud.md#how-to-measure)).
 Each reply is read by the voice of its language: `replyLanguage()` guesses French or English from
 common short words and French accents, and Cantonese when the reply is mostly Han characters
-(kana means Japanese and is never sent to the Cantonese voice). A reply whose voice is not
-installed is read by the device's voices. An OpenRouter engine
+(kana means Japanese and is never sent to the Cantonese voice). `voiceFor()` picks the voice:
+the choice made with **Use** for that language when it can run here, else the language's catalog
+default when it can run, else another voice of the language that is installed and can run (a
+language whose only installed voice is not the default is still read by it — a device that holds
+only the Canto GPU voice hears Cantonese from it, not silence from the absent INT8 default).
+Only when no voice of the language can run is the reply read by the device's voices. An OpenRouter engine
 (`POST /api/v1/audio/speech`, relayed by the server like dictation) is a planned follow-up.
 
 The Cantonese worker is `public/workers/canto-tts-worker.js`; it keeps the TTS worker's protocol

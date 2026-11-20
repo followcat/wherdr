@@ -7,7 +7,7 @@
 // is not installed. Both are free and never go through the wherdr server.
 // Choice and voice are kept on this device.
 import { sentenceChunks, speakableText, speechChunks } from '~/utils/speech/plainText'
-import { createNeuralVoice, defaultVoice, replyLanguage, VOICES } from '~/utils/speech/neuralVoice'
+import { createNeuralVoice, defaultVoice, replyLanguage } from '~/utils/speech/neuralVoice'
 import type { Voice } from '~/utils/speech/neuralVoice'
 import { toast } from './useHerdr'
 
@@ -42,15 +42,15 @@ watch(readAloudVoice, v => store.set(READ_ALOUD_VOICE_KEY, v))
 // A voice switch stops the reply that is playing.
 watch(readAloudEngine, () => stopSpeaking())
 watch(readAloudVoice, () => stopSpeaking())
-// The neural voice chosen for replies (the INT8 Canto voice when empty or when
-// the chosen one cannot run here). The GPU voice is this explicit choice.
+// The neural voice chosen for replies with Use (the GPU voice is always an
+// explicit choice). Empty, or when it cannot run here, the language's catalog
+// default, then another installed voice of that language (voiceFor).
 export const readAloudNeural = ref(store.get(READ_ALOUD_NEURAL_KEY) || '')
 watch(readAloudNeural, v => store.set(READ_ALOUD_NEURAL_KEY, v))
 watch(readAloudNeural, () => stopSpeaking())
 export function setNeuralVoice(id: string) { readAloudNeural.value = id }
 export function neuralVoiceFor(lang: string): Voice {
-  const chosen = readAloudNeural.value ? VOICES.find(v => v.id === readAloudNeural.value && v.lang === lang) : undefined
-  return chosen && neuralVoice?.usable(chosen) ? chosen : defaultVoice([lang])
+  return neuralVoice?.voiceFor(lang, readAloudNeural.value) ?? defaultVoice([lang])
 }
 // Voice list filters (utils/speech/voicePicker.ts): 'mine' (the user's
 // languages), 'all' or a language code; low-quality voices hidden by default.

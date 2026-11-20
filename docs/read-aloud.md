@@ -50,7 +50,9 @@ frames and audio are dropped after it plays.
 (`@followcat/canto-tts-nano-fp16` at `e89ed00`), for GPUs. It runs only when `navigator.gpu` gives
 an adapter with `shader-f16`; otherwise its settings row says **Needs WebGPU with shader-f16: not
 available on this device** and offers nothing, and it never falls back to WASM. It shares the
-G2P and OpenCC files with the INT8 voice. Choose it with **Use**; the INT8 voice stays the
+G2P and OpenCC files with the INT8 voice. The INT8 voice stays the default; choose the GPU one
+with **Use**. Either way, when the default cannot run here but another installed Cantonese voice
+can, a Chinese reply is read by that voice — **Use** is only needed to prefer it over the
 default. The settings row of each Canto voice shows the last reply's execution provider, phase
 (CPU-side I/O or GPU KV), load time, first-audio time and real-time factor, so the two can be
 compared: install both, Use one, play a reply or Test, read the row, then Use the other.
