@@ -326,6 +326,19 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
     w.onmessage = ({ data: m }: MessageEvent<FromWorker>) => {
       if (w !== worker) return
       armStall()
+      // A throw here — a malformed part the audio graph refuses, say —
+      // otherwise escapes a message handler uncaught: an error, not a stall.
+      try {
+        dispatch(m)
+      }
+      catch (e) { fail(e instanceof Error ? e.message : String(e)) }
+    }
+    w.onerror = (e) => {
+      e.preventDefault?.()
+      if (w === worker) fail(e.message)
+    }
+
+    function dispatch(m: FromWorker) {
       if (m.t === 'ready') {
         if (budget != null && m.heap > budget) return fail(`out of memory: the voice takes ${m.heap} bytes`)
         ready = true
@@ -349,10 +362,6 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
         if (m.id !== undefined && Number(m.id.split('.')[0]) !== job?.gen && !OUT_OF_MEMORY.test(m.error)) return
         fail(m.error)
       }
-    }
-    w.onerror = (e) => {
-      e.preventDefault?.()
-      if (w === worker) fail(e.message)
     }
     const load = {
       t: 'load',
@@ -526,8 +535,13 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
     const known = voiceProvider.get(opts.voice.id)
     stats = { voice: opts.voice.id, genMs: 0, audioMs: 0, heap: 0, loadMs: voiceLoad.get(opts.voice.id), provider: known?.provider, phase: known?.phase, dtype: known?.dtype }
     tapAt = now()
-    startWorker(opts.voice)
-    pump()
+    // Even making the worker can fail (a platform that refuses Workers):
+    // an error through onError, not a silent pass to the device's voices.
+    try {
+      startWorker(opts.voice)
+      pump()
+    }
+    catch (e) { fail(e instanceof Error ? e.message : String(e)) }
     return true
   }
 

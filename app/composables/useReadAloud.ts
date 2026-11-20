@@ -92,6 +92,12 @@ let gen = 0
 // Safari drops utterances it no longer references before their `end` event.
 let live: SpeechSynthesisUtterance[] = []
 let watchdog: ReturnType<typeof setInterval> | undefined
+// An utterance iOS cannot use — a voice that is listed but not downloaded, a
+// queue dropped right after cancel() — sits pending forever with no event at
+// all. Nothing heard this long after the tap never starts: say so.
+const DEVICE_START_MS = 3_000
+let heardStart = false
+let startedAt = 0
 
 function done(g: number) {
   if (g !== gen) return
@@ -143,9 +149,12 @@ export function speak(id: string, md: string, neural?: Voice) {
   // The device's voices still cut long utterances: use their own chunks.
   const deviceChunks = canto ? speechChunks(text) : chunks
   speakingId.value = id
+  heardStart = false
+  startedAt = Date.now()
   live = deviceChunks.map((text, i) => {
     const u = new SpeechSynthesisUtterance(text)
     if (deviceVoice) { u.voice = deviceVoice; u.lang = deviceVoice.lang }
+    u.onstart = () => { heardStart = true }
     if (i === deviceChunks.length - 1) u.onend = () => done(g)
     u.onerror = (e) => {
       if (g !== gen || e.error === 'interrupted' || e.error === 'canceled') return
@@ -155,13 +164,24 @@ export function speak(id: string, md: string, neural?: Voice) {
     }
     return u
   })
-  for (const u of live) s.speak(u)
-  // Chrome can start paused after a cancel().
+  // Chrome can start paused after a cancel(); iOS can keep the queue paused.
   s.resume()
-  // iOS stops speaking with the screen locked or the app in the background,
-  // without an `end` event: the button comes back to Play once nothing is left.
+  for (const u of live) s.speak(u)
+  s.resume()
   clearInterval(watchdog)
-  watchdog = setInterval(() => { if (!s.speaking && !s.pending) done(g) }, 1500)
+  watchdog = setInterval(() => {
+    if (heardStart || s.speaking) {
+      // iOS stops speaking with the screen locked or the app in the
+      // background, without an `end` event: Play comes back once nothing
+      // is left.
+      if (!s.speaking && !s.pending) done(g)
+    }
+    else if (Date.now() - startedAt >= DEVICE_START_MS) {
+      done(g)
+      s.cancel()
+      toast(tl('Could not read aloud (the device voice did not start)'), true)
+    }
+  }, 1500)
 }
 
 // Stops what plays; with `prefix`, only if it belongs to it (a closed pane).
