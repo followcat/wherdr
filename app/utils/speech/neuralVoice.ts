@@ -73,6 +73,20 @@ export const LOOKAHEAD = 2
 // call. Terminate only if it never answers (twice the longest measured ORT
 // call, never sooner than 3 s).
 export const STOP_GRACE_MS = 5_000
+// A suspended AudioContext that still has not resumed this long after the
+// tap never will (an interruption owns the audio session): say so.
+export const SUSPEND_GRACE_MS = 6_000
+// No worker message for this long while a load or a sentence is expected:
+// the worker died or its download stalled — a silent reply stuck on Stop.
+// (Progress posts — phase, dl, parts, audio — each reset the timer.)
+export const STALL_MS = 90_000
+// Voices this device held whole once (localStorage): a tap before refresh()
+// answers, or a voice whose files the browser pruned from Cache Storage, is
+// still tried — the worker streams what the cache lost or fails with an
+// error the UI shows, rather than a silent pass to the device's voices.
+export const NEURAL_INSTALLED_KEY = 'neuralVoicesInstalled'
+// Why a voice refused a reply; null when it can run (the usable() gates).
+export type UnusableWhy = 'not-installed' | 'marked' | 'budget' | 'unsupported'
 
 export const asStored = (v: Voice): StoredModel => ({ id: v.id, dir: v.dir, set: v.set, files: v.members })
 export const voiceBytes = (v: Voice) => v.members.reduce((n, m) => n + m.bytes, 0)
@@ -128,6 +142,8 @@ export interface NeuralVoiceDeps {
   budget?: number | null
   idleMs?: number
   stopGraceMs?: number
+  suspendMs?: number
+  stallMs?: number
 }
 
 type FromWorker =
@@ -172,6 +188,8 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
   let gen = 0
   let idle: ReturnType<typeof setTimeout> | undefined
   let stopTimer: ReturnType<typeof setTimeout> | undefined
+  let suspendTimer: ReturnType<typeof setTimeout> | undefined
+  let stallTimer: ReturnType<typeof setTimeout> | undefined
   let stats: VoiceStats | null = null
   const lastStats = new Map<string, VoiceStats>()
   const voiceLoad = new Map<string, number>()
@@ -197,8 +215,33 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
   // worker's own adapter check answers and its error is shown.
   const supports = (v: Voice) => !v.requires?.includes('webgpu') || gpuReady !== false
   const fits = (v: Voice) => !crashedModels()[v.id] && (budget == null || heapNeeded(v) <= budget)
-  const usable = (v: Voice) => installed.has(v.id) && fits(v) && supports(v)
+  const usable = (v: Voice) => (installed.has(v.id) || wasInstalled(v.id)) && fits(v) && supports(v)
   void gpuCheck()
+
+  function wasInstalledSet(): Set<string> {
+    try {
+      const v = JSON.parse(globalThis.localStorage?.getItem(NEURAL_INSTALLED_KEY) || '[]')
+      return new Set(Array.isArray(v) ? v.filter(x => typeof x === 'string') : [])
+    }
+    catch { return new Set() }
+  }
+  const wasInstalled = (id: string) => wasInstalledSet().has(id)
+  function remember(id: string, on: boolean) {
+    const s = wasInstalledSet()
+    if (on === s.has(id)) return
+    if (on) s.add(id); else s.delete(id)
+    try { globalThis.localStorage?.setItem(NEURAL_INSTALLED_KEY, JSON.stringify([...s])) }
+    catch { /* storage unavailable */ }
+  }
+
+  // The gate that refuses a voice, named for the caller's message.
+  function whyNot(v: Voice): UnusableWhy | null {
+    if (crashedModels()[v.id]) return 'marked'
+    if (!supports(v)) return 'unsupported'
+    if (budget != null && heapNeeded(v) > budget) return 'budget'
+    if (!installed.has(v.id) && !wasInstalled(v.id)) return 'not-installed'
+    return null
+  }
 
   // Which voices this device holds whole: speak() decides from this, in the tap.
   async function refresh() {
@@ -212,11 +255,13 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
   async function install(v: Voice, onProgress?: (p: Progress) => void) {
     await installModel(asStored(v), onProgress, store)
     installed.add(v.id)
+    remember(v.id, true)
   }
 
   const textStored = (v: Voice) => ({ id: v.textDir!, dir: v.textDir!, set: 'canto-text', files: v.members.filter(m => m.dir === v.textDir) })
   async function remove(v: Voice) {
     installed.delete(v.id)
+    remember(v.id, false)
     if (loaded?.id === v.id) release()
     await deleteModel(asStored(v), store)
     // The shared G2P/OpenCC files go only when no other Canto voice uses them.
@@ -244,6 +289,8 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
   function release() {
     stop()
     clearTimeout(stopTimer)
+    clearTimeout(suspendTimer)
+    clearTimeout(stallTimer)
     clearTimeout(idle) // stop() armed it
     worker?.terminate()
     worker = null
@@ -278,6 +325,7 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
     markLoading(v.id)
     w.onmessage = ({ data: m }: MessageEvent<FromWorker>) => {
       if (w !== worker) return
+      armStall()
       if (m.t === 'ready') {
         if (budget != null && m.heap > budget) return fail(`out of memory: the voice takes ${m.heap} bytes`)
         ready = true
@@ -320,6 +368,16 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
       runner: v.runner,
     }
     w.postMessage(load)
+    armStall()
+  }
+
+  // A worker that should answer — it loads, or sentences are owed — is given
+  // STALL_MS between its messages; none for that long means it died or its
+  // download stalled: an error, not a silent reply stuck on Stop.
+  function armStall() {
+    clearTimeout(stallTimer)
+    if (!worker) return
+    stallTimer = setTimeout(() => { if (job || !ready) fail('the voice stopped answering') }, deps.stallMs ?? STALL_MS)
   }
 
   // Ask for the next sentences, keeping at most LOOKAHEAD beyond the one playing.
@@ -330,6 +388,7 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
     while (j.sent < j.opts.chunks.length && j.sent - j.endedSentences <= ahead) {
       worker.postMessage({ t: 'speak', id: `${j.gen}.${j.sent}`, text: j.opts.chunks[j.sent], speed: j.opts.speed ?? 1 })
       j.sent++
+      armStall()
     }
   }
 
@@ -415,16 +474,18 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
   // The voice a reply in `lang` is read by: the choice kept for that language
   // when it can run here, else its catalog default when it can run, else
   // another offered voice of the language that can — a language whose only
-  // installed voice is not the default is still read by it. Last the catalog
-  // default itself, usable or not: speak() then refuses it and the caller
-  // falls back to the device's voices.
+  // installed voice is not the default is still read by it. A voice verified
+  // whole on the device is preferred over one only remembered (its files may
+  // have been pruned). Last the catalog default itself, usable or not:
+  // speak() then refuses it and the caller falls back to the device's voices.
   function voiceFor(lang: string, chosenId = ''): Voice {
     const own = (v: Voice | undefined): v is Voice => !!v && v.lang === lang && usable(v)
     const chosen = VOICES.find(v => v.id === chosenId)
     if (own(chosen)) return chosen
     const dflt = defaultVoice([lang])
     if (own(dflt)) return dflt
-    return VOICES.find(v => own(v) && (v.default || v.requires?.length)) ?? dflt
+    const offered = (v: Voice) => own(v) && (v.default || !!v.requires?.length)
+    return VOICES.find(v => offered(v) && installed.has(v.id)) ?? VOICES.find(offered) ?? dflt
   }
 
   // Called from the tap. false: this voice cannot speak here (not installed,
@@ -434,8 +495,22 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
     stop()
     clearTimeout(stopTimer)
     clearTimeout(idle)
-    if (!ctx || ctx.state === 'closed') ctx = makeAudio()
+    if (!ctx || ctx.state === 'closed') {
+      ctx = makeAudio()
+      // An interruption (a call, Siri, another app, the screen locking) takes
+      // the audio session on iOS: resume() at each change gets it back.
+      ctx.addEventListener?.('statechange', () => {
+        if (ctx && ctx.state !== 'running' && ctx.state !== 'closed' && job) void ctx.resume().catch(() => {})
+      })
+    }
     void ctx.resume().catch(() => {})
+    // A context still suspended this long after the tap never resumes: audio
+    // is scheduled but never starts and no source ever ends — a silent reply
+    // stuck on Stop. Say so instead.
+    clearTimeout(suspendTimer)
+    suspendTimer = setTimeout(() => {
+      if (job && ctx && ctx.state !== 'running') fail(`the audio output stayed ${ctx.state}`)
+    }, deps.suspendMs ?? SUSPEND_GRACE_MS)
     job = {
       gen: ++gen,
       voice: opts.voice,
@@ -458,7 +533,7 @@ export function createNeuralVoice(deps: NeuralVoiceDeps = {}) {
 
   globalThis.addEventListener?.('pagehide', release)
 
-  return { speak, stop, release, refresh, install, remove, usable, fits, supports, gpuCheck, voiceFor, stats: () => stats, statsFor: (id: string) => lastStats.get(id) ?? null }
+  return { speak, stop, release, refresh, install, remove, usable, fits, supports, gpuCheck, voiceFor, whyNot, stats: () => stats, statsFor: (id: string) => lastStats.get(id) ?? null }
 }
 
 export type NeuralVoice = ReturnType<typeof createNeuralVoice>

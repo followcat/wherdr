@@ -510,10 +510,14 @@ the memory budget and the phone figures are in [Read aloud: the voice of wherdr]
 The engine, `app/utils/speech/neuralVoice.ts`, is the `wherdr` choice of `useReadAloud`. Its
 voice is installed through the dictation model store (`installModel`, Cache Storage); a voice
 not installed, or too large for this device (memory budget, or a crash mark as for dictation
-models), is not used and the reply goes to the device's voices instead. A reply goes to
+models), is not used and the reply goes to the device's voices instead. A voice the device
+installed once is still tried when its files were pruned since — the worker streams them back
+or fails with the error shown, never a silent pass (the refusal's reason is toasted when the
+device's voices cannot read the language either). A reply goes to
 `public/workers/tts-worker.js` one piece at a time, at most two pieces ahead of the one playing,
 so Stop never waits behind a long queue; the pieces play back to back through WebAudio, whose
-`AudioContext` is resumed inside the tap (iOS). Audio that arrives for a stopped reply is
+`AudioContext` is resumed inside the tap (iOS) — a context still suspended a few seconds later
+is an error, not a silent reply stuck on Stop. Audio that arrives for a stopped reply is
 dropped. The worker and the `AudioContext` are released after 60 s without speech and on
 `pagehide`. `tests/neuralVoice.test.ts` covers it with a fake worker.
 

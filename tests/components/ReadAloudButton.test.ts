@@ -2,6 +2,7 @@
 // device voice, turns into Stop, one reply at a time, hidden when turned off.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mountSuspended } from '@nuxt/test-utils/runtime'
+import { setToaster } from '~/composables/useHerdr'
 
 const fake = vi.hoisted(() => {
   class Utterance { text: string; voice: unknown = null; lang = ''; onend?: () => void; onerror?: (e: { error: string }) => void; constructor(t: string) { this.text = t } }
@@ -67,5 +68,22 @@ describe('ReadAloudButton', () => {
     readAloudEngine.value = engineAtLoad
     const w = await mountSuspended(ReadAloudButton, { props: { id: 'p1:a1', text: 'Hi' } })
     expect(w.find('[data-testid="read-aloud"]').exists()).toBe(false)
+  })
+
+  it('says why a Cantonese reply stays silent when no voice can read it', async () => {
+    // The wherdr engine is chosen but no voice is installed (the staging bug:
+    // only the GPU voice is, or nothing is), and the device has no Chinese
+    // voice to fall back to — the refusal must show, not stay silent.
+    const toasts: string[] = []
+    setToaster({ clear() {}, add: (t: { title: string }) => { toasts.push(t.title) } } as unknown as Parameters<typeof setToaster>[0])
+    try {
+      readAloudEngine.value = 'wherdr'
+      const w = await mountSuspended(ReadAloudButton, { props: { id: 'p1:a1', text: '今日天氣幾好。' } })
+      await w.find('button').trigger('click')
+      expect(toasts.join(' ')).toContain('Could not read aloud')
+      // The device's voices were still asked, whatever they can say.
+      expect(fake.queue.length).toBeGreaterThan(0)
+    }
+    finally { setToaster(null as unknown as Parameters<typeof setToaster>[0]) }
   })
 })
