@@ -1,7 +1,7 @@
 // wherdr (herdr-web) — PWA to drive, from your phone, the coding agents running in Herdr.
 // Client-only app (no SSR) served by Nitro, which also hosts the whole
 // Herdr gateway (API, WebSockets, Web Push): see server/.
-import { CSP_BASE, CSP_DICTATION_WORKER, CSP_TTS_WORKER, CSP_WEBGPU_WORKER, DICTATION_WORKER_PATH, TTS_WORKER_PATH, WEBGPU_WORKER_PATH } from './server/utils/csp'
+import { CANTO_TTS_WORKER_PATH, CSP_BASE, CSP_CANTO_TTS_WORKER, CSP_DICTATION_WORKER, CSP_TTS_WORKER, CSP_WEBGPU_WORKER, DICTATION_WORKER_PATH, TTS_WORKER_PATH, WEBGPU_WORKER_PATH } from './server/utils/csp'
 import { ICON_SCAN_GLOBS } from './shared/iconScan'
 import { lazyChunks, PRECACHE_GLOBS, RUNTIME_ONLY_GLOBS } from './shared/precache'
 import { execFileSync } from 'node:child_process'
@@ -169,6 +169,7 @@ export default defineNuxtConfig({
     [DICTATION_WORKER_PATH]: { headers: { 'content-security-policy': CSP_DICTATION_WORKER } },
     [WEBGPU_WORKER_PATH]: { headers: { 'content-security-policy': CSP_WEBGPU_WORKER } },
     [TTS_WORKER_PATH]: { headers: { 'content-security-policy': CSP_TTS_WORKER } },
+    [CANTO_TTS_WORKER_PATH]: { headers: { 'content-security-policy': CSP_CANTO_TTS_WORKER } },
     '/icons/**': { headers: { 'cache-control': 'public, max-age=86400' } },
     '/_nuxt/**': { headers: { 'cache-control': 'public, max-age=31536000, immutable' } },
   },

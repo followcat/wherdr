@@ -1,0 +1,483 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -14,11 +14,18 @@
+ name = "canto_g2p"
+ crate-type = ["cdylib", "rlib"]
+ 
+-[dependencies]
++[features]
++default = []
++wasm = []
++
++[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ pyo3 = { version = "0.29", features = ["extension-module"] }
+ memmap2 = "0.9"
+ rayon = "1.10"
+ 
++[target.'cfg(target_arch = "wasm32")'.dependencies]
++wasm-bindgen = "=0.2.130"
++
+ [dev-dependencies]
+ # nothing yet
+ 
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -3,15 +3,28 @@
+ version = 4
+ 
+ [[package]]
++name = "bumpalo"
++version = "3.20.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "87a0cf66fd1eb2fb7b822cb78370d82303750809bc6ba855f3f58e517d3238db"
++
++[[package]]
+ name = "canto-hk-g2p"
+ version = "2.6.1"
+ dependencies = [
+  "memmap2",
+  "pyo3",
+  "rayon",
++ "wasm-bindgen",
+ ]
+ 
+ [[package]]
++name = "cfg-if"
++version = "1.0.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
++
++[[package]]
+ name = "crossbeam-deque"
+ version = "0.8.6"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -126,7 +139,7 @@
+  "proc-macro2",
+  "pyo3-macros-backend",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -138,7 +151,7 @@
+  "heck",
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.117",
+ ]
+ 
+ [[package]]
+@@ -171,6 +184,12 @@
+ ]
+ 
+ [[package]]
++name = "rustversion"
++version = "1.0.23"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
++
++[[package]]
+ name = "syn"
+ version = "2.0.117"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -182,6 +201,17 @@
+ ]
+ 
+ [[package]]
++name = "syn"
++version = "3.0.10"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4ae9ccbea3a7b0b09443036490c8f34a8b1b760fd345e5c0dae0aac718faea79"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "unicode-ident",
++]
++
++[[package]]
+ name = "target-lexicon"
+ version = "0.13.5"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -192,3 +222,47 @@
+ version = "1.0.24"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
++
++[[package]]
++name = "wasm-bindgen"
++version = "0.2.130"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a0181c14ddd6c7b8b0b0132a5f1ea2f32be0d893cd3ea97b6e3b28886b8a3d1c"
++dependencies = [
++ "cfg-if",
++ "rustversion",
++ "wasm-bindgen-macro",
++ "wasm-bindgen-shared",
++]
++
++[[package]]
++name = "wasm-bindgen-macro"
++version = "0.2.130"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6e931a02a39abdbf66966fc35902b5ed58344750a70885bed4ebb3d8eaf28ed9"
++dependencies = [
++ "quote",
++ "wasm-bindgen-macro-support",
++]
++
++[[package]]
++name = "wasm-bindgen-macro-support"
++version = "0.2.130"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2ca4b54280e455bd831e33a6b8e734baf432fe63fbc35c42ac14ce67a043a53a"
++dependencies = [
++ "bumpalo",
++ "proc-macro2",
++ "quote",
++ "syn 3.0.10",
++ "wasm-bindgen-shared",
++]
++
++[[package]]
++name = "wasm-bindgen-shared"
++version = "0.2.130"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3b1f9c3798725016c6ee5f2f57869ec0831e8bbc0ab0310a86e787e97f41389e"
++dependencies = [
++ "unicode-ident",
++]
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,11 @@
++#[cfg(not(target_arch = "wasm32"))]
+ use pyo3::prelude::*;
++#[cfg(not(target_arch = "wasm32"))]
+ use pyo3::types::PyList;
++#[cfg(not(target_arch = "wasm32"))]
+ use std::collections::HashMap;
++#[cfg(target_arch = "wasm32")]
++use wasm_bindgen::prelude::*;
+ 
+ mod aa_dei_sandhi;
+ mod address_sandhi;
+@@ -18,11 +23,13 @@
+ pub use pipeline::Pipeline;
+ 
+ /// Cantonese G2P pipeline exposed to Python via PyO3.
++#[cfg(not(target_arch = "wasm32"))]
+ #[pyclass]
+ pub struct PyPipeline {
+     inner: pipeline::Pipeline,
+ }
+ 
++#[cfg(not(target_arch = "wasm32"))]
+ #[pymethods]
+ impl PyPipeline {
+     /// Create a Pipeline.
+@@ -135,8 +142,53 @@
+     }
+ }
+ 
++#[cfg(not(target_arch = "wasm32"))]
+ #[pymodule]
+ fn _canto_hk_g2p(m: &Bound<'_, PyModule>) -> PyResult<()> {
+     m.add_class::<PyPipeline>()?;
+     Ok(())
+ }
++
++#[cfg(target_arch = "wasm32")]
++#[wasm_bindgen]
++pub struct WasmPipeline {
++    inner: pipeline::Pipeline,
++}
++
++#[cfg(target_arch = "wasm32")]
++#[wasm_bindgen]
++impl WasmPipeline {
++    #[wasm_bindgen(constructor)]
++    pub fn new(
++        word: &[u8],
++        char_dict: &[u8],
++        separable: &[u8],
++        romanized_slang: &[u8],
++        classifier_words: &[u8],
++    ) -> Result<WasmPipeline, JsValue> {
++        let inner = pipeline::Pipeline::from_bytes(
++            word,
++            char_dict,
++            separable,
++            romanized_slang,
++            classifier_words,
++        )
++        .map_err(|e| JsValue::from_str(&e))?;
++        Ok(WasmPipeline { inner })
++    }
++
++    pub fn convert(&self, text: &str) -> String {
++        self.inner.convert(text)
++    }
++
++    /// Flat [token, jyutping, token, jyutping, …] word segments, so the
++    /// worker can split at word boundaries without cutting a word.
++    pub fn words(&self, text: &str) -> Vec<String> {
++        let mut out = Vec::new();
++        for (token, jyutping) in self.inner.words(text) {
++            out.push(token);
++            out.push(jyutping);
++        }
++        out
++    }
++}
+--- a/src/pipeline.rs
++++ b/src/pipeline.rs
+@@ -4,8 +4,10 @@
+     aa_dei_sandhi, address_sandhi, classifier_reduplication, g2p, normalizer, romanized_slang,
+     segment, separable,
+ };
++#[cfg(not(target_arch = "wasm32"))]
+ use rayon::prelude::*;
+ use std::collections::HashMap;
++#[cfg(not(target_arch = "wasm32"))]
+ use std::path::PathBuf;
+ 
+ pub struct Pipeline {
+@@ -50,6 +52,7 @@
+     pub punc_norm: bool,
+ }
+ 
++#[cfg(not(target_arch = "wasm32"))]
+ pub fn default_data_dir() -> PathBuf {
+     // Look for data/ next to the compiled binary, then fall back to cwd/data/
+     let exe = std::env::current_exe().unwrap_or_default();
+@@ -63,6 +66,7 @@
+     PathBuf::from("data")
+ }
+ 
++#[cfg(not(target_arch = "wasm32"))]
+ impl Default for Pipeline {
+     fn default() -> Self {
+         Self::new()
+@@ -72,11 +76,13 @@
+ impl Pipeline {
+     /// Create a Pipeline loading dict files from the default data/ directory.
+     /// Punctuation normalisation is enabled by default.
++    #[cfg(not(target_arch = "wasm32"))]
+     pub fn new() -> Self {
+         Self::new_with_opts(true)
+     }
+ 
+     /// Create a Pipeline with explicit options.
++    #[cfg(not(target_arch = "wasm32"))]
+     pub fn new_with_opts(punc_norm: bool) -> Self {
+         let data_dir = default_data_dir();
+         Self::from_dir_opts(&data_dir, punc_norm).unwrap_or_else(|e| {
+@@ -85,10 +91,12 @@
+     }
+ 
+     /// Create a Pipeline from a custom directory containing word.bin and char.bin.
++    #[cfg(not(target_arch = "wasm32"))]
+     pub fn from_dir(dir: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
+         Self::from_dir_opts(dir, true)
+     }
+ 
++    #[cfg(not(target_arch = "wasm32"))]
+     pub fn from_dir_opts(
+         dir: &std::path::Path,
+         punc_norm: bool,
+@@ -98,6 +106,7 @@
+ 
+     /// Create a Pipeline from a custom directory, with a runtime override
+     /// dictionary layered on top of word_dict/char_dict (highest priority).
++    #[cfg(not(target_arch = "wasm32"))]
+     pub fn from_dir_opts_with_user_dict(
+         dir: &std::path::Path,
+         punc_norm: bool,
+@@ -133,6 +142,36 @@
+         })
+     }
+ 
++    /// Build a Pipeline from the five `.bin` files already in memory (WASM:
++    /// there is no filesystem). The candidate/source sidecars are not needed
++    /// by `convert()`; they stay `None`.
++    #[cfg(target_arch = "wasm32")]
++    pub fn from_bytes(
++        word: &[u8],
++        char_dict: &[u8],
++        separable: &[u8],
++        romanized_slang: &[u8],
++        classifier_words: &[u8],
++    ) -> Result<Self, String> {
++        let word_dict = Dict::from_bytes(word.to_vec())?;
++        let char_dict = Dict::from_bytes(char_dict.to_vec())?;
++        Ok(Pipeline {
++            word_dict,
++            char_dict,
++            user_dict: UserDict::new(HashMap::new()),
++            word_candidates: None,
++            char_candidates: None,
++            word_candidates_confidence: None,
++            char_candidates_confidence: None,
++            word_source: None,
++            char_source: None,
++            separable: Dict::from_bytes(separable.to_vec()).ok(),
++            romanized_slang: Dict::from_bytes(romanized_slang.to_vec()).ok(),
++            classifier_words: Dict::from_bytes(classifier_words.to_vec()).ok(),
++            punc_norm: true,
++        })
++    }
++
+     fn tokens_for(&self, text: &str) -> Vec<String> {
+         let slang_norm = romanized_slang::substitute(text, self.romanized_slang.as_ref());
+         let pre = if self.punc_norm {
+@@ -199,8 +238,25 @@
+         readings.join(" ")
+     }
+ 
++    /// The G2P's own word segments after normalization, each with its
++    /// Jyutping: the browser uses these as the split points so a synthesis
++    /// chunk never cuts a word in two.
++    pub fn words(&self, text: &str) -> Vec<(String, String)> {
++        self.convert_detailed(text)
++            .into_iter()
++            .map(|(token, jyutping, _lang, _confidence, _source)| (token, jyutping))
++            .collect()
++    }
++
+     pub fn convert_batch(&self, texts: &[String]) -> Vec<String> {
+-        texts.par_iter().map(|t| self.convert(t)).collect()
++        #[cfg(not(target_arch = "wasm32"))]
++        {
++            texts.par_iter().map(|t| self.convert(t)).collect()
++        }
++        #[cfg(target_arch = "wasm32")]
++        {
++            texts.iter().map(|t| self.convert(t)).collect()
++        }
+     }
+ 
+     /// Convert text to a list of (token, jyutping, lang, confidence, source)
+@@ -277,7 +333,14 @@
+         &self,
+         texts: &[String],
+     ) -> Vec<Vec<(String, String, String, String, String)>> {
+-        texts.par_iter().map(|t| self.convert_detailed(t)).collect()
++        #[cfg(not(target_arch = "wasm32"))]
++        {
++            texts.par_iter().map(|t| self.convert_detailed(t)).collect()
++        }
++        #[cfg(target_arch = "wasm32")]
++        {
++            texts.iter().map(|t| self.convert_detailed(t)).collect()
++        }
+     }
+ 
+     /// Convert text to a list of (token, candidate_readings, lang,
+@@ -342,10 +405,20 @@
+         &self,
+         texts: &[String],
+     ) -> Vec<Vec<(String, Vec<String>, String, String, String)>> {
+-        texts
+-            .par_iter()
+-            .map(|t| self.convert_candidates(t))
+-            .collect()
++        #[cfg(not(target_arch = "wasm32"))]
++        {
++            texts
++                .par_iter()
++                .map(|t| self.convert_candidates(t))
++                .collect()
++        }
++        #[cfg(target_arch = "wasm32")]
++        {
++            texts
++                .iter()
++                .map(|t| self.convert_candidates(t))
++                .collect()
++        }
+     }
+ }
+ 
+--- a/src/dict/lookup.rs
++++ b/src/dict/lookup.rs
+@@ -19,8 +19,11 @@
+ //!   Raw UTF-8. Strings referenced by (start, len).
+ //! ```
+ 
++#[cfg(not(target_arch = "wasm32"))]
+ use memmap2::Mmap;
++#[cfg(not(target_arch = "wasm32"))]
+ use std::fs::File;
++#[cfg(not(target_arch = "wasm32"))]
+ use std::path::Path;
+ 
+ // ── Constants ────────────────────────────────────────────────────────────────
+@@ -53,7 +56,11 @@
+ /// region and have a lifetime tied to `&self`.
+ pub struct Dict {
+     /// Keeps the mmap alive for the duration of this struct.
++    #[cfg(not(target_arch = "wasm32"))]
+     _mmap: Mmap,
++    /// Keeps the owned bytes alive for the duration of this struct (WASM).
++    #[cfg(target_arch = "wasm32")]
++    _bytes: Vec<u8>,
+     /// Pointer to the first byte of the entry table inside the mmap.
+     entry_ptr: *const u8,
+     /// Pointer to the first byte of the string pool inside the mmap.
+@@ -79,6 +86,7 @@
+     /// * The version field is not `1`.
+     /// * The file is too short to contain the declared header + entry table +
+     ///   string pool.
++    #[cfg(not(target_arch = "wasm32"))]
+     pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+         let file = File::open(path)?;
+ 
+@@ -133,6 +141,47 @@
+             entry_ptr,
+             pool_ptr,
+             entry_count,
++        })
++    }
++
++    /// Load a `.bin` dict from bytes already in memory (WASM). The format and
++    /// validation are the same as `load()`, without an mmap or filesystem.
++    #[cfg(target_arch = "wasm32")]
++    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, String> {
++        if bytes.len() < HEADER_SIZE {
++            return Err(format!(
++                "file too short: {} bytes (need at least {HEADER_SIZE})",
++                bytes.len()
++            ));
++        }
++        if &bytes[0..4] != MAGIC {
++            return Err(format!(
++                "bad magic: expected {:?}, got {:?}",
++                MAGIC,
++                &bytes[0..4]
++            ));
++        }
++        let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
++        if version != VERSION {
++            return Err(format!("unsupported version {version} (expected {VERSION})"));
++        }
++        let entry_count = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
++        let pool_size = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
++        let pool_offset = HEADER_SIZE + entry_count * ENTRY_SIZE;
++        let required = pool_offset + pool_size;
++        if bytes.len() < required {
++            return Err(format!(
++                "file too short: {} bytes (need {required} for {entry_count} entries + pool)",
++                bytes.len()
++            ));
++        }
++        let entry_ptr = bytes[HEADER_SIZE..].as_ptr();
++        let pool_ptr = bytes[pool_offset..].as_ptr();
++        Ok(Dict {
++            _bytes: bytes,
++            entry_ptr,
++            pool_ptr,
++            entry_count,
+         })
+     }
+ 

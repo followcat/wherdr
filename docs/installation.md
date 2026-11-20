@@ -171,10 +171,12 @@ DATA_DIR=/path/to/data node scripts/fetch-dictation-files.mjs
 | `parakeet` (default) | 670 MB | Parakeet v3: French, English and 23 more European languages, detected. Too large for an iPhone |
 | `canary` | 207 MB | Canary 180M, the iPhone's default: French, English, German, Spanish (the device's language, not detected) |
 | `sensevoice` | 237 MB | SenseVoice, lighter, no French (Chinese, English, Japanese, Korean, Cantonese) |
-| `ort` | 59 MB | onnxruntime-web 1.23.2, in `models/runtime/`, for WebGPU models only |
+| `ort` | 59 MB | onnxruntime-web 1.23.2, in `models/runtime/`, for the WebGPU models and the Cantonese voice |
 | `tts-siwis-medium` | 64 MB | Siwis, the French neural read-aloud voice (preparation for an on-device voice) |
 | `tts-cori-medium` | 64 MB | Cori, the English (UK) neural read-aloud voice |
 | `tts-mls-medium` | 78 MB | MLS, a fallback French voice |
+| `tts-canto-nano-int8` | 247 MB, plus the shared `ort` set (59 MB) if absent | Canto, the Cantonese neural read-aloud voice: the int8 canto-tts-nano bundle, its canto-hk-g2p 2.6.1 G2P data (from the pinned PyPI sdist) and the OpenCC s2t tables; also fetches onnxruntime-web 1.23.2 |
+| `tts-canto-nano-fp16` | 363 MB, plus the shared G2P/OpenCC and the `ort` set if absent | Canto GPU, the experimental float16 WebGPU voice; shares the G2P and OpenCC files of `tts-canto-nano-int8` |
 
 Name sets to choose (`… fetch-dictation-files.mjs runtime ort`), or `all`. Every file has a fixed
 URL and a sha256: a file that does not match is never kept. Run it again after an interruption:

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-11-10",
+  "updated": "2026-11-19",
   "voices": [
     {
       "id": "siwis-medium",
@@ -14,24 +14,63 @@
       "dir": "vits-piper-fr_FR-siwis-medium",
       "model": "fr_FR-siwis-medium.onnx",
       "members": [
-        { "path": "fr_FR-siwis-medium.onnx", "bytes": 63149190 },
-        { "path": "tokens.txt", "bytes": 921 },
-        { "path": "espeak-ng-data/phontab", "bytes": 55796 },
-        { "path": "espeak-ng-data/phonindex", "bytes": 39074 },
-        { "path": "espeak-ng-data/phondata", "bytes": 550424 },
-        { "path": "espeak-ng-data/phondata-manifest", "bytes": 21821 },
-        { "path": "espeak-ng-data/intonations", "bytes": 2040 },
-        { "path": "espeak-ng-data/fr_dict", "bytes": 63727 },
-        { "path": "espeak-ng-data/en_dict", "bytes": 166944 },
-        { "path": "espeak-ng-data/lang/roa/fr", "bytes": 79 },
-        { "path": "espeak-ng-data/lang/gmw/en", "bytes": 140 }
+        {
+          "path": "fr_FR-siwis-medium.onnx",
+          "bytes": 63149190
+        },
+        {
+          "path": "tokens.txt",
+          "bytes": 921
+        },
+        {
+          "path": "espeak-ng-data/phontab",
+          "bytes": 55796
+        },
+        {
+          "path": "espeak-ng-data/phonindex",
+          "bytes": 39074
+        },
+        {
+          "path": "espeak-ng-data/phondata",
+          "bytes": 550424
+        },
+        {
+          "path": "espeak-ng-data/phondata-manifest",
+          "bytes": 21821
+        },
+        {
+          "path": "espeak-ng-data/intonations",
+          "bytes": 2040
+        },
+        {
+          "path": "espeak-ng-data/fr_dict",
+          "bytes": 63727
+        },
+        {
+          "path": "espeak-ng-data/en_dict",
+          "bytes": 166944
+        },
+        {
+          "path": "espeak-ng-data/lang/roa/fr",
+          "bytes": 79
+        },
+        {
+          "path": "espeak-ng-data/lang/gmw/en",
+          "bytes": 140
+        }
       ],
       "source": {
         "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-fr_FR-siwis-medium.tar.bz2",
         "sha256": "375909aa30842b3a4efa10b1beb1d761af792960ae6873b4d53889f96c66195b"
       },
-      "memory": { "heap": 536870912, "basis": "iPhone 13, iOS Safari home-screen app, Settings › Read aloud › Test, 2026-11-10: the worker's WASM memory (512 MiB, the same for every voice), not the voice's own use" },
-      "speed": { "rtf": 0.16, "basis": "iPhone 13, iOS Safari home-screen app, Settings › Read aloud › Test, 2026-11-10" },
+      "memory": {
+        "heap": 536870912,
+        "basis": "iPhone 13, iOS Safari home-screen app, Settings › Read aloud › Test, 2026-11-10: the worker's WASM memory (512 MiB, the same for every voice), not the voice's own use"
+      },
+      "speed": {
+        "rtf": 0.16,
+        "basis": "iPhone 13, iOS Safari home-screen app, Settings › Read aloud › Test, 2026-11-10"
+      },
       "license": {
         "id": "CC-BY-4.0",
         "url": "https://doi.org/10.7488/ds/1705"
@@ -50,24 +89,63 @@
       "dir": "vits-piper-en_GB-cori-medium",
       "model": "en_GB-cori-medium.onnx",
       "members": [
-        { "path": "en_GB-cori-medium.onnx", "bytes": 63531507 },
-        { "path": "tokens.txt", "bytes": 940 },
-        { "path": "espeak-ng-data/phontab", "bytes": 55796 },
-        { "path": "espeak-ng-data/phonindex", "bytes": 39074 },
-        { "path": "espeak-ng-data/phondata", "bytes": 550424 },
-        { "path": "espeak-ng-data/phondata-manifest", "bytes": 21821 },
-        { "path": "espeak-ng-data/intonations", "bytes": 2040 },
-        { "path": "espeak-ng-data/fr_dict", "bytes": 63727 },
-        { "path": "espeak-ng-data/en_dict", "bytes": 166944 },
-        { "path": "espeak-ng-data/lang/roa/fr", "bytes": 79 },
-        { "path": "espeak-ng-data/lang/gmw/en", "bytes": 140 }
+        {
+          "path": "en_GB-cori-medium.onnx",
+          "bytes": 63531507
+        },
+        {
+          "path": "tokens.txt",
+          "bytes": 940
+        },
+        {
+          "path": "espeak-ng-data/phontab",
+          "bytes": 55796
+        },
+        {
+          "path": "espeak-ng-data/phonindex",
+          "bytes": 39074
+        },
+        {
+          "path": "espeak-ng-data/phondata",
+          "bytes": 550424
+        },
+        {
+          "path": "espeak-ng-data/phondata-manifest",
+          "bytes": 21821
+        },
+        {
+          "path": "espeak-ng-data/intonations",
+          "bytes": 2040
+        },
+        {
+          "path": "espeak-ng-data/fr_dict",
+          "bytes": 63727
+        },
+        {
+          "path": "espeak-ng-data/en_dict",
+          "bytes": 166944
+        },
+        {
+          "path": "espeak-ng-data/lang/roa/fr",
+          "bytes": 79
+        },
+        {
+          "path": "espeak-ng-data/lang/gmw/en",
+          "bytes": 140
+        }
       ],
       "source": {
         "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_GB-cori-medium.tar.bz2",
         "sha256": "49c9a5361bbdd95d7ca9687c4de11e5908481f65e7c7c368960df79949fdac2b"
       },
-      "memory": { "heap": 536870912, "basis": "iPhone 13, iOS Safari home-screen app, Settings › Read aloud › Test, 2026-11-10: the worker's WASM memory (512 MiB, the same for every voice), not the voice's own use" },
-      "speed": { "rtf": 0.17, "basis": "iPhone 13, iOS Safari home-screen app, Settings › Read aloud › Test, 2026-11-10" },
+      "memory": {
+        "heap": 536870912,
+        "basis": "iPhone 13, iOS Safari home-screen app, Settings › Read aloud › Test, 2026-11-10: the worker's WASM memory (512 MiB, the same for every voice), not the voice's own use"
+      },
+      "speed": {
+        "rtf": 0.17,
+        "basis": "iPhone 13, iOS Safari home-screen app, Settings › Read aloud › Test, 2026-11-10"
+      },
       "license": {
         "id": "Public domain (LibriVox recordings)",
         "url": "https://brycebeattie.com/files/tts/"
@@ -85,17 +163,61 @@
       "dir": "vits-piper-fr_FR-mls-medium",
       "model": "fr_FR-mls-medium.onnx",
       "members": [
-        { "path": "fr_FR-mls-medium.onnx", "bytes": 76733879, "sha256": "cb02104afedb7d38252ec3a6efb1343451926652d07f4e2d1f033c9e65753bcd" },
-        { "path": "tokens.txt", "bytes": 954, "sha256": "620e1aecf1a68fea3ba5850d137b0138fa2037c9b372dad13b95a2a215d0849a" },
-        { "path": "espeak-ng-data/phontab", "bytes": 55796, "sha256": "886f3fa402cb0ba73d483aa8ad000af47a6b7cc06293c75a97913fba68a530f6" },
-        { "path": "espeak-ng-data/phonindex", "bytes": 39074, "sha256": "3ca7b8fa3b42624e4b0f152707e7a39245fce569aa99ea47c055d9e622fcf0c4" },
-        { "path": "espeak-ng-data/phondata", "bytes": 550424, "sha256": "4e0288957874029a8c3c9f41a8f517ad4bf18127046decbdd4b9d1d6807ce3a3" },
-        { "path": "espeak-ng-data/phondata-manifest", "bytes": 21821, "sha256": "7b387af0702c7cf0b61f0bead68feded0bd8e1620729b0b252e76acbc30d3813" },
-        { "path": "espeak-ng-data/intonations", "bytes": 2040, "sha256": "3f8af65fd3eda9759a10f021d61361c120871f463515229c925995c7f90918cc" },
-        { "path": "espeak-ng-data/fr_dict", "bytes": 63727, "sha256": "e399ab924c4d10beef1fc310b30ea56e4ddfd8b4b64b8ed978e9c65394d49b2d" },
-        { "path": "espeak-ng-data/en_dict", "bytes": 166944, "sha256": "71bd330ba8a2e3e8076e631508208ef49449d6147c17b7bd2b4b1e1468292e35" },
-        { "path": "espeak-ng-data/lang/roa/fr", "bytes": 79, "sha256": "95f44834b48c075dad13eace54d2c98ff79b81aa0074dd67eebaf66c2909eef8" },
-        { "path": "espeak-ng-data/lang/gmw/en", "bytes": 140, "sha256": "4605d5330801de3641c6e366d15f129ea1f5ffbce8722642aba01ace07ab9c83" }
+        {
+          "path": "fr_FR-mls-medium.onnx",
+          "bytes": 76733879,
+          "sha256": "cb02104afedb7d38252ec3a6efb1343451926652d07f4e2d1f033c9e65753bcd"
+        },
+        {
+          "path": "tokens.txt",
+          "bytes": 954,
+          "sha256": "620e1aecf1a68fea3ba5850d137b0138fa2037c9b372dad13b95a2a215d0849a"
+        },
+        {
+          "path": "espeak-ng-data/phontab",
+          "bytes": 55796,
+          "sha256": "886f3fa402cb0ba73d483aa8ad000af47a6b7cc06293c75a97913fba68a530f6"
+        },
+        {
+          "path": "espeak-ng-data/phonindex",
+          "bytes": 39074,
+          "sha256": "3ca7b8fa3b42624e4b0f152707e7a39245fce569aa99ea47c055d9e622fcf0c4"
+        },
+        {
+          "path": "espeak-ng-data/phondata",
+          "bytes": 550424,
+          "sha256": "4e0288957874029a8c3c9f41a8f517ad4bf18127046decbdd4b9d1d6807ce3a3"
+        },
+        {
+          "path": "espeak-ng-data/phondata-manifest",
+          "bytes": 21821,
+          "sha256": "7b387af0702c7cf0b61f0bead68feded0bd8e1620729b0b252e76acbc30d3813"
+        },
+        {
+          "path": "espeak-ng-data/intonations",
+          "bytes": 2040,
+          "sha256": "3f8af65fd3eda9759a10f021d61361c120871f463515229c925995c7f90918cc"
+        },
+        {
+          "path": "espeak-ng-data/fr_dict",
+          "bytes": 63727,
+          "sha256": "e399ab924c4d10beef1fc310b30ea56e4ddfd8b4b64b8ed978e9c65394d49b2d"
+        },
+        {
+          "path": "espeak-ng-data/en_dict",
+          "bytes": 166944,
+          "sha256": "71bd330ba8a2e3e8076e631508208ef49449d6147c17b7bd2b4b1e1468292e35"
+        },
+        {
+          "path": "espeak-ng-data/lang/roa/fr",
+          "bytes": 79,
+          "sha256": "95f44834b48c075dad13eace54d2c98ff79b81aa0074dd67eebaf66c2909eef8"
+        },
+        {
+          "path": "espeak-ng-data/lang/gmw/en",
+          "bytes": 140,
+          "sha256": "4605d5330801de3641c6e366d15f129ea1f5ffbce8722642aba01ace07ab9c83"
+        }
       ],
       "source": {
         "base": "https://huggingface.co/csukuangfj/vits-piper-fr_FR-mls-medium/resolve/06ef1f996a72d027ce9a42e3eeac7cd21fc351ec/"
@@ -105,6 +227,374 @@
         "url": "https://openslr.org/94/"
       },
       "attribution": "Voice trained on the Multilingual LibriSpeech (MLS) French corpus by Vineel Pratap et al. (Meta AI), CC BY 4.0. Piper model packaged by sherpa-onnx."
+    },
+    {
+      "id": "canto-nano-int8",
+      "name": "Canto",
+      "lang": "yue",
+      "locale": "zh-HK",
+      "default": true,
+      "kind": "cantoNano",
+      "speakers": 1,
+      "sampleRate": 48000,
+      "set": "tts-canto-nano-int8",
+      "dir": "canto-tts-nano-int8-01f53d9",
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 11357,
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "path": "MOSS-Audio-Tokenizer-Nano-ONNX/codec_browser_onnx_meta.json",
+          "bytes": 17036,
+          "sha256": "3e291c883bb7d11ff2fe8e964e3e495519760358859f35c951254c7741592731"
+        },
+        {
+          "path": "MOSS-Audio-Tokenizer-Nano-ONNX/moss_audio_tokenizer_decode_full.onnx",
+          "bytes": 681902,
+          "sha256": "0fbbafe3fd4afa2a019af5c5ced204af6e2d1db044fa40f021525d2aee95b4ac"
+        },
+        {
+          "path": "MOSS-Audio-Tokenizer-Nano-ONNX/moss_audio_tokenizer_decode_shared.data",
+          "bytes": 44198912,
+          "sha256": "e69d52e0f4e84ca27850557ee54face46632d3a5a16c89bd246c7c408466dcad"
+        },
+        {
+          "path": "MOSS-TTS-Nano-cantophon-ONNX/moss_tts_decode_step.onnx",
+          "bytes": 904095,
+          "sha256": "0441833cff38ea475bfb77718a916b34288a2a1a7edd98f758e008b129f1d4a0"
+        },
+        {
+          "path": "MOSS-TTS-Nano-cantophon-ONNX/moss_tts_decode_step.onnx.data",
+          "bytes": 110579712,
+          "sha256": "36d9664afe0391f4a73288ad29e01b5ee4146cfb60f9e2724da54e1ad23d1d35"
+        },
+        {
+          "path": "MOSS-TTS-Nano-cantophon-ONNX/moss_tts_local_fixed_sampled_frame.onnx",
+          "bytes": 943129,
+          "sha256": "6da65278218a66507d958ac6e8cf5c3507d0845cf9471e19af8674b2ad77117e"
+        },
+        {
+          "path": "MOSS-TTS-Nano-cantophon-ONNX/moss_tts_local_fixed_sampled_frame.onnx.data",
+          "bytes": 85109760,
+          "sha256": "0a020951d63a432f2c1da1c6d8ee45500ae1f2e29ef6bde279b45cf8543980c4"
+        },
+        {
+          "path": "MOSS-TTS-Nano-cantophon-ONNX/moss_tts_prefill.onnx",
+          "bytes": 892424,
+          "sha256": "add74f6d16a83c72f3fa2d83a33780bcb03f3fb514f6f1650bcbca60881a307e"
+        },
+        {
+          "path": "MOSS-TTS-Nano-cantophon-ONNX/tts_browser_onnx_meta.json",
+          "bytes": 4304,
+          "sha256": "b263ee5d650a6b34e69fea3cc0373ec6838adad8ee5633954faa2af0dd146823"
+        },
+        {
+          "path": "NOTICE",
+          "bytes": 830,
+          "sha256": "c6c13bd4a71f05a3e3f1077e9dfbf968763eef74629a214333f118cd96100303"
+        },
+        {
+          "path": "README.md",
+          "bytes": 4367,
+          "sha256": "31caba371263ffd33f13fd8ae6381855c8d3c6c9336cc0efc5b1d6c8ba473d6f"
+        },
+        {
+          "path": "added_tokens.json",
+          "bytes": 1677,
+          "sha256": "32eea80bb2cee76ecfb423ab8be32dbdc70c2ee6b319670e212f9be4fab26e98"
+        },
+        {
+          "path": "browser_poc_manifest.json",
+          "bytes": 11740,
+          "sha256": "db6c56a975ae5b6fa8bc00933cc1eb7046a4d74a00b04c51a7fce0584b5bbfd1"
+        },
+        {
+          "path": "tokenizer.model",
+          "bytes": 470897,
+          "sha256": "c353ee1479b536bf414c1b247f5542b6607fb8ae91320e5af1781fee200fddff"
+        },
+        {
+          "path": "g2p/data/word.bin",
+          "bytes": 1785754,
+          "sha256": "839593ec3a019956ebce7d75cbaf405d4f7a5b771653afb7341ba9b3ff4ebd98",
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
+        },
+        {
+          "path": "g2p/data/char.bin",
+          "bytes": 631002,
+          "sha256": "509bc281ddaf4d3fb09163d67484de603dbf46427f20219b9cca0837000726d6",
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
+        },
+        {
+          "path": "g2p/data/separable.bin",
+          "bytes": 44,
+          "sha256": "c597decbbed63f3f0949f89fd42443abdea4c234accfa1b3d93a98d2bb61af0b",
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
+        },
+        {
+          "path": "g2p/data/romanized_slang.bin",
+          "bytes": 37,
+          "sha256": "eaa5c2b5667b586d79a843cb4372a2054cbc2233df9ea4a82e731b903889bbb6",
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
+        },
+        {
+          "path": "g2p/data/classifier_words.bin",
+          "bytes": 178,
+          "sha256": "91d5e6949691b01c6cedba84e0e5363f17e98a358b58e76c2637f009464fac24",
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
+        },
+        {
+          "path": "s2t/STPhrases.txt",
+          "bytes": 1006868,
+          "sha256": "1ce1869151530b6ea388ace1ae4efb3d51d1faa6e01c957f8d60313083a3969f",
+          "from": "s2t",
+          "dir": "canto-text-2.6.1"
+        },
+        {
+          "path": "s2t/STCharacters.txt",
+          "bytes": 34615,
+          "sha256": "9cedfb8bf13a220087103d9a96d9f56050c341c24a809cbce5c85c9045456557",
+          "from": "s2t",
+          "dir": "canto-text-2.6.1"
+        }
+      ],
+      "source": {
+        "base": "https://huggingface.co/dandelionchase/canto-tts-nano-int8/resolve/01f53d9e3371dda0c0b31f999ef6b5cda89d90ae/",
+        "extras": [
+          {
+            "url": "https://files.pythonhosted.org/packages/b6/89/792dd5d4297a421d0de8616df7230e192e0f25d9b9a6f3d1862494657404/canto_hk_g2p-2.6.1.tar.gz",
+            "sha256": "65490fad35541c438e4d490664fe453554a89eb1708cf0620004de0c55482183",
+            "dir": "canto-text-2.6.1/g2p",
+            "strip": 3,
+            "members": [
+              "python/canto_hk_g2p/data/word.bin",
+              "python/canto_hk_g2p/data/char.bin",
+              "python/canto_hk_g2p/data/separable.bin",
+              "python/canto_hk_g2p/data/romanized_slang.bin",
+              "python/canto_hk_g2p/data/classifier_words.bin"
+            ]
+          },
+          {
+            "url": "https://raw.githubusercontent.com/BYVoid/OpenCC/ver.1.2.0/data/dictionary/STPhrases.txt",
+            "sha256": "1ce1869151530b6ea388ace1ae4efb3d51d1faa6e01c957f8d60313083a3969f",
+            "to": "canto-text-2.6.1/s2t/STPhrases.txt"
+          },
+          {
+            "url": "https://raw.githubusercontent.com/BYVoid/OpenCC/ver.1.2.0/data/dictionary/STCharacters.txt",
+            "sha256": "9cedfb8bf13a220087103d9a96d9f56050c341c24a809cbce5c85c9045456557",
+            "to": "canto-text-2.6.1/s2t/STCharacters.txt"
+          }
+        ]
+      },
+      "license": {
+        "id": "Apache-2.0",
+        "url": "https://huggingface.co/dandelionchase/canto-tts-nano-int8"
+      },
+      "attribution": "canto-tts-nano by typangaa (Apache-2.0), fine-tuned from MOSS-TTS-Nano by OpenMOSS (Apache-2.0); int8 conversion by dandelionchase (Apache-2.0, see its NOTICE); audio codec by OpenMOSS. G2P canto-hk-g2p (Apache-2.0), rime-cantonese (CC BY 4.0, CanCLID), Unihan (Unicode License v3). Training data: privately sourced and not released, for copyright reasons.",
+      "extraSets": [
+        "ort"
+      ],
+      "memory": {
+        "heap": 654311424,
+        "speaking": 654311424,
+        "basis": "Chromium 141 (Playwright chromium-1243), Linux, 2026-11-19: the worker WASM heap with all four sessions and a 48-frame part, plus the OpenCC maps and PCM, plus 10%. Desktop, not a phone; the iPhone figure is not measured."
+      },
+      "speed": {
+        "rtf": 2.18,
+        "basis": "Chromium 141 (Playwright chromium-1243), Linux, 2026-11-19: generation time / audio length for the sample in the worker; desktop, not a phone."
+      },
+      "textDir": "canto-text-2.6.1"
+    },
+    {
+      "id": "canto-nano-fp16-gpu",
+      "name": "Canto GPU",
+      "lang": "yue",
+      "locale": "zh-HK",
+      "kind": "cantoNano",
+      "speakers": 1,
+      "sampleRate": 48000,
+      "set": "tts-canto-nano-fp16",
+      "dir": "canto-tts-nano-fp16-e89ed00",
+      "textDir": "canto-text-2.6.1",
+      "requires": [
+        "webgpu",
+        "shader-f16"
+      ],
+      "runner": {
+        "dtype": "float16",
+        "providers": [
+          "webgpu"
+        ],
+        "kvGpu": false,
+        "external": {
+          "tts": "moss_tts_global_shared.data",
+          "local": "moss_tts_local_shared.data",
+          "codec": "moss_audio_tokenizer_decode_shared.data"
+        }
+      },
+      "members": [
+        {
+          "path": "browser_poc_manifest.json",
+          "bytes": 11740,
+          "sha256": "db6c56a975ae5b6fa8bc00933cc1eb7046a4d74a00b04c51a7fce0584b5bbfd1"
+        },
+        {
+          "path": "tokenizer.model",
+          "bytes": 470897,
+          "sha256": "c353ee1479b536bf414c1b247f5542b6607fb8ae91320e5af1781fee200fddff"
+        },
+        {
+          "path": "added_tokens.json",
+          "bytes": 1677,
+          "sha256": "32eea80bb2cee76ecfb423ab8be32dbdc70c2ee6b319670e212f9be4fab26e98"
+        },
+        {
+          "path": "MOSS-TTS-Nano-cantophon-ONNX/tts_browser_onnx_meta.json",
+          "bytes": 4304,
+          "sha256": "b263ee5d650a6b34e69fea3cc0373ec6838adad8ee5633954faa2af0dd146823"
+        },
+        {
+          "path": "MOSS-TTS-Nano-cantophon-ONNX/moss_tts_prefill.onnx",
+          "bytes": 282296,
+          "sha256": "77c3be1768face09fae1df1984fed74ea82997022060f963e4faf99eb4dc7264"
+        },
+        {
+          "path": "MOSS-TTS-Nano-cantophon-ONNX/moss_tts_decode_step.onnx",
+          "bytes": 291393,
+          "sha256": "58c378c74f85c9fbda6edabc708696bee1064f6465b66170742d73c1d730717f"
+        },
+        {
+          "path": "MOSS-TTS-Nano-cantophon-ONNX/moss_tts_local_fixed_sampled_frame.onnx",
+          "bytes": 481288,
+          "sha256": "0c160439049ae83001089f83eee321edb2a1fd258c1565d0e7dc660c3a221872"
+        },
+        {
+          "path": "MOSS-TTS-Nano-cantophon-ONNX/moss_tts_global_shared.data",
+          "bytes": 220541952,
+          "sha256": "3cb0298cf4ac70c8abf71bf504da65190164a4fc83fba5ceddc8e2a4bac39861"
+        },
+        {
+          "path": "MOSS-TTS-Nano-cantophon-ONNX/moss_tts_local_shared.data",
+          "bytes": 115109376,
+          "sha256": "c1ed8c7df8a4a98bbaed25a7f5d94ee2d4585485262616a9c3e4434237e8b6dd"
+        },
+        {
+          "path": "MOSS-Audio-Tokenizer-Nano-ONNX/codec_browser_onnx_meta.json",
+          "bytes": 16462,
+          "sha256": "385f31b17ad8c0de2a9b8c9d38cf0083515735be85ba30b9e7882ab368fe884d"
+        },
+        {
+          "path": "MOSS-Audio-Tokenizer-Nano-ONNX/moss_audio_tokenizer_decode_full.onnx",
+          "bytes": 730295,
+          "sha256": "2d6ad1e49e458f552752affec88fed04b7d12b2dcc605c69e8275ecb41eb14f0"
+        },
+        {
+          "path": "MOSS-Audio-Tokenizer-Nano-ONNX/moss_audio_tokenizer_decode_shared.data",
+          "bytes": 22062592,
+          "sha256": "60e4e2dd7c317f247e0c4362ae96cf216193359d57ba9dd970850c734738d78e"
+        },
+        {
+          "path": "g2p/data/word.bin",
+          "bytes": 1785754,
+          "sha256": "839593ec3a019956ebce7d75cbaf405d4f7a5b771653afb7341ba9b3ff4ebd98",
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
+        },
+        {
+          "path": "g2p/data/char.bin",
+          "bytes": 631002,
+          "sha256": "509bc281ddaf4d3fb09163d67484de603dbf46427f20219b9cca0837000726d6",
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
+        },
+        {
+          "path": "g2p/data/separable.bin",
+          "bytes": 44,
+          "sha256": "c597decbbed63f3f0949f89fd42443abdea4c234accfa1b3d93a98d2bb61af0b",
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
+        },
+        {
+          "path": "g2p/data/romanized_slang.bin",
+          "bytes": 37,
+          "sha256": "eaa5c2b5667b586d79a843cb4372a2054cbc2233df9ea4a82e731b903889bbb6",
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
+        },
+        {
+          "path": "g2p/data/classifier_words.bin",
+          "bytes": 178,
+          "sha256": "91d5e6949691b01c6cedba84e0e5363f17e98a358b58e76c2637f009464fac24",
+          "from": "g2p",
+          "dir": "canto-text-2.6.1"
+        },
+        {
+          "path": "s2t/STPhrases.txt",
+          "bytes": 1006868,
+          "sha256": "1ce1869151530b6ea388ace1ae4efb3d51d1faa6e01c957f8d60313083a3969f",
+          "from": "s2t",
+          "dir": "canto-text-2.6.1"
+        },
+        {
+          "path": "s2t/STCharacters.txt",
+          "bytes": 34615,
+          "sha256": "9cedfb8bf13a220087103d9a96d9f56050c341c24a809cbce5c85c9045456557",
+          "from": "s2t",
+          "dir": "canto-text-2.6.1"
+        }
+      ],
+      "source": {
+        "base": "https://huggingface.co/followcat/canto-tts-nano-fp16/resolve/e89ed002b1881e4b7c4f52469adeab9d83806450/",
+        "extras": [
+          {
+            "url": "https://files.pythonhosted.org/packages/b6/89/792dd5d4297a421d0de8616df7230e192e0f25d9b9a6f3d1862494657404/canto_hk_g2p-2.6.1.tar.gz",
+            "sha256": "65490fad35541c438e4d490664fe453554a89eb1708cf0620004de0c55482183",
+            "dir": "canto-text-2.6.1/g2p",
+            "strip": 3,
+            "members": [
+              "python/canto_hk_g2p/data/word.bin",
+              "python/canto_hk_g2p/data/char.bin",
+              "python/canto_hk_g2p/data/separable.bin",
+              "python/canto_hk_g2p/data/romanized_slang.bin",
+              "python/canto_hk_g2p/data/classifier_words.bin"
+            ]
+          },
+          {
+            "url": "https://raw.githubusercontent.com/BYVoid/OpenCC/ver.1.2.0/data/dictionary/STPhrases.txt",
+            "sha256": "1ce1869151530b6ea388ace1ae4efb3d51d1faa6e01c957f8d60313083a3969f",
+            "to": "canto-text-2.6.1/s2t/STPhrases.txt"
+          },
+          {
+            "url": "https://raw.githubusercontent.com/BYVoid/OpenCC/ver.1.2.0/data/dictionary/STCharacters.txt",
+            "sha256": "9cedfb8bf13a220087103d9a96d9f56050c341c24a809cbce5c85c9045456557",
+            "to": "canto-text-2.6.1/s2t/STCharacters.txt"
+          }
+        ]
+      },
+      "extraSets": [
+        "ort"
+      ],
+      "license": {
+        "id": "Apache-2.0",
+        "url": "https://huggingface.co/followcat/canto-tts-nano-fp16"
+      },
+      "attribution": "canto-tts-nano by typangaa (Apache-2.0), fine-tuned from MOSS-TTS-Nano by OpenMOSS (Apache-2.0); int8 conversion by dandelionchase; fp16 conversion by @followcat (Apache-2.0, see its NOTICE); audio codec by OpenMOSS. G2P canto-hk-g2p (Apache-2.0), rime-cantonese (CC BY 4.0, CanCLID), Unihan (Unicode License v3). Training data: privately sourced and not released, for copyright reasons.",
+      "memory": {
+        "heap": 67108864,
+        "speaking": 67108864,
+        "basis": "Chromium 153 (channel chromium, --enable-unsafe-webgpu --enable-features=Vulkan --use-angle=vulkan), Linux, 2026-11-19: the worker WASM heap with the fp16 WebGPU sessions (33-58 MiB) plus the JS maps/PCM and 10%. The fp16 weights stay on the GPU, outside the WASM heap; the phone is not measured."
+      },
+      "speed": {
+        "rtf": 5.7,
+        "basis": "Chromium 153 desktop WebGPU, 2026-11-19: phase 1 RTF 5.70-6.40, phase 2 (GPU KV) 4.53-6.20, versus the INT8 1.40-1.88 on the same desktop. Slower than playback; not a phone figure."
+      }
     }
   ]
 }
