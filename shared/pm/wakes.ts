@@ -7,6 +7,7 @@
 // kind (Autopilot, Step check, Engine, Incident). Delivered, it
 // is open until the coordinator acks it, stays idle 2 min, quits, or 1 h
 // passes; no other wake goes while one is open, except the user's "run now".
+// One still pending an hour after it was made, its coordinator gone, ends unsent.
 // Not acked within 15 min (and its turn over): delivered once more, then the user is told.
 import { FIXES_PER_STEP, FIX_KINDS, FIX_TEXT, inHours, type Autopilot } from './autopilot'
 
@@ -147,6 +148,8 @@ export function tickWakes(q: Wake[], coordinator: string, { status, lastUserAt, 
       else if (idleSince !== w.idleSince) put({ ...w, idleSince })
     }
   }
+  // A coordinator that quit: its pending wakes older than an hour end, never delivered stale at its next start.
+  if (status === 'gone') for (const w of pendings(cur(), coordinator)) if (now - w.createdAt >= WAKE.TIMEOUT_MS) put({ ...w, endedAt: now, ended: 'quit' })
   // No ack within 15 min, its turn over: once more (with what waits meanwhile), then the user.
   for (const w of cur()) {
     if (w.deliveredAt === undefined || isOpen(w) || w.ackedAt !== undefined || w.ended === 'unanswered' || now - w.deliveredAt < WAKE.ACK_MS) continue

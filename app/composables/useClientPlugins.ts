@@ -21,7 +21,9 @@ export function startClientPlugins() {
   const router = useRouter()
   host = createPluginHost({
     list: () => api<{ plugins: ClientPluginInfo[], enabled: boolean }>('/api/client-plugins'),
-    load: info => import(/* @vite-ignore */ `${location.origin}/api/client-plugins/${encodeURIComponent(info.id)}/${encodeURIComponent(info.main)}?v=${info.source?.commit || ''}`),
+    // The commit sits in the folder part (`<id>@<commit>/`), so the bundle's
+    // relative imports also get new URLs after an update, not only the main file.
+    load: info => import(/* @vite-ignore */ `${location.origin}/api/client-plugins/${encodeURIComponent(info.id)}${info.source?.commit ? `@${info.source.commit}` : ''}/${encodeURIComponent(info.main)}`),
     insertDraft: (text) => {
       if (!curPane.value) return
       const d = useDraft(curPane.value)

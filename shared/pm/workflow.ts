@@ -153,11 +153,18 @@ export interface Template {
   workspaceGuards?: Guards
 }
 
+// The agents of the default workflow follow the coordinator's: its own agent runs the tasks. The
+// engine always pins a model, so an omp default takes the coordinator's model, else this one, and its
+// reviewer runs a fresh session of it. Claude, Codex (no known model to pin) and none: Claude's default.
+export const OMP_DEFAULT_MODEL = 'anthropic/claude-sonnet-5-5'
+export const defaultPrefs = (agent?: { program?: string, model?: string }): Prefs =>
+  agent?.program === 'omp' ? { agent: 'omp', model: agent.model && MODEL_RE.test(agent.model) ? agent.model : OMP_DEFAULT_MODEL, reviewModel: SAME_MODEL } : { agent: 'claude', model: 'sonnet' }
+
 // A project's workflow until the user accepts one (a template copy or the
 // coordinator's proposal): one type `task`, todo → work → done. Never saved;
 // version 0 marks it (a saved workflow starts at 1).
-export const defaultWorkflow = (key: string): Template => ({
-  id: key.toLowerCase(), version: 0, prefs: { agent: 'claude', model: 'sonnet' },
+export const defaultWorkflow = (key: string, agent?: { program?: string, model?: string }): Template => ({
+  id: key.toLowerCase(), version: 0, prefs: defaultPrefs(agent),
   taskTypes: { task: { steps: [{ id: 'todo', column: 'To do' }, { id: 'work', column: 'Working', holder: 'worker', ends: 'report' }, { id: 'done', column: 'Done' }] } },
 })
 export const isDefaultWorkflow = (t?: Template | null) => t?.version === 0

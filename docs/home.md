@@ -141,7 +141,8 @@ needs you (a question, a block), its row comes back in the main list until you a
 Coordinators and **Tasks to review** follow the [machine tab](#machines-as-tabs): a tab shows the
 projects whose allowed machines it holds (a project on machines of several groups shows on each
 of those tabs), **All** shows every project, and Alfred shows on every tab. A workspace shows
-under its tab group (unless its *Shown in* says otherwise). An open coordinator
+under its tab group (unless its *Shown in* says otherwise), and its members' tasks to review show
+where it does. An open coordinator
 conversation stays open on the tabs that show its project. The board follows the tab too when
 its picker is on *Follow machine tab* ([Board](project-management.md#board)); notifications stay
 global.
@@ -232,7 +233,7 @@ not filtered by tab; the board is, when its picker follows the machine tab.
 - Close tab and Close space first say how many terminals stop and how many agents are
   interrupted, then close each terminal as **Close this terminal** does; one that could not be
   closed is named, the others close all the same. Closing an agent's pane ends its program.
-- Split and move of tabs stay in herdr-app.
+- Splitting a pane is in its **…** menu ([Terminal](terminal.md)); move of tabs stays in herdr-app.
 - Worktrees are v2 only.
 
 ### Search

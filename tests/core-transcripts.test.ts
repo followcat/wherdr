@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -150,6 +150,67 @@ describe('remote shell', () => {
     const refused = createShellFs(coreShell(async () => { throw new CoreError('unavailable', 'herdr-core rejected the request') }, 'box'))
     const e = await refused.readFile('/x').catch((x: unknown) => x)
     expect([(e as { code?: string }).code, coreFailureKind(e)]).toEqual(['unreachable', 'unavailable'])
+  })
+})
+
+describe('omp core transcripts', () => {
+  // herdr-core has no integration that reports omp's session: the conversation is
+  // found in the folder omp keeps for its working directory.
+  // omp 19 writes its title before the session entry.
+  const session = (cwd: string, text: string) => [
+    { type: 'title', v: 1, title: 'Demo', source: 'auto', updatedAt: '2026-01-01T10:00:00.000Z' },
+    { type: 'session', version: 3, id: 'x', timestamp: '2026-01-01T10:00:00.000Z', cwd },
+    { type: 'message', id: 'u1', timestamp: '2026-01-01T10:00:01.000Z', message: { role: 'user', content: [{ type: 'text', text }], attribution: 'user' } },
+    { type: 'message', id: 'a1', timestamp: '2026-01-01T10:00:02.000Z', message: { role: 'assistant', content: [{ type: 'text', text: `Reply to ${text}` }], stopReason: 'stop' } },
+  ].map(d => JSON.stringify(d)).join('\n') + '\n'
+  function homeWithOmp(cwd: string, dirName: string, born: number) {
+    const home = mkdtempSync(path.join(tmpdir(), 'hw-core-omp-'))
+    const real = cwd.replace('~', home)
+    const dir = path.join(home, '.omp/agent/sessions', dirName)
+    mkdirSync(dir, { recursive: true })
+    const old = path.join(dir, '2026-01-01T09-00-00-000Z_old.jsonl')
+    const now = path.join(dir, '2026-01-01T10-00-00-000Z_new.jsonl')
+    writeFileSync(old, session(real, 'earlier question'))
+    writeFileSync(now, session(real, 'current question'))
+    utimesSync(old, new Date(born - 3600_000), new Date(born - 3600_000))
+    utimesSync(now, new Date(born + 1000), new Date(born + 1000))
+    // Another folder's conversation, written later, is never taken.
+    const other = path.join(home, '.omp/agent/sessions', '-elsewhere')
+    mkdirSync(other, { recursive: true })
+    writeFileSync(path.join(other, '2026-01-01T11-00-00-000Z_other.jsonl'), session(path.join(home, 'elsewhere'), 'other folder'))
+    return { home, cwd: real }
+  }
+  const omp = (cwd: string, born: number, argv = ['omp']) => fakeCore({ t5: { pid: 77, argv, created_ms: born, foreground: { pid: 77, name: 'omp', argv, cwd } } })
+  const texts = (items: { role: string, text?: string }[] | undefined) => (items || []).filter(i => i.role === 'user').map(i => i.text)
+
+  it('opens the conversation an omp terminal writes, in a folder under home', async () => {
+    const born = Date.now() - 60_000
+    const { home, cwd } = homeWithOmp('~/work/omp', '-work-omp', born)
+    const p = pane('o1', 't5', 'omp', cwd)
+    const t = createCoreTranscripts({ call: omp(cwd, born).call, pane: () => p, localHome: home })
+    const r = await t.chat({ id: 'o1', agent: 'omp', cwd }, {})
+    expect(r.available).toBe(true)
+    expect(r.file).toBe('2026-01-01T10-00-00-000Z_new.jsonl')
+    expect(texts(r.items)).toEqual(['current question'])
+  })
+
+  it('opens it for a folder outside home', async () => {
+    const born = Date.now() - 60_000
+    const cwd = `/srv/omp-${process.pid}`
+    const { home } = homeWithOmp(cwd, `--srv-omp-${process.pid}--`, born)
+    const p = pane('o2', 't5', 'omp', cwd)
+    const t = createCoreTranscripts({ call: omp(cwd, born).call, pane: () => p, localHome: home })
+    expect(texts((await t.chat({ id: 'o2', agent: 'omp', cwd }, {})).items)).toEqual(['current question'])
+  })
+
+  it('shows no earlier conversation for an omp started after it, unless omp continues it', async () => {
+    const born = Date.now() + 60_000 // both files were written before this omp started
+    const { home, cwd } = homeWithOmp('~/work/omp', '-work-omp', Date.now() - 60_000)
+    const p = pane('o3', 't5', 'omp', cwd)
+    const fresh = createCoreTranscripts({ call: omp(cwd, born).call, pane: () => p, localHome: home })
+    expect(await fresh.chat({ id: 'o3', agent: 'omp', cwd }, {})).toEqual({ available: false, reason: 'not_found' })
+    const resumed = createCoreTranscripts({ call: omp(cwd, born, ['omp', '--continue']).call, pane: () => p, localHome: home })
+    expect(texts((await resumed.chat({ id: 'o3', agent: 'omp', cwd }, {})).items)).toEqual(['current question'])
   })
 })
 

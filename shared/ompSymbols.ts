@@ -11,3 +11,6 @@ export const OMP_CURRENT = ['●', '\uF111', '[x]'] // status.enabled (model sel
 
 // Regex alternation of a glyph list, for `new RegExp`.
 export const ompAlt = (glyphs: readonly string[]) => `(?:${glyphs.map(g => g.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`
+// Working spinner: braille frames (unicode, nerd), "-\|/" (ascii); character-class ranges.
+export const OMP_SPINNER = '⠁-⣿'
+export const OMP_ASCII_SPINNER = '\\-\\\\|/'

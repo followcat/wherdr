@@ -25,6 +25,7 @@ class FakeTerm {
       this.csi.push({ id, fn })
       return { dispose() {} }
     },
+    registerEscHandler: () => ({ dispose() {} }),
   }
 
   constructor(init?: Record<string, unknown>) {
@@ -104,9 +105,12 @@ function setup(input?: () => boolean) {
   return { ctl, open, wrapper }
 }
 
-const typed = (ws: FakeSocket) => ws.sent.filter(m => m.type === 'terminal.input').map(m => m.text)
+const wheeled = (ws: FakeSocket) => ws.sent.filter(m => m.type === 'terminal.wheel').map(m => m.text)
 const UP = '\x1b[<64;41;13M'
 const DOWN = '\x1b[<65;41;13M'
+const X10_UP = '\x1b[M`I-'
+// The pacer holds a burst until the program paints; a frame releases it.
+const paint = (ws: FakeSocket) => ws.receive({ type: 'terminal.frame', bytes: 'eA==' })
 
 beforeEach(() => {
   h1.terms.length = 0
@@ -121,8 +125,9 @@ it('a scroll on a full-screen app reaches it as the wheel it asked for', async (
     const { ws, term } = await open()
     term.private('h', 1000, 1002, 1006)
     expect(ctl.scroll(3)).toBe(true)
+    paint(ws)
     expect(ctl.scroll(-2)).toBe(true)
-    expect(typed(ws)).toEqual([UP.repeat(3), DOWN.repeat(2)])
+    expect(wheeled(ws)).toEqual([UP.repeat(3), DOWN.repeat(2)])
   } finally { wrapper.unmount() }
 })
 
@@ -137,53 +142,56 @@ it('a wheel report is not typing: the gesture sending it carries on', async () =
   } finally { wrapper.unmount() }
 })
 
-it('the normal screen still scrolls locally', async () => {
+it('a normal-screen program tracking the mouse still gets the wheel', async () => {
   const { ctl, open, wrapper } = setup()
   try {
     const { ws, term } = await open()
     term.private('h', 1006)
     term.buffer.active.type = 'normal'
     ctl.scroll(3)
-    expect(typed(ws)).toEqual([])
+    expect(wheeled(ws)).toEqual([UP.repeat(3)])
   } finally { wrapper.unmount() }
 })
 
-it('an app that takes no wheel gets nothing', async () => {
+it('an app that takes no wheel gets nothing, an X10 one gets encoded reports', async () => {
   const { ctl, open, wrapper } = setup()
   try {
     const { ws, term } = await open()
-    term.private('h', 1006)
     term.modes.mouseTrackingMode = 'none'
     ctl.scroll(3)
+    expect(wheeled(ws)).toEqual([])
     term.modes.mouseTrackingMode = 'x10'
     ctl.scroll(3)
-    expect(typed(ws)).toEqual([])
+    expect(wheeled(ws)).toEqual([X10_UP.repeat(3)])
   } finally { wrapper.unmount() }
 })
 
-it('an app that did not ask for SGR reports gets nothing it could misread', async () => {
+it('reports follow the encoding the app asked for', async () => {
   const { ctl, open, wrapper } = setup()
   try {
     const { ws, term } = await open()
     ctl.scroll(1)
     term.private('h', 1006)
-    term.private('l', 1006)
+    paint(ws)
     ctl.scroll(1)
-    expect(typed(ws)).toEqual([])
+    term.private('l', 1006)
+    paint(ws)
+    ctl.scroll(1)
+    expect(wheeled(ws)).toEqual([X10_UP, UP, X10_UP])
   } finally { wrapper.unmount() }
 })
 
-it('a closed input gate stops the wheel too', async () => {
+it('a closed input gate keeps the wheel local', async () => {
   const { ctl, open, wrapper } = setup(() => false)
   try {
     const { ws, term } = await open()
     term.private('h', 1006)
-    expect(ctl.scroll(1)).toBe(false)
-    expect(typed(ws)).toEqual([])
+    expect(ctl.scroll(1)).toBe(true)
+    expect(wheeled(ws)).toEqual([])
   } finally { wrapper.unmount() }
 })
 
-it('a new socket learns the modes again from its own first paint', async () => {
+it('a socket swap keeps the mouse modes the terminal is tracking', async () => {
   const { ctl, open, wrapper } = setup()
   try {
     const { ws, term } = await open()
@@ -194,9 +202,6 @@ it('a new socket learns the modes again from its own first paint', async () => {
     next.open()
     next.receive({ type: 'web.capabilities', core: true })
     ctl.scroll(1)
-    expect(typed(next)).toEqual([])
-    term.private('h', 1006)
-    ctl.scroll(1)
-    expect(typed(next)).toEqual([UP])
+    expect(wheeled(next)).toEqual([UP])
   } finally { wrapper.unmount() }
 })

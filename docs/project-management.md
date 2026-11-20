@@ -644,18 +644,22 @@ count when the kept conversation ran with another agent. It is only about the
 autopilot: a workflow change the coordinator proposed is a *Workflow change*
 card in its conversation (see [Workflow](#workflow)). A tap opens its window
 (880 px wide on a computer, up to 90 % of the screen's height; a full sheet on
-the phone) with two tabs under its title, **Settings** and **Activity**. The
+the phone). Under its title, above two tabs, **Settings** and **Activity**, the
+autopilot's switch and its state (*Active*, *Asleep* and why, or *Off*), so it
+can be turned on from either tab. The
 window opens on the tab you picked last (on this device; Settings the first
 time); a link to the autopilot setting (`project.autopilot`) opens Settings.
 **Activity**, under the autopilot's line and a link to the project's Workflow tab:
 
-- on the board, *Open*, and a warning when its conversation
+- on the board, a warning when its conversation
   ran with another one: *New conversation* with the default, or *Resume* the one kept (for
-  Alfred, the agent resumed becomes its default); *Open* opens or starts it; when its
-  conversation stopped (its terminal ended, for example when its machine
-  restarted), *Resume the conversation* takes it up again with the agent that
-  ran it, and *New conversation* starts a new one;
-- the autopilot's state, a switch, today's counts and *Run now*;
+  Alfred, the agent resumed becomes its default); no *Open* button: a running
+  conversation opens from its row in the sidebar and its header; only when no
+  row can start it (never started: *Start with* its agent; stopped while its
+  project is off the bar: *Resume the conversation* with the agent that ran it,
+  or *New conversation*) are the start buttons here;
+- today's counts and *Wake now*, which wakes the coordinator at once with its
+  goal, without waiting for a timed wake (its log names it *Run now*);
 - **the day's timeline**: a 24 h bar with the autopilot's hours shaded, a mark
   for each wake sent (filled), each wake skipped (hollow; each skipped slot, even for the same reason) and each task it started,
   *now* and the next wake (dashed; outside the hours, their next start); the worker's account
@@ -674,9 +678,13 @@ groups the form saves together. A bar pinned at the bottom of the tab, visible
 while you scroll, says *Unsaved changes* and holds *Cancel* (back to the saved
 values) and *Save* (enabled once something changed). Leaving the tab or closing
 the window with unsaved changes asks once whether to discard them. The groups:
-**Goal**; **When it wakes**: *Every* (empty or `off`: no interval wake;
-  stalls then show only through engine wakes), each wake bringing the goal and
-  the health summary (see [Who sends a wake](#who-sends-a-wake)); then
+**Goal (optional)**: empty, its wakes say no goal is set and the coordinator
+works from the board; **When it wakes**: *Every* (empty or `off`: no timed
+  wake, only the events below; stalls then show only through engine wakes),
+  each wake bringing the goal and the health summary (see [Who sends a
+  wake](#who-sends-a-wake)), and skipped while nothing is new (one every 12 h
+  at most is kept) unless *Look for new work* is on, as the hint under *Every*
+  says; then
   **Routines**, a list with *Add routine* under it. A routine is a row: when
   (days of the week as chips, *Every day* or *Weekdays*, and a time; *Advanced*
   takes a cron or a list such as `mon,thu 09:00`), its own goal (*Summarise

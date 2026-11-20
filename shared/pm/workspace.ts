@@ -177,10 +177,10 @@ export const sharedSetup = (ws: Project | undefined, shared: Template | null = n
 // its workspace's (`shared`, workflows/<WS>.json), else the default; with the
 // workspace's agents and worktree setup unless it overrides them, and the
 // workspace's guards, which its own only harden. Any other project: its own.
-export function effectiveWorkflow(key: string, saved: Template | null, member: Project | undefined, ws: Project | undefined, shared: Template | null = null): Template {
+export function effectiveWorkflow(key: string, saved: Template | null, member: Project | undefined, ws: Project | undefined, shared: Template | null = null, agent?: { program?: string, model?: string }): Template {
   const id = key.toLowerCase()
-  if (!member?.workspace || !ws || !isWorkspace(ws)) return saved ?? defaultWorkflow(key)
-  const t = saved ?? (shared ? { ...ownWorkflow(shared), id } : defaultWorkflow(key))
+  if (!member?.workspace || !ws || !isWorkspace(ws)) return saved ?? defaultWorkflow(key, agent)
+  const t = saved ?? (shared ? { ...ownWorkflow(shared), id } : defaultWorkflow(key, agent))
   const own = new Set(member.overrides ?? [])
   const { prefs, worktree, workspaceGuards: _, ...rest } = t
   return {

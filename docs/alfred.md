@@ -108,7 +108,7 @@ written to `notes/.log.jsonl` with who made it.
 | `wherdr alfred notes list [--scope all\|<tab>]` | the notes (id, title, scope, dates) and the linked files |
 | `wherdr alfred notes show <id\|path>` | one note, or one linked file |
 | `wherdr alfred notes add "<title>" [--scope all\|<tab>] < lines.md` | adds a note: at most 12 content lines and 1500 characters (blank lines, `---` separators and `#` to `####` headings do not count toward the 12), checkboxes (`- [ ]`) and links allowed; scope `all` (every tab, the default) or one home tab (a tab group or a machine shown as its own tab), by name |
-| `wherdr alfred notes edit <id> [--title "<title>"] [--scope all\|<tab>] < lines.md` | changes a note; new lines on stdin replace its own, empty stdin keeps them |
+| `wherdr alfred notes edit <id> [--title "<title>"] [--scope all\|<tab>] [--if-updated <iso>] < lines.md` | changes a note; new lines on stdin replace its own, empty stdin keeps them; `--if-updated` refuses the change if the note was updated since that date |
 | `wherdr alfred notes remove <id>` | removes a note |
 | `wherdr alfred notes file put <folder/name.md> < file.md` | writes a linked file under a folder of the notes, for anything too long for a note |
 | `wherdr alfred notes file remove <folder/name.md>` | removes a linked file |
@@ -118,7 +118,7 @@ opens its sheet), and `[[label|icon|colour|link]]` a badge of the agent's own, s
 `[[Waiting|clock|amber]]` or `[[Plan|file||plans/x.md]]`: an icon from a short list (flag,
 clock, calendar, alert, info, check, x, pause, star, bug, lightbulb, rocket, eye, lock, link,
 file, branch, pr, server, bell), a project palette colour (violet, blue, teal, green, amber,
-orange, red, pink), an optional link; an empty field is skipped. Anywhere else the text stays
+orange, red, pink, cyan, lime, indigo, magenta), an optional link; an empty field is skipped. Anywhere else the text stays
 as written. You read them in the [Notes panel](home.md#notes).
 
 A note links to another note (`[Plan](other-note.md)`), a linked file

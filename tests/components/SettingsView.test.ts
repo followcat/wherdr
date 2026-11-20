@@ -79,7 +79,7 @@ it('shows the same reference component in Settings and the shortcut sheet', asyn
   try {
     expect(w.getComponent(ShortcutsReference).isVisible()).toBe(true)
     const rows = w.getComponent(ShortcutsReference).findAll('.shortcut-row')
-    expect(rows).toHaveLength(21)
+    expect(rows).toHaveLength(24)
     // The hardware Alt+←/→ tab steps are supported v3 rows, not filtered v2-only.
     const prevTab = rows.find(r => r.text().includes('Previous tab of this space'))!
     expect(prevTab.findAll('kbd').map(k => k.text())).toEqual(['Alt', '←'])

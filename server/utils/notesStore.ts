@@ -13,7 +13,7 @@ import type { Project } from '../../shared/pm/project'
 import type { MachineInfo } from '../../shared/types'
 import { DATA_DIR } from './env'
 import { HerdrError } from './herdr'
-import { readSettings } from './settings'
+import { loadSettings, readSettings } from './settings'
 
 // One change at a time per notes folder: two agents writing at once never
 // lose one of their changes.
@@ -37,10 +37,11 @@ export function notesStore(folder = path.join(DATA_DIR, 'notes')) {
     const full = at(rel), tmp = `${full}.${randomUUID()}.tmp`
     await fs.mkdir(path.dirname(full), { recursive: true })
     await fs.writeFile(tmp, text)
-    if (!fresh) return fs.rename(tmp, full).then(() => true)
-    try { await fs.link(tmp, full); return true }
-    catch (e) { if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false; throw e }
-    finally { await fs.rm(tmp, { force: true }) }
+    try {
+      if (!fresh) { await fs.rename(tmp, full); return true }
+      try { await fs.link(tmp, full); return true }
+      catch (e) { if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false; throw e }
+    } finally { await fs.rm(tmp, { force: true }) }
   }
   const exists = (rel: string) => fs.access(at(rel)).then(() => true, () => false)
   const log = async (by: string, action: string, what: string) => {
@@ -80,10 +81,14 @@ export function notesStore(folder = path.join(DATA_DIR, 'notes')) {
         return note
       }
     }),
-    edit: (id: string, change: Partial<Pick<Note, 'title' | 'scope' | 'body'>>, by: string) => serial(dir, async (): Promise<Note> => {
+    // ifUpdated: refused unless the note is still the one updated then.
+    edit: (id: string, change: Partial<Pick<Note, 'title' | 'scope' | 'body'>>, by: string, ifUpdated?: string) => serial(dir, async (): Promise<Note> => {
       const old = await store.get(id)
       if (!old) throw new HerdrError('not_found', `No note ${id}`)
-      const note = { ...old, ...change, updated: new Date().toISOString() }
+      if (ifUpdated && Date.parse(old.updated) !== Date.parse(ifUpdated)) throw new HerdrError('conflict', `Note ${id} changed since (updated ${old.updated}): show it again, then edit`)
+      // Always later than the stamp it replaces, even within the same millisecond:
+      // an equal stamp would let a stale --if-updated edit through.
+      const note = { ...old, ...change, updated: new Date(Math.max(Date.now(), Date.parse(old.updated) + 1)).toISOString() }
       await write(`${id}.md`, noteText(note))
       await log(by, 'edit', id)
       return note
@@ -116,8 +121,10 @@ export interface NotesWriter { by: string, project?: Pick<Project, 'key' | 'mach
 // (the bar's items the user has not taken off it).
 // The home tabs (tab groups, machines shown as their own tab), in the bar's
 // order: what a note's scope and Alfred's brief name.
-export async function homeTabs(settingsFile?: string, machines: readonly MachineInfo[] = []) {
-  const s = await readSettings(settingsFile)
+// `read`: readSettings for display; notes commands use loadSettings, which
+// refuses an unreadable file rather than resolve scopes on the defaults.
+export async function homeTabs(settingsFile?: string, machines: readonly MachineInfo[] = [], read = readSettings) {
+  const s = await read(settingsFile)
   const groups = readMachineGroups(s.machineGroups ?? null)
   const bases = [...new Set(machines.map(m => m.baseKey ?? m.key))]
   const label = (key: string) => machines.find(m => m.key === key)?.label || key || 'this machine'
@@ -127,7 +134,7 @@ export async function homeTabs(settingsFile?: string, machines: readonly Machine
 }
 
 export async function runNotes(store: NotesStore, cmd: NotesCommand, input: unknown, who: NotesWriter, settingsFile?: string, machines: readonly MachineInfo[] = []) {
-  const { s, groups, label, tabs } = await homeTabs(settingsFile, machines)
+  const { s, groups, label, tabs } = await homeTabs(settingsFile, machines, loadSettings)
   const name = (scope: string) => scopeName(scope, tabs, label)
   const scopeOf = (raw: string) => {
     const r = resolveScope(raw, tabs)
@@ -181,7 +188,7 @@ export async function runNotes(store: NotesStore, cmd: NotesCommand, input: unkn
       const given = String(input ?? '').trim() ? await lines() : undefined
       const change = { ...(cmd.title ? { title: cmd.title } : {}), ...(cmd.scope ? { scope: scopeOf(cmd.scope) } : {}), ...(given ? { body: given.body } : {}) }
       if (!Object.keys(change).length) throw new HerdrError('bad_input', 'Nothing to change: give --title, --scope or new lines on stdin')
-      return { edited: shown(await store.edit(cmd.id, change, who.by)), ...warn(given?.missing ?? []) }
+      return { edited: shown(await store.edit(cmd.id, change, who.by, cmd.ifUpdated)), ...warn(given?.missing ?? []) }
     }
     case 'remove': await store.remove(cmd.id, who.by); return { removed: cmd.id }
     case 'file put': {

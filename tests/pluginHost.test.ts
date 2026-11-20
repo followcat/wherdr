@@ -128,6 +128,19 @@ describe('plugin host', () => {
     expect(h.rows()[0]!.status).toBe('off')
   })
 
+  it('gives a plugin that failed a new try once an update changed its commit', async () => {
+    let commit = 'a'
+    const s = setup({ p: () => { if (commit === 'a') throw new Error('boom') } })
+    const h = createPluginHost({ ...s.deps, list: async () => ({ plugins: [{ ...info('p'), source: { repo: 'me/p', ref: '', commit } }], enabled: true }) })
+    await h.init()
+    expect(h.rows()[0]).toMatchObject({ status: 'failed', error: 'boom' })
+    await h.refresh()
+    expect(h.rows()[0]!.status).toBe('failed')
+    commit = 'b'
+    await h.refresh()
+    expect(h.rows()[0]).toMatchObject({ status: 'running', error: '' })
+  })
+
   it('survives a failing manifest list', async () => {
     const s = setup({})
     const h = createPluginHost({ ...({ list: async () => { throw new Error('offline') } } as Partial<HostDeps>), insertDraft() {}, currentAgent: () => null, subscribeNavigate: () => () => {}, prefs: s.saved, savePrefs() {}, changed() {}, load: async () => ({}) } as HostDeps)

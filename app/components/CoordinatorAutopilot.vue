@@ -1,11 +1,12 @@
 <script setup lang="ts">
-// A coordinator's autopilot: its switch, whether it is active or asleep
-// (nothing to do: its scheduled wakes are skipped), today's counters against
-// the limits, the day's timeline (AutopilotTimeline) and "run now", then its
-// settings, saved by the user only: goal, when it wakes, limits, hours.
+// A coordinator's autopilot: its switch and whether it is active or asleep
+// (nothing to do: its scheduled wakes are skipped), above the tabs; today's
+// counters against the limits, the day's timeline (AutopilotTimeline) and
+// "wake now", then its settings, saved by the user only: goal, when it wakes,
+// limits, hours.
 // In the coordinator window and the project sheet's Autopilot tab. Two tabs:
 // Settings, first and the default, whose Save bar is pinned at the bottom of the
-// scroll, and Activity (switch, run now, timeline, wake log). The tab is
+// scroll, and Activity (counters, wake now, timeline, wake log). The tab is
 // remembered per viewer; a link to `project.autopilot` opens Settings. Leaving Settings, or closing the window
 // (`leave`, CoordinatorButton), with unsaved changes asks once.
 // Slots: `activity` and `settings`, the coordinator window's parts at the top of each tab.
@@ -145,6 +146,10 @@ const counters = computed(() => props.c.limits
 
 <template>
   <section class="ap" :data-tab="tab" data-testid="coordinator-autopilot">
+    <div class="ap-head">
+      <USwitch :model-value="ap.on" size="lg" :disabled="busy" :aria-label="tl('Autopilot', 'Autopilote')" data-testid="autopilot-on" @update:model-value="setOn" />
+      <span class="mono-label" data-testid="autopilot-state" :data-asleep="ap.on && c.asleep ? '' : undefined">{{ tl('Autopilot', 'Autopilote') }} · {{ stateText }}</span>
+    </div>
     <div class="segmented ap-tabs" role="tablist" :style="{ '--segment-count': TABS.length }">
       <button v-for="[k, label] in TABS" :id="`ap-tab-${k}-${c.project}`" :key="k" type="button" role="tab" :class="{ on: tab === k }" :aria-selected="tab === k" :data-testid="`autopilot-tab-${k}`" @click="pickTab(k)">
         <span>{{ tl(label) }}</span>
@@ -155,11 +160,10 @@ const counters = computed(() => props.c.limits
     <div v-show="tab === 'activity'" class="ap-panel" role="tabpanel" :aria-labelledby="`ap-tab-activity-${c.project}`" data-testid="autopilot-activity">
     <slot name="activity" />
     <div class="ap-head">
-      <USwitch :model-value="ap.on" size="lg" :disabled="busy" :aria-label="tl('Autopilot', 'Autopilote')" data-testid="autopilot-on" @update:model-value="setOn" />
-      <span class="mono-label" data-testid="autopilot-state" :data-asleep="ap.on && c.asleep ? '' : undefined">{{ tl('Autopilot', 'Autopilote') }} · {{ stateText }}</span>
       <span class="ap-count mono-label" data-testid="autopilot-counters">{{ counters }}</span>
-      <UButton type="button" color="neutral" variant="outline" size="lg" icon="i-lucide-play" :disabled="busy || !c.terminal" data-testid="autopilot-run-now" @click="runNow">{{ tl('Run now', 'Lancer maintenant') }}</UButton>
+      <UButton type="button" color="neutral" variant="outline" size="lg" icon="i-lucide-play" :disabled="busy || !c.terminal" data-testid="autopilot-run-now" @click="runNow">{{ tl('Wake now') }}</UButton>
     </div>
+    <p class="muted" data-testid="autopilot-run-now-hint">{{ tl('Wakes the coordinator now with its goal, without waiting for a timed wake.') }}</p>
     <p v-if="!c.terminal" class="muted">{{ tl('Start the coordinator to wake it.', 'Lance le coordinateur pour le réveiller.') }}</p>
     <p v-else-if="sent" class="muted" role="status">{{ tl('Queued: it goes as soon as the coordinator is idle.', 'En file : il part dès que le coordinateur est inactif.') }}</p>
     <AutopilotTimeline :c="c" />
@@ -173,9 +177,10 @@ const counters = computed(() => props.c.limits
         <USelect :id="`ap-agent-${c.project}`" v-model="program" :items="agentItems" size="lg" class="w-full" data-testid="coordinator-agent" />
       </div>
       <fieldset class="ap-group">
-        <legend class="mono-label">{{ tl('Goal', 'Objectif') }}</legend>
+        <legend class="mono-label">{{ tl('Goal (optional)') }}</legend>
         <UTextarea :id="`ap-goal-${c.project}`" v-model="form.goal" :rows="2" autoresize :maxrows="6" size="xl" class="w-full" :maxlength="2000" :aria-label="tl('Goal')" data-testid="autopilot-goal"
           :placeholder="tl('What it works toward, e.g. Ship the small fixes first', 'Ce vers quoi il travaille, ex. Les petites corrections d’abord')" />
+        <p class="muted" data-testid="autopilot-goal-hint">{{ tl('Empty: its wakes say no goal is set, and it works from the board.') }}</p>
         <p v-if="fieldError('goal')" class="error" role="alert" data-testid="autopilot-error-goal">{{ fieldError('goal') }}</p>
       </fieldset>
 
@@ -188,6 +193,8 @@ const counters = computed(() => props.c.limits
             <p v-if="fieldError('every')" class="error" role="alert" data-testid="autopilot-error-every">{{ fieldError('every') }}</p>
           </div>
         </div>
+        <p class="muted" data-testid="autopilot-every-hint">{{ tl('Empty: no timed wake, only the events below. A timed wake brings the goal and a health summary; it is skipped while nothing is new (at least one every 12 h), unless Look for new work is on.') }}</p>
+        <p v-if="!form.every.trim() || form.every.trim() === 'off'" class="muted" data-testid="autopilot-every-off">{{ tl('Every off: stalls then show only through engine wakes.') }}</p>
         <span :id="`ap-routines-${c.project}`" class="field-label">{{ tl('Routines') }}</span>
         <div class="ap-routines" role="group" :aria-labelledby="`ap-routines-${c.project}`" data-testid="autopilot-routines">
           <AutopilotRoutine v-for="(x, i) in form.routines" :key="x.id" v-model="form.routines[i]!" :open="opened === x.id" @remove="form.routines = form.routines.filter(y => y.id !== x.id)" />
@@ -195,8 +202,6 @@ const counters = computed(() => props.c.limits
         <UButton type="button" color="neutral" variant="outline" size="lg" icon="i-lucide-plus" class="ap-add" :disabled="form.routines.length >= MAX_ROUTINES" data-testid="autopilot-add-routine" @click="addRoutine">{{ tl('Add routine') }}</UButton>
         <p v-if="fieldError('routines')" class="error" role="alert" data-testid="autopilot-error-routines">{{ fieldError('routines') }}</p>
         <p class="muted" data-testid="autopilot-routines-hint">{{ tl('A routine wakes the coordinator at its time with its own goal; an automation adds a task.') }}</p>
-        <p class="muted" data-testid="autopilot-every-hint">{{ tl('Each wake brings the goal and a health summary; skipped when nothing is new.') }}</p>
-        <p v-if="!form.every.trim() || form.every.trim() === 'off'" class="muted" data-testid="autopilot-every-off">{{ tl('Every off: stalls then show only through engine wakes.') }}</p>
         <span :id="`ap-events-${c.project}`" class="field-label">{{ tl('Also on', 'Aussi quand') }}</span>
         <div class="ap-events" role="group" :aria-labelledby="`ap-events-${c.project}`">
           <USwitch v-for="e in EVENT_ORDER" :key="e" :model-value="form.events.includes(e)" size="lg" :label="tl(EVENT_LINE[e][0])" :description="tl(EVENT_LINE[e][1])"

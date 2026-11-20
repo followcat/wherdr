@@ -10,6 +10,11 @@ trusted private network:
   other devices only through a private network such as Tailscale.
 - Anyone who can reach it without a passkey registered can control your agents. Enable the
   **passkey lock** (Settings → Security).
+- Without a passkey, this applies to every program on the machine too: a local `POST /api/prompt`
+  (from an agent, for example) is taken as your own turn.
+- Agents run as your user and can read what you can, including Alfred's CLI token
+  (`DATA_DIR/alfred/.alfred-token`, which runs `wherdr alfred` commands). The file browser never
+  shows it (`DATA_DIR` is protected), but a shell can.
 
 Reports showing that these assumptions can be bypassed are very welcome, for example: access
 without an unlocked session while the lock is enabled, cross-site requests or WebSocket

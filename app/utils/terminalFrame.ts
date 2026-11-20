@@ -21,7 +21,8 @@ export interface TerminalFrame {
   bytes: Uint8Array
 }
 
-export function writeTerminalFrame(term: FrameTerminal, frame: TerminalFrame, hooks: { resized?: () => void, written?: () => void } = {}) {
+// `reset` runs right after term.reset(), in stream order.
+export function writeTerminalFrame(term: FrameTerminal, frame: TerminalFrame, hooks: { resized?: () => void, reset?: () => void, written?: () => void } = {}) {
   const { width, height } = frame
   if ((width && height) || frame.reset) {
     term.write('', () => {
@@ -29,7 +30,7 @@ export function writeTerminalFrame(term: FrameTerminal, frame: TerminalFrame, ho
         term.resize(width, height)
         hooks.resized?.()
       }
-      if (frame.reset) term.reset()
+      if (frame.reset) { term.reset(); hooks.reset?.() }
     })
   }
   term.write(frame.bytes, hooks.written)

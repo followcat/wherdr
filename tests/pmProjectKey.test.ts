@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createPmStore } from '../server/utils/pmStore'
-import { renamed, showIds, shownTaskId, storedTaskId } from '../shared/pm/projectKey'
+import { PROJECT_COLORS, defaultColor, renamed, showIds, shownTaskId, storedTaskId } from '../shared/pm/projectKey'
 
 let dir = ''
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-key-')) })
@@ -13,6 +13,16 @@ const okFolder = async (_m: string, p: string) => p
 const project = (key: string) => ({ key, name: `${key} app`, machine: '', path: `/src/${key}` })
 
 describe('project keys', () => {
+  it('gives a new member the color its workspace uses least, a top-level project the first free one', () => {
+    expect(PROJECT_COLORS).toHaveLength(12)
+    const all = PROJECT_COLORS.map(color => ({ color })) // every color taken by top-level projects
+    const ws = [...all, { color: 'violet', workspace: 'WS' }, { color: 'blue', workspace: 'WS' }, { color: 'violet', workspace: 'OTHER' }]
+    expect(defaultColor(ws, 'WS')).toBe('teal') // least used in WS, ties in palette order
+    const full = [...ws, ...PROJECT_COLORS.map(color => ({ color, workspace: 'WS' })), { color: 'teal', workspace: 'WS' }]
+    expect(defaultColor(full, 'WS')).toBe('green') // violet, blue and teal twice, the rest once
+    expect(defaultColor([{ color: 'violet' }, { color: 'teal' }])).toBe('blue') // top-level: first free
+    expect(defaultColor(all)).toBe('violet') // none free: in turn
+  })
   it('maps a task id between its stored and its shown form', () => {
     const projects = [{ key: 'WHR', label: 'WD', aliases: ['OLD'] }, { key: 'PDS' }]
     expect(shownTaskId(projects, 'WHR-52')).toBe('WD-52')

@@ -39,7 +39,7 @@ import { EXAMPLES } from '../../shared/pm/examples'
 import { afterRefusal, subTasks } from '../../shared/pm/feature'
 import { parseRefs } from '../../shared/pm/planRefs'
 import { eventOf, stateChanges, type TaskStateName } from '../../shared/pm/onState'
-import { SHARED_FIELDS, backToWorkspace, effectiveProject, followShared, isSharedField, cleanWorkspaceFields, effectiveProjects, liftShared, needsSink, sinkShared, isWorkspace, memberOverrides, ownWorkflow, workflowOverrides, effectiveWorkflow, workspaceErrors, workspaceOf, workspaceTaskError, removeRefusal } from '../../shared/pm/workspace'
+import { SHARED_FIELDS, backToWorkspace, effectiveProject, followShared, isSharedField, cleanWorkspaceFields, effectiveProjects, liftShared, needsSink, sinkShared, isWorkspace, memberOverrides, ownWorkflow, workflowOverrides, effectiveWorkflow, sharedSetup, workspaceErrors, workspaceOf, workspaceTaskError, removeRefusal } from '../../shared/pm/workspace'
 import type { MapFile } from '../../shared/pm/workspaceMap'
 import { DATA_DIR } from './env'
 import { writeFileAtomic, writeJsonAtomic } from './atomicWrite'
@@ -363,7 +363,11 @@ export function createPmStore(dir = path.join(DATA_DIR, 'projects')) {
     workflow: async (key: string) => {
       if (!KEY_RE.test(key)) return null
       const list = await projects(), p = list.find(x => x.key === key), ws = p && workspaceOf(p, list)
-      return effectiveWorkflow(key, await readJson<Template>(workflowFile(key)), p, ws, ws ? await readJson<Template>(workflowFile(ws.key)) : null)
+      const saved = await readJson<Template>(workflowFile(key)), shared = ws ? await readJson<Template>(workflowFile(ws.key)) : null
+      // With no accepted workflow (its own or its workspace's), the tasks run on the coordinator's own
+      // agent: a member's is its workspace's.
+      const c = saved || shared ? null : await readJson<CoordinatorRecord>(path.join(files.coordinators, `${ws?.key ?? key}.json`))
+      return effectiveWorkflow(key, saved, p, ws, shared, c?.ran ?? c?.agent)
     },
     savedWorkflow: (key: string) => (KEY_RE.test(key) ? readJson<Template>(workflowFile(key)) : Promise.resolve(null)),
     workflowLog: (key: string) => (KEY_RE.test(key) ? readLog(workflowLogFile(key)) : Promise.resolve([])),
@@ -408,11 +412,12 @@ export function createPmStore(dir = path.join(DATA_DIR, 'projects')) {
     // A change made on the task as it is on disk, in one write (with a log line
     // when given): a caller's older copy never undoes what another wrote since
     // (an engine action that ended meanwhile). null: no such task, or the
-    // change gave null (nothing to write on the task as it is now).
-    updateTask: (id: string, change: (t: Task) => Task | null, log?: { by: string, text: string }) => write(async () => {
+    // change gave null (nothing to write on the task as it is now). all: every
+    // task as it is now, for a check that must hold at the write (a cycle in after).
+    updateTask: (id: string, change: (t: Task, all: () => Promise<Task[]>) => Task | null | Promise<Task | null>, log?: { by: string, text: string }) => write(async () => {
       const task = TASK_ID_RE.test(id) ? await readJson<Task>(path.join(files.tasks, `${id}.json`)) : null
       if (!task) return null
-      const next = change(task)
+      const next = await change(task, tasks)
       if (!next) return null
       return writeTask(log ? { ...next, log: [...(next.log ?? []), { at: Date.now(), by: log.by, text: showIds(await readProjects(), log.text) }].slice(-200) } : next)
     }),
@@ -528,9 +533,16 @@ export function createPmStore(dir = path.join(DATA_DIR, 'projects')) {
         const mergeAfter = [t.mergeAfter, ...(raws[i]!.mergeAfterIndex ?? []).map(j => added[j]!.id)].filter(Boolean).join(',')
         if (mergeAfter) added[i] = { ...t, mergeAfter, log: [...t.log!, { at, by, text: `merges after ${mergeAfter}` }] }
       }
-      for (const t of added) await writeJson(path.join(files.tasks, `${t.id}.json`), t)
       const split = { ...feature, plan: { order, ...(file ? { file } : {}) }, log: [...(feature.log ?? []), { at, by, text: `split into ${added.map(t => t.id).join(', ')}: ${order}${file ? ` (plan file ${file})` : ''}` }].slice(-200) }
-      await writeJson(path.join(files.tasks, `${id}.json`), split)
+      // A write that fails removes the sub-tasks written before it.
+      const written: string[] = []
+      try {
+        for (const t of added) { const f = path.join(files.tasks, `${t.id}.json`); await writeJson(f, t); written.push(f) }
+        await writeJson(path.join(files.tasks, `${id}.json`), split)
+      } catch (e) {
+        await Promise.all(written.map(f => fs.rm(f, { force: true }).catch(() => {})))
+        throw e
+      }
       return { feature: split, tasks: added }
     }),
 
@@ -551,7 +563,7 @@ export function createPmStore(dir = path.join(DATA_DIR, 'projects')) {
       // A removed project's workflow and log under the same key are not the new one's.
       await Promise.all([workflowFile(fields.key), workflowLogFile(fields.key)].map(f => fs.rm(f, { force: true })))
       let added: Project = ws.fields.workspace
-        ? { key: fields.key, name: fields.name, color: fields.color ?? defaultColor(list), machine: fields.machine, path: folder, workspace: ws.fields.workspace, addedAt: Date.now() }
+        ? { key: fields.key, name: fields.name, color: fields.color ?? defaultColor(list, ws.fields.workspace), machine: fields.machine, path: folder, workspace: ws.fields.workspace, addedAt: Date.now() }
         : { ...fields, ...ws.fields, color: fields.color ?? defaultColor(list), path: folder, ...(git && !ws.fields.kind ? {} : { git: false as const }), addedAt: Date.now() }
       if (source) added = { ...added, from: (await copyTemplate(added.key, source, 'user')).from }
       await saveProjects([...list, added])
@@ -606,9 +618,11 @@ export function createPmStore(dir = path.join(DATA_DIR, 'projects')) {
       const { list, i } = await findProject(key)
       const p = list[i]!, ws = workspaceOf(p, list)
       const own = new Set(p.overrides ?? []), next = { ...p } as Project
+      // The workspace's value as its members get it: its shared field, else its workflow's.
+      const theirs = sharedSetup(ws, ws ? await readJson<Template>(workflowFile(ws.key)) : null)
       for (const f of ['prefs', 'worktree'] as const) {
         if (!(f in setup)) continue
-        const v = setup[f], same = v === undefined || !Object.keys(v).length || JSON.stringify(v) === JSON.stringify(ws?.shared?.[f])
+        const v = setup[f], same = v === undefined || !Object.keys(v).length || JSON.stringify(v) === JSON.stringify(theirs[f])
         if (same) { own.delete(f); delete next[f] }
         else { own.add(f); Object.assign(next, { [f]: v }) }
       }

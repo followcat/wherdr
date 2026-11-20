@@ -43,12 +43,16 @@ and the coordinator's conversation opens. Alfred adds one too:
 ## The workspace's coordinator
 
 The workspace's coordinator handles its members as its own projects: its
-token reads and acts on each member, with no setting to change, at the *Act*
-level of [Other projects this coordinator may act on](project-management.md#coordinators-on-other-projects)
-(list, show, read, plan, adding, starting, editing and ordering tasks, tell…;
-commands that name a project take `--project <member>`). A member's guards,
-merges, settings and workflow stay with you. Its instructions (`AGENTS.md`)
-list the members.
+token runs every coordinator command on each member, with no setting to change,
+under the same rules as on the workspace itself (a turn of the user, the
+autopilot, the guards). Beyond list, show, adding, starting and editing tasks or
+tell, it ends a step it holds on a member's task (`step done`, `step wait`,
+`step back`), decides after N send-backs (`task decide`), merges a member's contributor PR (`pr merge … --project <member>`),
+shows things (`ui action`, `ui show`) and proposes automations; commands that
+name a project take `--project <member>`. Unlike [Other projects this coordinator may act on](project-management.md#coordinators-on-other-projects),
+nothing stays with another coordinator: a member has none. A member's settings
+and its **own** workflow stay with you (`template edit` takes no `--project`).
+Its instructions (`AGENTS.md`) list the members.
 
 ### What the workspace's coordinator may change
 
@@ -70,7 +74,9 @@ A member has **no coordinator**: none is started for it, and none shows in the
 sidebar: the workspace's **row** does, under its tab group, with its
 coordinator's state, the tasks working and waiting for you (its members' and
 its own features'), and its members' key badges, a small orange square on one
-with a task waiting ([Coordinators](home.md#coordinators)). A tap on the badges
+with a task waiting. A member's key and task ids show everywhere (Home cards,
+the sidebar, the board, the task sheet, the agent header, notes) as a badge
+with a **dashed border**; a workspace's or a project's own is solid ([Coordinators](home.md#coordinators)). A tap on the badges
 lists the members, each with its own counts. **n waiting for you** is a link:
 one task opens its sheet; several open the workspace's board, or on a member's
 line *Tasks to review* filtered to that member. Every wake about a member's task goes to the workspace's coordinator,
@@ -185,7 +191,9 @@ needs it, with no question to you:
   the root's own path) adopts the root's own repository.
 
 The new member gets a key and a name proposed from its folder (as the New sheet
-does: `payroll-api` → `PA`) and the next free color, takes every shared setting
+does: `payroll-api` → `PA`) and the color its workspace's members use least
+among the 12 of the palette (ties: palette order; a project outside a
+workspace still takes the first color no project has), takes every shared setting
 and the workspace's workflow, and its repository's visibility (public or
 private) is checked at once. Its line on the [map](#the-workspace-map), when it
 has one, names it. Each adoption is written to the workspace's log and listed

@@ -141,11 +141,14 @@ async function act(deps: ActDeps, id: unknown, cancel: boolean, choice?: CardCho
     return save(deps.store, { ...card, state: 'done', outcome: { text: 'Applied by you', at: Date.now() } })
   }
   if (card.theme) {
-    const list = readCustomThemes((await readSettings(deps.settingsFile)).customThemes ?? null)
-    if (list.length >= CUSTOM_THEMES_MAX) throw new HerdrError('refused', `At most ${CUSTOM_THEMES_MAX} custom themes: delete one in Settings › Appearance first`)
     const th = readThemeFile(card.theme.file, newCustomId())
     if (typeof th === 'string') throw new HerdrError('bad_input', th)
-    await patchSettings({ customThemes: writeCustomThemes([...list, th]), theme: th.id }, { file: deps.settingsFile })
+    // Read in the settings queue: a theme saved meanwhile is kept.
+    await patchSettings((now) => {
+      const list = readCustomThemes(now.customThemes ?? null)
+      if (list.length >= CUSTOM_THEMES_MAX) throw new HerdrError('refused', `At most ${CUSTOM_THEMES_MAX} custom themes: delete one in Settings › Appearance first`)
+      return { customThemes: writeCustomThemes([...list, th]), theme: th.id }
+    }, { file: deps.settingsFile })
     return save(deps.store, { ...card, state: 'done', outcome: { text: 'Applied by you', at: Date.now() } })
   }
   const c = card.change

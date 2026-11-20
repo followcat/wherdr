@@ -4,8 +4,9 @@
 // its kept conversation ran with another agent (resuming it makes that agent the default),
 // and a project coordinator's autopilot (Alfred has none), under its name and
 // what it is. Not its proposed workflow change: a card in its conversation.
-// On the board (`open`), also the button that opens or starts it; a stopped
-// conversation (its terminal ended) can be resumed instead.
+// On the board (`open`), also the buttons that start it, only while nothing else
+// can: no Open (its row and header open a running one), and a stopped one whose row
+// is in the sidebar resumes from there (CoordinatorsSection).
 // A project coordinator's window has the autopilot's tabs: its agent in Settings
 // (saved with them, CoordinatorAutopilot), opening its conversation in Activity. Alfred's (Bare): its agent, then the rest.
 import type { FunctionalComponent } from 'vue'
@@ -43,7 +44,8 @@ const resume = () => {
   if (props.c.main && props.c.ran) void act(async () => { await api('/api/pm/coordinator-agent', { project: props.c.project, program: props.c.ran!.program }); await loadAlfred() })
   if (props.open && pane.value) navigateTo(panePath(pane.value.id))
 }
-const openIt = () => (pane.value ? navigateTo(panePath(pane.value.id)) : fresh())
+// No row for it in the sidebar (never started, or its project off the bar): started here.
+const startHere = computed(() => !pane.value && !(stopped.value && projectOnBar(props.c.project)))
 
 const Bare: FunctionalComponent<{ c: CoordinatorView }> = (_, { slots }) => [slots.settings?.(), slots.activity?.()]
 Bare.props = ['c', 'withAgent']
@@ -66,12 +68,12 @@ defineExpose({ leave: () => (props.c.main || !auto.value ? Promise.resolve(true)
       </template>
       <template #activity>
         <PartHead v-if="!c.main" part="autopilot" :project="c.project" />
-        <div v-if="open && !other" class="coord-head">
+        <div v-if="open && !other && startHere" class="coord-head">
           <UButton v-if="stopped" color="primary" size="lg" :loading="busy" data-testid="coordinator-resume-stopped" @click="resumeStopped">
             {{ tl('Resume the conversation') }}
           </UButton>
-          <UButton :color="stopped ? 'neutral' : 'primary'" :variant="stopped ? 'outline' : 'solid'" size="lg" :loading="busy" data-testid="coordinator-open" @click="openIt">
-            {{ pane ? tl('Open') : stopped ? tl('New conversation') : tl(`Start with ${agentName(agent)}`) }}
+          <UButton :color="stopped ? 'neutral' : 'primary'" :variant="stopped ? 'outline' : 'solid'" size="lg" :loading="busy" data-testid="coordinator-open" @click="fresh">
+            {{ stopped ? tl('New conversation') : tl(`Start with ${agentName(agent)}`) }}
           </UButton>
         </div>
         <div v-if="other && c.ran" class="term-banner coord-warn" data-testid="coordinator-other-agent">

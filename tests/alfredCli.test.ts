@@ -249,6 +249,11 @@ describe('runAlfredCommand', () => {
     const write = execs.find(e => e.input)!
     expect(write.argv.slice(4)).toEqual(['/home/user/.wherdr/pm/coordinators/WEB/memory.md', expect.stringMatching(/^# Memory/)])
     expect(Buffer.from(write.input!, 'base64').toString()).toBe('- Goal from v2\'s autopilot: Ship it\n- Squash merges only\n')
+     // A member has no coordinator of its own: its workspace's gets the note.
+    const ok = async (_m: string, p: string) => p.replace(/^~/, '/home/user')
+    await store.addProject({ key: 'ws', name: 'Work', machine: '', path: '~/work', kind: 'workspace' }, ok)
+    await store.addProject({ key: 'api', machine: '', path: '~/work/api', workspace: 'ws' }, ok)
+    expect((await runAlfredCommand(withCall(), token, { argv: ['project', 'memory', 'API'], input: note })).change[0]).toBe('add to the end of the memory.md of WS\'s coordinator, on this machine:')
   })
 
   it('Alfred\'s wherdr script sends stdin with project memory (shown or applied) and theme propose', async () => {

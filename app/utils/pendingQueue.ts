@@ -122,7 +122,10 @@ export function pendingQueue(o: {
     const inAgentQueue = held(q)
     // Sent from here and still in Claude's field: the send left it there (a
     // paste Claude did not submit). Waiting there, whatever the agent's state.
-    const inInput = !q.id.startsWith('cc-') && (!q.state || q.state === 'held') && fieldHolds(o.input, q.text, false, true)
+    // Refused by the server ('failed', not_submitted) but there all the same:
+    // one bubble with the field's Send now / Clear, not "Not sent" + Retry
+    // (refused while the field holds it) next to the field's own card.
+    const inInput = !q.id.startsWith('cc-') && q.state !== 'sending' && fieldHolds(o.input, q.text, false, true)
     return {
       id: q.id,
       raw: q.text,

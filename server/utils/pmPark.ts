@@ -2,7 +2,8 @@
 // parked tasks whose wait is over taken up again in the same conversation.
 // The rules are in shared/pm/park.ts.
 import { BLOCKED_ON_CMD, parkOf, parseBlockedOn, resumeText, roomResumeText } from '../../shared/pm/park'
-import type { Run } from '../../shared/pm/run'
+import type { Run, Task } from '../../shared/pm/run'
+import type { Project } from '../../shared/pm/project'
 import { boardOrder } from '../../shared/pm/boardOrder'
 import { showIds, shownTaskId } from '../../shared/pm/projectKey'
 import { roomWaits } from './pmPlace'
@@ -64,7 +65,9 @@ export async function resumeParked(deps: PmLaunchDeps, now = Date.now()) {
     if (failed && now - failed.at < ROOM_RETRY_MS) { waits.set(p.on, wait); continue }
     const worker = (await store.runs()).filter(r => r.task === task.id && r.role === 'worker').sort((a, b) => b.startedAt - a.startedAt)[0]
     const text = roomResumeText(p)
-    const t = await reviveWorker(deps, task.id, `there is room on ${p.room} again`, worker?.session ? undefined : text, undefined, ROOM_WHY, text)
+    // A throw (busy: the user's Resume now meanwhile) keeps the machine this pass; the others go on.
+    const t = await reviveWorker(deps, task.id, `there is room on ${p.room} again`, worker?.session ? undefined : text, undefined, ROOM_WHY, text).catch(() => 'threw' as const)
+    if (t === 'threw') { waits.set(p.on, wait); continue }
     if (t?.state === 'working') { roomFailed.delete(task.id); await store.saveTask({ ...(await store.task(task.id))!, parked: undefined }); continue }
     // No room yet (no task back): it keeps the machine for itself.
     if (!t) { waits.set(p.on, wait); continue }
@@ -85,17 +88,21 @@ export async function resumeParked(deps: PmLaunchDeps, now = Date.now()) {
   }
   roomWaits.clear()
   for (const [m, w] of waits) roomWaits.set(m, w)
-  for (const task of tasks.filter(t => going(t) && !t.parked!.room)) {
-    const text = resumeText(task, tasks, projects)
-    if (!text) continue
-    const worker = (await store.runs()).filter(r => r.task === task.id && r.role === 'worker').sort((a, b) => b.startedAt - a.startedAt)[0]
-    const why = `${task.parked!.on} is done, the parked task goes on`
-    if (worker?.terminal && worker.state !== 'ended') {
-      await deps.call('terminal.send', { terminal: worker.terminal, text: showIds(projects, text) }, 30000)
-      await store.logTask({ ...task, parked: undefined }, 'engine', why)
-      continue
-    }
-    const t = await reviveWorker(deps, task.id, why, worker?.session ? undefined : text, undefined, PARKED_WHY, text)
-    if (t?.state === 'working') await store.saveTask({ ...(await store.task(task.id))!, parked: undefined })
+  for (const task of tasks.filter(t => going(t) && !t.parked!.room)) await resumeOne(deps, task, tasks, projects).catch(() => {})
+}
+
+// One parked task whose wait is over (a throw leaves it parked for the next pass).
+async function resumeOne(deps: PmLaunchDeps, task: Task, tasks: Task[], projects: Project[]) {
+  const { store } = deps
+  const text = resumeText(task, tasks, projects)
+  if (!text) return
+  const worker = (await store.runs()).filter(r => r.task === task.id && r.role === 'worker').sort((a, b) => b.startedAt - a.startedAt)[0]
+  const why = `${task.parked!.on} is done, the parked task goes on`
+  if (worker?.terminal && worker.state !== 'ended') {
+    await deps.call('terminal.send', { terminal: worker.terminal, text: showIds(projects, text) }, 30000)
+    await store.logTask({ ...task, parked: undefined }, 'engine', why)
+    return
   }
+  const t = await reviveWorker(deps, task.id, why, worker?.session ? undefined : text, undefined, PARKED_WHY, text)
+  if (t?.state === 'working') await store.saveTask({ ...(await store.task(task.id))!, parked: undefined })
 }

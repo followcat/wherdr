@@ -64,6 +64,19 @@ describe('openCoreTerm', () => {
     expect(resizes(t.sent)).toEqual([[60, 30], [61, 30]])
   })
 
+  it('passes wheel reports to the program without taking control, and nothing else', async () => {
+    const t = setup({ watch: true })
+    await tick()
+    t.sess.onMessage(JSON.stringify({ type: 'terminal.resize', cols: 60, rows: 30 }))
+    t.sess.onMessage(JSON.stringify({ type: 'terminal.wheel', text: '\x1b[<64;5;9M\x1b[<64;5;9M' }))
+    t.sess.onMessage(JSON.stringify({ type: 'terminal.wheel', text: '\x1b[Ma%)' }))
+    t.sess.onMessage(JSON.stringify({ type: 'terminal.wheel', text: '\x1b[<64;5;9Mrm -rf ~\r' }))
+    const data = t.sent.filter(f => f.channel === 3 && f.kind === FRAME.DATA)
+    expect(data.map(f => f.payload.toString('latin1'))).toEqual(['\x1b[<64;5;9M\x1b[<64;5;9M', '\x1b[Ma%)'])
+    expect(resizes(t.sent)).toEqual([])
+    expect(t.out).not.toContainEqual({ type: 'terminal.control', on: true })
+  })
+
   it('fits the terminal to the screen on open, and gives control up when another viewer sets the size', async () => {
     const t = setup()
     await tick()

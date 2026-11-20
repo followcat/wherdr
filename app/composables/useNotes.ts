@@ -22,7 +22,8 @@ export const notesTab = computed(() => tabScope(machineBarPick.value, machineGro
 export const notesMachineName = (key: string) => machineName(key) || key || t('This machine')
 
 export const loadNotes = () => api<{ notes: Note[], files: string[] }>('/api/notes').then((r) => { notes.value = r.notes; noteFiles.value = r.files }, () => {})
-export const loadNoteFile = (path: string) => api<{ text: string | null }>(`/api/notes/file?path=${encodeURIComponent(path)}`).then(r => r.text, () => null)
+// null: no such file; undefined: not read (the network, the server), never "missing".
+export const loadNoteFile = (path: string) => api<{ text: string | null }>(`/api/notes/file?path=${encodeURIComponent(path)}`).then(r => r.text, () => undefined)
 // Open but out of sight: the panel was beside the conversation and the page
 // now shown has none (the board, a settings page). Back in the panel beside
 // the next conversation or Home; only an explicit open shows it as a sheet.

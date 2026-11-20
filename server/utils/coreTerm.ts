@@ -26,6 +26,8 @@ const WINDOW = 256 * 1024
 // Never more than one credit window in flight, plus the first paint.
 const MAX_OUTSTANDING = 8 * 1024 * 1024
 const KEY_RE = /^[a-z0-9+\-]{1,24}$/i
+// Mouse wheel reports (SGR or X10), see app/utils/terminalWheel.ts.
+const WHEEL_RE = /^(?:\x1B\[<6[45];\d{1,3};\d{1,3}M|\x1B\[M[`a][!-\xFF]{2})+$/
 
 interface CoreTermDeps {
   endpoint: string | undefined
@@ -91,10 +93,11 @@ export function openCoreTerm(ws: WsLike, url: URL, deps: CoreTermDeps): TermSess
     resize(want)
     announce()
   }
-  const input = (bytes: Buffer) => {
+  // A wheel is not typing: it leaves the terminal's size to whoever has it.
+  const input = (bytes: Buffer, take = true) => {
     const go = () => {
       if (!core || channel < 0 || !bytes.length) return
-      takeControl()
+      if (take) takeControl()
       core.send(channel, FRAME.DATA, bytes)
     }
     if (channel < 0) { if (early.length < 64) early.push(go) }
@@ -268,6 +271,9 @@ export function openCoreTerm(ws: WsLike, url: URL, deps: CoreTermDeps): TermSess
         case 'terminal.input':
           if (typeof m.text === 'string' && m.text.length <= 65536) input(Buffer.from(m.text, 'utf8'))
           else if (typeof m.bytes === 'string' && m.bytes.length <= 90000) input(Buffer.from(m.bytes, 'base64'))
+          break
+        case 'terminal.wheel':
+          if (typeof m.text === 'string' && m.text.length <= 8192 && WHEEL_RE.test(m.text)) input(Buffer.from(m.text, 'latin1'), false)
           break
         // A pasted file path: typed as text (xterm already brackets real pastes).
         case 'paste':

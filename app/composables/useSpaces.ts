@@ -5,6 +5,7 @@
 // and closing a tab or a space closes each of its terminals (/api/close).
 import type { Pane } from '#shared/types'
 import type { CloseKind } from '~/utils/closeFlow'
+import type { SplitDir } from '#shared/splitTree'
 import { leadPane } from '#shared/spaces'
 import { sameTabBody } from '#shared/coreTabMap'
 import { HERDR_AGENT_KINDS } from '#shared/launchableAgents'
@@ -29,6 +30,44 @@ async function quickTab(body: Record<string, unknown>) {
     navigateTo(panePath(r.pane_id))
   }
   catch (err) { toast((err as Error).message, true) }
+}
+// Split right / down: a shell like this pane's (same machine and folder) in the same
+// tab, placed in wherdr's split tree, then the tab view on it. "Split with agent…": the
+// New agent sheet with that machine and folder, placed to the right. None for a pane
+// whose folder is unknown; off offline.
+export const splitAgentPane = ref<Pane | null>(null)
+const splitOff = (p: Pane) => offlineView.value || (p.machine ? machineInfo(p.machine)?.status !== 'online' : false)
+export function splitItems(p: Pane): MenuItem[] {
+  if (!sameTabBody(p, [])) return []
+  const disabled = splitOff(p)
+  return [
+    { label: t('Split right'), icon: 'i-lucide-columns-2', kbds: shortcutKbds('split-right'), disabled, run: () => splitPane(p, 'right') },
+    { label: t('Split down'), icon: 'i-lucide-rows-2', kbds: shortcutKbds('split-down'), disabled, run: () => splitPane(p, 'down') },
+    { label: t('Split with agent…'), icon: 'i-lucide-bot', disabled, run: () => splitWithAgent(p) },
+  ]
+}
+// Split right / down (menu, Mod+Alt+S, Mod+Alt+Shift+S): false when it cannot.
+export function splitPane(p: Pane, dir: SplitDir): boolean {
+  const like = sameTabBody(p, [])
+  if (!like || splitOff(p)) return false
+  void split(p, { ...like, beside: p.id }, dir)
+  return true
+}
+async function split(p: Pane, body: Record<string, unknown>, dir: SplitDir) {
+  haptic()
+  try { splitDone(p, await api<SplitResult>('/api/agents', body), dir) }
+  catch (err) { toast((err as Error).message, true) }
+}
+export type SplitResult = { pane_id: string, tab_id: string, address?: string }
+// The new terminal `r`, created beside `p`: into the split tree, then the tab view on it.
+export function splitDone(p: Pane, r: SplitResult, dir: SplitDir) {
+  if (r.address) addSplit(r.tab_id, p, r.address, dir)
+  navigateTo({ path: tabPath(r.tab_id), query: { pane: r.pane_id } })
+}
+export function splitWithAgent(p: Pane) {
+  haptic()
+  splitAgentPane.value = p
+  newAgentOpen.value = true
 }
 // New tab with a choice of kind and folder (the sheet).
 export function newTabChoose(workspaceId: string) {
@@ -140,6 +179,7 @@ export function paneItems(p: Pane): MenuItem[] {
   return [
     notificationMenuItem(p),
     { label: t('Rename pane'), icon: 'i-lucide-pencil', run: () => { renameTarget.value = p.id } },
+    ...splitItems(p),
     { kind: 'separator' },
     closePaneItem(p),
   ]

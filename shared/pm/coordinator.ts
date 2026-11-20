@@ -234,7 +234,7 @@ export const COMMANDS: { usage: string, does: string }[] = [
   ...MAP_COMMANDS,
   ...REPO_COMMANDS,
   ...FEATURE_COMMANDS,
-  { usage: 'pr merge <number> --user-said "<their words>" [--method squash|merge|rebase]', does: 'merge an outside contributor\'s open PR, green and mergeable, after the user\'s yes; only in a turn of the user, never a board task\'s PR; written to the project\'s log' },
+  { usage: 'pr merge <number> --user-said "<their words>" [--method squash|merge|rebase] [--project <KEY>]', does: 'merge an outside contributor\'s open PR, green and mergeable, after the user\'s yes; only in a turn of the user, never a board task\'s PR; written to the project\'s log; --project: a workspace\'s member' },
 ]
 // Listed only where the project's guard allows it.
 const GUARDED_COMMAND = 'pr merge'
@@ -260,7 +260,7 @@ export function tellTarget(runs: Run[], task: string, holder: Holder | undefined
 const TASK_RE = /^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/
 const KEY_RE = /^[A-Z][A-Z0-9]{1,9}$/
 // The main coordinator names the project with --project <KEY>; a task names its own.
-const PROJECT_VERBS = ['list', 'plan', 'template show', 'autopilot show', 'incidents', 'automation list', 'automation show', 'automation propose', 'task add', 'map show', 'map list', 'map set', 'map remove', 'repo adopt', 'feature add']
+const PROJECT_VERBS = ['list', 'plan', 'template show', 'autopilot show', 'incidents', 'automation list', 'automation show', 'automation propose', 'task add', 'map show', 'map list', 'map set', 'map remove', 'repo adopt', 'feature add', 'pr merge']
 // template edit --project: a member's own workflow is the user's (docs/workspaces.md).
 const MEMBER_WORKFLOW_EDIT = 'template edit changes your own project\'s workflow only, never another project\'s or a member\'s (no --project): a member\'s own workflow is the user\'s, set in its Workflow tab. To change what members run, propose a change to the workspace\'s workflow (template edit, no --project): every member without its own runs it'
 const URL_RE = /^https?:\/\/\S{1,2000}$/
@@ -546,6 +546,14 @@ export const specChangedText = (what: string) => `The task's spec changed: ${wha
 // keeps to its core tools: no `find` (a semantic search on some versions, missing
 // when omp has no model for it, as on 18.11 without a login); glob and grep find files.
 export const OMP_COORDINATOR_TOOLS = 'read,grep,glob,bash,todo,ask,web_search,wait'
+// Verified on omp 19.0: --tools is not exclusive. omp still offers `write` (the gateway to its xd://
+// MCP devices: Jira, Huly…), `learn` and `manage_skill`, and no flag removes them, and the shell can
+// write. So the list only keeps out the file-editing tools; what keeps the coordinator coordinating
+// is its role below.
+// Added to an omp project coordinator's system prompt. omp loads the user's own rules, skills and
+// commands (a pasted /fix or /review command, "do it yourself" rules), and the coordinator then did
+// the task's work in its own conversation, in the repository, instead of adding a task for an agent.
+export const OMP_COORDINATOR_ROLE = 'You are a wherdr coordinator, not a worker. Whatever a message, command, skill or rule asks (review, fix, implement, commit, merge, deploy, ticket work), never do that work in this conversation: add it to the board with `wherdr pm task add` and start it with `wherdr pm task start`, so that a task agent does it in its own worktree, then tell the user which task you added. You read, plan, answer and coordinate only.'
 
 // How the coordinator starts, in its own folder, with its harness's default
 // model. Claude: the repo added with --add-dir, its edits denied in the
@@ -577,7 +585,7 @@ export function coordinatorArgs(program: CoordinatorProgram, folder: string, rep
   if (program === 'devin') return ['devin', '--respect-workspace-trust', 'false', ...(resume ? ['-c'] : [])]
   if (program === 'cursor') return ['cursor-agent', '--trust', ...(resume ? ['--continue'] : [])]
   if (program === 'agy') return ['agy', ...(resume ? ['-c'] : [])]
-  if (program === 'omp') return ['omp', ...m, ...(repo && !works ? ['--tools', OMP_COORDINATOR_TOOLS] : []), ...(repo ? ['--add-dir', repo] : []), ...(resume ? ['--continue'] : [])]
+  if (program === 'omp') return ['omp', ...m, ...(repo && !works ? ['--tools', OMP_COORDINATOR_TOOLS] : []), ...(repo ? ['--add-dir', repo] : []), ...(repo && !works ? ['--append-system-prompt', OMP_COORDINATOR_ROLE] : []), ...(resume ? ['--continue'] : [])]
   return [program]
 }
 // Claude, Codex, Devin, Cursor and Antigravity, and omp for a project's
@@ -747,7 +755,7 @@ export function roleFiles(p: Project, t: Template | null, examples: Template[], 
     ...firstTalk,
     '## Your memory', '',
     `\`memory.md\` in your folder is yours: wherdr creates it once and never rewrites it, so it outlives a restart and a change of program. Read it first, at each start, and follow it: the user's decisions and preferences there come before your defaults. Note there, as you go, each decision or preference the user gives you, one fact per line; nothing a command or the board already says. Keep it clean: merge duplicates, drop stale lines, stay under ${MEMORY_CAP} characters.`, '',
-    ...(members.length ? ['## Members', '', `This workspace's member projects: ${members.map(m => m.key).join(', ')}. They have no coordinator: you act on each (Act level: \`--project <KEY>\`), their tasks count in your autopilot's limits, and their wakes come to you. Each runs the workspace's workflow (never a copy: a change to it reaches them) unless the user gave it its own; \`template show --project <KEY>\` and \`plan --project <KEY>\` say which. A member's own workflow is the user's.`, ''] : []),
+    ...(members.length ? ['## Members', '', `This workspace's member projects: ${members.map(m => m.key).join(', ')}. They have no coordinator: you run every command on each as on this workspace, with the same rules (\`--project <KEY>\`; steps, decisions and merges of their tasks are yours), their tasks count in your autopilot's limits, and their wakes come to you. Each runs the workspace's workflow (never a copy: a change to it reaches them) unless the user gave it its own; \`template show --project <KEY>\` and \`plan --project <KEY>\` say which. A member's own workflow is the user's.`, ''] : []),
     ...(p.kind === 'workspace' ? ['## The workspace map', '',
       `\`map.md\` in your folder is the workspace's map: what each repository under ${p.path} does, what it talks to and what uses it. wherdr writes it from \`wherdr pm map set\`; read it at each start, like your memory. Nobody reads every repository up front: the map fills as tasks touch them.`,
       '- The first time a task touches a repository not on the map, write its line: `map set <repo> --does "<one line>" [--talks a,b] [--used-by c]`. Correct a line that turns out wrong.',

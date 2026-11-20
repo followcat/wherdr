@@ -5,14 +5,26 @@ Status: **implemented** (2026-10-01). Code: `app/utils/shortcuts.ts` (table and 
 (help sheet), `app/components/ShortcutsReference.vue` (shared with Settings › Shortcuts). Tests: `tests/shortcuts.test.ts`, `tests/cardKeys.test.ts`.
 `[INFERENCE]` marks claims nobody has tested on a device yet.
 
-> v3 (herdr-core): pane swaps (`Alt+Shift+arrows`) and side-by-side focus moves are v2 only;
-> Mod+Alt+O (reveal) needs `/api/reveal`, which herdr-core mode does not serve.
+> v3 (herdr-core): pane swaps (`Alt+Shift+arrows`) and side-by-side focus moves are v2 only.
+
+> 2026-11-19 (WHR-1): Mod+Alt+O works again on v3. `POST /api/open-editor` (`server/utils/openEditor.ts`)
+> takes only the pane id and opens the pane's own folder, on its machine: this computer, or another
+> one through core's `machine.exec`. The folder must exist and lie under that machine's home (checked
+> there, after symlinks); only `open` runs, the folder is a positional argument. macOS only: another
+> system answers "… is not a Mac", and the menu entry is hidden for a pane whose machine is known not
+> to be a Mac. The editor is `WH_OPEN_EDITOR` or the first line of `~/.local/share/wherdr/editor`
+> (an app name), else the default app for folders.
+
+> 2026-11-19: Mod+Alt+S splits the current pane right, Mod+Alt+Shift+S down (v3, wherdr's own
+> layout). Not ⌥⌘D: macOS shows or hides the Dock with it. No browser binding known for ⌘⌥S,
+> ⌘⌥⇧S, Ctrl+Alt+S or Ctrl+Alt+Shift+S in Chromium, Firefox or Safari, and none in GNOME's
+> default keys (its own use Super) `[INFERENCE]`: not tried in Safari or on GNOME yet.
 
 > 2026-11-13: Mod+Alt+P toggles the Notes panel (P for pad: N is the new space). No
 > browser binding known for ⌘⌥P or Ctrl+Alt+P `[INFERENCE]`.
 
 > 2026-10-02: Mod+Alt+O (current agent folder in the default editor, via the existing
-> /api/reveal "Open" action on the folder path) added since; action in
+> /api/reveal "Open" action on the folder path, now `/api/open-editor`) added since; action in
 > `app/composables/useHerdr.ts` (`openFolderOnMachine`). First bound to E, moved to O the
 > same day: Firefox and Zen own ⌘⌥E (Network Monitor) on macOS, Zen also Ctrl+Alt+E
 > ("Forward workspace").
@@ -38,6 +50,7 @@ promise that wherdr "can replace the Herdr terminal client day to day".
 | New agent in a new space: the "New agent" sheet, which creates the space (`workspace.create`) | Mod+Alt+N | Computer, online | Yes (caught before the terminal) |
 | New tab in the current pane's space: the "Start in a new tab" sheet | Mod+Alt+T | Computer, online, a pane being viewed | Yes (caught before the terminal) |
 | Close the current pane, through the same confirmation as the menu | Mod+Alt+W | Computer, online, a pane being viewed | Yes (caught before the terminal) |
+| Split the current pane right / down: a shell in the same folder, as the menu's Split right / Split down | Mod+Alt+S / Mod+Alt+Shift+S | Computer, online, a pane with a known folder | Yes (caught before the terminal) |
 | The current agent's folder in its default editor, on the agent's machine | Mod+Alt+O | Computer, a pane with a folder, on a Mac (`machineOs`) | Yes (caught before the terminal) |
 | Search this conversation; if search is already open, focus and select its field | Mod+F | Agent in conversation mode | No: the browser keeps its Find there |
 | Switch between conversation and terminal | Ctrl+`` ` `` on every platform, by position (`Backquote`; on macOS also `IntlBackslash`, the key left of 1 on ISO keyboards) | Agent with a conversation, or the active cell | Yes (xterm sends nothing for it) |
@@ -209,7 +222,7 @@ The composer blurs itself on Esc. After a stop it gets the focus back.
 - **Q4.** Mod+Alt+N opens "New agent". Because that sheet creates a new space, it is also the
   "new workspace" shortcut. Mod+Alt+T (new tab) and Mod+Alt+W (close pane) follow the same pattern.
 - **Q8.** Mod+Alt+O opens the agent's current folder in its default editor on the agent's Mac
-  (same `/api/reveal` "Open" action as a path in the conversation: never apps or scripts, the
+  (`/api/open-editor`: never apps or scripts, the
   folder is opened as a folder). First bound to E: Firefox and Zen take ⌘⌥E on macOS (Network
   Monitor), Zen also Ctrl+Alt+E (Forward workspace) — the shortcut never reached wherdr. O is
   free in Firefox, Zen, Chromium and Safari (⌘O "Open File" needs no Alt). The agent menu gets

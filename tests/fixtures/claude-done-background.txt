@@ -1,0 +1,17 @@
+ ▐▛███▜▌   Claude Code v2.1.319
+▝▜█████▛▘  Haiku 5.5 · Claude Max
+  ▘▘ ▝▝    ~/project
+
+❯ Run sleep 600 in the background, then reply OK.
+
+  Ran 1 shell command
+
+● OK
+
+✻ Brewed for 7s · done 12:49 PM · 1 shell still running
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  ⏵⏵ auto mode on · 1 shell · ↓ to manage

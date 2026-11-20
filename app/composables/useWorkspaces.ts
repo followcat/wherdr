@@ -3,6 +3,16 @@
 // (computer), swiping between the panes of a tab.
 import { tabEntry, workspaceTree } from '#shared/workspaces'
 import { type Closing, type Landing, type TabMemory, type Viewed, afterClose, neighborTab, rememberTab, spaceTab } from '#shared/spaces'
+import { type SplitDir, fitTree, insertSplit, readTabSplits, setRatio, writeTabSplits } from '#shared/splitTree'
+import type { Pane } from '#shared/types'
+
+// wherdr's own split layout of each tab (shared/splitTree.ts), synced to every device;
+// each write drops the trees of tabs that are gone (once the state is known).
+const aliveTab = (tab: string) => {
+  const s = herdrState.value
+  return !s.ok || !s.ready || !s.tabs || s.tabs.some(t => t.id === tab)
+}
+export const tabSplits = syncedRef('tabSplits', readTabSplits, v => writeTabSplits(v, aliveTab))
 
 // Last opened tab of each space, kept on the device.
 const tabMemory = ref<TabMemory>({})
@@ -35,7 +45,7 @@ watch(herdrState, (s) => {
 })
 const liveState = computed(() => {
   const s = herdrState.value
-  return gone.value.size ? { ...s, panes: s.panes.filter(p => !gone.value.has(p.id)) } : s
+  return { ...s, splits: tabSplits.value, ...(gone.value.size ? { panes: s.panes.filter(p => !gone.value.has(p.id)) } : {}) }
 })
 
 // Tabs of a space (those that have panes), in Herdr's order.
@@ -43,6 +53,22 @@ export function spaceTabs(workspaceId: string) {
   const ws = liveState.value.workspaces.find(w => w.id === workspaceId)
   if (!ws) return []
   return workspaceTree(liveState.value, ws.machine || '').find(w => w.workspace.id === workspaceId)?.tabs.filter(e => e.panes.length) || []
+}
+
+// Split right / down of `from`: terminal `leaf` (just created in tab `tabId`) takes the
+// second half of its cell. The tree starts from what the tab shows now.
+export function addSplit(tabId: string, from: Pane, leaf: string, dir: SplitDir) {
+  if (!from.coreAddress) return
+  const shown = (tabOf(from.tab)?.panes ?? [from]).map(p => p.coreAddress).filter((a): a is string => Boolean(a) && a !== leaf)
+  const { [from.tab]: base, ...rest } = tabSplits.value
+  tabSplits.value = { ...rest, [tabId]: insertSplit(fitTree(base, shown), from.coreAddress, leaf, dir) }
+}
+
+// A divider of tab `tabId` dragged (or reset) to `ratio`: written once, on release.
+// The drawn tree (fitted to the tab's panes) is the one stored.
+export function resizeSplit(tabId: string, path: string, ratio: number) {
+  const tree = tabOf(tabId)?.tree
+  if (tree) tabSplits.value = { ...tabSplits.value, [tabId]: setRatio(tree, path, ratio) }
 }
 
 // Direction of the last swipe (+1 next, -1 previous): the incoming pane slides

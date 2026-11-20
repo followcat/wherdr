@@ -28,6 +28,49 @@ const BACKGROUND = /^\(ctrl\+b to run in background\)$/i
 // Claude's activity line while it works ("✻ Fermenting… (17s · ↓ 230 tokens)").
 const ACTIVITY = /^[*✢✳✶✻✽·] \S/
 
+// Claude's own verb on that line ("Orbiting"), not in the transcript: the activity
+// line at column 0, at most 20 lines above the input field frame (a task list or a
+// "⎿ Tip: …" in between). "✻ Worked for 2m 31s" (turn over) has no "…".
+const VERB_LINE = /^[*✢✳✶✻✽✺✹✷✸∗·]\s+(\p{L}[\p{L}'’-]*(?: \p{L}[\p{L}'’-]*){0,3})(?:…|\.\.\.)(?:\s+\(.*\))?$/u
+export function parseClaudeActivity(text: string | null | undefined): string | null {
+  if (!text) return null
+  const lines = text.split('\n').map(l => l.trimEnd())
+  const rules: number[] = []
+  for (let i = lines.length - 1; i >= 0 && rules.length < 2; i--) if (RULE_RE.test(lines[i]!)) rules.push(i)
+  const end = rules.length === 2 ? rules[1]! : lines.length
+  for (let i = end - 1; i >= Math.max(0, end - 20); i--) {
+    const m = VERB_LINE.exec(lines[i]!)
+    if (m) return m[1]!
+  }
+  return null
+}
+
+// Jobs left running once Claude's turn is over, as its footer counts them under the
+// input field ("⏵⏵ auto mode on · 1 shell · ↓ to manage"), else as the turn's last
+// line says ("✻ Brewed for 7s · done 12:49 PM · 1 shell still running"). Null while
+// a turn runs (its verb line is up) or when nothing runs in the background.
+const JOB = /^(\d+) ((?:background )?(?:shells?|tasks?|agents?|monitors?|teammates?))$/
+const STILL_RUNNING = /^[*✢✳✶✻✽·]\s+\S.*?·\s+done\b.*?·\s+(\d+ \S+(?: \S+)?) still running$/
+const TURN_END = /^[*✢✳✶✻✽·]\s+\S.*\bfor \d/
+export function parseClaudeBackground(text: string | null | undefined): string | null {
+  if (!text || parseClaudeActivity(text)) return null
+  const lines = text.trimEnd().split('\n').map(l => l.trimEnd())
+  let rule = -1
+  for (let i = lines.length - 1; i >= 0 && rule < 0; i--) if (RULE_RE.test(lines[i]!)) rule = i
+  if (rule < 0) return null
+  const jobs = lines.slice(rule + 1).flatMap(l => l.split(' · ').flatMap(s => JOB.exec(s.trim().replace(/^⏵⏵\s+/, ''))?.[0] ?? []))
+  if (jobs.length) return jobs.join(', ')
+  // Else the latest turn's end line only: an older turn's count is stale once a newer turn
+  // ended ("✻ Worked for 2s") or began (a "❯ " message above the input field).
+  let top = rule - 1
+  while (top >= 0 && !RULE_RE.test(lines[top]!)) top--
+  for (let i = top - 1; i >= Math.max(0, top - 24); i--) {
+    if (TURN_END.test(lines[i]!)) return STILL_RUNNING.exec(lines[i]!)?.[1] ?? null
+    if (lines[i]!.startsWith('❯ ')) return null
+  }
+  return null
+}
+
 // "1m 14s" → ms.
 export function elapsedMs(s: string | null | undefined): number | null {
   const m = /^(?:(\d+)h\s*)?(?:(\d+)m\s*)?(\d+)s$/.exec(String(s || '').trim())

@@ -178,6 +178,8 @@ export interface Pane {
   model?: ModelInfo
   // Claude working, conversation shown: verb of its activity line ("Orbiting").
   activity?: string
+  // Claude, turn over: its jobs still running in the background, as its screen counts them ("1 shell").
+  background?: string
   // Claude working, conversation shown: what its screen shows.
   claudeScreen?: ClaudeScreen
   // Claude Code status near the input field ("✔ Update installed · Restart to update").

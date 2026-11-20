@@ -66,8 +66,10 @@ export const fieldGap = (field: string, text: string) =>
   `${fieldForm(field).length} chars, ${imageTagCount(field)} images${PASTE_TAG.test(field) ? ', a paste stand-in' : ''}; expected ${messageForm(text).length} chars, ${uploadNames(text).length} images, ${text.split('\n').length} lines`
 export function fieldHolds(field: string | null | undefined, text: string, exact = false, loose = false): boolean {
   // The lone "\" a photo message is sent with (holdEnter in coreInput.ts), left
-  // there when Claude dropped core's Enter: not part of the message.
-  field = String(field || '').replace(/\\\s*$/, '')
+  // there when Claude dropped core's Enter: not part of the message. Only a
+  // photo message gets one: a message of its own ending with "\" keeps it.
+  field = String(field || '')
+  if (uploadNames(text).length) field = field.replace(/\\\s*$/, '')
   // Photos alone: only their tags tell them apart, so they are counted.
   const free = loose && Boolean(withoutUploads(text))
   const form = free ? looseForm : fieldForm

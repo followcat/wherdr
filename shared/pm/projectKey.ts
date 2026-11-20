@@ -6,7 +6,8 @@
 import type { Project } from './project'
 
 // The palette (names; the colors are theme tokens, --project-<name>).
-export const PROJECT_COLORS = ['violet', 'blue', 'teal', 'green', 'amber', 'orange', 'red', 'pink'] as const
+// The first 8 came first; the 4 after them keep every stored color in place.
+export const PROJECT_COLORS = ['violet', 'blue', 'teal', 'green', 'amber', 'orange', 'red', 'pink', 'cyan', 'lime', 'indigo', 'magenta'] as const
 export type ProjectColor = typeof PROJECT_COLORS[number]
 export const isProjectColor = (c: unknown): c is ProjectColor => PROJECT_COLORS.includes(c as ProjectColor)
 
@@ -66,8 +67,14 @@ export function renamed(p: Keyed, key: string): { label?: string, aliases?: stri
   return { ...(next !== p.key ? { label: next } : {}), ...(aliases.length ? { aliases } : {}) }
 }
 
-// A new project's color: the first one no project has yet, else in turn.
-export function defaultColor(projects: { color?: string }[]): ProjectColor {
+// A new project's color: the first one no project has yet, else in turn. A
+// new member of `workspace`: the one its workspace's members use least (ties:
+// palette order), so members seen together differ.
+export function defaultColor(projects: { color?: string, workspace?: string }[], workspace?: string): ProjectColor {
+  if (workspace) {
+    const uses = (c: ProjectColor) => projects.filter(p => p.workspace === workspace && p.color === c).length
+    return PROJECT_COLORS.reduce((best, c) => (uses(c) < uses(best) ? c : best))
+  }
   const used = new Set(projects.map(p => p.color))
   return PROJECT_COLORS.find(c => !used.has(c)) ?? PROJECT_COLORS[projects.length % PROJECT_COLORS.length]!
 }
