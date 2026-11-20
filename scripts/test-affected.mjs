@@ -8,6 +8,7 @@ import net from 'node:net'
 // Reviewed supplements to Vitest's import graph: Nuxt auto-imports, templates,
 // CSS and transport boundaries are not ordinary static imports.
 export const domains = [
+  { name: 'canto-speech', source: /ReadAloud|speech\/|useReadAloud|public\/workers\/canto|dictation-files|dictationServerFiles|csp|nuxt\.config|canto/i, tests: /ReadAloud|neuralVoice|speechVoices|cantoText|cantoFp16|cantoRunner|fetchDictationFiles|dictationServerFiles|csp/i, e2e: ['canto-tts-worker'], reason: 'The Cantonese voice crosses a worker, the model fetch set, Cache Storage and the settings rows.' },
   { name: 'references', source: /(?:reference|Composer|ChatMarkdown|QuotedText|UserText)/i, tests: /(?:reference|Composer|ChatMarkdown|QuotedText|UserText|quote)/i, e2e: ['core-smoke'], reason: 'References cross templates, composer state and the send boundary.' },
   { name: 'guards', source: /(?:server\/api\/(?:prompt|input|choose)|Identity|guardedSend)/i, tests: /(?:guard|Identity|stoppedAgent|agentPrompt)/i, e2e: ['core-smoke'], reason: 'Identity and stale actions must be checked through transport.' },
   { name: 'terminal', source: /terminal|server\/routes\/.*ws/i, tests: /terminal/i, e2e: ['core-smoke'], reason: 'Terminal rendering and websocket lifecycle cross the built app.' },

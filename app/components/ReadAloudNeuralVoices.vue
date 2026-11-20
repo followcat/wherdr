@@ -1,33 +1,41 @@
 <script setup lang="ts">
 // Settings › Conversation › Read aloud › Voice of wherdr: one row per language
-// voice (voices.json, the default ones), with its size, attribution, Install /
-// progress / Cancel / Delete and a Test. A reply is read by the voice of its
-// language; one not installed here falls back to the device's voices.
-// Install and Test show what they measured on this device (download, load,
-// first sentence, speed, heap): the figures recorded in voices.json.
+// voice (voices.json), with its size, attribution, Install / progress /
+// Cancel / Delete, a Test and Use (the explicit choice for its language).
+// The Canto GPU voice needs WebGPU with shader-f16; elsewhere its row says so
+// and offers nothing. Each row shows the last reply's provider, load, first
+// audio and real-time factor, so the INT8 and GPU voices can be compared.
 // Rows styled like DictationDeviceSettings.vue.
-import { neuralVoice, speak, speakingId, stopSpeaking } from '~/composables/useReadAloud'
+import { neuralVoice, neuralVoiceFor, readAloudNeural, setNeuralVoice, speak, speakingId, stopSpeaking } from '~/composables/useReadAloud'
 import { fmtBytes } from '~/utils/bytes'
 import { cancelInstall, fetchCommand, MissingOnServer, storedBytes, watchInstall } from '~/utils/dictation/modelStore'
 import type { Progress } from '~/utils/dictation/modelStore'
 import { asStored, VOICES, voiceBytes } from '~/utils/speech/neuralVoice'
 import type { Voice, VoiceStats } from '~/utils/speech/neuralVoice'
 
-const voices = VOICES.filter(v => v.default)
+const voices = VOICES.filter(v => v.default || v.requires?.length)
 const have = reactive<Record<string, number>>({})
 const progress = reactive<Record<string, Progress | null>>({})
 const errors = reactive<Record<string, string>>({})
 const downloadMs = reactive<Record<string, number>>({})
 const measured = reactive<Record<string, VoiceStats>>({})
+const gpuOk = ref<boolean | null>(null)
 const canKeep = typeof caches !== 'undefined'
-const LANGS: Record<string, string> = { fr: 'French', en: 'English' }
+const LANGS: Record<string, string> = { fr: 'French', en: 'English', yue: 'Cantonese' }
 // Spoken in the voice's own language: sample speech, not interface text.
 const SAMPLES: Record<string, string> = {
   fr: 'Bonjour ! Voici comment les réponses en français seront lues.',
   en: 'Hello! This is how replies in English will sound.',
+  yue: '今日天氣幾好，我想出街行吓。',
 }
 
 const installed = (v: Voice) => (have[v.id] ?? 0) >= voiceBytes(v)
+const needsGpu = (v: Voice) => !!v.requires?.includes('webgpu')
+const gpuReason = (v: Voice) => needsGpu(v) && gpuOk.value === false
+  ? t('Needs WebGPU with shader-f16: not available on this device.')
+  : ''
+const canRun = (v: Voice) => !needsGpu(v) || gpuOk.value === true
+const chosen = (v: Voice) => installed(v) && canRun(v) && neuralVoiceFor(v.lang).id === v.id
 
 async function refresh(v: Voice) {
   have[v.id] = await storedBytes(asStored(v)).catch(() => 0)
@@ -62,6 +70,7 @@ function install(v: Voice) {
 
 async function remove(v: Voice) {
   if (speakingId.value === `settings:${v.id}`) stopSpeaking()
+  if (readAloudNeural.value === v.id) setNeuralVoice('')
   delete downloadMs[v.id]
   delete measured[v.id]
   await neuralVoice?.remove(v).catch(e => toast((e as Error).message, true))
@@ -73,17 +82,22 @@ function test(v: Voice) {
   speak(`settings:${v.id}`, SAMPLES[v.lang] ?? SAMPLES.en!, v)
 }
 
-// When a Test ends, keep what it measured.
-watch(speakingId, (_now, was) => {
-  const s = neuralVoice?.stats()
-  if (was?.startsWith('settings:') && s && was === `settings:${s.voice}`) measured[s.voice] = { ...s }
-})
+// Every reply stores its last values, so both voices can be compared later.
+function refreshStats() {
+  for (const v of voices) {
+    const s = neuralVoice?.statsFor(v.id)
+    if (s) measured[v.id] = { ...s }
+  }
+}
+watch(speakingId, () => refreshStats())
 
 const secs = (ms: number) => `${(ms / 1000).toFixed(1)} s`
 function measures(v: Voice) {
   const s = measured[v.id]
   const parts: string[] = []
   if (downloadMs[v.id] != null) parts.push(`${t('Download')} ${secs(downloadMs[v.id]!)}`)
+  if (s?.provider) parts.push(s.provider === 'webgpu' ? t('WebGPU') : s.provider === 'wasm' ? t('WASM') : s.provider)
+  if (s?.phase) parts.push(s.phase === 'gpu-kv' ? t('GPU KV') : s.phase === 'cpu-io' ? t('CPU I/O') : s.phase)
   if (s?.loadMs != null) parts.push(`${t('Load')} ${secs(s.loadMs)}`)
   if (s?.firstMs != null) parts.push(`${t('First sentence')} ${secs(s.firstMs)}`)
   if (s?.audioMs) parts.push(`${t('Real-time factor')} ${(s.genMs / s.audioMs).toFixed(2)}`)
@@ -92,11 +106,13 @@ function measures(v: Voice) {
 }
 
 onMounted(async () => {
+  if (neuralVoice) gpuOk.value = await neuralVoice.gpuCheck()
   await Promise.all(voices.map(refresh))
   for (const v of voices) {
     const run = watchInstall(v.id, onRun(v))
     if (run) follow(v, run)
   }
+  refreshStats()
 })
 
 const pct = (p: Progress) => Math.floor((p.got / Math.max(1, p.total)) * 100)
@@ -111,8 +127,8 @@ const pct = (p: Progress) => Math.floor((p.got / Math.max(1, p.total)) * 100)
         <small data-testid="voice-attribution">{{ v.attribution }}</small>
       </div>
       <div class="neural-voice-state" data-testid="voice-state">
-        <small v-if="neuralVoice && !neuralVoice.fits(v)" class="neural-voice-error" role="status">{{ t('Too large for this device: replies in this language use the device’s voices.') }}</small>
-        <template v-if="progress[v.id]">
+        <small v-if="gpuReason(v)" class="neural-voice-error" role="status">{{ gpuReason(v) }}</small>
+        <template v-else-if="progress[v.id]">
           <progress :value="progress[v.id]!.got" :max="progress[v.id]!.total" />
           <small v-if="progress[v.id]!.server">{{ t(`Preparing on the server… ${pct(progress[v.id]!)} %`) }}</small>
           <small v-else>{{ pct(progress[v.id]!) }} % · {{ fmtBytes(progress[v.id]!.got) }} / {{ fmtBytes(progress[v.id]!.total) }}</small>
@@ -120,19 +136,21 @@ const pct = (p: Progress) => Math.floor((p.got / Math.max(1, p.total)) * 100)
         </template>
         <template v-else-if="installed(v)">
           <small><UIcon name="i-lucide-check" /> {{ t('Installed') }}</small>
+          <small v-if="chosen(v)" data-testid="voice-using"><UIcon name="i-lucide-check" /> {{ t('Using') }}</small>
+          <UButton v-else color="neutral" variant="outline" size="md" icon="i-lucide-play" :label="t('Use')" :disabled="!canRun(v)" data-testid="voice-use" @click="setNeuralVoice(v.id)" />
           <UButton color="neutral" variant="outline" size="md" :icon="speakingId === `settings:${v.id}` ? 'i-lucide-square' : 'i-lucide-volume-2'" :label="speakingId === `settings:${v.id}` ? t('Stop') : t('Test')" data-testid="voice-test" @click="test(v)" />
           <UButton color="neutral" variant="ghost" size="md" icon="i-lucide-trash-2" :label="t('Delete')" data-testid="voice-delete" @click="remove(v)" />
         </template>
         <template v-else>
           <small v-if="have[v.id]">{{ t('Partly downloaded') }} · {{ fmtBytes(have[v.id]!) }}</small>
-          <UButton color="primary" variant="outline" size="md" icon="i-lucide-download" :disabled="!canKeep || !neuralVoice" :label="have[v.id] ? t('Resume') : t(`Install · ${fmtBytes(voiceBytes(v))}`)" data-testid="voice-install" @click="install(v)" />
+          <UButton color="primary" variant="outline" size="md" icon="i-lucide-download" :disabled="!canKeep || !neuralVoice || !canRun(v)" :label="have[v.id] ? t('Resume') : t(`Install · ${fmtBytes(voiceBytes(v))}`)" data-testid="voice-install" @click="install(v)" />
           <UButton v-if="have[v.id]" color="neutral" variant="ghost" size="md" :label="t('Delete')" data-testid="voice-delete" @click="remove(v)" />
         </template>
         <small v-if="measures(v)" class="neural-voice-measure" data-testid="voice-measure">{{ measures(v) }}</small>
         <small v-if="errors[v.id]" class="neural-voice-error" role="status">{{ errors[v.id] }}</small>
       </div>
     </div>
-    <p class="muted settings-hint">{{ t('Each reply is read by the voice of its language, French or English. Until that voice is installed, the device’s voices read it. The text never leaves this device.') }}</p>
+    <p class="muted settings-hint">{{ t('Each reply is read by the voice of its language; Use makes that voice the choice for its language. The GPU voice is experimental and needs WebGPU with shader-f16. Until a voice is installed, the device’s voices read it. The text never leaves this device.') }}</p>
   </div>
 </template>
 

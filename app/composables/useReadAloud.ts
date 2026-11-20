@@ -2,11 +2,11 @@
 // Settings › Conversation › Read aloud (ReadAloudSettings.vue). One reply at a
 // time for the whole app. Engines: the device's own voices (speechSynthesis),
 // or `wherdr`, a neural voice run on the device (utils/speech/neuralVoice.ts),
-// which reads each reply with the voice of its language (French or English,
-// a guess) and falls back to the device's voices while that voice is not installed.
-// Both are free and never go through the wherdr server. Choice and voice are
-// kept on this device.
-import { speakableText, speechChunks } from '~/utils/speech/plainText'
+// which reads each reply with the voice of its language (French, English or
+// Cantonese, a guess) and falls back to the device's voices while that voice
+// is not installed. Both are free and never go through the wherdr server.
+// Choice and voice are kept on this device.
+import { sentenceChunks, speakableText, speechChunks } from '~/utils/speech/plainText'
 import { createNeuralVoice, defaultVoice, replyLanguage } from '~/utils/speech/neuralVoice'
 import type { Voice } from '~/utils/speech/neuralVoice'
 import { toast } from './useHerdr'
@@ -16,6 +16,7 @@ export const READ_ALOUD_KEY = 'readAloud'
 export const READ_ALOUD_VOICE_KEY = 'readAloudVoice'
 export const READ_ALOUD_LANG_KEY = 'readAloudVoiceLang'
 export const READ_ALOUD_HIDE_LOW_KEY = 'readAloudHideLow'
+export const READ_ALOUD_NEURAL_KEY = 'readAloudNeural'
 
 const store = {
   get: (k: string) => { try { return localStorage.getItem(k) } catch { return null } },
@@ -38,6 +39,19 @@ watch(readAloudEngine, v => store.set(READ_ALOUD_KEY, v))
 // voiceURI of the chosen voice; '' = the system's default voice.
 export const readAloudVoice = ref(store.get(READ_ALOUD_VOICE_KEY) || '')
 watch(readAloudVoice, v => store.set(READ_ALOUD_VOICE_KEY, v))
+// A voice switch stops the reply that is playing.
+watch(readAloudEngine, () => stopSpeaking())
+watch(readAloudVoice, () => stopSpeaking())
+// The neural voice chosen for replies with Use (the GPU voice is always an
+// explicit choice). Empty, or when it cannot run here, the language's catalog
+// default, then another installed voice of that language (voiceFor).
+export const readAloudNeural = ref(store.get(READ_ALOUD_NEURAL_KEY) || '')
+watch(readAloudNeural, v => store.set(READ_ALOUD_NEURAL_KEY, v))
+watch(readAloudNeural, () => stopSpeaking())
+export function setNeuralVoice(id: string) { readAloudNeural.value = id }
+export function neuralVoiceFor(lang: string): Voice {
+  return neuralVoice?.voiceFor(lang, readAloudNeural.value) ?? defaultVoice([lang])
+}
 // Voice list filters (utils/speech/voicePicker.ts): 'mine' (the user's
 // languages), 'all' or a language code; low-quality voices hidden by default.
 export const readAloudVoiceLang = ref(store.get(READ_ALOUD_LANG_KEY) || 'mine')
@@ -80,10 +94,13 @@ export function speak(id: string, md: string, neural?: Voice) {
   const g = ++gen
   s?.cancel()
   neuralVoice?.stop()
-  const chunks = speechChunks(speakableText(md, tl('Code block.', 'Bloc de code.')))
+  const text = speakableText(md, tl('Code block.', 'Bloc de code.'))
+  const voice = neural ?? neuralVoiceFor(replyLanguage(text))
+  const canto = voice.kind === 'cantoNano'
+  const chunks = canto ? sentenceChunks(text) : speechChunks(text)
   if (!chunks.length) return done(g)
   if (readAloudEngine.value === 'wherdr' && neuralVoice?.speak({
-    voice: neural ?? defaultVoice([replyLanguage(chunks.join(' '))]),
+    voice,
     chunks,
     onEnd: () => done(g),
     onError: (e) => {
@@ -96,12 +113,14 @@ export function speak(id: string, md: string, neural?: Voice) {
     return
   }
   if (!s) return done(g)
-  const voice = deviceVoices.value.find(v => v.voiceURI === readAloudVoice.value)
+  const deviceVoice = deviceVoices.value.find(v => v.voiceURI === readAloudVoice.value)
+  // The device's voices still cut long utterances: use their own chunks.
+  const deviceChunks = canto ? speechChunks(text) : chunks
   speakingId.value = id
-  live = chunks.map((text, i) => {
+  live = deviceChunks.map((text, i) => {
     const u = new SpeechSynthesisUtterance(text)
-    if (voice) { u.voice = voice; u.lang = voice.lang }
-    if (i === chunks.length - 1) u.onend = () => done(g)
+    if (deviceVoice) { u.voice = deviceVoice; u.lang = deviceVoice.lang }
+    if (i === deviceChunks.length - 1) u.onend = () => done(g)
     u.onerror = (e) => {
       if (g !== gen || e.error === 'interrupted' || e.error === 'canceled') return
       done(g)

@@ -26,6 +26,24 @@ export function speakableText(md: string, codeBlock = 'Code block.'): string {
     .trim()
 }
 
+// The Cantonese voice splits a reply into sentences only: its worker groups
+// the words inside a sentence into short parts at G2P word boundaries, so a
+// sentence never needs to be cut here.
+export function sentenceChunks(text: string): string[] {
+  const out: string[] = []
+  let start = 0
+  for (let i = 0; i < text.length; i++) {
+    if (/[。！？.!?；;\n]/.test(text[i]!)) {
+      const s = text.slice(start, i + 1).trim()
+      if (s) out.push(s)
+      start = i + 1
+    }
+  }
+  const rest = text.slice(start).trim()
+  if (rest) out.push(rest)
+  return out
+}
+
 // Speech engines cut long utterances (Chrome stops after ~15 s): the text goes
 // out in pieces of at most `max` characters, split at a sentence, then a comma,
 // then a space.

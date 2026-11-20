@@ -14,6 +14,9 @@ export const CSP_WEBGPU_WORKER = CSP_DICTATION_WORKER
 // The read-aloud worker runs the same sherpa-onnx runtime.
 export const TTS_WORKER_PATH = '/workers/tts-worker.js'
 export const CSP_TTS_WORKER = CSP_DICTATION_WORKER
+// The Cantonese worker compiles onnxruntime-web and the G2P WASM.
+export const CANTO_TTS_WORKER_PATH = '/workers/canto-tts-worker.js'
+export const CSP_CANTO_TTS_WORKER = CSP_DICTATION_WORKER
 
 // An agent's page (FilesView's Preview iframe, and Open in a tab): `sandbox`
 // without allow-same-origin gives it an opaque origin, so it never reads

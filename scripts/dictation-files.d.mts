@@ -1,5 +1,5 @@
 // Types of dictation-files.mjs, for the server that imports it.
-export interface FetchEntry { url: string, sha256: string, to?: string, dir?: string, members?: string[] }
+export interface FetchEntry { url: string, sha256: string, to?: string, dir?: string, members?: string[], strip?: number }
 export interface FetchOptions {
   fetchImpl?: typeof globalThis.fetch
   tries?: number

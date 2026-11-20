@@ -5,14 +5,16 @@
 // share one download per model. The worker reads the same slices.
 // Based on followcat's installAsr / fetchModelFile (followcat/wherdr, branch mobile, MIT).
 import { DEVICE_CACHE } from './deviceModels'
-import type { DeviceModel } from './deviceModels'
 
 // What the store needs of a model: a dictation model, or a read-aloud voice
 // (app/utils/speech/neuralVoice.ts) with its catalog members as files.
-export type StoredModel = Pick<DeviceModel, 'id' | 'dir' | 'set' | 'files'>
+// `dir` on a file lets a voice share files kept in another folder (the Canto
+// voices share their G2P and OpenCC files).
+export interface StoredFile { path: string, bytes: number, dir?: string }
+export interface StoredModel { id: string, dir: string, set: string, files: StoredFile[] }
 
 export const CHUNK = 8 * 1024 * 1024
-export const fileUrl = (m: StoredModel, path: string) => `/models/${m.dir}/${path}`
+export const fileUrl = (m: StoredModel, file: StoredFile) => `/models/${file.dir ?? m.dir}/${file.path}`
 export const chunkUrl = (url: string, i: number) => `${url}?chunk=${i}`
 export const chunkCount = (bytes: number) => Math.max(1, Math.ceil(bytes / CHUNK))
 const chunkEnd = (bytes: number, i: number) => Math.min(bytes, (i + 1) * CHUNK) - 1
@@ -84,7 +86,7 @@ export async function storedBytes(m: StoredModel, deps: StoreDeps = {}): Promise
   const keys = new Set((await (await cs.open(DEVICE_CACHE)).keys()).map(r => keyOf(r.url)))
   let have = 0
   for (const f of m.files) {
-    const url = fileUrl(m, f.path)
+    const url = fileUrl(m, f)
     if (keys.has(url)) { have += f.bytes; continue }
     for (let i = 0; i < chunkCount(f.bytes); i++) {
       if (keys.has(chunkUrl(url, i))) have += chunkEnd(f.bytes, i) - i * CHUNK + 1
@@ -122,7 +124,7 @@ async function download(m: StoredModel, deps: StoreDeps, signal: AbortSignal, on
   if (got < total) await prepareOnServer(m, deps, signal, onProgress)
   onProgress({ got, total })
   for (const f of m.files) {
-    const url = fileUrl(m, f.path)
+    const url = fileUrl(m, f)
     if (await cache.match(url)) continue
     for (let i = 0; i < chunkCount(f.bytes); i++) {
       const key = chunkUrl(url, i)

@@ -54,10 +54,19 @@ for (const m of CATALOG.models) {
 }
 // A voice comes from an archive (its members extracted), or as loose files
 // under `source.base`, each with its own sha256 (no archive is published).
+// `source.extras` adds archives/single files (the G2P sdist, the OpenCC
+// tables), and `extraSets` adds a shared set (the Canto voice's ORT runtime).
 for (const v of VOICES.voices) {
-  SETS[v.set] = v.source.url
-    ? [{ url: v.source.url, sha256: v.source.sha256, dir: v.dir, members: v.members.map(f => f.path) }]
-    : v.members.map(f => ({ url: v.source.base + f.path, sha256: f.sha256, to: `${v.dir}/${f.path}` }))
+  if (v.source.extras) {
+    const loose = v.members
+      .filter(f => !f.from)
+      .map(f => ({ url: v.source.base + f.path, sha256: f.sha256, to: `${v.dir}/${f.path}` }))
+    SETS[v.set] = [...loose, ...v.source.extras, ...(v.extraSets ?? []).flatMap(name => SETS[name] ?? [])]
+  } else {
+    SETS[v.set] = v.source.url
+      ? [{ url: v.source.url, sha256: v.source.sha256, dir: v.dir, members: v.members.map(f => f.path) }]
+      : v.members.map(f => ({ url: v.source.base + f.path, sha256: f.sha256, to: `${v.dir}/${f.path}` }))
+  }
 }
 export const DEFAULT_SETS = ['runtime', CATALOG.models[0].set]
 
@@ -129,13 +138,13 @@ const FORMATS = [
 // The tar command that extracts `members` of an archive (all under its top
 // folder, named as the archive) straight into `dir`. With `stdin`, tar reads
 // the decompressed tar from its input (the JS bzip2 decoder) instead.
-export function extractCommand(archive, dir, members, { stdin = false } = {}) {
+export function extractCommand(archive, dir, members, { stdin = false, strip = 1 } = {}) {
   const name = path.basename(archive)
   const format = FORMATS.find(f => name.endsWith(f.ext))
   if (!format) throw new Error(`unknown archive format: ${name}`)
   const top = name.slice(0, -format.ext.length)
   const source = stdin ? ['-f', '-'] : [...format.flags, '-f', archive]
-  const args = ['-x', ...source, '-C', dir, '--strip-components=1', ...members.map(m => `${top}/${m}`)]
+  const args = ['-x', ...source, '-C', dir, `--strip-components=${strip}`, ...members.map(m => `${top}/${m}`)]
   return { args, program: format.program }
 }
 
@@ -208,9 +217,9 @@ function runTar(args, input) {
 // Extracts the archive's members into `dir` (`mode` from unpackMode). On
 // failure, the archive and the members it left half written are removed and
 // the error says why.
-export async function unpack(archive, dir, members, { mode = 'tar' } = {}) {
+export async function unpack(archive, dir, members, { mode = 'tar', strip = 1 } = {}) {
   const js = mode === 'js'
-  const { args, program } = extractCommand(archive, dir, members, { stdin: js })
+  const { args, program } = extractCommand(archive, dir, members, { stdin: js, strip })
   const { code, err } = await runTar(args, js ? createReadStream(archive).pipe(bunzip2()) : undefined)
   if (code === 0) return
   await Promise.all([archive, ...members.map(m => path.join(dir, m))].map(f => rm(f, { force: true })))
@@ -232,13 +241,13 @@ export async function fetchEntry(modelsDir, entry, opts = {}) {
   const stamp = path.join(dir, '.complete')
   if ((await readFile(stamp, 'utf8').catch(() => '')).trim() === entry.sha256) return log(`have ${entry.dir}`)
   const archive = path.join(dir, path.basename(new URL(entry.url).pathname))
-  const { program } = extractCommand(archive, dir, entry.members)
+  const { program } = extractCommand(archive, dir, entry.members, { strip: entry.strip })
   const mode = await unpackMode(program, opts)
   if (!mode) throw new Error(needs(program))
   log(`fetch ${entry.url}`)
   await download(entry.url, entry.sha256, archive, opts)
   opts.onUnpack?.()
-  await unpack(archive, dir, entry.members, { mode })
+  await unpack(archive, dir, entry.members, { mode, strip: entry.strip })
   await rm(archive, { force: true })
   await writeFile(stamp, `${entry.sha256}\n`)
 }
