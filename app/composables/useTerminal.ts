@@ -25,6 +25,7 @@ import { uploadPhoto } from '~/utils/photoUpload'
 import { terminalClosedText, terminalUnavailableText } from '~/utils/terminalClosed'
 import { bindTerminalMouse, terminalCell } from '~/utils/terminalMouse'
 import { TERM_FONT, onFontsLoaded, scaledTermFont } from '~/utils/terminalFont'
+import { createWheelPacer, trackSgrMouse, wheelReports, type SgrMouse } from '~/utils/terminalWheel'
 import { displayVirtualChord, virtualNavigationBytes, virtualNavigationKeys } from '~/utils/keybarKeys'
 import { createCompositionTracker, toggleVirtualModifier, virtualChord, virtualInputAction, type VirtualModifier } from '~/utils/terminalModifiers'
 import { captureTerminalScreen, type TerminalCopySnapshot } from '~/utils/terminalCopy'
@@ -34,7 +35,6 @@ import { COLD_HISTORY, MAX_HISTORY } from '#shared/terminalHistory'
 import { restoreFromBottom, shouldFetchDeep, viewForRestore } from '~/utils/terminalDeepHistory'
 
 const CORE_SCROLLBACK = 5000
-const MAX_WHEEL_NOTCHES = 40
 
 export interface Banner { text: string, btn: string, fn: () => void }
 export interface TerminalOptions {
@@ -42,6 +42,7 @@ export interface TerminalOptions {
   hasBanner: () => boolean
   fill?: () => boolean
   input?: () => boolean
+  wheelAccel?: () => boolean
 }
 
 // `fill`: side-by-side cell, the terminal takes the whole cell instead of the
@@ -97,9 +98,15 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
   let links: TerminalLinks | null = null
   let mouse: ReturnType<typeof bindTerminalMouse> | null = null
   let mouseSupported = false
-  // The app asked for SGR mouse reports (DECSET 1006), the only form a wheel
-  // report is sent in. A new socket's first paint replays the mode.
-  let sgrMouse = false
+  // The program asked for SGR mouse coordinates (DECSET 1006): see wheelReports.
+  let mouseSgr: SgrMouse | null = null
+  // Wheel reports to the program, paced on its repaints (see createWheelPacer).
+  let wheelCell = { column: 0, row: 0 }
+  const wheel = createWheelPacer({
+    send: n => sendTerm({ type: 'terminal.wheel', text: wheelReports(n, wheelCell, mouseSgr?.on() === true, (term?.rows || 24) + 1) }),
+    page: () => term?.rows || 24,
+    accel: opts.wheelAccel,
+  })
   let coreStream = false
   // herdr-core: whether this viewer's size is the terminal's (see coreTerm.ts).
   let coreControl = true
@@ -114,8 +121,8 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
   // the view (Conversation/Terminal toggle) and sockets get replaced: a stale
   // coreStream would skip the next fit and attach at xterm's default 80×24.
   function forgetStream() {
+    wheel.cancel()
     mouseSupported = false
-    sgrMouse = false
     coreStream = false
     coreControl = true
     revealGate.cancel()
@@ -282,6 +289,13 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     deep.fromBottom = null
     loadingEarlier.value = false
     followCursor()
+  }
+  // A full-screen app keeps its history to itself: it tracks the mouse, so a
+  // scroll reaches it as wheel reports — the alternate screen has no rows for
+  // xterm to move.
+  function appTakesWheel() {
+    return coreStream && term?.buffer.active.type === 'alternate'
+      && ['vt200', 'drag', 'any'].includes(term.modes.mouseTrackingMode)
   }
   // Called on the reader's own seek only (scroll(), viewportMoved): never from
   // the reveal, so a short cold buffer showing its top on arrival waits for
@@ -510,14 +524,6 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     term.loadAddon(fit)
     term.open(host)
     mouse = bindTerminalMouse(term, () => mouseSupported && opts.input?.() !== false, event => sendTerm(event))
-    // xterm doesn't expose the mouse encoding. Returning false leaves the
-    // sequence to xterm, which still applies it.
-    const watchSgrMouse = (on: boolean) => (params: (number | number[])[]) => {
-      if (params.includes(1006)) sgrMouse = on
-      return false
-    }
-    term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, watchSgrMouse(true))
-    term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, watchSgrMouse(false))
     // Selection of the visible text, copied on release or with ⌘C.
     unbindSelection = bindTerminalSelection(term, () => toast(t('Copied')))
     // OSC 8 hyperlinks and http(s) URLs, opened in a new tab.
@@ -593,6 +599,7 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     // Wheel: xterm must not see it (it would send ↑/↓ to the agent, see
     // utils/terminalWheel.ts); TerminalView scrolls the local viewport instead.
     term.attachCustomWheelEventHandler(() => false)
+    mouseSgr = trackSgrMouse(term)
     // Shift+Enter as a named key; Ctrl+V (outside Apple) and F12 left to the browser.
     bindTerminalKeys(term, key => sendVirtualKey(key))
     term.onData(d => {
@@ -880,12 +887,14 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
             scrollGeometryVersion.value++
             if (coreStream) offerFit()
           },
+          reset: () => mouseSgr?.reset(),
           written: () => {
             // Credits never wait for the reveal: the server stops relaying when
             // its window is spent.
             if (credit && tws === ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'credit', bytes: credit }))
             revealGate.written()
             if (smoothTouchScrolling.value) frameTick.value++
+            if (bytes.length) wheel.frame()
             // Nothing in the view reacts to the replay while it is covered.
             if (covering.value) return
             if (coreStream && !coreControl) followCursor()
@@ -974,6 +983,7 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     revealGate.cancel()
     covering.value = false
     term?.reset()
+    mouseSgr?.reset()
   }
   function focus() {
     // A parked xterm is detached: it has no host to focus and must never send
@@ -1017,6 +1027,40 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     return term?.rows && el?.clientHeight ? el.clientHeight / term.rows : 16
   }
   const pageRows = () => term?.rows || 24
+  // The cell under a point, ignoring the touch preview's offset.
+  function pointCell(x?: number, y?: number) {
+    const screen = term?.element?.querySelector('.xterm-screen') as HTMLElement | null
+    const rect = screen?.getBoundingClientRect()
+    const offset = screen?.style.transform ? new DOMMatrixReadOnly(screen.style.transform).m42 : 0
+    const fixedRect = rect ? { left: rect.left, top: rect.top - offset, width: rect.width, height: rect.height } : null
+    return fixedRect && term && x !== undefined && y !== undefined ? terminalCell(x, y, fixedRect, term.cols, term.rows) : null
+  }
+  // Otherwise scrolling is local: the attach delivered the scrollback and xterm owns
+  // the viewport — plus, for a watched grid taller than the host, the lifted
+  // part below it. Positive lines look back: one line moves the window one
+  // row, inside history and the clipped grid alike.
+  function scroll(lines: number, x?: number, y?: number): boolean {
+    if (!term) return false
+    // The replay is not written yet: the finger has no window to move, and its
+    // rows would land on a screen that is about to be replaced.
+    if (covering.value) return false
+    // A program tracking the mouse gets the wheel (its own history: Claude
+    // Code's fullscreen view); otherwise xterm scrolls the history it kept.
+    if (term.modes.mouseTrackingMode !== 'none' && opts.input?.() !== false) {
+      if (!tws || tws.readyState !== 1) return false
+      wheelCell = pointCell(x, y) ?? { column: Math.floor(term.cols / 2), row: Math.floor(term.rows / 2) }
+      // Not terminal.input: scrolling neither cancels a touch gesture nor takes control.
+      wheel.push(lines)
+      return true
+    }
+    view -= lines
+    atTail = false
+    followCursor()
+    // Scrolling back (positive lines) to the oldest row xterm holds asks
+    // for the deep history, once.
+    if (lines > 0) maybeFetchDeep()
+    return true
+  }
   // A tap on the cursor's own row asks to type at the field; a tap anywhere
   // else only acts on the pane (stop inertia, open a link).
   function tapOnCursor(x: number, y: number): boolean {
@@ -1026,38 +1070,6 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     if (!cell || !term) return false
     const buffer = term.buffer.active
     return cell.row + buffer.viewportY === buffer.cursorY + buffer.baseY
-  }
-  // A full-screen app keeps its history to itself: the alternate screen has no
-  // rows for xterm to move, so a scroll has to reach the app as its wheel.
-  function appTakesWheel() {
-    return coreStream && sgrMouse && term?.buffer.active.type === 'alternate'
-      && ['vt200', 'drag', 'any'].includes(term.modes.mouseTrackingMode)
-  }
-  function sendWheel(lines: number): boolean {
-    if (!term || !tws || tws.readyState !== 1 || opts.input?.() === false) return false
-    const report = `\x1b[<${lines > 0 ? 64 : 65};${(term.cols >> 1) + 1};${(term.rows >> 1) + 1}M`
-    // Not through sendTerm: it counts terminal.input as typing, which would
-    // cancel the very gesture sending these.
-    tws.send(JSON.stringify({ type: 'terminal.input', text: report.repeat(Math.min(Math.abs(lines), MAX_WHEEL_NOTCHES)) }))
-    return true
-  }
-  // Otherwise scrolling is local: the attach delivered the scrollback and xterm owns
-  // the viewport — plus, for a watched grid taller than the host, the lifted
-  // part below it. Positive lines look back: one line moves the window one
-  // row, inside history and the clipped grid alike.
-  function scroll(lines: number): boolean {
-    if (!term) return false
-    // The replay is not written yet: the finger has no window to move, and its
-    // rows would land on a screen that is about to be replaced.
-    if (covering.value) return false
-    if (appTakesWheel()) return sendWheel(lines)
-    view -= lines
-    atTail = false
-    followCursor()
-    // Scrolling back (positive lines) to the oldest row xterm holds asks for
-    // the deep history, once.
-    if (lines > 0) maybeFetchDeep()
-    return true
   }
   // These two end with the owning component, not with dispose(): the view can
   // be mounted again on this controller.
@@ -1140,6 +1152,7 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     mounting = false
     takeoverQueued = false
     focusQueued = false
+    wheel.cancel()
     disconnect()
     unbindSelection?.()
     unbindPaste?.()

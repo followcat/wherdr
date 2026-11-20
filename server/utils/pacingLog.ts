@@ -11,6 +11,9 @@ import { DATA_DIR } from './env'
 export const PACING_LOG_FILE = path.join(DATA_DIR, 'pacing-log.jsonl')
 
 const memo = new Map<string, PacingEntry[]>()
+// Files whose last line was cut (no newline at the end, or an append that
+// failed midway): the next append starts on a line of its own, never glued to it.
+const cut = new Set<string>()
 let queue: Promise<unknown> = Promise.resolve()
 
 async function load(file: string): Promise<PacingEntry[]> {
@@ -19,6 +22,7 @@ async function load(file: string): Promise<PacingEntry[]> {
   let text = ''
   try { text = await fs.readFile(file, 'utf8') }
   catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e }
+  if (text && !text.endsWith('\n')) cut.add(file)
   const entries = text.split('\n').flatMap(l => (l ? [parseEntry(l)].filter((e): e is PacingEntry => e !== null) : []))
   memo.set(file, entries)
   return entries
@@ -48,9 +52,13 @@ export function recordReadings(next: PacingEntry[], now = Date.now(), file = PAC
     if (stale) {
       const kept = keepRecent(all, now)
       await rewrite(file, kept)
+      cut.delete(file)
       memo.set(file, kept)
     } else {
-      await fs.appendFile(file, lines(added), { mode: 0o600 })
+      const start = cut.has(file) ? '\n' : ''
+      cut.add(file)
+      await fs.appendFile(file, start + lines(added), { mode: 0o600 })
+      cut.delete(file)
       entries.push(...added)
     }
     return added
@@ -70,4 +78,4 @@ export async function accountUsedToday(key: string, now = Date.now(), file = PAC
 }
 
 // Tests: forget what was loaded.
-export function forgetPacingLog() { memo.clear() }
+export function forgetPacingLog() { memo.clear(); cut.clear() }

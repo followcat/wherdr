@@ -138,7 +138,7 @@ class FakeTerm {
   echoViewport() { this.viewportEl.dispatchEvent(new Event('scroll')) }
   resize(cols: number, rows: number) { this.cols = cols; this.rows = rows }
   loadAddon() {} open() {} focus() {} dispose() {} refresh() {} reset() {}
-  parser = { registerCsiHandler: () => ({ dispose() {} }) }
+  parser = { registerCsiHandler: () => ({ dispose() {} }), registerEscHandler: () => ({ dispose() {} }) }
   attachCustomWheelEventHandler() {} attachCustomKeyEventHandler() {}
   onData() {} onBinary() {}
   onScroll(fn: (y: number) => void) { this.onScrollCb = fn }

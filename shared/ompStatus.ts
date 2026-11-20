@@ -51,10 +51,29 @@ export function ompPreviewText(text: string): string {
   return lines.filter((_, i) => !drop.has(i)).join('\n')
 }
 
+// omp shows one status line per extension under its own footer: up to two of them are set aside,
+// then the footer is read above them and they follow its line.
+const EXTENSION_LINES = 2
 // The reading, and the indices (in text.split('\n')) of the screen lines it came from.
 function findOmpStatus(text: string | null | undefined): { status: OmpStatus, lines: number[] } | null {
   if (!text) return null
-  const all = text.split('\n').map(l => l.trimEnd())
+  const rows = text.split('\n')
+  const filled = rows.map((l, i) => l.trim() ? i : -1).filter(i => i >= 0)
+  for (let k = 0; k <= EXTENSION_LINES && k < filled.length; k++) {
+    const extras = filled.slice(filled.length - k)
+    if (extras.some(i => /^\s*[─━│╭╰├┌└▶]/.test(rows[i]!) || RULE.test(rows[i]!))) return null
+    const found = readFooter(k ? rows.slice(0, extras[0]) : rows)
+    if (!found) continue
+    if (!k) return found
+    const shown = extras.map(i => rows[i]!.trim()).filter(x => !found.status.meters?.includes(x))
+    const line = [found.status.line, ...shown].join(' · ').slice(0, 300)
+    return { status: { ...found.status, line }, lines: [...found.lines, ...extras] }
+  }
+  return null
+}
+
+function readFooter(rows: string[]): { status: OmpStatus, lines: number[] } | null {
+  const all = rows.map(l => l.trimEnd())
   const at = all.map((l, i) => l ? i : -1).filter(i => i >= 0)
   const lines = at.map(i => all[i]!)
   const n = lines.length

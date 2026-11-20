@@ -117,6 +117,14 @@ describe('pacing log', () => {
       forgetPacingLog()
       expect((await readPacingLog(file)).map(x => x.week)).toEqual([5, 7, 2])
     })
+
+    it('an append after a cut last line starts on a line of its own', async () => {
+      const now = Date.now()
+      fs.writeFileSync(file, JSON.stringify(e(now - H, 5)) + '\n{"account":"claude:a1b')
+      await recordReadings([e(now, 7)], now, file)
+      forgetPacingLog()
+      expect((await readPacingLog(file)).map(x => x.week)).toEqual([5, 7])
+    })
   })
 })
 

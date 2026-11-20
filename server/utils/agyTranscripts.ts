@@ -417,7 +417,8 @@ export function createAgyTranscripts({
     bases.set(file, base)
     for (const [key, older] of bases) {
       if (bases.size <= DOCUMENT_CACHE_ENTRIES) break
-      if (older.refs) continue
+      // The base being acquired has no ref yet: the caller takes it right after.
+      if (older.refs || older === base) continue
       bases.delete(key)
       rmSync(older.dir, { recursive: true, force: true })
     }
@@ -582,7 +583,10 @@ export function createAgyTranscripts({
       // both sidecars. node:sqlite (Node 24) creates a missing -wal and -shm
       // even for a read-only open and leaves them in agy's folder. Otherwise
       // (agy not running, or a sidecar refused) read the kept copy; remote
-      // machines always take the copy path.
+      // machines always take the copy path. Not atomic: sidecars removed
+      // between the check and the open are recreated, empty, beside agy's
+      // database; deleting them afterwards could remove a live writer's WAL,
+      // so they are left (SQLite reuses them on the next open).
       if (fs === localFs && walSt && existsSync(`${file}-shm`)) {
         try {
           const db = new Db(file, { readOnly: true })

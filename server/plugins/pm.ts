@@ -55,9 +55,11 @@ export default defineNitroPlugin((nitroApp) => {
   // A project's On state change command, in the background (pmOnState.ts).
   pmStore().onStateChanges((t, states) => { void runOnState({ ...coreAdminDeps(), store: pmStore() }, t, states).catch(() => {}) })
   void repairDoneTasks(pmStore()).catch(() => {})
+  // Every 10 s for 5 min, then once a minute until herdr-core answers (said once in the log).
   let tries = 0
   const timer = setInterval(() => {
-    if (++tries > 30) return clearInterval(timer)
+    if (++tries === 31) console.warn('[pm] herdr-core has not answered for 5 min: runs are reconciled (merges resumed, worktrees swept) once it does, tried once a minute')
+    if (tries > 30 && tries % 6) return
     reconcileRuns({ ...coreAdminDeps(), store: pmStore() }).then(() => {
       clearInterval(timer)
       void sweepWorktrees({ ...coreAdminDeps(), store: pmStore() }).catch(() => {})

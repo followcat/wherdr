@@ -21,6 +21,10 @@ export interface CoreMenuContext {
   rename: (paneId: string) => void
   /** Opens the file browser of the agent's folder. */
   browseFiles: () => void
+  /** Split right / down entries of the pane (absent when its folder is unknown), already built. */
+  split?: MenuItem[]
+  /** "Open in editor" entry, absent when the pane has no folder on a Mac. */
+  editor?: MenuItem
   /** Settings entries (not in a side-by-side cell), already built. */
   settings: MenuItem[]
   /** Close entry, absent on the compact phone. */
@@ -36,6 +40,7 @@ export function coreAgentMenu(ctx: CoreMenuContext): MenuItem[] {
     { label: t('Take control of this terminal'), icon: 'i-lucide-arrow-left-right', run: ctx.takeControl },
     { label: t('Reconnect'), icon: 'i-lucide-refresh-cw', run: ctx.reconnect },
   ]
+  if (ctx.editor) items.push(ctx.editor)
   for (const contribute of CONTRIBUTIONS) items.push(...contribute(ctx))
   items.push(...ctx.settings)
   if (ctx.close) items.push({ kind: 'separator' }, ctx.close)

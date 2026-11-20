@@ -1,8 +1,9 @@
 <script setup lang="ts">
-// Raw terminal of the pane: xterm.js + touch layer. The attach delivers the
-// history: a finger drag or the wheel scrolls xterm's local viewport — never
-// ↑/↓ sent to the agent; click = keyboard to the terminal, a tap too except
-// on iOS: see utils/terminalTapFocus.ts).
+// Raw terminal of the pane: xterm.js + touch layer (scrolling with a finger or
+// the wheel -> ctl.scroll: xterm's history on herdr-core, or wheel reports to a
+// program tracking the mouse, like Claude Code's fullscreen view; never ↑/↓
+// sent to the agent; click = keyboard to the terminal, a tap too except on
+// iOS: see utils/terminalTapFocus.ts).
 import '@xterm/xterm/css/xterm.css'
 import { createTerminalTouch } from '~/utils/terminalTouch'
 import { takeTouchLines } from '~/utils/terminalWheel'
@@ -27,10 +28,12 @@ let legacyAcc = 0
 let legacyPendingLines = 0
 let legacyRaf = 0
 let legacyMoved = false
+// Where the wheel or the finger is: a program tracking the mouse gets it there.
+let legacyPoint: { x: number, y: number } | null = null
 const legacyFlush = () => {
   legacyRaf = 0
   if (!legacyPendingLines) return
-  props.ctl.scroll(legacyPendingLines)
+  props.ctl.scroll(legacyPendingLines, legacyPoint?.x, legacyPoint?.y)
   legacyPendingLines = 0
 }
 const legacyQueue = (n: number) => {
@@ -74,6 +77,7 @@ function legacyOnTouchMove(e: TouchEvent) {
     // the smooth path — never while an IME composition is in flight.
     if (props.ctl.hasFocus() && !props.ctl.imeBusy()) props.ctl.blur()
     legacyMoved = true
+    legacyPoint = { x, y }
     legacyQueue(lines)
   }
 }
@@ -102,10 +106,12 @@ function legacyOnTouchEnd(e: TouchEvent) {
 // state on every event, and that cancellation must not drop the stream's
 // fractional rest or the rows already queued for the next frame.
 let wheelAcc = 0, wheelPendingLines = 0, wheelRaf = 0
+// Where the wheel or the finger is: a program tracking the mouse gets it there.
+let wheelPoint: { x: number, y: number } | null = null
 const wheelFlush = () => {
   wheelRaf = 0
   if (!wheelPendingLines) return
-  props.ctl.scroll(wheelPendingLines)
+  props.ctl.scroll(wheelPendingLines, wheelPoint?.x, wheelPoint?.y)
   wheelPendingLines = 0
 }
 const wheelQueue = (n: number) => {
@@ -129,6 +135,7 @@ function legacyOnWheel(e: WheelEvent) {
   wheelAcc -= wheelPixels(e.deltaY, e.deltaMode, h, props.ctl.pageRows())
   const { lines, rest } = takeLines(wheelAcc, h)
   wheelAcc = rest
+  wheelPoint = { x: e.clientX, y: e.clientY }
   if (lines) wheelQueue(lines)
 }
 
@@ -142,13 +149,15 @@ let lastTouchAt = -Infinity
 let lastScrollAt = -Infinity
 let stoppingScroll = false
 let touching = false
+// Where the finger is: a program tracking the mouse gets the wheel there.
+let scrollPoint: { x: number, y: number } | null = null
 const screenEl = () => host.value?.querySelector('.xterm-screen') as HTMLElement | null
 function flush() {
   raf = 0
   if (!pendingLines) return
   const n = pendingLines
   pendingLines = 0
-  if (!props.ctl.scroll(n)) acc = 0
+  if (!props.ctl.scroll(n, scrollPoint?.x, scrollPoint?.y)) acc = 0
 }
 const scroller = () => host.value?.querySelector('.xterm') as HTMLElement | null
 const touch = createTerminalTouch({
@@ -159,6 +168,7 @@ const touch = createTerminalTouch({
     // disturb an active IME composition or its deferred commit.
     if (props.ctl.hasFocus() && !props.ctl.imeBusy()) props.ctl.blur()
     lastScrollAt = performance.now()
+    scrollPoint = { x: point.x, y: point.y }
     acc += pixels
     const { lines, rest } = takeTouchLines(acc, props.ctl.rowHeight(), scrollDirection)
     acc = rest
@@ -173,11 +183,12 @@ const touch = createTerminalTouch({
   },
   momentum(pixels, point) {
     lastScrollAt = performance.now()
+    scrollPoint = { x: point.x, y: point.y }
     acc += pixels
     const { lines, rest } = takeTouchLines(acc, props.ctl.rowHeight(), scrollDirection)
     acc = rest
     if (lines) scrollDirection = Math.sign(lines)
-    if (lines) props.ctl.scroll(lines)
+    if (lines) props.ctl.scroll(lines, point.x, point.y)
   },
   horizontal(pixels) {
     lastScrollAt = performance.now()

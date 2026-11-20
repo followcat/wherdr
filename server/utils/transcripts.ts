@@ -1726,6 +1726,33 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     return best && { file: best.file, session: best.id, ...(best.id !== resumed ? { guessed: true } : {}) }
   }
 
+  // omp keeps a session folder per working directory: `-<path under home>` or
+  // `--<absolute path>--`, separators and drive colons as dashes. herdr-core reports no
+  // omp session, so the newest file there is the conversation, once it is no older than
+  // the terminal; `--continue` / `--resume` take up an older one.
+  const ompDirName = (cwd: string) => {
+    const rel = cwd === home || cwd.startsWith(`${home}/`) ? cwd.slice(home.length).replace(/^\/+/, '') : null
+    return rel !== null ? `-${rel.replace(/[/\\:]/g, '-')}` : `--${cwd.replace(/^\/+/, '').replace(/[/\\:]/g, '-')}--`
+  }
+  async function locateOmp(pane: TranscriptPane): Promise<Loc | null> {
+    if (!pane.cwd) return null
+    const dir = path.join(home, '.omp/agent/sessions', ompDirName(pane.cwd.replace(/\/+$/, '')))
+    const files = (await listDir(dir)).filter(n => n.endsWith('.jsonl') && !n.startsWith('.')).map(n => path.join(dir, n))
+    if (!files.length) return null
+    const stats = await fs.statMany(files)
+    const proc = await paneProcess(pane.id, 'omp').catch(() => null)
+    const argv: string[] = Array.isArray(proc?.argv) ? proc.argv : []
+    const continued = argv.some(a => a === '--continue' || a === '-c' || a === '--resume' || a === '-r' || a.startsWith('--resume='))
+    let best: { file: string, mtimeMs: number } | null = null
+    for (let i = 0; i < files.length; i++) {
+      const st = stats[i]
+      if (!st || !st.isFile) continue
+      if (!continued && pane.bornAt && st.mtimeMs < pane.bornAt - 5000) continue
+      if (!best || st.mtimeMs > best.mtimeMs) best = { file: files[i]!, mtimeMs: st.mtimeMs }
+    }
+    return best && { file: best.file, session: path.basename(best.file, '.jsonl'), guessed: true }
+  }
+
   // Codex panes of the machine (kept up to date by the state): for the claims.
   const codexPeers = new Map<string, TranscriptPane>()
   // Agents seen at work: they have a conversation (see shared/integrations.ts).
@@ -1848,6 +1875,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
         const proc = await paneProcess(pane.id, 'claude')
         if (proc) loc = await locateClaude(proc)
       }
+      if (!loc && pane.agent === 'omp') loc = await locateOmp(pane)
     } catch { failed = true }
     // Failed read (SSH, timeout): we keep the last known file rather
     // than conclude "no conversation" (the view would empty for a second).
@@ -1897,9 +1925,13 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     if (known !== undefined) return known
     let cwd = ''
     try {
-      const d = JSON.parse((await readRange(file, 0, 4096)).text.split('\n')[0]!)
-      if (d && d.type === 'session' && typeof d.cwd === 'string') cwd = d.cwd.replace(/\/+$/, '')
-    } catch { /* first line longer than 4 KB or unreadable: paths stay under ~ */ }
+      // omp 19 writes a "title" entry before the "session" one.
+      for (const l of (await readRange(file, 0, 4096)).text.split('\n').slice(0, 4)) {
+        let d: Json
+        try { d = JSON.parse(l) } catch { continue }
+        if (d && d.type === 'session' && typeof d.cwd === 'string') { cwd = d.cwd.replace(/\/+$/, ''); break }
+      }
+    } catch { /* unreadable: paths stay under ~ */ }
     ompCwds.set(file, cwd)
     if (ompCwds.size > 64) ompCwds.delete(ompCwds.keys().next().value!)
     return cwd

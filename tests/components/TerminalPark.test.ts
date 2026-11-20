@@ -54,6 +54,7 @@ class FakeTerm {
       this.csi.push(() => fn([1006]))
       return { dispose() {} }
     },
+    registerEscHandler: () => ({ dispose() {} }),
   }
   attachCustomWheelEventHandler() {} attachCustomKeyEventHandler() {}
   onData() {} onBinary() {} onScroll() {}

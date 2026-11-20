@@ -44,7 +44,12 @@ space's `herdr.space`, a new `herdr.tab` and `herdr.seen=0`, so it also appears 
 herdr-app. Terminals made from the "New" sheet get the space whose folder holds
 their cwd, else a new one. A tab of one terminal not named in herdr-app's layout is renamed
 through that terminal's `herdr.title`; closing a tab or a space kills each of its terminals.
-Split, move and renaming a tab named in the layout stay in herdr-app.
+**Split right**, **Split down** and **Split with agent…** start the new terminal with its tab's `herdr.space` / `herdr.tab` (from the labels or
+the layout); a folder tab gets a wherdr-own `wherdr.tab` label on both terminals, which herdr-app
+ignores (a terminal's `cwd` stays its start folder, so the space holds). The split layout is
+wherdr's own: a tree per tab (leaves are core addresses) in the synced setting `tabSplits`, never
+written to herdr-app's document; a pane missing from it goes at the bottom. Move and renaming a tab
+named in the layout stay in herdr-app.
 Each pane preserves its full core address behind a stable interface identifier.
 Agent identity uses core's `agent` field when supplied, otherwise recognised
 application/template/command names. Identity does not gate status: OSC 7501

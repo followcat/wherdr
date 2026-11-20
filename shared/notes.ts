@@ -30,7 +30,7 @@ export type NotesCommand =
   | { verb: 'list', scope?: string }
   | { verb: 'show', id: string } // a note's id, or a file's path
   | { verb: 'add', title: string, scope?: string } // the lines come as the call's input
-  | { verb: 'edit', id: string, title?: string, scope?: string } // new lines on input; none: kept
+  | { verb: 'edit', id: string, title?: string, scope?: string, ifUpdated?: string } // new lines on input; none: kept
   | { verb: 'remove', id: string }
   | { verb: 'file put' | 'file remove', path: string } // put: the file's text on input
 
@@ -42,7 +42,7 @@ export const NOTES_COMMANDS: { usage: string, does: string }[] = [
   { usage: 'notes list [--scope all|<tab>]', does: 'every note (id, title, scope, dates), or one scope\'s, and the linked files' },
   { usage: 'notes show <id|path>', does: 'one note, or one linked file' },
   { usage: 'notes add "<title>" [--scope all|<tab>] < lines.md', does: `add a note: a title and a few short Markdown lines on stdin, ${NOTE_LIMIT}` + ' (checkboxes, links to another note `other-note.md`, a file `plans/x.md` or an in-app place `#/board?task=ID`); scope all (every tab) or one home tab (a tab group or a machine shown as its own tab), by name; left out, the tab your project shows in' },
-  { usage: 'notes edit <id> [--title "<title>"] [--scope all|<tab>] < lines.md', does: 'change a note: new lines on stdin replace its own, same limit (empty stdin keeps them); --scope moves it. Rewrite a note to keep it short rather than add another' },
+  { usage: 'notes edit <id> [--title "<title>"] [--scope all|<tab>] [--if-updated <iso>] < lines.md', does: 'change a note: new lines on stdin replace its own, same limit (empty stdin keeps them); --scope moves it; --if-updated: refused unless the note is still as last shown (its updated date), so a change made meanwhile is never lost. Rewrite a note to keep it short rather than add another' },
   { usage: 'notes remove <id>', does: 'remove a note once its subject is decided or done' },
   { usage: 'notes file put <folder/name.md> < file.md', does: 'write a Markdown file under a folder of the notes (plans/x.md), for content too long for a note: link it from a note' },
   { usage: 'notes file remove <folder/name.md>', does: 'remove a linked file no note needs any more' },
@@ -102,7 +102,7 @@ const usage = (verb: string) => ({ error: `usage: ${NOTES_COMMANDS.filter(c => c
 // words and flags after `notes` → a command, or the reason it is not one.
 export function parseNotes(words: string[], flags: Record<string, string>): NotesCommand | { error: string } {
   const [w0 = '', w1, w2, ...rest] = words
-  const allowed = { list: ['scope'], add: ['scope'], edit: ['title', 'scope'] }[w0] ?? []
+  const allowed = { list: ['scope'], add: ['scope'], edit: ['title', 'scope', 'if-updated'] }[w0] ?? []
   const extra = Object.keys(flags).find(f => !allowed.includes(f))
   if (extra) return { error: `unknown option --${extra}` }
   const { scope, title } = flags
@@ -115,7 +115,9 @@ export function parseNotes(words: string[], flags: Record<string, string>): Note
   if (w0 === 'edit') {
     if (!w1 || w2) return usage(w0)
     if (title !== undefined && !cleanTitle(title)) return { error: '--title is one line of text' }
-    return { verb: w0, id: w1, ...(title !== undefined ? { title: cleanTitle(title) } : {}), ...(scope ? { scope } : {}) }
+    const ifUpdated = flags['if-updated']
+    if (ifUpdated !== undefined && !Number.isFinite(Date.parse(ifUpdated))) return { error: '--if-updated is the note\'s updated date (ISO), as notes show gives it' }
+    return { verb: w0, id: w1, ...(title !== undefined ? { title: cleanTitle(title) } : {}), ...(scope ? { scope } : {}), ...(ifUpdated ? { ifUpdated } : {}) }
   }
   if (w0 === 'file' && (w1 === 'put' || w1 === 'remove')) {
     if (!w2 || rest.length) return usage(`file ${w1}`)

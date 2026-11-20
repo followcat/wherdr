@@ -347,14 +347,23 @@ describe('CONTEXT_SCRIPT', () => {
   it('removes a snapshot whose clone is gone, an incomplete folder, a leftover lock and an orphan marker; the clone is pruned when it exists', () => {
     const m = member2(path.join(tmp, 'clones', 'gone')), base = path.join(tmp, 'ctx5'), root = path.join(base, 'GONE')
     const sha = sh(CONTEXT_SCRIPT, ...contextArgs(m.clone, root, 'main')).out.split(' ')[0]!
-    const dir = path.join(root, sha)
+    const dir = path.join(root, sha), old = new Date(Date.now() - 2 * 3600_000), age = (...ps: string[]) => ps.forEach(p => fs.utimesSync(p, old, old))
     fs.rmSync(m.clone, { recursive: true, force: true })
+    // Used within the hour (since it was listed), or locked by a start: it stays.
+    expect(sh(CONTEXT_REMOVE_SCRIPT, dir, base)).toEqual({ code: 0, out: '' })
+    expect(fs.existsSync(dir)).toBe(true)
+    age(dir)
+    fs.mkdirSync(`${dir}.lock`)
+    expect(sh(CONTEXT_REMOVE_SCRIPT, dir, base).code).toBe(0)
+    expect(fs.existsSync(dir)).toBe(true)
+    fs.rmdirSync(`${dir}.lock`)
     expect(sh(CONTEXT_REMOVE_SCRIPT, dir, base)).toEqual({ code: 0, out: '' })
     expect(fs.existsSync(dir) || fs.existsSync(`${dir}.ok`)).toBe(false)
     // Incomplete: a folder with no .git, a lock, a marker without its folder.
     const other = path.join(base, 'OTHER')
     fs.mkdirSync(path.join(other, 'abc', 'src'), { recursive: true }); fs.writeFileSync(path.join(other, 'abc', 'src', 'f'), 'x'); fs.chmodSync(path.join(other, 'abc', 'src'), 0o500)
     fs.mkdirSync(path.join(other, 'abc.lock')); fs.writeFileSync(path.join(other, 'lost.ok'), '')
+    age(path.join(other, 'abc'), path.join(other, 'abc.lock'))
     expect(sh(CONTEXT_REMOVE_SCRIPT, path.join(other, 'abc'), base).code).toBe(0)
     expect(sh(CONTEXT_REMOVE_SCRIPT, path.join(other, 'abc.lock'), base).code).toBe(0)
     expect(sh(CONTEXT_REMOVE_SCRIPT, path.join(other, 'lost.ok'), base).code).toBe(0)
@@ -364,6 +373,7 @@ describe('CONTEXT_SCRIPT', () => {
     const sha2 = sh(CONTEXT_SCRIPT, ...contextArgs(m2.clone, root2, 'main')).out.split(' ')[0]!
     expect(sh(CONTEXT_REMOVE_SCRIPT, path.join(root2, `${sha2}.ok`), base).code).toBe(0)
     expect(fs.existsSync(path.join(root2, `${sha2}.ok`))).toBe(true)
+    age(path.join(root2, sha2))
     expect(sh(CONTEXT_REMOVE_SCRIPT, path.join(root2, sha2), base).code).toBe(0)
     expect(git(m2.clone, 'worktree', 'list').split('\n')).toHaveLength(1)
   })

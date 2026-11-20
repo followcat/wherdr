@@ -152,7 +152,8 @@ it('remembers "Resume with" after a reload', async () => {
 it('shows no warning when the kept conversation is the default agent\'s', async () => {
   const b = await mount(view({ ran: { program: 'claude' }, terminal: 'host/t1' }), true)
   expect(b.find('[data-testid="coordinator-other-agent"]').exists()).toBe(false)
-  expect(b.find('[data-testid="coordinator-open"]').text()).toBe('Open')
+  // It runs: no Open button, its row and header open it.
+  expect(b.find('[data-testid="coordinator-open"]').exists()).toBe(false)
 })
 
 it('names the autopilot with its subtitle and links a project\'s to its Workflow tab', async () => {

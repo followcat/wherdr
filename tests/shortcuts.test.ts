@@ -64,6 +64,16 @@ describe('matchShortcut', () => {
     expect(match({ key: 'f', metaKey: true }, body, { ...mac, phase: 'capture' })).toBeNull()
   })
 
+  it('Mod+Alt+S splits right, with Shift down, from the terminal on Linux and macOS', () => {
+    const cap = { phase: 'capture' as const }
+    expect(match({ key: 's', code: 'KeyS', ctrlKey: true, altKey: true }, term, { ...linux, ...cap })).toBe('split-right')
+    expect(match({ key: 'S', code: 'KeyS', ctrlKey: true, altKey: true, shiftKey: true }, term, { ...linux, ...cap })).toBe('split-down')
+    // ⌥ types ß / Í on a Mac: by position.
+    expect(match({ key: 'ß', code: 'KeyS', metaKey: true, altKey: true }, term, { ...mac, ...cap })).toBe('split-right')
+    expect(match({ key: 'Í', code: 'KeyS', metaKey: true, altKey: true, shiftKey: true }, term, { ...mac, ...cap })).toBe('split-down')
+    expect(applyBindings({ 'split-down': { mods: ['mod', 'alt'], key: 'd' } }).find(s => s.id === 'split-down')).toMatchObject({ key: 'd', capture: true, kbds: ['meta', 'alt', 'D'] })
+  })
+
   it('Ctrl+` by position, from the terminal too, with Ctrl on macOS', () => {
     expect(match({ key: '²', code: 'Backquote', ctrlKey: true }, term, linux)).toBe('toggle-term')
     expect(match({ key: '`', code: 'Backquote', ctrlKey: true }, field('draft'))).toBe('toggle-term')

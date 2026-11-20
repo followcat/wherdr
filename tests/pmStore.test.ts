@@ -94,6 +94,22 @@ describe('pm store', () => {
     expect(await store.savedWorkflow('WEB')).toBeNull()
     expect(await store.workflowLog('WEB')).toEqual([])
   })
+
+  it('runs the default workflow with the agent of the coordinator, until a workflow is accepted', async () => {
+    const store = createPmStore(dir)
+    await store.setEnabled(true)
+    await store.addProject({ ...input, template: '' }, okFolder)
+    // No coordinator started yet, or Claude's: the Claude default.
+    expect((await store.workflow('WEB'))!.prefs).toEqual({ agent: 'claude', model: 'sonnet' })
+    // omp: its own agent for the worker, its model pinned (the engine always pins one), and a reviewer of the same model.
+    await store.saveCoordinator({ ...(await store.coordinator('WEB'))!, ran: { program: 'omp', model: 'anthropic/claude-opus-5-5' } })
+    expect((await store.workflow('WEB'))!.prefs).toEqual({ agent: 'omp', model: 'anthropic/claude-opus-5-5', reviewModel: 'same' })
+    await store.saveCoordinator({ ...(await store.coordinator('WEB'))!, ran: { program: 'omp' } })
+    expect((await store.workflow('WEB'))!.prefs).toMatchObject({ agent: 'omp', model: expect.stringMatching(/^\S+$/), reviewModel: 'same' })
+    // An accepted workflow keeps its own agents.
+    await store.saveWorkflow('WEB', { ...defaultWorkflow('WEB'), prefs: { agent: 'claude', model: 'opus' } })
+    expect((await store.workflow('WEB'))!.prefs).toEqual({ agent: 'claude', model: 'opus' })
+  })
 })
 
 describe('removing a project (WHR-513)', () => {
@@ -228,7 +244,9 @@ describe('workspace members', () => {
     await store.saveWorkflow('PAY', { ...defaultWorkflow('PAY'), prefs: { agent: 'claude' }, worktree: { copy: ['config.json'] }, workspaceGuards: { protected: ['x'] } })
     expect(await store.savedWorkflow('PAY')).not.toHaveProperty('workspaceGuards')
     await store.saveWorkflow('PAY', { ...defaultWorkflow('PAY'), prefs: { agent: 'claude' }, worktree: { copy: ['config.json'] } })
-    expect(await store.workflow('PAY')).toMatchObject({ prefs: { agent: 'claude' }, worktree: { copy: ['config.json'] } })
+    expect(await store.workflow('PAY')).toMatchObject({ prefs: { agent: 'claude' }, worktree: { copy: ['config.json'] } })    // Agents set back to the workspace's workflow's: no override of its own.
+    await store.addProject({ key: 'tax', machine: '', path: '~/work/tax', workspace: 'ws' }, okFolder)
+    expect(await store.setMemberSetup('TAX', { prefs: { agent: 'claude', model: 'sonnet' } })).not.toHaveProperty('overrides')
   })
 })
 
@@ -238,5 +256,21 @@ describe('cleanProjectInput', () => {
       .toEqual({ key: 'WHR', name: 'WHR', machine: 'mac', path: '/w', base: 'v3' })
     const { errors } = cleanProjectInput({ key: '1x', machine: 3, path: 'rel', base: 'a..b', template: 'Bad Id' })
     expect(errors.map(e => e.path)).toEqual(['key', 'machine', 'path', 'base', 'template'])
+  })
+})
+
+describe('workspace members and the coordinator\'s agent', () => {
+  it('runs a member with no workflow of its own on its workspace coordinator\'s agent', async () => {
+    const store = createPmStore(dir)
+    await store.setEnabled(true)
+    await store.addProject({ key: 'ws', name: 'Work', machine: '', path: '~/work', kind: 'workspace', group: 'g1' }, okFolder)
+    await store.addProject({ key: 'pay', machine: '', path: '~/work/payroll-api', workspace: 'ws' }, okFolder)
+    expect((await store.workflow('PAY'))!.prefs).toEqual({ agent: 'claude', model: 'sonnet' })
+    await store.saveCoordinator({ ...(await store.coordinator('WS'))!, ran: { program: 'omp', model: 'anthropic/claude-opus-5-5' } })
+    expect((await store.workflow('PAY'))!.prefs).toEqual({ agent: 'omp', model: 'anthropic/claude-opus-5-5', reviewModel: 'same' })
+    expect((await store.workflow('WS'))!.prefs).toEqual({ agent: 'omp', model: 'anthropic/claude-opus-5-5', reviewModel: 'same' })
+    // The workspace's accepted workflow wins over the coordinator's agent.
+    await store.saveWorkflow('WS', { ...defaultWorkflow('WS'), prefs: { agent: 'claude', model: 'opus' } })
+    expect((await store.workflow('PAY'))!.prefs).toEqual({ agent: 'claude', model: 'opus' })
   })
 })

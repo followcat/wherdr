@@ -3,7 +3,7 @@
 // member added (store.addProject), its visibility checked, its map line
 // pointed at it and the adoption written to the workspace's log.
 import { REAL_ALL_SCRIPT, REAL_SCRIPT, adoptRefusal, foldersOn, realLines, adoptedMember, realRepo, repoUnder, underRoot, type RepoCommand } from '../../shared/pm/workspaceAdopt'
-import { effectiveWorkflow, isWorkspace } from '../../shared/pm/workspace'
+import { effectiveWorkflow, isWorkspace, membersOf, repoPath } from '../../shared/pm/workspace'
 import { needsRemote } from '../../shared/pm/newProject'
 import { renderMap } from '../../shared/pm/workspaceMap'
 import type { Project } from '../../shared/pm/project'
@@ -24,7 +24,8 @@ export async function adoptRepo(deps: Deps, ws: Project | undefined, projects: P
 
 // Everything adopting checks, nothing changed: the repository (symlinks
 // resolved) and its folder as probed.
-export async function checkAdoption(deps: Deps, ws: Project, projects: Project[], cmd: RepoCommand) {
+// members: a repository already a member of ws is returned as is (a feature's plan may name it by path).
+export async function checkAdoption(deps: Deps, ws: Project, projects: Project[], cmd: RepoCommand, { members = false } = {}) {
   const { store } = deps
   const { on } = machineOn(deps, ws.machine)
   const home = await homeOf(deps, on) ?? ''
@@ -36,6 +37,8 @@ export async function checkAdoption(deps: Deps, ws: Project, projects: Project[]
   const [realRoot = '', realFolder = ''] = r.out.split('\n')
   const repo = realRepo(named, realRoot, realFolder)
   if (typeof repo !== 'string') throw new HerdrError('refused', repo.error)
+  const known = members ? membersOf(ws.key, projects).find(p => repoPath(p, ws) === repo) : undefined
+  if (known) return { repo, path: known.path }
   const member = adoptedMember(ws, repo, projects)
   const probe = await probeFolder(ws.machine, member.path, deps)
   const workflow = effectiveWorkflow(member.key, null, member as Project, ws, await store.savedWorkflow(ws.key))

@@ -206,7 +206,7 @@ if [ -e "$dir" ] || [ -e "$dir.ok" ]; then
   rm -rf "$dir" "$dir.ok"
 fi
 git -C "$clone" worktree prune >/dev/null 2>&1
-git -C "$clone" worktree add -q --detach "$dir" "$sha" 2>&1 || exit 1
+git -C "$clone" -c core.hooksPath=/dev/null worktree add -q --detach "$dir" "$sha" 2>&1 || exit 1
 chmod -R a-w "$dir" || exit 1
 : > "$dir.ok" || exit 1
 state=

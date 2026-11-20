@@ -71,6 +71,17 @@ describe('a message sent while Codex installs or updates itself', () => {
     held.apply(ready())
     expect(tries).toBe(before)
   })
+  it('a send whose core connection dropped may have reached Codex: never typed again', async () => {
+    let tries = 0
+    const held = createHeld(async () => { tries++; throw Object.assign(new Error('herdr-core is unreachable'), { code: 'unreachable', unconfirmed: true }) })
+    held.hold(pane(), 'Hi')
+    held.apply([pane({ installing: undefined })])
+    await new Promise(r => setTimeout(r, 0))
+    const after = [pane({ installing: undefined })]
+    held.apply(after)
+    expect(after[0]!.queued).toMatchObject([{ state: 'failed', reason: 'unseen' }])
+    expect(tries).toBe(1)
+  })
   it('survives a restart: still typed once Codex is ready; one cut while typing is never typed again', async () => {
     let saved: HeldSaved | null = null
     const store = { load: () => saved, save: (x: HeldSaved) => { saved = JSON.parse(JSON.stringify(x)) } }

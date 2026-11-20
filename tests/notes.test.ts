@@ -41,6 +41,21 @@ describe('notes store', () => {
     expect(log.map(l => `${l.by} ${l.action} ${l.what}`)).toEqual(['Alfred add look-at-the-plan', 'Alfred add look-at-the-plan-2', 'Alfred file put plans/x.md', 'Alfred edit look-at-the-plan', 'Alfred remove look-at-the-plan'])
   })
 
+  it('edit --if-updated: refused once the note changed since; a failed write leaves no temp file', async () => {
+    const { added } = await run(['add', 'Plan'], 'one')
+    expect((await run(['edit', 'plan', '--if-updated', added.updated], 'two')).edited.body).toBe('two')
+    await expect(run(['edit', 'plan', '--if-updated', added.updated], 'three')).rejects.toMatchObject({ code: 'conflict' })
+    expect(parseNotes(['edit', 'plan'], { 'if-updated': 'yesterday' })).toHaveProperty('error')
+    await fs.mkdir(path.join(dir, 'notes/plans/x.md'), { recursive: true })
+    await expect(run(['file', 'put', 'plans/x.md'], '# Plan\n')).rejects.toThrow()
+    expect(await fs.readdir(path.join(dir, 'notes/plans'))).toEqual(['x.md'])
+  })
+
+  it('an unreadable settings file: refused, never scoped on the defaults', async () => {
+    await fs.writeFile(settingsFile, '{ not json')
+    await expect(run(['add', 'Plan', '--scope', 'home'], 'one')).rejects.toMatchObject({ code: 'settings_damaged' })
+  })
+
   it('keeps notes short and says which links lead nowhere yet', async () => {
     await expect(run(['add', 'Long'], Array(13).fill('- line').join('\n'))).rejects.toThrow(/linked file/)
     expect(await run(['add', 'Links'], '[a](other.md) [b](plans/y.md) [c](#/board?task=WD-1) [d](https://example.com)')).toMatchObject({ missing: ['other.md', 'plans/y.md'] })

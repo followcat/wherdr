@@ -7,8 +7,10 @@ const backToOrigin = useViewBack()
 // terminal shown in a cell fits its pane to the cell, and each pane gets its
 // size back when the tab is left (server/utils/paneSizes.ts). Herdr's focus and
 // zoom are never changed: wherdr's active cell is not Herdr's focus. herdr-core
-// keeps the layout in herdr-app's document: wherdr never changes it.
+// keeps the layout in herdr-app's document: wherdr never changes it; a tab drawn
+// from wherdr's own split tree gets dividers to drag (computer only).
 import { neighborPane, paneBoxes } from '#shared/layout'
+import { setRatio, treeDividers, treeLayout } from '#shared/splitTree'
 import { longPress } from '~/utils/longPress'
 import { skipsPress } from '~/utils/headerMenu'
 import { cellFocusStep } from '~/utils/viewMode'
@@ -24,7 +26,16 @@ const entry = computed(() => tabOf(props.tabId))
 const headerAdd = computed(() => entry.value && spaceTabControls(spaceTabs(entry.value.tab.workspace).length).headerAdd)
 const ws = computed(() => (entry.value ? herdrState.value.workspaces.find(w => w.id === entry.value!.tab.workspace) : undefined))
 const byId = computed(() => new Map((entry.value?.panes || []).map(p => [p.id, p])))
-const layout = computed(() => entry.value?.layout || null)
+// A divider being dragged: the cells follow it, the tree is written on release.
+const preview = ref<{ path: string, ratio: number } | null>(null)
+const layout = computed(() => {
+  const e = entry.value
+  if (!e?.tree || !preview.value) return e?.layout || null
+  const paneOf = new Map(e.panes.map(p => [p.coreAddress, p.id]))
+  return treeLayout(e.tab, setRatio(e.tree, preview.value.path, preview.value.ratio), leaf => paneOf.get(leaf)!)
+})
+const dividers = computed(() => (entry.value?.tree && !offlineView.value && layout.value ? treeDividers(layout.value) : []))
+const onPreview = (path: string, ratio: number | null) => { preview.value = ratio == null ? null : { path, ratio } }
 const boxes = computed(() => (layout.value ? paneBoxes(layout.value).filter(b => byId.value.has(b.pane)) : []))
 const machine = computed(() => (multiMachine.value && entry.value ? machineInfo(entry.value.tab.machine) : undefined))
 const tabLabel = (label: string, n: number) => label || String(n)
@@ -139,13 +150,14 @@ function open(paneId: string) {
       <UButton color="neutral" variant="outline" @click="backToOrigin">{{ t('Back') }}</UButton>
     </div>
     <div v-else-if="!entry" class="chat-empty">{{ t('Loading…') }}</div>
-    <div v-else-if="entry && desk" class="split">
+    <div v-else-if="entry && desk" class="split" :class="{ resizing: preview }">
       <div
         v-for="b in boxes" :key="b.pane" class="split-box"
         :style="{ left: `${b.left}%`, top: `${b.top}%`, width: `${b.width}%`, height: `${b.height}%` }"
       >
         <AgentView cell :pane-id="b.pane" :active="b.pane === active" @activate="activate(b.pane)" />
       </div>
+      <SplitDividers :dividers="dividers" @preview="onPreview" @resize="(path, ratio) => resizeSplit(tabId, path, ratio)" />
     </div>
     <div v-else-if="entry" class="plan-wrap">
       <div class="plan">

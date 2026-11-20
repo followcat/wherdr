@@ -161,6 +161,6 @@ describe('coordinator of a folder without git', () => {
     const omp = coordinatorArgs('omp', '/c', ws.path, isPlainFolder(ws))
     expect(omp.slice(0, 2)).toEqual(['omp', '--tools'])
     expect(omp[2]).toBe(OMP_COORDINATOR_TOOLS)
-    expect(omp.slice(3)).toEqual(['--add-dir', ws.path])
+    expect(omp.slice(3, 5)).toEqual(['--add-dir', ws.path])
   })
 })

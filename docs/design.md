@@ -20,6 +20,10 @@ Use theme variables only in interface styling: `--text`, `--text-2`, `--muted`,
 and the semantic state tokens. Do not add hardcoded hex, RGB or named colors to
 components. Palette values belong in the theme definitions in `main.css` and
 [themes.ts](../app/utils/themes.ts); themes can override the state colors too.
+Project key badges ([ProjectBadge.vue](../app/components/ProjectBadge.vue)) take
+one of 12 fixed `--project-<color>` tokens (`PROJECT_COLORS` in
+[projectKey.ts](../shared/pm/projectKey.ts)), mid-tones readable on dark and light; a
+workspace member's badge has a dashed border.
 Examples: `.menu button:active` uses `--surface-2`, `.task-chip` uses `--line`,
 and `.card-state.working` uses `--working`.
 
@@ -117,6 +121,10 @@ A bar pinned at the bottom of the scroll (`position: sticky; bottom: 0`, a
 task's To do buttons on the phone, the folder picker's buttons) is the body's
 last element and carries that padding itself; the body then has none, so the
 bar sits on the sheet's edge and nothing scrolls under it.
+Home's list follows the same rule: its scroll runs to the screen's bottom edge,
+under the floating **+ New** (`.fab-wrap`, `position: absolute`), and its bottom
+padding (the button's height plus the safe area) lets the last card scroll clear
+of the button; no footer band is reserved for it.
 What could overflow shrinks, wraps or is ellipsized: grid
 and flex children get `min-width: 0` (`minmax(0, 1fr)` tracks), long names and
 paths wrap with `overflow-wrap: anywhere`, fields are `w-full` or

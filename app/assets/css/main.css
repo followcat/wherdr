@@ -168,6 +168,10 @@
   --project-orange: #f97316;
   --project-red: #ef4444;
   --project-pink: #ec4899;
+  --project-cyan: #06b6d4;
+  --project-lime: #84cc16;
+  --project-indigo: #6366f1;
+  --project-magenta: #d946ef;
 
   --working: #a98bff;
   --blocked: #ffb347;
@@ -1454,6 +1458,7 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
 .chat-status .status-dot { width: 7px; height: 7px; background: var(--working); flex: none; animation: pulse 1.3s ease-in-out infinite; }
 .chat-status.waiting { color: color-mix(in srgb, var(--rose) 55%, var(--text)); }
 .chat-status.waiting .status-dot { background: var(--rose); }
+.chat-status.calm .status-dot { background: var(--muted); animation: none; }
 /* Claude's verb ("✻ Orbiting…"): same shimmer, in Claude orange. The star
    (ClaudeSpinner) has a fixed box: the verb does not move when it changes. */
 .chat-status .claude-verb-line { display: inline-flex; align-items: baseline; min-width: 0; font-family: var(--font-mono); font-size: 13px; }
@@ -2700,6 +2705,18 @@ ol[data-slot="viewport"] { top: calc(var(--safe-top) + 12px) !important; bottom:
    the active cell has an accent border (and receives the keyboard). */
 .split { position: relative; flex: 1; min-height: 0; margin: 10px 12px 12px; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
 .split-box { position: absolute; display: flex; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); overflow: hidden; }
+/* Dividers of wherdr's split tree: a 9px grip over the cell border, the line lit on hover, focus and drag. */
+.divider { position: absolute; z-index: 4; touch-action: none; outline: none; }
+.divider.right { width: 9px; transform: translateX(-50%); cursor: col-resize; }
+.divider.down { height: 9px; transform: translateY(-50%); cursor: row-resize; }
+.divider::after { content: ''; position: absolute; background: transparent; transition: background .1s ease; }
+.divider.right::after { top: 0; bottom: 0; left: calc(50% - 1px); width: 2px; }
+.divider.down::after { left: 0; right: 0; top: calc(50% - 1px); height: 2px; }
+.divider:hover::after, .divider:focus-visible::after, .divider.on::after { background: var(--accent); }
+.split.resizing { -webkit-user-select: none; user-select: none; }
+.split.resizing .split-box { pointer-events: none; }
+.split.resizing:has(.divider.right.on) { cursor: col-resize; }
+.split.resizing:has(.divider.down.on) { cursor: row-resize; }
 .cell-view { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
 .cell-view .agent-top {
   grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "head tabs actions";
@@ -3494,7 +3511,8 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
 
 /* Only tab content moves; the header and footer are outside this clipped viewport. */
 .home-content { position: relative; flex: 1; min-height: 0; overflow: hidden; isolation: isolate; background: inherit; }
-.home-content > .scroll { position: absolute; inset: 0; padding-bottom: 16px; background: inherit; overflow-x: hidden; }
+/* The scroll keeps the bottom padding of .scroll: its end runs under the floating + New (.fab-wrap) and the last card scrolls clear of it. */
+.home-content > .scroll { position: absolute; inset: 0; background: inherit; overflow-x: hidden; }
 /* The list's scrollbar: thin, shown while the pointer is over the list. Rows shrink
    or ellipsize; overflow-x above is only a last guard against a row too wide. */
 .home-content > .scroll { scrollbar-width: thin; scrollbar-color: transparent transparent; }
@@ -3502,7 +3520,6 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
 .home-content > .scroll::-webkit-scrollbar { width: 6px; height: 0; }
 .home-content > .scroll::-webkit-scrollbar-thumb { background: transparent; }
 .home-content > .scroll:hover::-webkit-scrollbar-thumb { background: var(--line); }
-#home > .fab-wrap { position: static; flex: none; display: flex; justify-content: flex-end; padding: 12px 16px calc(var(--safe-bottom) + 18px); }
 .home-next-enter-active, .home-next-leave-active,
 .home-prev-enter-active, .home-prev-leave-active { transition-property: transform, opacity; transition-duration: 260ms; transition-timing-function: cubic-bezier(.22,.68,0,1); will-change: transform, opacity; }
 .home-next-enter-from { transform: translateX(calc(100% + var(--home-release, 0px))); opacity: 0; }

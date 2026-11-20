@@ -36,6 +36,8 @@ export const SYNCED_SETTINGS = [
   'shortcutBindings',
   // Community plugins: '1' lets the wherdr plugins load (shared/clientPlugins.ts)
   'communityPlugins',
+  // wherdr's own split layout of each tab (shared/splitTree.ts)
+  'tabSplits',
 ] as const
 
 export type SyncedSetting = typeof SYNCED_SETTINGS[number]

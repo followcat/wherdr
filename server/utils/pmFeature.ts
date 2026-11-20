@@ -44,7 +44,7 @@ export async function splitFeature(deps: Deps, ws: Project | undefined, feature:
   // Each task's repository: a member, else one to adopt (checked now, symlinks resolved); once each.
   const where: ({ key: string } | { repo: string, path: string })[] = []
   for (const t of plan.tasks) {
-    const m = memberAt(t.repo), checked = m ? undefined : await checkAdoption(deps, ws, list, { name: 'repo adopt', repo: t.repo })
+    const m = memberAt(t.repo), checked = m ? undefined : await checkAdoption(deps, ws, list, { name: 'repo adopt', repo: t.repo }, { members: true })
     const at = m ?? (checked && memberAt(checked.repo)) ?? checked!
     if (where.some(w => ('key' in w && 'key' in at ? w.key === at.key : 'repo' in w && 'repo' in at && w.repo === at.repo))) throw new HerdrError('bad_input', `${t.repo}: its repository twice: one sub-task per repository`)
     where.push('key' in at ? { key: at.key } : at)

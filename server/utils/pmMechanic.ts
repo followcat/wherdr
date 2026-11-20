@@ -135,7 +135,10 @@ export async function startChained(deps: PmLaunchDeps, now = Date.now()) {
     let next: typeof mine[number] | undefined, pace: Awaited<ReturnType<typeof paceOf>> | undefined
     for (const t of mine.filter(x => x.after && x.state === 'todo' && !x.sameFiles)) {
       pace = pacedStart(t, 'engine') ? await paceOf(store, p, t, now) : undefined
-      if (!coordinatorStartRefusal(ap, t, all, runs, now, false, { pace: pace?.verdict, engine: true, holds })) { next = t; break }
+      const why = coordinatorStartRefusal(ap, t, all, runs, now, false, { pace: pace?.verdict, engine: true, holds })
+      if (!why) { next = t; break }
+      // Held by the autopilot's limits, hours or pace: why, on its card.
+      if (t.held !== why) await store.updateTask(t.id, x => (x.state === 'todo' && x.held !== why ? { ...x, held: why } : null))
     }
     if (!next) return
     // No room on any allowed machine: held, with why on its card, until a later tick finds room.

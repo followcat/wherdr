@@ -40,8 +40,9 @@ watch(eventsOpen, (v) => { if (v) everOpen.value = true })
 
 // Hidden under a conversation on the phone, the list keeps the state it last
 // showed instead of re-rendering on every push, and catches up when it shows.
-let shownState = herdrState.value
-const st = computed(() => (homeShown.value ? (shownState = herdrState.value) : shownState))
+// wherdr's own splits go with it (the cards' mini-maps).
+let shownState = { ...herdrState.value, splits: tabSplits.value }
+const st = computed(() => (homeShown.value ? (shownState = { ...herdrState.value, splits: tabSplits.value }) : shownState))
 const agents = computed(() => st.value.panes)
 // Mounted only while the list is shown: mounting again reads at once.
 const HomePollers = defineComponent({

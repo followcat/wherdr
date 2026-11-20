@@ -53,9 +53,11 @@ export const projectTabs = syncedRef('projectTabs', readProjectTabs, v => JSON.s
 
 // Each project's tab machines (utils/projectTabs.ts), by its fixed key.
 // Alfred is not in it: it shows on every tab. A workspace not pinned shows
-// under its tab group.
-export const projectTabPlaces = computed(() => new Map(projectCoordinators.value.map(c =>
-  [c.project, projectTabMachines({ machines: c.machines ?? [], paused: c.paused, busy: c.busy }, projectTabs.value[c.project] ?? c.workspace?.group, machineGroups.value)])))
+// under its tab group; its members (no coordinator of their own) show where it does.
+export const projectTabPlaces = computed(() => new Map(projectCoordinators.value.flatMap((c) => {
+  const place = projectTabMachines({ machines: c.machines ?? [], paused: c.paused, busy: c.busy }, projectTabs.value[c.project] ?? c.workspace?.group, machineGroups.value)
+  return [[c.project, place] as const, ...(c.workspace?.members ?? []).map(m => [m.key, place] as const)]
+})))
 // The home tab picked shows this project (a project not loaded yet shows).
 export const projectOnBar = (project: string) => tabHolds(projectTabPlaces.value.get(project), machineBarSelection.value)
 // Whether a bar item (its id) holds a project.

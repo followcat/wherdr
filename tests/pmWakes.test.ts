@@ -117,6 +117,10 @@ describe('wake queue', () => {
     expect(tick(q, 'working', 10 * MIN).deliver).toBeUndefined()
     expect(tick(q, 'gone', 10 * MIN).deliver).toBeUndefined()
     expect(tick(q, 'idle', 10 * MIN).deliver).toBeDefined()
+    // Its coordinator gone an hour after it was made: it ends, never delivered stale at its next start.
+    const stale = tick(q, 'gone', WAKE.TIMEOUT_MS)
+    expect(stale.changed).toEqual([expect.objectContaining({ id: 'w1', ended: 'quit' })])
+    expect(tick(stale.q, 'idle', WAKE.TIMEOUT_MS + MIN).deliver).toBeUndefined()
   })
 
   it('after a human message, waits 60 s', () => {

@@ -143,6 +143,12 @@ describe('message left in Claude\'s input field', () => {
     expect(fieldHolds('[Pasted text #1 +29 lines]', 'one line')).toBe(false)
   })
 
+  it('refused by the server (not_submitted) but still in the field: one bubble, the field\'s Send now / Clear', () => {
+    const list = pendingQueue({ mine: [{ id: 'w-a', text: MSG, at: 1000, state: 'failed', local: true }], claude: [], items: [], screen: null, input: FIELD })
+    expect(list.map(q => [q.state, q.inInput])).toEqual([['failed', true]])
+    expect(inputShown(list, FIELD)).toBe(true)
+  })
+
   it('delivered: the field is empty, read by the agent', () => {
     const list = pendingQueue({ mine: [sent], claude: [], items: [], screen: null, idle: true, input: null })
     expect(list.map(q => [q.phase, q.inInput])).toEqual([['sent', undefined]])

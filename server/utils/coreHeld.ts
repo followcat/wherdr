@@ -19,7 +19,8 @@ import { writeJsonAtomicSync } from './atomicWrite'
 
 const CLIENT_ID = /^w-[a-z0-9]{1,32}$/
 const ready = (p: Pane) => p.agent === 'codex' && !p.installing && !p.stopped && p.status !== 'working' && p.status !== 'blocked'
-const mayHaveReached = (e: unknown) => (e as { code?: string })?.code === 'timeout'
+// Timed out, or the connection lost during the send (failure() in coreInput.ts): it may have been typed.
+const mayHaveReached = (e: unknown) => (e as { code?: string })?.code === 'timeout' || (e as { unconfirmed?: boolean })?.unconfirmed === true
 
 // On disk: the lists by core address, and the ids being typed (here or by their holder).
 export interface HeldSaved { held: Record<string, QueuedMessage[]>, typing: string[] }

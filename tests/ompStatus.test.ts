@@ -24,6 +24,12 @@ describe('parseOmpStatus', () => {
     expect(parseOmpStatus(fx('omp-ask-1814-single.txt'))).toBeNull()
     expect(parseOmpStatus('old output ▶─99%──200K─◀\nUsage\nEsc to close')).toBeNull()
   })
+  it('reads the older footer with an extension\'s status line below it (omp shows one per extension)', () => {
+    const screen = fx('omp-idle-footer.txt').trimEnd() + '\nguards-ext'
+    expect(parseOmpStatus(screen)).toEqual({ line: '◒ Opus 5.5 👁 · 📁 ~/wherdr · ⑂ omp-support *24 ?4 · guards-ext', meters: '◫ 52.7%/1M ⟲ · ⏱ 5h 44% (2h 6m) · 7d 71% (3d 10h)' })
+    // Text under a full-screen panel is still no footer.
+    expect(parseOmpStatus('old output\nUsage\nEsc to close\nguards-ext')).toBeNull()
+  })
 })
 
 describe('parseOmpContext', () => {

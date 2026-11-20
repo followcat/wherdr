@@ -2,7 +2,7 @@
 // for Claude Code (no OSC 7501) and never describes a question, so the visible
 // screen (terminal.read) fills in `prompt`, `interaction` and, when core
 // reports nothing, the status. Reads are cached, bounded and never fatal.
-import type { Choices, ClaudeScreen, OmpStatus, Pane } from '../../shared/types'
+import type { Choices, ClaudeScreen, OmpActivity, OmpStatus, Pane } from '../../shared/types'
 import { classifyScreen, confirmedInput } from '../../shared/interactiveScreen'
 import { codexError } from '../../shared/codexError'
 import { hasTranscript } from '../../shared/agentKind'
@@ -11,7 +11,8 @@ import { parseChoices, parseOmpPrompt, promptIdentity, completeClaudeAsk, type C
 import { queueSendNow, readDraft, sameText } from './coreDraft'
 import { lastSentText, sendingTo } from './submitting'
 import { fieldHolds } from '../../shared/queuedMatch'
-import { parseClaudeScreen } from './claudeScreen'
+import { parseClaudeActivity, parseClaudeBackground, parseClaudeScreen } from './claudeScreen'
+import { ompActivityOf, parseOmpActivity } from './ompActivity'
 import { clineWorking, parseClineApproval } from '../../shared/clineScreen'
 
 const WORKING = /\besc(?:ape)? to interrupt\b/i
@@ -86,21 +87,24 @@ const STARTUP_MS = 30_000
 // After a key from the key bar, the agent is read at every poll this long, and a changed
 // draft is shown at once: the change is the key's, nobody is typing it.
 const KEYED_MS = 2000
+// A working Claude whose screen still shows the last turn's end this long after core
+// said it works has really ended its turn (only background jobs run).
+const TURN_START_MS = 3000
 
 // What one screen text says, kept while the text, the agent and core's status
 // stay the same: most polls see the screens they saw before.
-interface Parsed { agent: string | null | undefined, status: string | null | undefined, r: CoreReading, error: ReturnType<typeof codexError>, sendNow: boolean, draft?: ReturnType<typeof readDraft>, claude?: ClaudeScreen | null }
+interface Parsed { agent: string | null | undefined, status: string | null | undefined, r: CoreReading, error: ReturnType<typeof codexError>, sendNow: boolean, draft?: ReturnType<typeof readDraft>, claude?: ClaudeScreen | null, verb?: string | null }
 
 export function createCoreScreens(deps: CoreScreenDeps) {
   const now = deps.now ?? Date.now
-  const cache = new Map<string, { at: number, text: string, open?: boolean, working?: boolean, parsed?: Parsed }>()
+  const cache = new Map<string, { at: number, text: string, open?: boolean, working?: boolean, parsed?: Parsed, background?: string | null }>()
   const born = new Map<string, number>()
   const failed = new Set<string>()
   const drafts = new Map<string, { text: string, since: number, real?: boolean }>()
   const keyed = new Map<string, number>()
   // omp's status line and context gauge, kept between reads (an unviewed resting omp
-  // is read at the background pace).
-  const omps = new Map<string, { at: number, status: OmpStatus | null }>()
+  // is read at the background pace), and its running step while it works.
+  const omps = new Map<string, { at: number, status: OmpStatus | null, activity?: OmpActivity | null }>()
   // Consecutive 'terminal' observations per Devin pane, keyed to the read
   // that produced them (at): Devin mid-redraw (footer or rule not yet
   // painted) classifies 'terminal' for one read, and the overlay that opens
@@ -120,7 +124,7 @@ export function createCoreScreens(deps: CoreScreenDeps) {
       const text = String(r?.text ?? '')
       deps.noted?.(p, text)
       const old = cache.get(p.id)
-      cache.set(p.id, { at: now(), text, working: p.status === 'working', ...(old?.text === text ? { parsed: old.parsed } : {}) })
+      cache.set(p.id, { at: now(), text, working: p.status === 'working', ...(old?.text === text ? { parsed: old.parsed, background: old.background } : {}) })
       failed.delete(p.id)
     } catch { failed.add(p.id) }
   }
@@ -132,8 +136,12 @@ export function createCoreScreens(deps: CoreScreenDeps) {
       // A screen without the gauge (a full-screen panel) keeps the last one, marked old.
       const status = parsed ? { ...parsed, meters: parsed.meters ?? o?.status?.meters ?? null, metersFresh: Boolean(parsed.meters) && p.status === 'working' }
         : o?.status ? { ...o.status, metersFresh: false } : null
-      omps.set(p.id, o = { at: c.at, status })
+      // The step of this turn only: a read from before it (or at rest) has none.
+      const activity = p.status === 'working' && c.working ? ompActivityOf(parseOmpActivity(c.text), o?.activity, c.at) : null
+      omps.set(p.id, o = { at: c.at, status, activity })
     }
+    if (p.status === 'working' && o?.activity) p.ompActivity = o.activity
+    else delete p.ompActivity
     if (!o?.status) return
     // Read before this turn, or not read lately: the last known value.
     p.ompStatus = p.status === 'working' && !failed.has(p.id) ? o.status : { ...o.status, metersFresh: false }
@@ -188,6 +196,17 @@ export function createCoreScreens(deps: CoreScreenDeps) {
       for (const p of agents) {
         const c = cache.get(p.id)
         if (!c) continue
+        // Claude's turn is over and only background jobs run ("1 shell"): at rest, even when
+        // core still reports the turn as working. A read from the first moments of a turn
+        // (no verb drawn yet, the last turn's line still up) does not count.
+        if (p.agent === 'claude' && !failed.has(p.id)) {
+          const background = c.background === undefined ? c.background = parseClaudeBackground(c.text) : c.background
+          const settled = p.status !== 'working' || (c.working && c.at - (p.since ?? 0) >= TURN_START_MS)
+          if (background && settled) {
+            p.background = background
+            if (p.status === 'working') p.status = 'idle'
+          } else delete p.background
+        }
         if (c.parsed?.agent !== p.agent || c.parsed.status !== p.status) {
           c.parsed = { agent: p.agent, status: p.status, r: readCoreScreen(c.text, p.agent, p.status),
             error: p.agent === 'codex' ? codexError(c.text) : null, sendNow: queueSendNow(c.text, p.agent) }
@@ -225,7 +244,11 @@ export function createCoreScreens(deps: CoreScreenDeps) {
         if (p.agent === 'claude' && p.status === 'working' && !failed.has(p.id)) {
           const screen = parsed.claude === undefined ? parsed.claude = parseClaudeScreen(c.text, c.at) : parsed.claude
           if (screen) p.claudeScreen = screen
-        }
+          // Its own verb ("✻ Orbiting…"), for the conversation's status line.
+          const verb = parsed.verb === undefined ? parsed.verb = parseClaudeActivity(c.text) : parsed.verb
+          if (verb) p.activity = verb
+          else delete p.activity
+        } else if (p.agent === 'claude') delete p.activity
         const draft = !failed.has(p.id) && r.interaction === 'input' && p.status !== 'working' ? (parsed.draft === undefined ? parsed.draft = readDraft(c.text, p.agent) : parsed.draft) : null
         let seen = drafts.get(p.id)
         if (!draft) drafts.delete(p.id)
