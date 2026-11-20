@@ -384,6 +384,47 @@ describe('the neural voice', () => {
     expect(seen).toEqual(['error: the voice stopped answering'])
   })
 
+  it('says so when the voice worker cannot even start', async () => {
+    // A platform that refuses the Worker itself: an error, not a silent
+    // pass to the device's voices.
+    const caches = fakeCaches()
+    const cache = await caches.open(DEVICE_CACHE)
+    for (const m of siwis.members) await cache.put(`/models/${siwis.dir}/${m.path}`, new Response(''))
+    const voice = createNeuralVoice({
+      caches,
+      budget: null,
+      worker: () => { throw new Error('worker refused') },
+      audio: () => new FakeAudio() as unknown as AudioContext,
+    })
+    await voice.refresh()
+    const { seen, opts } = reply(['One.'])
+    expect(voice.speak(opts)).toBe(true)
+    await new Promise(r => setTimeout(r, 10))
+    expect(seen).toEqual(['error: worker refused'])
+  })
+
+  it('says so when a part the audio graph refuses arrives', async () => {
+    // A throw inside the message dispatch — scheduling a malformed part, say —
+    // is an error, not a stall waited out.
+    const caches = fakeCaches()
+    const cache = await caches.open(DEVICE_CACHE)
+    for (const m of siwis.members) await cache.put(`/models/${siwis.dir}/${m.path}`, new Response(''))
+    const broken = new FakeAudio()
+    broken.createBuffer = () => { throw new Error('the audio part was malformed') }
+    const voice = createNeuralVoice({
+      caches,
+      budget: null,
+      worker: () => new FakeWorker() as unknown as Worker,
+      audio: () => broken as unknown as AudioContext,
+    })
+    await voice.refresh()
+    const { seen, opts } = reply(['One.'])
+    expect(voice.speak(opts)).toBe(true)
+    const w = FakeWorker.made.at(-1)!
+    w.answer(w.asked()[0]!, 10)
+    expect(seen).toEqual(['error: the audio part was malformed'])
+  })
+
   it('says so when the audio output never resumes', async () => {
     // iOS keeps the AudioContext suspended when an interruption owns the
     // audio session: the worker answers, nothing plays, no source ever ends.

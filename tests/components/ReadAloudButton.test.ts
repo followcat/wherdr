@@ -5,11 +5,13 @@ import { mountSuspended } from '@nuxt/test-utils/runtime'
 import { setToaster } from '~/composables/useHerdr'
 
 const fake = vi.hoisted(() => {
-  class Utterance { text: string; voice: unknown = null; lang = ''; onend?: () => void; onerror?: (e: { error: string }) => void; constructor(t: string) { this.text = t } }
+  class Utterance { text: string; voice: unknown = null; lang = ''; onstart?: () => void; onend?: () => void; onerror?: (e: { error: string }) => void; constructor(t: string) { this.text = t } }
   const synth = {
-    queue: [] as Utterance[], speaking: false, pending: false,
-    speak(u: Utterance) { this.queue.push(u); this.speaking = true },
-    cancel: vi.fn(function (this: { queue: Utterance[], speaking: boolean }) { this.queue = []; this.speaking = false }),
+    queue: [] as Utterance[], speaking: false, pending: false, drop: false,
+    // `drop`: the iOS silent no-op — the utterance is queued, pending stays
+    // true, and no start/end/error event ever comes.
+    speak(u: Utterance) { this.queue.push(u); if (this.drop) { this.pending = true } else { this.speaking = true } },
+    cancel: vi.fn(function (this: { queue: Utterance[], speaking: boolean, pending: boolean }) { this.queue = []; this.speaking = false; this.pending = false }),
     resume() {},
     getVoices: () => [{ name: 'Amélie', lang: 'fr-CA', voiceURI: 'voice-amelie', localService: true }, { name: 'Daniel', lang: 'en-GB', voiceURI: 'voice-daniel', localService: true }],
     addEventListener() {},
@@ -85,5 +87,34 @@ describe('ReadAloudButton', () => {
       expect(fake.queue.length).toBeGreaterThan(0)
     }
     finally { setToaster(null as unknown as Parameters<typeof setToaster>[0]) }
+  })
+
+  it('says so when the device voice never starts', async () => {
+    // The phone symptom: Play flips to Stop, no sound, no error. iOS queues
+    // an utterance it cannot speak (a listed but not-downloaded voice, a
+    // queue lost right after cancel()) pending forever — no event ever
+    // comes, and pending never clears either.
+    const toasts: string[] = []
+    setToaster({ clear() {}, add: (t: { title: string }) => { toasts.push(t.title) } } as unknown as Parameters<typeof setToaster>[0])
+    fake.drop = true
+    vi.useFakeTimers()
+    try {
+      readAloudEngine.value = 'device'
+      const w = await mountSuspended(ReadAloudButton, { props: { id: 'p1:a1', text: '今日天氣幾好。' } })
+      await w.find('button').trigger('click')
+      expect(w.text()).toContain('Stop')
+      // A first tick inside the grace: no verdict yet.
+      vi.advanceTimersByTime(1600)
+      expect(toasts).toEqual([])
+      vi.advanceTimersByTime(2000)
+      await nextTick()
+      expect(toasts.join(' ')).toContain('the device voice did not start')
+      expect(w.text()).toContain('Play')
+    }
+    finally {
+      vi.useRealTimers()
+      fake.drop = false
+      setToaster(null as unknown as Parameters<typeof setToaster>[0])
+    }
   })
 })
