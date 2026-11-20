@@ -85,6 +85,7 @@ async function speak(msg, job) {
   }
   const groups = text.groupWords(words, { cap: 48, firstCap: 24 })
   post({ t: 'parts', id: msg.id, count: groups.length })
+  post({ t: 'dl', file: 'speech', got: 0, total: groups.length }) // heartbeat between ORT calls
   for (let i = 0; i < groups.length; i++) {
     await new Promise(resolve => setTimeout(resolve, 0))
     if (job.cancelled) throw CANCELLED
@@ -115,6 +116,7 @@ async function speak(msg, job) {
       truncated: out.truncated,
       ep: runner.provider,
     }, [out.pcm.buffer])
+    post({ t: 'dl', file: 'speech', got: i + 1, total: groups.length })
   }
 }
 

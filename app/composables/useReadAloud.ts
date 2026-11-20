@@ -8,7 +8,7 @@
 // Choice and voice are kept on this device.
 import { sentenceChunks, speakableText, speechChunks } from '~/utils/speech/plainText'
 import { createNeuralVoice, defaultVoice, replyLanguage } from '~/utils/speech/neuralVoice'
-import type { Voice } from '~/utils/speech/neuralVoice'
+import type { UnusableWhy, Voice } from '~/utils/speech/neuralVoice'
 import { toast } from './useHerdr'
 
 export type ReadAloudEngine = 'off' | 'device' | 'wherdr'
@@ -59,6 +59,21 @@ watch(readAloudVoiceLang, v => store.set(READ_ALOUD_LANG_KEY, v))
 export const readAloudHideLow = ref(store.get(READ_ALOUD_HIDE_LOW_KEY) !== 'off')
 watch(readAloudHideLow, v => store.set(READ_ALOUD_HIDE_LOW_KEY, v ? 'on' : 'off'))
 
+// What whyNot() is said as; 'unavailable' when the engine itself is absent.
+const WHY_TEXT: Record<UnusableWhy | 'unavailable', string> = {
+  'not-installed': 'the voice is not installed',
+  marked: 'the voice was marked too large for this device — use Try again in Settings',
+  budget: 'the voice does not fit this device’s memory',
+  unsupported: 'the voice needs WebGPU with shader-f16',
+  unavailable: 'no neural voice can run on this device',
+}
+// A device voice for the reply's language (the zh-HK voice's primary 'zh'
+// also matches zh-* and a yue voice): with none, the device-side fallback
+// is silent too and the refusal is worth a toast.
+const primary = (l: string) => l.toLowerCase().split('-')[0]
+export function deviceCovers(v: Voice): boolean {
+  return deviceVoices.value.some(d => primary(d.lang) === primary(v.locale) || primary(d.lang) === primary(v.lang))
+}
 // The device's voices: often empty at first, filled on `voiceschanged`.
 export const deviceVoices = shallowRef<SpeechSynthesisVoice[]>([])
 function loadVoices() {
@@ -99,18 +114,29 @@ export function speak(id: string, md: string, neural?: Voice) {
   const canto = voice.kind === 'cantoNano'
   const chunks = canto ? sentenceChunks(text) : speechChunks(text)
   if (!chunks.length) return done(g)
-  if (readAloudEngine.value === 'wherdr' && neuralVoice?.speak({
-    voice,
-    chunks,
-    onEnd: () => done(g),
-    onError: (e) => {
-      if (g !== gen) return
-      done(g)
-      toast(tl(`Could not read aloud (${e.message})`), true)
-    },
-  })) {
-    speakingId.value = id
-    return
+  let why: UnusableWhy | 'unavailable' | null = null
+  if (readAloudEngine.value === 'wherdr') {
+    if (neuralVoice?.speak({
+      voice,
+      chunks,
+      onEnd: () => done(g),
+      onError: (e) => {
+        if (g !== gen) return
+        done(g)
+        toast(tl(`Could not read aloud (${e.message})`), true)
+      },
+    })) {
+      speakingId.value = id
+      return
+    }
+    why = neuralVoice?.whyNot(voice) ?? 'unavailable'
+  }
+  // The device's voices take over. A reply they cannot read either — no voice
+  // of its language on this device — or a refusal that is a defect (a marked
+  // voice stays refused until Try again, an unsupported one can never run)
+  // must say why instead of staying silent.
+  if (why && (why !== 'not-installed' || !deviceCovers(voice))) {
+    toast(tl(`Could not read aloud (${WHY_TEXT[why]})`), true)
   }
   if (!s) return done(g)
   const deviceVoice = deviceVoices.value.find(v => v.voiceURI === readAloudVoice.value)

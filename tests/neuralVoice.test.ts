@@ -2,7 +2,7 @@
 // worker that speaks the TTS worker's protocol and a fake WebAudio clock.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEVICE_CACHE } from '../app/utils/dictation/deviceModels'
-import { CANTO_WORKER_URL, LOOKAHEAD, VOICES, createNeuralVoice, defaultVoice, heapEstimate, heapNeeded, replyLanguage } from '../app/utils/speech/neuralVoice'
+import { CANTO_WORKER_URL, LOOKAHEAD, NEURAL_INSTALLED_KEY, VOICES, createNeuralVoice, defaultVoice, heapEstimate, heapNeeded, replyLanguage } from '../app/utils/speech/neuralVoice'
 import { fakeCaches } from './fakeModelCache'
 
 const siwis = VOICES.find(v => v.id === 'siwis-medium')!
@@ -15,10 +15,10 @@ class FakeWorker {
   onerror: ((e: { message: string }) => void) | null = null
   got: { t: string, id?: string, text?: string }[] = []
   terminated = false
-  constructor() { FakeWorker.made.push(this) }
+  constructor(public auto = true) { FakeWorker.made.push(this) }
   postMessage(m: { t: string, id?: string }) {
     this.got.push(m)
-    if (m.t === 'load') this.send({ t: 'ready', heap: 1, ms: 800, sampleRate: 10 })
+    if (m.t === 'load' && this.auto) this.send({ t: 'ready', heap: 1, ms: 800, sampleRate: 10 })
   }
   send(data: unknown) { if (!this.terminated) this.onmessage?.({ data }) }
   // The audio of a sentence asked for: `n` samples at 10 Hz.
@@ -52,7 +52,7 @@ class FakeAudio {
 
 const tick = () => new Promise(r => setTimeout(r, 0))
 
-async function make(o: { installed?: boolean, budget?: number | null, idleMs?: number } = {}) {
+async function make(o: { installed?: boolean, budget?: number | null, idleMs?: number, suspendMs?: number } = {}) {
   const caches = fakeCaches()
   if (o.installed !== false) {
     const cache = await caches.open(DEVICE_CACHE)
@@ -62,11 +62,23 @@ async function make(o: { installed?: boolean, budget?: number | null, idleMs?: n
     caches,
     budget: o.budget ?? null,
     idleMs: o.idleMs ?? 60_000,
+    suspendMs: o.suspendMs,
     worker: () => new FakeWorker() as unknown as Worker,
     audio: () => new FakeAudio() as unknown as AudioContext,
   })
   await voice.refresh()
   return voice
+}
+
+// An in-memory localStorage: the "installed once" record and the crash marks.
+function fakeStorage(init: Record<string, string> = {}) {
+  const data = new Map(Object.entries(init))
+  vi.stubGlobal('localStorage', {
+    getItem: (k: string) => data.get(k) ?? null,
+    setItem: (k: string, v: string) => { data.set(k, v) },
+    removeItem: (k: string) => { data.delete(k) },
+  })
+  return data
 }
 
 function reply(chunks: string[]) {
@@ -232,9 +244,9 @@ describe('the neural voice', () => {
     for (const m of v.members) await cache.put(`/models/${(m as { dir?: string }).dir ?? v.dir}/${m.path}`, new Response(''))
   }
   const gpu = (features: string[]) => vi.stubGlobal('navigator', { gpu: { requestAdapter: async () => ({ features: new Set(features) }) } })
-  const engine = (caches: CacheStorage) => createNeuralVoice({
+  const engine = (caches: CacheStorage, budget: number | null = null) => createNeuralVoice({
     caches,
-    budget: null,
+    budget,
     worker: () => new FakeWorker() as unknown as Worker,
     audio: () => new FakeAudio() as unknown as AudioContext,
   })
@@ -301,6 +313,87 @@ describe('the neural voice', () => {
     const { opts } = reply(['今日。'])
     opts.voice = voice.voiceFor('yue', '')
     expect(voice.speak(opts)).toBe(true)
+  })
+
+  it('tries a voice the device held once, its files verified or not', async () => {
+    // The record answered by install() keeps a voice usable past refresh()'s
+    // answer and past the browser pruning Cache Storage (iOS does): the
+    // worker streams what the cache lost or fails with a visible error,
+    // never a silent pass to the device's voices.
+    gpu(['shader-f16'])
+    const data = fakeStorage({ [NEURAL_INSTALLED_KEY]: JSON.stringify(['canto-nano-fp16-gpu']) })
+    const voice = engine(fakeCaches())
+    await voice.gpuCheck()
+    // No refresh() at all: the record answers for the tap.
+    expect(voice.usable(cantoGpu)).toBe(true)
+    expect(voice.voiceFor('yue', '').id).toBe('canto-nano-fp16-gpu')
+    // Files verified gone (the browser pruned them): still tried.
+    await voice.refresh()
+    expect(voice.usable(cantoGpu)).toBe(true)
+    // The record dropped (as remove() does): the device fallback is back.
+    data.delete(NEURAL_INSTALLED_KEY)
+    expect(voice.usable(cantoGpu)).toBe(false)
+  })
+
+  it('names why a voice refused a reply', async () => {
+    gpu(['shader-f16'])
+    const data = fakeStorage()
+    const voice = engine(fakeCaches())
+    await voice.gpuCheck()
+    await voice.refresh()
+    expect(voice.whyNot(canto)).toBe('not-installed')
+    expect(voice.whyNot(cantoGpu)).toBe('not-installed')
+    // A crash mark stays until Try again clears it.
+    data.set('dictationTooLarge', JSON.stringify({ 'canto-nano-int8': 'oom' }))
+    expect(voice.whyNot(canto)).toBe('marked')
+    data.delete('dictationTooLarge')
+    // WebGPU absent or without shader-f16.
+    vi.stubGlobal('navigator', { gpu: { requestAdapter: async () => ({ features: new Set() }) } })
+    const noF16 = engine(fakeCaches())
+    await noF16.gpuCheck()
+    expect(noF16.whyNot(cantoGpu)).toBe('unsupported')
+    // A device too small for the voice.
+    const small = engine(fakeCaches(), 1)
+    expect(small.whyNot(canto)).toBe('budget')
+    // An installed, fitting, supported voice: no refusal.
+    const caches = fakeCaches()
+    await installFiles(caches, canto)
+    const ok = engine(caches)
+    await ok.gpuCheck()
+    await ok.refresh()
+    expect(ok.whyNot(canto)).toBeNull()
+  })
+
+  it('says so when the voice stops answering', async () => {
+    // A worker killed silently or a download that stalls never posts ready:
+    // an error, not a silent reply stuck on Stop.
+    const caches = fakeCaches()
+    const cache = await caches.open(DEVICE_CACHE)
+    for (const m of siwis.members) await cache.put(`/models/${siwis.dir}/${m.path}`, new Response(''))
+    const voice = createNeuralVoice({
+      caches,
+      budget: null,
+      stallMs: 40,
+      worker: () => new FakeWorker(false) as unknown as Worker,
+      audio: () => new FakeAudio() as unknown as AudioContext,
+    })
+    await voice.refresh()
+    const { seen, opts } = reply(['One.'])
+    expect(voice.speak(opts)).toBe(true)
+    await new Promise(r => setTimeout(r, 80))
+    expect(seen).toEqual(['error: the voice stopped answering'])
+  })
+
+  it('says so when the audio output never resumes', async () => {
+    // iOS keeps the AudioContext suspended when an interruption owns the
+    // audio session: the worker answers, nothing plays, no source ever ends.
+    // The refusal is an error, not a silent reply stuck on Stop.
+    const voice = await make({ suspendMs: 40 })
+    const { seen, opts } = reply(['One.'])
+    expect(voice.speak(opts)).toBe(true)
+    FakeAudio.made[0]!.state = 'suspended'
+    await new Promise(r => setTimeout(r, 80))
+    expect(seen).toEqual(['error: the audio output stayed suspended'])
   })
 
   it('selects the Canto worker with its kind and runtime', async () => {
