@@ -20,6 +20,9 @@ if (import.meta.client) {
 }
 
 const fullH = { orient: '', h: 0 }
+// The sheet geometry of the last layout() actually applied: --vv-bottom also
+// moves with innerHeight, which the keyboard can leave unchanged.
+let applied = { h: 0, top: 0, kb: false, sheetH: 0, sheetTop: 0, sheetBottom: 0 }
 
 // The last layout() ran this recently: while the visual viewport is still
 // moving (the keyboard's animation, a pinch), a pane resize per animation
@@ -44,6 +47,13 @@ export function layout() {
   }
   fullH.h = Math.max(fullH.h, h, window.innerHeight)
   const kb = fullH.h - h > 120
+  // Bottom sheets follow the visible area (keyboard, iOS scroll offset).
+  const sheet = sheetViewport(window.innerHeight, top, h)
+  // The same geometry again (the vv scroll iOS fires while nothing moved, a
+  // spurious resize): three inherited custom properties, a body class and a
+  // layoutTick bump per call restyle the whole tree for nothing.
+  if (h === applied.h && top === applied.top && kb === applied.kb
+    && sheet.height === applied.sheetH && sheet.top === applied.sheetTop && sheet.bottom === applied.sheetBottom) return
   kbOpen.value = kb
   // A shrink this large only resembles a soft-keyboard open — it cannot be
   // told apart from one here, so geometry must stay bookkeeping and never
@@ -53,12 +63,11 @@ export function layout() {
   vvHeight.value = h
   vvTop.value = top
   document.body.classList.toggle('kb', kb)
-  // Bottom sheets follow the visible area (keyboard, iOS scroll offset).
-  const sheet = sheetViewport(window.innerHeight, top, h)
   const root = document.documentElement.style
   root.setProperty('--vv-h', `${sheet.height}px`)
   root.setProperty('--vv-top', `${sheet.top}px`)
   root.setProperty('--vv-bottom', `${sheet.bottom}px`)
+  applied = { h, top, kb, sheetH: sheet.height, sheetTop: sheet.top, sheetBottom: sheet.bottom }
   layoutTick.value++
 }
 

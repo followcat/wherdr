@@ -1797,6 +1797,10 @@ body.kb .composer { padding-bottom: 8px; }
   /* Past the max height the field scrolls (autoresize sets overflow: hidden). */
   overflow-y: auto !important;
 }
+/* Chrome 123+ sizes the field to its content itself: no JS resize pass, whose
+   one-row collapse used to chop the conversation's bottom on every keystroke
+   (Composer.vue). The max-height above keeps the cap; the field scrolls past it. */
+.prompt.sized-content .prompt-input { field-sizing: content; resize: none; }
 .prompt-input::placeholder { color: var(--dim); }
 .prompt-foot { display: flex; align-items: center; min-width: 0; gap: 8px; }
 .prompt-plus { flex: none; width: 32px; height: 32px; justify-content: center; color: var(--text-2); border-color: var(--line); }

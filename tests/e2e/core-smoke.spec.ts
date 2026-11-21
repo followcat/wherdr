@@ -282,7 +282,13 @@ test('command code journey: selection, rendering, search, send, /clear, peers', 
       return page.getByRole('button', { name: 'Load earlier messages' }).isVisible()
     }).toBe(true)
     const beforeRes = page.waitForResponse(r => r.url().includes('/api/chat') && new URL(r.url()).searchParams.has('before'))
-    await page.locator('.chat').evaluate((el: HTMLElement) => { el.scrollTop = 0 })
+    // The scroll to the top carries a gesture (a wheel up, as the reader's own
+    // scroll would): a bare scrollTop write is programmatic, and the view pins
+    // those back to the bottom now.
+    await page.locator('.chat').evaluate((el: HTMLElement) => {
+      el.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true }))
+      el.scrollTop = 0
+    })
     await beforeRes
     await pollText(PHRASE)
     await expect(page.locator('.chat-note')).toContainText('Start of conversation')

@@ -45,8 +45,15 @@ describe('terminal fit while the viewport moves', () => {
   it('sends one fit once the keyboard animation settles, not one per frame', async () => {
     const ctl = await mounted()
     vi.useFakeTimers()
-    // visualViewport firing during the keyboard's slide: each bumps layoutTick.
+    // The keyboard's slide: each frame reports a new visible height, so each
+    // layout() is a real change (a repeated one is deduped away).
+    const vp = { height: 1000, offsetTop: 0 }
+    vi.stubGlobal('visualViewport', vp)
+    vi.stubGlobal('screen', { width: 820, height: 1180 })
+    vi.stubGlobal('innerWidth', 744)
+    vi.stubGlobal('innerHeight', 1000)
     for (let i = 0; i < 5; i++) {
+      vp.height = 1000 - i
       layout()
       await nextTick()
       vi.advanceTimersByTime(60)
