@@ -419,7 +419,7 @@ function onWheel(e: WheelEvent) {
 }
 
 let fitTimer: ReturnType<typeof setTimeout> | undefined
-let settleTimer: ReturnType<typeof setTimeout> | undefined
+let fitSettleTimer: ReturnType<typeof setTimeout> | undefined
 // The quiet the viewport needs before a moving fit lands: roughly the
 // keyboard's slide animation, restarted by each new frame of it.
 const VIEWPORT_SETTLE_MS = 280
@@ -434,9 +434,9 @@ function scheduleFit() {
   // finger's release stays disqualified.
   resizeTouch()
   if (viewportMoving(VIEWPORT_SETTLE_MS)) {
-    clearTimeout(settleTimer)
-    settleTimer = setTimeout(() => {
-      settleTimer = undefined
+    clearTimeout(fitSettleTimer)
+    fitSettleTimer = setTimeout(() => {
+      fitSettleTimer = undefined
       props.ctl.fitNow(true)
     }, VIEWPORT_SETTLE_MS)
     return
@@ -480,7 +480,7 @@ onUnmounted(() => {
   cancelTouch()
   ro?.disconnect()
   clearTimeout(fitTimer)
-  clearTimeout(settleTimer)
+  clearTimeout(fitSettleTimer)
   cancelAnimationFrame(legacyRaf)
   // The terminal is parked by default: its xterm and its stream stay, so the
   // next mount adopts them (the pane's AgentView owns the cross-pane cache).
