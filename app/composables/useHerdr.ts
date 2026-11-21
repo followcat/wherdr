@@ -316,6 +316,22 @@ export const paneStale = (p: Pane | null | undefined) => {
   const m = p ? machineInfo(p.machine) : undefined
   return Boolean(m && m.status !== 'online')
 }
+// "Open in editor" applies to a pane with a folder on a Mac. The core state does not
+// give a remote machine's system: unknown is offered, the server answers "not a Mac".
+export const canOpenOnMachine = (p: Pane | null | undefined) => {
+  const os = p ? machineInfo(p.machine)?.os : undefined
+  return Boolean(p?.cwd && !paneStale(p) && (!os || os === 'Darwin'))
+}
+// The agent's folder in its default editor, on the agent's machine (checked server-side).
+// Shared by the agent menu entry and the Mod+Alt+O shortcut.
+export async function openFolderOnMachine(pane: Pane) {
+  try {
+    const r = await api<{ machine: string }>('/api/open-editor', { pane_id: pane.id })
+    toast(tl(`Opened in the editor on ${r.machine}`))
+  } catch (err) {
+    toast((err as Error).message, true)
+  }
+}
 function readList(raw: string | null): string[] {
   try {
     const v = JSON.parse(raw || '[]')

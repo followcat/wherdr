@@ -165,6 +165,8 @@ const terminalOpts = {
   hasBanner: () => Boolean(banner.value),
   fill: () => Boolean(props.cell),
   input: inputAllowed,
+  // Claude Code accelerates wheel reports: see createWheelPacer.
+  wheelAccel: () => pane.value?.agent === 'claude',
 }
 // A recently viewed pane may still hold a parked terminal (utils/terminalPark.ts):
 // adopt it instead of opening a cold one, and bind it to this view's closures.
@@ -478,6 +480,10 @@ function coreMenuItems(p: Pane | undefined): MenuItem[] {
     rename: (id) => { renameTarget.value = id },
     reconnect: () => { banner.value = null; viewMode.value = 'term'; nextTick(() => { ctl.reset(); ctl.connect(false) }) },
     browseFiles: () => { filesOpen.value = true },
+    split: p ? splitItems(p) : [],
+    editor: p && canOpenOnMachine(p)
+      ? { label: t('Open in editor'), icon: 'i-lucide-square-code', kbds: desk.value && live.value ? shortcutKbds('open-editor') : undefined, run: () => openFolderOnMachine(p) }
+      : undefined,
     settings: props.cell ? [] : settingsMenuItems(),
     close: p && !compactPhone.value ? closePaneItem(p, live.value ? shortcutKbds('close-pane') : undefined) : undefined,
   })

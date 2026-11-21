@@ -18,6 +18,8 @@ Questions and feedback: [Discord](https://discord.gg/ky36WYmtVE); bugs: [GitHub 
 - [Installation and updates](installation.md) — Requirements, running as a service, updating.
 - [Install with an agent](install-with-an-agent.md) — Ready-to-paste agent prompts: new install, v3 beside v2 with import, update.
 - [Update with an agent](update-with-an-agent.md) — The steps Alfred (or any agent) follows to update v3: plan and your yes, backup, update, health check, rollback; the release's Upgrade notes.
+- [Release notes 3.2.2](release-notes-3.2.2.md) — Open in editor back on v3 (Mod+Alt+O), omp conversations and status fixed, omp coordinators that keep coordinating, and a default workflow on the coordinator's agent.
+- [Release notes 3.2.1](release-notes-3.2.1.md) — The split terminal back on v3, Terminal view scrolling fixed and smooth fast scrolling of Claude's fullscreen view, a clearer Autopilot window, cards that stay answerable, 12 project colors, and minor fixes.
 - [Release notes 3.2.0](release-notes-3.2.0.md) — Community plugins (full access, behind a switch) and install from GitHub, omp, Antigravity conversations, workspace context folders, skills and plan files, Hermes conversations, Tasks to review in place of Decisions, update rollback, security fixes, plus the never-released 3.1.1 work.
 - [Release notes 3.1.0](release-notes-3.1.0.md) — Workspaces, Alfred routing and briefs, dark/light themes and custom themes, changeable shortcuts, and fixes.
 - [Release notes 3.0.0](release-notes-3.0.0.md) — What v3 brings to a v2 user, what changed, what is gone, how to move.

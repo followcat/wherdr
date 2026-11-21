@@ -44,13 +44,16 @@ export async function readSettings(file = SETTINGS_FILE): Promise<SettingsMap> {
 const writeSettings = (settings: SettingsMap, file: string) => writeFileAtomic(file, JSON.stringify({ v: 1, settings }) + '\n')
 
 // Writes one after another: two devices changing settings at the same time
-// each get their keys in; for the same key, the last one to arrive wins.
+// each get their keys in; for the same key, the last one to arrive wins. A
+// patch that depends on the current settings is an updater: it runs in the
+// queue, on the settings as they are then (it may throw to refuse).
 let queue: Promise<unknown> = Promise.resolve()
 
-export function patchSettings(patch: SettingsPatch, opts: { onlyMissing?: boolean, file?: string } = {}): Promise<SettingsMap> {
+export function patchSettings(patch: SettingsPatch | ((now: SettingsMap) => SettingsPatch), opts: { onlyMissing?: boolean, file?: string } = {}): Promise<SettingsMap> {
   const file = opts.file || SETTINGS_FILE
   const run = queue.then(async () => {
-    const { next, changed } = applySettingsPatch(await loadSettings(file), patch, opts.onlyMissing)
+    const now = await loadSettings(file)
+    const { next, changed } = applySettingsPatch(now, typeof patch === 'function' ? patch(now) : patch, opts.onlyMissing)
     if (!Object.keys(changed).length) return next
     await writeSettings(next, file)
     for (const fn of listeners) {

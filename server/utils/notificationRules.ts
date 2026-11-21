@@ -1,13 +1,19 @@
 import { notificationEvents, NotificationPresence, paneNotificationSource, parseNotificationSettings, type NotificationEvent, type NotificationSource } from '../../shared/notificationRules'
-import { readSettings } from './settings'
+import { loadSettings } from './settings'
 import { getMachine, machineOfPane } from './machines'
 import type { HerdrState, Pane } from '../../shared/types'
 
 export const notificationPresence = new NotificationPresence()
+// The rules last read: an unreadable settings file (logged by loadSettings)
+// keeps them, never the defaults in their place. None read yet (undefined):
+// nothing is notified until the file can be read.
+let lastRules: string | null | undefined
 
 export async function notificationAllowed(event: NotificationEvent, state: Pick<HerdrState, 'workspaces'>,
   pane?: Pick<Pane, 'id' | 'workspace'>, fallback?: NotificationSource): Promise<boolean> {
-  const settings = parseNotificationSettings((await readSettings()).notificationRules)
+  const rules = await loadSettings().then(s => (lastRules = s.notificationRules ?? null), () => lastRules)
+  if (rules === undefined) return false
+  const settings = parseNotificationSettings(rules)
   const machine = pane ? machineOfPane(pane.id) : null
   const source = pane ? paneNotificationSource(pane, state, [],
     machine?.info().baseKey ?? machine?.key ?? fallback?.machine) : fallback

@@ -74,7 +74,7 @@ describe('feature split', () => {
     // The machine's answers for adopting /h/work/ledger.
     const call = async (_m: string, p: { argv: string[] }) => {
       const [, , script] = p.argv
-      const out = script === REAL_ALL_SCRIPT ? p.argv.slice(4).map(a => `x${a}`).join('\n') : script === REAL_SCRIPT ? '/h/work\n/h/work/ledger' : script === PROBE_SCRIPT ? 'dir\ngit\nremote' : script === PREPARE_SCRIPT ? 'git' : script!.includes(REMOTE_SCRIPT.split('\n').at(-2)!) ? 'git@github.com:acme/ledger.git\n{"visibility":"PRIVATE"}' : script!.includes('$HOME') ? '/h' : ''
+      const out = script === REAL_ALL_SCRIPT ? p.argv.slice(4).map(a => `x${a}`).join('\n') : script === REAL_SCRIPT ? `/h/work\n${p.argv[5]}` : script === PROBE_SCRIPT ? 'dir\ngit\nremote' : script === PREPARE_SCRIPT ? 'git' : script!.includes(REMOTE_SCRIPT.split('\n').at(-2)!) ? 'git@github.com:acme/ledger.git\n{"visibility":"PRIVATE"}' : script!.includes('$HOME') ? '/h' : ''
       return { code: 0, stdout: Buffer.from(out).toString('base64') }
     }
     const deps = { store, call, machines: () => [{ key: 'home', label: 'home', local: true }] } as never
@@ -98,7 +98,8 @@ describe('feature split', () => {
     expect(await keys()).toEqual(['WS', 'PA', 'QA', 'OT'])
     expect((await store.tasks()).filter(t => t.feature)).toEqual([])
 
-    const r = await split(plan([{ repo: 'QA', title: 'Show it', type: 'task', after: ['payroll-api'] }, { repo: 'payroll-api', title: 'Serve it', type: 'task', files: ['api'] }]))
+    // A member named by its path: that member, not a refused adoption.
+    const r = await split(plan([{ repo: 'QA', title: 'Show it', type: 'task', after: ['/h/work/payroll-api'] }, { repo: '/h/work/payroll-api', title: 'Serve it', type: 'task', files: ['api'] }]))
     expect(r.tasks).toEqual([{ id: 'PA-1', project: 'PA', title: 'Serve it' }, { id: 'QA-1', project: 'QA', title: 'Show it', after: 'PA-1' }])
     expect(r.started).toEqual(['PA-1'])
     expect(start).toHaveBeenCalledTimes(1)

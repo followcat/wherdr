@@ -44,7 +44,9 @@ export function createPluginHost(deps: HostDeps) {
   let listError = ''
   let community = false
   // One number per plugin, raised when it is turned off: a load still pending
-  // from before is dropped instead of activating.
+  // from before is dropped instead of activating. Its top-level code already
+  // ran at import() and cannot be undone; only activate() is skipped (plugins
+  // keep their side effects in activate, docs/plugins.md).
   const runs = new Map<string, number>()
   const cancel = (id: string) => runs.set(id, (runs.get(id) ?? 0) + 1)
 
@@ -135,10 +137,14 @@ export function createPluginHost(deps: HostDeps) {
     const res = await deps.list()
     const before = new Map(infos.map(i => [i.id, i.source?.commit]))
     infos.splice(0, infos.length, ...res.plugins)
+    const p = deps.prefs()
+    const failed = { ...p.failed }
     for (const [id, commit] of before) {
       const now = infos.find(i => i.id === id)
-      if (!now || now.source?.commit !== commit) { cancel(id); stop(id); status.delete(id) }
+      if (!now || now.source?.commit !== commit) { cancel(id); stop(id); status.delete(id); delete failed[id] }
     }
+    // A failure belongs to the code that failed: another commit gets a new try.
+    if (Object.keys(failed).length !== Object.keys(p.failed).length) deps.savePrefs({ off: p.off, failed })
     if (community) await startAll()
     else deps.changed()
   }

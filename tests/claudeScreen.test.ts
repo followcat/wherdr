@@ -2,7 +2,7 @@
 // screen shows it running (bug t-0106: wherdr showed "En attente").
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { elapsedMs, parseClaudeScreen } from '../server/utils/claudeScreen'
+import { elapsedMs, parseClaudeActivity, parseClaudeBackground, parseClaudeScreen } from '../server/utils/claudeScreen'
 import { queuedPhase } from '../shared/queuedPhase'
 
 const fx = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
@@ -123,5 +123,47 @@ describe('queued message against the screen', () => {
   it('photos: the paths sent do not count, nor does "[Image #1]"', () => {
     const s = { shell: null, sent: '[Image #1] Que vois-tu sur cette capture ?', queued: [] }
     expect(queuedPhase('/home/user/.cache/herdr-web/uploads/a.png\nQue vois-tu sur cette capture ?', s)).toBe('sent')
+  })
+})
+
+describe('parseClaudeActivity', () => {
+  it('reads Claude\'s own verb above the input field, whatever the glyph', () => {
+    expect(parseClaudeActivity(fx('claude-working.txt'))).toBe('Boondoggling')
+    expect(parseClaudeActivity(fx('core-screens/claude-working-spinner.txt'))).toBe('Simmering')
+    const field = '\n' + '─'.repeat(40) + '\n❯ \n' + '─'.repeat(40)
+    for (const l of ['* Orbiting… (3s)', '✻ Orbiting...', '· Orbiting… (1h 2m 3s · ↑ 12.5k tokens · esc to interrupt)']) {
+      expect(parseClaudeActivity(l + field), l).toBe('Orbiting')
+    }
+    expect(parseClaudeActivity('✻ Kneading the dough… (5s)' + field)).toBe('Kneading the dough')
+  })
+  it('nothing once the turn is over, in the conversation, or too far up', () => {
+    const field = '\n' + '─'.repeat(40) + '\n❯ \n' + '─'.repeat(40)
+    expect(parseClaudeActivity(fx('claude-done.txt'))).toBeNull()
+    for (const l of ['✻ Worked for 2m 31s', '  ✻ Orbiting… (4s)', '⏺ Running npx vitest run…', '· A list item']) {
+      expect(parseClaudeActivity(l + field), l).toBeNull()
+    }
+    expect(parseClaudeActivity(['✻ Orbiting… (4s)', ...Array(25).fill('  line')].join('\n') + field)).toBeNull()
+    expect(parseClaudeActivity(null)).toBeNull()
+  })
+})
+
+describe('parseClaudeBackground', () => {
+  it('counts the jobs left running once the turn is over, from the footer or the turn\'s last line', () => {
+    const bg = fx('claude-done-background.txt')
+    expect(parseClaudeBackground(bg)).toBe('1 shell')
+    expect(parseClaudeBackground(bg.replace('· 1 shell · ↓ to manage', '· 2 shells · 1 background task'))).toBe('2 shells, 1 background task')
+    // No count in the footer: the "done … · N shells still running" line.
+    expect(parseClaudeBackground(bg.replace(' · 1 shell · ↓ to manage', '').replace('1 shell still', '2 shells still'))).toBe('2 shells')
+  })
+  it('nothing while a turn runs or when no job is left', () => {
+    expect(parseClaudeBackground(fx('claude-done-time.txt'))).toBeNull()
+    expect(parseClaudeBackground(fx('claude-done-background.txt').replace('✻ Brewed for 7s · done 12:49 PM · 1 shell still running', '✻ Brewing… (3s)'))).toBeNull()
+    expect(parseClaudeBackground(null)).toBeNull()
+    // The jobs ended and a newer turn followed: the older "still running" line is stale.
+    const later = fx('claude-done-background.txt').replace(' · 1 shell · ↓ to manage', '')
+      .replace('1 shell still running\n', '1 shell still running\n\n❯ Thanks.\n\n● You are welcome.\n\n✻ Worked for 2s\n')
+    expect(parseClaudeBackground(later)).toBeNull()
+    // A newer turn without its end line yet: no stale count either.
+    expect(parseClaudeBackground(later.replace('\n✻ Worked for 2s\n', '\n'))).toBeNull()
   })
 })

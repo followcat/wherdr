@@ -228,6 +228,10 @@ describe('the plan file on the workspace\'s machine', () => {
     await out('.git/config')
     // A link that stays inside is the file it leads to.
     expect(await readPlanFile(deps, ws(), 'specs/inside.md')).toEqual({ text: PLAN })
+    // A chain of links longer than the resolver follows never reads past its end.
+    await fs.symlink(path.join(outside, 'secret.md'), path.join(root, 'specs/chain21.md'))
+    for (let i = 20; i >= 0; i--) await fs.symlink(`chain${i + 1}.md`, path.join(root, `specs/chain${i}.md`))
+    expect(await readPlanFile(deps, ws(), 'specs/chain0.md')).toEqual({ why: 'specs/chain0.md was not found' })
   })
 
   it('splits from a file of the root, with the plan file and the refs kept; refuses a path outside', async () => {
@@ -702,7 +706,10 @@ describe('the plan file on the workspace\'s machine', () => {
       expect((await store.task(sub.id))!.planTick).toBeUndefined()
       expect(notices).toEqual([])
       up = true
+      // Tried again once PLAN_RETRY_MS has passed, as any other wait.
       await go(t0 + 180_000)
+      expect((await store.task(sub.id))!.planTick).toBeUndefined()
+      await go(t0 + PLAN_RETRY_MS)
       expect((await store.task(sub.id))!.planTick).toMatchObject({ ticked: ['T010', 'T011'] })
     })
   })

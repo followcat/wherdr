@@ -105,6 +105,34 @@ describe('core input routes', () => {
     expect(t.calls).toEqual([])
   })
 
+  it('Claude\'s input cannot be read (still pasting, core lost): looked at again, never typed over', async () => {
+    const t = deps(() => ({ started: true }))
+    t.d.settleMs = 1
+    t.d.field = async () => { throw new HerdrError('pasting', 'Claude is still pasting') }
+    await expect(coreSend(t.d, { pane_id: 't1', text: 'hi' })).rejects.toMatchObject({ code: 'input_busy' })
+    t.d.field = async () => { throw new CoreError('disconnected', 'closed') }
+    await expect(coreSend(t.d, { pane_id: 't1', text: 'hi' })).rejects.toMatchObject({ code: 'unreachable', unconfirmed: true })
+    expect(t.calls).toEqual([])
+  })
+
+  it('stuck behind another writer: refused at its deadline, nothing typed, even once that writer ends', async () => {
+    let release!: () => void
+    const wake = new Promise<void>(r => { release = r })
+    const t = deps(() => ({ started: true }))
+    t.d.startByMs = 20
+    const engine = takingTurns(async (m, params) => { t.calls.push([m, params, 0]); await wake; return {} as never }, 0)
+    void engine('terminal.send', { terminal: 'm/t1', text: 'Autopilot wake' }, 30000)
+    await expect(coreSend(t.d, { pane_id: 't1', text: 'hi' })).rejects.toMatchObject({ code: 'busy' })
+    release()
+    await new Promise(r => setTimeout(r, 10))
+    expect(t.calls.map(c => c[1].text)).toEqual(['Autopilot wake'])
+  })
+
+  it('a message of its own ending with "\\" matches the field that holds it', () => {
+    expect(fieldHolds('C:\\dir\\', 'C:\\dir\\', true)).toBe(true)
+    expect(fieldHolds('C:\\dir', 'C:\\dir\\', true)).toBe(false)
+  })
+
   it('a send while a wake is being typed waits for it, then goes once the field is empty', async () => {
     let release!: () => void
     const wake = new Promise<void>(r => { release = r })
@@ -219,6 +247,31 @@ describe('core input routes', () => {
     expect(cold.logs).toHaveLength(2)
     expect(cold.logs[1]).toMatch(/a photo stayed a path, sent as it is after \d+ ms: field held \d+ chars, 0 images; expected \d+ chars, 1 images, 2 lines$/)
     expect(cold.logs.join('\n')).not.toMatch(/look|srv/)
+  })
+
+  it('a slow core (each read, send and key near its timeout): the photo fallback stops in time, answered under 120 s', async () => {
+    const msg = 'look at this\n/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.png'
+    let clock = 1_000_000
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock)
+    let field: string | null = null
+    const t = deps((m, params) => {
+      if (m === 'terminal.send') { clock += 29_000; field = `${msg}\n\\` }
+      if (m === 'terminal.keys') {
+        clock += 9_000
+        if (params.keys[0] === 'backspace') field = `${msg}\n\\`
+      }
+      return m === 'terminal.send' ? { started: false } : {}
+    })
+    t.d.settleMs = 1
+    let looks = 0
+    t.d.field = async () => { clock += 15_000; return looks++ ? field : null }
+    const warn = console.warn
+    console.warn = () => {}
+    const start = clock
+    try {
+      await coreSend(t.d, { pane_id: 't1', text: msg }).catch(() => null)
+    } finally { console.warn = warn; now.mockRestore() }
+    expect(clock - start).toBeLessThan(120_000)
   })
 
   it('a photo path cleared to be pasted again: never sent in part, nor lost when the field cannot be read', async () => {

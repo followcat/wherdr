@@ -53,8 +53,9 @@ function mountBadges() {
   }
 }
 
-// The linked file open, its Markdown (null: missing), in place of the list.
-const file = ref<{ path: string, text: string | null } | null>(null)
+// The linked file open, its Markdown (null: missing; undefined: not read yet,
+// read again with the notes), in place of the list.
+const file = ref<{ path: string, text: string | null | undefined } | null>(null)
 const fileHtml = computed(() => (file.value?.text == null ? '' : md(file.value.text, { doc: true })))
 const view = ref<HTMLElement | null>(null)
 let cameFrom = '' // the note whose link opened the file: back scrolls to it
@@ -69,7 +70,7 @@ watch(noteFiles, async () => {
   const path = file.value?.path
   if (!path) return
   const text = await loadNoteFile(path)
-  if (file.value?.path === path && file.value.text !== text) file.value = { path, text }
+  if (text !== undefined && file.value?.path === path && file.value.text !== text) file.value = { path, text }
 })
 async function openFile(path: string) {
   const text = await loadNoteFile(path)
@@ -86,7 +87,7 @@ onMounted(async () => {
   const path = notesFile.value
   if (!path) return
   const text = await loadNoteFile(path)
-  if (text != null && !file.value) file.value = { path, text }
+  if (text !== null && !file.value) file.value = { path, text }
   else if (!file.value) notesFile.value = null
 })
 onBeforeUnmount(() => { notesFile.value = null })
@@ -160,7 +161,8 @@ async function onClick(e: MouseEvent) {
       </header>
       <!-- eslint-disable-next-line vue/no-v-html -- sanitized by md() (utils/markdown.ts) -->
       <div v-if="file.text != null" class="note-file-body md md-body" v-html="fileHtml" />
-      <p v-else class="muted">{{ tl('This file is missing.') }}</p>
+      <p v-else-if="file.text === null" class="muted">{{ tl('This file is missing.') }}</p>
+      <p v-else class="muted" data-testid="note-file-unread">{{ tl('This file could not be read. Trying again…') }}</p>
     </article>
     <div v-show="!file" class="notes-index">
       <USelect v-model="filter" :items="items" size="lg" class="notes-filter" :aria-label="tl('Notes shown')" data-testid="notes-filter" />

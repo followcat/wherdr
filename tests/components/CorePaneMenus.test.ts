@@ -4,17 +4,19 @@ import { mountSuspended } from '@nuxt/test-utils/runtime'
 import AgentCard from '~/components/AgentCard.vue'
 import PhoneIdentity from '~/components/PhoneIdentity.vue'
 import { desk, herdrState } from '~/composables/useHerdr'
-import { currentPaneItems, paneItems } from '~/composables/useSpaces'
+import { currentPaneItems, paneItems, splitAgentPane } from '~/composables/useSpaces'
+import { newAgentOpen } from '~/composables/useUi'
 import type { Pane } from '#shared/types'
 
-// herdr-core has no split, move or swap: the pane menus must not offer them.
+// herdr-core has no move or swap: the pane menus must not offer them (Split right and
+// Split down, a shell in wherdr's own layout of the tab, are offered by the plan's pane menu).
 const ws = { id: 'w1', label: 'api', number: 1, status: null, worktree: false }
 const pane: Pane = { id: 'w1:p1', workspace: 'w1', tab: 'w1:t1', tabLabel: null, agent: 'claude', name: 'build', label: null, status: 'idle', title: '', cwd: '/', agentSession: null }
 const second: Pane = { ...pane, id: 'w1:p2', name: 'tests' }
 const rect = (x: number) => ({ x, y: 0, width: 40, height: 20 })
 const layout = { tab: 'w1:t1', workspace: 'w1', zoomed: false, focused: 'w1:p1', area: { x: 0, y: 0, width: 80, height: 20 }, panes: [{ pane: 'w1:p1', rect: rect(0) }, { pane: 'w1:p2', rect: rect(40) }] }
 const state = () => ({ ok: true, panes: [pane, second], workspaces: [ws], tabs: [{ id: 'w1:t1', workspace: 'w1', label: 'main', number: 1, layout }] }) as never
-const LAYOUT = /^(Split right|Split down|Move to…|Swap with)/
+const LAYOUT = /^(Move to…|Swap with)/
 
 let cfg: { core?: boolean }
 let was: boolean | undefined
@@ -26,7 +28,7 @@ afterEach(() => {
 })
 const labels = (items: { label?: string }[]) => items.map(i => i.label ?? '')
 
-it('core mode: no split, move or swap entry in the pane menus; rename and close stay', () => {
+it('core mode: no move or swap entry in the pane menus; rename and close stay', () => {
   herdrState.value = state()
   cfg.core = true
   for (const items of [currentPaneItems(pane), paneItems(pane)]) {
@@ -35,9 +37,20 @@ it('core mode: no split, move or swap entry in the pane menus; rename and close 
     expect(l).toContain('Rename pane')
     expect(l.some(x => /^Close/.test(x))).toBe(true)
   }
+  expect(labels(paneItems(pane))).toEqual(expect.arrayContaining(['Split right', 'Split down', 'Split with agent…']))
 })
 
-it('core mode: the phone "Panes and tabs" sheet has no split or move', async () => {
+it('Split with agent… opens the New agent sheet on that pane', () => {
+  herdrState.value = state()
+  const item = paneItems(pane).find(i => i.label === 'Split with agent…') as { run: () => void }
+  item.run()
+  try {
+    expect(splitAgentPane.value?.id).toBe('w1:p1')
+    expect(newAgentOpen.value).toBe(true)
+  } finally { newAgentOpen.value = false; splitAgentPane.value = null }
+})
+
+it('core mode: the phone "Panes and tabs" sheet has no move or swap', async () => {
   cfg.core = true
   herdrState.value = state()
   const w = await mountSuspended(PhoneIdentity, { props: { pane, workspace: ws }, attachTo: document.body })
@@ -50,7 +63,7 @@ it('core mode: the phone "Panes and tabs" sheet has no split or move', async () 
   } finally { w.unmount() }
 })
 
-it('core mode: the home card right-click menu has no split or move', async () => {
+it('core mode: the home card right-click menu has no move or swap', async () => {
   cfg.core = true
   desk.value = true
   herdrState.value = state()

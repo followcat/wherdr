@@ -16,7 +16,7 @@ vi.mock('@xterm/xterm', () => ({ Terminal: class {
     return m
   }
   write(_data: unknown, done?: () => void) { done?.() }
-  parser = { registerCsiHandler: () => ({ dispose() {} }) }
+  parser = { registerCsiHandler: () => ({ dispose() {} }), registerEscHandler: () => ({ dispose() {} }) }
   loadAddon() {} open() {} dispose() {} refresh() {} reset() {} resize() {} attachCustomWheelEventHandler() {}
   attachCustomKeyEventHandler() {} onData() {} onBinary() {} onScroll() {}
   constructor() { terms.push(this) }
@@ -122,6 +122,7 @@ it.each([false, true])('shares wake probes while preserving touch beta=%s frame 
     const replacement = sockets[1]!
     replacement.readyState = 1
     replacement.onopen!()
+    replacement.onmessage!({ data: '{"type":"web.capabilities","core":true}' })
     ctl.scroll(1)
     expect(terms[0]!.scrollToLine).toHaveBeenLastCalledWith(9)
     staleClose()

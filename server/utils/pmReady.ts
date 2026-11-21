@@ -3,6 +3,7 @@
 // each failed check. A machine found ready is trusted for 10 minutes; any
 // result is kept for the board's "Start on…" menu.
 import { HerdrError } from './herdr'
+import { shq } from './fsx'
 import { PATH_SETUP, homeOf, machineOn } from './coreCreate'
 import { exec, wherdrBase, type PmLaunchDeps } from './pmLaunch'
 import { READY_SCRIPT, readyOf, readyRefusal, type Readiness } from '../../shared/pm/ready'
@@ -32,7 +33,7 @@ async function runCheck(deps: PmLaunchDeps, p: Project, t: Template | null, task
   const gh = !!t && !!as && taskPlan(t, as, p).some(s => s.action?.kind.startsWith('github.'))
   const base = as ? taskBase(as, p) ?? '' : p.base ?? ''
   const args = [clone, base, visual ? wherdrBase(machine, deps.origin) : '', gh ? '1' : '0', visual ? '1' : '0', ...programs]
-  const r = await exec(deps, on, `${PATH_SETUP}\nWHERDR_PM_DIR=${pmDir()}\n${READY_SCRIPT}`, args, undefined, 90).catch(() => ({ out: '' }))
+  const r = await exec(deps, on, `${PATH_SETUP}\nWHERDR_PM_DIR=${shq(pmDir())}\n${READY_SCRIPT}`, args, undefined, 90).catch(() => ({ out: '' }))
   const ready = readyOf(r.out, origin.out.trim())
   const refused = readyRefusal(ready)
   last.set(`${p.key}|${machine}|${visual ? 1 : 0}`, { ...ready, ...(refused ? { refused } : {}) })

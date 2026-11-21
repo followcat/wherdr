@@ -29,7 +29,8 @@ real() {
   while :; do
     d=$(cd -P "$(dirname "$p")" 2>/dev/null && pwd) || return 1
     p=$d/$(basename "$p")
-    [ -L "$p" ] && [ "$n" -lt 20 ] || break
+    [ -L "$p" ] || break
+    [ "$n" -lt 20 ] || return 1
     l=$(readlink "$p") || return 1
     case $l in /*) p=$l;; *) p=$d/$l;; esac
     n=$((n + 1))
@@ -212,7 +213,7 @@ async function tick(deps: PmLaunchDeps, id: string, notify: PlanNotify, now: num
   const task = await store.task(id)
   if (!task?.refs?.length || !task.feature || task.planTick || !task.step?.done || task.step.abandoned) return
   const waiting = task.planTries
-  if (waiting && !waiting.offline && now - waiting.at < PLAN_RETRY_MS) return
+  if (waiting && now - waiting.at < PLAN_RETRY_MS) return
   const projects = await store.projects()
   const p = projects.find(x => x.key === task.project), ws = p && workspaceOf(p, projects)
   const feature = await store.task(task.feature), file = feature?.plan?.file
@@ -251,9 +252,11 @@ async function tick(deps: PmLaunchDeps, id: string, notify: PlanNotify, now: num
     if ('skipped' in result) return await skip(result.skipped)
     await store.updateTask(id, x => ({ ...x, planTick: { at: now, ticked: ticked.ticked }, planTries: undefined }), { by: 'engine', text: [`plan: ticked ${ticked.ticked.join(', ')} in ${file} (${result.done})`, left].filter(Boolean).join('; ') })
   } catch (e) {
-    // An unreachable machine is said once, then waited for; any other failure of a script counts as a try.
-    if (e instanceof HerdrError && (e.code === 'unreachable' || e.code === 'bad_machine')) {
-      if (!waiting?.offline) await store.updateTask(id, x => ({ ...x, planTries: { n: waiting?.n ?? 0, first: waiting?.first ?? now, at: now, offline: true } }), { by: 'engine', text: `plan: ${refs} not ticked yet in ${file}: ${e.message}; wherdr tries again when the machine is back` })
+    // An unreachable machine is said once, then waited for (tried every PLAN_RETRY_MS); a machine
+    // that is not one (removed) is final; any other failure of a script counts as a try.
+    if (e instanceof HerdrError && e.code === 'bad_machine') return await skip(e.message)
+    if (e instanceof HerdrError && e.code === 'unreachable') {
+      await store.updateTask(id, x => ({ ...x, planTries: { n: waiting?.n ?? 0, first: waiting?.first ?? now, at: now, offline: true } }), waiting?.offline ? undefined : { by: 'engine', text: `plan: ${refs} not ticked yet in ${file}: ${e.message}; wherdr tries again when the machine is back` })
       return
     }
     return again((e as Error).message)

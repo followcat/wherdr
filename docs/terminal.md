@@ -13,7 +13,13 @@
   control of this terminal** and **Reconnect** are also in the agent's **…** menu.
 - **Input**: keys go to core with `terminal.keys`, text with `terminal.send` (never retried),
   Stop with `terminal.interrupt`. The history the terminal received is scrolled locally, with the
-  wheel or by touch.
+  wheel or by touch. A program that tracks the mouse in its own full screen (Claude Code's
+  fullscreen view, `vim`, `less --mouse`) gets the wheel and touch scrolling as mouse wheel
+  events, as in a desktop terminal, so it scrolls its own history; this never takes control of
+  the terminal's size. A fast scroll is paced on the program's repaints (one burst at a time, at
+  most a page kept, nothing more while it does not repaint), and in a Claude agent it allows for
+  Claude Code's wheel acceleration, so a trackpad flick moves as far as the fingers and stops
+  when they do. Other programs get one wheel event per row.
 - **History on demand**: an open asks core for a few screens of history (200 lines), and the
   older output comes when you scroll back to the top of what the terminal holds — up to 5000
   lines, fetched once on the same connection, with a short *Loading earlier output* strip while
@@ -32,5 +38,17 @@
   restarts or loses it.
 - **Close** ends the terminal's program (`terminal.kill`) after confirmation.
 
-Split layouts, dragging panes and dividers, and pane swaps are v2 only: with herdr-core, every
-terminal of a space is a tab, and rename, split and move of tabs stay in herdr-app.
+- **Split right** and **Split down** (pane's **…** menu, absent when its folder is unknown, off
+  while its machine is offline): a shell on the same machine and in the same folder, in the same
+  tab, taking the right or bottom half of the pane's cell; the tab view opens on it. The layout is
+  wherdr's own (a synced setting, the same on every open device within a second); herdr-app keeps
+  its own and wherdr never writes it. Closing a terminal gives its room to its neighbour.
+  On a computer, **Mod+Alt+S** splits the pane being viewed to the right and **Mod+Alt+Shift+S**
+  splits it down, from the terminal too (changeable in Settings › Shortcuts).
+- **Split with agent…** (same menu): the New agent sheet on the pane's machine and folder; the
+  agent (or a terminal) it launches takes the right half of the pane's cell.
+- **Resize** (computer): drag the line between two cells; each terminal fits its cell as it
+  moves, and the new proportion is saved on release (arrows on a focused line move it by 5 %).
+  Double-click a line to go back to 50/50. Each side keeps at least 15 %. Not on a phone.
+
+Pane swaps are v2 only for now; move of tabs stays in herdr-app.

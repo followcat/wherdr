@@ -1,6 +1,6 @@
 import { rowGroup, type Row } from './spaces'
 import type { CoreTerminal } from './coreInventory'
-import { type CoreDocs, SPACE_LABEL, TAB_LABEL, rootTerminals, SEEN_LABEL } from './coreLayout'
+import { type CoreDocs, SPACE_LABEL, TAB_LABEL, WHERDR_TAB_LABEL, rootTerminals, SEEN_LABEL } from './coreLayout'
 import { addressOnly, coreActivity, coreTitle, coreUnread, ownTitle } from './coreInventory'
 import type { HerdrState, MachineInfo, Pane } from './types'
 import { cleanTitle } from './paneTitle'
@@ -38,7 +38,8 @@ const cmdProgram = (argv: string[] | null | undefined) => {
 }
 // Placement of a terminal, in this order: its herdr.space / herdr.tab labels, the tab
 // of the machine's herdr-app document whose layout holds it, then its folder
-// (one workspace per folder, one tab per terminal) when nothing says otherwise.
+// (one workspace per folder, one tab per terminal, or one tab per wherdr.tab
+// label: a split of a folder tab) when nothing says otherwise.
 // `host`: the name of the machine wherdr runs on (its host name, or the one the user gave it).
 export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], docs: CoreDocs = {}, host = ''): HerdrState {
   const result: HerdrState = { ok: true, ready: true, workspaces: [], tabs: [], panes: [], machines: [
@@ -67,7 +68,8 @@ export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], do
     const docTab = space?.tabs?.find(t => t.id === placed?.tab)
     const workspace = placed ? `${prefix}s${key(placed.space)}` : `${prefix}w${key(cwd || terminal.address)}`
     const id = key(terminal.address)
-    const tab = placed?.tab ? `${workspace}:b${key(placed.tab)}` : `${workspace}:t${id}`
+    const own = terminal.labels?.[WHERDR_TAB_LABEL]
+    const tab = placed?.tab ? `${workspace}:b${key(placed.tab)}` : own ? `${workspace}:g${key(own)}` : `${workspace}:t${id}`
     if (!result.workspaces.some(w => w.id === workspace)) {
       const folder = space?.folder || cwd
       result.workspaces.push({ id: workspace, machine, label: space?.name || folder.split('/').filter(Boolean).pop() || 'Terminals',

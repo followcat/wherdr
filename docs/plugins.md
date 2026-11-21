@@ -102,7 +102,8 @@ writing code, install it as is.
 1. **Write** `src/index.ts` (or plain `index.js`). Export an object `{ activate(wherdr), deactivate() }`
    (or a function) as described in [The module](#the-module). Find your zone with its
    `data-wherdr` marker, and attach to it again when it reappears (use a `MutationObserver` and/or
-   `wherdr.onNavigate`). Undo everything in `deactivate()`.
+   `wherdr.onNavigate`). Undo everything in `deactivate()`. Do nothing at the top level of the module:
+   it runs as soon as the file loads, even when the plugin is turned off before it activates.
 2. **Build** one ES module with no external imports (the example uses esbuild, installed with the repo's
    dependencies; any bundler works): `npx esbuild src/index.ts --bundle --format=esm --target=es2020 --outfile=index.js`.
    For the example: `npm run build:example-plugin` from the repo root.

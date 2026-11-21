@@ -96,21 +96,27 @@ export const CONTEXT_LIST_SCRIPT = `find "$1" -mindepth 2 -maxdepth 2 \\( -type 
 // through the clone it belongs to (its .git file names it), writable again first;
 // when that clone or its record is gone, or the folder was never complete, the
 // folder itself (never anything outside $2). A leftover lock goes; a marker only
-// when its folder is gone.
+// when its folder is gone. A snapshot is removed under its lock (as a start takes
+// it), and only when still untouched for an hour: a start may have used it since it was listed.
 export const CONTEXT_REMOVE_SCRIPT = `dir=$1 base=$2
 case $dir in *..*) exit 3;; esac
 case $dir in "$base"/?*/?*) ;; *) exit 3;; esac
 case $dir in
-  *.lock) rmdir "$dir" 2>/dev/null;;
+  *.lock) [ -n "$(find "$dir" -maxdepth 0 -mmin +60 2>/dev/null)" ] && rmdir "$dir" 2>/dev/null;;
   *.ok) [ -d "\${dir%.ok}" ] || rm -f "$dir";;
   *)
+    # A lock older than 5 min is a dead start's, as the start itself counts it.
+    mkdir "$dir.lock" 2>/dev/null || { [ -n "$(find "$dir.lock" -maxdepth 0 -mmin +5 2>/dev/null)" ] && rmdir "$dir.lock" 2>/dev/null && mkdir "$dir.lock" 2>/dev/null; } || exit 0
+    trap 'rmdir "$dir.lock" 2>/dev/null' EXIT
+    [ -n "$(find "$dir" -maxdepth 0 -mmin +60 2>/dev/null)" ] || exit 0
     chmod -R u+w "$dir" 2>/dev/null
     g=$(sed -n 's/^gitdir: //p' "$dir/.git" 2>/dev/null)
     common=\${g%/worktrees/*}
     [ -n "$g" ] && [ -d "$common" ] && git --git-dir="$common" worktree remove --force "$dir" >/dev/null 2>&1
     if [ -e "$dir" ]; then rm -rf "$dir" || exit 1; fi
     rm -f "$dir.ok"
-    [ -n "$g" ] && [ -d "$common" ] && git --git-dir="$common" worktree prune >/dev/null 2>&1;;
+    [ -n "$g" ] && [ -d "$common" ] && git --git-dir="$common" worktree prune >/dev/null 2>&1
+    rmdir "$dir.lock" 2>/dev/null;;
 esac
 rmdir "$(dirname "$dir")" 2>/dev/null
 exit 0`

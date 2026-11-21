@@ -44,6 +44,18 @@ it('shows today\'s counters against the limits, and the switch saves the autopil
   await vi.waitFor(() => expect(posts).toEqual([{ project: 'CO', autopilot: { ...autopilot, on: true } }]))
 })
 
+it('puts the switch above both tabs, and explains Wake now, Every and the optional goal', async () => {
+  const b = await mount()
+  for (const panel of ['autopilot-settings', 'autopilot-activity']) expect(b.find(`[data-testid="${panel}"] [data-testid="autopilot-on"]`).exists()).toBe(false)
+  expect(b.find('[data-testid="coordinator-autopilot"] > .ap-head [data-testid="autopilot-on"]').exists()).toBe(true)
+  expect(b.find('[data-testid="autopilot-run-now"]').text()).toBe('Wake now')
+  expect(b.find('[data-testid="autopilot-run-now-hint"]').text()).toContain('Wakes the coordinator now with its goal')
+  expect(b.find('[data-testid="autopilot-settings"] legend').text()).toBe('Goal (optional)')
+  expect(b.find('[data-testid="autopilot-goal-hint"]').text()).toContain('no goal is set')
+  const every = b.find('[data-testid="autopilot-every-hint"]').text()
+  for (const part of ['Empty: no timed wake, only the events below.', 'skipped while nothing is new (at least one every 12 h), unless Look for new work is on']) expect(every).toContain(part)
+})
+
 it('saves the goal, interval, events and limits edited', async () => {
   const b = await mount()
   await b.find('textarea#ap-goal-CO').setValue('  Fix the board first ')

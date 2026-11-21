@@ -6,7 +6,7 @@
 
 export type ShortcutId = 'search-all' | 'search-chat' | 'toggle-term' | 'stop' | 'prev-agent' | 'next-agent'
   | 'prev-tab' | 'next-tab'
-  | 'new-space' | 'new-tab' | 'close-pane' | 'open-editor' | 'settings' | 'notes' | 'help'
+  | 'new-space' | 'new-tab' | 'close-pane' | 'split-right' | 'split-down' | 'open-editor' | 'settings' | 'notes' | 'help'
 
 export type Mod = 'mod' | 'ctrl' | 'alt' | 'shift'
 
@@ -57,6 +57,10 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: 'new-space', mods: ['mod', 'alt'], key: 'n', fields: 'any', terminal: true, capture: true, kbds: ['meta', 'alt', 'N'] },
   { id: 'new-tab', mods: ['mod', 'alt'], key: 't', fields: 'any', terminal: true, capture: true, kbds: ['meta', 'alt', 'T'] },
   { id: 'close-pane', mods: ['mod', 'alt'], key: 'w', fields: 'any', terminal: true, capture: true, kbds: ['meta', 'alt', 'W'] },
+  // Split the current pane (S for split): a shell to the right, or below with Shift. Caught
+  // before the terminal as N, T and W. Not ⌥⌘D: macOS shows or hides the Dock with it.
+  { id: 'split-right', mods: ['mod', 'alt'], key: 's', fields: 'any', terminal: true, capture: true, kbds: ['meta', 'alt', 'S'] },
+  { id: 'split-down', mods: ['mod', 'alt', 'shift'], key: 's', fields: 'any', terminal: true, capture: true, kbds: ['meta', 'alt', 'shift', 'S'] },
   // Current agent folder in its default editor: like the other machine actions, Mod+Alt
   // (chromium.org never lets pages see Mod+N, T or W). O, not E: Firefox and Zen bind
   // ⌘⌥E to the Network Monitor on macOS (Ctrl+Shift+E elsewhere), Zen also uses

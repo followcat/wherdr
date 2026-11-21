@@ -1,8 +1,9 @@
 <script setup lang="ts">
-// Raw terminal of the pane: xterm.js + touch layer. The attach delivers the
-// history: a finger drag or the wheel scrolls xterm's local viewport — never
-// ↑/↓ sent to the agent; click = keyboard to the terminal, a tap too except
-// on iOS: see utils/terminalTapFocus.ts).
+// Raw terminal of the pane: xterm.js + touch layer (scrolling with a finger or
+// the wheel -> ctl.scroll: xterm's history on herdr-core, or wheel reports to a
+// program tracking the mouse, like Claude Code's fullscreen view; never ↑/↓
+// sent to the agent; click = keyboard to the terminal, a tap too except on
+// iOS: see utils/terminalTapFocus.ts).
 import '@xterm/xterm/css/xterm.css'
 import { createTerminalTouch } from '~/utils/terminalTouch'
 import { takeTouchLines } from '~/utils/terminalWheel'
@@ -24,18 +25,33 @@ let legacyLastY: number | null = null
 let legacyLastX: number | null = null
 let legacyStartX = 0, legacyStartY = 0
 let legacyAcc = 0
+// The wheel's accumulator is separate: cancelTouchState must not drop a
+// stream's fractional rest between consecutive wheel events.
+let wheelAcc = 0, wheelPendingLines = 0, wheelRaf = 0
 let legacyPendingLines = 0
 let legacyRaf = 0
 let legacyMoved = false
+// Where the wheel or the finger is: a program tracking the mouse gets it there.
+let legacyPoint: { x: number, y: number } | null = null
 const legacyFlush = () => {
   legacyRaf = 0
   if (!legacyPendingLines) return
-  props.ctl.scroll(legacyPendingLines)
+  props.ctl.scroll(legacyPendingLines, legacyPoint?.x, legacyPoint?.y)
   legacyPendingLines = 0
 }
 const legacyQueue = (n: number) => {
   legacyPendingLines += n
   if (!legacyRaf) legacyRaf = requestAnimationFrame(legacyFlush)
+}
+const wheelFlush = () => {
+  wheelRaf = 0
+  if (!wheelPendingLines) return
+  props.ctl.scroll(wheelPendingLines, legacyPoint?.x, legacyPoint?.y)
+  wheelPendingLines = 0
+}
+const wheelQueue = (n: number) => {
+  wheelPendingLines += n
+  if (!wheelRaf) wheelRaf = requestAnimationFrame(wheelFlush)
 }
 const tapFocuses = import.meta.client ? tapFocusesTerminal(navigator.vendor) : true
 function legacyOnTouchStart(e: TouchEvent) {
@@ -74,6 +90,7 @@ function legacyOnTouchMove(e: TouchEvent) {
     // the smooth path — never while an IME composition is in flight.
     if (props.ctl.hasFocus() && !props.ctl.imeBusy()) props.ctl.blur()
     legacyMoved = true
+    legacyPoint = { x, y }
     legacyQueue(lines)
   }
 }
@@ -101,17 +118,6 @@ function legacyOnTouchEnd(e: TouchEvent) {
 // The wheel owns its own accumulator: onWheel cancels pending touch/hold
 // state on every event, and that cancellation must not drop the stream's
 // fractional rest or the rows already queued for the next frame.
-let wheelAcc = 0, wheelPendingLines = 0, wheelRaf = 0
-const wheelFlush = () => {
-  wheelRaf = 0
-  if (!wheelPendingLines) return
-  props.ctl.scroll(wheelPendingLines)
-  wheelPendingLines = 0
-}
-const wheelQueue = (n: number) => {
-  wheelPendingLines += n
-  if (!wheelRaf) wheelRaf = requestAnimationFrame(wheelFlush)
-}
 // The layer only receives the mouse on a touch screen (main.css): on a
 // computer, xterm receives it directly (selection, mouse mode).
 // Listened on the whole block, before xterm: on a computer the mouse reaches
@@ -129,6 +135,7 @@ function legacyOnWheel(e: WheelEvent) {
   wheelAcc -= wheelPixels(e.deltaY, e.deltaMode, h, props.ctl.pageRows())
   const { lines, rest } = takeLines(wheelAcc, h)
   wheelAcc = rest
+  legacyPoint = { x: e.clientX, y: e.clientY }
   if (lines) wheelQueue(lines)
 }
 

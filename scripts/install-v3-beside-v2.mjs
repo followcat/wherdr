@@ -120,11 +120,15 @@ export function buildTuning(heapLimit = v8.getHeapStatistics().heap_size_limit, 
 // one rollback) only once it succeeded: a failed build (out of memory…) leaves
 // the running .output whole. Run in the checkout; ok: what runs after the swap.
 export const NEXT_OUTPUT = '.output.next'
+// The commit a build was made from, kept inside it: it moves with the build on
+// swaps and rollbacks, so a re-run of the installer knows what update.sh built.
+export const BUILT_COMMIT = 'built-commit'
+const stampBuild = `git rev-parse HEAD > ${NEXT_OUTPUT}/${BUILT_COMMIT}`
 export const swapBuild = ok => `[ -f ${NEXT_OUTPUT}/server/index.mjs ] && rm -rf .output.prev && { [ ! -e .output ] || mv .output .output.prev; } && mv ${NEXT_OUTPUT} .output${ok ? ` && ${ok}` : ''}`
 export function buildCommand(src, tuning) {
   const p = tuning ? `${tuning.prefix} ` : ''
   const env = tuning ? `export NODE_OPTIONS="${'$'}{NODE_OPTIONS:-} ${tuning.nodeOptions}"; ` : ''
-  return `cd ${JSON.stringify(src)} && export NITRO_OUTPUT_DIR=${NEXT_OUTPUT}; ${env}rm -rf ${NEXT_OUTPUT} && { ${p}npm ci --no-audit --no-fund --loglevel=error && ${p}npm run build; } > ../build.log 2>&1 && ${swapBuild()} || { rm -rf ${NEXT_OUTPUT}; exit 1; }`
+  return `cd ${JSON.stringify(src)} && export NITRO_OUTPUT_DIR=${NEXT_OUTPUT}; ${env}rm -rf ${NEXT_OUTPUT} && { ${p}npm ci --no-audit --no-fund --loglevel=error && ${p}npm run build && ${stampBuild}; } > ../build.log 2>&1 && ${swapBuild()} || { rm -rf ${NEXT_OUTPUT}; exit 1; }`
 }
 
 // The tailscale serve HTTPS port: the one asked for, else the one this v3 already
@@ -207,7 +211,7 @@ if [ "$(node -p 'require("v8").getHeapStatistics().heap_size_limit')" -lt ${BUIL
 fi
 export NITRO_OUTPUT_DIR=${NEXT_OUTPUT}
 rm -rf ${NEXT_OUTPUT} .output.failed
-{ $run npm ci --no-audit --no-fund --loglevel=error && $run npm run build; } > ../build.log 2>&1 && ${swapBuild()} || { tail -20 ../build.log; rm -rf ${NEXT_OUTPUT}; echo "ERROR build-failed: the running build (.output) is unchanged; see $(cd .. && pwd)/build.log"; exit 5; }
+{ $run npm ci --no-audit --no-fund --loglevel=error && $run npm run build && ${stampBuild}; } > ../build.log 2>&1 && ${swapBuild()} || { tail -20 ../build.log; rm -rf ${NEXT_OUTPUT}; echo "ERROR build-failed: the running build (.output) is unchanged; see $(cd .. && pwd)/build.log"; exit 5; }
 # Answers with the given text in /api/health (the new build: its commit, as <version>+<commit>).
 answers() { for i in $(seq 1 "${'$'}{WHERDR_HEALTH_WAIT:-60}"); do curl -fsS --max-time 3 http://127.0.0.1:${port}/api/health 2>/dev/null | grep -qF "$1" && return 0; sleep 1; done; return 1; }
 # A restart that fails is rolled back too, as a build that does not answer.
@@ -385,10 +389,13 @@ export async function main(argv = process.argv.slice(2), io = {}) {
     const deploySource = o.deploySource || mine.deploySource || null
     const autoDeploy = !!deploySource
     // With auto-deploy, src/ is only the service's folder: the build comes from the source.
-    const follow = hasSrc && !!mine.createdSrc && !autoDeploy
+    // A release tag update.sh <version> chose is kept (update.sh alone follows the branch again).
+    const pinned = hasSrc && !!mine.createdSrc && !autoDeploy ? git('describe', '--exact-match', '--tags', '--match', 'v[0-9]*', 'HEAD').out || null : null
+    const follow = hasSrc && !!mine.createdSrc && !autoDeploy && !pinned
     const moves = follow && remote && remote !== head
     const built = fs.existsSync(path.join(src, '.output', 'server', 'index.mjs'))
-    const needsBuild = !built || moves || (!!mine.builtCommit && mine.builtCommit !== head)
+    const builtCommit = (() => { try { return fs.readFileSync(path.join(src, '.output', BUILT_COMMIT), 'utf8').trim() || null } catch { return mine.builtCommit || null } })()
+    const needsBuild = !built || moves || (!!builtCommit && builtCommit !== head)
     const tuning = buildTuning(io.heapLimit, run('sh', ['-c', 'command -v ionice']).ok)
     const self = ts ? (() => { try { return JSON.parse(run('tailscale', ['status', '--json']).out).Self.DNSName.replace(/\.$/, '') } catch { return null } })() : null
     const appUrl = self && httpsPort ? `https://${self}:${httpsPort}/` : null
@@ -403,6 +410,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
     const plan = [
       ownHc ? `start herdr-core session "${o.hcSession}" as ${hcName}.service (${socket})` : `use the running herdr-core session "${o.hcSession}" (${socket})`,
       !hasSrc ? `clone ${o.repo} (${o.branch} at ${short(remote)}) into ${src}`
+        : pinned ? `keep ${src} on ${pinned} (chosen with update.sh <version>; update.sh alone follows ${o.branch})`
         : !follow ? `keep ${src} at ${short(head)} (not cloned by this installer: not updated)`
           : moves ? `update ${src}: git fetch, then ${short(head)} → origin/${o.branch} at ${short(remote)}`
             : `keep ${src} at ${short(head)}${remote ? ` (= origin/${o.branch})` : ` (git ls-remote ${o.repo} failed)`}`,
@@ -462,7 +470,8 @@ export async function main(argv = process.argv.slice(2), io = {}) {
       const c = r.ok ? git('checkout', '-q', '-f', '--detach', `origin/${o.branch}`) : r
       if (!c.ok) throw new Stop(EXIT.failed, 'update-failed', `could not move ${src} to origin/${o.branch}: ${c.err.split('\n').pop()}`)
       step('OK', `${src} at ${short(git('rev-parse', 'HEAD').out)} (origin/${o.branch})`)
-    } else step('SKIP', `${src} exists, at ${short(head)} (not cloned by this installer)`)
+    } else if (pinned) step('SKIP', `${src} stays on ${pinned}`)
+    else step('SKIP', `${src} exists, at ${short(head)} (not cloned by this installer)`)
     const now = git('rev-parse', 'HEAD').out || null
     const deployEnv = { ...env, WHERDR_V3_SOURCE: deploySource, WHERDR_V3_DIR: o.dir, WHERDR_V3_SERVICE: name, WHERDR_V3_PORT: o.port }
     if (autoDeploy) {
@@ -472,7 +481,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
       const r = run('bash', [path.join(o.dir, DEPLOY_SCRIPT), 'prepare'], { env: deployEnv, timeout: 1200000 })
       if (!r.ok || !fs.existsSync(path.join(src, '.output', 'server', 'index.mjs'))) throw new Stop(EXIT.failed, 'deploy-failed', `could not install a build from ${deploySource}: ${r.err.split('\n').pop() || 'no build'} (${o.dir}/deploy/deploy.log)`)
       step('OK', `prebuilt ${short(fs.readFileSync(path.join(o.dir, 'deploy', 'commit'), 'utf8').trim())} in ${src}/.output`)
-    } else if (!built || (m.builtCommit ? m.builtCommit !== now : now !== head)) {
+    } else if (!built || (builtCommit ? builtCommit !== now : now !== head)) {
       const r = run('sh', ['-c', buildCommand(src, tuning)], { timeout: 3600000 })
       if (!r.ok) throw new Stop(EXIT.failed, 'build-failed', `the build failed, the running build (${src}/.output) is unchanged: see ${o.dir}/build.log${tuning ? '' : " (out of memory? the build needs about 1.5 GB of Node heap: NODE_OPTIONS=--max-old-space-size=1536)"}`)
       m.builtCommit = now; save(m)
@@ -502,7 +511,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
     summary.local = target
 
     fs.writeFileSync(path.join(o.dir, 'update.sh'), autoDeploy
-      ? `#!/usr/bin/env bash\n# Auto-deploy is on: install the latest prebuilt v3 now (never builds here).\nWHERDR_V3_SOURCE=${JSON.stringify(deploySource)} WHERDR_V3_DIR=${JSON.stringify(o.dir)} WHERDR_V3_SERVICE=${name} WHERDR_V3_PORT=${o.port} exec bash ${JSON.stringify(path.join(o.dir, DEPLOY_SCRIPT))} "$@"\n`
+      ? `#!/usr/bin/env bash\n# Auto-deploy is on: install the latest prebuilt v3 now (never builds here). A version cannot be chosen.\ncase "\${1:-deploy}" in deploy|rollback|status) ;; *) echo "NOTE auto-deploy installs the latest prebuilt build, not a chosen version ($1)"; set -- deploy ;; esac\nWHERDR_V3_SOURCE=${JSON.stringify(deploySource)} WHERDR_V3_DIR=${JSON.stringify(o.dir)} WHERDR_V3_SERVICE=${name} WHERDR_V3_PORT=${o.port} exec bash ${JSON.stringify(path.join(o.dir, DEPLOY_SCRIPT))} "$@"\n`
       : updateScript({ branch: o.branch, name, port: o.port }), { mode: 0o755 })
     step('OK', `${o.dir}/update.sh`)
     if (autoDeploy) {

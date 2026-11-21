@@ -83,7 +83,7 @@ class FakeTerm {
   resize(cols: number, rows: number) { this.cols = cols; this.rows = rows }
   loadAddon() {} open() {} focus() {} dispose() {} refresh() {}
   reset() { Object.assign(this.buffer.active, { viewportY: 0, baseY: 0, length: this.rows, cursorY: this.rows - 1 }) }
-  parser = { registerCsiHandler: () => ({ dispose() {} }) }
+  parser = { registerCsiHandler: () => ({ dispose() {} }), registerEscHandler: () => ({ dispose() {} }) }
   attachCustomWheelEventHandler() {} attachCustomKeyEventHandler() {}
   onData() {} onBinary() {}
   onScroll(fn: (y: number) => void) { this.onScrollCb = fn }

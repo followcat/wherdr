@@ -63,7 +63,8 @@ describe('terminal beta switch', () => {
     await r.send('touchstart', 100)
     await r.send('touchmove', 140)
     paint()
-    expect(r.ctl.scroll.mock.calls).toEqual([[2]])
+    expect(r.ctl.scroll.mock.calls).toEqual([[2, 50, 140]])
+    expect(r.screen()).not.toContain('translate')
     await r.send('touchend', 140, 0)
     paint()
     expect(r.ctl.scroll).toHaveBeenCalledTimes(1)
@@ -289,7 +290,7 @@ describe('terminal beta switch', () => {
     await r.send('touchstart', 100)
     await r.send('touchmove', 140)
     paint()
-    expect(r.ctl.scroll.mock.calls).toEqual([[3], [2]])
+    expect(r.ctl.scroll.mock.calls).toEqual([[3], [2, 50, 140]])
   })
   it('cancels multitouch and removes every scheduled frame on unmount', async () => {
     const r = await mounted(true)
