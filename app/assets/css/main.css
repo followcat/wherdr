@@ -1994,7 +1994,7 @@ body.kb .composer { padding-bottom: 8px; }
 .hw-sheet > * { border-top: 0 !important; border-bottom: 0 !important; }
 /* Keep wrapped titles above the scrolling body when the sheet reaches its height limit. */
 .hw-sheet > [data-slot="header"] { padding: 4px 0 10px; min-height: 0; flex: none; border: 0; order: 1; display: flex; align-items: center; justify-content: space-between; }
-.hw-sheet > [data-slot="body"] { padding: 0 0 var(--sheet-end); order: 2; overflow-y: auto; overscroll-behavior: contain; flex: 1; min-height: 0; scroll-padding-bottom: 16px; }
+.hw-sheet > [data-slot="body"] { padding: 0 0 var(--sheet-end); order: 2; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; flex: 1; min-height: 0; scroll-padding-bottom: 16px; }
 /* A body whose content fills the sheet's height (a task's), still its one scroll. */
 .hw-sheet > [data-slot="body"]:has(> .task-sheet) { display: flex; flex-direction: column; }
 /* A bar pinned (sticky) at the bottom of the body is its last element and
@@ -2070,6 +2070,10 @@ body.kb .composer { padding-bottom: 8px; }
 .menu button .desc { color: var(--text-3); font-size: 14.5px; }
 /* Action with a description (plugin actions): label, then the description below. */
 .menu button .menu-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+/* A label can be one unbreakable string (a tab name, a path): wrap it like the
+   description does, or it pushes the row past the sheet's edge and the body's
+   scroll lands the whole list off to the left. */
+.menu button .menu-text > span { min-width: 0; overflow-wrap: anywhere; }
 .menu button .menu-sub { color: var(--text-3); font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; }
 .menu .menu-group {
   display: flex; align-items: center; gap: 8px; padding: 14px 8px 6px;
