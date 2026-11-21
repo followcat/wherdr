@@ -3,6 +3,7 @@ import { defineComponent, h, nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createTerminal } from '~/composables/useTerminal'
 import { terminalRenderer } from '~/composables/useHerdr'
+import { kbOpen } from '~/composables/useViewport'
 
 // A resize reallocates the WebGL canvas; on some GPUs the glyph atlas then
 // shows noise until rebuilt. Every resize repaints instead of trusting it.
@@ -57,6 +58,7 @@ class FakeSocket {
   close() { this.readyState = 3; this.onclose?.() }
   open() { this.readyState = 1; this.onopen?.() }
   receive(m: unknown) { this.onmessage?.({ data: JSON.stringify(m) }) }
+  resizes() { return this.sent.filter(m => m.type === 'terminal.resize').map(m => [m.cols, m.rows]) }
 }
 
 function setup() {
@@ -88,7 +90,40 @@ beforeEach(() => {
   FakeSocket.all.length = 0
   vi.stubGlobal('WebSocket', FakeSocket)
 })
-afterEach(() => { vi.unstubAllGlobals() })
+afterEach(() => { vi.unstubAllGlobals(); kbOpen.value = false })
+
+it('the keyboard opening never resizes the pane for rows alone', async () => {
+  const { ctl, open, wrapper } = setup()
+  try {
+    const ws = await open()
+    ws.open()
+    // Composer focused, keyboard sliding up: the window is shorter, nothing else moved.
+    kbOpen.value = true
+    h1.fit = { cols: 47, rows: 30 }
+    ctl.fitNow(true)
+    expect(h1.terms[0]).toMatchObject({ cols: 47, rows: 40 })
+    expect(ws.resizes()).toEqual([])
+    // Closing fits back to the same pane: still nothing to send.
+    kbOpen.value = false
+    h1.fit = { cols: 47, rows: 40 }
+    ctl.fitNow(true)
+    expect(ws.resizes()).toEqual([])
+  } finally { ctl.dispose(); wrapper.unmount() }
+})
+
+it('the keyboard resizes as usual while the terminal itself is typed in', async () => {
+  const { ctl, open, wrapper } = setup()
+  try {
+    const ws = await open()
+    ws.open()
+    kbOpen.value = true
+    ctl.kbdOn.value = true
+    h1.fit = { cols: 47, rows: 30 }
+    ctl.fitNow(true)
+    expect(h1.terms[0]).toMatchObject({ cols: 47, rows: 30 })
+    expect(ws.resizes()).toEqual([[47, 30]])
+  } finally { ctl.dispose(); wrapper.unmount() }
+})
 
 it('a core-driven resize repaints: the atlas is rebuilt, not trusted', async () => {
   const { ctl, open, wrapper } = setup()
