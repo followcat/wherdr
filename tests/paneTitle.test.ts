@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Pane } from '../shared/types'
-import { paneOwnTitle, paneTitle } from '../shared/paneTitle'
+import { cleanTitle, maskCreds, paneOwnTitle, paneTitle } from '../shared/paneTitle'
 
 const pane = (overrides: Partial<Pane> = {}): Pane => ({
   id: 'w1:p1', workspace: 'w1', tab: 't1', tabLabel: null,
@@ -74,5 +74,20 @@ describe('own title of a pane, without an added capital', () => {
     expect(paneOwnTitle(pane({ agent: 'claude', name: 'claude', title: '' }))).toBe('claude')
     expect(paneOwnTitle(pane({ label: 'Mon agent' }))).toBe('Mon agent')
     expect(paneOwnTitle(pane({ agent: 'omp', name: 'build review', title: '' }))).toBe('build review')
+  })
+})
+
+describe('credentials in names', () => {
+  it('masks the userinfo of a URI pasted into a name', () => {
+    expect(maskCreds('HTTPS_PROXY=http://user1:secre7@10.0.0.1:3128')).toBe('HTTPS_PROXY=http://…@10.0.0.1:3128')
+    expect(maskCreds('postgres://alice:p%40ss@db.acme/app')).toBe('postgres://…@db.acme/app')
+  })
+  it('leaves names without a password alone', () => {
+    expect(maskCreds('ssh://git@github.com/acme/shop')).toBe('ssh://git@github.com/acme/shop')
+    expect(maskCreds('git@github.com:acme/shop.git')).toBe('git@github.com:acme/shop.git')
+    expect(maskCreds('mailto:alice@acme.dev')).toBe('mailto:alice@acme.dev')
+  })
+  it('cleanTitle masks too, so every title path is covered', () => {
+    expect(cleanTitle('PROXY=http://user1:secre7@proxy.local:8080')).toBe('PROXY=http://…@proxy.local:8080')
   })
 })
