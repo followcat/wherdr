@@ -703,6 +703,14 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     await sendKeys([chord])
   }
 
+  // A resize reallocates the WebGL canvas; on some GPUs the glyph atlas then
+  // holds noise until it is rebuilt — repaint clears it rather than trusting it.
+  function repaint() {
+    if (!term) return
+    term.clearTextureAtlas()
+    term.refresh(0, term.rows - 1)
+  }
+
   function fitNow(send: boolean) {
     // A parked view is detached: it measures zero and must never resize the
     // terminal, locally or on the wire (the adopt fits once in its new host).
@@ -715,7 +723,7 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     const p = proposeTerminalSize(term)
     if (!p || !p.cols || !p.rows) return
     const d = { cols: p.cols, rows: p.rows }
-    if (!coreStream && (d.cols !== term.cols || d.rows !== term.rows)) term.resize(d.cols, d.rows)
+    if (!coreStream && (d.cols !== term.cols || d.rows !== term.rows)) { term.resize(d.cols, d.rows); repaint() }
     if (send && (d.cols !== lastSize.cols || d.rows !== lastSize.rows)) {
       if (sendTerm({ type: 'terminal.resize', cols: d.cols, rows: d.rows })) lastSize = { cols: d.cols, rows: d.rows }
     }
@@ -884,6 +892,7 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
           resized: () => {
             if (term !== current) return
             scrollGeometryVersion.value++
+            repaint()
             if (coreStream) offerFit()
           },
           reset: () => mouseSgr?.reset(),

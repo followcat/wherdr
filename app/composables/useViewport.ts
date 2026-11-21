@@ -21,7 +21,16 @@ if (import.meta.client) {
 
 const fullH = { orient: '', h: 0 }
 
+// The last layout() ran this recently: while the visual viewport is still
+// moving (the keyboard's animation, a pinch), a pane resize per animation
+// frame is a repaint storm — a fit asked now should wait for quiet instead.
+let movedAt = 0
+export function viewportMoving(withinMs: number) {
+  return Date.now() - movedAt < withinMs
+}
+
 export function layout() {
+  movedAt = Date.now()
   const vv = window.visualViewport
   const h = vv ? vv.height : window.innerHeight
   const top = vv ? vv.offsetTop : 0

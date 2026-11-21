@@ -17,7 +17,7 @@ vi.mock('@xterm/xterm', () => ({ Terminal: class {
   }
   write(_data: unknown, done?: () => void) { done?.() }
   parser = { registerCsiHandler: () => ({ dispose() {} }), registerEscHandler: () => ({ dispose() {} }) }
-  loadAddon() {} open() {} dispose() {} refresh() {} reset() {} resize() {} attachCustomWheelEventHandler() {}
+  loadAddon() {} open() {} dispose() {} refresh() {} clearTextureAtlas() {} reset() {} resize() {} attachCustomWheelEventHandler() {}
   attachCustomKeyEventHandler() {} onData() {} onBinary() {} onScroll() {}
   constructor() { terms.push(this) }
 } }))

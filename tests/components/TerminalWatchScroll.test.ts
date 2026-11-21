@@ -137,7 +137,7 @@ class FakeTerm {
   // included: viewportY is already current when it fires.
   echoViewport() { this.viewportEl.dispatchEvent(new Event('scroll')) }
   resize(cols: number, rows: number) { this.cols = cols; this.rows = rows }
-  loadAddon() {} open() {} focus() {} dispose() {} refresh() {} reset() {}
+  loadAddon() {} open() {} focus() {} dispose() {} refresh() {} clearTextureAtlas() {} reset() {}
   parser = { registerCsiHandler: () => ({ dispose() {} }), registerEscHandler: () => ({ dispose() {} }) }
   attachCustomWheelEventHandler() {} attachCustomKeyEventHandler() {}
   onData() {} onBinary() {}

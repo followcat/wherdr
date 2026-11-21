@@ -8,7 +8,7 @@ import '@xterm/xterm/css/xterm.css'
 import { createTerminalTouch } from '~/utils/terminalTouch'
 import { takeTouchLines } from '~/utils/terminalWheel'
 import { mouseFromTouch, tapFocusesTerminal } from '~/utils/terminalTapFocus'
-import { kbOpen } from '~/composables/useViewport'
+import { kbOpen, viewportMoving } from '~/composables/useViewport'
 import type { TerminalCopySnapshot } from '~/utils/terminalCopy'
 
 // `park` defaults to true: a view leaving keeps its xterm and stream (an
@@ -419,14 +419,28 @@ function onWheel(e: WheelEvent) {
 }
 
 let fitTimer: ReturnType<typeof setTimeout> | undefined
+let settleTimer: ReturnType<typeof setTimeout> | undefined
+// The quiet the viewport needs before a moving fit lands: roughly the
+// keyboard's slide animation, restarted by each new frame of it.
+const VIEWPORT_SETTLE_MS = 280
 // Throttle rather than debounce: long divider drags must keep fitting while
 // the pointer moves, without sending every intermediate pixel to Herdr.
+// A viewport still moving (the keyboard animating, a pinch) wants the
+// opposite: one fit once it settles, not a pane resize per animation frame.
 function scheduleFit() {
   // fitNow may resize locally before the echoed frame — there is no resized
   // callback to bump scrollGeometryVersion, so invalidate directly here in
   // both scroll modes: a hold measured against the old geometry dies, the
   // finger's release stays disqualified.
   resizeTouch()
+  if (viewportMoving(VIEWPORT_SETTLE_MS)) {
+    clearTimeout(settleTimer)
+    settleTimer = setTimeout(() => {
+      settleTimer = undefined
+      props.ctl.fitNow(true)
+    }, VIEWPORT_SETTLE_MS)
+    return
+  }
   if (fitTimer) return
   fitTimer = setTimeout(() => {
     fitTimer = undefined
@@ -466,6 +480,7 @@ onUnmounted(() => {
   cancelTouch()
   ro?.disconnect()
   clearTimeout(fitTimer)
+  clearTimeout(settleTimer)
   cancelAnimationFrame(legacyRaf)
   // The terminal is parked by default: its xterm and its stream stay, so the
   // next mount adopts them (the pane's AgentView owns the cross-pane cache).
