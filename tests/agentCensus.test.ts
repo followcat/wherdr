@@ -33,6 +33,15 @@ it('resolves a single cmd process: exact cwd, argv, birth bound, complete census
   expect(big.complete).toBe(false)
 })
 
+it('strips the kernel " (deleted)" annotation from cwd and exe links', () => {
+  // readlink appends the marker to vanished targets: it is evidence about the
+  // inode, not part of the path — both link fields normalize it away.
+  const c = parseAgentCensus(H() + S(1, { comm: 'command-code', argv: ['/x/bin/cmd'], cwd: '/w/gone (deleted)', exe: '/usr/bin/node (deleted)' }) + T())
+  const p = c.processes[0]
+  expect(p?.cwd).toBe('/w/gone')
+  expect(p?.exe).toBe('/usr/bin/node')
+})
+
 it('keeps every independent and nested cmd peer (no ancestry dedup)', () => {
   const c = parseAgentCensus(H()
     + S(100, { argv: ['node', '/x/bin/cmd'], cwd: '/w/same', exe: '/usr/bin/node', res: ENTRY })
@@ -257,6 +266,23 @@ it('cmdLaunchArgs: proven direct and package launches yield agent args past the 
   expect(cmdLaunchArgs(['node', '-r', '/x/bin/cmd', '/srv/app.js', 'go'])).toEqual(['go']) // preload proves, app arg boundary intact
 })
 
+it('cmdLaunchArgs: env-wrapped launches unwrap to the agent boundary', () => {
+  // env execve()s its operand directly: assignments and known options are
+  // consumed, the command tail is the recorded launch argv.
+  expect(cmdLaunchArgs(['env', 'PATH=/x/bin', 'cmd', '-t', '--yolo'])).toEqual(['-t', '--yolo'])
+  expect(cmdLaunchArgs(['env', 'cmd'])).toEqual([])
+  expect(cmdLaunchArgs(['env', '-i', 'cmd', 'go'])).toEqual(['go'])
+  expect(cmdLaunchArgs(['env', '-u', 'TERM', 'cmd', 'go'])).toEqual(['go'])
+  expect(cmdLaunchArgs(['env', '--unset=TERM', 'cmd', 'go'])).toEqual(['go'])
+  expect(cmdLaunchArgs(['env', '-C', '/work', 'cmd'])).toEqual([])
+  expect(cmdLaunchArgs(['env', '--', 'cmd', 'x'])).toEqual(['x'])
+  expect(cmdLaunchArgs(['env', 'A=1', 'B=2', 'command-code', 'chat'])).toEqual(['chat'])
+  // An interpreter operand recurses: env node /pkg/index.mjs still resolves.
+  expect(cmdLaunchArgs(['env', 'PATH=x', 'node', `${PKGD}/index.mjs`, 'go'])).toEqual(['go'])
+  // Nested env unwrapping stays bounded and still proves the inner command.
+  expect(cmdLaunchArgs(['env', 'env', 'A=1', 'cmd'])).toEqual([])
+})
+
 it('cmdLaunchArgs: unproven launch shapes return null, never a guessed boundary', () => {
   // Shell roots — a shell that later exec'd cmd can never claim its own ticks.
   expect(cmdLaunchArgs(['bash', '-l'])).toBeNull()
@@ -271,4 +297,14 @@ it('cmdLaunchArgs: unproven launch shapes return null, never a guessed boundary'
   expect(cmdLaunchArgs(['node', '/x/command-code/server.js'])).toBeNull() // dir name alone is not an entrypoint
   expect(cmdLaunchArgs(['node', '--import'])).toBeNull()
   expect(cmdLaunchArgs([])).toBeNull()
+  // env shapes that cannot prove a command boundary: unknown options,
+  // missing option operands, no command, a non-cmd operand.
+  expect(cmdLaunchArgs(['env'])).toBeNull()
+  expect(cmdLaunchArgs(['env', 'A=1'])).toBeNull()
+  expect(cmdLaunchArgs(['env', '-u'])).toBeNull()
+  expect(cmdLaunchArgs(['env', '--unset'])).toBeNull()
+  expect(cmdLaunchArgs(['env', '--bogus', 'cmd'])).toBeNull()
+  expect(cmdLaunchArgs(['env', '-Z', 'cmd'])).toBeNull()
+  expect(cmdLaunchArgs(['env', 'ls', 'cmd'])).toBeNull()
+  expect(cmdLaunchArgs(['env', 'PATH=x', 'bash', '-c', 'exec cmd'])).toBeNull() // env only unwraps one layer of provable launch
 })

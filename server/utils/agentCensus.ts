@@ -166,11 +166,42 @@ export function cmdLaunchArgs(argv: string[]): string[] | null {
   if (!argv.length) return null
   const a0b = base(argv[0])
   if (CMD_BIN.has(a0b)) return argv.slice(1)
+  // env [opts] [NAME=VALUE]... COMMAND [ARG]... is a provable wrapper: env
+  // execve()s the operand itself, so the launch boundary is the operand.
+  if (a0b === 'env') {
+    const i = envOperand(argv, 1)
+    return i === null ? null : cmdLaunchArgs(argv.slice(i))
+  }
   if (!INTERPRETER.test(a0b)) return null
   const sp = scriptPos(argv, true)
   if (sp.kind !== 'script') return null
   const hit = (c: string) => CMD_BIN.has(base(c)) || ENTRY.test(c)
   return hit(sp.raw) || sp.preloads.some(hit) ? argv.slice(sp.index + 1) : null
+}
+
+// env option shapes that consume no operand, and ones that consume exactly
+// one (long forms may also carry it as --opt=value). Anything else is an
+// unproven boundary: unknown options may inject or hide arguments.
+const ENV_NOARG = new Set(['-', '-i', '--ignore-environment', '-0', '--null', '-v', '--debug', '--list-signal-handling'])
+const ENV_ARG = new Set(['-u', '--unset', '-C', '--chdir', '-S', '--split-string', '-P', '--default-sig', '--block-signal', '--ignore-signal'])
+function envOperand(argv: string[], i: number): number | null {
+  for (; i < argv.length; i++) {
+    const a = argv[i]!
+    if (a === '--') return i + 1 < argv.length ? i + 1 : null
+    if (ENV_NOARG.has(a)) continue
+    if (a.startsWith('--')) {
+      const eq = a.indexOf('=')
+      const name = eq < 0 ? a : a.slice(0, eq)
+      if (ENV_ARG.has(name) && (eq >= 0 || ++i < argv.length)) continue
+      return null
+    }
+    if (ENV_ARG.has(a)) {
+      if (++i >= argv.length) return null
+      continue
+    }
+    if (a.startsWith('-') || !a.includes('=')) return a.startsWith('-') ? null : i
+  }
+  return null
 }
 
 const MAX_CMDLINE = 16384
@@ -248,7 +279,7 @@ export function parseAgentCensus(stdout: string): AgentCensus {
       ppid: Number.isSafeInteger(ppid) && ppid! >= 0 ? ppid : undefined,
       comm: dec(p[6]).toString('utf8') || undefined,
       argv: parts.length ? parts : undefined,
-      cwd: link(p[8]),
+      cwd: link(p[8])?.replace(/ \(deleted\)$/, ''),
       exe: link(p[9])?.replace(/ \(deleted\)$/, ''),
       startTicks: Number.isSafeInteger(ticks) && ticks! >= 0 ? ticks : undefined,
       startedAt: birthUpperBound(ticks!, hz, boot, up!, wall!),
