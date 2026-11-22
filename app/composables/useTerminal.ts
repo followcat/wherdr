@@ -1268,6 +1268,8 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     focusQueued = false
     wheel.cancel()
     disconnect()
+    // A disposed controller accepts no more frames: a late push is a no-op.
+    syncOutput.dispose()
     unbindSelection?.()
     unbindPaste?.()
     unbindOsc52?.()

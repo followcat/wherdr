@@ -184,7 +184,14 @@ export function createSyncOutput(hooks: SyncOutputWrites, options: SyncOutputOpt
     holdParts.push(bytes)
     holdLen += bytes.length
   }
+  // Bytes of a split marker kept aside for the next chunk.
+  function tailLen() {
+    return tail?.length ?? 0
+  }
   function releaseHold(events: Release[]) {
+    // A frame that ends on a split close marker keeps that prefix aside: the
+    // frame is released only with those bytes, in order.
+    if (holdLen > 0 && tail) { appendHold(tail, holdMeta); tail = null }
     if (holdLen === 0) return
     const bytes = concat(holdParts)
     holdParts = []
@@ -248,8 +255,19 @@ export function createSyncOutput(hooks: SyncOutputWrites, options: SyncOutputOpt
           releaseHold(events)
           continue
         }
+        // The close marker can be split across chunks. Its first 7 bytes are
+        // the shared `\x1b[?2026` prefix, so keep a trailing prefix aside and
+        // let the next chunk resolve it (here or as another sequence such as
+        // `\x1b[?2004h`).
+        const prefix = splitPrefixAt(data, i)
+        if (prefix >= 0 && holdLen + (data.length - i) < maxBytes) {
+          appendHold(data.subarray(i, prefix), meta)
+          tail = data.slice(prefix)
+          armTimer('frame', timeoutMs)
+          return
+        }
         appendHold(data.subarray(i), meta)
-        if (holdLen >= maxBytes) {
+        if (holdLen + tailLen() >= maxBytes) {
           stopTimer()
           mode = 'idle'
           releaseHold(events)
@@ -312,7 +330,8 @@ export function createSyncOutput(hooks: SyncOutputWrites, options: SyncOutputOpt
     }
     const events: Release[] = []
     scan(bytes, meta, events)
-    const held = holdLen
+    // A frame resting on a split marker prefix holds those bytes too.
+    const held = holdLen + (mode === 'frame' ? tailLen() : 0)
     if (held > 0) {
       // Credited now: waiting for `l` must never stall the server's window.
       done?.()
@@ -355,7 +374,7 @@ export function createSyncOutput(hooks: SyncOutputWrites, options: SyncOutputOpt
     },
     reset,
     pending: () => holdLen + (clear?.length ?? 0) + (tail?.length ?? 0),
-    isHolding: () => holdLen > 0,
+    isHolding: () => holdLen > 0 || (mode === 'frame' && tailLen() > 0),
     dispose() {
       disposed = true
       reset()

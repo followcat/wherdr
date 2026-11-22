@@ -150,6 +150,70 @@ describe('createSyncOutput', () => {
     expect(credited).toEqual(['held', 'closed', 'plain'])
   })
 
+  it.each([1, 2, 3, 4, 5, 6, 7])('closes a frame split at prefix length %i without waiting for the timeout', (n) => {
+    vi.useFakeTimers()
+    const h = harness()
+    h.out.push(enc(`${OPEN}frame${PREFIX.slice(0, n)}`), meta)
+    expect(h.writes).toHaveLength(0)
+    expect(h.out.pending()).toBe(enc(`${OPEN}frame${PREFIX.slice(0, n)}`).length)
+    h.out.push(enc(`${PREFIX.slice(n)}lafter`), meta)
+    // Released at once, with no timer advanced, then the rest in wire order.
+    expect(h.text()).toEqual([`${OPEN}frame${CLOSE}`, 'after'])
+    expect(h.out.pending()).toBe(0)
+    expect(h.out.isHolding()).toBe(false)
+  })
+
+  it('keeps a false close prefix inside the frame and releases the intact bytes at the real close', () => {
+    const h = harness()
+    h.out.push(enc(`${OPEN}frame\x1b[?20`), meta)
+    expect(h.writes).toHaveLength(0)
+    h.out.push(enc(`04hmore${CLOSE}`), meta)
+    expect(h.text()).toEqual([`${OPEN}frame\x1b[?2004hmore${CLOSE}`])
+  })
+
+  it('counts a frame holding only its open marker and a split close prefix as holding', () => {
+    const h = harness()
+    const r = h.out.push(enc(`${OPEN}${PREFIX}`), meta)
+    expect(r.held).toBe(OPEN.length + PREFIX.length)
+    expect(h.out.isHolding()).toBe(true)
+    h.out.reset()
+  })
+
+  it('releases a trailing split close prefix with the frame when the timeout expires', () => {
+    vi.useFakeTimers()
+    const h = harness()
+    h.out.push(enc(`${OPEN}frame${PREFIX}`), meta)
+    expect(h.writes).toHaveLength(0)
+    vi.advanceTimersByTime(SYNC_OUTPUT_TIMEOUT_MS - 1)
+    expect(h.writes).toHaveLength(0)
+    vi.advanceTimersByTime(1)
+    expect(h.text()).toEqual([`${OPEN}frame${PREFIX}`])
+  })
+
+  it('flush() keeps a trailing split close prefix inside the frame', () => {
+    const h = harness()
+    h.out.push(enc(`${OPEN}frame${PREFIX.slice(0, 4)}`), meta)
+    h.out.flush()
+    expect(h.text()).toEqual([`${OPEN}frame${PREFIX.slice(0, 4)}`])
+    expect(h.out.pending()).toBe(0)
+  })
+
+  it('a metadata change releases an unclosed frame with its split close prefix', () => {
+    const h = harness()
+    h.out.push(enc(`${OPEN}frame${PREFIX}`), { width: 48, height: 26 })
+    h.out.push(enc('next'), { width: 50, height: 26 })
+    expect(h.text()).toEqual([`${OPEN}frame${PREFIX}`, 'next'])
+  })
+
+  it('dispose() makes a later push and flush clean no-ops', () => {
+    const h = harness()
+    h.out.dispose()
+    h.out.push(enc(`${OPEN}x${CLOSE}`), meta)
+    h.out.flush()
+    expect(h.writes).toHaveLength(0)
+    expect(h.out.pending()).toBe(0)
+  })
+
   it('flush() hands held bytes to the writer; reset() drops them', () => {
     const flushed = harness()
     flushed.out.push(enc(`${OPEN}half`), meta)
