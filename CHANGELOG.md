@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- **Typing keeps the conversation at its end.** Every keystroke in the message field ran the field's resize pass, which collapses the field to one row and reads its height back; the browser chopped the conversation's scroll position while the field was down, and nothing moved it back — one letter of a pinyin candidate and the view sat above the end. A scroll event with no gesture behind it (wheel, touch, key, pointer on the conversation) is now undone at once — scroll events dispatch before paint, so the undo is never seen — while the jumps that leave the end on purpose (a quoted message's original, a search hit, an unanswered question) release the following themselves first. Where the browser sizes the field to its content itself (field-sizing, Chrome 123+), the JS pass is off and the CSS property does the work.
+
 ## [3.2.2] — 2026-11-19
 
 wherdr 3.2.2 brings back *Open in editor* on v3 (Mod+Alt+O) and fixes omp: its conversations open from herdr-core terminals, its status shows with an extension's status line, an omp coordinator keeps coordinating, and a project's default workflow runs on its coordinator's agent. Release notes: [docs/release-notes-3.2.2.md](docs/release-notes-3.2.2.md).

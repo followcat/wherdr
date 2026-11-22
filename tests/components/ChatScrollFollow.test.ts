@@ -40,7 +40,11 @@ describe('conversation follows the end only from the bottom', () => {
 
   async function mount() {
     herdrState.value = { ok: true, workspaces: [], panes: [pane] }
-    const w = await mountSuspended(ChatView, { props: { pane, localQueued: [] } })
+    const w = await mountSuspended(ChatView, {
+      props: { pane, localQueued: [] },
+      // A finished turn shows its Copy reply button (UTooltip).
+      global: { stubs: { UTooltip: { template: '<slot />' } } },
+    })
     await expect.poll(() => w.find('.chat').text()).toContain('three steps')
     const box = w.find('.chat')
     const g = fakeBox(box.element as HTMLElement)
@@ -81,7 +85,9 @@ describe('conversation follows the end only from the bottom', () => {
     try {
       await grow()
       expect(g.top).toBe(bottom(g))
-      // A small scroll up (keyboard, scrollbar or touch: no wheel) during the run.
+      // A small scroll up during the run, with a gesture behind it (a key on
+      // the box here; a wheel or a touch drag goes through onUserScroll).
+      await w.find('.chat').trigger('keydown', { key: 'ArrowUp' })
       await scrollTo(bottom(g) - 30)
       const reading = g.top
       for (let i = 0; i < 5; i++) await grow()
@@ -91,5 +97,51 @@ describe('conversation follows the end only from the bottom', () => {
       await grow()
       expect(g.top).toBe(bottom(g))
     } finally { w.unmount() }
+  })
+
+  it('re-pins the scroll a collapsed composer truncates, with no gesture behind it', async () => {
+    const { w, g, grow } = await mount()
+    try {
+      await grow()
+      expect(g.top).toBe(bottom(g))
+      // The composer's autoresize pass collapses the field to one row: .chat
+      // grows taller and the browser truncates its scrollTop, then restores
+      // the rows — no net resize (no ResizeObserver callback) and no wheel,
+      // touch or key (no gesture). The scroll event of the truncation alone:
+      g.top = bottom(g) - 69
+      await w.find('.chat').trigger('scroll')
+      // Undone before paint: the view is back at the end…
+      expect(g.top).toBe(bottom(g))
+      // …and still following the next growth.
+      await grow()
+      expect(g.top).toBe(bottom(g))
+    } finally { w.unmount() }
+  })
+
+  it('lets a programmatic jump leave the bottom: the jump clears the following first', async () => {
+    items.push({ role: 'user', text: '↳ Replying to your message from 00:00 ("It runs in three steps.")\nGo on.', ts: '2026-01-01T00:00:02Z' })
+    try {
+      const { w, g, grow } = await mount()
+      try {
+        await grow()
+        expect(g.top).toBe(bottom(g))
+        // Tapping the quote scrolls to the original message (smooth): its
+        // scroll events carry no gesture of their own.
+        await w.find('.msg-quote').trigger('click')
+        // The animation's first frames still read atEnd — they must not re-arm
+        // the following, or the next frame would be read as a scroll away to
+        // undo and the jump would never leave the bottom.
+        g.top = bottom(g) - 2
+        await w.find('.chat').trigger('scroll')
+        g.top = bottom(g) - 120
+        await w.find('.chat').trigger('scroll')
+        // Not undone: the jump left the bottom on purpose, so the following
+        // stays off and the growth below does not pull the view back.
+        const reading = g.top
+        expect(reading).toBe(bottom(g) - 120)
+        await grow()
+        expect(g.top).toBe(reading)
+      } finally { w.unmount() }
+    } finally { items.pop() }
   })
 })
