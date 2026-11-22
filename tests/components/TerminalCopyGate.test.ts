@@ -47,7 +47,7 @@ class FakeTerm {
   onDataCb: ((d: string) => void) | null = null
   onBinaryCb: ((d: string) => void) | null = null
   constructor() { hoisted.terminals.push(this); this.element.appendChild(this.textarea) }
-  loadAddon() {} open() {} focus() {} dispose() {} refresh() {} reset() {} resize() {} scrollLines() {} scrollToLine() {}
+  loadAddon() {} open() {} focus() {} dispose() {} clearTextureAtlas() {} refresh() {} reset() {} resize() {} scrollLines() {} scrollToLine() {}
   parser = { registerCsiHandler: () => ({ dispose() {} }), registerEscHandler: () => ({ dispose() {} }) }
   attachCustomWheelEventHandler() {} attachCustomKeyEventHandler() {}
   onData(fn: (d: string) => void) { this.onDataCb = fn }

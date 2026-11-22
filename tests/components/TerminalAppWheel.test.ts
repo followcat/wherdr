@@ -43,7 +43,7 @@ class FakeTerm {
   resize(cols: number, rows: number) { this.cols = cols; this.rows = rows }
   focus() { this.textarea.focus() }
   write(_d: unknown, cb?: () => void) { cb?.() }
-  loadAddon() {} dispose() {} refresh() {} reset() {}
+  loadAddon() {} dispose() {} clearTextureAtlas() {} refresh() {} reset() {}
   attachCustomWheelEventHandler() {} attachCustomKeyEventHandler() {}
   onData() {} onBinary() {} onScroll() {}
   scrollToLine() {}

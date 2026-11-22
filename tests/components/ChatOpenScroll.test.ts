@@ -190,7 +190,10 @@ describe('opening a conversation', () => {
       release(a.id, answer())
       await expect.poll(() => w.find('.chat').text()).toContain('demo message 15')
       await nextTick()
-      // The reader scrolls 1700 px up from the bottom.
+      // The reader scrolls 1700 px up from the bottom: a scroll event alone
+      // reads as the composer's collapse (undone), the gesture carries the
+      // reader's intent.
+      await w.find('.chat').trigger('pointerdown')
       tops.set(box(w), height(box(w)) - 1700)
       await w.find('.chat').trigger('scroll')
       // The pane changes under the mounted view (phone swipe, pane selector).

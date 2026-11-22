@@ -47,7 +47,7 @@ class FakeTerm {
     if (text) this.written.push(text)
     cb?.()
   }
-  loadAddon() {} dispose() {} refresh() {} reset() { this.written.length = 0 }
+  loadAddon() {} dispose() {} clearTextureAtlas() {} refresh() {} reset() { this.written.length = 0 }
   parser = {
     // The controller watches DECSET 1006 through the parser: tests feed a mode.
     registerCsiHandler: (_spec: unknown, fn: (params: unknown[]) => boolean) => {

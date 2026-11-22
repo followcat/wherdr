@@ -22,10 +22,12 @@ async function mounted() {
   const ctl = {
     mount: vi.fn(async (el: HTMLElement) => { el.innerHTML = '<div class="xterm"><div class="xterm-screen">terminal grid</div></div>'; return true }),
     scroll: vi.fn(() => true), rowHeight: () => 16, pageRows: () => 24,
-    fitNow: vi.fn(), hasBanner: () => true, connect: vi.fn(), dispose: vi.fn(),
+    fitNow: vi.fn(), hasBanner: () => true, connect: vi.fn(), dispose: vi.fn(), isConnected: () => false,
     focus: vi.fn(), blur: vi.fn(), tapLink: vi.fn(() => false), tapMouse: vi.fn(),
-    cancelTouchScroll: vi.fn(), scrollInputVersion: ref(0), scrollAck: ref(0), frameTick: ref(0),
-    loading: ref(false), selectionHint: { visible: ref(false), dismiss: vi.fn() },
+    cancelTouchScroll: vi.fn(), scrollInputVersion: ref(0), scrollGeometryVersion: ref(0), scrollAck: ref(0), frameTick: ref(0),
+    loading: ref(false), loadingEarlier: ref(false), selectionHint: { visible: ref(false), dismiss: vi.fn() },
+    hasFocus: () => false, imeBusy: () => false, park: vi.fn(), captureScreen: vi.fn(() => null),
+    clearVirtualModifiers: vi.fn(), tapOnCursor: vi.fn(() => false),
   }
   const w = await mountSuspended(TerminalView, { props: { ctl: ctl as unknown as TerminalCtl } })
   unmount = () => w.unmount()
