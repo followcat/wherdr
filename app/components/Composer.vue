@@ -37,6 +37,13 @@ const emit = defineEmits<{ sent: [queued: QueuedMessage | null], showTerminal: [
 // the next message. Clear: Ctrl+U and Backspace, line by line (a field of a
 // few lines; harmless on an empty field), only offered while Codex rests.
 const codexFieldHint = computed(() => tl('Text typed in Codex’s terminal, or arrived there by mistake: your next message would be sent after it.', 'Texte tapé dans le terminal de Codex, ou arrivé là par erreur : ton prochain message serait envoyé à sa suite.'))
+// Chrome 123+ sizes the field to its content itself (field-sizing: content):
+// no JS resize pass — UTextarea's autoresize collapses the field to one row and
+// reads its scrollHeight on every keystroke, and the conversation above loses
+// its bottom position to the browser's clamping while the field is down. Where
+// the CSS property exists the autoresize prop stays off (main.css, sized-content);
+// elsewhere (iOS Safari) the JS pass stays.
+const fieldSizing = typeof CSS !== 'undefined' && Boolean(CSS.supports?.('field-sizing', 'content'))
 const clearingField = ref(false)
 async function clearCodexField() {
   clearingField.value = true
@@ -727,9 +734,9 @@ defineExpose({
     </div>
     <UChatPrompt
       ref="promptRef" v-model="text" :disabled="Boolean(pane?.stopped)" :placeholder="pane?.stopped ? t('Restart Codex before sending a message') : readOnly ? t('Draft saved — sending unavailable offline') : placeholder" variant="outline" color="neutral"
-      :rows="1" :maxrows="7" :autofocus="false" :submit-on-enter="enterSends && (canSend || stopMode || readOnly)"
+      :rows="1" :maxrows="7" :autoresize="!fieldSizing" :autofocus="false" :submit-on-enter="enterSends && (canSend || stopMode || readOnly)"
       :enterkeyhint="enterSends ? 'send' : 'enter'" autocapitalize="sentences"
-      data-wherdr="composer-field" class="prompt" :class="{ suggesting: suggestTap, expanded, 'has-mic': Boolean(mic.engine.value) }" :style="suggestRoom ? { '--suggest-room': `${suggestRoom}px` } : undefined" :ui="{ header: 'prompt-head', body: 'prompt-body', base: 'prompt-input', footer: 'prompt-foot' }"
+      data-wherdr="composer-field" class="prompt" :class="{ suggesting: suggestTap, expanded, 'has-mic': Boolean(mic.engine.value), 'sized-content': fieldSizing }" :style="suggestRoom ? { '--suggest-room': `${suggestRoom}px` } : undefined" :ui="{ header: 'prompt-head', body: 'prompt-body', base: 'prompt-input', footer: 'prompt-foot' }"
       @focus="fieldFocus" @blur="fieldBlur"
       @submit="submit" @keydown="onKeydown" @paste="onPaste" @beforeinput="onBeforeInput"
       @compositionstart="onComposition" @compositionend="onComposition" @compositioncancel="onComposition"

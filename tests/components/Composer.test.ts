@@ -164,6 +164,28 @@ describe('Composer send', () => {
   })
 })
 
+// The field sized by CSS where the browser can (field-sizing: content): no JS
+// resize pass to truncate the conversation above; elsewhere the autoresize stays.
+// happy-dom's CSS.supports always says yes and cannot be spied on, so the whole
+// CSS global is stubbed.
+describe('Composer field sizing', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('marks the prompt sized-content where field-sizing is supported', async () => {
+    vi.stubGlobal('CSS', { supports: () => true })
+    const w = await mountSuspended(Composer, { props: { pane: pane('w1:f1'), paneId: 'w1:f1', sendKeys: async () => {} } })
+    expect(w.find('.prompt').classes()).toContain('sized-content')
+    w.unmount()
+  })
+
+  it('keeps the JS resize where field-sizing is not supported (iOS Safari)', async () => {
+    vi.stubGlobal('CSS', { supports: () => false })
+    const u = await mountSuspended(Composer, { props: { pane: pane('w1:f2'), paneId: 'w1:f2', sendKeys: async () => {} } })
+    expect(u.find('.prompt').classes()).not.toContain('sized-content')
+    u.unmount()
+  })
+})
+
 // A dictation app pastes the text and presses Enter; while the page lags it
 // can do it again before the first send is answered: one message, not two.
 describe('Composer: no duplicate sends', () => {
