@@ -704,6 +704,14 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     await sendKeys([chord])
   }
 
+  // A resize reallocates the WebGL canvas; on some GPUs the glyph atlas then
+  // holds noise until it is rebuilt — repaint clears it rather than trusting it.
+  function repaint() {
+    if (!term) return
+    term.clearTextureAtlas()
+    term.refresh(0, term.rows - 1)
+  }
+
   function fitNow(send: boolean) {
     // A parked view is detached: it measures zero and must never resize the
     // terminal, locally or on the wire (the adopt fits once in its new host).
@@ -716,11 +724,17 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     const p = proposeTerminalSize(term)
     if (!p || !p.cols || !p.rows) return
     const d = { cols: p.cols, rows: p.rows }
-    if (!coreStream && (d.cols !== term.cols || d.rows !== term.rows)) term.resize(d.cols, d.rows)
-    if (send && (d.cols !== lastSize.cols || d.rows !== lastSize.rows)) {
+    // The keyboard covering the window is a rows-only change: while it is
+    // open and the terminal is not what is being typed in, resizing is pure
+    // churn — a SIGWINCH and a full repaint for rows the keyboard hides. The
+    // pane keeps its size, and the close fits back to it as a no-op. Typing
+    // into the terminal itself still resizes: the prompt must stay visible.
+    const covered = kbOpen.value && !kbdOn.value && d.cols === lastSize.cols
+    if (!coreStream && !covered && (d.cols !== term.cols || d.rows !== term.rows)) { term.resize(d.cols, d.rows); repaint() }
+    if (send && !covered && (d.cols !== lastSize.cols || d.rows !== lastSize.rows)) {
       if (sendTerm({ type: 'terminal.resize', cols: d.cols, rows: d.rows })) lastSize = { cols: d.cols, rows: d.rows }
     }
-    if (coreStream) offerFit()
+    if (coreStream && !covered) offerFit()
   }
 
   // Theme change while the terminal is shown.
@@ -885,6 +899,7 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
           resized: () => {
             if (term !== current) return
             scrollGeometryVersion.value++
+            repaint()
             if (coreStream) offerFit()
           },
           reset: () => mouseSgr?.reset(),

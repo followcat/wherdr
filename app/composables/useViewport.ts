@@ -20,6 +20,17 @@ if (import.meta.client) {
 }
 
 const fullH = { orient: '', h: 0 }
+// The sheet geometry of the last layout() actually applied: --vv-bottom also
+// moves with innerHeight, which the keyboard can leave unchanged.
+let applied = { h: 0, top: 0, kb: false, sheetH: 0, sheetTop: 0, sheetBottom: 0 }
+
+// The last layout() ran this recently: while the visual viewport is still
+// moving (the keyboard's animation, a pinch), a pane resize per animation
+// frame is a repaint storm — a fit asked now should wait for quiet instead.
+let movedAt = 0
+export function viewportMoving(withinMs: number) {
+  return Date.now() - movedAt < withinMs
+}
 
 export function layout() {
   const vv = window.visualViewport
@@ -41,15 +52,25 @@ export function layout() {
   // input evidence: hardwareKeyboard is forged and forgotten by input events
   // alone (a kbOpen-gated key here proves; a touch or a prompt blur in
   // useHerdr forgets).
+  // Bottom sheets follow the visible area (keyboard, iOS scroll offset).
+  const sheet = sheetViewport(window.innerHeight, top, h)
+  // The same geometry again (the vv scroll iOS fires while nothing moved, a
+  // spurious resize): three inherited custom properties, a body class and a
+  // layoutTick bump per call restyle the whole tree for nothing. Checked
+  // before movedAt: a duplicate must not refresh the fit-suppression window
+  // (viewportMoving), or iOS's idle events would defer the terminal's fit
+  // forever.
+  if (h === applied.h && top === applied.top && kb === applied.kb
+    && sheet.height === applied.sheetH && sheet.top === applied.sheetTop && sheet.bottom === applied.sheetBottom) return
+  movedAt = Date.now()
   vvHeight.value = h
   vvTop.value = top
   document.body.classList.toggle('kb', kb)
-  // Bottom sheets follow the visible area (keyboard, iOS scroll offset).
-  const sheet = sheetViewport(window.innerHeight, top, h)
   const root = document.documentElement.style
   root.setProperty('--vv-h', `${sheet.height}px`)
   root.setProperty('--vv-top', `${sheet.top}px`)
   root.setProperty('--vv-bottom', `${sheet.bottom}px`)
+  applied = { h, top, kb, sheetH: sheet.height, sheetTop: sheet.top, sheetBottom: sheet.bottom }
   layoutTick.value++
 }
 

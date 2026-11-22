@@ -995,6 +995,9 @@ body.short-bottom { --safe-bottom: 0px; }
 
 /* ---------- Terminal ---------- */
 #termWrap { position: relative; flex: 1; min-height: 0; padding: 6px 4px 0 6px; background: var(--bg); }
+/* Keyboard open: the pane keeps its size (useTerminal), the canvas overflows
+   the shortened window — clip it instead of letting it paint over the row below. */
+body.kb #termWrap { overflow: hidden; }
 /* The layer receives touch gestures; on a computer, the mouse must reach
    xterm for selection and the programs' mouse mode. */
 #term { position: absolute; inset: 6px 4px 0 6px; z-index: 0; }
