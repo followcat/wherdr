@@ -20,6 +20,12 @@
   most a page kept, nothing more while it does not repaint), and in a Claude agent it allows for
   Claude Code's wheel acceleration, so a trackpad flick moves as far as the fingers and stops
   when they do. Other programs get one wheel event per row.
+- **Synchronized repaints**: a program that brackets a full repaint in DEC Mode 2026
+  (`CSI ? 2026 h` … `CSI ? 2026 l`, as Antigravity `agy` does when its size changes) has the whole
+  frame written to xterm in one step. A clear that arrives just before the frame rides in the same
+  write, so the conversation swaps to the new screen instead of scrolling through it, and the view
+  stays at the tail (no history refetch). A frame left open by a broken program is released after
+  one second, and a frame over 1 MiB is written at once.
 - **History on demand**: an open asks core for a few screens of history (200 lines), and the
   older output comes when you scroll back to the top of what the terminal holds — up to 5000
   lines, fetched once on the same connection, with a short *Loading earlier output* strip while
