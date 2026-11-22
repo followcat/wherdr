@@ -52,7 +52,28 @@ describe('readCoreScreen', () => {
   })
 })
 
+describe('readCoreScreen, Antigravity 1.5.14', () => {
+  it('reads the live braille status line and a running background command as working', () => {
+    for (const text of [' ⣷  Running command...\n', '● [17:28:01] npm test — running\n', '⠋ Working… (12s)\n']) {
+      expect(readCoreScreen(text, 'agy', 'unknown')).toMatchObject({ status: 'working', interaction: 'working' })
+    }
+  })
+  it('reads the workspace trust picker as Your turn with native choices', () => {
+    for (const status of ['unknown', null, 'idle']) {
+      const r = readCoreScreen(fx('agy-trust.txt'), 'agy', status)
+      expect(r).toMatchObject({ status: 'blocked', interaction: 'native' })
+    }
+  })
+})
+
 describe('enrich', () => {
+  // Antigravity checks live below.
+  // Fixture: tests/fixtures/agy-trust.txt
+  it('reads the Antigravity workspace prompt as native choices', () => {
+    const r = readCoreScreen(fx('agy-trust.txt'), 'agy', 'unknown')
+    expect(r).toMatchObject({ status: 'blocked', interaction: 'native' })
+    expect(r.choices?.options).toHaveLength(2)
+  })
   function setup(texts: Record<string, string>, viewed = (_: string) => true) {
     const reads: string[] = []
     let t = 0

@@ -3,7 +3,7 @@
 // and a bounded pending map for calls whose page is still in flight — pure
 // helpers, no store or fetch.
 import { describe, expect, it } from 'vitest'
-import { applyToolUpdates, mergeToolUpdates, retainToolUpdates } from '../app/utils/chatTail'
+import { CHAT_COLD_READ_MS, CHAT_READ_MS, applyToolUpdates, chatReadTimeoutMs, mergeToolUpdates, retainToolUpdates } from '../app/utils/chatTail'
 import type { ChatItem, CommandCodeToolUpdate } from '../shared/types'
 
 const item = (text: string, role: ChatItem['role'] = 'assistant'): ChatItem => ({ role, text, ts: '2026-01-01T00:00:00Z' })
@@ -11,6 +11,21 @@ const call = (id: string, extra: Partial<ChatItem> = {}): ChatItem =>
   ({ role: 'tool', text: 'read file', ts: '2026-01-01T00:00:00Z', toolId: id, ...extra })
 const up = (id: string, at: number | undefined, fields: Partial<CommandCodeToolUpdate> = {}): CommandCodeToolUpdate =>
   ({ id, at, out: 'res', error: false, images: 0, ref: '', imageAt: 0, ...fields })
+
+describe('chatTail read deadline', () => {
+  it('gives a cold snapshot-backed read 30 s and keeps 8 s for polls and JSONL agents', () => {
+    for (const agent of ['agy', 'hermes', 'opencode']) {
+      expect(chatReadTimeoutMs(agent, true)).toBe(CHAT_COLD_READ_MS)
+      expect(chatReadTimeoutMs(agent, true)).toBe(30_000)
+      expect(chatReadTimeoutMs(agent, false)).toBe(CHAT_READ_MS)
+    }
+    for (const agent of ['claude', 'codex', 'omp', 'cline', null, undefined]) {
+      expect(chatReadTimeoutMs(agent, true)).toBe(CHAT_READ_MS)
+      expect(chatReadTimeoutMs(agent, false)).toBe(CHAT_READ_MS)
+    }
+    expect(chatReadTimeoutMs('agy', false)).toBe(8000)
+  })
+})
 
 describe('chatTail tool updates', () => {
   it('applies outcomes to matching toolIds in tail and older lists — immutably', () => {

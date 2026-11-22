@@ -19,10 +19,17 @@ const WORKING = /\besc(?:ape)? to interrupt\b/i
 // Antigravity's running turn offers "esc to cancel"; its pickers number their
 // options, so a visible option list rules the turn out.
 const AGY_WORKING = /\besc(?:ape)? to cancel\b/i
+// agy 1.5.14's live status line (a braille spinner, "⣷  Running command...")
+// and a running background command in its footer, neither mentioning cancel.
+const AGY_SPINNER = /^\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⣾⣽⣻⢿⡿⣟⣯⣷]\s+\S.*(?:\.\.\.|…)/m
+const AGY_RUNNING = /^\s*●\s+\[\d{2}:\d{2}:\d{2}\]\s+.*\brunning\s*$/m
 const NUMBERED_OPTION = /^\s*[❯›>]?\s*\d{1,2}\.\s+\S/m
 // Claude's folder-trust box: unnumbered options, so it needs the non-strict reading
 // even while core reports no status.
 const TRUST_FOLDER = /Is this a project you created or one you trust\?[\s\S]*Yes, I trust this folder/
+// Antigravity's unnumbered `>` picker (workspace trust, permissions): its
+// navigation legend is what distinguishes it from the plain `>` input prompt.
+const AGY_PICKER = /(?:↑\/↓\s*Navigate\s*·\s*enter\s*(?:Confirm|Select)|Do you trust the contents of this project\?)/i
 // Claude's spinner line: "✻ Pondering… (12s · ↑ 1.2k tokens)".
 const SPINNER = /^\s*[*✢✳✶✻✽·]\s+\S.*…\s*\(\d+[smh]/
 
@@ -36,14 +43,20 @@ export interface CoreReading {
 export function readCoreScreen(text: string, agent: string | null | undefined, status: string | null | undefined): CoreReading {
   const tail = text.trimEnd().split('\n').slice(-14).join('\n')
   const working = WORKING.test(tail)
-    || (agent === 'agy' && AGY_WORKING.test(tail) && !NUMBERED_OPTION.test(tail))
+    || (agent === 'agy' && !NUMBERED_OPTION.test(tail)
+      && (AGY_WORKING.test(tail) || AGY_SPINNER.test(tail) || AGY_RUNNING.test(tail)))
     || (agent === 'cline' && clineWorking(text))
     || tail.split('\n').some(l => SPINNER.test(l))
   let choices: Choices | null = null
   if (!working) {
     choices = agent === 'omp' ? parseOmpPrompt(text)
       : agent === 'cline' ? parseClineApproval(text)
-        : parseChoices(text, { strict: status !== 'blocked' && !(agent === 'claude' && TRUST_FOLDER.test(tail)) })
+        : parseChoices(text, {
+          agent,
+          strict: status !== 'blocked'
+            && !(agent === 'claude' && TRUST_FOLDER.test(tail))
+            && !(agent === 'agy' && AGY_PICKER.test(tail)),
+        })
     if (choices) choices.identity = promptIdentity(text, agent)
   }
   const known = status && status !== 'unknown' ? status : null
@@ -105,12 +118,12 @@ export function createCoreScreens(deps: CoreScreenDeps) {
   // omp's status line and context gauge, kept between reads (an unviewed resting omp
   // is read at the background pace), and its running step while it works.
   const omps = new Map<string, { at: number, status: OmpStatus | null, activity?: OmpActivity | null }>()
-  // Consecutive 'terminal' observations per Devin pane, keyed to the read
-  // that produced them (at): Devin mid-redraw (footer or rule not yet
-  // painted) classifies 'terminal' for one read, and the overlay that opens
-  // on it flaps. Only a reading seen in two consecutive reads is published;
-  // while unconfirmed the pane keeps its last published interaction instead
-  // of dropping to 'unknown'. Re-parsing the same cached text never counts.
+  // Consecutive 'terminal' observations per Devin or Antigravity pane, keyed to
+  // the read that produced them (at): both mid-redraw (footer or rule not yet
+  // painted) classify 'terminal' for one read, and the overlay that opens on it
+  // flaps. Only a reading seen in two consecutive reads is published; while
+  // unconfirmed the pane keeps its last published interaction instead of
+  // dropping to 'unknown'. Re-parsing the same cached text never counts.
   // Other agents publish every read at once.
   const terms = new Map<string, { at: number, streak: number, published?: NonNullable<Pane['interaction']> }>()
   const terminalPending = (id: string) => {
@@ -223,7 +236,11 @@ export function createCoreScreens(deps: CoreScreenDeps) {
         if (error) p.error = error
         else delete p.error
         const raw = failed.has(p.id) ? 'unknown' : r.interaction
-        if (p.agent !== 'devin') {
+        // Devin and Antigravity redraw their whole normal-buffer screen: a
+        // frame caught mid-repaint classifies 'terminal' for one read, and the
+        // overlay that opens on it flaps over the conversation. Only a reading
+        // seen in two consecutive reads is published.
+        if (p.agent !== 'devin' && p.agent !== 'agy') {
           terms.delete(p.id)
           p.interaction = raw
         } else {

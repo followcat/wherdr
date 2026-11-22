@@ -16,9 +16,12 @@ export interface AgyProcess {
 export interface AgySessionGuess { id: string | null, ambiguous: boolean }
 
 const AGY_ID = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i
-// <cli dir>/conversations/<uuid>.db(.-wal/.-shm) or <cli dir>/presence/<uuid>.lock.
-const agyFile = (base: string) => new RegExp(
-  `^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/(?:conversations|presence)/([\\da-f]{8}(?:-[\\da-f]{4}){3}-[\\da-f]{12})\\.(?:db(?:-wal|-shm)?|lock)$`,
+const AGY_UUID = '[\\da-f]{8}(?:-[\\da-f]{4}){3}-[\\da-f]{12}'
+// Under <cli dir>: a presence lock (`presence/<uuid>.lock`) or a conversation
+// database (`conversations/<uuid>.db` with its -wal/-shm sidecars). Subagents
+// only ever open conversations/<subagent-uuid>.db*, never a presence lock.
+const agyDescriptor = (base: string) => new RegExp(
+  `^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/(presence|conversations)/(${AGY_UUID})\\.(lock|db(?:-wal|-shm)?)$`,
   'i',
 )
 
@@ -32,25 +35,47 @@ export function agyConversationFlag(argv: string[]): string | null {
   return null
 }
 
-// Conversation ids an open-descriptor list points at (empty when none).
-export function agyFdsSessions(paths: string[], home: string, honorEnv: boolean): string[] {
+// The conversation ids an open-descriptor list points at, split into presence
+// locks and conversation databases (both empty when none).
+export function agyFdIds(paths: string[], home: string, honorEnv: boolean): { presence: string[], conversations: string[] } {
   const base = path.resolve(agyCliDir(home, honorEnv))
-  const match = agyFile(base)
-  const found = new Set<string>()
+  const match = agyDescriptor(base)
+  const presence = new Set<string>()
+  const conversations = new Set<string>()
   for (const p of paths) {
     const m = match.exec(path.resolve(String(p || '').replace(/ \(deleted\)$/, '')))
-    if (m) found.add(m[1]!.toLowerCase())
+    if (!m) continue
+    const id = m[2]!.toLowerCase()
+    if (m[1]!.toLowerCase() === 'presence' && m[3]!.toLowerCase() === 'lock') presence.add(id)
+    else if (m[1]!.toLowerCase() === 'conversations' && /^db(?:-wal|-shm)?$/i.test(m[3]!)) conversations.add(id)
   }
-  return [...found]
+  return { presence: [...presence], conversations: [...conversations] }
+}
+
+// Conversation ids an open-descriptor list points at (empty when none).
+export function agyFdsSessions(paths: string[], home: string, honorEnv: boolean): string[] {
+  const { presence, conversations } = agyFdIds(paths, home, honorEnv)
+  return [...new Set([...presence, ...conversations])]
 }
 
 export async function agySession(fs: MachineFs, home: string, proc: AgyProcess, honorEnv: boolean): Promise<AgySessionGuess> {
   if (Number.isSafeInteger(proc.pid) && proc.pid! > 0 && fs.readProcessFiles) {
     const files = await fs.readProcessFiles(proc.pid!).catch(() => null)
     if (files) {
-      const ids = agyFdsSessions(files, home, honorEnv)
-      // An ambiguous descriptor set (two conversations held open) resolves to nothing.
-      if (ids.length) return { id: ids.length === 1 ? ids[0]! : null, ambiguous: ids.length !== 1 }
+      const { presence, conversations } = agyFdIds(files, home, honorEnv)
+      // The root conversation holds presence/<root>.lock and may also hold
+      // its own conversations/<root>.db next to any subagent DBs; a subagent
+      // only ever holds conversations/<subagent>.db. So one presence lock
+      // owns the process unless the only open DB names another conversation.
+      if (presence.length > 1) return { id: null, ambiguous: true }
+      if (presence.length === 1) {
+        const root = presence[0]!
+        return conversations.length === 0 || conversations.includes(root)
+          ? { id: root, ambiguous: false }
+          : { id: null, ambiguous: true }
+      }
+      if (conversations.length === 1) return { id: conversations[0]!, ambiguous: false }
+      if (conversations.length > 1) return { id: null, ambiguous: true }
     }
   }
   return { id: proc.argvExact === true ? agyConversationFlag(proc.argv || []) : null, ambiguous: false }

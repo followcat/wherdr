@@ -44,6 +44,18 @@ describe('terminal fallback after native recognition', () => {
   it.each(['pi', 'gemini', 'kimi', null])('does not infer a menu from an unsupported agent %s', agent => {
     expect(classifyScreen({ text: 'A normal reply without a known input marker', agent })).toBe('unknown')
   })
+  it.each([
+    '? for shortcuts                                                   auto · Gemini 4 Carbon · medium',
+    '                                                            auto · Gemini 4 Carbon · high',
+    'Press up to edit queued messages                                  auto · Gemini 4 Carbon · low',
+  ])('confirms the Antigravity field with its 1.5.14 footer %j', (footer) => {
+    const text = ['────────────────────────────────────────', '>', '────────────────────────────────────────', footer].join('\n')
+    expect(confirmedInput(text, 'agy')).toBe(true)
+    expect(classifyScreen({ text, agent: 'agy', status: 'idle' })).toBe('input')
+  })
+  it('never reads the Antigravity trust picker as the input field', () => {
+    expect(confirmedInput(fx('agy-trust.txt'), 'agy')).toBe(false)
+  })
   it.each(['devin-idle.txt', 'devin-idle-quota.txt', 'devin-status-plain.txt', 'devin-idle-edits.txt', 'devin-idle-narrow.txt'])(
     'confirms the Devin field in %s whatever its footer says', name => {
       const text = fx(name)

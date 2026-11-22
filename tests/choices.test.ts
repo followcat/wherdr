@@ -43,6 +43,22 @@ describe('parseChoices', () => {
     expect(c.cursor).toBe(0)
   })
 
+  it('never reads a > markdown blockquote or the > input field as choices', () => {
+    const quote = ['The reply says:', '', '> Yes, I trust this folder', '> No, exit', '', '↑/↓ Navigate · enter Confirm'].join('\n')
+    expect(parseChoices(quote, { agent: 'agy' })).toBeNull()
+    const field = ['────────────────', '>', '────────────────', '? for shortcuts'].join('\n')
+    expect(parseChoices(field, { agent: 'agy' })).toBeNull()
+  })
+
+  it('reads Antigravity 1.5.14\'s unnumbered > picker with its navigation legend', () => {
+    const c = parseChoices(fx('agy-trust.txt'), { agent: 'agy' })!
+    expect(c.question).toBe('Do you trust the contents of this project?')
+    expect(c.options.map(o => o.label)).toEqual(['Yes, I trust this folder', 'No, exit'])
+    expect(keysFor(c, 1)).toEqual(['down', 'enter'])
+    // An unnumbered list is never trusted in strict mode.
+    expect(parseChoices(fx('agy-trust.txt'), { agent: 'agy', strict: true })).toBeNull()
+  })
+
   it('does not take the "› Ask Codex…" field for a question', () => {
     expect(parseChoices(fx('codex-idle.txt'), { strict: true })).toBeNull()
     expect(parseChoices(fx('codex-idle.txt'))).toBeNull()

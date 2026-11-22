@@ -13,6 +13,7 @@ import { loadWebgl, loadXterm } from '~/utils/xtermLoader'
 import { offerNewBuild } from '~/composables/useAppVersion'
 import { proposeTerminalSize, terminalPixelWidth } from '~/utils/terminalSize'
 import { writeTerminalFrame } from '~/utils/terminalFrame'
+import { createSyncOutput } from '~/utils/terminalSyncOutput'
 import { kbOpen } from './useViewport'
 import { guardWebglCanvasSize } from '~/utils/terminalRenderer'
 import { bindTerminalSelection } from '~/utils/terminalSelection'
@@ -35,6 +36,9 @@ import { COLD_HISTORY, MAX_HISTORY } from '#shared/terminalHistory'
 import { restoreFromBottom, shouldFetchDeep, viewForRestore } from '~/utils/terminalDeepHistory'
 
 const CORE_SCROLLBACK = 5000
+// The view waits at most this long for the terminal font before its first fit;
+// a slower load re-measures when it arrives (see mount).
+const FONT_WAIT_MS = 150
 
 export interface Banner { text: string, btn: string, fn: () => void }
 export interface TerminalOptions {
@@ -123,6 +127,10 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
   function forgetStream() {
     wheel.cancel()
     mouseSupported = false
+    syncOutput.reset()
+    writingFrames = 0
+    holdTail = false
+    gateHeld = 0
     coreStream = false
     coreControl = true
     revealGate.cancel()
@@ -154,6 +162,14 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
   // like baseY 0 / viewportY 0 would otherwise read as output at the bottom
   // edge and keep a stale position from the previous buffer.
   let activeBuf: IBuffer | null = null
+  // Frames queued in xterm whose write callback has not run yet. A repaint's
+  // intermediate viewport events are not the reader seeking; the window is
+  // placed once when the last one lands (see performWrite).
+  let writingFrames = 0
+  // atTail was true when the frame currently being written started.
+  let holdTail = false
+  // Bytes a synchronized frame keeps back, counted for the reveal gate.
+  let gateHeld = 0
   // A parked position is anchored to the row under the window's top edge:
   // when the scrollback is full, each scrolling newline trims the oldest
   // row — every row's index shifts down one while ybase/ydisp hold — and a
@@ -259,6 +275,56 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
       loadingEarlier.value = false
     },
   })
+  // One run of bytes to xterm (a complete synchronized frame, or plain stream
+  // bytes), keeping the reveal gate, the tail pin and the wheel pacer in step.
+  function performWrite(frameBytes: Uint8Array, frameMeta: { width?: number, height?: number, reset?: boolean }, done: () => void) {
+    const current = term
+    if (!current) { done(); return }
+    revealGate.pushed()
+    writingFrames++
+    if (atTail) holdTail = true
+    writeTerminalFrame(current, { width: frameMeta.width, height: frameMeta.height, reset: frameMeta.reset, bytes: frameBytes }, {
+      resized: () => {
+        if (term !== current) return
+        scrollGeometryVersion.value++
+        repaint()
+        if (coreStream) offerFit()
+      },
+      reset: () => mouseSgr?.reset(),
+      written: () => {
+        // Credits never wait for the reveal: the server stops relaying when
+        // its window is spent.
+        writingFrames = Math.max(0, writingFrames - 1)
+        revealGate.written()
+        if (smoothTouchScrolling.value) frameTick.value++
+        if (frameBytes.length) wheel.frame()
+        // A repaint's own viewport events are ignored (see viewportMoved): the
+        // window is placed once, after the whole run has landed at the tail.
+        if (writingFrames === 0) {
+          const pinned = holdTail
+          holdTail = false
+          if (pinned || (coreStream && !coreControl)) followCursor()
+        }
+        if (!covering.value) selectionHint.refresh(current, mouseSupported)
+        done()
+      },
+    })
+  }
+  // DEC Mode 2026 (synchronized output): a program's complete frames reach
+  // xterm whole, so a clear-and-repaint swaps in one step (utils/terminalSyncOutput.ts).
+  const syncOutput = createSyncOutput({
+    write: (bytes, meta, done) => performWrite(bytes, meta, done),
+    onHold: () => {
+      // Held back during a covered replay: the gate must not reveal on the
+      // quiet timer while a frame is still on its way.
+      if (!covering.value) return
+      revealGate.pushed()
+      gateHeld++
+    },
+    onDrain: () => {
+      while (gateHeld > 0) { revealGate.written(); gateHeld-- }
+    },
+  })
   // The deep history of this xterm: asked once, when the person scrolls back
   // to the top of what the cold attach delivered (utils/terminalDeepHistory.ts).
   const deep = { asked: false, pending: false, fromBottom: null as number | null }
@@ -334,11 +400,26 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
   // domain: its bottom edge (viewportY === baseY) is the live tail. A move
   // where the viewport simply stayed pinned to the bottom edge is output
   // growing ybase and ydisp together — the reader's buffer row did not move.
-  function viewportMoved() {
+  function viewportMoved(fromDom = false) {
     const buf = term?.buffer.active
     if (!term || !buf) return
     // xterm scrolls through the replay: that is not the reader seeking.
     if (covering.value) {
+      lastY = buf.viewportY
+      lastBaseY = buf.baseY
+      return
+    }
+    // A repaint's own intermediate moves (`\x1b[3J` dropping baseY and
+    // viewportY to 0, lines growing baseY back) are not the reader seeking:
+    // the window is placed once the write lands (performWrite).
+    if (writingFrames > 0 && holdTail) {
+      lastY = buf.viewportY
+      lastBaseY = buf.baseY
+      return
+    }
+    // The viewport's trailing DOM scroll after a clear-and-repaint lands on the
+    // tail: it is output, never an unpin.
+    if (fromDom && atTail && buf.viewportY === buf.baseY) {
       lastY = buf.viewportY
       lastBaseY = buf.baseY
       return
@@ -557,15 +638,33 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     else void setRenderer(terminalRenderer.value)
     // JetBrains Mono (bundled): once loaded, xterm re-measures its cells.
     const t0 = term
-    Promise.all([
+    const fonts = Promise.all([
       document.fonts?.load(`${scaledFont(fontSize.value)}px "JetBrains Mono Variable"`),
       document.fonts?.load(`${scaledFont(fontSize.value)}px "Wherdr Symbols"`, '─▀█⎿⏵⏺✻✳'),
-    ]).then(() => {
-      if (disposed || term !== t0) return
+    ]).catch(() => {})
+    // The first fit and the attach wait for the real font metrics (bounded):
+    // mounting at the fallback metrics and re-fitting a moment later sends a
+    // second SIGWINCH right on open, and an agent answers it by wiping and
+    // replaying its whole conversation.
+    let fontReady = false
+    await Promise.race([
+      fonts.then(() => { fontReady = true }),
+      new Promise<void>(resolve => setTimeout(resolve, FONT_WAIT_MS)),
+    ])
+    if (seq !== mountSeq || disposed || term !== t0) return false
+    if (fontReady) {
       t0.options.fontFamily = TERM_FONT
       fitNow(true)
       t0.refresh(0, t0.rows - 1)
-    }).catch(() => {})
+    } else {
+      // The cap lost the race (a slow network): re-measure when the face arrives.
+      void fonts.then(() => {
+        if (disposed || term !== t0) return
+        t0.options.fontFamily = TERM_FONT
+        fitNow(true)
+        t0.refresh(0, t0.rows - 1)
+      })
+    }
     // Nerd Font icons load on first use (unicode-range): the WebGL atlas
     // may already hold empty boxes for them, redraw once the face arrives.
     unbindFonts = onFontsLoaded(() => {
@@ -644,7 +743,7 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     activeBuf = null
     anchor = null
     term.onScroll(() => viewportMoved())
-    term.element?.querySelector('.xterm-viewport')?.addEventListener('scroll', () => viewportMoved())
+    term.element?.querySelector('.xterm-viewport')?.addEventListener('scroll', () => viewportMoved(true))
     if (focusQueued) focus()
     return true
   }
@@ -889,33 +988,29 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
         // Core repaints the screen and its history on each attach.
         // A full repaint replaces the screen the gesture measured — input
         // version kills it. A resize only invalidates its coordinates.
-        if (coreStream && m.full === true) {
+        const reset = coreStream && m.full === true
+        const width = Number.isInteger(m.width) && m.width > 0 ? Number(m.width) : undefined
+        const height = Number.isInteger(m.height) && m.height > 0 ? Number(m.height) : undefined
+        // A new paint or a size change owns the screen from here: bytes a
+        // synchronized frame kept back reach xterm first, in wire order.
+        if (reset || (width && height && (width !== current.cols || height !== current.rows))) syncOutput.flush()
+        if (reset) {
           scrollInputVersion.value++
           atTail = true
           revealGate.begin()
         }
-        revealGate.pushed()
-        writeTerminalFrame(current, { width: m.width, height: m.height, reset: coreStream && m.full === true, bytes }, {
-          resized: () => {
-            if (term !== current) return
-            scrollGeometryVersion.value++
-            repaint()
-            if (coreStream) offerFit()
-          },
-          reset: () => mouseSgr?.reset(),
-          written: () => {
-            // Credits never wait for the reveal: the server stops relaying when
-            // its window is spent.
-            if (credit && tws === ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'credit', bytes: credit }))
-            revealGate.written()
-            if (smoothTouchScrolling.value) frameTick.value++
-            if (bytes.length) wheel.frame()
-            // Nothing in the view reacts to the replay while it is covered.
-            if (covering.value) return
-            if (coreStream && !coreControl) followCursor()
-            selectionHint.refresh(current, mouseSupported)
-          },
-        })
+        const frameMeta = { width, height, reset }
+        const creditBack = () => {
+          if (credit && tws === ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'credit', bytes: credit }))
+        }
+        if (!bytes.length) {
+          // A meta-only frame (resize, reset): nothing to gate.
+          if (width && height || reset) performWrite(bytes, frameMeta, creditBack)
+          else creditBack()
+          return
+        }
+        // A chunk a synchronized frame holds is credited at once.
+        syncOutput.push(bytes, frameMeta, creditBack)
       } else if (m.type === 'terminal.control') {
         coreControl = m.on === true
         if (controlPending && !coreControl) takeControl()
@@ -995,6 +1090,10 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     atTail = true
     anchor?.dispose()
     anchor = null
+    syncOutput.reset()
+    writingFrames = 0
+    holdTail = false
+    gateHeld = 0
     revealGate.cancel()
     covering.value = false
     term?.reset()
@@ -1169,6 +1268,8 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     focusQueued = false
     wheel.cancel()
     disconnect()
+    // A disposed controller accepts no more frames: a late push is a no-op.
+    syncOutput.dispose()
     unbindSelection?.()
     unbindPaste?.()
     unbindOsc52?.()
