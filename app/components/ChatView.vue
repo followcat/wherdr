@@ -15,7 +15,7 @@ import { userMessageParts } from '~/utils/userMessage'
 import { type PendingMessage, type WaitingOn, inputShown, pendingLabel, pendingQueue, rememberSent } from '~/utils/pendingQueue'
 import { clampRange, createSelectionSettler, lastLineRect, selectionReplyPos } from '~/utils/selectionReply'
 import { addAnswer, addQuote, answerEnd, answerOf, forgetReply, isQuoted, replyTargets, rowOf, rowRef, rowSettled, tableRank, tableRef, tappedAnswer, toggleOkAll, unansweredCount, withQuestions, type Answer } from '~/utils/questionReply'
-import { CHAT_READ_MS, applyToolUpdates, createFlipGuard, createTailLoader, itemKeys, mergeToolUpdates, nextTail, restartsTail, retainToolUpdates, swapTail, tailQuery } from '~/utils/chatTail'
+import { applyToolUpdates, chatReadTimeoutMs, createFlipGuard, createTailLoader, itemKeys, mergeToolUpdates, nextTail, restartsTail, retainToolUpdates, swapTail, tailQuery } from '~/utils/chatTail'
 import { missedReply, replyId, sortNewReplies } from '~/utils/typewriter'
 import { newestThought } from '~/utils/reasoningReveal'
 import { restoredScrollTop, saveReadingPosition } from '~/utils/readingPosition'
@@ -514,7 +514,7 @@ async function loadStep(current: () => boolean): Promise<boolean> {
     const ready = chat.value.tailStart === null ? await chatIntent.take(props.pane) : undefined
     if (stale()) return false
     const startedAt = Date.now()
-    const r = ready || await api<ChatResponse>(`/api/chat?${tailQuery(pane, chat.value)}`, undefined, AbortSignal.timeout(CHAT_READ_MS))
+    const r = ready || await api<ChatResponse>(`/api/chat?${tailQuery(pane, chat.value)}`, undefined, AbortSignal.timeout(chatReadTimeoutMs(props.pane.agent, !chat.value.token)))
     if (stale()) return false
     if (!r.available) {
       // Any list on screen counts, the end kept on this device too: a server
@@ -635,7 +635,7 @@ async function loadOlder() {
   // proof this page request belongs to the generation the server selected.
   const since = props.pane.agent === 'cmd' ? `&since=${encodeURIComponent(chat.value.token)}` : ''
   try {
-    const r = await api<ChatResponse>(`/api/chat?pane=${encodeURIComponent(pane)}&before=${before}${since}`, undefined, AbortSignal.timeout(CHAT_READ_MS))
+    const r = await api<ChatResponse>(`/api/chat?pane=${encodeURIComponent(pane)}&before=${before}${since}`, undefined, AbortSignal.timeout(chatReadTimeoutMs(props.pane.agent, true)))
     if (staleGen(gen)) return
     // Command Code and OpenCode: an unavailable reply is authoritative on
     // any request — the selected conversation is gone, the shown one is

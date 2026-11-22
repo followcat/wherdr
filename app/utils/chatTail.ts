@@ -164,6 +164,21 @@ export function tailQuery(pane: string, c: { token: string, tailStart: number | 
 // so the next poll can ask again, instead of every refresh waiting forever
 // behind a read that will never settle.
 export const CHAT_READ_MS = 8000
+// A cold read of a SQLite/snapshot-backed conversation can be a copy of a
+// 40–110 MB database (agy embeds tool outputs in its steps): a remote server
+// copies it in 4 MB chunks, so the first tail or an older page needs longer
+// than a poll of an already-open file.
+export const CHAT_COLD_READ_MS = 30_000
+const SNAPSHOT_AGENTS = new Set(['agy', 'hermes', 'opencode'])
+
+// Deadline of one /api/chat read: the cold initial tail (or an older page)
+// of a snapshot-backed agent gets CHAT_COLD_READ_MS; incremental polls and
+// JSONL agents keep CHAT_READ_MS.
+export function chatReadTimeoutMs(agent: string | null | undefined, cold: boolean): number {
+  return cold && agent !== null && agent !== undefined && SNAPSHOT_AGENTS.has(agent)
+    ? CHAT_COLD_READ_MS
+    : CHAT_READ_MS
+}
 
 // One re-read of the bottom at a time, for its whole life. `step` returns
 // true to run again at once (session changed, delta did not fit), up to `max`
