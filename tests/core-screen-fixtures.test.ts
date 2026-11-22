@@ -220,11 +220,17 @@ describe('Antigravity slash-command panels', () => {
     expect(readCoreScreen(screen(name), 'agy', 'blocked').choices).toBeNull()
   })
 
-  it(`${PANELS[0]}: read as the terminal, Esc back to the field`, async () => {
+  it(`${PANELS[0]}: read as the terminal on its second read, Esc back to the field`, async () => {
     const name = PANELS[0]!
     let text = screen(name)
-    const screens = createCoreScreens({ call: async () => ({ text }), viewed: () => true })
+    let t = 0
+    const screens = createCoreScreens({ call: async () => ({ text }), viewed: () => true, now: () => t })
     const p = { id: name, agent: 'agy', status: 'idle', coreAddress: 'host-a/t2' } as Pane
+    // Antigravity repaints its whole normal-buffer screen: a single mid-paint
+    // read never opens the overlay over the conversation.
+    await screens.enrich([p])
+    expect(p.interaction).toBe('unknown')
+    t += 300
     await screens.enrich([p])
     expect(p.interaction).toBe('terminal')
     // The overlay itself opens once 'terminal' has held for 500 ms.
@@ -233,6 +239,7 @@ describe('Antigravity slash-command panels', () => {
     expect(window.update(p.interaction!, 500)).toBe(true)
     text = screen('agy-idle')
     screens.forget(p.id)
+    t += 300
     await screens.enrich([p])
     expect(p.interaction).toBe('input')
   })

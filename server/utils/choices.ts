@@ -49,6 +49,12 @@ type Json = any
 // ❯ in Claude Code, › in Codex; > on Codex's login screen, only taken
 // before a numbered option (otherwise a "> …" quote would count).
 const CURSOR = /^(\s*)(?:[❯›]|>(?=\s+\d{1,2}\.\s))\s+(\S.*?)\s*$/
+// Antigravity 1.5.14's unnumbered picker: an ASCII `>` before the option. Only
+// accepted when the screen announces its keyboard navigation (see agyNav) and
+// it is not the `>` input field framed by rules; a `>` markdown blockquote
+// never has that legend.
+const GT_CURSOR = /^(\s*)>\s+(\S.*?)\s*$/
+const AGY_NAV = /(?:↑\/↓\s*Navigate\s*·\s*enter\s*(?:Confirm|Select)|\benter\s+to\s+(?:confirm|select)\b.*\besc)/i
 const NUMBERED = /^(\s*)(?:[❯›>↑↓]\s+)?(\d{1,2})\.\s+(\S.*?)\s*$/
 const RULE = /^[\s─━═—-]+$/
 // Start of a neighbouring column: at least 3 spaces or a vertical bar │.
@@ -91,10 +97,21 @@ function dropSidePanel(lines: string[], c: number): string[] {
   })
 }
 
-// Column (in characters) where the text of an option line starts.
-function textColumn(line: string): number {
-  const m = line.match(/^(\s*)(?:(?:[❯›]|[>↑↓](?=\s+\d))\s+)?/)
+// Column (in characters) where the text of an option line starts. `gt` also
+// counts an ASCII `>` cursor (Antigravity's unnumbered picker).
+function textColumn(line: string, gt = false): number {
+  const m = line.match(gt
+    ? /^(\s*)(?:(?:[❯›>]|[↑↓](?=\s+\d))\s+)?/
+    : /^(\s*)(?:(?:[❯›]|[>↑↓](?=\s+\d))\s+)?/)
   return m ? m[0].length : 0
+}
+
+// Antigravity's unnumbered `>` option is only a cursor when the keyboard
+// legend is below, and it is not the `>` input field framed between rules.
+function agyCursorOk(lines: string[], at: number): boolean {
+  if (!AGY_NAV.test(lines.slice(at + 1).join('\n'))) return false
+  return !(at > 0 && at < lines.length - 1
+    && /^\s*─{3,}/.test(lines[at - 1]!) && /^\s*─{3,}/.test(lines[at + 1]!))
 }
 
 interface RawOption { n: number | null, label: string, hint: string | null, line: number, end: number }
@@ -112,26 +129,34 @@ const CLAUDE_FREE_BOX = 'Type something'
 // the agent as blocked (Codex's trust screen passes for "idle"):
 // an unnumbered list could then just be the input field
 // ("› Ask Codex…" followed by the model line, aligned the same way).
-export function parseChoices(text: string | null | undefined, { strict = false, full = false }: { strict?: boolean, full?: boolean } = {}): Choices | null {
+export function parseChoices(text: string | null | undefined, { strict = false, full = false, agent = null }: { strict?: boolean, full?: boolean, agent?: string | null } = {}): Choices | null {
   if (!text) return null
+  const gt = agent === 'agy'
   let lines = text.replace(/\s+$/, '').split('\n').slice(-60)
 
-  // The last ❯ on screen: the previous ones are history (prompts
-  // sent), the active prompt is always at the bottom.
+  // The last cursor on screen: the previous ones are history (prompts
+  // sent), the active prompt is always at the bottom. An ASCII `>` only counts
+  // for Antigravity, with its navigation legend below it and outside the `>`
+  // input field's rules.
   let c = -1
-  for (let i = lines.length - 1; i >= 0; i--) if (CURSOR.test(lines[i]!)) { c = i; break }
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!
+    if (CURSOR.test(line)) { c = i; break }
+    if (gt && GT_CURSOR.test(line) && agyCursorOk(lines, i)) { c = i; break }
+  }
   if (c < 0) return null
   lines = dropSidePanel(lines, c)
 
   const cursorLine = lines[c]!
-  const cursorText = cursorLine.match(CURSOR)![2]!
+  const cursorMatch = CURSOR.exec(cursorLine) ?? (gt ? GT_CURSOR.exec(cursorLine) : null)
+  const cursorText = cursorMatch![2]!
   // Cursor on the "Submit" line of Claude's checkboxes: the list is read from
   // the numbered option just above.
   let anchor = c
   if (cursorText === SUBMIT) {
     for (let i = c - 1; i >= Math.max(0, c - 40) && anchor === c; i--) if (NUMBERED.test(lines[i]!)) anchor = i
   }
-  const col = textColumn(lines[anchor]!)
+  const col = textColumn(lines[anchor]!, gt)
   const options: RawOption[] = []
   let submit: RawOption | null = null
 
@@ -144,18 +169,18 @@ export function parseChoices(text: string | null | undefined, { strict = false, 
     let first = anchor
     for (let i = anchor - 1; i >= Math.max(0, anchor - 40); i--) {
       const line = lines[i]!
-      if (NUMBERED.test(line) && textColumn(line) === col) first = i
-      else if (line.trim() && !RULE.test(line) && textColumn(line) <= col) break
+      if (NUMBERED.test(line) && textColumn(line, gt) === col) first = i
+      else if (line.trim() && !RULE.test(line) && textColumn(line, gt) <= col) break
     }
     for (let i = first; i < lines.length; i++) {
       const line = lines[i]!
       const m = line.match(NUMBERED)
-      if (m && textColumn(line) === col) {
+      if (m && textColumn(line, gt) === col) {
         options.push({ n: Number(m[2]), label: m[3]!, hint: null, line: i, end: i })
-      } else if (options.length && !submit && /^\s*(?:❯\s+)?Submit$/.test(line) && textColumn(line) > col) {
+      } else if (options.length && !submit && /^\s*(?:❯\s+)?Submit$/.test(line) && textColumn(line, gt) > col) {
         // Claude's checkboxes: "Submit" below them, unnumbered.
         submit = { n: null, label: SUBMIT, hint: null, line: i, end: i }
-      } else if (options.length && line.trim() && !RULE.test(line) && textColumn(line) > col) {
+      } else if (options.length && line.trim() && !RULE.test(line) && textColumn(line, gt) > col) {
         // More indented lines just below an option: its description.
         const o = options[options.length - 1]!
         if (i === o.end + 1) {
@@ -185,7 +210,8 @@ export function parseChoices(text: string | null | undefined, { strict = false, 
   } else {
     if (strict) return null
     // Unnumbered options: lines adjacent to the cursor, same text column.
-    const sameCol = (l: string) => Boolean(l.trim()) && !RULE.test(l) && !/^\s*[❯›]/.test(l) && textColumn(l) === col
+    const sameCol = (l: string) => Boolean(l.trim()) && !RULE.test(l) && !/^\s*[❯›]/.test(l)
+      && !(gt && /^\s*>/.test(l)) && textColumn(l, gt) === col
     let first = c
     while (first - 1 >= 0 && sameCol(lines[first - 1]!)) first--
     let last = c
@@ -812,14 +838,14 @@ const identity = (value: unknown) => createHash('sha256').update(JSON.stringify(
 export function promptIdentity(text: string | null | undefined, agent?: string | null): string {
   const c = agent === 'omp' ? parseOmpPrompt(text, true)
     : agent === 'cline' ? parseClineApproval(text)
-      : agent ? parseChoices(text, { full: true }) : parseChoices(text, { full: true }) || parseOmpPrompt(text, true)
+      : agent ? parseChoices(text, { full: true, agent }) : parseChoices(text, { full: true }) || parseOmpPrompt(text, true)
   return identity(c ? { question: c.question, options: c.options.map(({ label, hint, n, free, key }) => ({ label, hint, n, free, key })), detail: c.detail, multi: c.multi, tabs: c.tabs } : null)
 }
 
 // On-screen prompt re-read before choose/nav; Claude questions can be
 // completed by the pending transcript call after their screen identity is set.
 export function screenChoices(text: string | null | undefined, agent: string | null | undefined, asked: ClaudeAsked[] = []): Choices | null {
-  const c = agent === 'omp' ? parseOmpPrompt(text) : parseChoices(text) || parseChoices(text, { strict: true })
+  const c = agent === 'omp' ? parseOmpPrompt(text) : parseChoices(text, { agent }) || parseChoices(text, { strict: true, agent })
   if (c) c.identity = promptIdentity(text, agent)
   return c && agent === 'claude' ? completeClaudeAsk(c, asked) : c
 }

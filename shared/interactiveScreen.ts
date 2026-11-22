@@ -49,9 +49,15 @@ export function confirmedInput(text: string, agent?: string | null): boolean {
   // status footer (`ClinePass: …`, the workspace, `Auto-approve all …`).
   if (agent === 'cline') return /^\s*─{3,}/.test(lines[at - 1] || '') && /^\s*─{3,}/m.test(below)
     && /\bAuto-approve all (?:enabled|disabled)\b/i.test(below)
-  // Antigravity's prompt is a plain `>` between rules, `? for shortcuts` below.
+  // Antigravity's prompt is a plain `>` between rules. Its footer varies:
+  // `? for shortcuts` at rest, the mode/status line (`auto · Gemini … · high`)
+  // on a narrow phone, `Press up to edit queued messages` while a message is
+  // queued, or the left hint truncated away by the width.
   if (agent === 'agy' && /^\s*>(?:\s|$)/.test(line)) return /^\s*─{3,}/.test(lines[at - 1] || '')
-    && /^\s*─{3,}/m.test(below) && /\?\s+for shortcuts/i.test(below)
+    && /^\s*─{3,}/m.test(below)
+    && (/\?\s+for shortcuts/i.test(below)
+      || /\b(?:accept-edits|auto|plan)\s*·/i.test(below)
+      || /\bPress up to edit queued messages\b/i.test(below))
   // Devin's field: a rule above (it may carry the session title), a rule
   // below, then the footer. The footer's words change with the mode, the
   // session and the width (model only, `· smart`, `ctrl+o …`, a quota or
