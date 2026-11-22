@@ -1413,6 +1413,12 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
 }
 .msg-system::before, .msg-system::after, .day-sep::before, .day-sep::after { content: ''; flex: 1; height: 1px; background: var(--line-soft); }
 .day-sep { color: var(--muted); }
+/* Above the first reply this device had not shown yet (ChatView): fades after a few seconds. */
+.new-sep { color: var(--accent); }
+.new-sep::before, .new-sep::after { background: var(--accent); opacity: .5; }
+.new-sep-leave-active { transition: opacity .6s ease; }
+.new-sep-leave-to { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .new-sep-leave-active { transition: none; } }
 /* Local "/" command with more output: the line opens it (see ChatView). */
 .msg-cmd > button.msg-system { width: 100%; background: none; border: 0; padding: 0; cursor: pointer; color: var(--dim); }
 .msg-cmd > button.msg-system > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1987,9 +1993,8 @@ body.kb .composer { padding-bottom: 8px; }
   /* A long title (a task's, AppSheet `clamp`): two lines in smaller type, cut
      with an ellipsis, a tap shows it whole; one line once the body is scrolled
      or a field is typed in (`compact`), so the keyboard leaves room to write. */
-  .hw-sheet-title.clamp { font-size: 18px; line-height: 1.15; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; cursor: pointer; }
+  .hw-sheet-title.clamp { font-size: 18px; line-height: 1.15; }
   .hw-sheet-head.compact .hw-sheet-title.clamp { -webkit-line-clamp: 1; line-clamp: 1; }
-  .hw-sheet .hw-sheet-title.clamp.open { display: block; overflow: visible; }
   .hw-sheet-lead:has(+ .hw-sheet-title.clamp) { margin-top: 0; }
   .hw-sheet > .hw-sheet-head.compact { padding-bottom: 6px; }
   /* Typing (AppSheet `.typing`): a text area grows up to part of the visible
@@ -2011,6 +2016,10 @@ body.kb .composer { padding-bottom: 8px; }
 /* The autopilot's pinned Save bar (CoordinatorAutopilot.vue) in the coordinator window. */
 .hw-sheet > [data-slot="body"]:has(> .coord > .ap[data-tab="settings"]) { padding-bottom: 0; }
 .hw-sheet-title { min-width: 0; font: 850 24px/1 var(--display); letter-spacing: -.035em; word-spacing: .06em; color: var(--text); overflow-wrap: anywhere; }
+/* A long title (a task's, AppSheet `clamp`): two lines at most, cut with an
+   ellipsis, a tap shows it whole (the Description keeps it in full). */
+.hw-sheet-title.clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; cursor: pointer; line-height: 1.1; }
+.hw-sheet .hw-sheet-title.clamp.open { display: block; overflow: visible; }
 .hw-sheet [data-slot="close"] { position: static; inset: auto; }
 /* Before the title (a task's id badge): the title follows it. */
 .hw-sheet-lead { flex: none; align-self: flex-start; margin: 3px 10px 0 0; }

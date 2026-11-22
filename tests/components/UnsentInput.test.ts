@@ -7,7 +7,9 @@ import ChatView from '~/components/ChatView.vue'
 import { herdrState } from '~/composables/useHerdr'
 import type { Pane } from '#shared/types'
 
-registerEndpoint('/api/chat', () => ({ available: true, token: 'unsent', file: '/tmp/demo/transcript.jsonl', items: [{ role: 'user', text: 'Write the release notes.', ts: '2026-01-01T00:00:00Z' }] }))
+// Claude's own queue, set by a test.
+let queue: { text: string, ts: string }[] = []
+registerEndpoint('/api/chat', () => ({ available: true, token: 'unsent', file: '/tmp/demo/transcript.jsonl', items: [{ role: 'user', text: 'Write the release notes.', ts: '2026-01-01T00:00:00Z' }], queue }))
 const calls: Record<string, unknown>[] = []
 let started = true
 // Set by a test to hold or fail the answer.
@@ -29,7 +31,7 @@ async function mount(pane: Pane) {
 }
 
 describe('text left unsent in Claude’s input', () => {
-  afterEach(() => { calls.length = 0; started = true; answer = null; herdrState.value = { ok: false, workspaces: [], panes: [] } })
+  afterEach(() => { queue = []; calls.length = 0; started = true; answer = null; herdrState.value = { ok: false, workspaces: [], panes: [] } })
 
   it('shows the text as not sent, and sends or clears it', async () => {
     const w = await mount({ ...base, draft: { text: 'Summarise the README.\nKeep it short.', lines: 2 } })
@@ -100,6 +102,20 @@ describe('text left unsent in Claude’s input', () => {
       await w.setProps({ pane: { ...base, status: 'working' } })
       await expect.poll(() => btn().exists()).toBe(false)
       expect(calls).toHaveLength(1)
+    } finally { w.unmount() }
+  })
+
+  it('a card note wherdr queued in Claude: its row tagged "From the card" above Send now, never a lone Send now (WHR-550)', async () => {
+    queue = [{ text: 'From the card: Applied: Autopilot (off → on)', ts: '2026-01-01T00:01:00Z' }]
+    const w = await mount({ ...base, status: 'working', queueSendNow: true })
+    try {
+      await expect.poll(() => w.find('[data-testid="queued-note"]').exists()).toBe(true)
+      const note = w.find('[data-testid="queued-note"]')
+      expect(note.find('.msg-wake[data-kind="card"]').text()).toBe('From the card')
+      expect(note.text()).toContain('Applied: Autopilot (off → on)')
+      expect(note.text()).toContain('sent when it finishes')
+      expect(w.find('.msg-pending').exists()).toBe(false)
+      expect(w.find('[data-testid="queue-send-now"]').exists()).toBe(true)
     } finally { w.unmount() }
   })
 

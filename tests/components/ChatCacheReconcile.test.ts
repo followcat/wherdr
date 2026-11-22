@@ -1,6 +1,6 @@
 // The end of a conversation kept on this device shows at once, then the
 // server's answer is reconciled with it: the blocks already shown keep their
-// elements, and a reply that arrived meanwhile comes in as a live one would.
+// elements, and a reply this device never showed comes in at once, under "New".
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { mountSuspended } from '@nuxt/test-utils/runtime'
 import { flushPromises } from '@vue/test-utils'
@@ -18,8 +18,11 @@ const kept: ChatItem[] = [
 ]
 // A copy kept before the transcript was recorded with it has no `file`.
 let keptFile: string | undefined = 'demo.jsonl'
+// Holds the read of the kept end, to let the server answer first.
+let keptGate: Promise<void> = Promise.resolve()
+let keptItems = kept
 vi.mock('~/utils/offlineCache', () => ({
-  readChat: async () => ({ id: 'w1:p1', items: kept, at: Date.parse(at(3)), file: keptFile }),
+  readChat: async () => (await keptGate, { id: 'w1:p1', items: keptItems, at: Date.parse(at(3)), file: keptFile }),
   saveChat: vi.fn(),
   touchChat: vi.fn(),
 }))
@@ -47,6 +50,8 @@ afterEach(() => {
   herdrState.value = { ok: false, panes: [], workspaces: [] }
   setOfflineAccess(null)
   keptFile = 'demo.jsonl'
+  keptGate = Promise.resolve()
+  keptItems = kept
   vi.unstubAllGlobals()
 })
 
@@ -68,7 +73,7 @@ it('shows the kept end before the server answers, and keeps every element when t
   } finally { w.unmount() }
 })
 
-it('keeps the blocks already shown when the answer starts lower, and types the reply that arrived meanwhile', async () => {
+it('keeps the blocks already shown when the answer starts lower, and marks the reply this device never showed, without typing it', async () => {
   const w = await mount()
   try {
     await expect.poll(() => w.text()).toContain('Add a note to the changelog.')
@@ -80,8 +85,34 @@ it('keeps the blocks already shown when the answer starts lower, and types the r
     const same = [...after.keys()].filter(k => before.has(k))
     expect(same.length).toBeGreaterThanOrEqual(2)
     for (const k of same) expect(after.get(k), k).toBe(before.get(k))
-    expect(w.findAll('.md-body.typing')).toHaveLength(1)
-    expect(w.find('.md-body.typing').text()).toBe('Added under Unreleased.')
+    expect(w.find('.md-body.typing').exists()).toBe(false)
+    const sep = w.element.querySelector('[data-testid="new-sep"]')
+    expect(sep?.textContent).toBe('New')
+    // Above the new reply, below the last one this device showed.
+    const follows = (x: Element | undefined) => Boolean(x && sep!.compareDocumentPosition(x) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(follows(after.get('Added under Unreleased.'))).toBe(true)
+    expect(follows(after.get('Add a note to the changelog.'))).toBe(false)
+  } finally { w.unmount() }
+})
+
+it.each([
+  ['with a reply in common', kept],
+  ['left before the first reply', kept.slice(0, 1)],
+])('still marks the missed reply when the server answers before the kept end is read (%s)', async (_name, items) => {
+  keptItems = items
+  let release!: () => void
+  keptGate = new Promise((ok) => { release = ok })
+  const w = await mount()
+  try {
+    answer([...kept, { role: 'assistant', text: 'Added under Unreleased.', ts: at(4) }].map(it => ({ ...it })))
+    await expect.poll(() => w.text()).toContain('Added under Unreleased.')
+    expect(w.find('[data-testid="new-sep"]').exists()).toBe(false)
+    release()
+    await expect.poll(() => w.find('[data-testid="new-sep"]').exists()).toBe(true)
+    const sep = w.element.querySelector('[data-testid="new-sep"]')!
+    const reply = [...w.element.querySelectorAll('[data-hit-key]')].find(el => el.textContent?.includes('Added under Unreleased.'))!
+    expect(sep.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(w.find('.md-body.typing').exists()).toBe(false)
   } finally { w.unmount() }
 })
 

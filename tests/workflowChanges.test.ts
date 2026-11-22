@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
-import { changeSummary, workflowChanges } from '../shared/pm/workflowChanges'
-import type { Template } from '../shared/pm/workflow'
+import { changeSummary, changeTitle, workflowChanges } from '../shared/pm/workflowChanges'
+import { defaultWorkflow, type Template } from '../shared/pm/workflow'
 
 const old: Template = {
   id: 'w',
@@ -51,4 +51,16 @@ it('a step moved among the others reads as moved', () => {
   const c = workflowChanges(old, next)
   expect(c.types[0]!.steps.map(s => [s.id, s.kind])).toEqual([['todo', 'same'], ['review', 'same'], ['work', 'moved'], ['old', 'same'], ['done', 'same']])
   expect(changeSummary(c)).toEqual(['task: work moved'])
+})
+
+it('titles a proposal by what it does: first workflow, types only added or removed, else a change', () => {
+  const add = (t: Template, ...types: string[]): Template => ({ ...t, taskTypes: { ...t.taskTypes, ...Object.fromEntries(types.map(k => [k, { steps: [{ id: 'todo' }, { id: 'done' }] }])) } })
+  const { tiny: _, ...rest } = old.taskTypes
+  expect(changeTitle(workflowChanges(old, add(old, 'release')))).toBe('New task type')
+  expect(changeTitle(workflowChanges(old, add(old, 'release', 'docs')))).toBe('New task types')
+  expect(changeTitle(workflowChanges(old, { ...old, taskTypes: rest }))).toBe('Task type removed')
+  expect(changeTitle(workflowChanges(old, { ...old, taskTypes: {} }))).toBe('Task types removed')
+  expect(changeTitle(workflowChanges(null, old))).toBe('First workflow')
+  expect(changeTitle(workflowChanges(defaultWorkflow('CO'), add(old, 'release')))).toBe('First workflow')
+  expect(changeTitle(workflowChanges(old, { ...add(old, 'release'), guards: { merge: { others: 'engine' } } }))).toBe('Workflow change')
 })

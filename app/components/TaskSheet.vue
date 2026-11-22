@@ -1,5 +1,10 @@
 <script setup lang="ts">
-// A task's sheet. A task waiting for the user opens on To do (TaskTodo): what
+// A task's sheet. Its header holds only what matters first: the title (two lines
+// at most), the branch line with the PR's badge and its state (open, merged,
+// closed, conflict, red CI), the task's total time, then the buttons that make
+// sense now: the step's own (StepButton, first), Open the agent, Stop only while
+// the agent holding the step runs, and a ⋯ menu for Check on GitHub and Report a problem. The step
+// times are at the top of History. A task waiting for the user opens on To do (TaskTodo): what
 // it needs from them and its buttons. Otherwise: its Plan (the steps, the current one, what its holder was
 // told, the proofs and rounds), its links, Open the agent (AgentButton: whatever the step, disabled once it ended), and
 // the step's button when it waits for the user ("Merged"; busy while it runs, a
@@ -15,12 +20,13 @@
 // and History (the whole log as one timeline, the hand-offs as entries; TaskHistory).
 // The PR's badge sits on the branch line; scrolled out of sight, it shows in the
 // sheet's header, so the PR is always one tap away.
-import { branchLine, canStart, canStop, cardStatus, linkLabel, mergeWaits, prLink, statusText, type Card } from '#shared/pm/board'
+import { agentRuns, branchLine, canStart, canStop, cardStatus, linkLabel, mergeWaits, prLink, prState, statusText, type Card } from '#shared/pm/board'
 import { canCheckGithub, type GhCheck } from '#shared/pm/ghCheck'
 import type { Pane } from '#shared/types'
+import type { MenuItem } from '~/composables/useUi'
 import { reviewSwitch } from '#shared/pm/run'
 import { shotMode } from '#shared/pm/shots'
-import { timesText } from '#shared/pm/times'
+import { spent, timesText, totalTime } from '#shared/pm/times'
 import { nextRecheck } from '#shared/pm/steps'
 
 // stopping: opened from the card menu's Stop, the confirmation shown.
@@ -50,14 +56,17 @@ const earlier = (id: string) => props.card.state?.earlierShots?.[id] ?? []
 // The fallback took the last review (the review agent out of quota): said on the review step it holds now or held last.
 const switched = computed(() => reviewSwitch(props.card.log))
 const switchAt = computed(() => props.card.plan.findLastIndex((s, i) => s.holder === 'reviewer' && (done.value || i <= at.value)))
-// Where its PR and merge stand (the card's line), with the full time and the approval's date.
-const status = computed(() => { const s = cardStatus(props.card); return s && { ...s, text: statusText(s, fmtDateTime, true) } })
+// Where it stands before it has a PR (same files as another task, held, opening
+// the PR); once it has one, the PR's badge says it.
+const status = computed(() => { const s = !pr.value && cardStatus(props.card); return s ? { ...s, text: statusText(s, fmtDateTime, true) } : undefined })
 
 // Which branch merges into which, once it has a branch.
 const branch = computed(() => branchLine(props.card, props.projectBase))
 // The task's PR (the github.pr step's or a link proof's), a badge on that line,
 // not repeated with the other links under the description.
 const pr = computed(() => prLink(props.card))
+// Its state on the badge; Check on GitHub's finding wins (closed is only known from it).
+const prSays = computed(() => (check.value?.outcome === 'closed' ? 'closed' : check.value?.outcome === 'merged' ? 'merged' : prState(props.card)))
 const otherLinks = computed(() => props.card.links.filter(l => l.url !== pr.value?.url))
 // The branch line scrolled out of the sheet: the badge moves to its header.
 const branchRow = ref<HTMLElement>()
@@ -72,8 +81,10 @@ watch(branchRow, (el) => {
 })
 onBeforeUnmount(() => io?.disconnect())
 
-// Time per step, the waits for the user apart, review rounds and CI fixes, in one line.
+// Time per step, the waits for the user apart, review rounds and CI fixes, in one line (History);
+// the header shows only the whole time, on the branch line.
 const times = computed(() => (props.card.times ? timesText(props.card.times) : ''))
+const total = computed(() => { const ms = props.card.times && totalTime(props.card.times, Date.now()); return ms === undefined ? '' : spent(ms) })
 // A step the coordinator rechecks: when its next recheck is due.
 const recheck = computed(() => { const n = nextRecheck(props.card.state); return n === 'user' ? tl('Next recheck: when you write to the coordinator or act on the task') : n ? `${tl('Next recheck')} ${n - Date.now() < 43_200_000 ? fmtTime(n) : fmtDateTime(n)}` : '' })
 
@@ -96,6 +107,8 @@ const picked = ref<Tab>()
 // The tab picked while it is still there (the task read again), else the first.
 const tab = computed(() => (picked.value && tabs.value.includes(picked.value) ? picked.value : tabs.value[0]!))
 
+// The step's own button, in the header (not in the To do tab).
+const stepAbove = computed(() => !!todo.value && !!props.card.userLabel && !['decide', 'stopped', 'refused'].includes(todo.value))
 const confirmStop = ref(!!props.stopping)
 const why = ref('')
 const stop = () => run(async () => { await stopTaskApi(props.card.id, why.value); confirmStop.value = false })
@@ -111,6 +124,12 @@ const check = ref<GhCheck>()
 const checkGithub = () => run(async () => { check.value = (await api<{ check: GhCheck }>('/api/pm/task-check', { id: props.card.id })).check })
 const archiveClosed = () => run(async () => { const yes = await archiveClosedApi(props.card.id, !!props.card.stopped); if (yes) check.value = undefined; return yes })
 onMounted(() => { if (props.checking) checkGithub() })
+// The secondary actions, in the ⋯ menu at the end of the buttons.
+const more = (): MenuItem[] => [
+  ...(canCheckGithub(props.card) ? [{ label: tl('Check on GitHub'), icon: 'i-lucide-refresh-cw', run: checkGithub }] : []),
+  ...(canReport.value && !reportOpen.value ? [{ label: tl('Report a problem'), icon: 'i-lucide-flag', run: () => { reportOpen.value = true } }] : []),
+]
+const hasMore = computed(() => canCheckGithub(props.card) || (canReport.value && !reportOpen.value))
 // Archived (off the board, done for its project's delay): back in Done.
 const unarchive = () => run(() => api('/api/pm/task-unarchive', { id: props.card.id }))
 // Removed: the sheet closes, the board reloads without it.
@@ -127,25 +146,24 @@ const remove = () => run(async () => { const yes = await removeTaskApi(props.car
     </template>
     <div class="task-sheet" data-testid="task-sheet">
       <div class="task-sheet-top">
-        <p v-if="card.step" class="mono-label">{{ card.step }}</p>
         <p v-if="status" class="task-status" :class="status.tone" data-testid="task-status">{{ status.text }}</p>
         <div v-if="branch || pr" ref="branchRow" class="task-branch-row" data-testid="task-branch-row">
           <BranchLine v-if="branch" :line="branch" />
-          <a v-if="pr" :href="pr.url" target="_blank" rel="noopener" class="board-chip task-pr" data-testid="task-pr">{{ linkLabel(pr) }} <UIcon name="i-lucide-arrow-up-right" aria-hidden="true" /></a>
+          <a v-if="pr" :href="pr.url" target="_blank" rel="noopener" class="board-chip task-pr" data-testid="task-pr">{{ linkLabel(pr) }}<span v-if="prSays" class="task-pr-state" :data-state="prSays" data-testid="task-pr-state">{{ tl(prSays) }}</span> <UIcon name="i-lucide-arrow-up-right" aria-hidden="true" /></a>
+          <span v-if="total" class="task-total" :title="tl('Total time')" data-testid="task-total">{{ total }}</span>
         </div>
-        <p v-if="times" class="task-times" data-testid="task-times">{{ times }}</p>
         <p v-if="recheck" class="task-times" data-testid="task-recheck">{{ recheck }}</p>
         <p v-if="card.archived" class="muted" data-testid="task-archived">{{ tl('Archived') }} {{ fmtWhen(new Date(card.archived).toISOString()) }}</p>
         <div class="task-sheet-actions">
+          <StepButton v-if="stepAbove" :card="card" :busy="busy" :loading="pressing" @press="press" />
           <UButton v-if="!todo && canStart(card) && !waitsFor?.length" color="primary" size="xl" icon="i-lucide-play" :loading="busy" data-testid="task-start" @click="start">{{ card.sameFiles ? tl('Start anyway') : tl('Start', 'Lancer') }}</UButton>
           <UButton v-if="failedAction" :color="fixFirst(card, todo) ? 'neutral' : 'primary'" :variant="fixFirst(card, todo) ? 'outline' : 'solid'" size="xl" icon="i-lucide-rotate-ccw" :loading="busy" data-testid="task-retry" @click="press">{{ tl('Try again', 'Réessayer') }}</UButton>
-          <UButton v-if="canReport && !reportOpen" color="neutral" variant="outline" size="xl" icon="i-lucide-flag" data-testid="task-report-start" @click="reportOpen = true">{{ tl('Report a problem') }}</UButton>
           <AgentButton v-if="!card.archived" :card="card" :primary="todo === 'ask'" />
           <UButton v-if="card.parked?.room && !card.stopped" color="primary" size="xl" icon="i-lucide-play" :loading="busy" :title="tl(`Paused for room on ${card.parked.room}: ${card.parked.need}`)" data-testid="task-room-resume" @click="resume('continue')">{{ tl('Resume now') }}</UButton>
-          <UButton v-if="canStop(card) && !confirmStop" color="error" variant="outline" size="xl" icon="i-lucide-square" data-testid="task-stop" @click="confirmStop = true">{{ tl('Stop', 'Arrêter') }}</UButton>
-          <UButton v-if="canCheckGithub(card)" color="neutral" variant="outline" size="xl" icon="i-lucide-refresh-cw" :loading="busy" data-testid="task-check" @click="checkGithub">{{ tl('Check on GitHub') }}</UButton>
+          <UButton v-if="canStop(card) && agentRuns(card) && !confirmStop" color="error" variant="outline" size="xl" icon="i-lucide-square" data-testid="task-stop" @click="confirmStop = true">{{ tl('Stop', 'Arrêter') }}</UButton>
           <UButton v-if="card.archived" color="neutral" variant="outline" size="xl" icon="i-lucide-archive-restore" :loading="busy" data-testid="task-unarchive" @click="unarchive">{{ tl('Unarchive') }}</UButton>
           <UButton v-if="card.removable" color="error" variant="outline" size="xl" icon="i-lucide-trash-2" :loading="busy" data-testid="task-remove" @click="remove">{{ tl('Delete…', 'Supprimer…') }}</UButton>
+          <span v-if="hasMore" class="task-more" data-testid="task-more"><SpaceMenu :items="more" :title="card.title" :label="tl('More actions')" size="lg" /></span>
         </div>
         <p v-if="card.mergeAfter?.length && !card.state?.done" class="muted" data-testid="task-merge-after">{{ tl(`Merges once ${card.mergeAfter.join(', ')} ${card.mergeAfter.length > 1 ? 'are' : 'is'} done.`) }}</p>
         <p v-if="canStart(card) && waitsFor?.length" class="muted" data-testid="task-waits">{{ tl(`Starts once ${waitsFor.join(', ')} ${waitsFor.length > 1 ? 'are' : 'is'} done.`, `Démarre une fois ${waitsFor.join(', ')} terminée${waitsFor.length > 1 ? 's' : ''}.`) }}</p>
@@ -180,7 +198,7 @@ const remove = () => run(async () => { const yes = await removeTaskApi(props.car
       </div>
 
       <div id="task-panel" class="task-panel" role="tabpanel" :aria-labelledby="`task-tab-${tab}`" data-testid="task-panel">
-        <TaskTodo v-if="tab === 'todo' && todo" :card="card" :kind="todo" :pane="pane" :busy="busy" :pressing="pressing" :refused="refused" :failed="!!error || !!refused" :waits-for="waitsFor"
+        <TaskTodo v-if="tab === 'todo' && todo" :card="card" :kind="todo" :pane="pane" :busy="busy" :pressing="pressing" :refused="refused" :failed="!!error || !!refused" :waits-for="waitsFor" :step-above="stepAbove"
           @press="press" @start="start" @resume="resume" @decide="decide" @back="sendBack" @review="restartReview" @worker="startWorker" @ask="askCoordinator" @fix="askFix" @comments="picked = 'comments'" />
         <template v-else-if="tab === 'description'">
           <!-- eslint-disable-next-line vue/no-v-html -- HTML sanitized by DOMPurify (utils/markdown.ts) -->
@@ -213,7 +231,10 @@ const remove = () => run(async () => { const yes = await removeTaskApi(props.car
           </li>
         </ol>
 
-        <TaskHistory v-else :card="card" :comments="tab === 'comments'" />
+        <template v-else>
+          <p v-if="tab === 'history' && times" class="task-times" data-testid="task-times">{{ times }}</p>
+          <TaskHistory :card="card" :comments="tab === 'comments'" />
+        </template>
       </div>
     </div>
   </AppSheet>
@@ -239,6 +260,12 @@ const remove = () => run(async () => { const yes = await removeTaskApi(props.car
 .task-pr .iconify { width: 12px; height: 12px; }
 .task-sheet-lead { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .task-times { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+/* The PR's state on its badge, after a thin rule; red for what blocks it. */
+.task-pr-state { margin-left: 6px; padding-left: 6px; border-left: 1px solid var(--line); color: var(--muted); }
+.task-pr-state:is([data-state="merged"]) { color: var(--done); }
+.task-pr-state:is([data-state="conflict"], [data-state="red CI"], [data-state="closed"]) { color: var(--danger); }
+/* The whole time, small and muted, at the end of the branch line. */
+.task-total { margin-left: auto; font: 12px/1.4 var(--mono); color: var(--muted); white-space: nowrap; }
 .task-panel { display: flex; flex-direction: column; gap: 10px; min-width: 0; flex: 1 0 auto; }
 .task-desc { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-2); }
 /* Headings shown small: a description is not a document. */
@@ -254,6 +281,7 @@ const remove = () => run(async () => { const yes = await removeTaskApi(props.car
    (Stop under Try again and Report a problem spans the line, not one stray button). */
 @media (max-width: 699px) {
   .task-sheet-actions > * { flex: 1 1 auto; justify-content: center; }
+  .task-sheet-actions > .task-more { flex: none; }
 }
 .task-report-open { display: grid; gap: 6px; justify-items: start; padding: 10px 12px; border: 1px solid var(--working); }
 .task-stop-confirm { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--danger); }

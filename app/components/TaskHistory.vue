@@ -10,7 +10,7 @@ import { REPORTS, taskHistory, type Who } from '#shared/pm/history'
 
 const props = defineProps<{ card: Card, comments?: boolean }>()
 const WHO: Record<Who, string> = { worker: 'Worker', reviewer: 'Reviewer', user: 'You', coordinator: 'Coordinator', engine: 'wherdr' }
-const entries = computed(() => taskHistory(props.card.log, props.card.plan, props.card.state, !props.comments, props.card.workReports)
+const entries = computed(() => taskHistory(props.card.log, props.card.plan, props.card.state, !props.comments, props.card.workReports, props.card.starts)
   .filter(e => !props.comments || REPORTS.has(e.label))
   .map(e => ({ ...e, html: e.routine ? '' : md(e.text, { plain: true }), tone: e.label === 'Sent back' ? 'back' : e.label === 'Passed' ? 'pass' : '' })))
 function onClick(e: MouseEvent) {
@@ -26,6 +26,7 @@ function onClick(e: MouseEvent) {
       <span class="mono-label">
         <b>{{ tl(WHO[e.who]) }}</b><template v-if="e.label"> · {{ tl(e.label) }}</template>
         <span class="muted"> · <time :datetime="new Date(e.at).toISOString()" :title="fmtDateTime(e.at)">{{ fmtWhen(new Date(e.at).toISOString()) }}</time><template v-if="e.agent"> · {{ e.agent }}</template></span>
+        <template v-for="st in e.started ?? []" :key="st.role"> · <span class="task-history-agent" data-testid="history-agent">{{ tl(WHO[st.role]) }} {{ st.agent }}</span></template>
       </span>
       <span v-if="e.routine" class="task-history-line">{{ e.text }}</span>
       <FoldText v-else :lines="5">
@@ -46,6 +47,7 @@ function onClick(e: MouseEvent) {
 /* The engine's bookkeeping: one light line, no rule of its own. */
 .task-history li.routine { gap: 0; padding-top: 4px; padding-bottom: 4px; border-left-color: transparent; color: var(--muted); font-size: 12px; }
 .task-history li.routine .mono-label { font-size: 10px; }
+.task-history-agent { color: var(--text-2); }
 .task-history-line { white-space: pre-wrap; overflow-wrap: anywhere; }
 .task-history-md { overflow-wrap: anywhere; color: var(--text-2); }
 .task-history-md :deep(:is(h1, h2, h3, h4, h5, h6)) { font-size: 15px; margin: .6em 0 .3em; }

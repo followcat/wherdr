@@ -12,6 +12,20 @@ import type { OutboxItem } from './outbox'
 import { type QueuedPhase, queuedPhases } from '../../shared/queuedPhase'
 import { fieldHolds, photosLanded, photosOnly, uploadNames, withoutUploads } from '../../shared/queuedMatch'
 import { sameSent } from '../../shared/reference'
+import { CARD_NOTE } from '../../shared/uiActions'
+import { WAKE_LABEL, type WakeKind, wakeKindOf } from '../../shared/pm/wakes'
+
+// A note wherdr itself typed into the agent (a card's outcome, a wake): never
+// the user's bubble, a small row tagged like its row in the conversation.
+export interface WherdrNote { kind: WakeKind | 'card', text: string }
+export function wherdrNoteOf(raw: string): WherdrNote | null {
+  if (raw.startsWith(CARD_NOTE)) return { kind: 'card', text: raw.slice(CARD_NOTE.length) }
+  const kind = wakeKindOf(raw)
+  if (!kind) return null
+  // Its head line, without a <pasted_content> wrapper nor its label.
+  const head = raw.replace(/^\s*<pasted_content[^>]*>\s*/, '').trimStart().split('\n')[0]!
+  return { kind, text: head.slice(WAKE_LABEL[kind].length + 2) }
+}
 
 export interface PendingMessage {
   id: string
@@ -36,6 +50,8 @@ export interface PendingMessage {
   // Typed into Claude's input field and still there, not submitted: never
   // "sent" nor "read" (see `input` of pendingQueue).
   inInput?: boolean
+  // wherdr's own note (see wherdrNoteOf).
+  note?: WherdrNote
 }
 
 const normText = (s: string) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase()
@@ -52,6 +68,26 @@ export function rememberSent(paneId: string, list: OutboxItem[]): OutboxItem[] {
   out.push(...list.filter(q => uploadNames(q.text).length))
   memories.set(paneId, out.slice(-MEMORY))
   return memories.get(paneId)!
+}
+
+type Entry = OutboxItem & { missing?: number }
+const timeOf = (ts: string | null) => (ts && Date.parse(ts)) || undefined
+// Both sources in sending order, the oldest first. Each is in order already;
+// Claude's entries go between wherdr's records by time, since a message may be
+// listed by Claude alone (its wherdr record pruned once Claude got it) while
+// a later one is still one of wherdr's records. Without a time on either
+// side, wherdr's record goes first.
+function bySendingOrder(own: Entry[], theirs: Entry[]): Entry[] {
+  const out: Entry[] = []
+  let i = 0
+  let j = 0
+  while (i < own.length || j < theirs.length) {
+    const a = own[i]
+    const b = theirs[j]
+    if (b && (!a || (a.at && b.at && b.at < a.at))) { out.push(b); j++ }
+    else { out.push(a!); i++ }
+  }
+  return out
 }
 
 export function pendingQueue(o: {
@@ -78,12 +114,13 @@ export function pendingQueue(o: {
   }
   // Sending order, whatever the source (server or local send).
   const mine = [...o.mine].sort((a, b) => (a.at && b.at ? a.at - b.at : 0))
-  const list: (OutboxItem & { missing?: number })[] = mine.filter(q => !inChat(q))
+  const own: Entry[] = mine.filter(q => !inChat(q))
+  const theirs: Entry[] = []
   // Claude's entries: one of wherdr's records (listed, or already in the
   // conversation) is the same message. Photos alone: one entry per record
   // still waiting in Claude's queue (not held here, not already sent).
-  const minePhases = queuedPhases(list.map(q => q.text), o.screen)
-  let ownPhotos = list.filter((q, i) => photosOnly(q.text) && !q.state && minePhases[i] === 'queued').length
+  const minePhases = queuedPhases(own.map(q => q.text), o.screen)
+  let ownPhotos = own.filter((q, i) => photosOnly(q.text) && !q.state && minePhases[i] === 'queued').length
   const memPhotos = (o.memory || []).filter(m => photosOnly(m.text) && !mine.some(q => q.id === m.id))
   // wherdr did not send these: shown only while Claude may still read them
   // (never once idle), and not once in the conversation (a scheduled prompt
@@ -96,14 +133,15 @@ export function pendingQueue(o: {
       // Remembered ones are taken in order, even when the server knows the entry.
       const remembered = memPhotos.shift()
       const known = q.sent || remembered?.text
-      list.push({ id: `cc-${q.ts}`, text: known || '', missing: known ? 0 : images })
+      theirs.push({ id: `cc-${q.ts}`, text: known || '', missing: known ? 0 : images, at: timeOf(q.ts) })
       continue
     }
     if (!normText(q.text) || mine.some(x => holds(x.text, q.text))) continue
     if (o.items.some(i => (!q.ts || !i.ts || i.ts >= q.ts) && (i.role === 'user' || i.role === 'notice') && holds(i.text, q.text))) continue
     const known = images ? q.sent || [...(o.memory || [])].reverse().find(m => holds(withoutUploads(m.text), q.text))?.text : null
-    list.push({ id: `cc-${q.ts}`, text: known || q.text, missing: known ? 0 : images })
+    theirs.push({ id: `cc-${q.ts}`, text: known || q.text, missing: known ? 0 : images, at: timeOf(q.ts) })
   }
+  const list = bySendingOrder(own, theirs)
   const phases = queuedPhases(list.map(q => q.text), o.screen)
   // Claude's transcript queue is the truth on what it has not taken yet: its
   // screen may show a queued message where a sent one stands (Claude Code
@@ -125,6 +163,7 @@ export function pendingQueue(o: {
     // Refused by the server ('failed', not_submitted) but there all the same:
     // one bubble with the field's Send now / Clear, not "Not sent" + Retry
     // (refused while the field holds it) next to the field's own card.
+    const note = wherdrNoteOf(q.text)
     const inInput = !q.id.startsWith('cc-') && q.state !== 'sending' && fieldHolds(o.input, q.text, false, true)
     return {
       id: q.id,
@@ -141,6 +180,7 @@ export function pendingQueue(o: {
       ...(q.pasted ? { pasted: q.pasted } : {}),
       ...(inAgentQueue ? { inAgentQueue } : {}),
       ...(inInput ? { inInput } : {}),
+      ...(note ? { note } : {}),
     }
   })
 }

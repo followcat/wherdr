@@ -160,10 +160,12 @@ it('opens the project sheet on the URL\'s tab; Guards saves a branch added; Gene
   const copy = inSheet('pm-setup-copy')!.querySelector('textarea') ?? inSheet('pm-setup-copy') as HTMLTextAreaElement
   ;(copy as HTMLTextAreaElement).value = '.env\n config/local.json '
   copy.dispatchEvent(new Event('input'))
-  await pick(w, 'pm-reach-DOC', 'act') // a pick saves at once, with what was typed
+  inSheet('pm-reach-add')!.click() // a pick saves at once, with what was typed
+  await vi.waitFor(() => expect(document.querySelector('[data-testid="pm-reach-pick-DOC"]')).not.toBeNull())
+  document.querySelector<HTMLElement>('[data-testid="pm-reach-pick-DOC"]')!.click()
   await vi.waitFor(() => expect(calls[0]).toEqual({ url: '/api/pm/project-update', body: {
     // Only what changed: the agents left alone are not sent (a member's never become its own).
-    key: 'WEB', name: 'Website', reach: [{ project: 'DOC', level: 'act' }],
+    key: 'WEB', name: 'Website', reach: [{ project: 'DOC', level: 'read' }],
     worktree: { copy: ['.env', 'config/local.json'], share: [], lockfile: '', command: '', timeout: '' }, // share none kept
   } }))
 

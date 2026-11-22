@@ -74,7 +74,10 @@ export function cardTime(c: { phase: string, step?: string, state?: { since?: nu
   if (c.phase === 'working' && c.step && c.state?.since !== undefined) return `${spent(now - c.state.since)} in ${c.step}`
 }
 
-// The sheet's line: 'work 25 min · review 9 min · waited for you 1 h · 2 review rounds · 1 CI fix · 42 min in all'.
+// The task's whole time, for the sheet's header: start to done, or to now while it goes on.
+export const totalTime = (x: Times, now: number) => (x.total ?? (x.start !== undefined ? Math.max(0, now - x.start) : undefined))
+
+// The History tab's line: 'work 25 min · review 9 min · waited for you 1 h · 2 review rounds · 1 CI fix · 42 min in all'.
 export function timesText(x: Times): string {
   const plural = (n: number, one: string) => `${n} ${one}${n > 1 ? 's' : ''}`
   return [

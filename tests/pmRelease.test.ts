@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -10,7 +11,7 @@ import { advanceTick } from '../server/utils/pmAdvance'
 import { mechanicTick } from '../server/utils/pmMechanic'
 import { forgetMemory } from '../server/utils/pmMemory'
 import { askAgentFix } from '../server/utils/pmFix'
-import { FIX_QUIET_MS, RELEASE_IDLE_MS, RELEASE_TALK_MS, ROOM_WAKE_MS, agentBack, agentsAtWork, fixAskText, fixAskedStep, fixWatch, fixableBlock, handFix, handToAgent, idleSince, releaseDue, retriesAction, roomWanted } from '../shared/pm/release'
+import { CODEX_SESSION_SCRIPT, FIX_QUIET_MS, RELEASE_IDLE_MS, RELEASE_TALK_MS, ROOM_WAKE_MS, agentBack, agentsAtWork, fixAskText, fixAskedStep, fixWatch, fixableBlock, handFix, handToAgent, idleSince, releaseDue, retriesAction, roomWanted } from '../shared/pm/release'
 import { cardStatus } from '../shared/pm/board'
 import { initialState, onEvent, type PlannedStep } from '../shared/pm/steps'
 import { wherdr } from '../shared/pm/examples'
@@ -169,7 +170,7 @@ describe('release and restart on the server', () => {
     expect(calls.some(c => c[0] === 'terminal.send')).toBe(false)
   })
 
-  it('opening a released worker starts it again with its conversation, saying so', async () => {
+  it('opening a released worker starts it again with its conversation, sending it nothing', async () => {
     const { store, calls, deps } = await setup()
     await releaseIdle(deps, 0)
     await expect(wakeReleased(deps, 'WH-1')).rejects.toThrow('not released')
@@ -179,9 +180,25 @@ describe('release and restart on the server', () => {
     const t = await wakeReleased(deps, 'WH-1')
     expect(t.state).toBe('working')
     const line = String(calls.filter(c => c[0] === 'terminal.run')[1]![1].line)
-    expect(line).toContain(`'--resume' '${ended.session}'`)
-    expect(line).toMatch(/Restarted: it was released to free memory at \d\d:\d\d\./)
+    expect(line.endsWith(`'--resume' '${ended.session}'`)).toBe(true)
     expect(t.log!.at(-1)!.text).toBe('started the worker again in its worktree: the user opened its conversation')
+  })
+})
+
+describe('a released Codex worker\'s conversation', () => {
+  it('is the newest rollout whose first message reads the worker\'s instructions, not its reviewer\'s', async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-codex-'))
+    const day = path.join(home, 'sessions/2026/01/02')
+    await fs.mkdir(day, { recursive: true })
+    const id = (n: number) => `0000000${n}-aaaa-bbbb-cccc-dddddddddddd`
+    const rollout = (at: string, n: number, file: string) => fs.writeFile(path.join(day, `rollout-2026-01-02T${at}-${id(n)}.jsonl`), `{"type":"session_meta"}\n{"type":"response_item","payload":{"role":"user","content":[{"type":"input_text","text":"Read ${file} and follow it."}]}}\n`)
+    await rollout('10-00-00', 1, '/t/W-1/instructions.md') // an earlier worker conversation
+    await rollout('11-00-00', 2, '/t/W-1/instructions.md')
+    await rollout('12-00-00', 3, '/t/W-1/review.md')
+    const find = (file: string) => execFileSync('sh', ['-c', CODEX_SESSION_SCRIPT, 'sh', file, '60'], { env: { ...process.env, CODEX_HOME: home }, encoding: 'utf8' }).trim()
+    expect(find('/t/W-1/instructions.md')).toBe(id(2))
+    expect(find('/t/W-2/instructions.md')).toBe('')
+    await fs.rm(home, { recursive: true, force: true })
   })
 })
 

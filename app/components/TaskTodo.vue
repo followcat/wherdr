@@ -24,7 +24,7 @@ import type { Pane } from '#shared/types'
 import type { WaitKind } from '#shared/pm/run'
 import type { TodoKind } from '~/utils/taskTodo'
 
-const props = defineProps<{ card: Card, kind: TodoKind, pane?: Pane, busy: boolean, pressing: boolean, refused: string, failed?: boolean, waitsFor?: string[] }>()
+const props = defineProps<{ card: Card, kind: TodoKind, pane?: Pane, busy: boolean, pressing: boolean, refused: string, failed?: boolean, waitsFor?: string[], stepAbove?: boolean }>()
 const emit = defineEmits<{ press: [], start: [], resume: [how: Resume], decide: [choice: Choice], back: [note: string], review: [], worker: [], ask: [], fix: [], comments: [] }>()
 
 // Where the engine's catch-up of a conflict stands: the agent on it, or done.
@@ -58,6 +58,7 @@ const notes = computed(() => (props.kind === 'merge' || props.kind === 'step') &
   : {})
 const pr = computed(() => (props.kind === 'merge' || props.kind === 'step' || props.kind === 'refused' ? prLink(props.card) : undefined))
 const note = ref('')
+// stepAbove: the step's own button (StepButton) is in the sheet's header, not here.
 // A stalled review in one plain sentence: its reviewer gone, or still there past the step's time limit.
 const reviewSay = computed(() => (props.card.terminal
   ? tl(`The review has run over ${props.card.plan[props.card.state?.at ?? 0]?.timeout ?? 'its time limit'} without a verdict. Restart it to review the PR's latest commit from the start.`)
@@ -157,7 +158,7 @@ const ASK_LABEL: Record<WaitKind, [string, string]> = { question: ['Its agent as
       <div v-else class="task-sheet-actions todo-buttons">
         <!-- A refused action is tried again from the sheet's top (Try again). -->
         <UButton v-if="fixes" :color="fixesFirst ? 'primary' : 'neutral'" :variant="fixesFirst ? 'solid' : 'outline'" size="xl" :icon="confirmed === 'fix' ? 'i-lucide-check' : 'i-lucide-wrench'" :class="{ confirmed: confirmed === 'fix' }" :loading="sending('fix')" :disabled="busy" data-testid="todo-fix" @click="act('fix', () => emit('fix'))">{{ tl('Ask the agent to fix it') }}</UButton>
-        <UButton v-if="card.userLabel && kind !== 'refused'" color="primary" size="xl" :loading="sending('press') || goes" :disabled="busy || (!open && (!!stuck || (waits !== undefined && !goes)))" data-testid="step-user" @click="act('press', () => emit('press'))">{{ waits !== undefined && !stuck ? tl('Merging') : card.userLabel }}</UButton>
+        <StepButton v-if="card.userLabel && kind !== 'refused' && !stepAbove" :card="card" :busy="busy" :loading="sending('press')" @press="act('press', () => emit('press'))" />
         <UButton v-if="pr" color="neutral" variant="outline" size="xl" icon="i-lucide-square-arrow-out-up-right" :to="pr.url" target="_blank" data-testid="todo-pr">{{ tl('Open the PR') }}</UButton>
         <UButton v-if="stuck" color="primary" size="xl" :icon="confirmed === 'worker' ? 'i-lucide-check' : 'i-lucide-play'" :class="{ confirmed: confirmed === 'worker' }" :loading="sending('worker')" :disabled="busy" data-testid="todo-worker-start" @click="act('worker', () => emit('worker'))">{{ tl('Start the worker') }}</UButton>
         <UButton v-if="kind === 'review'" color="primary" size="xl" :icon="confirmed === 'review' ? 'i-lucide-check' : 'i-lucide-rotate-ccw'" :class="{ confirmed: confirmed === 'review' }" :loading="sending('review')" :disabled="busy" data-testid="todo-review-restart" @click="act('review', () => emit('review'))">{{ tl('Restart the review') }}</UButton>

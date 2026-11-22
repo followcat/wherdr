@@ -358,7 +358,7 @@ export function bbReady(statuses: BbStatus[], required: string[] = []): { ok: tr
 export const endsMerged = (k: string) => isPrMerge(k) || k === 'git.verify-merged'
 
 // Why a merged task's remote branch stays whatever its host says: a protected
-// branch, or a base (the project's, the step's), which other work starts from.
+// branch, or a base (the project's, the step's, the type's start), which other work starts from.
 export function keepsBranch(g: ResolvedGuards, branch: string, bases: (string | undefined)[]): string | undefined {
   if (isProtected(g, branch)) return 'it is a protected branch'
   if (bases.includes(branch)) return 'it is a base branch'

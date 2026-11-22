@@ -2,7 +2,7 @@
 // removed or changed, each changed field with its value before and after.
 // The coordinator's proposal card and review show it; the JSON diff
 // (templateDiff) stays for the details.
-import type { Guards, Step, StepAction, Template, TaskType } from './workflow'
+import { isDefaultWorkflow, type Guards, type Step, type StepAction, type Template, type TaskType } from './workflow'
 import { lineDiff } from './coordinator'
 
 // before/after: the field's value as text, absent when it was not set.
@@ -14,8 +14,9 @@ export interface StepChange { id: string, kind: ChangeKind, holder: string, ends
 // steps: the new list in order, removed steps where they were; about: an added
 // type in a few words ("6 steps, PR to develop, you merge").
 export interface TypeChange { type: string, kind: 'added' | 'removed' | 'changed', fields: FieldChange[], steps: StepChange[], about?: string }
-// all: the workflow's own fields (guards, instructions, prefs, worktree), for every type.
-export interface WorkflowChanges { all: FieldChange[], types: TypeChange[] }
+// all: the workflow's own fields (guards, instructions, prefs, worktree), for every type;
+// first: the project had no accepted workflow yet (none, or the minimal default).
+export interface WorkflowChanges { all: FieldChange[], types: TypeChange[], first?: true }
 
 const MERGE_BY = { engine: 'automatic', user: 'you' } as Record<string, string>
 const text = (v: unknown): string | undefined => {
@@ -105,7 +106,17 @@ export function workflowChanges(old: Template | null, next: Template): WorkflowC
     const kind = !a ? 'added' : !b ? 'removed' : 'changed'
     if (kind !== 'changed' || fields.length || steps.some(s => s.kind !== 'same')) types.push({ type, kind, fields, steps, ...(kind === 'added' ? { about: typeAbout(next, b!) } : {}) })
   }
-  return { all: compare(ownFields(o), ownFields(next)), types }
+  return { all: compare(ownFields(o), ownFields(next)), types, ...(!old || isDefaultWorkflow(old) ? { first: true as const } : {}) }
+}
+
+// A proposal's title, from what it does: the project's first workflow, task
+// types only added, or only removed, else a change.
+export type ChangeTitle = 'First workflow' | 'New task type' | 'New task types' | 'Task type removed' | 'Task types removed' | 'Workflow change'
+export function changeTitle(c?: WorkflowChanges): ChangeTitle {
+  if (c?.first) return 'First workflow'
+  const only = (k: TypeChange['kind']) => !!c && !c.all.length && !!c.types.length && c.types.every(t => t.kind === k)
+  const many = (c?.types.length ?? 0) > 1
+  return only('added') ? (many ? 'New task types' : 'New task type') : only('removed') ? (many ? 'Task types removed' : 'Task type removed') : 'Workflow change'
 }
 
 const fieldLine = (f: FieldChange) => (f.field === 'instructions' ? 'instructions edited' : `${f.field}: ${f.before ?? 'none'} → ${f.after ?? 'none'}`)

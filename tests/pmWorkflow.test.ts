@@ -82,6 +82,12 @@ describe('validateTemplate', () => {
     expect(paths(validateTemplate(t))).toEqual(['taskTypes.a.childType', 'taskTypes.a.steps[0]'])
   })
 
+  it('a task type may start from another branch: a branch name, never empty or invalid', () => {
+    const t = (start: unknown) => ({ id: 'x', taskTypes: { promote: { start, steps: [{ id: 'w', holder: 'worker', ends: 'report' }] } } })
+    expect(validateTemplate(t('develop'))).toEqual([])
+    for (const bad of ['', 'bad..name', 'a b', 3]) expect(validateTemplate(t(bad))).toEqual([{ path: 'taskTypes.promote.start', message: 'must be a branch name, such as develop' }])
+  })
+
   it('needs at least one task type', () => {
     expect(paths(validateTemplate({ id: 'x', taskTypes: {} }))).toEqual(['taskTypes'])
   })

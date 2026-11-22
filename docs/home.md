@@ -186,6 +186,31 @@ the current one, a task's worker, reviewer or coordinator) — reaches the progr
 (`HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`/`NO_PROXY`, upper- and lowercase), never in its command
 line, so it stays out of titles and argv.
 
+### Named agents
+
+Settings › Agents › **Named agents** gives a name to a command on some machines: an
+executable on the machine's PATH (often a wrapper script) and its fixed options, for a second
+account of the same program (a subscription and an API key) or launch options such as
+`--thinking medium`. Each one has a name (`omp-sub`), the program it runs (claude, codex or
+omp: wherdr reads its conversation, choices and status as that program's), the command
+(`omp-sub --thinking medium`) and the machines that have it; *Add named agent*, then edit or
+remove a row. A workflow names it in `prefs.agent`, `reviewAgent` or `reviewFallbackAgent`
+([Worker and reviewer agents](project-management.md#worker-and-reviewer-agents)). The list
+follows you on every device and is read by the engine.
+
+**No secret ever goes in wherdr**: only a name and a command line (a command naming a key,
+token, secret or password, as `--api-key VALUE` or `TOKEN=…`, is refused). Options are split
+on spaces and passed as typed, so quotes are refused: an option whose value has spaces goes
+in the wrapper script. The wrapper script reads its key itself, from the
+keychain for instance:
+
+```sh
+#!/bin/sh
+# ~/bin/omp-sub: omp on the API account, its key from the keychain.
+OMP_API_KEY="$(secret-tool lookup service omp-api)" exec omp "$@"
+# macOS: security find-generic-password -s omp-api -w
+```
+
 ### Machines as tabs
 
 The **machine tabs** at the top of the list are **All**, then one tab per machine (the host, the

@@ -19,6 +19,7 @@ afterEach(() => { w?.unmount(); w = null; posts.length = 0 })
 
 it('pending: the change in a line, Accept answers it, See all changes opens the review', async () => {
   w = await mountSuspended(ProposalCard, { props: { c: pending } })
+  expect(w.find('.part-name').text()).toBe('Workflow change')
   expect(w.text()).toContain('task: merge: you → automatic')
   await w.find('[data-testid="proposal-card-accept"]').trigger('click')
   await vi.waitFor(() => expect(posts).toEqual([{ project: 'CO', accept: true }]))
@@ -29,6 +30,7 @@ it('pending: the change in a line, Accept answers it, See all changes opens the 
 it('answered: its own change, the outcome, by whom and when, and no buttons, even while another waits', async () => {
   w = await mountSuspended(ProposalCard, { props: { c: pending, answer: { outcome: 'refused', at: 2, by: 'user', proposedAt: 1, summary: ['task: + land'] } } })
   expect(w.text()).toContain('task: + land')
+  expect(w.find('.part-name').text()).toBe('Workflow change')
   expect(w.text()).not.toContain('automatic')
   expect(w.find('[data-testid="proposal-outcome"]').text()).toMatch(/^Refused by you · /)
   expect(w.find('button').exists()).toBe(false)
@@ -108,4 +110,14 @@ it('the Workflow tab\'s head links to the Autopilot tab', async () => {
   w = await mountSuspended(PartHead, { props: { part: 'workflow', project: 'CO' } })
   expect(w.find('[data-testid="part-link"]').text()).toBe('Who starts tasks and when: Autopilot tab')
   expect(w.find('[data-testid="part-link"]').attributes('href')).toBe('#/settings?section=projects&project=CO&tab=autopilot')
+})
+
+it('only a task type added: New task type on the card and its review, and once answered', async () => {
+  const added = { all: [], types: [{ type: 'release', kind: 'added' as const, fields: [], steps: [], about: '9 steps' }] }
+  w = await mountSuspended(ProposalCard, { props: { c: { ...pending, proposal: { diff: '+ release', at: 1, changes: added } } } })
+  expect(w.find('.part-name').text()).toBe('New task type')
+  await w.find('[data-testid="proposal-see"]').trigger('click')
+  await vi.waitFor(() => expect(document.body.textContent).toContain('New task type proposed'))
+  await w.setProps({ answer: { outcome: 'accepted', at: 2, by: 'user', proposedAt: 1, summary: ['+ type release'], title: 'New task type' } })
+  expect(w.find('.part-name').text()).toBe('New task type')
 })

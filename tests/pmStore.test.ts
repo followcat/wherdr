@@ -147,6 +147,29 @@ describe('runs', () => {
       expect(reads.mock.calls.filter(c => String(c[0]).includes('runs')).map(c => path.basename(String(c[0])))).toEqual(['b.json'])
     } finally { reads.mockRestore() }
   })
+
+  it('reads a task file again only when it changed, even replaced at the same size and mtime', async () => {
+    const store = createPmStore(dir)
+    await fs.mkdir(store.files.tasks, { recursive: true })
+    const file = (id: string) => path.join(store.files.tasks, `${id}.json`)
+    const task = (id: string, title: string) => JSON.stringify({ id, project: 'WEB', title, description: '', type: 'simple', state: 'todo' })
+    await fs.writeFile(file('WEB-1'), task('WEB-1', 'one'))
+    await fs.writeFile(file('WEB-2'), task('WEB-2', 'two'))
+    expect((await store.tasks()).map(t => t.title)).toEqual(['one', 'two'])
+    const reads = vi.spyOn(fs, 'readFile')
+    try {
+      await store.tasks()
+      expect(reads).not.toHaveBeenCalled()
+      // Another file in its place (a save is a rename), same size and times: its inode tells.
+      const { mtime } = await fs.stat(file('WEB-2'))
+      await fs.writeFile(`${file('WEB-2')}.tmp`, task('WEB-2', 'TWO'))
+      await fs.utimes(`${file('WEB-2')}.tmp`, mtime, mtime)
+      await fs.rename(`${file('WEB-2')}.tmp`, file('WEB-2'))
+      await fs.utimes(store.files.tasks, mtime, new Date(mtime.getTime() + 5000))
+      expect((await store.tasks()).map(t => t.title)).toEqual(['one', 'TWO'])
+      expect(reads.mock.calls.map(c => path.basename(String(c[0])))).toEqual(['WEB-2.json'])
+    } finally { reads.mockRestore() }
+  })
 })
 
 describe('workflows migration', () => {

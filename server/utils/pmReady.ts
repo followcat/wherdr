@@ -8,6 +8,7 @@ import { PATH_SETUP, homeOf, machineOn } from './coreCreate'
 import { exec, wherdrBase, type PmLaunchDeps } from './pmLaunch'
 import { READY_SCRIPT, readyOf, readyRefusal, type Readiness } from '../../shared/pm/ready'
 import { reviewerPlan, shotStep, taskBase, taskPlan, workerPlan, type Task } from '../../shared/pm/run'
+import { namedAgents } from './settings'
 import { cloneOn, type Project } from '../../shared/pm/project'
 import type { Template } from '../../shared/pm/workflow'
 import { pmDir } from './pmHome'
@@ -29,7 +30,8 @@ async function runCheck(deps: PmLaunchDeps, p: Project, t: Template | null, task
   const origin = await exec(deps, machineOn(deps, p.machine).on, 'git -C "$1" remote get-url origin', [p.path]).catch(() => ({ out: '' }))
   const type = task?.type ?? Object.keys(t?.taskTypes ?? {})[0]
   const as = task ?? (type ? { type } as Task : undefined)
-  const programs = t && as ? [...new Set([workerPlan(t, as), reviewerPlan(t, as)].flatMap(x => ('program' in x ? [x.program] : [])))] : []
+  const named = await namedAgents()
+  const programs = t && as ? [...new Set([workerPlan(t, as, named), reviewerPlan(t, as, undefined, named)].flatMap(x => ('program' in x ? [x.program] : [])))] : []
   const gh = !!t && !!as && taskPlan(t, as, p).some(s => s.action?.kind.startsWith('github.'))
   const base = as ? taskBase(as, p) ?? '' : p.base ?? ''
   const args = [clone, base, visual ? wherdrBase(machine, deps.origin) : '', gh ? '1' : '0', visual ? '1' : '0', ...programs]

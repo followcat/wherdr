@@ -105,6 +105,16 @@ describe('other projects (WHR-311)', () => {
     await refused(cli(['task', 'add', 'More', '--type', 'study', '--project', 'ST']), 'needs Act')
   })
 
+  it('ui show file of another project\'s task: refused without reach, allowed with Read (WHR-544)', async () => {
+    const st = await store.addTask({ project: 'ST', title: 'Study', type: 'study' })
+    await noteTurn(store, 'CO', 'user', 'show me its report')
+    const show = () => cli(['ui', 'show', 'file', `${st.id}/report.md`])
+    await refused(show(), 'show on project ST needs Read or Act')
+    await reach('read')
+    // Past the reach check: what stops it now is only that no wherdr is open in this test.
+    await refused(show(), 'No open wherdr')
+  })
+
   it('Act: writes logged with the acting coordinator\'s name, its coordinator told at its next wake; guards, merges and settings stay out', async () => {
     const st = await store.addTask({ project: 'ST', title: 'Study', type: 'study' })
     await issueToken(store, 'ST')
@@ -989,7 +999,9 @@ describe('role files', () => {
     expect(first).toContain('propose a workflow with `template edit`')
     expect(first).toContain('In that same first reply, propose a workflow')
     expect(agents).toContain('"id":"vibe"')
-    expect(agents).toContain('with its absolute path (`/src/co/README.md`)')
+    expect(agents).toContain('with its own full absolute path (`/src/co/README.md`)')
+    expect(agents).toContain('never a bare name after its folder')
+    expect(agents).toContain('offer `ui show file ABC-24/report.md`')
     expect(files['CLAUDE.md']).toBe('@AGENTS.md\n')
     expect(JSON.parse(files['.claude/settings.json']!).permissions.deny).toEqual(['Edit(//src/co/**)'])
     const codex = coordinatorArgs('codex', '/h/c', '/src/co')

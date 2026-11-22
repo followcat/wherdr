@@ -312,6 +312,14 @@ describe('step engine, study and feature split', () => {
       expect(held.since).toBe(0)
     })
 
+    it('a 5 h wait for the user\'s answer does not count, and the clock runs again from the answer', () => {
+      const asks = (t: number) => t > H && t <= 6 * H
+      const at = (t: number) => clockStops(asks(t) ? { state: 'waiting', waitKind: 'question' } : { state: 'working' }, false)
+      expect(run(6 * H, at).yourTurn).toBeUndefined()
+      expect(run(7.5 * H, at).yourTurn).toBeUndefined()
+      expect(run(8 * H, at).yourTurn).toEqual({ reason: 'timeout', badge: 'Check work: over 3h' })
+    })
+
     it('normal work still times out after 3 h', () => {
       expect(run(2.5 * H, () => false).yourTurn).toBeUndefined()
       expect(run(3 * H, () => false).yourTurn).toEqual({ reason: 'timeout', badge: 'Check work: over 3h' })

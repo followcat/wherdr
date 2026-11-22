@@ -112,7 +112,10 @@ export const nudgeText = (s: Stall, tests: string[] = []) => s.cause.startsWith(
 export const stallTurn = (s: Stall) => `Stalled: ${s.reason}`
 
 // The step's holder cannot work (pauseClock): the task waits for room, a machine
-// or the pace (held), for another task (parked, park.ts), for the engine to resume it after an incident, or the
-// machine its agent runs on is offline or unreachable.
+// or the pace (held), for another task (parked, park.ts), for the engine to resume it after an incident, for
+// the user's answer to its agent's question or permission request, or the
+// machine its agent runs on is offline or unreachable. A login problem (auth)
+// is the engine's to fix (mechanic.ts restarts the agent): its clock runs.
 export const clockStops = (task: Pick<Task, 'state' | 'run' | 'recovery' | 'stopped' | 'waitKind' | 'held' | 'parked'>, machineOffline: boolean) =>
   machineOffline || !!task.parked || recovering(task) || (!!task.held && (task.state === 'todo' || task.state === 'working'))
+  || (task.state === 'waiting' && (task.waitKind === 'question' || task.waitKind === 'permission'))

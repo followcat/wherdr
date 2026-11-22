@@ -66,7 +66,7 @@ export function tasks(now: number): Task[] {
       step: at(1, min(30)), branch: 'task/API-12', log: [{ at: min(31), by: 'Ada', text: 'Created for the 2.3 release' }],
     }),
     task('API-13', 'simple', 'Fix the flaky CSV export test', 'export.spec.ts fails about one run in ten in CI. Find out why and make it deterministic.', {
-      step: at(1, min(25)), branch: 'task/API-13', tags: ['ci'],
+      step: at(1, min(25)), branch: 'task/API-13', tags: ['ci'], log: [{ at: min(25), by: 'user', text: 'started the task' }],
     }),
     task('API-10', 'simple', 'Webhook retries with backoff', 'Retry failed webhook deliveries 5 times, doubling the wait, then mark them failed.', {
       step: at(3, min(6)), branch: 'task/API-10',
@@ -81,5 +81,5 @@ export function tasks(now: number): Task[] {
 export const runs = (now: number): Run[] => {
   const run = (task: string, role: Run['role'], program: string, terminal: string, ago: number): Run =>
     ({ id: `r-${task}-${role}`, task, role, program, model: '', machine: '', worktree: `${HOME}/.wherdr/worktrees/${task}`, branch: `task/${task}`, instructions: '', terminal, attempt: 1, state: 'running', startedAt: now - ago * 60_000 })
-  return [run('WEB-7', 'worker', 'claude', WEB_AT, 95), run('API-12', 'worker', 'codex', CODEX_AT, 30), run('API-13', 'worker', 'omp', OMP_AT, 25)]
+  return [run('WEB-7', 'worker', 'claude', WEB_AT, 95), run('API-12', 'worker', 'codex', CODEX_AT, 30), { ...run('API-13', 'worker', 'omp', OMP_AT, 25), agent: 'omp-sub' }] // omp-sub: a named agent (Settings › Agents)
 }

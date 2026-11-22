@@ -22,7 +22,7 @@ const flow: Template = {
 describe('engine liveness', () => {
   let dir = ''
   beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-sentinel-')) })
-  afterEach(() => fs.rm(dir, { recursive: true, force: true }))
+  afterEach(() => fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
 
   // Two tasks at their merge step; prInfo(branch) answers each task's PR read.
   async function setup(prInfo: (branch: string) => { code: number, text: string } = () => ({ code: 1, text: '' })) {

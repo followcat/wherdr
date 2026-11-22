@@ -18,7 +18,7 @@ import type { CoreAdminDeps } from './coreCreate'
 import { resendFirst } from './coordinatorFirst'
 import { lastWords } from './pmRead'
 import type { FolderCheck, PmStore } from './pmStore'
-import { readSettings } from './settings'
+import { namedAgents, readSettings } from './settings'
 import { addChangeCard, addSettingCard, addThemeCard } from './uiActions'
 import { importThemeText, themeFile } from '../../app/utils/customThemes'
 import { contrastIssues } from '../../app/utils/themes'
@@ -291,7 +291,7 @@ async function alfredCommand(deps: Deps, argv: unknown, input: unknown, card?: s
       const turn = await alfredTurn()
       const why = workflowEditRefusal(old, next, turn?.kind ?? 'none', p.key)
       if (why) throw new HerdrError('refused', why)
-      const errors = validateTemplate(next)
+      const errors = validateTemplate(next, await namedAgents())
       if (errors.length) throw new HerdrError('bad_input', errors.map(e => `${e.path}: ${e.message}`).join('; '))
       // Saved where the coordinator's proposal waits: the user answers it in the same review.
       const rec = await store.coordinator(p.key)

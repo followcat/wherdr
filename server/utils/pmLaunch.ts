@@ -22,7 +22,9 @@ import { ensureReady } from './pmReady'
 import { fileConflict, filesSection, pastAgents } from '../../shared/pm/files'
 import { branchFor } from '../../shared/pm/branchName'
 import { showIds, shownKey, shownTaskId } from '../../shared/pm/projectKey'
-import { LABEL, TMP_DIR, WS_FILES_SCRIPT, parseWsFiles, wsFilesSection, agentEnv, agentLine, isAuthFailure, instructionsText, shotStep, startBase, taskPlan, workflowBaseNote, missingBaseNote, reconcile, runLabels, taskPaths, tmpRefusal, workerPlan, type Run, type Task } from '../../shared/pm/run'
+import { namedAgents } from './settings'
+import { agentsMissing } from '../../shared/pm/namedAgents'
+import { LABEL, TMP_DIR, WS_FILES_SCRIPT, parseWsFiles, wsFilesSection, agentEnv, agentLine, isAuthFailure, instructionsText, shotStep, startBase, taskPlan, workflowBaseNote, missingBaseNote, startMissing, reconcile, runLabels, taskPaths, tmpRefusal, taskAgents, workerPlan, type Run, type Task } from '../../shared/pm/run'
 import { isOpen, type Incident, type Recovery } from '../../shared/pm/incident'
 import { recordGone, type CoreList } from './pmIncidents'
 import { interruptTask } from './pmRecovery'
@@ -125,6 +127,13 @@ export async function linkSkills(deps: Pick<CoreAdminDeps, 'call'>, store: PmSto
 export const FETCH_BRANCH_SCRIPT = `git -C "$1" ls-remote -q --exit-code origin "refs/heads/$2" >/dev/null 2>&1; c=$?
 [ $c = 2 ] && exit 2; [ $c = 0 ] || { echo "origin unreachable (git ls-remote exit $c)"; exit 1; }
 git -C "$1" fetch -q origin "+refs/heads/$2:refs/remotes/origin/$2" 2>&1 || exit 1`
+// The branch a task type starts from (TaskType.start), at the task's first
+// start: fetched from origin, or the local one when there is no origin. Prints
+// its full ref (a tag of the same name is never taken for it); exits 2 when it
+// is not there (the remote answers without it, or no local one).
+export const START_BRANCH_SCRIPT = `if ! git -C "$1" remote get-url origin >/dev/null 2>&1; then git -C "$1" rev-parse -q --verify "refs/heads/$2" >/dev/null || exit 2; echo "refs/heads/$2"; exit 0; fi
+${FETCH_BRANCH_SCRIPT}
+echo "refs/remotes/origin/$2"`
 // A read-only snapshot of a member's base branch for context folders ($1 its
 // clone, $2 the folder of its snapshots, $3 the base branch; '' the repository's
 // default, $4 a commit it pinned at an earlier start, or ''). A pinned commit is
@@ -383,8 +392,10 @@ async function machineHold(deps: PmLaunchDeps, task: Task, machine: string, now 
 // any other first start of it stays to do, behind that task (the engine starts it then).
 // by: who starts it (the log's 'back to work' line, when that clears a timeout or a stall).
 // resume: a Claude worker's conversation taken up again (crash recovery), with
-// that first message; failing at once, a new conversation reads the instructions.
-type StartOpts = { handover?: string, revive?: true, on?: string, by?: string, anyway?: true, resume?: { session: string, text: string } }
+// that first message, or none (no text: the user opens a released worker);
+// a Codex worker's too, when its session was found (program: the session's,
+// never handed to another program); failing at once, a new conversation reads the instructions.
+type StartOpts = { handover?: string, revive?: true, on?: string, by?: string, anyway?: true, resume?: { session: string, text?: string, program?: string } }
 export async function startTask(deps: PmLaunchDeps, id: unknown, opts: StartOpts = {}): Promise<Task> {
   return oneStart(String(id), 'worker', async () => {
     const before = await deps.store.task(id)
@@ -419,7 +430,8 @@ async function startOnce(deps: PmLaunchDeps, id: unknown, { handover, revive, on
   const p = await ensureVisibility(deps, found)
   const t = p ? await store.workflow(p.key) : null
   if (!t) return wait(store, task, `The project has no workflow: ask its coordinator to propose one in ${projectPlace(task.project, 'workflow')}`)
-  const plan = workerPlan(t, task)
+  const named = await namedAgents()
+  const plan = workerPlan(t, task, named)
   if ('reason' in plan) return wait(store, task, plan.reason)
   // Stopped at a step the worker does not hold (the review): no new worker. That
   // step's holder is told again (the reviewer started again) by the next advance
@@ -442,6 +454,8 @@ async function startOnce(deps: PmLaunchDeps, id: unknown, { handover, revive, on
     return wait(store, task, (e as Error).message)
   }
   if (!(await kindsOf(deps, on)).includes(plan.program)) return wait(store, task, `${plan.program} is not installed on ${label}`)
+  const lacking = agentsMissing(taskAgents(t, task, named), named, machine)
+  if (lacking) return wait(store, task, `${label}: ${lacking}`)
   const home = await homeOf(deps, on)
   if (!home) return wait(store, task, `${label}: home folder not found`)
   const repo = cloneOn(p, machine, home)
@@ -455,6 +469,11 @@ async function startOnce(deps: PmLaunchDeps, id: unknown, { handover, revive, on
   const cont = fetched?.code === 0
   const contLine = fetched?.code === 2 ? `Branch \`${task.fromBranch}\` is no longer on the remote: this task starts from the base branch instead.` : ''
   if (contLine) task = await store.logTask(task, 'engine', contLine)
+  // A promotion's type starts from its own branch, pinned at the first start (the task's branch keeps that commit); never the working branch instead.
+  const start = cont ? undefined : t.taskTypes[task.type]?.start
+  const at = start && !task.branch && !task.run ? await exec(deps, on, START_BRANCH_SCRIPT, [repo, start]) : undefined
+  if (at && at.code !== 0) return wait(store, task, startMissing(start!, at.code === 2 ? '' : at.out.split('\n').slice(-2).join(' ') || 'timeout'))
+  const startRef = at ? at.out.trim().split('\n').pop() || start : start
   // Named at the first start (a task started before has task/<id>): a later title, tag or template change leaves it alone.
   const paths = taskPaths(home, task.id, task.branch || (cont ? task.fromBranch : task.run ? undefined : branchFor(p.branchName, { ...task, id: shownTaskId([p], task.id) })), pmDir())
   // Recorded at the first start: changing the project's branch later leaves this task alone.
@@ -462,8 +481,8 @@ async function startOnce(deps: PmLaunchDeps, id: unknown, { handover, revive, on
   if (started.fromWorkflow) await noteWorkflowBase(store, p.key, started.base!)
   let base = started.base ?? ''
   // The workspace's working branch (not the member's own, nor the task's): a repository without it starts from its current branch.
-  const shared = !!base && !started.fromWorkflow && task.base === undefined && !!p.workspace && !(p.overrides ?? []).includes('base')
-  const wt = await exec(deps, on, WORKTREE_SCRIPT, [repo, paths.worktree, paths.branch, base, cont ? `origin/${task.fromBranch}` : '', ...(shared ? ['1'] : [])])
+  const shared = !start && !!base && !started.fromWorkflow && task.base === undefined && !!p.workspace && !(p.overrides ?? []).includes('base')
+  const wt = await exec(deps, on, WORKTREE_SCRIPT, [repo, paths.worktree, paths.branch, startRef ?? base, cont ? `origin/${task.fromBranch}` : '', ...(shared ? ['1'] : [])])
   if (wt.code !== 0) return wait(store, task, `git worktree failed: ${wt.out.split('\n').slice(-3).join(' ') || 'timeout'}`)
   const missing = /^wherdr-base-missing ?(.*)$/m.exec(wt.out)
   if (missing) {
@@ -501,10 +520,11 @@ async function startOnce(deps: PmLaunchDeps, id: unknown, { handover, revive, on
   const first = onEvent(taskPlan(t, task, p), initialState(), { kind: 'start' }, Date.now()).state
   const step = task.step?.started ? task.step : { ...first, told: first.since }
   const install = await store.install()
-  // Claude's conversation id, pinned: a later resume takes it up again.
-  const taken = plan.program === 'claude' ? resume : undefined
+  // Claude's conversation id, pinned: a later resume takes it up again. Codex: only one found.
+  const taken = (resume?.program ?? 'claude') === plan.program && (plan.program === 'claude' || plan.program === 'codex') ? resume : undefined
   const session = () => (plan.program === 'claude' ? { session: randomUUID() } : {})
-  let run: Run = { id: randomUUID().replace(/-/g, '').slice(0, 12), task: task.id, role: 'worker', ...plan, machine, ...paths, attempt: 1, state: 'starting', startedAt: Date.now(), ...(taken ? { session: taken.session } : session()), ...(ctx.folders.length ? { context: ctx.folders } : {}) }
+  const { command: _command, ...who } = plan
+  let run: Run = { id: randomUUID().replace(/-/g, '').slice(0, 12), task: task.id, role: 'worker', ...who, machine, ...paths, attempt: 1, state: 'starting', startedAt: Date.now(), ...(taken ? { session: taken.session } : session()), ...(ctx.folders.length ? { context: ctx.folders } : {}) }
   for (;;) {
     await store.saveRun(run) // the receipt, before the terminal exists
     await store.saveTask({ ...task, state: 'working', waiting: undefined, waitKind: undefined, stopped: undefined, held: undefined, sameFiles: undefined, machineWait: undefined, run: run.id, step, base, branch: paths.branch, branchStart: task.branchStart ?? paths.branch, ...(shotToken ? { shotToken } : {}) })
@@ -513,7 +533,7 @@ async function startOnce(deps: PmLaunchDeps, id: unknown, { handover, revive, on
       address = (await deps.call<{ address: string }>('terminal.run', {
         cwd: paths.worktree, ...(on ? { on } : {}), no_parent: true, wait: false,
         env: { ...agentEnv(paths.worktree), ...await deps.proxyEnv?.(p.machine) }, labels: runLabels(install, run),
-        line: `${PATH_SETUP}; ${agentLine(plan.program, plan.model, paths.instructions, run.session ? { id: run.session, ...(taken && run.attempt === 1 ? { resume: taken.text } : {}) } : undefined, undefined, ctx.folders.map(f => f.dir))}`,
+        line: `${PATH_SETUP}; ${agentLine(plan, plan.model, paths.instructions, run.session ? { id: run.session, ...(taken && run.attempt === 1 ? { resume: taken.text ?? true } : {}) } : undefined, undefined, ctx.folders.map(f => f.dir))}`,
       }, 30000)).address
     } catch (e) {
       // Unconfirmed: it may run anyway. The watchdog finds it by its labels, or ends the run (staleStarts).
@@ -533,7 +553,7 @@ async function startOnce(deps: PmLaunchDeps, id: unknown, { handover, revive, on
     // An agent that exits at once gets one more attempt, never a loop.
     if (run.attempt > 1 || failed.code === NOT_FOUND)
       return wait(store, task, `${plan.program} stopped right after starting (exit code ${failed.code}). Last output:\n${failed.lines || '(none)'}`, isAuthFailure(failed.lines) ? 'auth' : undefined)
-    run = { ...run, id: randomUUID().replace(/-/g, '').slice(0, 12), terminal: undefined, attempt: 2, state: 'starting', startedAt: Date.now(), ...session() }
+    run = { ...run, id: randomUUID().replace(/-/g, '').slice(0, 12), terminal: undefined, attempt: 2, state: 'starting', startedAt: Date.now(), session: undefined, ...session() }
   }
 }
 

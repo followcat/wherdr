@@ -5,10 +5,10 @@ import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { RETRY_MS, SCRIPT, commandState, endsMerged, guardAction, isTransient, leaks, prReady, runsState, taskGuards, type Receipt } from '../shared/pm/actions'
 import { dropMergedBranch, runAction, watch, type ActionDeps, type ActionJob } from '../server/utils/pmActions'
-import { WORKTREE_SCRIPT } from '../server/utils/pmLaunch'
+import { START_BRANCH_SCRIPT, WORKTREE_SCRIPT } from '../server/utils/pmLaunch'
 import { initialState, onEvent, planSteps, reviewedCommit } from '../shared/pm/steps'
 import { dueText } from '../shared/pm/advance'
-import { github, vibe } from '../shared/pm/examples'
+import { company, github, vibe } from '../shared/pm/examples'
 import type { Step, Template } from '../shared/pm/workflow'
 
 const t: Template = {
@@ -304,6 +304,38 @@ describe('on a real repo', () => {
     expect(got.out).not.toContain('wherdr-base-missing')
     expect(fs.existsSync(path.join(`${wt}1`, 'd.txt'))).toBe(true)
     expect((await localSh(WORKTREE_SCRIPT, [one, `${wt}2`, 'task/A-2', 'nope', '', '1'])).out).toContain('wherdr-base-missing main')
+  })
+
+  it('a promotion lands develop\'s tip as at the task\'s start into uat; develop never changes', async () => {
+    const origin = path.join(tmp, 'pr-origin.git'), repo = path.join(tmp, 'pr-repo'), wt = path.join(tmp, 'pr-wt'), solo = path.join(tmp, 'pr-solo')
+    git(tmp, 'init', '-q', '--bare', '-b', 'main', origin); git(tmp, 'clone', '-q', origin, repo)
+    git(repo, 'commit', '-q', '--allow-empty', '-m', 'init'); git(repo, 'push', '-q', 'origin', 'main', 'main:uat')
+    fs.writeFileSync(path.join(repo, 'd.txt'), 'd\n'); git(repo, 'add', '.'); git(repo, 'commit', '-qm', 'd'); git(repo, 'push', '-q', 'origin', 'HEAD:develop')
+    const tip = git(repo, 'rev-parse', 'HEAD')
+    git(repo, 'reset', '-q', '--hard', 'HEAD~1')
+    // On origin it is fetched; missing there (or locally, with no origin) it exits 2; a local branch with no origin is enough.
+    expect(await localSh(START_BRANCH_SCRIPT, [repo, 'develop'])).toEqual({ code: 0, out: 'refs/remotes/origin/develop' })
+    expect((await localSh(START_BRANCH_SCRIPT, [repo, 'nope'])).code).toBe(2)
+    // With no origin, a tag of the same name at an older commit is not the branch.
+    git(tmp, 'init', '-q', '-b', 'main', solo); git(solo, 'commit', '-q', '--allow-empty', '-m', 'x'); git(solo, 'tag', 'develop')
+    git(solo, 'commit', '-q', '--allow-empty', '-m', 'y'); git(solo, 'branch', 'develop')
+    const local = await localSh(START_BRANCH_SCRIPT, [solo, 'develop'])
+    expect(local).toEqual({ code: 0, out: 'refs/heads/develop' })
+    expect((await localSh(WORKTREE_SCRIPT, [solo, `${wt}-solo`, 'task/A-2', local.out, ''])).code).toBe(0)
+    expect(git(`${wt}-solo`, 'rev-parse', 'HEAD')).toBe(git(solo, 'rev-parse', 'refs/heads/develop'))
+    expect((await localSh(START_BRANCH_SCRIPT, [solo, 'nope'])).code).toBe(2)
+    expect((await localSh(WORKTREE_SCRIPT, [repo, wt, 'task/A-1', 'refs/remotes/origin/develop', ''])).code).toBe(0)
+    expect(git(wt, 'rev-parse', 'HEAD')).toBe(tip)
+    // develop moves on after the start: the task keeps the commit it started at.
+    git(repo, 'checkout', '-q', '-b', 'later', tip); git(repo, 'commit', '-q', '--allow-empty', '-m', 'later'); git(repo, 'push', '-q', 'origin', 'HEAD:develop')
+    const later = git(repo, 'rev-parse', 'HEAD')
+    const land = company.taskTypes['promote-uat']!.steps.find((s): s is Step => typeof s !== 'string' && s.id === 'land')!.action!
+    const deps: ActionDeps = { store: { receipt: async () => null, saveReceipt: async () => {} }, sh: localSh }
+    expect(await runAction(deps, job({ worktree: wt, action: land, by: 'user' }))).toMatchObject({ ok: true })
+    git(repo, 'fetch', '-q')
+    expect(spawnSync('git', ['-C', repo, 'merge-base', '--is-ancestor', tip, 'origin/uat']).status).toBe(0)
+    expect(spawnSync('git', ['-C', repo, 'merge-base', '--is-ancestor', later, 'origin/uat']).status).not.toBe(0)
+    expect(git(repo, 'rev-parse', 'origin/develop')).toBe(later)
   })
 
   it('lands vibe\'s step locally on a fresh git init folder, with no remote', async () => {

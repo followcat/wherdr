@@ -1,16 +1,18 @@
 import { findingLine } from './report'
 import type { Round } from './verdict'
+import type { AgentStart } from './board'
 
 // The task's hand-offs between its agents and the user, oldest first, built
 // from what the task keeps: its log, the worker's reports (each kept as it
 // arrived, Task.workReports; a task older than them: only its last one), the review's
 // send-back rounds and its passing verdict. With `all`, the engine's routine
 // lines too, marked `routine`: the sheet's History is the whole log in one timeline.
+// Each run's start (starts) names its agent on the line that logged it: `started`.
 
 export type Who = 'worker' | 'reviewer' | 'user' | 'coordinator' | 'engine'
 // label: what the entry is (Done, Sent back…), empty for a plain log line;
 // agent: the program and model behind a worker or reviewer; text: Markdown.
-export interface HistoryEntry { at: number, who: Who, agent?: string, label: string, text: string, routine?: true }
+export interface HistoryEntry { at: number, who: Who, agent?: string, started?: Omit<AgentStart, 'at'>[], label: string, text: string, routine?: true }
 // The labels of the agents' reports and verdicts (the sheet's Comments).
 export const REPORTS = new Set(['Done', 'Fixed', 'Sent back', 'Passed'])
 
@@ -23,6 +25,9 @@ type State = { proofs: Record<string, { report?: string }>, reviews?: Record<str
 // The engine's lines kept: what it handed the worker (a catch-up, red CI, a
 // fix) and its update of the PR with its base; the rest is bookkeeping.
 const ENGINE_KEPT = /^(?:fix-base|catch-up|rerun-ci|ci-to-agent|fix [\w-]+): |: updated with |conflicts with or is behind|^gave up: /
+// A line that logs a start: the user's or coordinator's, the autopilot's, the engine's restart or review.
+const STARTED = /\bstart|reviewed by /i
+const START_WINDOW_MS = 120_000
 const DONE = /^([\w-]+): done$/
 const VERDICT = /^([\w-]+): verdict, (\d+) finding/
 
@@ -35,7 +40,20 @@ function whoOf(by: string): { who: Who, agent?: string } {
 
 const list = (fs: Round['findings'], sev = true) => fs.map(f => findingLine(f, sev)).join('\n')
 
-export function taskHistory(log: LogEntry[], plan: Planned[], s?: State, all = false, reports: WorkReport[] = []): HistoryEntry[] {
+// Each start on the start line logged closest to it (a run's time is taken just before or after its line).
+function startLines(log: LogEntry[], starts: AgentStart[]) {
+  const at = new Map<number, Omit<AgentStart, 'at'>[]>()
+  for (const { at: t, ...st } of starts) {
+    let best = -1
+    log.forEach((e, i) => {
+      if (Math.abs(e.at - t) <= START_WINDOW_MS && STARTED.test(e.text) && (best < 0 || Math.abs(e.at - t) < Math.abs(log[best]!.at - t))) best = i
+    })
+    if (best >= 0 && !at.get(best)?.some(x => x.role === st.role && x.agent === st.agent)) at.set(best, [...at.get(best) ?? [], st])
+  }
+  return at
+}
+
+export function taskHistory(log: LogEntry[], plan: Planned[], s?: State, all = false, reports: WorkReport[] = [], starts: AgentStart[] = []): HistoryEntry[] {
   const known = new Set(plan.map(p => p.id))
   // Each review step's verdicts, newest first: its passing one (the last, when
   // kept) and its send-backs, matched from the end on their number of findings.
@@ -62,11 +80,13 @@ export function taskHistory(log: LogEntry[], plan: Planned[], s?: State, all = f
     for (let k = 1; k <= Math.min(dones.length, kept.length); k++) reportAt.set(dones.at(-k)!, kept.at(-k)!)
   }
 
+  const startAt = startLines(log, starts)
   const out: HistoryEntry[] = []
   let sentBack: Round | undefined
   log.forEach((e, i) => {
     const { who, agent } = whoOf(e.by)
-    const base = { at: e.at, who, ...(agent ? { agent } : {}) }
+    const started = startAt.get(i)
+    const base = { at: e.at, who, ...(agent ? { agent } : {}), ...(started ? { started } : {}) }
     if (who === 'engine' && !ENGINE_KEPT.test(e.text)) return void (all && out.push({ ...base, label: '', text: e.text, routine: true }))
     const done = who === 'worker' ? DONE.exec(e.text) : null
     if (done) {

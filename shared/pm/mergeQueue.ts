@@ -11,7 +11,7 @@ import { prReady } from './actions'
 import { mergeAfterIds } from './advance'
 import { mayMerge, type ResolvedGuards } from './guards'
 import type { MechFacts } from './mechanic'
-import { waitsToMerge, type PlannedStep, type StepState } from './steps'
+import { MERGE_WAIT, waitsToMerge, type PlannedStep, type StepState } from './steps'
 import type { Task } from './run'
 
 // May this merge step go on without the user: the guards give it to the
@@ -59,6 +59,21 @@ export function queueOut(f: Pick<MechFacts, 'task' | 'plan' | 'pr' | 'head' | 'a
 const waitText = (ids: string[]) => `waits for ${ids.join(', ')} to be done`
 export const mergeWaits = (task: Pick<Task, 'mergeAfter'>, tasks: Task[]) =>
   mergeAfterIds(task).filter((id) => { const t = tasks.find(x => x.id === id); return !!t && !(t.step?.done && !t.step.abandoned) })
+
+// Every merge kind waits for the tasks it merges after, in the queue or not
+// (git.land, bitbucket.merge, github.merge outside the queue): its action is
+// not run, its card says why, and the engine's next pass checks again (watch,
+// shared/pm/advance.ts runsNow). git.verify-merged is not held: the user merged
+// on their host already, it is logged as a warning (server/utils/pmBoard.ts).
+export const HELD_MERGES = new Set(['git.land', 'github.merge', 'bitbucket.merge'])
+export const mergeHoldText = (ids: string[]) => `Merges once ${ids.join(', ')} ${ids.length > 1 ? 'are' : 'is'} done`
+// by: who started it; a user's click stays theirs (mergeBy), so their guard applies when the engine runs it later.
+export function mergeHold(kind: string, task: Pick<Task, 'mergeAfter'>, tasks: Task[], s: StepState, now: number, by: 'user' | 'engine'): StepState | undefined {
+  const waits = HELD_MERGES.has(kind) ? mergeWaits(task, tasks) : []
+  if (!waits.length) return
+  const user = by === 'user' || s.mergeBy === 'user' ? { mergeBy: 'user' as const } : {}
+  return { ...s, acting: true, watch: { from: s.watch?.from ?? now, next: now + MERGE_WAIT.every }, mergeWait: mergeHoldText(waits), ...user }
+}
 
 // A task it merges after that was stopped or abandoned: its coordinator is
 // woken once for it (key: kept in task.mech), and it keeps waiting, no cascade stop.

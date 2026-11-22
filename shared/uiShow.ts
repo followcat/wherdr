@@ -18,6 +18,36 @@ export function folderPath(raw: unknown, cwd?: string | null): string | null {
   return p
 }
 
+// The pm tasks folder beside a coordinator's (<pm>/coordinators/<KEY> →
+// <pm>/tasks), or null for any other folder.
+export function tasksDirOf(cwd?: string | null): string | null {
+  const m = cwd ? /^(\/.+)\/coordinators\/[^/]+\/?$/.exec(cwd) : null
+  return m ? `${m[1]}/tasks` : null
+}
+
+// A file of a task's folder (its report, screenshots, mockups): written
+// ABC-24/mockups/page.html, or as its absolute path under tasksDir. ~, ..,
+// anything else: null.
+const TASK_ID = /^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/i
+export function taskFilePath(raw: unknown, tasksDir?: string | null): { task: string, rel: string } | null {
+  if (typeof raw !== 'string') return null
+  let p = raw.trim().replace(/^['"]|['"]$/g, '')
+  const root = tasksDir?.replace(/\/+$/, '')
+  if (root && p.startsWith(`${root}/`)) p = p.slice(root.length + 1)
+  const [task, ...rest] = p.split('/')
+  const rel = folderPath(rest.join('/'))
+  return task && TASK_ID.test(task) && rel ? { task: task.toUpperCase(), rel } : null
+}
+
+// What a kept block or an event may show: a path inside the agent's folder,
+// or the absolute path of a file in a task's folder (server/utils/uiOpen.ts).
+const TASK_FILE = /^\/(?:[^/]+\/)+tasks\/[A-Z][A-Z0-9]{1,9}-\d{1,6}\/[^/]/
+export function shownPath(raw: string): string | null {
+  const p = raw.trim()
+  if (TASK_FILE.test(p)) return p.length > 1024 || /[\0\r\n]/.test(p) || p.split('/').includes('..') ? null : p
+  return folderPath(p)
+}
+
 // `file <path…>` or `shots <task>` after `ui show`; bad: the usage error.
 export type UiShowCommand = { name: 'ui show', what: 'file', path: string } | { name: 'ui show', what: 'shots', task: string }
 export function uiShowArgs(what: string | undefined, rest: string[], taskRe: RegExp, bad: { error: string }): UiShowCommand | { error: string } {
@@ -33,7 +63,7 @@ export function parseShowLine(line: string): { what: UiShowWhat, arg: string } |
   const m = SHOW_LINE.exec(line.trim())
   if (!m) return null
   const what = m[1] as UiShowWhat
-  const arg = what === 'file' ? folderPath(m[2]) : m[2]!.trim()
+  const arg = what === 'file' ? shownPath(m[2]!) : m[2]!.trim()
   return arg && (what === 'file' || /^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(arg)) ? { what, arg } : null
 }
 

@@ -1,6 +1,7 @@
 import { expect, it, vi } from 'vitest'
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import TaskSheet from '~/components/TaskSheet.vue'
+import { menuState } from '~/composables/useUi'
 import { initialState, planSteps, type StepState } from '#shared/pm/steps'
 import { company, wherdr } from '#shared/pm/examples'
 import { readBody } from 'h3'
@@ -57,7 +58,7 @@ const cases: [string, Card, string, string[]][] = [
   ['a stopped task', waiting({ yourTurn: 'Stopped by the user: wrong way', stopped: { by: 'the user', why: 'wrong way', at: 1 }, state: at(1) }), 'stopped', []],
   ['a step the user ends', waiting({ yourTurn: 'Deploy it', userLabel: 'Deployed', state: at(4, { yourTurn: { reason: 'user', badge: 'Deploy it' } }) }), 'step', ['step-user']],
   ['an agent question', waiting({ yourTurn: 'Which port?', asks: { kind: 'question', text: 'Which port?' }, state: at(1) }), 'ask', []],
-  ['a refused merge', waiting({ yourTurn: 'Merge: merge: 2 check(s) failed', state: at(4, { yourTurn: { reason: 'action', badge: 'Merge: merge: 2 check(s) failed' } }) }), 'refused', ['task-retry', 'task-report-start']],
+  ['a refused merge', waiting({ yourTurn: 'Merge: merge: 2 check(s) failed', state: at(4, { yourTurn: { reason: 'action', badge: 'Merge: merge: 2 check(s) failed' } }) }), 'refused', ['task-retry', 'task-more']],
   ['a blocked task', waiting({ yourTurn: 'WHR-2, which this task starts after, failed', phase: 'todo', state: undefined }), 'blocked', ['task-start']],
 ]
 
@@ -146,7 +147,7 @@ it('a coordinator-held step past its limit says what waits and asks the coordina
   expect(w.get('[data-testid="task-todo"]').attributes('data-todo')).toBe('coordinator')
   expect(w.get('[data-testid="task-badge"]').text()).toBe('Waiting for the coordinator to check the deploy')
   expect(w.get('[data-testid="todo-coordinator-wait"]').text()).toBe('At this step for 1 h 40 min')
-  expect(w.find('[data-testid="task-report-start"]').exists()).toBe(true)
+  expect(w.find('[data-testid="task-more"]').exists()).toBe(true)
   await w.get('[data-testid="todo-ask-coordinator"]').trigger('click')
   await vi.waitFor(() => expect(asked).toEqual({ id: 'WHR-1' }))
   // The task read again: asked, off Your turn.
@@ -337,7 +338,7 @@ it('shows the PR as a badge on the branch line, in the header once that line scr
   const withLead = { AppSheet: { template: '<section><header><slot name="lead" /></header><slot /></section>' } }
   const w = await mountSuspended(TaskSheet, { props: { card: c }, global: { stubs: withLead } })
   const badge = w.get('[data-testid="task-branch-row"] [data-testid="task-pr"]')
-  expect([badge.attributes('href'), badge.attributes('target'), badge.text()]).toEqual([url, '_blank', 'PR #646'])
+  expect([badge.attributes('href'), badge.attributes('target'), badge.text()]).toEqual([url, '_blank', 'PR #646open'])
   expect(w.find('header [data-testid="task-pr-head"]').exists()).toBe(false)
   seen([{ isIntersecting: false }])
   await nextTick()
@@ -348,4 +349,25 @@ it('shows the PR as a badge on the branch line, in the header once that line scr
   expect(none.find('[data-testid="task-pr"]').exists()).toBe(false)
   none.unmount()
   vi.unstubAllGlobals()
+})
+
+it('the header: the step\'s button first, Stop only while the step\'s agent runs, Check on GitHub and Report a problem in the ⋯ menu', async () => {
+  const merge = waiting({
+    yourTurn: 'Look at the screenshots, then merge', userLabel: 'Merge', links: [{ label: 'pr', url: 'https://github.com/o/r/pull/7' }],
+    state: at(4, { yourTurn: { reason: 'user', badge: 'Look at the screenshots, then merge' }, proofs: { pr: { link: 'https://github.com/o/r/pull/7' } } }),
+  })
+  const w = await mountSuspended(TaskSheet, { props: { card: merge }, global: { stubs } })
+  expect(w.get('.task-sheet-actions').element.firstElementChild!.getAttribute('data-testid')).toBe('step-user')
+  expect(w.get('[data-testid="task-todo"]').find('[data-testid="step-user"]').exists()).toBe(false)
+  expect(w.get('[data-testid="task-pr-state"]').text()).toBe('open')
+  expect(w.find('[data-testid="task-stop"]').exists()).toBe(false)
+  expect(w.find('[data-testid="task-times"]').exists()).toBe(false)
+  await w.get('[data-testid="task-more"] button').trigger('click')
+  expect(menuState.items.map(i => i.label)).toEqual(['Check on GitHub', 'Report a problem'])
+  // The worker's conversation still open at the merge step: no Stop; an agent holding the step: Stop.
+  await w.setProps({ card: { ...merge, agents: { worker: 'core-1' } } })
+  expect(w.find('[data-testid="task-stop"]').exists()).toBe(false)
+  await w.setProps({ card: { ...merge, terminal: 'core-1' } })
+  expect(w.find('[data-testid="task-stop"]').exists()).toBe(true)
+  w.unmount()
 })

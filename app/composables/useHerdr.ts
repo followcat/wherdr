@@ -17,6 +17,7 @@ import { READY_SORTS, type ReadySort } from '#shared/spaces'
 import { DEADLINE_WARNING_MS } from '#shared/sessionLimit'
 import { effectiveTypingSpeed, encryptedTextActive, parseTypingSettings } from '~/utils/typewriter'
 import { readAgentOrder, readHiddenAgents } from '~/utils/agentChoices'
+import { readNamedAgents, type NamedAgent } from '#shared/pm/namedAgents'
 import { checkNewVersionOnWake } from './useAppVersion'
 import { onceEvery } from '~/utils/onceEvery'
 import { keepIfSame } from '~/utils/keepIfSame'
@@ -94,6 +95,8 @@ export const quotaDisplay = syncedRef<QuotaDisplay>('quotaDisplay', readQuotaDis
 export const hiddenAgents = syncedRef<string[]>('hiddenAgents', readHiddenAgents, v => JSON.stringify(v), { deep: true })
 // Settings › Agents order: the first offered agent is the default everywhere.
 export const agentOrder = syncedRef<string[]>('agentOrder', readAgentOrder, v => JSON.stringify(v), { deep: true })
+// Settings › Agents › Named agents (shared/pm/namedAgents.ts), read by the engine too.
+export const namedAgents = syncedRef<NamedAgent[]>('namedAgents', readNamedAgents, v => JSON.stringify(v), { deep: true })
 // Content width on a computer; migration of the old preference.
 export const contentWidth = ref<ContentWidth>(migrateContentWidth(ls.get('contentWidth'), ls.get('chatWidth')))
 watch(contentWidth, (v) => {

@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import ProjectWorkflow from '~/components/ProjectWorkflow.vue'
 import WorkflowChart from '~/components/WorkflowChart.vue'
-import { herdrState } from '~/composables/useHerdr'
+import { herdrState, namedAgents } from '~/composables/useHerdr'
 import { coordinators } from '~/composables/useCoordinators'
 import { panePath } from '~/composables/useWorkspaces'
 import { useDraft } from '~/composables/useDraft'
@@ -99,4 +99,14 @@ it('has no template library: without a workflow, only Ask the coordinator; the �
   expect(w.text()).not.toMatch(/template/i)
   expect(w.find('[data-testid="wf-ask"]').exists()).toBe(true)
   expect((w.vm as unknown as { menu: () => { label?: string }[] }).menu().map(m => m.label)).toEqual(['Change log'])
+})
+
+it('shows a named agent of Settings › Agents by its name', async () => {
+  namedAgents.value = [{ name: 'omp-sub', program: 'omp', command: 'omp-sub --thinking medium', machines: [''] }]
+  const flow = { ...wherdr, prefs: { ...wherdr.prefs, agent: 'omp-sub', model: 'sonnet', reviewModel: 'opus' } }
+  const c = await mountSuspended(WorkflowChart, { props: { workflow: flow, type: 'simple' } })
+  expect(c.find('[data-step="work"] [data-testid="wf-who"]').text()).toBe('Workeromp-sub · sonnet')
+  expect(c.find('[data-step="review"] [data-testid="wf-who"]').text()).toBe('Revieweromp-sub · opus')
+  namedAgents.value = []
+  c.unmount()
 })

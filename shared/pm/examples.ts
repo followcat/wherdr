@@ -35,6 +35,13 @@ export const company: Template = {
       // The engine watches the develop pipeline: the coordinator hears only of a failure.
       { id: 'deploy', column: 'Deploy', ends: 'action', action: { kind: 'pipeline.watch', branch: 'develop', every: '2m', timeout: '90m' } },
       done] },
+    // A promotion: develop's tip as at the task's start lands into uat, once you accept it.
+    'promote-uat': { start: 'develop', steps: [todo,
+      { id: 'check', column: 'Working', holder: 'worker', ends: 'report',
+        instructions: 'This task promotes {start} to uat. Change nothing: check that the {start} pipeline is green and list the commits uat lacks (git log origin/uat..HEAD --oneline) in your report.' },
+      { id: 'land', column: 'Deploy', holder: 'none', ends: 'user', userLabel: 'Promote', action: { kind: 'git.land', target: 'uat' } },
+      { id: 'deploy', column: 'Deploy', ends: 'action', action: { kind: 'pipeline.watch', branch: 'uat', every: '2m', timeout: '90m' } },
+      done] },
   },
 }
 

@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createPmStore, type PmStore } from '../server/utils/pmStore'
-import { FETCH_BRANCH_SCRIPT, WORKTREE_SCRIPT, reconcileRuns, startTask, wherdrBase, type PmLaunchDeps } from '../server/utils/pmLaunch'
+import { FETCH_BRANCH_SCRIPT, START_BRANCH_SCRIPT, WORKTREE_SCRIPT, reconcileRuns, startTask, wherdrBase, type PmLaunchDeps } from '../server/utils/pmLaunch'
 import { uploadShot } from '../server/utils/pmBoard'
 import { agentLine, duplicateAgents, publicTask, reconcile, workerPlan, type Run, type Task } from '../shared/pm/run'
 import type { Template } from '../shared/pm/workflow'
@@ -34,7 +34,7 @@ describe('worker plan and command line', () => {
     expect(workerPlan(template, task({ prefs: { model: 'haiku' } }))).toEqual({ program: 'claude', model: 'haiku' })
     expect(workerPlan(template, task({ type: 'talk' }))).toEqual({ reason: 'Task type "talk" has no worker step' })
     expect(workerPlan({ ...template, prefs: { agent: 'claude' } }, task())).toMatchObject({ reason: expect.stringMatching(/^No model set/) })
-    expect(workerPlan(template, task({ prefs: { agent: 'pi' } }))).toEqual({ reason: 'The engine cannot start "pi": claude, codex or omp' })
+    expect(workerPlan(template, task({ prefs: { agent: 'pi' } }))).toEqual({ reason: 'The engine cannot start "pi": claude, codex, omp or a named agent of Settings › Agents' })
     // omp starts with a pinned model too (a provider/model name is a valid model).
     expect(workerPlan(template, task({ prefs: { agent: 'omp', model: 'anthropic/claude-sonnet-5-5' } }))).toEqual({ program: 'omp', model: 'anthropic/claude-sonnet-5-5' })
     expect(workerPlan(template, task({ prefs: { model: 'x; rm -rf ~' } }))).toMatchObject({ reason: expect.stringMatching(/^Invalid model/) })
@@ -45,6 +45,9 @@ describe('worker plan and command line', () => {
     expect(agentLine('omp', 'anthropic/claude-sonnet-5-5', "/h/it's.md")).toBe(`exec omp '--model' 'anthropic/claude-sonnet-5-5' 'Read /h/it'\\''s.md and follow it.'`)
     expect(agentLine('omp', 'sonnet', '/h/i.md', { id: 's1' }, 'Then stop.')).toBe(`exec omp '--model' 'sonnet' 'Read /h/i.md and follow it. Then stop.'`)
     expect(agentLine('codex', 'gpt-5', "/h/it's.md")).toBe(`exec codex '-c' 'check_for_update_on_startup=false' '--model' 'gpt-5' 'Read /h/it'\\''s.md and follow it.'`)
+    // A released worker reopened: its conversation taken up again with no first message (no model turn).
+    expect(agentLine('claude', 'opus', '/h/i.md', { id: 's1', resume: true })).toBe(`exec claude '--model' 'opus' '--resume' 's1'`)
+    expect(agentLine('codex', 'gpt-5', '/h/i.md', { id: 's1', resume: true })).toBe(`exec codex '-c' 'check_for_update_on_startup=false' '--model' 'gpt-5' 'resume' 's1'`)
   })
 })
 
@@ -212,6 +215,18 @@ describe('startTask', () => {
       expect(text).toContain(line)
       expect(t.log!.map(l => l.text)).toContain(line)
     }
+  })
+
+  it.each([0, 2])('a type that starts from develop: its worktree starts there at the first start; develop missing on the remote waits (exit %s)', async (code) => {
+    const promote = { ...template, taskTypes: { ...template.taskTypes, simple: { ...template.taskTypes.simple!, start: 'develop' } } }
+    const { deps, execs } = await setup({ template: promote, fails: s => code && s === START_BRANCH_SCRIPT ? code : undefined, exec: s => s === START_BRANCH_SCRIPT ? 'refs/remotes/origin/develop' : undefined })
+    const t = await startTask(deps, 'WEB-1')
+    expect(execs.find(e => e.script === START_BRANCH_SCRIPT)!.args).toEqual(['/home/u/web', 'develop'])
+    const wt = execs.find(e => e.script === WORKTREE_SCRIPT)
+    if (code) {
+      expect(t).toMatchObject({ state: 'waiting', waiting: expect.stringMatching(/^Branch `develop`, which this task type starts from, is not on the remote/) })
+      expect(wt).toBeUndefined()
+    } else expect(wt!.args.slice(2, 4)).toEqual([t.branch, 'refs/remotes/origin/develop'])
   })
 
   it('a task whose branch to continue cannot be fetched (remote unreachable) waits, without a worktree', async () => {

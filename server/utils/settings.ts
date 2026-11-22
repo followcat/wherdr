@@ -6,6 +6,7 @@ import path from 'node:path'
 import { writeFileAtomic } from './atomicWrite'
 import { applySettingsPatch, cleanSettings, type SettingsMap, type SettingsPatch } from '../../shared/settings'
 import { DATA_DIR } from './env'
+import { readNamedAgents, type NamedAgent } from '../../shared/pm/namedAgents'
 import { HerdrError } from './herdr'
 
 export const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json')
@@ -40,6 +41,9 @@ export async function loadSettings(file = SETTINGS_FILE): Promise<SettingsMap> {
 export async function readSettings(file = SETTINGS_FILE): Promise<SettingsMap> {
   return loadSettings(file).catch(() => ({}))
 }
+
+// The named agents (Settings › Agents) the engine starts tasks with.
+export const namedAgents = async (file = SETTINGS_FILE): Promise<NamedAgent[]> => readNamedAgents((await readSettings(file)).namedAgents)
 
 const writeSettings = (settings: SettingsMap, file: string) => writeFileAtomic(file, JSON.stringify({ v: 1, settings }) + '\n')
 

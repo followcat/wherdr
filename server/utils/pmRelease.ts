@@ -5,7 +5,7 @@
 // send-back, a conflict, red CI, or the user opening its conversation
 // (wakeReleased). The rules are in shared/pm/release.ts.
 import { LABEL, type LabelledTerminal, type Run, type Task } from '../../shared/pm/run'
-import { PUSH_LEFT_SCRIPT, RELEASED_WHY, idleSince, releaseDue, restartedLine, roomWanted, waitsForUser, waitsInQueue, wasReleased } from '../../shared/pm/release'
+import { CODEX_SESSION_SCRIPT, PUSH_LEFT_SCRIPT, RELEASED_WHY, idleSince, releaseDue, roomWanted, waitsForUser, waitsInQueue, wasReleased } from '../../shared/pm/release'
 import { roomShort } from '../../shared/pm/placement'
 import { HerdrError } from './herdr'
 import { talkOf } from './pmTalk'
@@ -72,12 +72,21 @@ export async function releaseIdle(deps: PmLaunchDeps, now = Date.now()) {
   return released
 }
 
+// A Codex worker's conversation id, never pinned at launch: found in its
+// machine's Codex sessions (CODEX_SESSION_SCRIPT); undefined when not found.
+async function codexSession(deps: PmLaunchDeps, run: Run): Promise<string | undefined> {
+  const mins = String(Math.max(1, Math.ceil((Date.now() - run.startedAt) / 60_000) + 1))
+  const r = await Promise.resolve().then(() => actionShell(deps, runOn(deps, run))(CODEX_SESSION_SCRIPT, [run.instructions, mins])).catch(() => ({ code: 1, out: '' }))
+  const id = r.code === 0 ? r.out.trim().split('\n').pop()?.trim() : undefined
+  return id && /^[0-9a-f-]{36}$/.test(id) ? id : undefined
+}
+
 const heldLogged = new Set<string>()
 // The released worker again, in its worktree, with a handover note; `now`:
 // what it is to do first (red CI, a conflict), when the step itself does not
 // say it. No room on its machine: not now, tried again on a later pass (undefined;
 // onHold gets why). stopped: why its handover says it was stopped. resume: a
-// Claude worker's conversation is taken up again, with that first message.
+// Claude worker's conversation is taken up again, with that first message ('': none).
 export async function reviveWorker(deps: PmLaunchDeps, id: string, why: string, now?: string, onHold?: (hold: string) => void, stopped = RELEASED_WHY, resume?: string): Promise<Task | undefined> {
   const { store } = deps
   const { task, plan } = await load(deps, id)
@@ -95,7 +104,8 @@ export async function reviveWorker(deps: PmLaunchDeps, id: string, why: string, 
   forgetMemory(worker.machine)
   const handover = handoverText({ ...task, stopped: { by: 'the engine', why: stopped, at: Date.now() } }, plan, worker.branch)
     + (now ? `\nWhat to do now:\n\n${now}\n` : '')
-  const started = await startTask(deps, id, { handover, revive: true, ...(resume && worker.session ? { resume: { session: worker.session, text: resume } } : {}) })
+  const session = resume === undefined ? undefined : worker.session ?? (worker.program === 'codex' ? await codexSession(deps, worker) : undefined)
+  const started = await startTask(deps, id, { handover, revive: true, ...(session ? { resume: { session, ...(resume ? { text: resume } : {}), ...(worker.program === 'codex' ? { program: 'codex' } : {}) } } : {}) })
   if (started.state !== 'working') return store.logTask(started, 'engine', `could not start the worker again (${why}): ${started.waiting ?? ''}`)
   // The handover gives the step's text: not sent again.
   const step = started.step && { ...started.step, told: started.step.since }
@@ -103,14 +113,15 @@ export async function reviveWorker(deps: PmLaunchDeps, id: string, why: string, 
 }
 
 // The user opens the conversation of a worker the engine released: started
-// again in its worktree, its conversation taken up again with one line saying
-// so; then the user writes to it as before. Refused with why when it cannot.
+// again in its worktree, its conversation taken up again with no message (no
+// model turn until the user writes): Claude's pinned id, Codex's found in its
+// sessions; omp (no conversation id) and a Codex one not found: a new one reads
+// the handover. Refused with why when it cannot.
 export async function wakeReleased(deps: PmLaunchDeps, id: string): Promise<Task> {
   const worker = (await deps.store.runs()).filter(r => r.task === id && r.role === 'worker').sort((a, b) => b.startedAt - a.startedAt)[0]
   if (!wasReleased(worker)) throw new HerdrError('refused', 'Its worker was not released')
-  const at = new Date(worker!.endedAt ?? Date.now()).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
   let hold = ''
-  const t = await reviveWorker(deps, id, 'the user opened its conversation', undefined, (h) => { hold = h }, RELEASED_WHY, restartedLine(at))
+  const t = await reviveWorker(deps, id, 'the user opened its conversation', undefined, (h) => { hold = h }, RELEASED_WHY, '')
   if (t?.state !== 'working') throw new HerdrError('refused', hold ? `Not enough room to start it again now: ${roomShort(hold) ?? hold}` : `It could not start again: ${t?.waiting ?? 'try again later'}`)
   return t
 }

@@ -151,6 +151,10 @@ describe('the coordinator\'s view of machines', () => {
     expect(view(machine('machine-b', 16, 2, 8, ['light']))).toMatch(/ · takes nothing now: 2\.0 GB free, needs 2\.7 GB with its reserve$/)
     expect(view(machine('machine-c', 16, 12, 8, [], { online: false }))).toBe('machine-c: offline')
     expect(view(machine('machine-c', 16, 12, 8, ['light']), { paused: true })).toBe('machine-c: paused for this project · 1 agents at work')
+    // Each agent by name, paused or not.
+    const named = (c: Candidate) => ({ ...c, running: [{ ...WEIGHT_DEFAULTS.light, weight: 'light', agent: 'omp-api' }, { ...WEIGHT_DEFAULTS.light, weight: 'light', agent: 'claude' }, { ...WEIGHT_DEFAULTS.light, weight: 'light', agent: 'claude' }] })
+    expect(view(named(machine('machine-c', 16, 12, 8)), { paused: true })).toBe('machine-c: paused for this project · 3 agents at work (omp-api, 2 claude)')
+    expect(view(named(machine('machine-c', 16, 12, 8)))).toMatch(/ · running 3 light · agents omp-api, 2 claude · fits /)
     // macOS: the memory pressure decides, not the swap (it grows on demand).
     const mac = (pressure: 'normal' | 'warn' | 'critical') => { const c = machine('machine-m', 18, 5, 8, ['standard']); return view({ ...c, capacity: { ...c.capacity!, pressure } }) }
     expect(mac('normal')).toBe('machine-m: pressure normal, ≈5.0 GB available of 18.0 GB · 8 cores, load 0.0 · 1 of 12 agents · running 1 standard · fits standard')

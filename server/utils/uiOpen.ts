@@ -6,7 +6,7 @@ import type { Pane } from '../../shared/types'
 import type { Turn } from '../../shared/pm/coordinator'
 import { uiBlock, uiLink, uiOpenRefusal, uiShow, uiTarget, type UiClient, type UiOpenEvent } from '../../shared/uiOpen'
 import { linkTarget, UI_TARGETS, uiTargetList } from '../../shared/uiTargets'
-import { folderPath, showBlock, type UiShowEvent } from '../../shared/uiShow'
+import { folderPath, showBlock, taskFilePath, tasksDirOf, type UiShowEvent } from '../../shared/uiShow'
 import { shownTaskId } from '../../shared/pm/projectKey'
 import type { Task } from '../../shared/pm/run'
 import { HerdrError } from './herdr'
@@ -16,10 +16,13 @@ type Client = UiClient & { send: (data: string) => void }
 
 export interface UiOpenDeps { store: PmStore, panes: () => Pane[], clients: () => Iterable<Client> }
 
-// The agent's own conversation and the open app the user is on now.
-async function userApp(deps: UiOpenDeps, scope: string, give: string) {
+// The agent's own conversation, and the open app the user is on now.
+async function ownPane(deps: UiOpenDeps, scope: string) {
   const terminal = (await deps.store.coordinator(scope))?.terminal
-  const pane = terminal ? deps.panes().find(p => p.coreAddress === terminal) : undefined
+  return terminal ? deps.panes().find(p => p.coreAddress === terminal) : undefined
+}
+async function userApp(deps: UiOpenDeps, scope: string, give: string) {
+  const pane = await ownPane(deps, scope)
   const to = pane ? uiTarget([...deps.clients()], pane.id, Date.now()) : null
   if (!pane || !to) throw new HerdrError('not_found', `No open wherdr is in use on your conversation now: give the user the ${give} instead`)
   return { pane, to }
@@ -52,17 +55,27 @@ export async function openUi(deps: UiOpenDeps, o: { scope: string, main: boolean
 // `ui targets`: the settings `ui open --target <id>` can highlight.
 export const uiTargetsList = () => ({ targets: uiTargetList(), note: 'Highlight one with ui open --target <id> (add --project <KEY> for a project.… target), in a turn of the user' })
 
-// `ui show file <path> | shots <task>`: the file (inside the agent's folder) or
-// the task's screenshots, beside the conversation of the app the user is on.
-export async function showUi(deps: UiOpenDeps, o: { scope: string, turn: Turn, by: string } & ({ what: 'file', path: string } | { what: 'shots', task: Task })) {
+// `ui show file <path> | shots <task>`: the file (inside the agent's folder, or
+// of a task's folder: ABC-24/report.md) or the task's screenshots, beside the
+// conversation of the app the user is on. taskOf: the task a path names, once
+// the caller checked the agent may reach it (throws otherwise); tasksDir: the
+// pm tasks folder when the agent's folder is not a coordinator's (Alfred's).
+type ShowFile = { what: 'file', path: string, taskOf?: (id: string) => Promise<Pick<Task, 'id'>>, tasksDir?: string }
+export async function showUi(deps: UiOpenDeps, o: { scope: string, turn: Turn, by: string } & (ShowFile | { what: 'shots', task: Task })) {
   if (o.turn !== 'user') throw new HerdrError('refused', 'ui show is only for a turn that comes from the user, never in a wake')
   const give = o.what === 'file' ? 'path' : 'task'
+  // A task's file: the task found and its reach checked first, open app or not.
+  const file = o.what === 'file' ? o : null
+  const tasks = tasksDirOf((await ownPane(deps, o.scope))?.cwd) ?? file?.tasksDir
+  const inTask = file?.taskOf ? taskFilePath(file.path, tasks) : null
+  const task = inTask ? await file!.taskOf!(inTask.task) : null
   const { pane, to } = await userApp(deps, o.scope, give)
   let arg: string
   if (o.what === 'file') {
-    const p = folderPath(o.path, pane.cwd)
-    if (!p) throw new HerdrError('refused', 'Only a file of your own folder: a path relative to it (docs/plan.md), with no ~ or ..')
-    arg = p
+    const p = inTask ? null : folderPath(o.path, pane.cwd)
+    if (!inTask && !p) throw new HerdrError('refused', 'Only a file of your own folder, a path relative to it (docs/plan.md), or of one of your project\'s tasks (ABC-24/report.md), with no ~ or ..')
+    if (inTask && !tasks) throw new HerdrError('not_found', 'The tasks folder is unknown from your folder: give the user the path instead')
+    arg = inTask ? `${tasks}/${task!.id}/${inTask.rel}` : p!
   } else {
     if (!Object.values(o.task.step?.shots ?? {}).some(l => l.length)) throw new HerdrError('refused', 'This task has no screenshots yet')
     arg = shownTaskId(await deps.store.projects(), o.task.id)

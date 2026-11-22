@@ -7,6 +7,7 @@ import { limitState } from '../../shared/quotaLimit'
 import { DEFAULT_PACE, paceVerdict } from '../../shared/pm/pacing'
 import { accountQuota, paceRows, type PaceRow, type PaceState } from '../../shared/pm/pace'
 import { workerPlan, type Task } from '../../shared/pm/run'
+import { namedAgents } from './settings'
 import type { Quotas } from '../../shared/types'
 import type { PmStore } from './pmStore'
 import { readQuotas } from './quotas'
@@ -21,7 +22,7 @@ export async function projectPace(store: PmStore, project: string, task?: Pick<T
   const t = p ? await store.workflow(p.key) : null
   if (!p || !t) return null
   const type = task?.type ?? Object.keys(t.taskTypes)[0] ?? ''
-  const plan = workerPlan(t, { type, ...(task?.prefs ? { prefs: task.prefs } : {}) } as Task)
+  const plan = workerPlan(t, { type, ...(task?.prefs ? { prefs: task.prefs } : {}) } as Task, await namedAgents())
   if ('reason' in plan) return null
   const { program } = plan
   // Only Claude and Codex have a quota reading (omp has none): no account, quota

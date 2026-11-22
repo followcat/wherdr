@@ -608,6 +608,7 @@ onMounted(() => {
         <div v-show="activeSection === 'agents'" class="settings-section">
           <OfferedAgentsSettings />
           <ProxiesSettings />
+          <NamedAgentsSettings />
           <div data-ui-target="agents.claude-quotas" id="claude-quotas" class="settings-group">
             <h3>{{ tl('Claude quotas', 'Quotas Claude') }}</h3>
             <ClaudeQuotaSetup v-if="activeSection === 'agents'" />

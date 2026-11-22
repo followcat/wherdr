@@ -10,6 +10,7 @@
 // maps/<WS>.json (a workspace's map: shared/pm/workspaceMap.ts).
 // Atomic writes (temp file + rename), one at a time. Switched off, every
 // write is refused except turning it back on.
+import { namedAgents } from './settings'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -20,7 +21,7 @@ import type { RepoVisibility } from '../../shared/pm/visibility'
 import { WEIGHTS, defaultWorkflow, isContextError, isWeight, readContext, startOverFrom, validateTemplate, type Template } from '../../shared/pm/workflow'
 import { checkTaskContext } from '../../shared/pm/context'
 import { templateChanges, type LogEntry } from '../../shared/pm/templateText'
-import { publicTask, taskPlan, type Run, type Task, type TaskLogEntry } from '../../shared/pm/run'
+import { publicTask, taskPlan, taskPrefsOf, type Run, type Task, type TaskLogEntry } from '../../shared/pm/run'
 import { replan } from '../../shared/pm/steps'
 import { afterIds } from '../../shared/pm/advance'
 import { parseFiles } from '../../shared/pm/files'
@@ -90,7 +91,7 @@ async function readJson<T>(file: string): Promise<T | null> {
   }
 }
 
-const writeJson = (file: string, data: unknown) => writeJsonAtomic(file, data, { dirMode: 0o700 })
+const writeJsonStored = (file: string, data: unknown) => writeJsonAtomic(file, data, { dirMode: 0o700 })
 
 // A line of a project's log: a task removed (task), or a contributor's PR
 // merged on the user's yes (pr, said: the user's own message), by whom and why.
@@ -124,28 +125,41 @@ export function createPmStore(dir = path.join(DATA_DIR, 'projects')) {
     const names = (await fs.readdir(folder).catch(() => [] as string[])).filter(n => n.endsWith('.json')).sort()
     return (await Promise.all(names.map(n => readJson<T>(path.join(folder, n)).catch(() => null)))).filter((x): x is Awaited<T> & {} => !!x)
   }
-  // The runs, kept in memory: clients and ticks ask for them all the time, and
-  // finished runs pile up. Every save is a rename into the folder, which
-  // changes the folder's mtime: while it stays the same, nothing is read; when
-  // it changes, only the files whose mtime or size changed are read again.
-  let runCache: { at: number, files: Map<string, { mtime: number, size: number, run: Run | null }>, list: Run[] } | null = null
-  const runs = async (): Promise<Run[]> => {
-    const at = (await fs.stat(files.runs).catch(() => null))?.mtimeMs
-    if (at === undefined) return []
-    if (runCache?.at === at) return [...runCache.list]
-    const names = (await fs.readdir(files.runs).catch(() => [] as string[])).filter(n => n.endsWith('.json')).sort()
-    const old = runCache?.files, next = new Map<string, { mtime: number, size: number, run: Run | null }>()
-    await Promise.all(names.map(async (n) => {
-      const file = path.join(files.runs, n), s = await fs.stat(file).catch(() => null)
-      if (!s) return
-      const was = old?.get(n)
-      const run = was && was.mtime === s.mtimeMs && was.size === s.size ? was.run : await readJson<Run>(file).catch(() => null)
-      next.set(n, { mtime: s.mtimeMs, size: s.size, run })
-    }))
-    runCache = { at, files: next, list: names.flatMap(n => next.get(n)?.run ?? []) }
-    return [...runCache.list]
+  // The runs and the tasks, kept in memory: clients and ticks ask for them all
+  // the time, and finished runs and archived tasks pile up (hundreds of tasks
+  // parsed again on every tick kept a small host's CPU busy and its memory high).
+  // Every save is a rename into the folder, which changes the folder's mtime:
+  // while it stays the same, nothing is read; when it changes, only the files
+  // whose mtime, size or inode changed are read again. Our own writes also mark
+  // the folder stale (a rename within the clock's tick may leave its mtime as is).
+  // A write during a read leaves that read untrusted. The objects are shared
+  // between callers: never change one in place.
+  const folders = new Map<string, () => void>()
+  function cachedFolder<T>(folder: string) {
+    let cache: { at: number, files: Map<string, { mtime: number, size: number, ino: number, value: T | null }>, list: T[] } | null = null
+    let gen = 0
+    folders.set(folder, () => { gen++; if (cache) cache.at = -1 })
+    return async (): Promise<T[]> => {
+      const g = gen, at = (await fs.stat(folder).catch(() => null))?.mtimeMs
+      if (at === undefined) return []
+      if (cache?.at === at) return [...cache.list]
+      const names = (await fs.readdir(folder).catch(() => [] as string[])).filter(n => n.endsWith('.json')).sort()
+      const old = cache?.files, next = new Map<string, { mtime: number, size: number, ino: number, value: T | null }>()
+      await Promise.all(names.map(async (n) => {
+        const file = path.join(folder, n), s = await fs.stat(file).catch(() => null)
+        if (!s) return
+        const was = old?.get(n)
+        const value = was && was.mtime === s.mtimeMs && was.size === s.size && was.ino === s.ino ? was.value : await readJson<T>(file).catch(() => null)
+        next.set(n, { mtime: s.mtimeMs, size: s.size, ino: s.ino, value })
+      }))
+      cache = { at: g === gen ? at : -1, files: next, list: names.flatMap(n => next.get(n)?.value ?? []) }
+      return [...cache.list]
+    }
   }
-  const tasks = () => readAll<Task>(files.tasks)
+  const stale = (file: string) => folders.get(path.dirname(file))?.()
+  const writeJson = async (file: string, data: unknown) => { try { await writeJsonStored(file, data) } finally { stale(file) } }
+  const runs = cachedFolder<Run>(files.runs)
+  const tasks = cachedFolder<Task>(files.tasks)
   // The project's log: the tasks removed, by whom and why.
   const projectLog = async (key: string) =>
     (TASK_ID_RE.test(`${key}-1`) ? (await readJson<{ entries?: ProjectLogEntry[] }>(path.join(files.projectLog, `${key}.json`)))?.entries : null) ?? []
@@ -259,6 +273,13 @@ export function createPmStore(dir = path.join(DATA_DIR, 'projects')) {
   // (replan), said in its log. Within the workflow's write.
   // A new task from addTask's input, checked, not saved; pending: those of
   // the same write, not saved yet.
+  // A task's own prefs (task add --agent), checked as the workflow's: an agent
+  // names a program or a named agent of Settings › Agents. Empty ones dropped.
+  async function taskPrefs(raw: unknown): Promise<Task['prefs']> {
+    const r = taskPrefsOf(raw, await namedAgents())
+    if ('errors' in r) throw badInput(r.errors)
+    return r.prefs
+  }
   async function newTask(raw: unknown, pending: Task[] = []): Promise<Task> {
     const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
     const str = (k: string) => (typeof o[k] === 'string' ? (o[k] as string).trim() : '')
@@ -295,7 +316,8 @@ export function createPmStore(dir = path.join(DATA_DIR, 'projects')) {
     const refs = parseRefs(o.refs)
     if ('error' in refs) throw badInput([{ path: 'refs', message: refs.error }])
     if (refs.length && !feature) throw badInput([{ path: 'refs', message: 'plan lines of a feature: the task needs a feature' }])
-    return { id: `${p.key}-${n}`, project: p.key, title, description: str('description').slice(0, 20000), type, state: 'todo', origin, createdAt: Date.now(), ...(isWorkspace(p) ? { kind: 'feature' as const } : {}), ...(feature ? { feature } : {}), ...(refs.length ? { refs } : {}), ...(after ? { after } : {}), ...(mergeAfter ? { mergeAfter } : {}), ...(auto ? { auto } : {}), ...(addedBy ? { addedBy } : {}), ...(weight ? { weight } : {}), ...(planned.length ? { files: planned } : {}), ...(fromBranch ? { fromBranch } : {}), ...(checked ? { context: checked.context } : {}) }
+    const prefs = await taskPrefs(o.prefs)
+    return { id: `${p.key}-${n}`, project: p.key, title, description: str('description').slice(0, 20000), type, state: 'todo', origin, createdAt: Date.now(), ...(isWorkspace(p) ? { kind: 'feature' as const } : {}), ...(feature ? { feature } : {}), ...(refs.length ? { refs } : {}), ...(after ? { after } : {}), ...(mergeAfter ? { mergeAfter } : {}), ...(auto ? { auto } : {}), ...(addedBy ? { addedBy } : {}), ...(weight ? { weight } : {}), ...(planned.length ? { files: planned } : {}), ...(fromBranch ? { fromBranch } : {}), ...(checked ? { context: checked.context } : {}), ...(prefs ? { prefs } : {}) }
   }
 
   async function replanTasks(key: string, before: Template, after: Template) {
@@ -376,7 +398,7 @@ export function createPmStore(dir = path.join(DATA_DIR, 'projects')) {
     saveWorkflow: (key: string, raw: unknown, { by = 'user', said = '' } = {}) => write(async () => {
       const { list, i } = await findProject(key)
       const t = raw && typeof raw === 'object' && !Array.isArray(raw) ? ownWorkflow(raw as Template) : raw
-      const errors = validateTemplate(t)
+      const errors = validateTemplate(t, await namedAgents())
       if (errors.length) throw badInput(errors)
       const old = await readJson<Template>(workflowFile(key)), ws = workspaceOf(list[i]!, list)
       const shared = ws ? await readJson<Template>(workflowFile(ws.key)) : null
@@ -431,7 +453,8 @@ export function createPmStore(dir = path.join(DATA_DIR, 'projects')) {
       const logFile = path.join(files.projectLog, `${t.project}.json`)
       const entries = await projectLog(t.project)
       await writeJson(logFile, { v: 1, entries: [...entries, { at: Date.now(), by, text: showIds(await readProjects(), text), task: t.id }].slice(-500) })
-      await fs.rm(path.join(files.tasks, `${t.id}.json`), { force: true })
+      const file = path.join(files.tasks, `${t.id}.json`)
+      await fs.rm(file, { force: true }).finally(() => stale(file))
     }),
     projectLog,
     logProject: (key: string, entry: Omit<ProjectLogEntry, 'at'>) => write(async () => {
@@ -506,11 +529,12 @@ export function createPmStore(dir = path.join(DATA_DIR, 'projects')) {
       await writeJson(file, next)
       return next
     }),
-    saveRun: (r: Run) => write(async () => { await writeJson(path.join(files.runs, `${r.id}.json`), r); if (runCache) runCache.at = -1 }),
+    saveRun: (r: Run) => write(() => writeJson(path.join(files.runs, `${r.id}.json`), r)),
     receipt: (id: string) => readJson<Receipt>(path.join(files.receipts, `${id}.json`)),
     saveReceipt: (r: Receipt) => write(() => writeJson(path.join(files.receipts, `${r.id}.json`), r)),
 
-    // { project, title, description?, type, after?, mergeAfter?, feature?, auto?, origin?, addedBy? }: a new task, to do (origin: 'user' when unset).
+    taskPrefs,
+    // { project, title, description?, type, after?, mergeAfter?, feature?, auto?, origin?, addedBy?, prefs? }: a new task, to do (origin: 'user' when unset).
     addTask: (raw: unknown) => write(async () => {
       const task = await newTask(raw)
       await writeJson(path.join(files.tasks, `${task.id}.json`), task)
@@ -540,7 +564,7 @@ export function createPmStore(dir = path.join(DATA_DIR, 'projects')) {
         for (const t of added) { const f = path.join(files.tasks, `${t.id}.json`); await writeJson(f, t); written.push(f) }
         await writeJson(path.join(files.tasks, `${id}.json`), split)
       } catch (e) {
-        await Promise.all(written.map(f => fs.rm(f, { force: true }).catch(() => {})))
+        await Promise.all(written.map(f => fs.rm(f, { force: true }).catch(() => {}).finally(() => stale(f))))
         throw e
       }
       return { feature: split, tasks: added }

@@ -8,7 +8,9 @@ import { DEFAULT_MEMORY } from '../../shared/pm/memory'
 import { weightOf, type Weight } from '../../shared/pm/weight'
 import { paceWait } from '../../shared/pm/pace'
 import type { PaceVerdict } from '../../shared/pm/pacing'
-import { taskPlan, type Task } from '../../shared/pm/run'
+import { taskAgents, taskPlan, type Task } from '../../shared/pm/run'
+import { agentsMissing } from '../../shared/pm/namedAgents'
+import { namedAgents } from './settings'
 import { busyNext, busyQueue, coordinatorStartRefusal, holdsSlot, type SlotOf } from '../../shared/pm/autopilot'
 import { byBoardOrder } from '../../shared/pm/boardOrder'
 import { sameFilesText } from '../../shared/pm/files'
@@ -53,6 +55,8 @@ export async function placeFor(deps: PmLaunchDeps, task: Task, { asked, waits = 
   const pinned = fresh ? undefined : fixed.machine
   const t = await deps.store.workflow(p.key)
   const settings = await readMemorySettings()
+  // The named agents its worker and reviewer use: a machine without one takes nothing.
+  const named = await namedAgents(), needed = t ? taskAgents(t, task, named) : []
   // Each machine's state now, not the last reading (a few seconds old): one that just went offline takes nothing.
   const listed = await Promise.resolve().then(() => deps.call<{ machines?: CoreMachine[] }>('machine.list', {}, 3000)).then(r => r?.machines ?? null, () => null)
   // A failed read never holds a start: it goes where it would have gone without placement.
@@ -63,7 +67,7 @@ export async function placeFor(deps: PmLaunchDeps, task: Task, { asked, waits = 
     const paused = fresh && isPaused(p, key)
     // Another machine than home, before the task's first start there: ready for the project?
     const notReady = online && fresh && !paused && key !== p.machine ? await readiness(deps, p, t, task, key).catch((e: Error) => e.message) : ''
-    const wait = paused ? PAUSED : waits[key] ?? (fresh ? roomWaits.get(key) : undefined) ?? (notReady ? `not ready (${notReady})` : undefined)
+    const wait = paused ? PAUSED : agentsMissing(needed, named, key) ?? waits[key] ?? (fresh ? roomWaits.get(key) : undefined) ?? (notReady ? `not ready (${notReady})` : undefined)
     return {
       key, label: m?.label ?? key, online, ...(wait ? { wait } : {}), settings: settings[key] ?? DEFAULT_MEMORY,
       capacity: online ? await machineCapacity(deps, key) : null, running: online ? await atWork(deps.store, key) : [],

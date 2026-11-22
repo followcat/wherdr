@@ -5,7 +5,7 @@ import { parseCommand } from '../shared/pm/coordinator'
 import { parseOpenLine, uiPlaceLabel, usedAt, type UiDevice } from '../shared/uiOpen'
 import type { Pane } from '../shared/types'
 import type { Task } from '../shared/pm/run'
-import { folderPath, parseShowLine } from '../shared/uiShow'
+import { folderPath, parseShowLine, taskFilePath } from '../shared/uiShow'
 
 // Alfred (_main) runs in pane p1, the WEB coordinator in p2.
 // WEB was renamed: it shows WB and was once WW.
@@ -138,6 +138,23 @@ describe('ui show', () => {
     for (const path of ['../x', '~/.ssh/id', '/etc/hosts', 'a/../../b'])
       await expect(showUi(deps, { ...web, turn: 'user', what: 'file', path })).rejects.toThrow(/your own folder/)
     await expect(showUi(deps, { ...web, turn: 'wake', what: 'file', path: 'a.md' })).rejects.toThrow(/never in a wake/)
+  })
+
+  it('shows a file of a task\'s folder the agent may reach, by its absolute path', async () => {
+    const { deps, got } = setup([{ pane: 'p2', device: 'computer', ago: 1 }])
+    const tasks = '/h/.wherdr/pm/tasks'
+    deps.panes = () => [{ id: 'p2', coreAddress: 't-web', cwd: '/h/.wherdr/pm/coordinators/WEB' }] as Pane[]
+    // As the coordinator's command checks it: another project's task is refused.
+    const taskOf = async (id: string) => { if (!id.startsWith('WEB-')) throw new Error('refused: project OTHER'); return { id } }
+    const show = (path: string) => showUi(deps, { ...web, turn: 'user', what: 'file', path, taskOf })
+    for (const path of ['WEB-3/mockups/page.html', `${tasks}/WEB-3/mockups/page.html`]) await show(path)
+    expect(got[0]!.msgs.map(m => JSON.parse(m).arg)).toEqual([`${tasks}/WEB-3/mockups/page.html`, `${tasks}/WEB-3/mockups/page.html`])
+    await expect(show('OTHER-1/report.md')).rejects.toThrow(/project OTHER/)
+    for (const path of ['WEB-3/../../x', `${tasks}/WEB-3/../WEB-4/a`, `${tasks}/../coordinators/WEB/memory.md`, '/etc/WEB-3/a'])
+      await expect(show(path)).rejects.toThrow(/your project's tasks/)
+    expect(taskFilePath('web-3/report.md')).toEqual({ task: 'WEB-3', rel: 'report.md' })
+    expect(parseShowLine(`show file ${tasks}/WEB-3/report.md`)).toEqual({ what: 'file', arg: `${tasks}/WEB-3/report.md` })
+    expect(parseShowLine(`show file ${tasks}/WEB-3/../../x`)).toBeNull()
   })
 
   it('shows a task\'s screenshots once it has some, and approves nothing', async () => {

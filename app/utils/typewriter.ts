@@ -171,17 +171,38 @@ export function finishReveal(plan: RevealPlan) {
 // above (the block key, for its part, contains the position in the list).
 export const replyId = (it: { ts: string | null, text: string }) => `${it.ts || ''}|${it.text.length}|${it.text.slice(0, 64)}`
 
-// Reply to reveal after a re-read: only the last unknown
-// reply, and only if the conversation was already shown and followed
-// live (not on first load, on return to the app nor offline).
-// All received replies become known.
-export function pickTyping(known: Set<string>, replies: string[], live: boolean): string | null {
-  let pick: string | null = null
+// Replies new to this device after a re-read; all become known.
+// `following`: the conversation was already open and read live since
+// (not its first read, nor the first after the background or offline):
+// only then is the last new reply typed in (`animate`, the setting).
+// Otherwise new replies show at once, the first one under a "New" divider
+// (`fresh`), if this device knew some replies before (`baseline`): never
+// on a first open, where everything would be new.
+export interface NewReplies { typing: string | null, fresh: string | null }
+export function sortNewReplies(known: Set<string>, replies: string[], o: { following: boolean, animate: boolean, baseline: boolean }): NewReplies {
+  let first: string | null = null
+  let last: string | null = null
   for (const id of replies) {
     if (!known.has(id)) {
       known.add(id)
-      pick = id
+      first ??= id
+      last = id
     }
   }
-  return live ? pick : null
+  if (o.following) return { typing: o.animate ? last : null, fresh: null }
+  return { typing: null, fresh: o.baseline ? first : null }
+}
+
+// The kept end read after the server's answer: as if read first (all its
+// replies known), the first reply it lacks was missed by this device. Only
+// one written after its last message: older ones were never in it.
+interface Said { role: string, ts: string | null, text: string }
+export function missedReply(kept: Said[], current: Said[]): string | null {
+  const seen = new Set(kept.filter(i => i.role === 'assistant').map(replyId))
+  const end = kept.reduce((m, i) => Math.max(m, i.ts ? Date.parse(i.ts) || -Infinity : -Infinity), -Infinity)
+  for (const it of current) {
+    if (it.role !== 'assistant' || seen.has(replyId(it))) continue
+    if (end === -Infinity || (it.ts && Date.parse(it.ts) > end)) return replyId(it)
+  }
+  return null
 }

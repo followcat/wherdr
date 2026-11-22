@@ -175,7 +175,7 @@ describe('core input routes', () => {
     const long = `${msg}\n${Array.from({ length: 30 }, (_, i) => `line ${i}`).join('\n')}`
     for (const [text, after, enters] of [[msg, '[Image #120] what is wrong here?', 1], [msg, '', 0], [msg, '[Image #120] what is wrong here? more', 0],
       // A long paste, shown as its stand-in: still ours alone.
-      [long, '[Image #120] what is wrong here? [Pasted text #1 +29 lines]', 1], [long.split('\n').slice(1).join('\n'), '[Pasted text #1 +29 lines]', 1]] as const) {
+      [long, '[Image #120] what is wrong here? [Pasted text #1 +29 lines]', 1], [long.split('\n').slice(1).join('\n'), '[Pasted text #1 +30 lines]', 1]] as const) {
       let reads = 0
       let entered = false
       const t = deps((m) => { if (m === 'terminal.keys') entered = true; return m === 'terminal.send' ? { started: false } : {} })
@@ -247,6 +247,57 @@ describe('core input routes', () => {
     expect(cold.logs).toHaveLength(2)
     expect(cold.logs[1]).toMatch(/a photo stayed a path, sent as it is after \d+ ms: field held \d+ chars, 0 images; expected \d+ chars, 1 images, 2 lines$/)
     expect(cold.logs.join('\n')).not.toMatch(/look|srv/)
+  })
+
+  // A core photo path (~90 chars) wider than Claude's field: drawn over two lines (WHR-546).
+  const wrapped = (msg: string) => {
+    const keys: string[] = []
+    const sent: string[] = []
+    let field: string | null = null
+    const t = deps((m, params) => {
+      if (m === 'terminal.send') {
+        sent.push(params.text)
+        const [text, path, ...rest] = params.text.split('\n')
+        field = path ? [text, path.slice(0, 40), path.slice(40), ...rest].join('\n') : params.text
+      }
+      if (m === 'terminal.keys') {
+        keys.push(...params.keys)
+        if (params.keys[0] === 'ctrl+u') field = null
+        if (params.keys[0] === 'backspace' && params.keys.length === 1) field = field!.replace(/\n?\\$/, '')
+        if (params.keys[0] === 'enter') { sent.push(`enter on ${field}`); field = null }
+      }
+      return m === 'terminal.send' ? { started: false } : {}
+    })
+    t.d.settleMs = 1
+    t.d.field = async () => field
+    return { t, keys, sent }
+  }
+  const longMsg = 'look at this\n/home/user/.local/share/herdr-core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.png'
+
+  it('a photo path Claude draws over two lines, kept through the wait: submitted once as a path, its "\\" taken out first', async () => {
+    const { t, keys, sent } = wrapped(longMsg)
+    const warn = console.warn
+    console.warn = () => {}
+    try {
+      expect(await coreSend(t.d, { pane_id: 't1', text: longMsg })).toEqual({ ok: true, started: null })
+    } finally { console.warn = warn }
+    expect(keys.filter(k => k === 'enter')).toHaveLength(1)
+    expect(keys.slice(-2)).toEqual(['backspace', 'enter'])
+    expect(sent.at(-1)).toMatch(/^enter on [^\\]*$/)
+  })
+
+  it('a message sent while the one before is still being submitted: sent after it, in order', async () => {
+    const { t, sent } = wrapped(longMsg)
+    const warn = console.warn
+    console.warn = () => {}
+    try {
+      const first = coreSend(t.d, { pane_id: 't1', text: longMsg })
+      await new Promise(r => setTimeout(r, 5))
+      const second = coreSend(t.d, { pane_id: 't1', text: 'and then?' })
+      expect(await first).toEqual({ ok: true, started: null })
+      expect(await second).toEqual({ ok: true, started: null })
+    } finally { console.warn = warn }
+    expect(sent.filter(s => !s.startsWith('enter'))).toEqual([`${longMsg}\n\\`, `${longMsg}\n\\`, 'and then?'])
   })
 
   it('a slow core (each read, send and key near its timeout): the photo fallback stops in time, answered under 120 s', async () => {
@@ -357,6 +408,73 @@ describe('core input routes', () => {
     } finally { console.warn = warn }
     expect(Date.now() - at).toBeLessThan(1000)
     expect(t.calls.some(c => c[0] === 'terminal.keys')).toBe(false)
+  })
+
+  // WHR-549, on Claude Code 2.1.319: two photos Claude missed stay in the paste
+  // as paths, which makes a one-line text long enough to be collapsed, its "\"
+  // inside "[Pasted text #N +3 lines]" where no Backspace reaches it.
+  it('a long text + photos collapsed with its "\\" inside: pasted again without it, submitted once', async () => {
+    const msg = 'Look at these two screenshots of the settings page\n/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.png\n/srv/core/files/t1/2026-01-01T10-00-01-000Z-d4e5f6.png'
+    // A text that is long without its photos: no "\", it would be inside the stand-in.
+    const long = `one\ntwo\nthree\n${msg}`
+    expect(holdEnter(long)).toBe(long)
+    for (const second of [null, '[Pasted text #4 +2 lines]']) {
+      let field: string | null = null
+      const sent: string[] = []
+      const keys: string[] = []
+      const t = deps((m, params) => {
+        if (m === 'terminal.send') { sent.push(params.text); field = sent.length === 1 ? '[Pasted text #3 +3 lines]' : second }
+        if (m === 'terminal.keys') { keys.push(...params.keys); if (['ctrl+u', 'enter'].includes(params.keys[0])) field = null }
+        return m === 'terminal.send' ? { started: false } : {}
+      })
+      t.d.settleMs = 1
+      let looks = 0
+      t.d.field = async () => (looks++ ? field : null)
+      const warn = console.warn
+      console.warn = () => {}
+      try {
+        expect((await coreSend(t.d, { pane_id: 't1', text: msg })).ok).toBe(true)
+      } finally { console.warn = warn }
+      expect(sent).toEqual([`${msg}\n\\`, msg])
+      // Taken with core's Enter, or Enter once on the stand-in: never a "\" left in what Claude gets.
+      expect(keys.filter(k => k === 'enter')).toHaveLength(second ? 1 : 0)
+    }
+  })
+
+  it('after a restart, a stand-in hiding the "\\": pasted again without it, never Enter on it', async () => {
+    const msg = 'Look at these\n/srv/core/files/t1/2026-01-01T10-00-00-000Z-a1b2c3.png\n/srv/core/files/t1/2026-01-01T10-00-01-000Z-d4e5f6.png'
+    let field: string | null = '[Pasted text #3 +3 lines]'
+    const keys: string[] = []
+    const sent: string[] = []
+    const t = deps((m, params) => {
+      if (m === 'terminal.send') { sent.push(params.text); field = null }
+      if (m === 'terminal.keys') { keys.push(...params.keys); if (params.keys[0] === 'ctrl+u') field = null }
+      return {}
+    })
+    t.d.settleMs = 1
+    t.d.field = async () => field
+    const warn = console.warn
+    console.warn = () => {}
+    try {
+      await resumeSubmitting(t.d, [{ id: 'c', terminal: 'm/t1', text: msg, at: Date.now() }])
+    } finally { console.warn = warn }
+    expect(sent).toEqual([msg])
+    expect(keys).not.toContain('enter')
+  })
+
+  it('a long text alone that Claude collapses, with or without "+K lines": Enter once', async () => {
+    for (const [text, collapsed] of [['x'.repeat(900), '[Pasted text #5]'], ['a\nb\nc\nd\ne', '[Pasted text #5 +4 lines]']]) {
+      let enters = 0
+      let looks = 0
+      const t = deps((m) => { if (m === 'terminal.keys') enters++; return m === 'terminal.send' ? { started: false } : {} })
+      t.d.settleMs = 1
+      t.d.field = async () => (looks++ && !enters ? collapsed : null)
+      expect(await coreSend(t.d, { pane_id: 't1', text })).toEqual({ ok: true, started: null })
+      expect(t.calls[0]![1].text).toBe(text)
+      expect(enters).toBe(1)
+    }
+    // Another paste's line count is not this message.
+    expect(fieldHolds('[Pasted text #5 +9 lines]', 'a\nb\nc\nd\ne', true)).toBe(false)
   })
 
   it('slow field reads: too little of the wait left to paste again, the message goes as it is, Enter within the wait from the paste', async () => {

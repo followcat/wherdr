@@ -313,7 +313,8 @@ prompt Claude puts back after an interrupt) shows at the end of the conversation
 paint of a passive `terminal.attach`) confirms it is typed text, not Claude's gray suggestion, with **Send now** (Enter, pressed
 again every ~1 s while the box still holds that text alone, then a check that the box emptied and a turn started) and **Clear**. When Claude's queue offers
 "ctrl+enter to send now", the conversation offers **Send now** too (ctrl+enter, then a check
-that Claude took its queue). Each action re-reads the screen first and refuses a box that
+that Claude took its queue), under the queued message it sends: a note wherdr typed itself (a
+card's outcome, a wake) shows there as its tagged row, marked *sent when it finishes*. Each action re-reads the screen first and refuses a box that
 changed (`server/utils/coreDraft.ts`). **Send now** spins and disables the row's buttons from
 the tap until the message leaves the screen; a failure says why under it (*Not sent: … Try
 again*). One action runs at a time per terminal: the same one asked again, from a second tap
@@ -331,18 +332,28 @@ message is still there (up to ten times over about 16 seconds). A message with p
 with a lone `\` on its last line: core presses Enter right after its paste, and Claude,
 before it has turned a photo path into `[Image #N]`, would submit the path as plain text;
 `\` + Enter is a new line in Claude, so the message waits in the box for wherdr's Enter.
+Only when the box keeps the paste as it is: Claude collapses a paste of 3 line breaks or
+more, or over 800 characters (counted once it took out the photos it could read), into
+`[Pasted text #N +K lines]` (or `[Pasted text #N]`), and a `\` there would sit inside it,
+hold no Enter and reach Claude; such a message is sent without it. A stand-in counts as the
+message when its line count fits it (its text lines, plus the photos missing from its
+`[Image #N]` tags), also for a one-line text, with or without photos.
 Claude Code checks and reads a pasted photo path within one second, or keeps it as typed text
 for good (after an idle, on a loaded machine): a message whose photo shows as its path is
 cleared and pasted once more, only once its field is seen empty; a field that does not empty,
 or can no longer be read, after that clear refuses the send (**Not sent**, with Retry for the
 whole message), never submitting part of it. A multi-line message shows in the box as
 `[Pasted text #N +K lines]`, its photo paths hidden inside: a photo missing from the
-`[Image #N]` tags before it is such a path, and is pasted once more the same way.
+`[Image #N]` tags before it is such a path, and is pasted once more the same way. When the
+stand-in also hides the `\` (missed photos made a short text long enough to collapse), the
+message is pasted once more without it, at once, and goes with its paths if Claude misses
+them again.
 The 18 seconds count from the first paste, clears and the second paste included: the message
 is pasted again only with 6 seconds still left, otherwise it goes as it is at once.
 A photo still shown as its path after that, or when the wait ends, is never left there: wherdr takes the
 `\` out (Backspace, only while the box ends with it), presses Enter, and the message goes
-with its path, which the agent can still open; this leaves one line in the server log (the
+with its path, which the agent can still open (also a path wider than the box, which Claude
+draws over two lines); this leaves one line in the server log (the
 wait's duration and the sizes, never the text). A box that never holds the message alone
 when the wait ends (part of it, or other text) gets no Enter: the send is refused, so the
 message reads **Not sent** with Retry, and that text shows with **Send now** / **Clear**. The whole send (paste, wait, Enters) runs
@@ -367,7 +378,9 @@ A message only tells what wherdr knows: from the tap until it is in the agent's 
 its bubble reads **Sending…** with a small turning loader, whatever the send answered or the
 screen shows, also on another device or after a reload (the server marks the terminal as
 sending while it submits a message, text or photos); it never claims the agent read it.
-Held in Claude's own queue, it reads **Queued by Claude · sent when it finishes**. Once in
+Held in Claude's own queue, it reads **Queued by Claude · sent when it finishes**. Waiting
+messages show in the order they were sent, the oldest on top, whether wherdr or Claude's own
+queue lists them. Once in
 the transcript, the transcript's own message replaces it. Only once the server is done
 (its Enters over) and the message is still in the box does its bubble read **Not sent yet ·
 waiting in the agent's input** (the box's **Not sent — still in Claude's input**, with

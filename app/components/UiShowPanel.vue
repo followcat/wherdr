@@ -1,8 +1,9 @@
 <script setup lang="ts">
-// What an agent showed with `ui show` (shared/uiShow.ts): a file of its folder
-// (FilesView, read-only) or a task's screenshots (UiShowShots). Beside the
+// What an agent showed with `ui show` (shared/uiShow.ts): a file of its folder,
+// or by its absolute path one of a task's folder (FilesView, read-only) or a task's screenshots (UiShowShots). Beside the
 // conversation on a computer with room, in place of the Settings panel;
-// otherwise in a sheet. Leaving the conversation closes it.
+// otherwise in a sheet, resizable by its left edge like Notes. Leaving the
+// conversation closes it.
 import { showLabel } from '#shared/uiShow'
 import { isConversationPath } from '~/utils/settingsPanel'
 
@@ -11,6 +12,8 @@ const router = useRouter()
 const e = uiShown
 const panel = computed(() => sidePanelRoom.value)
 const title = computed(() => (e.value ? showLabel(e.value) : ''))
+// A task folder's file comes by its absolute path, read as a written path.
+const inFolder = computed(() => !e.value?.arg.startsWith('/'))
 const close = () => { uiShown.value = null }
 const sheetOpen = computed({ get: () => !!e.value && !panel.value, set: (v) => { if (!v) close() } })
 
@@ -24,6 +27,7 @@ watch(() => route.path, close)
 
 <template>
   <aside v-if="e && panel && isConversationPath(route.path)" id="ui-show" class="ui-show-panel" :aria-label="title" data-testid="ui-show-panel">
+    <SidePanelHandle controls="ui-show" />
     <header class="ui-show-top">
       <div class="ui-show-head">
         <span class="ui-open-by">{{ tl(`Shown by ${e.by || 'the agent'}`) }}</span>
@@ -34,13 +38,13 @@ watch(() => route.path, close)
       </button>
     </header>
     <div class="ui-show-body">
-      <FilesView v-if="e.what === 'file'" :key="`${e.pane}:${e.arg}`" :pane-id="e.pane" :file="e.arg" in-folder />
+      <FilesView v-if="e.what === 'file'" :key="`${e.pane}:${e.arg}`" :pane-id="e.pane" :file="e.arg" :in-folder="inFolder" />
       <UiShowShots v-else :key="e.arg" :task="e.arg" />
     </div>
   </aside>
   <AppSheet v-else-if="!panel" v-model:open="sheetOpen" :title="title" wide full screen>
     <template v-if="e">
-      <FilesView v-if="e.what === 'file'" :key="`${e.pane}:${e.arg}`" :pane-id="e.pane" :file="e.arg" in-folder />
+      <FilesView v-if="e.what === 'file'" :key="`${e.pane}:${e.arg}`" :pane-id="e.pane" :file="e.arg" :in-folder="inFolder" />
       <UiShowShots v-else :key="e.arg" :task="e.arg" />
     </template>
   </AppSheet>

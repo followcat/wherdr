@@ -470,6 +470,16 @@ workflow: merged, and its deploy watch passed when the workflow has one. The
 task's sheet says *Merges once LED-4 is done.*, and its card shows the wait
 while it is in the merge queue.
 
+Every merge kind waits the same way, not only the GitHub merge queue: a
+`git.land` (a workspace that lands on develop without a PR), a
+`bitbucket.merge`, or a `github.merge` the guards keep out of the queue is not
+run while an upstream task is not done. Its card says *Merges once LED-4 is
+done*, the engine checks again at each pass and runs the merge by itself once
+the upstream is done. A click on such a merge step is held with that reason,
+never lost. `git.verify-merged` (*I merged it*) cannot be held: you merged on
+your Git host already, so wherdr accepts it and logs a warning on the task
+(*merged before LED-4 was done*).
+
 If an upstream task is stopped or abandoned, the waiting one keeps waiting
 (no cascade stop) and the workspace's coordinator gets one wake for it: start
 the upstream again, or drop the wait with `task edit <task> --merge-after ""`.
@@ -477,6 +487,11 @@ the upstream again, or drop the wait with `task edit <task> --merge-after ""`.
 a feature, never a cycle, counting `after` and `mergeAfter` together (a task
 that merges after one that starts after it would block both). While it waits,
 its new commits are not pushed either: they go once the upstream is done.
+
+A promotion across a feature's repositories (develop → uat, say) is one
+promote sub-task per repository, of a type that [starts from
+develop](project-management.md#promotion-branches), each with `--merge-after`
+mirroring the feature's order.
 
 A sub-task's worker that finds halfway it needs something the split did not
 plan reports `blocked:on <task|repo>: <need>`: its task parks until that task

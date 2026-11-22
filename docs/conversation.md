@@ -31,6 +31,11 @@ from the pane's: they count only when the wherdr service has them too.
   or scrollbar) and the view stays where you are until you scroll back to the bottom or tap the
   **↓** button; content above that changes height (images, folding) does not move it. A
   conversation still opens at its last message.
+- **Typewriter and *New***: only a reply that arrives while you watch the open conversation is
+  typed in (**Settings › Conversation › Typewriter**). A reply already there when you open the
+  conversation, or when the app comes back from the background or offline, shows at once; if
+  this device never showed it, a thin *New* divider sits above the first such reply for a few
+  seconds, gone sooner once you scroll or write. None on a conversation's first open on a device.
 - **Message field focus**: the focused message field's border takes the agent's color, a
   second color glides slowly around it, with a faint glow around the field (omp's running
   actions get the same moving border, without the glow). It is frozen when the system asks for
@@ -128,12 +133,18 @@ from the pane's: they count only when the wherdr service has them too.
   that failed). It shows as a muted *From the card* row, not as a message you typed: the agent may
   propose the next card, but the click is never your yes to anything else (a *Cancel* cannot end
   a step that waits for you or merge a PR). A second click on a closed card tells nothing.
+  Typed while the agent works, the note (like a wake) waits in Claude's queue as the same small
+  row, marked *sent when it finishes*, with Claude's **Send now** under it: never a bubble, never
+  a **Send now** with no message.
   While that agent does not run, nothing is typed: its next start's first message lists what you
   applied or cancelled since.
 - **Files and screenshots beside the conversation**: an agent can show you a file of its own
   folder (`wherdr pm ui show file docs/plan.md`, a path relative to its folder: never `~`, `..`
-  or a path outside it) or a task's screenshots (`wherdr pm ui show shots WHR-12`, once the task
-  has some). On a wide computer they open in the side panel, in place of Settings: the file
+  or a path outside it), a coordinator also a file of one of its project's tasks' folders (its
+  report, screenshots, mockups: `ui show file ABC-24/mockups/page.html`, or the absolute path under
+  the pm tasks folder; another project's task only within its reach), or a task's screenshots (`wherdr pm ui show shots WHR-12`, once the task
+  has some). On a wide computer they open in the side panel, in place of Settings (drag its left
+  edge, or the arrow keys on it, to resize; double-click: default width; kept on the device): the file
   read-only as in Files (an HTML page runs as a page: see [Files](files.md)), the screenshots by step, before and after side by side, with a button
   to open the task. On a phone a card shows above the message field, and a tap opens a sheet
   (before and after toggled). A tap on a shown image (the file, an image of a shown Markdown

@@ -18,6 +18,8 @@ export const SYNCED_SETTINGS = [
   'homeGrouping', 'individualAgentList', 'collapsedMachines', 'collapsedRepos',
   'showCounters', 'showQuotas', 'quotaDisplay',
   'autoReorderReady', 'readySort', 'hiddenAgents', 'agentOrder',
+  // Named agents: a name for a command per machine (shared/pm/namedAgents.ts), read by the engine
+  'namedAgents',
   // Coordinators section: their order and Hidden group (shared/pm/coordinatorOrder.ts)
   'coordinatorOrder', 'coordinatorsHidden',
   // Conversation

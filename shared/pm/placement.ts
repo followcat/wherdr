@@ -150,7 +150,7 @@ export function roomShort(hold: string): string | undefined {
 // with their task's weight; unchecked: another machine than home whose
 // readiness for the project was not checked yet (it is before its first task);
 // paused: switched off for the project, it takes no new task of it.
-export type MachineView = Omit<Candidate, 'running'> & { home: boolean, running: (Estimate & { weight: Weight, task?: string })[], unchecked?: boolean, paused?: boolean }
+export type MachineView = Omit<Candidate, 'running'> & { home: boolean, running: (Estimate & { weight: Weight, task?: string, agent?: string })[], unchecked?: boolean, paused?: boolean }
 
 // A machine's card in the project's Machines view: its state, its memory in MB
 // for the bar (its agents' estimates, the rest of what is used, free, the
@@ -182,12 +182,15 @@ export function machineNow(c: MachineView, estimates: Record<Weight, Estimate> =
 }
 
 // "machine-a (home): 9.1 GB free of 32.0 GB · 8 cores, load 2.1 · 2 of 21 agents
-// · running 1 heavy, 1 light · fits heavy": the heaviest weight it takes now,
+// · running 1 heavy, 1 light · agents omp-api, 2 claude · fits heavy": its agents
+// by name (a named agent, else the program), the heaviest weight it takes now,
 // else why it takes nothing (full, not ready, paced).
 export function machineLine(c: MachineView, estimates: Record<Weight, Estimate> = WEIGHT_DEFAULTS): string {
   const name = `${c.label || 'this host'}${c.home ? ' (home)' : ''}`
   const hours = c.settings.hours ? [`available ${hoursLabel(c.settings.hours)}`] : []
-  if (c.paused) return `${name}: ${PAUSED}${c.running.length ? ` · ${c.running.length} agents at work` : ''}`
+  const names = [...new Set(c.running.flatMap(r => (r.agent ? [r.agent] : [])))]
+  const agents = names.map(n => { const k = c.running.filter(r => r.agent === n).length; return k > 1 ? `${k} ${n}` : n })
+  if (c.paused) return `${name}: ${PAUSED}${c.running.length ? ` · ${c.running.length} agents at work${agents.length ? ` (${agents.join(', ')})` : ''}` : ''}`
   if (!c.online) return [`${name}: offline`, ...hours].join(' · ')
   const count = WEIGHTS.slice().reverse().map(w => [w, c.running.filter(r => r.weight === w).length] as const).filter(([, n]) => n)
   const fits = WEIGHTS.slice().reverse().find(w => !misfit(c, w, estimates[w]))
@@ -195,6 +198,7 @@ export function machineLine(c: MachineView, estimates: Record<Weight, Estimate> 
     ...capacityParts(c.capacity, c.settings, c.running.length),
     ...hours,
     ...(count.length ? [`running ${count.map(([w, n]) => `${n} ${w}`).join(', ')}`] : []),
+    ...(agents.length ? [`agents ${agents.join(', ')}`] : []),
     fits ? `fits ${fits}${c.unchecked ? ' (readiness checked before its first task)' : ''}` : `takes nothing now: ${misfit(c, 'light', estimates.light)}`,
   ].join(' · ')}`
 }

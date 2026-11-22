@@ -6,7 +6,7 @@
 // Refuse or Accept. An outdated proposal (the workflow changed since) is
 // refused by the server: its reason shows here.
 import type { CoordinatorView } from '#shared/pm/coordinator'
-import { changeHeadline } from '#shared/pm/workflowChanges'
+import { changeHeadline, changeTitle } from '#shared/pm/workflowChanges'
 
 // canGoto, goto: opened from the conversation, the link back to the request.
 const props = defineProps<{ c: CoordinatorView, canGoto?: boolean }>()
@@ -20,6 +20,8 @@ const proposed = computed(() => props.c.proposal?.template)
 // Nothing readable (a change the builder does not describe): the JSON diff only.
 const changes = computed(() => { const c = props.c.proposal?.changes; return c && (c.all.length || c.types.length) ? c : undefined })
 const VIEWS = computed(() => [...(changes.value && proposed.value ? ['diagram' as const] : []), ...(changes.value ? ['readable' as const] : []), 'json' as const])
+// Its title says what it does: 'New task type proposed', 'First workflow proposed'…
+const title = computed(() => `${changeTitle(props.c.proposal?.changes)} proposed`)
 const headline = computed(() => changeHeadline(props.c.proposal?.changes ?? { all: [], types: [] }))
 // The task types it changes (a change to them all: every type).
 const types = computed(() => (changes.value?.types.length ? changes.value.types.map(x => x.type) : Object.keys(proposed.value?.taskTypes ?? {})))
@@ -29,7 +31,7 @@ const VIEW_LABEL = { diagram: 'Diagram', readable: 'List', json: 'JSON' }
 </script>
 
 <template>
-  <AppSheet v-model:open="open" :title="tl('Workflow change proposed')" tall wide top hide-close>
+  <AppSheet v-model:open="open" :title="tl(title)" tall wide top hide-close>
     <div class="review" data-testid="proposal-review">
       <template v-if="c.proposal">
         <p v-if="headline" class="review-headline" data-testid="proposal-headline">{{ headline }}</p>

@@ -172,7 +172,7 @@ describe('reviewer plan', () => {
   })
   it('omp works and reviews; a reviewer of an unknown engine is refused', () => {
     expect(reviewerPlan(company, task({ reviewAgent: 'omp', reviewModel: 'openai/gpt-5.5' }))).toEqual({ program: 'omp', model: 'openai/gpt-5.5' })
-    expect(reviewerPlan(company, task({ reviewAgent: 'pi', reviewModel: 'x' }))).toEqual({ reason: 'The engine cannot start "pi": claude, codex or omp' })
+    expect(reviewerPlan(company, task({ reviewAgent: 'pi', reviewModel: 'x' }))).toEqual({ reason: 'The engine cannot start "pi": claude, codex, omp or a named agent of Settings › Agents' })
     const omp = { ...company, prefs: { agent: 'omp', model: 'sonnet', reviewModel: 'same' } }
     expect(reviewerPlan(omp, task())).toEqual({ program: 'omp', model: 'sonnet' })
     // omp has no quota reading: the fallback is not asked for it, and its name reads plainly if it ever is.
@@ -207,7 +207,7 @@ describe('reviewer plan', () => {
     expect(reviewSwitch(log(`review: ${out}, reviewed by claude sonnet`, 'review: sent to the reviewer', 'review: started the reviewer (codex gpt-6.1-sol)'))).toBeUndefined()
   })
   it('a workflow with an invalid fallback is refused at save', () => {
-    const errors = (prefs: Template['prefs']) => validateTemplate({ ...company, prefs: { ...company.prefs, ...prefs } })
+    const errors = (prefs: Template['prefs']) => validateTemplate({ ...company, prefs: { ...company.prefs, ...prefs } }, [])
     expect(errors({ reviewFallbackAgent: 'claude', reviewFallbackModel: 'same' })).toEqual([])
     expect(errors({ reviewFallbackAgent: 'codex', reviewFallbackModel: 'gpt-6.1-sol' })).toEqual([])
     expect(errors({ reviewFallbackModel: 'opus' })).toContainEqual({ path: 'prefs.reviewFallbackModel', message: 'reviewFallbackAgent and reviewFallbackModel go together' })

@@ -39,6 +39,7 @@ export interface Card {
   holder: Holder
   terminal?: string // herdr-core address of the holder's agent, if it runs
   agents?: { worker?: string, reviewer?: string } // herdr-core address of each role's agent still running (Open the agent)
+  starts?: AgentStart[] // each run of its worker and reviewer: when it started and its agent by name (History)
   released?: number // its worker was released to free memory, at (0: unknown): opening it starts it again (release.ts)
   yourTurn?: string // the badge
   stall?: Stall // stalled, the machine may still fix it (blocked.ts); past HANDLE_AFTER_MS, also its yourTurn
@@ -87,6 +88,9 @@ export interface BoardProject { kind?: 'workspace', workspace?: string, base?: s
 // archived: each project's count of archived tasks, left out of cards (GET /api/pm/archived lists them).
 export interface Board { projects: BoardProject[], cards: Card[], archived?: Record<string, number> }
 
+// A run's start, its agent by name: a named agent (Settings › Agents), else its program.
+export interface AgentStart { at: number, role: Run['role'], agent: string }
+
 export const columnOf = (s: PlannedStep) => s.column || s.id
 
 // The columns of a project: those of every task type's steps, in order, once each.
@@ -118,6 +122,10 @@ export function cardOf(task: Task, plan: PlannedStep[], runs: Run[], now = Date.
   const stall = stallOf(task, plan, now)
   const lastWorker = runs.filter(r => r.task === task.id && r.role === 'worker').sort((a, b) => b.startedAt - a.startedAt)[0]
   const branch = lastWorker?.branch
+  const log = (task.log ?? []).slice(-30)
+  // The runs started since the log shown begins, for History's start lines.
+  const starts: AgentStart[] = runs.filter(r => r.task === task.id && r.startedAt >= (log[0]?.at ?? Infinity) - 60_000)
+    .sort((a, b) => a.startedAt - b.startedAt).map(r => ({ at: r.startedAt, role: r.role, agent: r.agent ?? r.program }))
   // A done task (merged, archived) is never the user's turn.
   // In the merge queue, waiting its turn or out of line: a refused merge is the queue's, not the user's.
   const queue = task.queue && !s?.done ? task.queue : undefined
@@ -153,14 +161,15 @@ export function cardOf(task: Task, plan: PlannedStep[], runs: Run[], now = Date.
     // Then the links steps gave as their proof, labelled 'PR' when a pull request, else by step; each address once.
     links: [...task.links ?? [], ...plan.flatMap((p) => { const url = s?.proofs[p.id]?.link; return url ? [{ label: isPrUrl(url) ? 'PR' : p.id, url }] : [] })]
       .filter((l, i, all) => all.findIndex(x => x.url === l.url) === i),
-    log: (task.log ?? []).slice(-30),
+    log,
+    ...(starts.length ? { starts } : {}),
     plan,
     ...(s ? { state: s } : {}),
     ...(task.workReports?.length ? { workReports: task.workReports } : {}),
     ...(task.stopped ? { stopped: task.stopped } : {}),
     ...(task.state === 'waiting' && task.waitKind ? { asks: { kind: task.waitKind, text: task.waiting?.split('\n')[0] ?? '', ...askedOf(task) } } : {}),
     // Waiting for the engine to resume it after an incident, or for its agent to start again (watchdog.ts): shown as a wait, not the user's turn.
-    ...(task.held && (task.state === 'todo' || task.state === 'working') ? { held: task.held } : recovering(task) ? { held: task.held || task.waiting || 'Waiting' } : {}),
+    ...(task.held && (task.state === 'todo' || task.state === 'working') ? { held: task.held } : recovering(task) ? { held: task.held || task.waiting || 'Waiting' } : s?.mergeWait && s.acting && !s.done ? { held: s.mergeWait } : {}),
     ...(task.sameFiles && task.state === 'todo' ? { sameFiles: task.sameFiles } : {}),
     ...(task.report ? { report: task.report } : {}),
     ...(task.tldrHeld ? { tldrWaits: true as const } : task.tldr?.text ? { tldr: task.tldr.text } : {}),
@@ -222,6 +231,9 @@ export const asker = (c: Pick<Card, 'asks' | 'stopped' | 'terminal'>) => (c.asks
 // The card's one-tap link: its PR when it has one, else its first link.
 // A task the user may stop: started, not done, not stopped already.
 export const canStop = (c: Pick<Card, 'state' | 'stopped'>) => !!c.state?.started && !c.state.done && !c.stopped
+// The agent holding the task's step runs: only then is Stop of use on its sheet
+// (at a merge step no agent holds it, even while the worker's conversation stays open).
+export const agentRuns = (c: Pick<Card, 'terminal'>) => !!c.terminal
 
 // A task the user may start by hand: to do, not stopped (its sheet resumes it).
 // One that waits for others shows them instead (waitsFor).
@@ -289,6 +301,17 @@ export function prNow(pr: (PrInfo & { mergeStateStatus?: string }) | undefined, 
 
 // The checks the task's merge step waits for.
 export const requiredChecks = (plan: PlannedStep[]) => plan.flatMap(p => (p.action?.kind === 'github.merge' ? p.action.checks ?? [] : []))
+
+// Its PR's state in one word, a small badge on its link (the task sheet): merged,
+// red CI, conflict, else open; none once done without a merge of its own.
+export type PrState = 'open' | 'merged' | 'red CI' | 'conflict'
+export function prState(c: Pick<Card, 'plan' | 'state' | 'prNow' | 'queueOut'>): PrState | undefined {
+  if (c.state?.done) return mergedByStep(c.plan, c.state) ? 'merged' : undefined
+  if (c.prNow === 'merged') return 'merged'
+  if (redAtMerge(c) || c.prNow?.startsWith('checks failed')) return 'red CI'
+  if (c.prNow?.startsWith('conflict')) return 'conflict'
+  return 'open'
+}
 
 // approved: when the user approved the merge (it merges by itself), said before the text.
 export interface CardStatus { text: string, tone: 'wait' | 'bad' | 'ok', at?: number, approved?: number }

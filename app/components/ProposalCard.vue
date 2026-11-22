@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // The coordinator's proposed workflow change, in its conversation after the
-// message that made it: titled 'Workflow change' with what a workflow is, what
+// message that made it: titled by what it does (changeTitle: 'New task type',
+// 'First workflow', 'Workflow change'…) with what a workflow is, what
 // changes in one line, the proposed workflow drawn small with its changes marked
 // (WorkflowChart, the first changed task type; a tap opens the review), who proposed it and the
 // user's request behind it (ProposalOrigin), Accept / Refuse and See all
@@ -8,13 +9,15 @@
 // replaced): what it changed, the outcome, by whom, when.
 // canGoto, goto: in the conversation, the link back to that request.
 import type { CoordinatorView, ProposalAnswer } from '#shared/pm/coordinator'
-import { changeHeadline } from '#shared/pm/workflowChanges'
+import { changeHeadline, changeTitle } from '#shared/pm/workflowChanges'
 
 const props = defineProps<{ c: CoordinatorView, answer?: ProposalAnswer, canGoto?: boolean }>()
 const emit = defineEmits<{ goto: [] }>()
 const review = ref(false)
 const { busy, error, answer: send } = useProposalAnswer(() => props.c.project)
 const pending = computed(() => (props.answer ? undefined : props.c.proposal))
+// An answer made before titles were kept: 'Workflow change'.
+const title = computed(() => (pending.value ? changeTitle(pending.value.changes) : props.answer?.title ?? 'Workflow change'))
 const summary = computed(() => (pending.value ? [changeHeadline(pending.value.changes ?? { all: [], types: [] })].filter(Boolean) : props.answer?.summary ?? []))
 // The task type drawn: the first one changed.
 const drawn = computed(() => pending.value?.changes?.types[0]?.type ?? Object.keys(pending.value?.template?.taskTypes ?? {})[0])
@@ -28,7 +31,7 @@ const outcome = computed(() => {
 
 <template>
   <div class="proposal-card" :class="{ answered: !pending }" data-testid="proposal-card">
-    <PartHead part="workflow" :title="tl('Workflow change')" />
+    <PartHead part="workflow" :title="tl(title)" />
     <p v-for="(l, i) in summary" :key="i" class="proposal-line" data-testid="proposal-headline">{{ l }}</p>
     <div v-if="pending?.template && drawn" class="proposal-chart" role="button" tabindex="0" :aria-label="tl('See all changes')" data-testid="proposal-chart" @click="review = true" @keydown.enter.prevent="review = true" @keydown.space.prevent="review = true">
       <WorkflowChart :workflow="pending.template" :type="drawn" :changes="pending.changes" compact />
