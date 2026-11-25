@@ -284,4 +284,27 @@ describe('board identities', () => {
   it('uses the base machine for an ordinary conversation in another session', () => {
     expect(paneNotificationSource({ id: 'abcd~w3:p1', workspace: 'abcd~w3' }, { workspaces: [] }, [], '')).toEqual({ machine: '', project: undefined, conversation: 'abcd~w3:p1' })
   })
+  it('defaults finished chimes off for actor-* backlot roles while keeping needs-you alerts on', () => {
+    const s = defaultNotifications()
+    const actor = paneNotificationSource(
+      { id: '0123456789abcdef~s7370:p7431', workspace: '0123456789abcdef~s7370', backlotRole: 'actor-a' },
+      { workspaces: [] },
+      [],
+      '',
+    )
+    expect(notificationEvents(s, actor)).toEqual(['needs-you'])
+    expect(notificationEvents({ ...s, default: { ...s.default, subagents: true } }, actor)).toEqual(['needs-you', 'finished'])
+    const withException = {
+      ...s,
+      exceptions: [{ kind: 'conversation' as const, machine: '', id: actor.conversation!, label: 'actor-a', events: ['needs-you', 'finished'] as const, subagents: false, until: null }],
+    }
+    expect(notificationEvents(withException, actor)).toEqual(['needs-you', 'finished'])
+    const director = paneNotificationSource(
+      { id: '0123456789abcdef~s7370:p7432', workspace: '0123456789abcdef~s7370', backlotRole: 'director' },
+      { workspaces: [] },
+      [],
+      '',
+    )
+    expect(notificationEvents(s, director)).toEqual(['needs-you', 'finished'])
+  })
 })

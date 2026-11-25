@@ -63,6 +63,8 @@ export interface NotificationSource {
   session?: string
   // A board event (a task waiting for approval, failed…): never a sub-agent's.
   board?: boolean
+  // Backlot role label (e.g. 'actor-a', 'director').
+  backlotRole?: string
 }
 
 export const EXCEPTIONS_MAX = 100
@@ -169,31 +171,39 @@ export function notificationEvents(settings: NotificationSettings, source: Notif
   if (e) return e.until !== null && e.until > now ? [] : e.events ?? defaultEvents(settings, source)
   return defaultEvents(settings, source)
 }
-const defaultEvents = (settings: NotificationSettings, source: NotificationSource) =>
-  source.subagent && !source.board && !settings.default.subagents ? [] : settings.default.events
+const defaultEvents = (settings: NotificationSettings, source: NotificationSource) => {
+  if (source.subagent && !source.board && !settings.default.subagents) return []
+  const events = settings.default.events
+  // Actor terminals generate frequent turn-completion chimes; keep them off by default unless sub-agents chime or an exception overrides them.
+  if (source.backlotRole?.startsWith('actor-') && !source.board && !settings.default.subagents) {
+    return events.filter(e => e !== 'finished')
+  }
+  return events
+}
 
 // Board files identify coordinators and every helper (including attempts).
 // Repo keys from Herdr are shared by worktrees; board repo names are used when
 // the board owns the conversation.
-export function paneNotificationSource(pane: Pick<Pane, 'id' | 'workspace'>, state: Pick<HerdrState, 'workspaces'>,
+export function paneNotificationSource(pane: Pick<Pane, 'id' | 'workspace' | 'backlotRole'>, state: Pick<HerdrState, 'workspaces'>,
   boards: MachineLinks[], baseMachine = machineOf(pane.id)): NotificationSource {
+  const roleFields = pane.backlotRole ? { backlotRole: pane.backlotRole } : {}
   const ws = state.workspaces.find(w => w.id === pane.workspace)
   for (const board of boards) {
     const coordinator = board.coordinators.find(c => c.pane === pane.id)
-    if (coordinator) return { machine: board.machine, project: coordinator.repo, conversation: pane.id, coordinator: coordinatorKey(coordinator) }
+    if (coordinator) return { machine: board.machine, project: coordinator.repo, conversation: pane.id, coordinator: coordinatorKey(coordinator), ...roleFields }
     const task = board.tasks.find(t => t.panes.some(p => p.id === pane.id) || (t.workspace !== null && t.workspace === pane.workspace))
     if (task) {
       // Each Herdr session has its own key prefix: its coordinators share the task's.
       // The task file names its session; older links: its coordinators share the task's key prefix.
       const key = machineOf(pane.id)
       const session = task.session ?? board.coordinators.find(c => c.session !== undefined && machineOf(c.pane ?? c.workspace) === key)?.session
-      return { machine: board.machine, project: task.repo, conversation: pane.id, subagent: true, ...(session === undefined ? {} : { session }) }
+      return { machine: board.machine, project: task.repo, conversation: pane.id, subagent: true, ...(session === undefined ? {} : { session }), ...roleFields }
     }
   }
   const board = boards.find(b => b.machine === baseMachine)
   const linked = board?.tasks.find(t => ws?.repo && state.workspaces.find(w => w.id === t.workspace)?.repo === ws.repo)
   const repo = board?.repos?.find(r => r.root === ws?.repo || `${r.root}/.git` === ws?.repo || r.repo === ws?.repoName)
-  return { machine: baseMachine, project: linked?.repo || repo?.repo || ws?.repoName || ws?.repo || undefined, conversation: pane.id }
+  return { machine: baseMachine, project: linked?.repo || repo?.repo || ws?.repoName || ws?.repo || undefined, conversation: pane.id, ...roleFields }
 }
 
 // Keeps saved exceptions to what the model allows: migrated conversation
