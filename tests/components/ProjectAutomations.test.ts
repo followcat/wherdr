@@ -40,6 +40,7 @@ it('lists each automation: its trigger in words, its next firing, its last resul
   expect(b.find('[data-testid="automation-never"]').text()).toBe('Never fired')
   await b.findAll('[data-testid="automation-on"]')[1]!.trigger('click')
   await vi.waitFor(() => expect(posts).toEqual([['/api/pm/automation', { project: 'W3', id: 'watch', on: true }]]))
+  await vi.waitFor(() => expect(b.findAll('[data-testid="automation-run"]')[0]!.attributes('disabled')).toBeUndefined())
   await b.findAll('[data-testid="automation-run"]')[0]!.trigger('click')
   await vi.waitFor(() => expect(posts[1]).toEqual(['/api/pm/automation', { project: 'W3', id: 'clean', runNow: true }]))
 })
