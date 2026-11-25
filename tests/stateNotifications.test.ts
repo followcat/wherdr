@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { expect, it, vi } from 'vitest'
 import { bindFunction } from './stateFunction'
+import { isBacklotDaemonTerminal } from '../shared/backlotDaemon'
 
 const source = readFileSync('server/utils/state.ts', 'utf8')
 function coreDelivery(opts: {
@@ -10,7 +11,7 @@ function coreDelivery(opts: {
   const pane = { id: 'w1:p1', coreAddress: 'm/t1', machine: 'k', workspace: 'w1', agent: 'claude', status: 'blocked', title: 'Example' }
   const pushSend = vi.fn(async () => 1)
   const notify = bindFunction(source, 'notifyCorePane', {
-    notificationAllowed: async () => opts.allowed ?? true, isViewed: () => opts.viewed ?? false, notificationTitle: (s: string) => s,
+    notificationAllowed: async () => opts.allowed ?? true, isViewed: () => opts.viewed ?? false, notificationTitle: (s: string) => s, isBacklotDaemonTerminal,
     state: {
       workspaces: [{ id: 'w1', label: 'demo' }, { id: 'beefbeefbeefbeef~s7370', label: 'backlot-studio' }],
       panes: opts.panes ?? [pane],
