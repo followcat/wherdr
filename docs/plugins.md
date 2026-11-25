@@ -94,21 +94,25 @@ is kept per device. They load only while [Community plugins](#community-plugins-
 
 ### Build and install a plugin (step by step)
 
-A plugin is two files in one folder: `manifest.json` and a prebuilt ES module. The complete
-working example is [`docs/examples/plugins/hello-mic/`](examples/plugins/hello-mic/): a microphone
-button next to Send that inserts a fixed sample text (no audio). To follow the steps without
-writing code, install it as is.
+A plugin is two files in one folder: `manifest.json` and a prebuilt ES module. Two working examples ship in the repository:
+
+- [`docs/examples/plugins/hello-header/`](examples/plugins/hello-header/): mounts a button in `header-actions` using only `wherdr.mountHeaderAction` and `wherdr.draft`.
+- [`docs/examples/plugins/hello-mic/`](examples/plugins/hello-mic/): a microphone button in `composer-actions` that inserts a fixed sample text (no audio).
+
+To follow the steps without writing code, install either example as is.
 
 1. **Write** `src/index.ts` (or plain `index.js`). Export an object `{ activate(wherdr), deactivate() }`
-   (or a function) as described in [The module](#the-module). Find your zone with its
-   `data-wherdr` marker, and attach to it again when it reappears (use a `MutationObserver` and/or
-   `wherdr.onNavigate`). Undo everything in `deactivate()`. Do nothing at the top level of the module:
-   it runs as soon as the file loads, even when the plugin is turned off before it activates.
-2. **Build** one ES module with no external imports (the example uses esbuild, installed with the repo's
+   (or a function) as described in [The module](#the-module). Use host helpers such as
+   `wherdr.mountHeaderAction` when available, or look up a `data-wherdr` marker and re-attach on
+   `wherdr.onNavigate`. Undo your own DOM side effects (such as `<style>` elements) in
+   `deactivate()`; host registrations are disposed automatically when the plugin stops. Do nothing
+   at the top level of the module: it runs as soon as the file loads, even when the plugin is turned
+   off before it activates.
+2. **Build** one ES module with no external imports (the examples use esbuild, installed with the repo's
    dependencies; any bundler works): `npx esbuild src/index.ts --bundle --format=esm --target=es2020 --outfile=index.js`.
-   For the example: `npm run build:example-plugin` from the repo root.
+   For the examples: `npm run build:example-plugin` from the repo root.
 3. **Install**: copy `manifest.json` and `index.js` (not the sources) to
-   `<DATA_DIR>/plugins/<id>/`, e.g. `mkdir -p data/plugins/hello-mic && cp docs/examples/plugins/hello-mic/{manifest.json,index.js} data/plugins/hello-mic/`.
+   `<DATA_DIR>/plugins/<id>/`, e.g. `mkdir -p data/plugins/hello-header && cp docs/examples/plugins/hello-header/{manifest.json,index.js} data/plugins/hello-header/`.
    Reload the page: no restart needed. Turn on Community plugins if it is off.
 4. **Check**: Settings › Plugins lists it as "On". If it says "Disabled after an error", the message is
    the exception; fix it and flip the switch.
@@ -122,28 +126,58 @@ called once with the `wherdr` object:
 
 ```js
 export default function (wherdr) {
-  const off = wherdr.onNavigate((path) => console.log('now at', path))
-  const button = document.createElement('button')
-  button.textContent = 'Fix'
-  button.onclick = () => wherdr.draft.insert('Please fix the failing test.')
-  document.querySelector('[data-wherdr="composer-actions"]')?.append(button)
+  const offNav = wherdr.onNavigate((path) => console.log('now at', path))
+  const offBtn = wherdr.mountHeaderAction((el) => {
+    const button = document.createElement('button')
+    button.textContent = 'Template'
+    button.onclick = () => {
+      if (wherdr.draft.get() === null) return
+      wherdr.draft.set('Please fix the failing test.')
+      wherdr.draft.focus()
+    }
+    el.append(button)
+  })
 }
 ```
 
 | API | Meaning |
 |---|---|
-| `wherdr.apiVersion` | `1`. Additions keep the number; a breaking change raises it. |
+| `wherdr.apiVersion` | `1`. Additive changes keep the number; a breaking change raises it. |
+| `wherdr.draft.get()` | Returns the open conversation's draft text, or `null` when no conversation is open. |
+| `wherdr.draft.set(text)` | Replaces the open conversation's draft with `text`. Nothing is sent; no-op when no conversation is open. |
 | `wherdr.draft.insert(text)` | Appends `text` to the draft of the open conversation (nothing is sent). No-op when no conversation is open. |
+| `wherdr.draft.focus()` | Focuses the open conversation's composer. On iOS, raises the keyboard only inside a user gesture. |
 | `wherdr.currentAgent()` | `{ id, agent, name, machine }` of the open conversation, or `null` (`agent` is `claude`, `codex`, `omp`… or `null` for a terminal). |
-| `wherdr.onNavigate(cb)` | `cb(path)` after each page change (`/`, `/settings?section=plugins`…). Returns the function that unsubscribes. |
+| `wherdr.onNavigate(cb)` | `cb(path)` after each page change (`/`, `/settings?section=plugins`…). Returns a tracked, idempotent disposer. |
+| `wherdr.mountHeaderAction(render)` | Mounts a widget into `[data-wherdr="header-actions"]` across the Home and agent headers. Returns a tracked, idempotent disposer. |
 
-### Failures are isolated
+### Drafts (`wherdr.draft`)
 
-A plugin that throws while loading or activating, does not answer within 8 seconds, has no valid
-default export, or whose `onNavigate` callback throws, is **disabled**: its listeners are removed
-and Settings › Plugins shows it as "Disabled after an error" with the message. The other plugins
-and the app keep working. The switch tries it again. Errors thrown by your own DOM listeners
-(like the button above) are yours to catch.
+A plugin can prepare input in the open conversation's composer (`curPane`) without ever submitting it:
+
+- **`wherdr.draft.get()`** returns the current draft string, or `null` when no conversation is open.
+- **`wherdr.draft.set(text)`** replaces the draft text (pass `""` to clear it). Does nothing when no conversation is open.
+- **`wherdr.draft.insert(text)`** appends `text` after a space when needed. Does nothing when no conversation is open.
+- **`wherdr.draft.focus()`** focuses the composer textarea when a conversation is open and its composer is shown. **On iOS, `focus()` raises the keyboard only when called synchronously inside a user gesture** (such as a button `click` handler).
+
+**Nothing is ever sent.** No plugin API submits a draft, sends a message, or answers an agent prompt: the human stays the sender.
+
+### Header actions (`wherdr.mountHeaderAction`)
+
+`wherdr.mountHeaderAction(render)` mounts small header widgets without querying the DOM or managing
+`MutationObserver`s.
+
+- **wherdr owns the container.** Whenever a `[data-wherdr="header-actions"]` slot exists (in the Home header and in the agent header, including headers mounted on later navigation), wherdr creates a child element and calls `render(el)`.
+- **Cleanup.** `render(el)` may optionally return a cleanup function `() => void`, which wherdr calls when that header unmounts or when the widget is disposed. Removing the host-owned element removes everything you appended to it.
+- **Disposer.** `mountHeaderAction` returns a tracked, idempotent disposer `() => void` that unmounts all copies immediately.
+
+### Lifecycle and failure isolation
+
+The host owns registration lifecycles:
+
+- **Tracked, idempotent disposers.** Every registration call (`onNavigate`, `mountHeaderAction`) returns a disposer `() => void` that can be called safely more than once.
+- **Cleaned up on stop.** Stopping a plugin — by flipping its switch off, updating or removing it, turning [Community plugins](#community-plugins-switch) off, or after an error — automatically disposes all of its registrations, whether `deactivate()` is missing, throws synchronously, or returns a rejected promise.
+- **Failures are isolated.** A plugin that throws while loading or activating, does not answer within 8 seconds, has no valid default export, or whose host-invoked callback (`onNavigate`, `mountHeaderAction` renderer) throws or returns a rejected promise, is **disabled**: its registrations are disposed and Settings › Plugins shows it as "Disabled after an error" with the message. Other plugins and the app keep working, and flipping its switch tries it again. Errors thrown inside your own DOM event listeners (such as a button's `click` handler) are yours to catch.
 
 ### Markers: `data-wherdr`
 
@@ -155,13 +189,15 @@ not renamed or removed within a major version; the markup inside a zone is not p
 | `composer` | The whole message box of a conversation. |
 | `composer-field` | The text field. |
 | `composer-actions` | An empty slot in the field's footer, just before Send: append your buttons to it. |
+| `header-actions` | An empty, zero-width slot in the Home header and agent header, before existing buttons (accounted for by header folding when populated). Prefer `wherdr.mountHeaderAction`. |
 | `conversation` | The conversation view (the messages). |
 | `home-list` | The home screen with the list of agents. |
 | `settings` | The Settings page. |
 | `settings-plugins` | The wherdr plugins block of Settings › Plugins. |
 
-Plugins run before or after a zone is created (zones come and go with navigation): look up the
-marker on each `onNavigate`, or observe the document, rather than once at load.
+Plugins run before or after a zone is created (zones come and go with navigation): use host
+helpers such as `wherdr.mountHeaderAction` where offered, or look up the marker on each
+`onNavigate` / observe the document rather than querying once at load.
 
 ### Not yet
 
