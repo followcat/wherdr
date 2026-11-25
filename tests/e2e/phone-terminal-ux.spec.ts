@@ -26,19 +26,31 @@ async function openConversation(page: Page, core: Core) {
 // touch path synthesized on WebKit (labeled synthetic there).
 async function swipeSheetDown(page: Page, browserName: string) {
   const sheet = page.locator('.hw-sheet')
+  const handle = sheet.locator('.hw-sheet-handle')
   // Wait for the opening rise animation to finish so touch coordinates land
-  // on the handle rather than below a still-rising sheet.
-  await sheet.evaluate(el => Promise.all(el.getAnimations().map(a => a.finished)))
-  const box = (await sheet.boundingBox())!
+  // cleanly on the settled handle rather than below a rising sheet.
+  let prevY = -1
+  await expect.poll(async () => {
+    const busy = await sheet.evaluate(el => el.getAnimations().some(a => a.playState === 'running'))
+    const y = (await handle.boundingBox())?.y ?? -1
+    const settled = !busy && y >= 0 && Math.abs(y - prevY) < 0.5
+    prevY = y
+    return settled
+  }, { intervals: [60] }).toBe(true)
+  const box = (await handle.boundingBox())!
+  const sheetBox = (await sheet.boundingBox())!
   const x0 = box.x + box.width / 2
-  const y0 = box.y + 8
+  const y0 = box.y + box.height / 2
+  const dist = Math.max(200, Math.round(sheetBox.height * 0.6))
+  const step = Math.ceil(dist / 5)
   if (browserName === 'chromium') {
     const cdp = await page.context().newCDPSession(page)
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y: y0 }] })
-    for (let i = 1; i <= 4; i++) {
+    for (let i = 1; i <= 5; i++) {
       await page.waitForTimeout(20)
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x0, y: y0 + i * 45 }] })
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x0, y: y0 + i * step }] })
     }
+    await page.waitForTimeout(20)
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
     return
   }
