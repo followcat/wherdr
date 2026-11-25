@@ -77,7 +77,9 @@ with the agent you chose (*Start with Claude*, *Codex*…), and its first
 message proposes a workflow ([its first
 conversation](#the-coordinators-first-conversation)). A folder without git
 needs no workflow: it has no tasks (a task needs git for its own worktree),
-and its coordinator does the work in it directly. Below, *Restart a
+and its coordinator does the work in it directly. Once that folder becomes a
+git repository, wherdr treats the project as one at its next task or
+coordinator start, or at *Check again* in the project sheet. Below, *Restart a
 coordinator* (with their number, collapsed until you open it) lists the
 projects whose coordinator does not run, to start it again; those running are
 in the sidebar, and with none stopped the section is hidden. The agent
@@ -147,7 +149,7 @@ board* goes to the board. Until the list is read, the switch and the rows show
 as grey blocks and both buttons wait; a failed read says why, with *Try again*. A row opens the
 project's sheet, with five tabs: General, Workflow, Guards, Automations and
 Autopilot; on a computer it is a wide window, and its General fields pair up
-side by side (name and key, worker and reviewer). Its ⋯ menu removes the project from wherdr, after a confirmation:
+side by side (name and key, worker and reviewer). Its header has a close cross, and beside it a ⋯ menu that removes the project from wherdr, after a confirmation:
 its folder, branches and task worktrees stay on the machine. Removing is refused,
 with why, while the project has open tasks (finish, abandon or close them first)
 and, for a workspace, while it still has member projects (remove them first). A
@@ -579,6 +581,12 @@ or a Claude reviewer with a Codex fallback:
 The fallback follows the reviewer's rules; saving refuses one that breaks them,
 or one of the two prefs without the other.
 
+A task that drives the omp browser relay (the user's own Chrome) sets
+`"browser": "relay"` the same way. Before it starts, the machine check also
+verifies that the relay's native host is registered in Chrome (any channel), Chromium or Brave; when it is not
+(an omp update can unregister it), the start is refused as a machine problem,
+"browser relay: …", not asked as a question to the agent.
+
 Before it starts a reviewer, wherdr reads the review agent's account (the
 reading of the home screen and pacing): at its limit and not yet reset, its
 5-hour window at 90 % or more, or held by its [pace](quotas.md#pace), the
@@ -1000,8 +1008,10 @@ click, long press, or ••• when it has more than *Open*) offers:
 - **Continue**, **Take it as it is** or **Archive**, on a stopped task;
 - **Check on GitHub**, on a task at its merge step or archived with a PR: its
   sheet opens with what wherdr found (see [Task sheet](#task-sheet));
-- **Delete…**, on a task never started (no agent, worktree or branch). A task
-  other tasks wait for cannot be deleted; its number is never given again.
+- **Delete…**, on a task never started (no agent, worktree or branch), also one
+  whose start failed before its worktree was made (its error stays on the card
+  until you delete it or start it again). A task other tasks wait for cannot be
+  deleted; its number is never given again.
 
 **Add task** opens a sheet: the project, a title, the task type (with its steps
 in one line), its weight, a Markdown description, the tasks it waits for, and
@@ -1109,7 +1119,7 @@ them too.
 A card opens the task's sheet. Tasks to review and a task
 link in the chat (`#/board?task=ID`) open it over the page you are on (a bottom
 sheet on a phone), with `?task=ID` added to that page's address, so it survives a
-reload and can be shared; closing it leaves the page as it was. The sheet's header holds only what matters first. Its id badge sits by the title (a tap copies it; a long title takes two lines at most, cut with an ellipsis, a tap shows it whole, the Description keeping it in full; on a phone one line once the sheet is scrolled or you type). Then which branch merges into
+reload and can be shared; closing it (the close cross at the header's top right, Escape, a tap outside or, on a phone, a swipe down) leaves the page as it was. The sheet's header holds only what matters first. Its id badge sits by the title (a tap copies it; a long title takes two lines at most, cut with an ellipsis, a tap shows it whole, the Description keeping it in full; on a phone one line once the sheet is scrolled or you type). Then which branch merges into
 which once it has one (*task/WHR-12 → develop · 3 commits*, or *task/WHR-12 will
 open a PR to v3* before its PR, with a button to copy the branch name), the
 task's PR as a badge on that line with its state (*PR #646 · open ↗*: *open*, *merged*, *closed*, *conflict* or *red CI*; opens it in a new tab; on a phone
@@ -1135,9 +1145,15 @@ its program and model; its text is Markdown, folded past a few lines with
 *Show more*. A task from before this version kept only its worker's last
 report, so its earlier *Done* says just that.
 
-**History** is the task's whole log in one timeline, oldest first: the same
-hand-offs, wherdr's catch-ups and CI fixes, the coordinator's and your
-actions, and wherdr's routine lines, lighter.
+**History** is the task's whole log as a timeline, oldest first, under the
+time per step: the same hand-offs, wherdr's catch-ups and CI fixes, the
+coordinator's and your actions, and wherdr's routine lines, lighter. Each
+event says when, who (*You*, *wherdr*, the coordinator, the worker or the
+reviewer with its program and model) and what; its square mark on the
+timeline's rule shows its kind: a run started (play, purple), a report or a
+passing verdict (check, green), a send-back (undo, orange), a merge (filled
+green), a failure (filled red), your own action (accent), a routine line (a
+small grey square). **Comments** uses the same timeline.
 
 <a id="tldr"></a>**TL;DR.** On a task waiting for you, **To do** starts with at
 most five lines in plain words, with no code names: **What changes for you**

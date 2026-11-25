@@ -97,7 +97,7 @@ export function openFramed(endpoint: string, timeout = 3000): Promise<FramedCore
       if (!p) return
       pending.delete(m.id!)
       clearTimeout(p.timer)
-      if (m.error) p.reject(new CoreError(m.error.data?.kind || 'rpc', m.error.message || 'herdr-core rejected the request', m.error.data?.hint))
+      if (m.error) p.reject(new CoreError(m.error.data?.kind || 'rpc', m.error.message || '', m.error.data?.hint))
       else p.resolve(m.result)
     }
     const onFrame = (channel: number, kind: number, payload: Buffer) => {

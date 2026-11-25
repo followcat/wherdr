@@ -4,7 +4,6 @@ import { getQuery, readBody, setResponseStatus } from 'h3'
 import { nextTick } from 'vue'
 import ProjectsSettings from '~/components/ProjectsSettings.vue'
 import type { PmOverview, Project } from '#shared/pm/project'
-import { pick } from '../helpers/select'
 
 // A fake server: the same rules as server/utils/pmStore.ts, in memory.
 let state: PmOverview
@@ -170,7 +169,7 @@ it('opens the project sheet on the URL\'s tab; Guards saves a branch added; Gene
   } }))
 
   await vi.waitFor(() => expect(inSheet('pm-general')!.getAttribute('aria-busy')).toBe('false'))
-  await pick(w, 'pm-visibility', 'private')
+  inSheet('pm-visibility')!.querySelector<HTMLElement>('[data-value="private"]')!.click()
   await vi.waitFor(() => expect(w.find('[data-testid="pm-public"]').exists()).toBe(false))
   expect(calls[1]).toEqual({ url: '/api/pm/project-visibility', body: { key: 'WEB', value: 'private' } })
 })

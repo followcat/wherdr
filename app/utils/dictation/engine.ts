@@ -53,6 +53,11 @@ export class ModelTooLarge extends Error {
   override name = 'ModelTooLarge'
 }
 
+// The chosen model needs browser capabilities this device lacks (WebGPU, shader-f16).
+export class DeviceUnsupported extends Error {
+  override name = 'DeviceUnsupported'
+}
+
 export function isAbortError(e: unknown): boolean {
   return (e as { name?: string } | null)?.name === 'AbortError'
 }

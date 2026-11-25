@@ -5,8 +5,9 @@ import { startCore, STREAM } from './core'
 // rest vs while the field or one of its controls holds the focus, the deferred
 // collapse of an outside press, the one-row virtual keybar, the phone header's
 // identity and its sheets — all on real browser focus/pointer events.
-// The IME step and the WebKit sheet swipe are synthetic (no OS/engine claim);
-// real soft-keyboard and IME behavior stays a physical-device boundary.
+// The IME step uses synthetic DOM events and the WebKit sheet swipe uses
+// Playwright pointer input (WebKit has no touch CDP); real soft-keyboard,
+// IME and physical iPhone touch-swipe behavior stay device boundaries.
 // Header variants (lone vs several panes) stay in PhoneIdentity.test.ts.
 
 type Core = Awaited<ReturnType<typeof startCore>>
@@ -22,38 +23,48 @@ async function openConversation(page: Page, core: Core) {
   await expect(page.locator('.composer .prompt')).toBeVisible()
 }
 
-// A downward swipe on the sheet: a real CDP gesture on Chromium, the same
-// touch path synthesized on WebKit (labeled synthetic there).
+// A downward swipe on the sheet: CDP touch input on Chromium, Playwright's
+// pointer stream on WebKit (UDrawer/vaul-vue binds pointer, not touch, events).
 async function swipeSheetDown(page: Page, browserName: string) {
   const sheet = page.locator('.hw-sheet')
-  const box = (await sheet.boundingBox())!
+  const handle = sheet.locator('.hw-sheet-handle')
+  // Wait for the opening rise animation to finish so touch coordinates land
+  // cleanly on the settled handle rather than below a rising sheet.
+  let prevY = -1
+  await expect.poll(async () => {
+    const busy = await sheet.evaluate(el => el.getAnimations().some(a => a.playState === 'running'))
+    const y = (await handle.boundingBox())?.y ?? -1
+    const settled = !busy && y >= 0 && Math.abs(y - prevY) < 0.5
+    prevY = y
+    return settled
+  }, { intervals: [60] }).toBe(true)
+  const box = (await handle.boundingBox())!
+  const sheetBox = (await sheet.boundingBox())!
   const x0 = box.x + box.width / 2
-  const y0 = box.y + 8
+  const y0 = box.y + box.height / 2
+  const dist = Math.max(200, Math.round(sheetBox.height * 0.6))
+  const step = Math.ceil(dist / 5)
   if (browserName === 'chromium') {
     const cdp = await page.context().newCDPSession(page)
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y: y0 }] })
-    for (let i = 1; i <= 4; i++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x0, y: y0 + i * 45 }] })
+    for (let i = 1; i <= 5; i++) {
+      await page.waitForTimeout(20)
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x0, y: y0 + i * step }] })
+    }
+    await page.waitForTimeout(20)
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
     return
   }
-  await sheet.locator('.hw-sheet-handle').evaluate((el, { x0, y0 }) => {
-    const fire = (type: string, y: number) => {
-      let ev: Event
-      try {
-        const t = new Touch({ identifier: 0, target: el, clientX: x0, clientY: y })
-        ev = new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === 'touchend' ? [] : [t], changedTouches: [t] })
-      } catch {
-        // WebKit cannot construct Touch: the same event with the lists set.
-        ev = new Event(type, { bubbles: true, cancelable: true })
-        const ts = [{ clientX: x0, clientY: y }]
-        Object.defineProperties(ev, { touches: { value: type === 'touchend' ? [] : ts }, changedTouches: { value: ts } })
-      }
-      el.dispatchEvent(ev)
-    }
-    fire('touchstart', y0)
-    for (let i = 1; i <= 4; i++) fire('touchmove', y0 + i * 45)
-    fire('touchend', y0 + 180)
-  }, { x0, y0 })
+  // WebKit has no CDP touch input: drive UDrawer's pointer listeners directly
+  // through Playwright's active pointer stream (required by setPointerCapture).
+  await page.mouse.move(x0, y0)
+  await page.mouse.down()
+  for (let i = 1; i <= 5; i++) {
+    await page.waitForTimeout(20)
+    await page.mouse.move(x0, y0 + i * step)
+  }
+  await page.waitForTimeout(20)
+  await page.mouse.up()
 }
 
 test('phone chrome: composer focus, deferred collapse, keybar and sheets', async ({ page, browser }, testInfo) => {
@@ -340,7 +351,7 @@ test('computer chrome: device-local interface scale, widths and terminal font', 
         .getByRole('radio', { name: /large/i }).click()
       await expect(page.locator('html')).toHaveAttribute('data-ui-scale', 'lg')
       await page.locator('.settings-group').filter({ hasText: 'Content width' })
-        .getByRole('radio', { name: /full width/i }).click()
+        .locator('[data-value="full"]').click()
       await expect(page.locator('html')).toHaveAttribute('data-content-width', 'full')
       expect(await cssVar('--read')).toContain('calc(100% - 48px)')
       await openAgent()

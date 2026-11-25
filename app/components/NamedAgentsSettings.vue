@@ -59,11 +59,11 @@ function remove(name: string) {
         <span>{{ t('Name') }}</span>
         <UInput v-model="form.name" size="lg" class="mono w-full" placeholder="omp-sub" autocomplete="off" autocapitalize="none" autocorrect="off" :spellcheck="false" data-testid="named-agent-name" />
       </label>
-      <label class="named-agent-field">
+      <div class="named-agent-field">
         <span>{{ t('Program') }}</span>
-        <USelect v-model="form.program" :items="programItems" size="lg" class="w-full" data-testid="named-agent-program" />
+        <SettingsChoice v-model="form.program" :items="programItems" :label="t('Program')" data-testid="named-agent-program" />
         <small class="muted">{{ t('wherdr reads its conversation, choices and status as this program\'s.') }}</small>
-      </label>
+      </div>
       <label class="named-agent-field">
         <span>{{ t('Command') }}</span>
         <UInput v-model="form.command" size="lg" class="mono w-full" placeholder="omp-sub --thinking medium" autocomplete="off" autocapitalize="none" autocorrect="off" :spellcheck="false" data-testid="named-agent-command" />

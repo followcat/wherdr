@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { validateTaskInput, validateTemplate, type Template } from '../shared/pm/workflow'
+import { workerPlan, type Task } from '../shared/pm/run'
 import { combineGuards, mayMerge } from '../shared/pm/guards'
 
 const template = (): Template => ({
@@ -90,6 +91,17 @@ describe('validateTemplate', () => {
 
   it('needs at least one task type', () => {
     expect(paths(validateTemplate({ id: 'x', taskTypes: {} }))).toEqual(['taskTypes'])
+  })
+
+  it('takes an omp role alias as a model for omp only', () => {
+    const withPrefs = (prefs: Record<string, string>) => paths(validateTemplate({ ...template(), prefs }))
+    const omp = { agent: 'omp', model: '@standard', reviewAgent: 'omp', reviewModel: '@plan:high', reviewFallbackAgent: 'omp', reviewFallbackModel: '@plan' }
+    expect(withPrefs(omp)).toEqual([])
+    expect(withPrefs({ ...omp, reviewFallbackAgent: 'claude' })).toEqual(['prefs.reviewFallbackModel'])
+    expect(withPrefs({ ...omp, reviewFallbackModel: '@bad role' })).toEqual(['prefs.reviewFallbackModel'])
+    const task = (prefs: Record<string, string>) => ({ type: 'simple', prefs }) as Task
+    expect(workerPlan(template(), task({ agent: 'omp', model: '@plan:high' }))).toEqual({ program: 'omp', model: '@plan:high' })
+    expect(workerPlan(template(), task({ agent: 'claude', model: '@plan' }))).toEqual({ reason: 'Invalid model "@plan"' })
   })
 })
 

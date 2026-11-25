@@ -8,6 +8,17 @@ import { DemoPm } from './pm'
 
 export const DEMO_REFUSAL = 'Demo — nothing runs here. Install wherdr to drive your own agents.'
 
+const DEMO_DIRS: Record<string, string[]> = {
+  '': ['code', 'Documents', 'notes'],
+  '/code': ['acme-api', 'acme-web'],
+  '/code/acme-api': ['docs', 'src'],
+  '/code/acme-web': ['public', 'src'],
+}
+const DEMO_FILES: Record<string, string> = {
+  'README.md': '# acme-web\n\nThe storefront of a made-up shop.\n\n- `npm run dev` starts it.\n- `npm test` runs the tests.\n',
+  'src/main.ts': 'import { createApp } from \'vue\'\nimport App from \'./App.vue\'\n\ncreateApp(App).mount(\'#app\')\n',
+}
+
 export interface DemoReply { status: number, body: unknown }
 export interface DemoClock {
   now: () => number
@@ -357,12 +368,17 @@ export class DemoServer {
               { name: 'package.json', kind: 'file', size: 412, link: false },
               { name: 'README.md', kind: 'file', size: 88, link: false },
             ] })
-        case '/api/files/read': return fail(404, DEMO_REFUSAL)
+        case '/api/files/read': {
+          const text = DEMO_FILES[q.get('path') ?? '']
+          return text === undefined ? fail(404, DEMO_REFUSAL) : ok({ path: q.get('path'), size: text.length, kind: 'text', text, truncated: false })
+        }
         case '/api/search': return ok(this.search(String(q.get('q') || '')))
-        case '/api/dirs': return ok({ path: S.HOME, parent: null, home: S.HOME, dirs: [
-          { name: 'acme-api', path: `${S.HOME}/code/acme-api`, git: true },
-          { name: 'acme-web', path: `${S.HOME}/code/acme-web`, git: true },
-        ] })
+        case '/api/dirs': {
+          // A small made-up home: each folder answers with its own subfolders.
+          const dir = q.get('path') || S.HOME
+          const sub = DEMO_DIRS[dir.slice(S.HOME.length)] ?? []
+          return ok({ path: dir, parent: dir === S.HOME ? null : dir.slice(0, dir.lastIndexOf('/')), home: S.HOME, dirs: sub.map(name => ({ name, path: `${dir}/${name}`, git: dir.endsWith('/code') })) })
+        }
       }
       return fail(404, DEMO_REFUSAL)
     }

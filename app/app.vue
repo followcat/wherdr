@@ -111,7 +111,7 @@ onUnmounted(() => {
   <UApp :locale="language === 'fr' ? fr : en" :toaster="{ position: desk ? 'top-right' : 'top-center', max: 1, progress: false }">
     <HomeView v-show="desk || isHome" @search="openSearch" />
     <div v-if="desk && slim && listDrawer" class="list-scrim" aria-hidden="true" @click="closeListDrawer" />
-    <GlobalSearch v-model:open="searchOpen" />
+    <LazyCommandMenu v-if="searchOpen" v-model:open="searchOpen" />
     <NuxtPage />
     <SettingsView v-if="settingsPanel" panel />
     <UiShowPanel />

@@ -9,7 +9,7 @@ export interface FetchOptions {
   onUnpack?: () => void
   has?: (program: string) => Promise<boolean>
 }
-export const CATALOG: { models: { id: string, set: string, dir: string, files: { path: string, bytes: number }[] }[] }
+export const CATALOG: { models: { id: string, runtime: string, set: string, dir: string, files: { path: string, bytes: number, sha256?: string }[] }[] }
 export const VOICES: { voices: { id: string, set: string, dir: string, members: { path: string, bytes: number }[] }[] }
 export const SETS: Record<string, FetchEntry[]>
 export const DEFAULT_SETS: string[]

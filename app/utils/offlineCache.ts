@@ -6,7 +6,7 @@
 // Opening a conversation reads its record only. Writes are grouped: what changes
 // waits in memory and goes in one transaction at most every WRITE_MS (and at
 // once when the page is hidden); reads see what waits.
-import type { ChatItem, HerdrState, Quotas } from '#shared/types'
+import type { ChatItem, ClaudeQueueEntry, HerdrState, Quotas } from '#shared/types'
 import { splitId, LOCAL } from '../../shared/ids'
 
 export const MAX_MESSAGES = 160
@@ -16,7 +16,8 @@ export const CHAT_BYTES = 220 * 1024
 export const WRITE_MS = 2000
 
 // `file`: the transcript the items come from (a re-read from another one starts again).
-export interface SavedChat { id: string, items: ChatItem[], at: number, file?: string | null }
+// `queue`: messages the agent holds and has not taken yet, so not in `items`.
+export interface SavedChat { id: string, items: ChatItem[], at: number, file?: string | null, queue?: ClaudeQueueEntry[] }
 export interface SavedHome { state: HerdrState, quotas: Quotas | null, at: number }
 // One kept conversation: when it was last opened (`used`) and its size in bytes.
 export interface ChatEntry { id: string, used: number, bytes: number }
@@ -142,7 +143,10 @@ async function write(p: Pending) {
     if (p.home) homeBytes = bytesOf(p.home)
     const chatsIn = new Map([...p.chats].map(([id, c]) => {
       const t = trimChat(c.items)
-      return [id, { chat: { ...c, items: t.items }, bytes: t.bytes }] as const
+      // Bounded with the items: a queue that does not fit is left to the next read.
+      const queueBytes = bytesOf(c.queue ?? [])
+      const queue = t.bytes + queueBytes <= CHAT_BYTES ? c.queue ?? [] : []
+      return [id, { chat: { ...c, items: t.items, queue }, bytes: t.bytes + (queue.length ? queueBytes : 0) }] as const
     }))
     await new Promise<void>((resolve, reject) => {
       const tx = d.transaction(['kv', 'chats'], 'readwrite')
@@ -209,8 +213,8 @@ export function saveQuotas(quotas: Quotas) {
   pending.quotas = quotas
   schedule()
 }
-export function saveChat(id: string, items: ChatItem[], file: string | null = null) {
-  pending.chats.set(id, { id, items, at: Date.now(), file })
+export function saveChat(id: string, items: ChatItem[], file: string | null = null, queue: ClaudeQueueEntry[] = []) {
+  pending.chats.set(id, { id, items, at: Date.now(), file, queue })
   pending.used.set(id, Date.now())
   schedule()
 }

@@ -282,7 +282,10 @@ test('command code journey: selection, rendering, search, send, /clear, peers', 
       return page.getByRole('button', { name: 'Load earlier messages' }).isVisible()
     }).toBe(true)
     const beforeRes = page.waitForResponse(r => r.url().includes('/api/chat') && new URL(r.url()).searchParams.has('before'))
-    await page.locator('.chat').evaluate((el: HTMLElement) => { el.scrollTop = 0 })
+    await page.locator('.chat').evaluate((el: HTMLElement) => {
+      el.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true }))
+      el.scrollTop = 0
+    })
     await beforeRes
     await pollText(PHRASE)
     await expect(page.locator('.chat-note')).toContainText('Start of conversation')
@@ -297,8 +300,8 @@ test('command code journey: selection, rendering, search, send, /clear, peers', 
 
     // Global search lands inside the conversation on the hit's older slice.
     await page.goto(`${core.url}/#/`)
-    await page.getByRole('button', { name: 'Search agents and conversations' }).first().click()
-    await page.getByRole('combobox', { name: 'Search agents and conversations' }).fill(PHRASE)
+    await page.getByRole('button', { name: 'Search conversations, tasks, settings and actions' }).first().click()
+    await page.getByPlaceholder('Search conversations, tasks, settings…').fill(PHRASE)
     await page.clock.runFor(300)
     await page.getByRole('option', { name: new RegExp(PHRASE) }).click()
     await expect(page).toHaveURL(/#\/a\//)

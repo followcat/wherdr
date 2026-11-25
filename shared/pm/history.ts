@@ -108,3 +108,20 @@ export function taskHistory(log: LogEntry[], plan: Planned[], s?: State, all = f
   })
   return out
 }
+
+// What an entry is, for its mark in the History timeline: a run started, a
+// report or a passing verdict (done), a send-back, a merge, a failure, the
+// user's own action, the engine's routine line, or any other hand-off (note).
+export type HistoryKind = 'start' | 'done' | 'back' | 'merged' | 'failed' | 'user' | 'routine' | 'note'
+const FAILED = /\bfail(?:ed|s|ure)?\b|could not|gave up|refused|conflicts? with/i
+const MERGED = /\bmerged\b/i
+const NOT_MERGED = /not (?:yet )?merged|without a merge|nor merged/i
+export function historyKind(e: HistoryEntry): HistoryKind {
+  if (e.label === 'Sent back' || (e.who === 'user' && /: sent back by the user/.test(e.text))) return 'back'
+  if (e.label) return 'done'
+  if (FAILED.test(e.text)) return 'failed'
+  if (MERGED.test(e.text) && !NOT_MERGED.test(e.text)) return 'merged'
+  if (e.started?.length || /\bstart(?:ed|s)?\b/.test(e.text)) return 'start'
+  if (e.who === 'user') return 'user'
+  return e.routine ? 'routine' : 'note'
+}

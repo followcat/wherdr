@@ -5,10 +5,11 @@
 // (no package.json, no PR step, not a visual task) print nothing.
 //
 // Arguments: clone, base branch ('' none), wherdr's base URL ('' skips the
-// check), gh (1: the workflow uses GitHub), visual (1: screenshots), then the
+// check), gh (1: the workflow uses GitHub), visual (1: screenshots), relay (1:
+// the task drives the omp browser relay), then the
 // agent programs the task needs (worker, reviewer).
 export const READY_SCRIPT = `export DISABLE_AUTOUPDATER=1
-clone=$1 base=$2 wherdr=$3 gh=$4 visual=$5; shift 5
+clone=$1 base=$2 wherdr=$3 gh=$4 visual=$5 relay=$6; shift 6
 say() { printf '%s %s %s\\n' "$1" "$2" "$(printf %s "$3" | tail -n 1 | cut -c1-200)"; }
 check() { id=$1; shift; if out=$("$@" 2>&1 </dev/null); then say "$id" ok "$out"; else say "$id" fail "$out"; fi; }
 if ! git -C "$clone" rev-parse --git-dir >/dev/null 2>&1; then say clone fail "no git repository in $clone"; else
@@ -25,6 +26,13 @@ if [ -f "$clone/package.json" ]; then
     if [ -f "$clone/node_modules/.package-lock.json" ] && [ ! "$clone/package-lock.json" -nt "$clone/node_modules/.package-lock.json" ]; then say deps ok installed
     else say deps warn "not installed in the clone: each task runs npm ci"; fi
   fi
+fi
+if [ "$relay" = 1 ]; then
+  found=; for d in "$HOME/.config/google-chrome" "$HOME/.config/google-chrome-beta" "$HOME/.config/google-chrome-unstable" "$HOME/.config/google-chrome-canary" "$HOME/.config/chromium" "$HOME/.config/BraveSoftware/Brave-Browser" "$HOME/Library/Application Support/Google/Chrome" "$HOME/Library/Application Support/Google/Chrome Beta" "$HOME/Library/Application Support/Google/Chrome Dev" "$HOME/Library/Application Support/Google/Chrome Canary" "$HOME/Library/Application Support/Chromium" "$HOME/Library/Application Support/BraveSoftware/Brave-Browser"; do
+    m="$d/NativeMessagingHosts/sh.omp.browser.json"
+    [ -f "$m" ] && h=$(sed -n 's/.*"path" *: *"\\([^"]*\\)".*/\\1/p' "$m" | head -n 1) && [ -x "$h" ] && found=1
+  done
+  if [ -n "$found" ]; then say relay ok ""; else say relay fail "the omp browser relay's native host is not registered in any browser it supports (Chrome, Chromium, Brave): run omp's browser relay setup again (an omp update can unregister it)"; fi
 fi
 for p in "$@"; do
   if ! command -v "$p" >/dev/null 2>&1; then say "agent:$p" fail "$p is not installed"
@@ -47,7 +55,7 @@ export interface Readiness { items: ReadyItem[], at: number }
 
 const NAMES: Record<string, string> = {
   clone: 'clone', fetch: 'git fetch', push: 'push rights', gh: 'gh login', node: 'node', npm: 'npm', deps: 'dependencies',
-  pm: 'wherdr folders', disk: 'disk space', reach: 'reaching wherdr', browsers: 'browsers',
+  pm: 'wherdr folders', disk: 'disk space', reach: 'reaching wherdr', browsers: 'browsers', relay: 'browser relay',
 }
 export const readyName = (id: string) => NAMES[id] ?? (id.startsWith('agent:') ? `${id.slice(6)} login` : id)
 

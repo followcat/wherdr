@@ -5,11 +5,24 @@
 - **Browse files** (agent's **…** menu): a read-only browser of the agent's folder, confined to
   the Git root that holds it (or the folder itself). Every resolved path, symbolic links
   included, must stay under that root; nothing is ever written.
+- The folder shows as a **tree** of folders and files with type icons: a folder's content is read
+  the first time it opens (a loading row, then an error or **Empty folder.** row when there is
+  nothing to list); a big tree draws only its visible rows. **Show hidden files** shows or hides
+  dotfiles (kept on the device). Clicking a file shows its preview, beside the tree when the panel
+  is wide enough (760 px), else in its place with **Back**; the breadcrumb above the preview opens
+  a folder of its path in the tree. **Refresh** reads the open folders and the file again.
 - **Preview** text and code (first 256 KB), images (up to 2 MB), PDFs and videos, and
   **download** any file up to 50 MB. **Open** shows a PDF or a video in a new tab.
 - **Markdown** files show formatted (**Rendered**) or as their source with line numbers
   (**Source**). A link to another file of the folder opens its preview, at the heading it names;
   **Back** returns to the previous file. A link that leads outside the folder is refused.
+  Inline code reads as text there: no glyph, chip or menu on it; a code block keeps **Copy**.
+- <a id="one-file"></a>**One file shown alone** (a path clicked in a conversation, or a file an
+  agent shows beside it) reads as a document under one compact header: the file's name in small
+  type, its folder and size under it, and the controls at their right (Rendered | Source, Open,
+  Download, Refresh as icons, Back after a link); on a phone or in a narrow panel the controls
+  sit beside the folder. The text takes the window's width with a
+  readable line length and no frame; a wide table scrolls inside itself.
 - <a id="html-pages"></a>**HTML pages** (`.html`, `.htm`, up to 256 KB: an agent's mockup or demo)
   run as a page (**Preview**, the default) or show their source (**Source**). The page runs in a
   sandboxed frame with its own origin, apart from wherdr: it cannot read wherdr's cookies or

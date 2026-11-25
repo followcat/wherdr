@@ -1,7 +1,7 @@
 // Tasks and the agent runs that work on them. A run's terminal carries
 // wherdr.* labels on herdr-core, so the engine finds it again after a restart.
 import type { Project } from './project'
-import { MODEL_RE, checkPrefs, reviewerCheck, type ContextSpec, type WorkflowError, type Prefs, type Step, type Template, type Weight } from './workflow'
+import { checkPrefs, reviewerCheck, validModel, type ContextSpec, type WorkflowError, type Prefs, type Step, type Template, type Weight } from './workflow'
 import { commandWords, resolveAgent, type AgentRef, type NamedAgent } from './namedAgents'
 import type { ContextFolder } from './context'
 import { fillBase, planSteps, type StepState } from './steps'
@@ -293,7 +293,7 @@ export function workerPlan(t: Template, task: Task, named: readonly NamedAgent[]
   if (!agent) return { reason: 'No agent set: add prefs.agent to the template' }
   const ref = resolveAgent(agent, named)
   if (!('program' in ref)) return { reason: 'reason' in ref ? ref.reason : agent }
-  if (!MODEL_RE.test(model)) return { reason: model ? `Invalid model "${model}"` : 'No model set: add prefs.model to the template (the model is always pinned)' }
+  if (!validModel(ref.program, model)) return { reason: model ? `Invalid model "${model}"` : 'No model set: add prefs.model to the template (the model is always pinned)' }
   return { ...ref, model }
 }
 

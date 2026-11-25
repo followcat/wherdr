@@ -53,8 +53,8 @@ colors to impose on other themes.
 ## Loading states
 
 Never show a default as if it were the value: while a section's data loads, an
-off switch or an empty list would read as real. Show skeletons instead, with
-[SettingsSkeleton.vue](../app/components/SettingsSkeleton.vue): muted square
+off switch or an empty list would read as real. Show skeletons instead, built from Nuxt UI's `USkeleton`
+blocks, with [SettingsSkeleton.vue](../app/components/SettingsSkeleton.vue): muted square
 blocks at the size of what comes (rows of a settings card, a switch), a gentle
 pulse that stops under `prefers-reduced-motion`, and the buttons that need the
 data disabled. A failed load shows its error and *Try again*, never the
@@ -62,7 +62,10 @@ defaults. Example: [ProjectsSettings.vue](../app/components/ProjectsSettings.vue
 A view built from several reads waits for all of them before its first paint
 (skeletons until then, never the sections that happen to be in), then keeps its
 last data on later refreshes: [HomeSkeleton.vue](../app/components/HomeSkeleton.vue).
-The `.skel` block itself lives in `main.css`.
+The conversation's ([ChatSkeleton.vue](../app/components/ChatSkeleton.vue)) stays
+static. Never draw a loading block by hand: use `USkeleton`, which `app.config.ts`
+maps to the square, muted, pulsing `.skel` class of `main.css` (never Nuxt UI's
+rounded default).
 
 ## Icons and buttons
 
@@ -86,6 +89,22 @@ Switches (`USwitch`) are green when on, in every theme: `app/app.config.ts` make
 `success` their default color, so give them no `color`. Size `xl` in Settings
 rows, `lg` in windows.
 
+A choice among **2 to 4 options** in Settings is a segmented control, never radio
+rows or a select: [SettingsChoice.vue](../app/components/SettingsChoice.vue), a
+single-choice `UToggleGroup` drawn by `.hw-seg` as a compact segmented button, not
+tabs: as wide as its options (never full width), always one row, about a normal
+button's height, square cells under 1 px rules, uppercase mono labels with a small
+Lucide icon left of the label where one helps. The chosen option is filled (accent
+background, `--on-accent` text), with no bar on top. On a narrow phone the cells
+and letters tighten and a long label wraps inside its cell, never into a grid.
+The chosen option's description shows under it, and tapping it again keeps
+it. Examples: Appearance › Theme (Dark, Light, System), the Typewriter, a Pace
+account's mode, a notification level, *Files shown from conversations*, and in a
+project's sheet its placement, repository visibility and workspace instructions.
+Five options or more stay a `USelect`: a list that can grow (Settings › Projects'
+tab filter) passes through `SettingsChoice` anyway, which turns into a select
+past 4. On/off stays a switch.
+
 Every touch target must be at least **44 × 44 px**. The drawn control can be
 smaller if its actual hit area reaches that minimum. Example: `.prompt-send` is
 32 px with `::after { inset: -8px }`, producing a 48 px hit area. Reserve space
@@ -101,13 +120,19 @@ padding that unnecessarily increases the bar height. These selectors are the
 integration points, not evidence that every current header already meets this rule.
 
 Reuse [AppSheet.vue](../app/components/AppSheet.vue) for drawers and sheets:
-outside tap and downward swipe close a phone sheet; the handle also supports tap,
-and Escape closes the modal. On open, focus goes to the sheet itself (no outline),
-not to its handle or first button; Tab reaches the buttons, which keep their
-keyboard focus ring. **Do not add a cross close button to sheets.**
-The gesture implementation is `dragStart` / `dragMove` / `dragEnd`, with the
-`.hw-sheet-handle` target. Current implementation gap: `AppSheet` still renders
-`.hw-sheet-close` with `i-lucide-x`; this is not a pattern to copy. Full-screen
+it is Nuxt UI's `UDrawer` on the phone and `UModal` on a computer (same props and
+slots, `PHONE_QUERY` decides), restyled by `.hw-sheet` / `.hw-scrim` (square, no
+library rounding). Outside tap and downward swipe close a phone sheet (the
+drawer's own drag, from the handle, the header or the content scrolled to its
+top); the handle also supports tap, and Escape closes either. On open, focus goes
+to the sheet itself (no outline), not to its handle or first button; Tab reaches
+the buttons, which keep their keyboard focus ring; the focus stays inside while
+it is open and returns where it was on close. A sheet with a title shows
+AppSheet's square close cross (`.hw-sheet-close`, `i-lucide-x`, ghost) at the
+header's right, beside the title's first line, on the phone and on a computer;
+do not draw another. A sheet's own header controls (a project's ⋯ menu) go in
+AppSheet's `actions` slot, just before the cross. The handle is AppSheet's own `.hw-sheet-handle` (36 × 4 px bar in a
+44 px target), not the drawer's. Full-screen
 `screen` views disable sheet dragging, so retain an explicit navigation action
 when using that mode.
 

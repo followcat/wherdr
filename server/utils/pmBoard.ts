@@ -9,6 +9,7 @@ import { taskPlan, type Task } from '../../shared/pm/run'
 import { boardOrder } from '../../shared/pm/boardOrder'
 import { weightOf, weightText } from '../../shared/pm/weight'
 import { allowedMachines, type Project } from '../../shared/pm/project'
+import { FEATURE, isWorkspace } from '../../shared/pm/workspace'
 import type { MachineInfo } from '../../shared/types'
 import { lastReadiness } from './pmReady'
 import { showIds, shownTaskId } from '../../shared/pm/projectKey'
@@ -72,7 +73,7 @@ export async function board(store: PmStore, known: MachineInfo[] = []): Promise<
     projects: projects.map((p) => {
       const t = templates.get(p.key), machines = machinesOf(p, known)
       const plans = t ? Object.keys(t.taskTypes).map(type => ({ id: type, steps: planSteps(t, { type }, p.base) })) : []
-      return { key: p.key, ...(p.kind ? { kind: p.kind } : {}), ...(p.workspace ? { workspace: p.workspace } : {}), ...(p.base ? { base: p.base } : {}), ...(p.label ? { label: p.label } : {}), ...(p.aliases ? { aliases: p.aliases } : {}), ...(p.color ? { color: p.color } : {}), name: p.name, columns: boardColumns(plans.map(x => x.steps)), types: plans.map(x => ({ id: x.id, plan: x.steps.map(s => s.id).join(' → '), weight: weightText(weightOf(t, { type: x.id })) })), ...(machines ? { machines } : {}) }
+      return { key: p.key, ...(p.kind ? { kind: p.kind } : {}), ...(p.workspace ? { workspace: p.workspace } : {}), ...(p.base ? { base: p.base } : {}), ...(p.label ? { label: p.label } : {}), ...(p.aliases ? { aliases: p.aliases } : {}), ...(p.color ? { color: p.color } : {}), name: p.name, columns: boardColumns(plans.map(x => x.steps)), types: isWorkspace(p) ? [{ id: FEATURE, plan: '' }] : plans.map(x => ({ id: x.id, plan: x.steps.map(s => s.id).join(' → '), weight: weightText(weightOf(t, { type: x.id })) })), ...(machines ? { machines } : {}) }
     }),
     // Done ones last, newest done first; the others in board order.
     cards: await cardsOf(store, [...all.filter(t => !t.step?.done), ...all.filter(t => t.step?.done && !t.archived).sort((a, b) => doneAt(b) - doneAt(a))], known),
@@ -249,9 +250,15 @@ async function stepActionOf(deps: CoreAdminDeps & { store: PmStore }, task: Task
     // A merge's wait past its limit (later, no longer acting) says why too.
     const failed = result.ok || (result.later && state.acting) ? '' : state.yourTurn?.error || result.error || `${act.action.kind} failed`
     const said = [auto, failed, result.note, result.alert].filter(Boolean).join('. ')
+    // A press that worked and said nothing else leaves a line of its own, so the log shows who did it
+    // (a retry already said so above; a line the step logged, such as a warning, stays last).
+    const pressed = by === 'user' && result.ok && cur.yourTurn?.reason !== 'action'
+      ? `${act.step}: ${act.action.kind === 'git.land' ? 'landed' : 'done'}${result.commit ? ` ${result.commit.slice(0, 7)}` : ''}${result.base ?? act.action.target ? ` on ${result.base ?? act.action.target}` : ''}, by you`
+      : ''
     const saved = log?.kind === 'log' ? await store.logTask({ ...(await fresh()), step: state }, 'engine', log.text)
       : said ? await store.logTask({ ...(await fresh()), step: state }, 'engine', said.startsWith(`${act.step}: `) ? said : `${act.step}: ${said}`)
-        : await store.saveTask({ ...(await fresh()), step: state })
+        : pressed ? await store.logTask({ ...(await fresh()), step: state }, 'user', pressed)
+          : await store.saveTask({ ...(await fresh()), step: state })
     // Merged (by the engine, or on the Git host and confirmed): the task's remote branch goes, when safe.
     const merged = result.ok && run && endsMerged(act.action.kind)
     const gone = merged && await dropMergedBranch(actionShell(deps, runOn(deps, run)), {

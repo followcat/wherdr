@@ -31,7 +31,7 @@ const VIEW_LABEL = { diagram: 'Diagram', readable: 'List', json: 'JSON' }
 </script>
 
 <template>
-  <AppSheet v-model:open="open" :title="tl(title)" tall wide top hide-close>
+  <AppSheet v-model:open="open" :title="tl(title)" tall wide top>
     <div class="review" data-testid="proposal-review">
       <template v-if="c.proposal">
         <p v-if="headline" class="review-headline" data-testid="proposal-headline">{{ headline }}</p>

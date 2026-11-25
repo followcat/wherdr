@@ -70,6 +70,13 @@ describe('model store', () => {
     expect(err).toBeInstanceOf(MissingOnServer)
     expect(err).toMatchObject({ path: 'enc.onnx', model: { id: 'm' } })
     expect(fetchCommand(model)).toBe(`node scripts/fetch-dictation-files.mjs runtime ${model.set}`)
+    expect(fetchCommand({ ...model, runtime: 'ort', set: 'qwen3' })).toBe('node scripts/fetch-dictation-files.mjs ort qwen3')
+  })
+
+  it('cancels while the server is still fetching the model files', async () => {
+    const fetch = (async () => Response.json({ state: 'preparing', phase: 'fetch', got: 100, total: 889_384_852 })) as typeof globalThis.fetch
+    const run = installModel({ ...model, id: 'qwen-cancel' }, (p) => { if (p.server) cancelInstall('qwen-cancel') }, { caches: fakeCaches(), fetch })
+    expect((await run.catch(e => e)).name).toBe('AbortError')
   })
 
   it('waits for the server to fetch the files, with its progress, then downloads them', async () => {
@@ -144,7 +151,11 @@ describe('model catalog', () => {
   it('has exact sizes, a pinned source and a source for every figure', () => {
     for (const m of DEVICE_MODELS) {
       expect(m.files.every(f => f.bytes > 0)).toBe(true)
-      expect(m.source.sha256).toMatch(/^[0-9a-f]{64}$/)
+      if ('url' in m.source) expect(m.source.sha256).toMatch(/^[0-9a-f]{64}$/)
+      else {
+        expect(m.source.base).toMatch(/^https:\/\/.+\/resolve\/[0-9a-f]{40}\/$/)
+        expect(m.files.every(f => f.sha256 && /^[0-9a-f]{64}$/.test(f.sha256))).toBe(true)
+      }
       expect(m.quality.every(q => q.source.startsWith('https://') && q.wer > 0)).toBe(true)
       if (m.speed) expect(m.speed.estimate).toBeGreaterThanOrEqual(1)
     }

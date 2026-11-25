@@ -1,23 +1,30 @@
 <script setup lang="ts">
-// App window: sheet at the bottom of the screen on the phone, centered window
-// on a computer (≥ 900 px, or a tablet). Escape or a tap outside closes it; on the phone,
-// so do a tap on the handle and a swipe down from the handle, the header, or
-// the content while it is scrolled to its top.
+// App window, on Nuxt UI overlays: a bottom sheet (UDrawer) on the phone, a
+// centered window (UModal) on a computer (≥ 900 px, or a tablet). Escape or a
+// tap outside closes it; on the phone, so do a tap on the handle and a swipe
+// down from the handle, the header, or the content while it is scrolled to its
+// top (the drawer's own drag: it follows the finger, then closes or springs back).
+// Both trap the focus, return it on close, and lock the page's scroll.
+import { useMediaQuery } from '@vueuse/core'
+import { UDrawer, UModal } from '#components'
 import { PHONE_QUERY } from '~/utils/layoutMode'
 // `screen`: full-screen view on the phone instead of a sheet (page color,
-// safe areas included); unchanged on a computer. The `footer` slot stays
+// safe areas included, no drag); unchanged on a computer. The `footer` slot stays
 // pinned under the scrolling content (above the home bar or the keyboard).
 // `top`: above the other windows (a confirmation asked from an open sheet).
+// `sub` slot: a row under the title, the header's full width (a shown file's
+// folder · size and controls, FilesView).
+// `actions` slot: the sheet's own controls, just before the close cross (a project's ⋯ menu).
 // `clamp`: a long title (a task's) on the phone: two lines in smaller type, a tap
 // shows it whole; one line once the body is scrolled or a field is typed in.
 import { kbOpen } from '~/composables/useViewport'
-import { SHEET_DRAG_SLOP, sheetDragCloses, sheetDragOffset } from '~/utils/sheetDrag'
 
 const open = defineModel<boolean>('open', { default: false })
-const props = defineProps<{ hideClose?: boolean, title?: string, tall?: boolean, wide?: boolean, full?: boolean, screen?: boolean, top?: boolean, clamp?: boolean }>()
+const props = defineProps<{ title?: string, tall?: boolean, wide?: boolean, full?: boolean, screen?: boolean, top?: boolean, clamp?: boolean }>()
 const emit = defineEmits<{ closed: [] }>()
-const slots = defineSlots<{ default?: () => unknown, footer?: () => unknown, lead?: () => unknown }>()
+const slots = defineSlots<{ default?: () => unknown, footer?: () => unknown, lead?: () => unknown, actions?: () => unknown, sub?: () => unknown }>()
 watch(open, (v, old) => { if (old && !v) emit('closed') })
+const phone = useMediaQuery(PHONE_QUERY)
 // Typing on the phone: a text field of the sheet has focus, the keyboard over
 // the page. The bars pinned over the body hide (`.typing` on the body or the
 // footer, main.css), so nothing covers the field; its form (the field and its
@@ -51,7 +58,8 @@ const compact = computed(() => props.clamp && (scrolledDown.value || typing.valu
 watch(compact, (v) => { if (v) fullTitle.value = false })
 const ui = computed(() => ({
   overlay: `hw-scrim${props.screen ? ' screen' : ''}${props.top ? ' top' : ''}`,
-  content: `hw-sheet${props.tall ? ' tall' : ''}${props.wide ? ' wide' : ''}${props.full ? ' full' : ''}${props.screen ? ' screen' : ''}${props.top ? ' top' : ''}`,
+  // mt-0: the drawer's top margin would push a full-screen view down.
+  content: `hw-sheet${props.tall ? ' tall' : ''}${props.wide ? ' wide' : ''}${props.full ? ' full' : ''}${props.screen ? ' screen' : ''}${props.top ? ' top' : ''}${phone.value ? ' mt-0' : ''}`,
 }))
 // On open, focus goes to the window itself (screen readers announce its
 // title), not to its first button: the phone's full-width handle would get
@@ -62,79 +70,60 @@ function focusSheet(e: Event) {
   ;(e.target as HTMLElement).focus({ preventScroll: true })
 }
 
-// The content, or a part of it that scrolls on its own,
-// is scrolled down: the swipe scrolls it back up, it does not close the sheet.
-function scrolled(from: EventTarget | null, body: HTMLElement) {
-  for (let n = from as HTMLElement | null; n; n = n === body ? null : n.parentElement) if (n.scrollTop > 0) return true
-  return false
+// The drawer's open state. A swipe closes the drawer itself before asking to
+// close: a sheet kept open (unsaved changes, CoordinatorButton) springs back.
+const shown = ref(open.value)
+watch(open, (v) => { shown.value = v })
+let swiped = false
+async function setOpen(v: boolean) {
+  open.value = v
+  if (v || !swiped) return
+  swiped = false
+  await nextTick()
+  if (!open.value) return
+  shown.value = false
+  await nextTick()
+  shown.value = true
 }
-// Swipe down: the sheet follows the finger, then closes or springs back.
-let drag: { sheet: HTMLElement, fromHandle: boolean, y0: number, y: number, t: number, v: number, dragging: boolean } | null = null
-function dragStart(e: TouchEvent, fromHandle: boolean) {
-  if (props.screen || e.touches.length !== 1 || !matchMedia(PHONE_QUERY).matches) return
-  const el = e.currentTarget as HTMLElement
-  const sheet = el.closest<HTMLElement>('.hw-sheet')
-  if (!sheet || (!fromHandle && scrolled(e.target, el))) return
-  const y = e.touches[0]!.clientY
-  drag = { sheet, fromHandle, y0: y, y, t: e.timeStamp, v: 0, dragging: false }
+// The handle closes on a tap (or Enter), not at the end of a drag from it.
+let handleY = 0
+function handleTap(e: MouseEvent) {
+  if (e.detail === 0 || Math.abs(e.clientY - handleY) <= 8) open.value = false
 }
-function dragMove(e: TouchEvent) {
-  if (!drag) return
-  const y = e.touches[0]!.clientY
-  const dy = y - drag.y0
-  if (!drag.dragging) {
-    if (dy < -SHEET_DRAG_SLOP && !drag.fromHandle) drag = null // scrolling the content up
-    else if (dy > SHEET_DRAG_SLOP) {
-      drag.dragging = true
-      drag.sheet.style.transition = 'none'
+// The image viewer opened from the sheet: its taps and Escape are its own.
+const overlay = computed(() => phone.value
+  ? {
+      // No drag on a full-screen view: drag from a handle it does not have.
+      handle: false,
+      handleOnly: !!props.screen,
+      // The page keeps its own layout (no fixed body); Reka still locks its scroll.
+      noBodyStyles: true,
+      content: { onOpenAutoFocus: focusSheet, disableOutsidePointerEvents: true },
+      onClose: () => { swiped = true },
     }
-    if (!drag?.dragging) return
-  }
-  e.preventDefault()
-  const dt = e.timeStamp - drag.t
-  if (dt > 0) drag.v = (y - drag.y) / dt
-  drag.y = y
-  drag.t = e.timeStamp
-  drag.sheet.style.transform = `translateY(${sheetDragOffset(dy)}px)`
-}
-function dragEnd(e: TouchEvent) {
-  const d = drag
-  drag = null
-  if (!d?.dragging) return
-  e.preventDefault() // no click on the handle after a drag
-  if (sheetDragCloses(d.y - d.y0, d.v, d.sheet.offsetHeight)) {
-    // The closing animation starts from where the finger left the sheet.
-    d.sheet.style.transition = ''
-    open.value = false
-    // Kept open (unsaved changes, CoordinatorButton): it springs back.
-    nextTick(() => { if (open.value) d.sheet.style.transform = '' })
-    return
-  }
-  d.sheet.style.transition = 'transform .2s cubic-bezier(.2, .8, .2, 1)'
-  d.sheet.style.transform = ''
-}
+  : { content: { onOpenAutoFocus: focusSheet } })
 </script>
 
 <template>
-  <!-- The image viewer opened from the sheet: its taps and Escape are its own. -->
-  <UModal v-model:open="open" :title="title" :ui="ui" :content="{ onOpenAutoFocus: focusSheet }" :dismissible="!lightboxSrc">
+  <component
+    :is="phone ? UDrawer : UModal" v-bind="overlay" :open="shown" :title="title" :ui="ui" :dismissible="!lightboxSrc"
+    @update:open="setOpen"
+  >
     <template #content>
       <button
         v-if="!screen" type="button" class="hw-sheet-handle" :aria-label="tl('Close', 'Fermer')"
-        @click="open = false" @touchstart.passive="dragStart($event, true)" @touchmove="dragMove" @touchend="dragEnd" @touchcancel="dragEnd"
+        @pointerdown="handleY = $event.clientY" @click="handleTap"
       />
-      <div
-        v-if="title" data-slot="header" class="hw-sheet-head" :class="{ compact }"
-        @touchstart.passive="dragStart($event, true)" @touchmove="dragMove" @touchend="dragEnd" @touchcancel="dragEnd"
-      >
+      <div v-if="title" data-slot="header" class="hw-sheet-head" :class="{ compact }">
         <span v-if="slots.lead" class="hw-sheet-lead"><slot name="lead" /></span>
         <span class="hw-sheet-title" :class="{ clamp, open: fullTitle }" :title="clamp ? title : undefined" aria-hidden="true" data-testid="sheet-title" @click="fullTitle = !!clamp && !fullTitle">{{ title }}</span>
-        <UButton v-if="!hideClose" icon="i-lucide-x" color="neutral" variant="ghost" data-slot="close" class="hw-sheet-close" :aria-label="tl('Close', 'Fermer')" @click="open = false" />
+        <span v-if="slots.actions" class="hw-sheet-actions"><slot name="actions" /></span>
+        <UButton icon="i-lucide-x" color="neutral" variant="ghost" data-slot="close" class="hw-sheet-close" :aria-label="tl('Close', 'Fermer')" @click="open = false" />
+        <div v-if="slots.sub" class="hw-sheet-sub"><slot name="sub" /></div>
       </div>
       <div
         ref="bodyEl" data-slot="body" class="hw-sheet-body" :class="{ typing }"
         @focusin="focusIn" @focusout="focusOut" @input="showForm" @scroll.passive="bodyScroll"
-        @touchstart.passive="dragStart($event, false)" @touchmove="dragMove" @touchend="dragEnd" @touchcancel="dragEnd"
       >
         <slot />
       </div>
@@ -142,5 +131,5 @@ function dragEnd(e: TouchEvent) {
         <slot name="footer" />
       </div>
     </template>
-  </UModal>
+  </component>
 </template>

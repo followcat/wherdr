@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // The COORDINATORS section under Alfred (AlfredRow, which coordinates all projects) at
 // the top of the agent list: the project coordinators that run, or whose
-// conversation stopped (its terminal ended), those the home tab picked shows
+// conversation stopped (its terminal ended), or that never started (Start), those the home tab picked shows
 // (useMachineBar.projectOnBar). One tap opens its conversation, or asks whether
 // to resume the stopped one or start a new one. Its menu (right click, or long
 // press on a touch screen) opens its board, its settings or autopilot tab,
@@ -22,7 +22,7 @@ import { paneGroup } from '#shared/spaces'
 
 const busy = ref('')
 const error = ref('')
-const rows = computed(() => projectCoordinators.value.filter(c => (coordinatorPane(c) || coordinatorStopped(c)) && projectOnBar(c.project)))
+const rows = computed(() => projectCoordinators.value.filter(c => (coordinatorPane(c) || coordinatorStopped(c) || coordinatorNotStarted(c)) && projectOnBar(c.project)))
 
 // The user's order, and the Hidden group (collapsed by default, this device).
 const sorted = computed(() => {
@@ -52,8 +52,13 @@ async function run(c: CoordinatorView, fn: () => Promise<unknown>) {
   busy.value = c.project
   error.value = ''
   try { await fn() }
-  catch (e) { error.value = (e as Error).message }
+  catch (e) { showError(c, e) }
   finally { busy.value = '' }
+}
+// A failed start is said on its row, not a second time under the list.
+const showError = (c: CoordinatorView, e: unknown) => {
+  const message = (e as Error).message
+  if (coordinatorStartErrors.value[c.project] !== message) error.value = message
 }
 function open(c: CoordinatorView) {
   if (busy.value || rowMenu.swallowClick() || dnd.swallowClick()) return
@@ -79,11 +84,13 @@ const selected = (c: CoordinatorView) => { const id = coordinatorPane(c)?.id; re
 const sub = (c: CoordinatorView) => {
   const p = coordinatorPane(c)
   const program = kindLabel((c.ran ?? coordinatorAgent(c))?.program)
+  if (!p && startError(c)) return `${tl('Did not start')}: ${startError(c)}`
   if (c.undelivered) return tl('First message not delivered: Send again in its menu')
   if (p) return `${program} · ${statusLabel(p)}`
   if (coordinatorStopped(c)) return `${program} · ${tl('Stopped')}`
-  return tl(`Start with ${program}`, `Lancer avec ${program}`)
+  return `${program} · ${tl('Not started')}`
 }
+const startError = (c: CoordinatorView) => coordinatorStartErrors.value[c.project]
 // "n waiting for you" tapped: one task opens its sheet; several, a member's open
 // Tasks to review on that project, a workspace's its board (Tasks to review has no workspace filter).
 function openWaiting(ids: string[], project: string, member: boolean) {
@@ -170,7 +177,7 @@ async function restart() {
     const p = await launchCoordinator(c.project, agent)
     if (p) await navigateTo(panePath(p.id))
   }
-  catch (e) { error.value = (e as Error).message }
+  catch (e) { showError(c, e) }
   finally { busy.value = '' }
 }
 const sheetOpen = computed({ get: () => !!restarting.value, set: (v) => { if (!v) restarting.value = null } })
@@ -208,8 +215,9 @@ onUnmounted(() => clearInterval(timer))
               :disabled="!!busy" data-testid="coordinator-row" :title="c.main ? undefined : tl(`Coordinator of ${c.name}`)" v-on="rowMenu.on(menu(c), coordinatorName(c))" @click="open(c)"
             >
               <i class="coord-dot" aria-hidden="true" />
-              <span class="coord-text"><b v-if="c.main">{{ coordinatorName(c) }}</b><b v-else class="coord-name"><ProjectBadge :text="c.label ?? c.project" :color="c.color" /><span data-testid="coordinator-name">{{ coordinatorName(c) }}</span></b><small>{{ busy === c.project ? tl('Starting…', 'Lancement…') : sub(c) }}</small></span>
-              <UIcon :name="coordinatorPane(c) ? 'i-lucide-chevron-right' : 'i-lucide-play'" class="coord-go" />
+              <span class="coord-text"><b v-if="c.main">{{ coordinatorName(c) }}</b><b v-else class="coord-name"><ProjectBadge :text="c.label ?? c.project" :color="c.color" /><span data-testid="coordinator-name">{{ coordinatorName(c) }}</span></b><small :class="{ failed: !coordinatorPane(c) && !!startError(c) }" :title="coordinatorPane(c) ? undefined : startError(c)">{{ busy === c.project ? tl('Starting…', 'Lancement…') : sub(c) }}</small></span>
+              <span v-if="coordinatorNotStarted(c)" class="coord-start" data-testid="coordinator-start"><UIcon name="i-lucide-play" />{{ startError(c) ? tl('Start again') : tl('Start') }}</span>
+              <UIcon v-else :name="coordinatorPane(c) ? 'i-lucide-chevron-right' : 'i-lucide-play'" class="coord-go" />
             </button>
             </UContextMenu>
             <template v-if="c.workspace && hasStrip(c)">
@@ -299,7 +307,9 @@ onUnmounted(() => clearInterval(timer))
 .coord-name { display: flex; align-items: center; gap: var(--badge-gap); min-width: 0; }
 .coord-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .coord-text small { overflow: hidden; color: var(--muted); font: 12px/1.4 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.coord-text small.failed { color: var(--blocked); white-space: normal; overflow-wrap: anywhere; }
 .coord-go { flex: none; color: var(--dim); }
+.coord-start { display: inline-flex; flex: none; align-items: center; gap: 4px; color: var(--text-2); font: 12px/1.4 var(--mono); }
 .coord-rename { cursor: default; }
 /* A workspace's members: badges under its name, inside the row's box. */
 .coord-row.joined { border-bottom-width: 0; padding-bottom: 2px; }

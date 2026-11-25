@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import postcss from 'postcss'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { type DOMWrapper, flushPromises } from '@vue/test-utils'
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
@@ -183,6 +185,22 @@ describe('Composer field sizing', () => {
     const u = await mountSuspended(Composer, { props: { pane: pane('w1:f2'), paneId: 'w1:f2', sendKeys: async () => {} } })
     expect(u.find('.prompt').classes()).not.toContain('sized-content')
     u.unmount()
+  })
+
+  it('caps sized-content at 7 rows on desktop and keeps the touch cap on coarse pointers', () => {
+    const css = readFileSync('app/assets/css/main.css', 'utf8')
+    let baseMaxHeight = ''
+    let coarseMaxHeight = ''
+    postcss.parse(css).walkRules((rule) => {
+      const media = rule.parent?.type === 'atrule' ? (rule.parent as postcss.AtRule).params : ''
+      if (!rule.selectors.includes('.prompt.sized-content .prompt-input')) return
+      rule.walkDecls('max-height', (d) => {
+        if (!media) baseMaxHeight = d.value
+        else if (media.includes('pointer: coarse')) coarseMaxHeight = d.value
+      })
+    })
+    expect(baseMaxHeight).toBe('min(40vh, calc(7lh + 12px))')
+    expect(coarseMaxHeight).toBe('min(176px, calc(var(--vv-h, 100dvh) * .3))')
   })
 })
 
@@ -406,5 +424,45 @@ describe('Composer paste event handling', () => {
     el.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertFromPaste', data: 'Native edit', bubbles: true, cancelable: false }))
     expect(el.value).toBe('Input words') // The browser owns non-cancellable edits.
     w.unmount()
+  })
+})
+
+// Upload in the test's hands: each call waits for its resolve() or reject().
+const uploads: { resolve: (r: { path: string, name: string }) => void, reject: (e: Error) => void }[] = []
+vi.mock('~/utils/photoUpload', () => ({
+  uploadPhoto: () => new Promise((resolve, reject) => uploads.push({ resolve, reject })),
+}))
+
+describe('Composer attachments (AttachTile)', () => {
+  it('a photo shows uploading, then idle; a failed one shows its reason; remove takes it away', async () => {
+    const id = 'att-1'
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:demo')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    const w = await mountSuspended(Composer, { props: { pane: pane(id), paneId: id, sendKeys: async () => {} } })
+    const vm = w.vm as unknown as { addImages: (f: File[]) => Promise<void> }
+    const photo = () => new File([new Uint8Array([1])], 'shot.png', { type: 'image/png' })
+    vm.addImages([photo()])
+    await vi.waitFor(() => expect(uploads).toHaveLength(1))
+    await nextTick()
+    const att = () => w.findAll('.att-tile')
+    expect(att()[0]!.attributes('data-status')).toBe('uploading')
+    expect(att()[0]!.find('[data-slot="image"]').attributes('src')).toBe('blob:demo')
+    expect(att()[0]!.find('.att-tile-badge').text()).toBe('PNG')
+    expect(att()[0]!.find('[data-slot="name"]').text()).toBe('shot.png')
+    uploads.shift()!.resolve({ path: '/tmp/shot.jpg', name: 'shot.jpg' })
+    await flushPromises()
+    expect(att()[0]!.attributes('data-status')).toBe('idle')
+
+    vm.addImages([photo()])
+    await vi.waitFor(() => expect(uploads).toHaveLength(1))
+    uploads.shift()!.reject(new Error('Disk full'))
+    await flushPromises()
+    expect(att()[1]!.attributes('data-status')).toBe('error')
+    expect(att()[1]!.find('[data-slot="description"]').text()).toContain('Disk full')
+
+    await att()[0]!.find('[data-slot="remove"]').trigger('click')
+    await att()[0]!.find('[data-slot="remove"]').trigger('click')
+    expect(att()).toHaveLength(0)
+    vi.restoreAllMocks()
   })
 })

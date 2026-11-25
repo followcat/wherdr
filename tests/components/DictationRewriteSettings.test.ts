@@ -47,6 +47,9 @@ describe('DictationRewriteSettings', () => {
     // The list is virtualised: give its viewport a size, as a browser would.
     vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(240)
     vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(320)
+    // @tanstack/virtual-core 3.19 (Nuxt UI 4.13) measures the viewport with clientHeight/clientWidth.
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(240)
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(320)
     localStorage.setItem(REWRITE_OPTIONS_KEY, JSON.stringify({ on: true }))
     const w = await mountSuspended(DictationRewriteSettings, { attachTo: document.body })
     await flushPromises()

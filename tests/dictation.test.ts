@@ -5,6 +5,7 @@ import { effectScope } from 'vue'
 import { createFakeEngine } from './fakeDictationEngine'
 import type { FakeEngine } from './fakeDictationEngine'
 import { ENGINES, disposeEngines } from '../app/utils/dictation/registry'
+import { DeviceUnsupported } from '../app/utils/dictation/engine'
 import { MAX_TAKE_MS, TRANSCRIBE_TIMEOUT_MS, useDictation } from '../app/composables/useDictation'
 
 const RATE = 48000
@@ -238,6 +239,16 @@ describe('useDictation', () => {
     await tick()
     expect(d.status.value).toBe('error')
     expect(d.error.value).toEqual({ reason: 'no-key', detail: undefined })
+    expect(FakeAudioContext.last.closed).toBe(true)
+  })
+
+  it('maps a worker Unsupported speech device failure to unsupported', async () => {
+    engine.prepare = async () => { throw new DeviceUnsupported('Unsupported speech device: WebGPU and shader-f16 required') }
+    const { d, start } = setup()
+    await start()
+    await tick()
+    expect(d.status.value).toBe('error')
+    expect(d.error.value).toEqual({ reason: 'unsupported', detail: 'Unsupported speech device: WebGPU and shader-f16 required' })
     expect(FakeAudioContext.last.closed).toBe(true)
   })
 

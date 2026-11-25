@@ -6,18 +6,18 @@ import { terminalRenderer } from '~/composables/useHerdr'
 
 // xterm arrives when the test says so: what the app asks meanwhile must wait for it.
 const loads = vi.hoisted(() => ({ xterm: 0, webgl: 0, release: () => {}, fail: (_e: Error) => {} }))
-const terminals = vi.hoisted(() => [] as { focused: boolean, disposed: boolean, addons: string[] }[])
+const terminals = vi.hoisted(() => [] as { focused: boolean, disposed: boolean, opened: boolean, addons: string[] }[])
 vi.mock('~/utils/xtermLoader', () => {
   class Terminal {
     cols = 80; rows = 24; options = {}; textarea = null; element = null
     buffer = { active: { viewportY: 0, baseY: 0, length: 0, cursorY: 0 } }
-    state = { focused: false, disposed: false, addons: [] as string[] }
+    state = { focused: false, disposed: false, opened: false, addons: [] as string[] }
     constructor() { terminals.push(this.state) }
     loadAddon(a: { kind: string }) { this.state.addons.push(a.kind) }
     focus() { this.state.focused = true }
     dispose() { this.state.disposed = true }
     parser = { registerCsiHandler: () => ({ dispose() {} }), registerEscHandler: () => ({ dispose() {} }) }
-    write() {} open() {} refresh() {} clearTextureAtlas() {} reset() {} scrollToLine() {} attachCustomWheelEventHandler() {}
+    write() {} open() { this.state.opened = true } refresh() {} clearTextureAtlas() {} reset() {} scrollToLine() {} attachCustomWheelEventHandler() {}
     attachCustomKeyEventHandler() {} onData() {} onBinary() {} onScroll() {}
   }
   class FitAddon { kind = 'fit'; proposeDimensions() { return null } }
@@ -142,4 +142,33 @@ it('offers a retry when xterm cannot be downloaded', async () => {
   expect(terminals).toHaveLength(1)
   ctl.dispose()
   wrapper.unmount()
+})
+
+it('stays covered after open() while waiting for the terminal font', async () => {
+  terminalRenderer.value = 'html'
+  const origFonts = Object.getOwnPropertyDescriptor(document, 'fonts')
+  let releaseFont!: () => void
+  Object.defineProperty(document, 'fonts', {
+    configurable: true,
+    value: { load: () => new Promise<void>(r => { releaseFont = r }) },
+  })
+  try {
+    const { ctl, wrapper, host } = setup()
+    const ready = ctl.mount(host)
+    loads.release()
+    await vi.waitFor(() => expect(terminals[0]?.opened).toBe(true))
+    expect(ctl.loading.value).toBe(true)
+    ctl.connect(true)
+    expect(sockets).toHaveLength(0)
+    releaseFont()
+    expect(await ready).toBe(true)
+    expect(ctl.loading.value).toBe(false)
+    ctl.connect(false)
+    expect(sockets[0]!.url).toContain('takeover=1')
+    ctl.dispose()
+    wrapper.unmount()
+  } finally {
+    if (origFonts) Object.defineProperty(document, 'fonts', origFonts)
+    else delete (document as { fonts?: unknown }).fonts
+  }
 })

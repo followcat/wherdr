@@ -62,7 +62,7 @@ for (const device of ['desktop', 'phone', 'tablet']) {
       }
       const group = w.findAll('.settings-group').find(g => g.text().includes('Default pane view'))!
       expect(group.isVisible()).toBe(true)
-      await group.findAll('[role="radio"]')[1]!.trigger('click')
+      await group.find('[data-value="term"]').trigger('click')
       expect(defaultViewMode.value).toBe('term')
       const nav = w.get('.settings-nav')
       expect(nav.text()).not.toContain('Desktop')
@@ -81,10 +81,11 @@ it('shows the same reference component in Settings and the shortcut sheet', asyn
     const rows = w.getComponent(ShortcutsReference).findAll('.shortcut-row')
     expect(rows).toHaveLength(24)
     // The hardware Alt+←/→ tab steps are supported v3 rows, not filtered v2-only.
+    // Nuxt UI renders both macOS (⌥) and non-macOS (Alt) spans inside <UKbd value="alt" />.
     const prevTab = rows.find(r => r.text().includes('Previous tab of this space'))!
-    expect(prevTab.findAll('kbd').map(k => k.text())).toEqual(['Alt', '←'])
+    expect(prevTab.findAll('kbd').map(k => k.text())).toEqual(['⌥Alt', '←'])
     const nextTab = rows.find(r => r.text().includes('Next tab of this space'))!
-    expect(nextTab.findAll('kbd').map(k => k.text())).toEqual(['Alt', '→'])
+    expect(nextTab.findAll('kbd').map(k => k.text())).toEqual(['⌥Alt', '→'])
     expect(sheet.findComponent(ShortcutsReference).exists()).toBe(true)
   } finally { w.unmount(); sheet.unmount() }
 })
@@ -119,14 +120,16 @@ it('Desktop: Interface size is a device choice, applied as data-ui-scale and kep
     const widthGroup = () => w.findAll('.settings-group').find(g => g.text().includes('Content width'))!
     expect(widthGroup().text()).toContain('1500 px')
     expect(widthGroup().text()).toContain('terminal fitted to 760 px')
+    await widthGroup().find('[data-value="wide"]').trigger('click')
     expect(widthGroup().text()).toContain('terminal fitted to 1100 px')
     await radios[0]!.trigger('click')
     expect(uiScale.value).toBe('md')
     expect(localStorage.getItem('uiScale')).toBe('md')
     expect(document.documentElement.dataset.uiScale).toBe('md')
     // Back at Standard the fitted caps are the column widths again.
-    expect(widthGroup().text()).toContain('760 px column')
     expect(widthGroup().text()).toContain('Up to 1100 px')
+    await widthGroup().find('[data-value="normal"]').trigger('click')
+    expect(widthGroup().text()).toContain('760 px column')
     w.unmount()
     w = await mount()
     expect(group().findAll('[role="radio"]')[0]!.attributes('aria-checked')).toBe('true')

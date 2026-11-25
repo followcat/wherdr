@@ -145,6 +145,27 @@ describe('read-only file browser', () => {
     await expect(listFiles(after(255), '/srv/repo', '')).rejects.toMatchObject({ code: 'unreachable' })
   })
 
+  it('reads once more when herdr-core fails its first call to a remote machine, never after a timeout', async () => {
+    const calls = (failures: string[]) => {
+      let n = 0
+      const m = { exec: async () => {
+        const stderr = failures[n++]
+        return stderr ? { code: 255, stdout: Buffer.alloc(0), stderr } : { code: 0, stdout: Buffer.from('/srv/repo\n'), stderr: '' }
+      } } as unknown as Machine
+      return { m, count: () => n }
+    }
+    // The first call finds the folder's root; the read is the second.
+    const once = calls(['', 'herdr-core: unavailable'])
+    expect((await readFilePreview(once.m, '/srv/repo', 'a.txt')).kind).toBe('text')
+    expect(once.count()).toBe(3)
+    const twice = calls(['', 'herdr-core: unavailable', 'herdr-core: unavailable'])
+    await expect(readFilePreview(twice.m, '/srv/repo', 'a.txt')).rejects.toMatchObject({ code: 'unreachable' })
+    expect(twice.count()).toBe(3)
+    const slow = calls(['', 'herdr-core: timeout'])
+    await expect(readFilePreview(slow.m, '/srv/repo', 'a.txt')).rejects.toMatchObject({ code: 'unreachable' })
+    expect(slow.count()).toBe(2)
+  })
+
   it('passes paths to a remote machine only as positional arguments', async () => {
     const calls: { script: string, args: string[] }[] = []
     const name = 'a;$(touch x).ts'

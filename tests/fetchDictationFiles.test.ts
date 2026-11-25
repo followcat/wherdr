@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { SETS, download, extractCommand, fetchEntry, setsOf, tarFailure, unpack } from '../scripts/dictation-files.mjs'
+import { CATALOG, SETS, download, extractCommand, fetchEntry, setsOf, tarFailure, unpack } from '../scripts/dictation-files.mjs'
 
 type Entry = { url: string, sha256: string, to?: string, dir?: string, members?: string[] }
 const body = Buffer.from('a'.repeat(1000) + 'b'.repeat(1000))
@@ -54,6 +54,27 @@ describe('the pinned files', () => {
     expect(setsOf([])).toEqual(['runtime', 'parakeet'])
     expect(setsOf(['all'])).toEqual(Object.keys(SETS))
     expect(() => setsOf(['nope'])).toThrow(/unknown set: nope/)
+  })
+  it('builds the qwen3 set of 9 loose pinned files and checks every model runtime set', () => {
+    const base = 'https://huggingface.co/jiangzhuo9357/Qwen3-ASR-0.6B-ONNX/resolve/4a01b95fafe2c9e3af77e33c18bbb7de349c62f6/'
+    const dir = 'qwen3-asr-0.6b-q4f16-4a01b95'
+    const expected: [string, number, string][] = [
+      ['prompt_config.json', 2578, '282e0cba43d48f0799c665e2687bea950cbb090bc1def85578d6cdf369c08970'],
+      ['mel_filters.json', 132427, 'dcdaf139353616855b4f85e304c075f5f3442573d40637ae0f031db705626181'],
+      ['tokenizer.json', 11429377, 'bd2a97b55c8f7f9c328c73ee9b9178771037e9f566dfca8e238a063d41cbac92'],
+      ['embed_tokens.int8.bin', 155582464, '9ec07c97a15cb9defb675656edeed0370bc3e7b2c478d1eefe6f948fc6516513'],
+      ['embed_scales.f32.bin', 607744, 'acce138a5f06f1233faa4a8a359903b3c303efc0ce37818ad8cf0f9be11fc9b3'],
+      ['encoder.fp16.onnx', 376261247, 'af2a517a3d873a401ec9f64a81711e3d780fc8b085fd36f9366f9ac17a54411b'],
+      ['decoder_init.q4f16.onnx', 348427, '328a14a46d7284bb6dc5242bc9f6029b013a6f2c42579f9e72dadbaa96ba511d'],
+      ['decoder_step.q4f16.onnx', 350380, '27f4588874d1e50a539aed8de424107a8b934a1a5b13368c3a36b467ffcf2024'],
+      ['decoder_weights.q4f16.data', 344670208, '898d0c82aad4cae494a4241639c73f9c8e79486fea3b4bac918883397b8f0bcc'],
+    ]
+    expect(SETS.qwen3).toEqual(expected.map(([name, , sha256]) => ({ url: base + name, sha256, to: `${dir}/${name}` })))
+    const qwen = CATALOG.models.find(m => m.set === 'qwen3')!
+    expect(qwen.runtime).toBe('ort')
+    expect(qwen.files.map(f => [f.path, f.bytes, f.sha256])).toEqual(expected)
+    expect(qwen.files.reduce((n, f) => n + f.bytes, 0)).toBe(889_384_852)
+    for (const m of CATALOG.models) expect(SETS[m.runtime]).toBeDefined()
   })
 })
 

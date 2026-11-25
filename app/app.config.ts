@@ -16,6 +16,14 @@ export default defineAppConfig({
     switch: {
       defaultVariants: { color: 'success' },
     },
+    // Attachments (composer): square, wherdr's surfaces and type (main.css, `.hw-att`).
+    chatAttachment: {
+      slots: { root: 'hw-att', leading: 'hw-att-lead', name: 'hw-att-name', description: 'hw-att-desc', remove: 'hw-att-x' },
+    },
+    // Loading blocks: square, wherdr's muted color and gentle pulse (main.css, `.skel`), not Nuxt UI's rounded ones.
+    skeleton: {
+      base: 'skel rounded-none',
+    },
     // Same square surface and same colors as the cards and windows.
     toast: {
       slots: {

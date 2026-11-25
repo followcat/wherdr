@@ -362,10 +362,18 @@ async function noteIdle(deps: PmLaunchDeps, task: Task, plan: PlannedStep[], run
 }
 
 // doing: told each stage, for the log of a pass that outlasts its interval (server/plugins/pm.ts).
+// A feature runs no agent: one a refused start left waiting (a failed start saved its reason) is to do again.
+export async function clearFeatures({ store }: PmLaunchDeps) {
+  for (const t of await store.tasks()) {
+    if (t.kind === 'feature' && t.state === 'waiting' && !t.closed) await store.updateTask(t.id, x => (x.state === 'waiting' ? { ...x, state: 'todo', waiting: undefined, waitKind: undefined } : null))
+  }
+}
+
 export async function mechanicTick(deps: PmLaunchDeps, now = Date.now(), doing: (what: string) => void = () => {}) {
   const { store } = deps
   if (!(await store.enabled())) return []
   const stage = <T>(what: string, fn: () => Promise<T>) => { doing(what); return fn().catch(() => null) }
+  await stage('clearFeatures', () => clearFeatures(deps))
   await stage('syncWaits', () => syncWaits(deps))
   await stage('advanceTick', () => advanceTick(deps, now))
   // Before the chain: a resumed task's followers then see it working.

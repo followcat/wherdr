@@ -31,11 +31,11 @@ const view = (project: string, more: Partial<CoordinatorView> = {}): Coordinator
 let w: Awaited<ReturnType<typeof mountSuspended>> | null = null
 // A coordinators read still in flight would answer the next test's first one
 // with this test's views (loadCoordinators shares it): let it end first.
-afterEach(async () => { w?.unmount(); w = null; coordinatorOrder.value = []; coordinatorsHidden.value = []; posts.length = 0; navigate.mockReset(); document.body.innerHTML = ''; await loadCoordinators() })
+afterEach(async () => { w?.unmount(); w = null; coordinatorOrder.value = []; coordinatorsHidden.value = []; posts.length = 0; navigate.mockReset(); document.body.innerHTML = ''; await loadCoordinators(); coordinators.value = [] })
 
-it('lists the running project coordinators only (Alfred, the main one, has its own row)', async () => {
+it('lists the running project coordinators (Alfred, the main one, has its own row)', async () => {
   herdrState.value = { ok: true, workspaces: [], panes: [pane('w:p1', 'host/t1')] }
-  views = [view(MAIN, { main: true, terminal: 'host/t1' }), view('CO', { terminal: 'host/t1' }), view('ST')]
+  views = [view(MAIN, { main: true, terminal: 'host/t1' }), view('CO', { terminal: 'host/t1' })]
   w = await mountSuspended(CoordinatorsSection)
   await vi.waitFor(() => expect(w!.findAll('[data-testid="coordinator-row"]')).toHaveLength(1))
   const co = w.find('[data-testid="coordinator-row"]')
@@ -46,6 +46,19 @@ it('lists the running project coordinators only (Alfred, the main one, has its o
   await co.trigger('click')
   await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('/a/w%3Ap1'))
   expect(posts).toEqual([])
+})
+
+it('shows a coordinator that never started with Start, which launches its saved agent (WHR-570)', async () => {
+  herdrState.value = { ok: true, workspaces: [], panes: [] }
+  views = [view('NEW', { agent: { program: 'codex' } })]
+  w = await mountSuspended(CoordinatorsSection)
+  // The test before's list shows until this one's is read.
+  await vi.waitFor(() => expect(w!.find('[data-testid="coordinator-name"]').text()).toBe('new app'))
+  const row = w.find('[data-testid="coordinator-row"]')
+  expect(row.text()).toContain('Not started')
+  expect(w.find('[data-testid="coordinator-start"]').text()).toBe('Start')
+  await row.trigger('click')
+  await vi.waitFor(() => expect(posts).toEqual([{ project: 'NEW', program: 'codex' }]))
 })
 
 it('shows a coordinator whose terminal ended as stopped, and resumes its conversation on demand (WHR-136)', async () => {

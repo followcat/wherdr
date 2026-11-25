@@ -585,8 +585,6 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
       return false
     }
     if (seq !== mountSeq || disposed) return false
-    mounting = false
-    loading.value = false
     term = new xterm.Terminal({
       fontFamily: TERM_FONT,
       fontSize: scaledFont(fontSize.value),
@@ -744,6 +742,10 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     anchor = null
     term.onScroll(() => viewportMoved())
     term.element?.querySelector('.xterm-viewport')?.addEventListener('scroll', () => viewportMoved(true))
+    // Keep the cover across the bounded font wait after term.open(), clearing it
+    // only once mount() is ready for the caller to connect or show the grid.
+    mounting = false
+    loading.value = false
     if (focusQueued) focus()
     return true
   }
@@ -914,9 +916,9 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
 
   function connect(takeover: boolean) {
     if (disposed) return
-    // Before xterm is there: the view connects once mounted; a take-over asked
-    // meanwhile is kept for that connection.
-    if (!term) { if (mounting && takeover) takeoverQueued = true; return }
+    // Before mount finishes (downloading xterm or awaiting fonts): the view connects
+    // once mounted; a take-over asked meanwhile is kept for that connection.
+    if (!term || mounting) { if (mounting && takeover) takeoverQueued = true; return }
     if (takeoverQueued) { takeover = true; takeoverQueued = false }
     clearTimeout(twsTimer)
     clearTimeout(handshake)
@@ -1103,7 +1105,7 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     // A parked xterm is detached: it has no host to focus and must never send
     // a focus report (see the blur below).
     if (parked) return
-    focusQueued = !term && mounting
+    focusQueued = mounting
     term?.focus()
     kbdOn.value = true
   }

@@ -126,7 +126,7 @@ export const keepsBusy = (ap: Autopilot | undefined) => !!ap?.on && ap.keepBusy 
 // its 'after'), a start held for room startHeld's.
 // A task behind another one's files starts from startFileWaits (pmFiles.ts).
 export const busyQueue = (tasks: Task[]) =>
-  tasks.filter(t => t.state === 'todo' && !t.after && !t.held && !t.sameFiles && !t.step?.started).sort(byBoardOrder)
+  tasks.filter(t => t.kind !== 'feature' && t.state === 'todo' && !t.after && !t.held && !t.sameFiles && !t.step?.started).sort(byBoardOrder)
 
 // The goal as a sentence in a wake's text: one final period, never two.
 export const sentence = (s: string) => (/[.!?…]$/.test(s.trim()) ? s.trim() : `${s.trim()}.`)
@@ -203,6 +203,7 @@ export const WAKE_RETRIES = 2
 // `pace`: the worker's account verdict, held to only for automatic work
 // (pacedStart); `engine`: the engine starts it, after its chain.
 export function coordinatorStartRefusal(ap: Autopilot | undefined, task: Task, tasks: Task[], runs: Run[], now: number, wake: boolean, { pace, engine, holds }: { pace?: PaceVerdict, engine?: boolean, holds?: SlotOf } = {}): string | undefined {
+  if (task.kind === 'feature') return `${task.id} is a feature: it runs no agent`
   const stopped = task.state === 'waiting' && !task.waitKind && !task.step?.done
   if (task.state !== 'todo' && !stopped) return `${task.id} is not to do (${taskStatus(task)})`
   // Starts, not attempts: an agent that exits at once gets a second run in the same start.

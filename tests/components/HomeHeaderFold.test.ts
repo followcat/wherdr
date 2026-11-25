@@ -26,7 +26,7 @@ describe('home header fold', () => {
   it('narrow: Settings stays a button, Search moves into the … menu', async () => {
     const w = await mountAt(200)
     expect(w.find('[aria-label="Settings"]').exists()).toBe(true)
-    expect(w.find('[aria-label="Search agents and conversations"]').exists()).toBe(false)
+    expect(w.find('[aria-label="Search conversations, tasks, settings and actions"]').exists()).toBe(false)
     const items = (w.getComponent(SpaceMenu).props('items') as () => MenuItem[])()
     expect(items.map(i => i.label)).toContain('Search')
     expect(items.map(i => i.label)).not.toContain('Settings')
@@ -38,7 +38,7 @@ describe('home header fold', () => {
   it('wide: Search and Settings are buttons, no … menu', async () => {
     const w = await mountAt(600)
     expect(w.find('[aria-label="Settings"]').exists()).toBe(true)
-    expect(w.find('[aria-label="Search agents and conversations"]').exists()).toBe(true)
+    expect(w.find('[aria-label="Search conversations, tasks, settings and actions"]').exists()).toBe(true)
     expect(w.findComponent(SpaceMenu).exists()).toBe(false)
     expect(w.find('[aria-label="Notes"]').exists()).toBe(false)
     w.unmount()

@@ -5,11 +5,10 @@ import { LEVEL_EVENTS, NOTIFICATION_EVENTS, NOTIFICATION_LEVELS, levelOf, type N
 const props = defineProps<{ events: NotificationEvent[], label: string, muted?: boolean }>()
 const emit = defineEmits<{ change: [events: NotificationEvent[]] }>()
 const level = computed(() => props.muted ? 'muted' : levelOf(props.events))
-const items = computed(() => [
-  ...(level.value === 'custom' ? [{ label: levelLabel('custom'), value: 'custom', disabled: true }] : []),
-  ...NOTIFICATION_LEVELS.map(l => ({ label: levelLabel(l), value: l })),
-])
-function pick(value: string) { emit('change', [...LEVEL_EVENTS[value as NotificationLevel]]) }
+// Custom (events picked by hand) selects no level: the hint says so.
+const icons: Record<NotificationLevel, string> = { 'muted': 'i-lucide-bell-off', 'needs-you': 'i-lucide-message-circle-question-mark', 'finished': 'i-lucide-bell', 'all': 'i-lucide-bell-ring' }
+const items = computed(() => NOTIFICATION_LEVELS.map(l => ({ label: levelLabel(l), value: l, icon: icons[l] })))
+function pick(value: NotificationLevel | undefined) { if (value) emit('change', [...LEVEL_EVENTS[value]]) }
 function toggle(event: NotificationEvent, on: boolean) {
   emit('change', NOTIFICATION_EVENTS.filter(e => e === event ? on : props.events.includes(e)))
 }
@@ -17,7 +16,7 @@ function toggle(event: NotificationEvent, on: boolean) {
 
 <template>
   <div class="notification-level">
-    <USelect :model-value="level" :items="items" size="lg" class="w-full" :aria-label="label" data-testid="notification-level" @update:model-value="v => pick(String(v))" />
+    <SettingsChoice :model-value="level === 'custom' ? undefined : level" :items="items" :label="label" data-testid="notification-level" @update:model-value="pick" />
     <small class="notification-level-hint">{{ level === 'custom' ? t('Only the events checked under Customize.') : levelHint(level) }}</small>
     <details class="notification-customize" :open="level === 'custom' || undefined">
       <summary><UIcon name="i-lucide-chevron-right" class="notification-chev" />{{ t('Customize') }}</summary>

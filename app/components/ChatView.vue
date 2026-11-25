@@ -9,6 +9,7 @@ import type { ChatItem, ChatResponse, ClaudeQueueEntry, ClaudeScreen, CommandCod
 import { readChat, saveChat, touchChat } from '~/utils/offlineCache'
 import { mayReadOffline, readOfflineAccess } from '~/utils/offlineAccess'
 import { restoreDraft } from '~/utils/queuedCancel'
+import { sentSplit } from '~/utils/attachTiles'
 import { folderGuesses } from '~/utils/pathFallback'
 import { uploadNames, uploadSrc } from '#shared/queuedMatch'
 import { userMessageParts } from '~/utils/userMessage'
@@ -167,7 +168,8 @@ async function restoreChat() {
   }
   synced = true
   await apply(() => {
-    chat.value = { ...fresh(), file: saved.file || null, tail: saved.items, held: true }
+    // With what the agent still holds: a message sent while it works is in no item yet.
+    chat.value = { ...fresh(), file: saved.file || null, tail: saved.items, queue: readOnly.value ? [] : saved.queue ?? [], held: true }
     savedAt.value = saved.at
     keptFile = saved.file
   })
@@ -192,7 +194,7 @@ function scrollToEnd(force: boolean) {
     // ResizeObserver, which fires on its growth while stick holds.
     pin(b)
     // A reading position restored before this frame wins (see apply).
-    requestAnimationFrame(() => { if (stick) pin(b) })
+    requestAnimationFrame(() => { if (!unmounted && stick && !held && box.value === b) pin(b) })
   }
 }
 // Transcript of the kept copy shown (undefined: kept without it, see readingPosition.ts).
@@ -262,15 +264,34 @@ let lastTop = 0
 // scroll events that follow nor a status change, until the reader scrolls
 // or the draft is sent or emptied.
 let held = false
-// The last scroll gesture on the box (wheel, touch drag, key, pointer — see
-// the handlers on .chat): a scroll away from the bottom is the reader's intent
-// only right after one. The composer's autoresize pass collapses the field to
-// one row and back on every keystroke, which truncates the box's scrollTop
-// without moving the reader — a scroll event with no gesture behind it, undone
-// below before it paints.
-let gestureAt = 0
+// The last scroll gesture (wheel, touch drag, pointer on the box, or scroll
+// keys on the document outside editable fields): a scroll away from the bottom
+// is the reader's intent only right after one (or while the pointer stays held
+// down on the box, e.g. dragging the scrollbar). The composer's autoresize pass
+// collapses the field to one row and back on every keystroke, which truncates
+// the box's scrollTop without moving the reader — a scroll event with no
+// gesture behind it, undone below before it paints.
+let gestureUntil = 0
+let pointerHeld = false
 const GESTURE_MS = 400
-function onGesture() { gestureAt = Date.now() }
+const SCROLL_KEYS = new Set(['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' '])
+function onGesture() { gestureUntil = Date.now() + GESTURE_MS }
+function hasGesture(now = Date.now()) { return pointerHeld || now <= gestureUntil }
+function onPointerDown() {
+  pointerHeld = true
+  onGesture()
+}
+function onPointerEnd() { pointerHeld = false }
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false
+  if ((target as HTMLElement).isContentEditable) return true
+  return Boolean(target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), .composer, .xterm'))
+}
+function onDocumentKey(e: KeyboardEvent) {
+  if (e.defaultPrevented || e.altKey || !SCROLL_KEYS.has(e.key)) return
+  if (isEditableTarget(e.target) || isEditableTarget(document.activeElement)) return
+  onGesture()
+}
 // A jump of the app's own (a quote's original, a search hit, an unanswered
 // question) leaves the bottom on purpose: its smooth scroll starts at the end,
 // so the animation's first frames still read "at the end" — re-arming the
@@ -285,7 +306,7 @@ function leaveEnd() {
   jumpedAt = Date.now()
 }
 function onUserScroll(e: Event) {
-  gestureAt = Date.now()
+  onGesture()
   held = false
   keptAnchor = false
   if (e instanceof WheelEvent && e.deltaY < 0) stick = false
@@ -302,13 +323,24 @@ onMounted(() => {
   if (box.value) ro.observe(box.value)
   // Content that grows afterwards (images loaded, blocks expanded).
   if (listEl.value) ro.observe(listEl.value)
+  document.addEventListener('keydown', onDocumentKey)
+  window.addEventListener('pointerup', onPointerEnd, true)
+  window.addEventListener('pointercancel', onPointerEnd, true)
+  window.addEventListener('blur', onPointerEnd)
 })
 onBeforeUnmount(() => {
   if (box.value && rendered.value) saveReadingPosition(props.pane.id, chat.value.file, box.value)
   // Leaving the pane stops the reply it was reading aloud.
   stopSpeaking(`${props.pane.id}:`)
 })
-onUnmounted(() => ro?.disconnect())
+onUnmounted(() => {
+  ro?.disconnect()
+  pointerHeld = false
+  document.removeEventListener('keydown', onDocumentKey)
+  window.removeEventListener('pointerup', onPointerEnd, true)
+  window.removeEventListener('pointercancel', onPointerEnd, true)
+  window.removeEventListener('blur', onPointerEnd)
+})
 function onScroll() {
   const b = box.value
   if (!b) return
@@ -317,7 +349,7 @@ function onScroll() {
   if (!held && Date.now() - jumpedAt >= JUMP_MS) {
     if (atEnd(b)) stick = true
     else if (b.scrollTop < lastTop - 1) {
-      if (Date.now() - gestureAt < GESTURE_MS) stick = false
+      if (hasGesture()) stick = false
       // Not a gesture (the composer's collapse, an anchor correction): put the
       // view back. The scroll event dispatches before paint, so the undo is
       // never seen.
@@ -511,10 +543,14 @@ async function loadStep(current: () => boolean): Promise<boolean> {
   const gen = resetGen
   const stale = () => !current() || pane !== props.pane.id || staleGen(gen)
   try {
-    const ready = chat.value.tailStart === null ? await chatIntent.take(props.pane) : undefined
+    const firstRead = chat.value.tailStart === null
+    const openedAt = performance.now()
+    const ready = firstRead ? await chatIntent.take(props.pane) : undefined
     if (stale()) return false
     const startedAt = Date.now()
     const r = ready || await api<ChatResponse>(`/api/chat?${tailQuery(pane, chat.value)}`, undefined, AbortSignal.timeout(chatReadTimeoutMs(props.pane.agent, !chat.value.token)))
+    // From the open to the answer, a preloaded read included (its own time: useChatIntent).
+    if (import.meta.dev && firstRead) console.debug(`[chat] first read (${ready ? 'preloaded' : 'direct'}, ${props.pane.machine ? 'remote' : 'local'}): ${Math.round(performance.now() - openedAt)} ms`)
     if (stale()) return false
     if (!r.available) {
       // Any list on screen counts, the end kept on this device too: a server
@@ -585,7 +621,7 @@ async function loadStep(current: () => boolean): Promise<boolean> {
     // belong to the new conversation and must not be saved under `pane`.
     if (stale()) return false
     retainToolUpdates(pendingUpdates, [chat.value.tail, chat.value.older], updates)
-    saveChat(pane, items.value, chat.value.file)
+    saveChat(pane, items.value, chat.value.file, chat.value.queue)
     // Paint the prepared tail first, then revalidate using its token and cursor.
     if (ready) return true
   } catch (err) {
@@ -685,7 +721,7 @@ async function loadOlder() {
     }, true)
     if (staleGen(gen)) return
     retainToolUpdates(pendingUpdates, [chat.value.tail, chat.value.older], updates)
-    saveChat(pane, items.value, chat.value.file)
+    saveChat(pane, items.value, chat.value.file, chat.value.queue)
     if (b) b.scrollTop = b.scrollHeight - fromBottom
   } catch (err) {
     if (!staleGen(gen)) toast((err as Error).message, true)
@@ -848,11 +884,11 @@ const unsentPane = computed<Pane>(old => (old && old.id === props.pane.id && old
   && old.inputText === props.pane.inputText && JSON.stringify(old.draft) === JSON.stringify(props.pane.draft) ? old : props.pane))
 const waitFor = computed(() => waitingOn(props.pane))
 // Same props objects for the messages on each render (none built inline).
-// A user message is one framed bubble: its images first, then its text, so a
-// message of images only still reads as the user's (right side, frame, time).
+// A user message: its attachments on their own row above the bubble
+// (MsgAttachments), the bubble holds only its text (none: no bubble).
 const userParts = weakMemo((b: Block & { k: 'user' }) => [{ type: 'text' as const, text: b.text || ' ' }])
 const userUi = keyedMemo((root: string) => ({ root, container: 'msg-c', content: 'msg-bubble' }))
-const userRoot = (b: Block & { k: 'user' }) => (b.text.trim() || b.files.length ? 'msg msg-user' : 'msg msg-user msg-no-text')
+const userRoot = (b: Block & { k: 'user' }) => (sentSplit(b.text, b.pasted).text.trim() ? 'msg msg-user' : 'msg msg-user msg-no-text')
 const textParts = weakMemo((b: { text: string }) => [{ type: 'text' as const, text: b.text }])
 const aiUi = keyedMemo((root: string) => ({ root, container: 'msg-c', content: 'md' }))
 const pendingUi = keyedMemo((root: string) => ({ root, container: 'msg-c', content: root.includes(' queued') ? 'msg-bubble queued' : 'msg-bubble' }))
@@ -1540,9 +1576,11 @@ function openPathMenu(el: HTMLElement, path?: string) {
   const p = path || el.dataset.path || (el.textContent || '').trim()
   if (p) openCodeMenu(el, pathMenuItems(p), fileName(p))
 }
-const filePeek = reactive({ open: false, path: '' })
+const filePeek = reactive({ open: false, path: '', name: '' })
+// Where the file's folder · size and controls go: under the window's title.
+const filePeekHead = `file-head-${useId()}`
 function previewFile(p: string) {
-  Object.assign(filePeek, { open: true, path: p })
+  Object.assign(filePeek, { open: true, path: p, name: '' })
 }
 async function downloadFile(p: string) {
   try { await saveFile(`/api/files/download?pane=${encodeURIComponent(props.pane.id)}&path=${encodeURIComponent(p)}&from=chat`, fileName(stripPosition(p))) }
@@ -1606,8 +1644,8 @@ const queuedBubbles = computed(() => queuedList.value.filter(q => !q.note))
 // wherdr's own notes in Claude's queue (a card's outcome, a wake), tagged like
 // their row in the conversation: Claude's Send now has the message it sends (WHR-550).
 const queuedNotes = computed(() => queuedList.value.filter(q => q.note))
-// Same bubble as a message in the conversation (thumbnails inside, above the
-// text), so nothing moves when it lands.
+// Same bubble as a message in the conversation (attachments above it), so
+// nothing moves when it lands.
 const pendingParts = (q: { body: string }) => [{ type: 'text' as const, text: q.body || ' ' }]
 // A message the server never got: "Cancel" puts the app's copy back into the
 // field, "Retry" sends it again.
@@ -1933,7 +1971,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
     <OfflineNote v-else-if="isStale(misses)" :label="t('Conversation not up to date — reconnecting…')" />
     <!-- The end kept on this device while the network is slow to answer: said, over the list (nothing moves). -->
     <span v-if="cachedTag && savedAt" class="cached-tag chat-cached" role="status">{{ tl(`Read at ${fmtTime(savedAt)}`, `Lu à ${fmtTime(savedAt)}`) }}</span>
-    <div ref="box" class="chat" @scroll.passive="onScroll" @wheel.passive="onUserScroll" @touchmove.passive="onUserScroll" @pointerdown="onGesture" @keydown="onGesture" @click.capture="onJump">
+    <div ref="box" class="chat" @scroll.passive="onScroll" @wheel.passive="onUserScroll" @touchmove.passive="onUserScroll" @pointerdown="onPointerDown" @click.capture="onJump">
       <!-- No bottom pin of its own (at mount, then 100 ms later): apply() places the first paint. -->
       <UChatMessages
         :status="working ? 'streaming' : 'ready'" :should-auto-scroll="false" :should-scroll-to-bottom="false"
@@ -1943,6 +1981,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
       >
         <div ref="listEl" class="chat-list" :class="[noInput ? 'no-reply' : 'can-reply', { asking: asked, skeleton }]" @click="onListClick" @keydown="onListKey">
           <div v-if="shownUnavailable === 'not_found' && firstPrompt" class="msg-user-wrap" data-testid="first-prompt">
+            <MsgAttachments :srcs="[]" :files="[]" :text="firstPrompt" />
             <UChatMessage
               id="first-prompt" role="user" side="right" variant="soft" :parts="firstParts(firstPrompt)"
               :ui="FIRST_UI"
@@ -2050,15 +2089,14 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                 <button v-if="b.reply" type="button" class="msg-quote" :aria-label="t('Show original message')" @click="gotoOrigin(b.origin)">
                   <UIcon name="i-lucide-corner-left-up" class="msg-quote-time" /><span class="msg-quote-time">{{ b.reply.time }}</span><span class="msg-quote-text">{{ b.reply.excerpt }}</span>
                 </button>
+                <MsgAttachments :srcs="b.srcs" :files="b.files" :text="b.text" :pasted="b.pasted" :offline="readOnly" @file="openPathMenu" />
                 <UChatMessage
                   :id="b.key" role="user" side="right" variant="soft"
                   :parts="userParts(b)"
                   :ui="userUi(userRoot(b))"
                 >
                   <template #content>
-                    <span v-if="b.srcs.length" class="msg-media"><MsgThumbs :srcs="b.srcs" :offline="readOnly" /></span><span v-if="b.files.length" class="msg-file-chips">
-                      <FileChip v-for="f in b.files" :key="f.path" :name="f.name" clickable @open="el => openPathMenu(el, f.path)" />
-                    </span><UserText :text="b.text" :pasted="b.pasted" />
+                    <UserText :text="b.text" :pasted="b.pasted" />
                   </template>
                 </UChatMessage>
                 <MsgStamp v-if="b.ts" :ts="b.ts" />
@@ -2217,15 +2255,14 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
             <button v-if="q.reply" type="button" class="msg-quote" :aria-label="t('Show original message')" @click="gotoOrigin(q.origin)">
               <UIcon name="i-lucide-corner-left-up" class="msg-quote-time" /><span class="msg-quote-time">{{ q.reply.time }}</span><span class="msg-quote-text">{{ q.reply.excerpt }}</span>
             </button>
+            <MsgAttachments :srcs="q.srcs" :files="q.files" :text="q.body" :pasted="q.pasted" :missing="q.missing" @file="openPathMenu" />
             <UChatMessage
               :id="`q:${q.id}`" role="user" side="right" variant="soft"
               :parts="pendingParts(q)"
-              :ui="pendingUi(`msg msg-user msg-pending sent${q.body || q.files.length ? '' : ' msg-no-text'}`)"
+              :ui="pendingUi(`msg msg-user msg-pending sent${sentSplit(q.body, q.pasted).text ? '' : ' msg-no-text'}`)"
             >
               <template #content>
-                <span v-if="q.srcs.length || q.missing" class="msg-media"><MsgThumbs v-if="q.srcs.length" :srcs="q.srcs" /><span v-for="k in q.missing" :key="k" class="thumb-missing" :title="t('Image')"><UIcon name="i-lucide-image" /></span></span><span v-if="q.files.length" class="msg-file-chips">
-                  <FileChip v-for="f in q.files" :key="f.path" :name="f.name" clickable @open="el => openPathMenu(el, f.path)" />
-                </span><UserText :text="q.body" :pasted="q.pasted" />
+                <UserText :text="q.body" :pasted="q.pasted" />
               </template>
             </UChatMessage>
             <div class="queued-tag sent" :role="queuedSending(q) ? 'status' : undefined">
@@ -2236,15 +2273,14 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
             <button v-if="q.reply" type="button" class="msg-quote" :aria-label="t('Show original message')" @click="gotoOrigin(q.origin)">
               <UIcon name="i-lucide-corner-left-up" class="msg-quote-time" /><span class="msg-quote-time">{{ q.reply.time }}</span><span class="msg-quote-text">{{ q.reply.excerpt }}</span>
             </button>
+            <MsgAttachments :srcs="q.srcs" :files="q.files" :text="q.body" :pasted="q.pasted" :missing="q.missing" @file="openPathMenu" />
             <UChatMessage
               :id="`q:${q.id}`" role="user" side="right" variant="soft"
               :parts="pendingParts(q)"
-              :ui="pendingUi(`msg msg-user msg-pending queued${q.body || q.files.length ? '' : ' msg-no-text'}`)"
+              :ui="pendingUi(`msg msg-user msg-pending queued${sentSplit(q.body, q.pasted).text ? '' : ' msg-no-text'}`)"
             >
               <template #content>
-                <span v-if="q.srcs.length || q.missing" class="msg-media"><MsgThumbs v-if="q.srcs.length" :srcs="q.srcs" /><span v-for="k in q.missing" :key="k" class="thumb-missing" :title="t('Image')"><UIcon name="i-lucide-image" /></span></span><span v-if="q.files.length" class="msg-file-chips">
-                  <FileChip v-for="f in q.files" :key="f.path" :name="f.name" clickable @open="el => openPathMenu(el, f.path)" />
-                </span><UserText :text="q.body" :pasted="q.pasted" />
+                <UserText :text="q.body" :pasted="q.pasted" />
               </template>
             </UChatMessage>
             <div v-if="q.state === 'failed' && !q.inInput" class="queued-tag failed" role="alert">
@@ -2278,8 +2314,9 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
     <UDropdownMenu v-if="!sheetMenus" v-model:open="codeMenu.open" :items="codeMenuDropdown" :content="{ align: 'start', side: 'bottom', sideOffset: 4 }" :ui="{ content: 'hw-dropdown' }">
       <span class="path-anchor" :style="{ left: `${codeMenu.x}px`, top: `${codeMenu.y}px`, width: `${codeMenu.w}px`, height: `${codeMenu.h}px` }" aria-hidden="true" />
     </UDropdownMenu>
-    <AppSheet v-model:open="filePeek.open" :title="fileName(stripPosition(filePeek.path))" wide full screen>
-      <FilesView v-if="filePeek.open" :key="filePeek.path" :pane-id="paneId" :file="filePeek.path" />
+    <AppSheet v-model:open="filePeek.open" :title="filePeek.name || fileName(stripPosition(filePeek.path))" wide full screen>
+      <template #sub><div :id="filePeekHead" /></template>
+      <FilesView v-if="filePeek.open" :key="filePeek.path" :pane-id="paneId" :file="filePeek.path" :head="filePeekHead" @name="filePeek.name = $event" />
     </AppSheet>
   </div>
 </template>

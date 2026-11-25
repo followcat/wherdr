@@ -36,7 +36,8 @@ sidebar's *New* sheet › *Project* with its *Project | Workspace* switch on
 *Create* adds it and starts its coordinator, whose first reply runs
 `wherdr pm map list` and offers to build the [map](#the-workspace-map) from
 the repositories it found. A coordinator that does not start is said in the
-window; the workspace stays added. From the New sheet, the sheet then closes
+window, with herdr-core's reason; the workspace stays added, and its row in the
+sidebar offers *Start again* ([Coordinators](home.md#coordinators)). From the New sheet, the sheet then closes
 and the coordinator's conversation opens. Alfred adds one too:
 `wherdr alfred workspace add` ([Alfred's command](alfred.md)).
 
@@ -317,6 +318,10 @@ other task type on a workspace and asks to add the task to one of its member
 projects instead. A feature has no agent and no step of its own; its
 sub-tasks are ordinary tasks of the members, one per repository. Each
 sub-task's card on the board shows its feature's id (`WS-3`) as a tag.
+
+To add one yourself, use **Add a task** on the board and pick the workspace: its
+only type is *feature*, and the form has no weight, *After* or *Start now*
+for it, since a feature never starts. No workflow type is needed.
 
 The workspace's coordinator runs them with no question to you:
 

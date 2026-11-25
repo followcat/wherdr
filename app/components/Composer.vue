@@ -10,9 +10,10 @@ import type { DraftAtt } from '~/composables/useDraft'
 import { unreference } from '#shared/reference'
 import { quotesIn, removeQuote } from '~/utils/questionReply'
 import { attachQuoteMirror } from '~/utils/quoteMirror'
+import { fileTile, pasteTile, photoTile } from '~/utils/attachTiles'
 import { isBareBang, isSlashCommand } from '#shared/queuedMatch'
 import { viaPrompt } from '#shared/sendRoute'
-import type { AttachKind } from '#shared/attachments'
+import { attachmentDisplayName, type AttachKind } from '#shared/attachments'
 import { refusalText, sortForAgent } from '~/utils/fileDrop'
 import { uploadPhoto } from '~/utils/photoUpload'
 import { keepPreview } from '~/utils/sentPreviews'
@@ -300,6 +301,7 @@ const answered = (p?: Pane) => { if (p?.task && p.coreAddress) api('/api/pm/answ
 async function submit() {
   if (readOnly.value) return toast(t('Sending unavailable offline'), true)
   if (stopMode.value) return interrupt()
+  if (attachments.value.some(a => a.error)) return toast(t('Remove the attachment that failed'), true)
   if (attachments.value.some(a => !a.paste && !a.path)) return toast(t(attachments.value.some(a => !a.path && a.file) ? 'File is uploading…' : 'Photo is uploading…'))
   // Photos and files go as file paths (`@<path>` for a text file given to
   // Claude): Claude Code and Codex open them themselves. Pasted texts go as
@@ -463,12 +465,36 @@ function clearAttachments(sent = false) {
 }
 // Large preview (same viewer as the conversation), including while
 // sending: the local URL (blob) is enough.
-function viewAtt(a: Att) { lightboxSrc.value = a.url }
+function viewAtt(a: Att) {
+  if (a.paste) pasteOpen.value = a.paste
+  else lightboxSrc.value = a.url
+}
+// The pasted text opened from its tile (PastedSheet).
+const pasteOpen = ref<string | null>(null)
+// One tile (AttachTile) for a photo, a file or pasted text: its preview, badge, name, size or lines, and upload state.
+function tileOf(a: Att) {
+  const status = a.error ? 'error' as const : a.paste || a.path ? 'idle' as const : 'uploading' as const
+  if (a.paste) return { status, ...pasteTile(a.paste) }
+  if (a.file) {
+    const tile = fileTile(a.file.label, a.file.kind, a.file.size, a.file.head)
+    return { ...tile, status, description: a.error || tile.description }
+  }
+  return { status, ...photoTile(a.label || attachmentDisplayName(a.name || '')), description: a.error || '', url: a.url }
+}
 function removeAtt(i: number) {
   const [a] = attachments.value.splice(i, 1)
   if (a && a.url) URL.revokeObjectURL(a.url)
 }
-watch(() => attachments.value.length, () => nextTick(layout))
+// The attachments' row: the right edge fades while more tiles follow.
+const attRow = ref<HTMLElement | null>(null)
+const attMore = ref(false)
+function attEdge() {
+  const e = attRow.value
+  attMore.value = Boolean(e && e.scrollLeft + e.clientWidth < e.scrollWidth - 1)
+}
+onMounted(() => window.addEventListener('resize', attEdge))
+onBeforeUnmount(() => window.removeEventListener('resize', attEdge))
+watch(() => attachments.value.length, () => nextTick(() => { layout(); attEdge() }))
 // Long text: keep the caret in view once the field reaches its max height.
 watch(text, () => nextTick(() => {
   const el = ta.value
@@ -478,16 +504,16 @@ watch(text, () => nextTick(() => {
 
 async function addImages(files: File[]) {
   for (const f of files) {
-    const a = reactive<Att>({ url: URL.createObjectURL(f), path: null })
+    // A pasted image may come without a name: its type gives the extension.
+    const label = f.name || `image.${(f.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg')}`
+    const a = reactive<Att>({ url: URL.createObjectURL(f), path: null, label })
     attachments.value.push(a)
     try {
       const r = await uploadPhoto(props.paneId, f)
       a.path = r.path
       a.name = r.name
     } catch (err) {
-      toast(`${t('Photo upload failed')} : ${(err as Error).message}`, true)
-      attachments.value = attachments.value.filter(x => x !== a)
-      URL.revokeObjectURL(a.url)
+      a.error = `${t('Photo upload failed')}: ${(err as Error).message}`
     }
   }
 }
@@ -511,6 +537,8 @@ async function uploadFile(f: File, kind: AttachKind) {
   if (useRuntimeConfig().public.core && f.size > 8 * 1024 * 1024) return toast(`${f.name} : ${t('File too large for herdr-core (8 MB max)')}`, true)
   const a = reactive<Att>({ url: '', path: null, file: { label: f.name, size: f.size, kind } })
   attachments.value.push(a)
+  // A text's first lines for its tile (kept with the draft).
+  if (kind === 'text') f.slice(0, 1024).text().then((s) => { if (a.file) a.file.head = firstLines(s) }, () => {})
   try {
     const r = await fetch(`/api/attach?pane=${encodeURIComponent(props.paneId)}&name=${encodeURIComponent(f.name)}`, {
       method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: f,
@@ -521,8 +549,7 @@ async function uploadFile(f: File, kind: AttachKind) {
     a.name = d.name
     a.ref = d.ref
   } catch (err) {
-    toast(`${f.name} : ${t('File upload failed')} — ${(err as Error).message}`, true)
-    attachments.value = attachments.value.filter(x => x !== a)
+    a.error = `${t('File upload failed')}: ${(err as Error).message}`
   }
 }
 function onFiles(e: Event) {
@@ -742,23 +769,12 @@ defineExpose({
       @compositionstart="onComposition" @compositionend="onComposition" @compositioncancel="onComposition"
     >
       <template v-if="attachments.length" #header>
-        <div class="attachments">
+        <div ref="attRow" class="attachments" :class="{ more: attMore }" @scroll.passive="attEdge">
           <template v-for="(a, i) in attachments" :key="a.url || a.path || a.file?.label || `paste:${i}`">
-            <PastedCard v-if="a.paste" :text="a.paste" removable @remove="removeAtt(i)" />
-            <FileChip
-              v-else-if="a.file" :name="a.file.label" :size="a.file.size" :kind="a.file.kind" :uploading="!a.path" removable
-              @remove="removeAtt(i)"
-            />
-            <div
-              v-else class="att" :class="{ up: !a.path }"
-              role="button" tabindex="0" :aria-label="t('View image')" @click="viewAtt(a)" @keydown.enter.self="viewAtt(a)"
-            >
-              <img :src="a.url" alt="">
-              <span v-if="!a.path" class="spinner" />
-              <button type="button" :aria-label="t('Remove')" @click.stop="removeAtt(i)"><UIcon name="i-lucide-x" /></button>
-            </div>
+            <AttachTile v-bind="tileOf(a)" @open="viewAtt(a)" @remove="removeAtt(i)" />
           </template>
         </div>
+        <PastedSheet :open="pasteOpen !== null" :text="pasteOpen || ''" @update:open="(o: boolean) => { if (!o) pasteOpen = null }" />
       </template>
       <template #footer>
         <!-- The focused field's ring (main.css, focused field): out of the footer's flow, over

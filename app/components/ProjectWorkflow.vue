@@ -82,14 +82,14 @@ defineExpose({ menu })
     </div>
     <p v-if="error && !dialog" class="form-error" role="alert">{{ t(error) }}</p>
 
-    <AppSheet v-model:open="jsonOpen" :title="tl('Workflow JSON')" tall wide top hide-close>
+    <AppSheet v-model:open="jsonOpen" :title="tl('Workflow JSON')" tall wide top>
       <div class="tpl-editor">
         <pre class="wf-json" tabindex="0" :aria-label="tl('Workflow JSON')" data-testid="wf-json">{{ json }}</pre>
         <UButton size="xl" color="neutral" variant="outline" class="hw-cta" icon="i-lucide-copy" data-testid="wf-json-copy" @click="copyCode(json)">{{ tl('Copy') }}</UButton>
       </div>
     </AppSheet>
 
-    <AppSheet v-model:open="logOpen" :title="tl('Change log', 'Journal des changements')" tall top hide-close>
+    <AppSheet v-model:open="logOpen" :title="tl('Change log', 'Journal des changements')" tall top>
       <ul class="tpl-log" data-testid="tpl-log">
         <li v-for="e in [...log].reverse()" :key="e.version">
           <b class="mono">v{{ e.version }}</b> <span class="muted">{{ new Date(e.at).toLocaleString() }} · {{ e.by }}</span> {{ e.changes.join(', ') || tl('created', 'créé') }}

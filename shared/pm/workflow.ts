@@ -79,14 +79,18 @@ export interface Guards {
 
 // reviewFallbackAgent and reviewFallbackModel (both, or none): the reviewer
 // started instead when the review agent's account is at its limit.
-export interface Prefs { agent?: string, model?: string, reviewAgent?: string, reviewModel?: string, reviewFallbackAgent?: string, reviewFallbackModel?: string }
-export const PREF_KEYS = ['agent', 'model', 'reviewAgent', 'reviewModel', 'reviewFallbackAgent', 'reviewFallbackModel'] as const
+export interface Prefs { agent?: string, model?: string, reviewAgent?: string, reviewModel?: string, reviewFallbackAgent?: string, reviewFallbackModel?: string, browser?: string }
+export const PREF_KEYS = ['agent', 'model', 'reviewAgent', 'reviewModel', 'reviewFallbackAgent', 'reviewFallbackModel', 'browser'] as const
 
 // Agents the engine knows how to start with a pinned model and a first message.
 export const PROGRAMS = ['claude', 'codex', 'omp'] as const
 // reviewModel: the worker's own model, in a new session.
 export const SAME_MODEL = 'same'
-export const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:[\]/-]{0,63}$/
+const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:[\]/-]{0,63}$/
+// omp alone also takes a role alias of its own config, with a thinking level maybe: @standard, @plan:high.
+const OMP_ROLE_RE = /^(?=.{2,64}$)@[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)?$/
+// Whether `program` can be started pinned to `model`.
+export const validModel = (program: string | undefined, model: string) => MODEL_RE.test(model) || (program === 'omp' && OMP_ROLE_RE.test(model))
 
 // A reviewer's agent and model (`field` asked for it): another model than the
 // worker's, or "same" with the worker's program. agent: a program or a named
@@ -97,7 +101,7 @@ export function reviewerCheck(worker: { program: string, model: string }, agent:
   if ('reason' in ref) return ref
   const program = 'unknown' in ref ? '' : ref.program
   if (same && program && program !== worker.program) return { reason: `${field} "${SAME_MODEL}" needs the worker's agent (${worker.program})` }
-  if (!MODEL_RE.test(model)) return { reason: model ? `Invalid review model "${model}"` : `No review model set: add prefs.${field} to the template` }
+  if (!validModel(program, model)) return { reason: model ? `Invalid review model "${model}"` : `No review model set: add prefs.${field} to the template` }
   if (!same && model === worker.model) return { reason: `The reviewer must use another model than the worker (${model}), or set ${field} to "${SAME_MODEL}"` }
   return 'unknown' in ref ? { program: '', agent, model } : { ...ref, model }
 }
@@ -165,7 +169,7 @@ export interface Template {
 // reviewer runs a fresh session of it. Claude, Codex (no known model to pin) and none: Claude's default.
 export const OMP_DEFAULT_MODEL = 'anthropic/claude-sonnet-5-5'
 export const defaultPrefs = (agent?: { program?: string, model?: string }): Prefs =>
-  agent?.program === 'omp' ? { agent: 'omp', model: agent.model && MODEL_RE.test(agent.model) ? agent.model : OMP_DEFAULT_MODEL, reviewModel: SAME_MODEL } : { agent: 'claude', model: 'sonnet' }
+  agent?.program === 'omp' ? { agent: 'omp', model: agent.model && validModel('omp', agent.model) ? agent.model : OMP_DEFAULT_MODEL, reviewModel: SAME_MODEL } : { agent: 'claude', model: 'sonnet' }
 
 // A project's workflow until the user accepts one (a template copy or the
 // coordinator's proposal): one type `task`, todo → work → done. Never saved;
@@ -221,6 +225,7 @@ export function checkPrefs(p: unknown, path: string, errs: WorkflowError[], name
   checkKeys(p, PREF_KEYS, path, errs)
   for (const [k, v] of Object.entries(p)) {
     if (!isStr(v)) errs.push({ path: `${path}.${k}`, message: 'must be text' })
+    else if (k === 'browser' && v !== 'relay') errs.push({ path: `${path}.browser`, message: 'must be "relay"' })
     else if (AGENT_PREFS.includes(k)) { const r = resolveAgent(v as string, named); if ('reason' in r) errs.push({ path: `${path}.${k}`, message: r.reason }) }
   }
 }

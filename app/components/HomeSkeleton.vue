@@ -8,12 +8,12 @@ const groups = [{ rows: 2, coord: true }, { rows: 3 }, { rows: 2 }]
 
 <template>
   <div class="home-skel" role="status" :aria-label="tl('Loading')" aria-busy="true" data-testid="home-skeleton">
-    <div class="home-skel-alfred"><span class="skel home-skel-mark" /><span class="home-skel-lines"><i class="skel" style="width: 34%" /><i class="skel" style="width: 62%" /><i class="skel" style="width: 46%" /></span></div>
-    <section v-for="(g, i) in groups" :key="i" class="agent-group">
-      <h2 class="group-title"><i class="skel home-skel-title" :style="{ width: `${92 - i * 14}px` }" /></h2>
+    <div class="home-skel-alfred" aria-hidden="true"><USkeleton as="span" class="home-skel-mark" /><span class="home-skel-lines"><USkeleton as="i" style="width: 34%" /><USkeleton as="i" style="width: 62%" /><USkeleton as="i" style="width: 46%" /></span></div>
+    <section v-for="(g, i) in groups" :key="i" class="agent-group" aria-hidden="true">
+      <h2 class="group-title"><USkeleton as="i" class="home-skel-title" :style="{ width: `${92 - i * 14}px` }" /></h2>
       <div class="card-list">
         <div v-for="n in g.rows" :key="n" class="home-skel-row" :class="{ coord: g.coord }" data-testid="home-skeleton-row">
-          <span class="home-skel-lines"><i class="skel" :style="{ width: `${68 - n * 11}%` }" /><i class="skel" :style="{ width: `${44 - n * 6}%` }" /></span>
+          <span class="home-skel-lines"><USkeleton as="i" :style="{ width: `${68 - n * 11}%` }" /><USkeleton as="i" :style="{ width: `${44 - n * 6}%` }" /></span>
         </div>
       </div>
     </section>

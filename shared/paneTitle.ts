@@ -1,7 +1,13 @@
 import type { Pane } from './types'
 
+// A URI carrying credentials ("http://user:pass@host:3128", a proxy
+// export pasted as a name) leaks the password onto every surface the
+// name reaches — mask the userinfo, keep the host.
+export const maskCreds = (text: string | null | undefined) =>
+  (text || '').replace(/([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/g, '$1…@')
+
 export const cleanTitle = (title: string | null | undefined) =>
-  (title || '').replace(/^[^\p{L}\p{N}~/]+/u, '').trim()
+  maskCreds((title || '').replace(/^[^\p{L}\p{N}~/]+/u, '').trim())
 
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'tcsh', 'csh', 'nu', 'pwsh', 'login', 'tmux', 'screen'])
 const CMD_NAMES = ['cmd', 'cmdc', 'command code', 'command-code', 'command_code', 'commandcode']

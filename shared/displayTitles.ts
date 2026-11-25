@@ -1,10 +1,13 @@
 import type { Pane, Workspace } from './types'
-import { cleanTitle, coordinatorTitle, paneTitle } from './paneTitle'
+import { cleanTitle, coordinatorTitle, maskCreds, paneTitle } from './paneTitle'
 import { addressOnly } from './coreInventory'
 
 // herdr-projects marks its spaces with invisible characters (braille blank
 // U+2800, zero-width spaces); some fonts draw them as dot grids.
+// A label is shown verbatim, so it goes through the same credentials
+// mask as titles.
 export function cleanLabel(label: string | null | undefined): string {
+  label = maskCreds(label)
   return (label ?? '').replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').replace(/[\u2800\s]+/g, ' ').trim()
 }
 

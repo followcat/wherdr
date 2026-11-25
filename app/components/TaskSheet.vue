@@ -137,7 +137,7 @@ const remove = () => run(async () => { const yes = await removeTaskApi(props.car
 </script>
 
 <template>
-  <AppSheet v-model:open="open" :title="card.title" tall clamp hide-close @closed="emit('closed')">
+  <AppSheet v-model:open="open" :title="card.title" tall clamp @closed="emit('closed')">
     <template #lead>
       <span class="task-sheet-lead">
         <ProjectBadge :text="card.shown" :color="card.color" copy />

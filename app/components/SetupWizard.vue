@@ -106,7 +106,7 @@ const BODY: Record<SetupStepId, string> = {
 </script>
 
 <template>
-  <AppSheet v-model:open="open" :title="tl('Set up projects')" wide hide-close>
+  <AppSheet v-model:open="open" :title="tl('Set up projects')" wide>
     <div class="setup" data-testid="setup-wizard" :data-step="step ?? 'done'">
       <div class="setup-progress" :style="{ '--steps': SETUP_STEPS.length }" role="progressbar" :aria-valuenow="index" aria-valuemin="0" :aria-valuemax="SETUP_STEPS.length" :aria-label="tl('Setup progress')">
         <i v-for="(s, i) in SETUP_STEPS" :key="s" :class="{ done: done[s], here: i === index }" />

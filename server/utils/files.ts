@@ -196,8 +196,15 @@ function executor(m: Machine, { timeoutMs = 15000, maxBytes = IMAGE_BYTES }: Run
   })
 }
 
+// A remote machine's first call can fail in herdr-core itself (its link to that
+// machine not up yet: code 255, "herdr-core: <kind>") and the next one work:
+// that read runs once more before "Machine unreachable". A timeout is not retried.
+const coreHiccup = (m: Machine, r: { code: number | null, stderr: string }) =>
+  Boolean(m.exec) && r.code === 255 && r.stderr.startsWith('herdr-core:') && r.stderr !== 'herdr-core: timeout'
 async function run(m: Machine, script: string, args: string[], opts?: RunOpts) {
-  const r = await executor(m, opts)(script, args)
+  const exec = executor(m, opts)
+  let r = await exec(script, args)
+  if (coreHiccup(m, r)) r = await exec(script, args)
   if (r.code === 0) return r.stdout
   throw shellError(m, r.code, r.stderr)
 }

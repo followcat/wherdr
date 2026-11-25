@@ -5,6 +5,7 @@
 import { HerdrError } from './herdr'
 import { PATH_SETUP, machineOn, type CoreAdminDeps } from './coreCreate'
 import { exec } from './pmLaunch'
+import { refreshGit } from './pmFolder'
 import type { PmStore } from './pmStore'
 import type { Project } from '../../shared/pm/project'
 import { apiUrl, ownLeakCheck, parseRemote, visibilityFromApi, visibilityFromGh, type Visibility } from '../../shared/pm/visibility'
@@ -43,8 +44,9 @@ export async function detectVisibility(deps: CoreAdminDeps, p: Pick<Project, 'ma
 
 // "Check again", or the first check: the result is kept with its date.
 export async function checkVisibility(deps: Deps, key: unknown, fetcher?: typeof fetch) {
-  const p = await deps.store.project(key)
-  if (!p) throw new HerdrError('not_found', 'Unknown project')
+  const found = await deps.store.project(key)
+  if (!found) throw new HerdrError('not_found', 'Unknown project')
+  const { project: p } = await refreshGit(deps, found)
   return deps.store.setVisibility(p.key, { value: await detectVisibility(deps, p, fetcher), at: Date.now(), by: 'check' })
 }
 

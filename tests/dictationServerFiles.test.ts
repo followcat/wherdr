@@ -155,4 +155,25 @@ describe('server dictation files', () => {
     expect(r.calls).toEqual(['rt.js', 'pack.tar.bz2', 'pack.tar.bz2'])
     expect(readFileSync(path.join(dir, 'm1/enc.onnx'))).toEqual(enc)
   })
+
+  it('fetches ort and loose files for Qwen without touching the sherpa runtime', async () => {
+    const dir = tmp()
+    const ortJs = Buffer.from('o'.repeat(100))
+    const cfg = Buffer.from('c'.repeat(50))
+    const r = remote({ 'ort.webgpu.min.js': ortJs, 'prompt_config.json': cfg }, { hold: true })
+    const qwen = { id: 'qwen3-asr-0.6b-q4f16', runtime: 'ort', set: 'qwen3', dir: 'qwen3-dir', files: [{ path: 'prompt_config.json', bytes: cfg.length }] }
+    const files = createServerFiles({
+      modelsDir: dir, models: [qwen], fetch: r.fetch,
+      sets: {
+        runtime: sets().runtime,
+        ort: [{ url: 'https://x/ort.webgpu.min.js', sha256: sha(ortJs), to: 'runtime/ort-1/ort.webgpu.min.js' }],
+        qwen3: [{ url: 'https://x/prompt_config.json', sha256: sha(cfg), to: 'qwen3-dir/prompt_config.json' }],
+      },
+    })
+    const first = await files.prepare(qwen.id)
+    expect(first).toEqual({ state: 'preparing', phase: 'fetch', got: 0, total: cfg.length })
+    r.release()
+    expect((await until(files, qwen.id)).at(-1)).toEqual({ state: 'ready' })
+    expect(r.calls).toEqual(['ort.webgpu.min.js', 'prompt_config.json'])
+  })
 })

@@ -122,6 +122,11 @@ export const coordinatorPane = (c: CoordinatorView) => (c.terminal ? herdrState.
 // while the offline copy shows: a running one would look stopped.
 export const coordinatorStopped = (c: CoordinatorView) => !!c.terminal && !!c.ran && herdrState.value.ok && !offlineView.value && !coordinatorPane(c)
 
+// Never started (or its record has no conversation to resume): the row offers Start.
+export const coordinatorNotStarted = (c: CoordinatorView) => herdrState.value.ok && !offlineView.value && !coordinatorPane(c) && !coordinatorStopped(c)
+// Why its last start from this browser failed, until the next one.
+export const coordinatorStartErrors = ref<Record<string, string>>({})
+
 // Its kept conversation runs with another agent than its default, and the user did not choose to resume it.
 export const coordinatorMismatch = (c: CoordinatorView) => !!coordinatorPane(c) && !!c.ran && !sameAgent(c.ran, coordinatorAgent(c)) && !resumedCoordinators.value.includes(c.terminal!)
 
@@ -130,7 +135,16 @@ export const coordinatorMismatch = (c: CoordinatorView) => !!coordinatorPane(c) 
 export async function launchCoordinator(project: string, agent?: CoordinatorAgent | 'resume') {
   const c = coordinators.value.find(x => x.project === project)
   const how = agent === 'resume' ? { resume: true } : agent ?? (c ? coordinatorAgent(c) : undefined)
-  const { terminal } = await api<{ terminal: string }>('/api/pm/coordinator-start', { project, ...how })
+  const { [project]: _before, ...others } = coordinatorStartErrors.value
+  coordinatorStartErrors.value = others
+  let terminal: string
+  try { ({ terminal } = await api<{ terminal: string }>('/api/pm/coordinator-start', { project, ...how })) }
+  catch (e) {
+    coordinatorStartErrors.value = { ...coordinatorStartErrors.value, [project]: (e as Error).message }
+    // A workspace just added: its row must show, with the failure.
+    await loadCoordinators().catch(() => {})
+    throw e
+  }
   await loadCoordinators()
   for (let i = 0; i < 40; i++) {
     const p = herdrState.value?.panes.find(x => x.coreAddress === terminal)

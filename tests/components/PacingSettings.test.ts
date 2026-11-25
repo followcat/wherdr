@@ -4,7 +4,7 @@ import { readBody } from 'h3'
 import PacingSettings from '~/components/PacingSettings.vue'
 import { DEFAULT_PACE, mergePolicy } from '#shared/pm/pacing'
 import type { PaceRow } from '#shared/pm/pace'
-import { pick, selectValue } from '../helpers/select'
+import { segPick, segValue } from '../helpers/select'
 
 // A fake server: one Claude account ahead of its line, Codex never read.
 const now = Date.now()
@@ -69,11 +69,14 @@ it('shows each account\'s pace, changes its mode, days, numbers and name; a prog
   expect(claude!.find('[data-testid="pace-name"]').attributes('placeholder')).toBe('Claude a1b2')
   expect(claude!.text()).toContain('Today +9 %')
   expect(claude!.find('[data-testid="pace-state"]').text()).toContain('Auto: waiting (ahead of the line) until')
-  expect(selectValue(claude!, 'pace-mode')).toBe('free')
+  expect(segValue(claude!, 'pace-mode')).toBe('free')
   expect(codex!.find('[data-testid="pace-unknown"]').text()).toContain('Quota unknown')
   expect(codex!.find('[data-testid="pace-mode"]').exists()).toBe(false)
 
-  await pick(claude!, 'pace-mode', 'workdays')
+  // A tap on the chosen segment keeps it; another sends the same value the select did.
+  await segPick(claude!, 'pace-mode', 'free')
+  expect(calls).toHaveLength(0)
+  await segPick(claude!, 'pace-mode', 'workdays')
   await vi.waitFor(() => expect(calls[0]).toEqual({ url: '/api/pacing', body: { key: 'claude:a1b2c3d4', policy: { mode: 'workdays' } } }))
 
   // Mode settings: Monday first; turning Friday off leaves Monday, which stays on.

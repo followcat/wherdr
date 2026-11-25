@@ -171,7 +171,8 @@ DATA_DIR=/path/to/data node scripts/fetch-dictation-files.mjs
 | `parakeet` (default) | 670 MB | Parakeet v3: French, English and 23 more European languages, detected. Too large for an iPhone |
 | `canary` | 207 MB | Canary 180M, the iPhone's default: French, English, German, Spanish (the device's language, not detected) |
 | `sensevoice` | 237 MB | SenseVoice, lighter, no French (Chinese, English, Japanese, Korean, Cantonese) |
-| `ort` | 59 MB | onnxruntime-web 1.23.2, in `models/runtime/`, for the WebGPU models and the Cantonese voice |
+| `ort` | 59 MB | onnxruntime-web 1.23.2, in `models/runtime/`, needed by `qwen3` (WebGPU models) and the Cantonese voice (`tts-canto-nano-int8`, `tts-canto-nano-fp16`) |
+| `qwen3` | 889 MB | Qwen3-ASR 0.6B (q4f16), opt-in on WebGPU with `shader-f16`: 16 languages including French and English, uses pane terms; needs `ort` |
 | `tts-siwis-medium` | 64 MB | Siwis, the French neural read-aloud voice (preparation for an on-device voice) |
 | `tts-cori-medium` | 64 MB | Cori, the English (UK) neural read-aloud voice |
 | `tts-mls-medium` | 78 MB | MLS, a fallback French voice |

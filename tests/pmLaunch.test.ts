@@ -15,6 +15,8 @@ import { startHeld } from '../server/utils/pmMechanic'
 import { resumeInterrupted } from '../server/utils/pmRecovery'
 import { loginRestartText } from '../shared/pm/recovery'
 import { CoreError } from '../server/utils/core'
+import { PROBE_SCRIPT } from '../server/utils/pmFolder'
+import { REMOTE_SCRIPT } from '../server/utils/pmVisibility'
 
 const template: Template = {
   id: 'vibe', instructions: 'Small commits.', prefs: { agent: 'claude', model: 'opus' },
@@ -121,6 +123,44 @@ async function setup(opts: { installed?: string[], exits?: (number | null)[], te
   } as unknown as PmLaunchDeps
   return { store, deps, runs, files, machine, execs }
 }
+
+describe('a project added without git', () => {
+  const plain = async (probe: (script: string) => string | undefined, fails?: (script: string) => number | undefined, over: Record<string, unknown> = {}) => {
+    const s = await setup({ exec: x => (x === PROBE_SCRIPT ? probe(x) : undefined), fails })
+    const raw = JSON.parse(await fs.readFile(s.store.files.projects, 'utf8'))
+    raw.projects[0] = { ...raw.projects[0], git: false, ...over }
+    await fs.writeFile(s.store.files.projects, JSON.stringify(raw))
+    return s
+  }
+  const flag = async (s: { store: PmStore }) => (await s.store.project('WEB'))!.git
+
+  it('starts once its folder is a repository, and checks its visibility again', async () => {
+    const s = await plain(() => 'dir\ngit\nremote', undefined, { visibility: { value: 'unknown', at: 1, by: 'check' } })
+    expect(await startTask(s.deps, 'WEB-1')).toMatchObject({ state: 'working' })
+    expect(await flag(s)).toBeUndefined()
+    expect(s.execs.some(e => e.script === REMOTE_SCRIPT)).toBe(true)
+  })
+
+  it('keeps the same refusal while the folder has no git', async () => {
+    const s = await plain(() => 'dir')
+    expect((await startTask(s.deps, 'WEB-1')).waiting).toMatch(/^The project folder is not a git repository/)
+    expect(await flag(s)).toBe(false)
+  })
+
+  it('leaves the flag on a failed probe and says the check could not run', async () => {
+    const s = await plain(() => 'dir\ngit', x => (x === PROBE_SCRIPT ? 5 : undefined))
+    const t = await startTask(s.deps, 'WEB-1', { by: 'user' })
+    expect(t.waiting).toMatch(/^Could not check whether/)
+    expect(await flag(s)).toBe(false)
+  })
+
+  it('never converts a workspace root', async () => {
+    const s = await plain(() => 'dir\ngit', undefined, { kind: 'workspace' })
+    await startTask(s.deps, 'WEB-1').catch(() => {})
+    expect(await flag(s)).toBe(false)
+    expect(s.execs.some(e => e.script === PROBE_SCRIPT)).toBe(false)
+  })
+})
 
 describe('startTask', () => {
   it('starts a labelled agent in a worktree, model pinned, autoupdate off, instructions in a file', async () => {

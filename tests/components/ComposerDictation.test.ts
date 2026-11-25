@@ -6,6 +6,7 @@ import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import Composer from '~/components/Composer.vue'
 import { dictationEngine, eventsOpen } from '~/composables/useHerdr'
 import { ENGINES, disposeEngines } from '~/utils/dictation/registry'
+import { DeviceUnsupported } from '~/utils/dictation/engine'
 import { HOLD_MS } from '~/composables/useComposerDictation'
 import type { Pane } from '#shared/types'
 import { createFakeEngine, type FakeEngine } from '../fakeDictationEngine'
@@ -152,6 +153,29 @@ describe('Composer dictation', () => {
     await mic().trigger('pointerup', { pointerType: 'touch' })
     await vi.waitFor(() => expect((field.element as HTMLTextAreaElement).value).toBe('fix the cache'))
     expect(made).toEqual([tooLarge, engine])
+    w.unmount()
+  })
+
+  it('after "unsupported", the next press loads a fresh engine (the CPU fallback), without a reload', async () => {
+    const unsupported = createFakeEngine()
+    unsupported.prepare = async () => { throw new DeviceUnsupported('Unsupported speech device: WebGPU and shader-f16 required') }
+    const made: FakeEngine[] = []
+    ENGINES.device = async () => { const e = made.length ? engine : unsupported; made.push(e); return e }
+    const { w, field, mic } = await mount('w9:p6')
+    now = 1000
+    await mic().trigger('pointerdown', { pointerType: 'touch' })
+    await mic().trigger('pointerup', { pointerType: 'touch' })
+    await vi.waitFor(() => expect(made).toHaveLength(1))
+    await vi.waitFor(() => expect(mic().attributes('aria-pressed')).toBe('false'))
+    await flushPromises()
+    now = 5000
+    await mic().trigger('pointerdown', { pointerType: 'touch' })
+    await vi.waitFor(() => expect(mic().attributes('aria-pressed')).toBe('true'))
+    FakeAudioContext.last.feed()
+    now += HOLD_MS
+    await mic().trigger('pointerup', { pointerType: 'touch' })
+    await vi.waitFor(() => expect((field.element as HTMLTextAreaElement).value).toBe('fix the cache'))
+    expect(made).toEqual([unsupported, engine])
     w.unmount()
   })
 })

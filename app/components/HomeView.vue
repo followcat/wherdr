@@ -442,8 +442,8 @@ function resetListWidth() {
       <UTooltip :text="t('Show list')" :content="{ side: 'right' }">
         <UButton icon="i-lucide-panel-left-open" color="neutral" variant="ghost" size="lg" class="icon-btn rail-toggle" :aria-label="t('Show list')" aria-expanded="false" aria-controls="home" @click="setListCollapsed(false)" />
       </UTooltip>
-      <UTooltip :text="tl('Search agents and conversations', 'Rechercher agents et conversations')" :kbds="shortcutKbds('search-all')" :content="{ side: 'right' }">
-        <UButton icon="i-lucide-search" color="neutral" variant="ghost" size="lg" class="icon-btn" :aria-label="tl('Search agents and conversations', 'Rechercher agents et conversations')" @click="openSearch" />
+      <UTooltip :text="tl('Search conversations, tasks, settings and actions')" :kbds="shortcutKbds('search-all')" :content="{ side: 'right' }">
+        <UButton icon="i-lucide-search" color="neutral" variant="ghost" size="lg" class="icon-btn" :aria-label="tl('Search conversations, tasks, settings and actions')" @click="openSearch" />
       </UTooltip>
       <UTooltip :text="t('New')" :kbds="shortcutKbds('new-space')" :content="{ side: 'right' }">
         <UButton icon="i-lucide-plus" color="neutral" variant="ghost" size="lg" class="icon-btn" :aria-label="t('New')" :disabled="!linkShown || offlineView" @click="newAgent" />
@@ -474,8 +474,8 @@ function resetListWidth() {
         </p>
         <h1 class="sr-only">{{ t('Agents') }}</h1>
         <div class="home-actions">
-          <UTooltip v-if="!headerFolded.has('search')" :text="tl('Search agents and conversations', 'Rechercher agents et conversations')" :kbds="shortcutKbds('search-all')" :disabled="!desk">
-            <UButton icon="i-lucide-search" color="neutral" variant="ghost" size="lg" class="icon-btn" :aria-label="tl('Search agents and conversations', 'Rechercher agents et conversations')" @click="openSearch" />
+          <UTooltip v-if="!headerFolded.has('search')" :text="tl('Search conversations, tasks, settings and actions')" :kbds="shortcutKbds('search-all')" :disabled="!desk">
+            <UButton icon="i-lucide-search" color="neutral" variant="ghost" size="lg" class="icon-btn" :aria-label="tl('Search conversations, tasks, settings and actions')" @click="openSearch" />
           </UTooltip>
           <UTooltip v-if="!headerFolded.has('board')" :text="tl('Board', 'Tableau')" :disabled="!desk">
             <UButton icon="i-lucide-square-kanban" color="neutral" variant="ghost" size="lg" class="icon-btn" :aria-label="tl('Board', 'Tableau')" data-testid="home-board" @click="openBoard" />
@@ -524,7 +524,7 @@ function resetListWidth() {
       </div>
       <div v-if="showCounters && agents.length" class="stats">
         <div v-for="c in stats" :key="c.s" class="stat" :class="[c.s, { zero: !c.n }]">
-          <b v-if="listShown">{{ c.n }}</b><b v-else class="skel stat-skel" />
+          <b v-if="listShown">{{ c.n }}</b><USkeleton v-else as="b" class="stat-skel" aria-hidden="true" />
           <span><i />{{ c.label }}</span>
         </div>
       </div>

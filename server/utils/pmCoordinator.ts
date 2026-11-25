@@ -14,7 +14,7 @@ import { FEATURE, WORKSPACE_FIRST, coordinatorKey, handledBy, isWorkspace, membe
 import { initialState, onEvent, planSteps, currentStep, durationMs, waitStep } from '../../shared/pm/steps'
 import { templateChanges } from '../../shared/pm/templateText'
 import { changeSummary, changeTitle, workflowChanges } from '../../shared/pm/workflowChanges'
-import { MODEL_RE, isDefaultWorkflow, validateTemplate } from '../../shared/pm/workflow'
+import { isDefaultWorkflow, validModel, validateTemplate } from '../../shared/pm/workflow'
 import { weightOf, weightText, weightsLine } from '../../shared/pm/weight'
 import { EXAMPLES } from '../../shared/pm/examples'
 import { AUTOPILOT_STARTED, UNCONFIRMED, DEFAULT_AUTOPILOT, LOOK_PER_DAY, USER_ONLY, addRefusal, bump, busyNext, busyQueue, keepsBusy, coordinatorStartRefusal, countFix, limitsLeft, pastLimit, lookAddRefusal, routinesOf, scheduledWake, tellRefusal, today, type Autopilot } from '../../shared/pm/autopilot'
@@ -31,6 +31,7 @@ import { cardNotesMessage, tellCardOutcome } from './cardOutcome'
 import { cardNoteOf } from '../../shared/uiActions'
 import { answeredTask, clearQuestion } from './pmAnswer'
 import { PATH_SETUP, homeOf, machineOn, type CoreAdminDeps } from './coreCreate'
+import { startFailure } from './coreInput'
 import { deliverFirst, queuedFirst, startTurn } from './coordinatorFirst'
 import { CREATE_SCRIPT, WRITE_SCRIPT, exec, launched, startTask } from './pmLaunch'
 import { actionShell } from './pmActions'
@@ -38,6 +39,7 @@ import { SCRIPT } from '../../shared/pm/actions'
 import { PR_FIELDS, prMergeAskRefusal, prMergeRefusal, type ContributorPr } from '../../shared/pm/contributorPr'
 import { userEvent, userStep } from './pmBoard'
 import { ensureVisibility } from './pmVisibility'
+import { refreshGit } from './pmFolder'
 import { boardOrder, orderTasks } from '../../shared/pm/boardOrder'
 import { pauseForRoom, removeTask, resumeTask, stopTask } from './pmStop'
 import { checkOnGithub } from './pmGhCheck'
@@ -731,7 +733,7 @@ export async function answerProposal(deps: Deps, key: unknown, accept: unknown) 
 
 // A program, and its model when one is given (Claude, Codex and omp take one).
 const agentOf = (v: { program?: unknown, model?: unknown }): CoordinatorAgent | null => (isCoordinatorProgram(v.program)
-  ? { program: v.program, ...(typeof v.model === 'string' && MODEL_RE.test(v.model) && (v.program === 'claude' || v.program === 'codex' || v.program === 'omp') ? { model: v.model } : {}) }
+  ? { program: v.program, ...(typeof v.model === 'string' && validModel(v.program, v.model) && (v.program === 'claude' || v.program === 'codex' || v.program === 'omp') ? { model: v.model } : {}) }
   : null)
 const BAD_AGENT = 'program: an agent that can coordinate (claude, codex, omp…)'
 const BAD_PROJECT_AGENT = 'program: claude, codex or omp (a project coordinator needs one that is kept out of the repository: by wherdr for Claude and Codex, by its tool list for omp)'
@@ -823,7 +825,7 @@ export async function writeRoleFiles(deps: Deps, key: string, program?: Coordina
   if (key === MAIN) return { p: undefined, local: true, on: undefined, ...await writeAlfredHome(deps, program) }
   const projects = await store.projects()
   const found = projects.find(x => x.key === key)
-  const p = found && await ensureVisibility(deps, found)
+  const p = found && await ensureVisibility(deps, (await refreshGit(deps, found)).project)
   if (!p) throw new HerdrError('not_found', 'Unknown project')
   const t = p ? await store.workflow(p.key) : null
   const { m, on } = machineOn(deps, p.machine)
@@ -978,7 +980,7 @@ export async function startCoordinator(deps: Deps, key: unknown, agent: { progra
   // What the user applied on its cards while it did not run, said once (a resume too).
   const notes = cardNotesMessage(before)
   // Its very first start on a git project with no accepted workflow: its first reply proposes one.
-  const git = key !== MAIN && projects.find(x => x.key === key)?.git !== false
+  const git = key !== MAIN && (await deps.store.project(key))?.git !== false // read again: this start may have found git
   // A new workspace's: its first reply offers to build the map.
   const fresh = !resume && !before?.ran
   const proposes = fresh && isWorkspace(projects.find(x => x.key === key)) ? [WORKSPACE_FIRST]
@@ -1006,7 +1008,7 @@ export async function startCoordinator(deps: Deps, key: unknown, agent: { progra
       labels: { 'wherdr.install': await deps.store.install(), 'wherdr.coordinator': key },
       line: `${PATH_SETUP}; export PATH=${quote(`${c.folder}/bin`)}:"$PATH"; exec ${argv.map(quote).join(' ')}`,
     }, 30000)).address
-  } catch (e) { up(); throw e }
+  } catch (e) { up(); startFailure(e) }
   // Its folder is wherdr's own, new at its first start: its trust dialog is answered here.
   void answerOwnTrust(deps, address, c.folder).catch(() => {})
   // Alfred keeps the agent the user picked as its own (a project coordinator keeps its default).

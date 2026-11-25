@@ -5,6 +5,7 @@ import type { Quota, QuotaAccount, QuotaCredits, Quotas } from '../types'
 import { limitEnds, limitState, type LimitState } from '../quotaLimit'
 import { accountFor } from '../quotaAccount'
 import { programName, quotaOut, type Task, type TaskOrigin } from './run'
+import type { WeekSeries } from '../pacingChart'
 import { DEFAULT_PACE, burning, current, paceVerdict, targetLine, type PacePolicy, type PaceReason, type PaceVerdict } from './pacing'
 
 // Tasks made before `origin` existed: from their other marks.
@@ -121,6 +122,7 @@ export interface PaceRow {
   verdict: PaceVerdict
   limit?: LimitState // the reading says "limit reached" (shared/quotaLimit.ts)
   credits?: QuotaCredits
+  series?: WeekSeries | null // this week's chart (shared/pacingChart.ts); null: no weekly reading
 }
 
 export function paceRows(q: Quotas | null, policyOf: (key: string) => PacePolicy, today: Record<string, number | null>, now: number): PaceRow[] {

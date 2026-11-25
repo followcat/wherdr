@@ -43,15 +43,15 @@ describe('Codex messages with photos', () => {
     herdrState.value = { ok: true, workspaces: [], panes: [pane] }
     const w = await mountSuspended(ChatView, { props: { pane, localQueued: [] }, global: { stubs: { UTooltip: { template: '<slot />' } } } })
     try {
-      await expect.poll(() => w.findAll('.msg-user').length).toBe(4)
-      const [alone, mixed, typedMarkers, withPhoto] = w.findAll('.msg-user')
+      await expect.poll(() => w.findAll('.msg-user-wrap').length).toBe(4)
+      const [alone, mixed, typedMarkers, withPhoto] = w.findAll('.msg-user-wrap')
       // Photo only: its thumbnail, no bubble text.
-      expect(alone!.classes()).toContain('msg-no-text')
+      expect(alone!.find('.msg-user').classes()).toContain('msg-no-text')
       expect(alone!.findAll('img')).toHaveLength(1)
       expect(alone!.find('img').attributes('src')).toMatch(/^\/api\/chat\/image\?pane=.*&i=0$/)
       expect(alone!.find('.msg-fold').exists()).toBe(false)
       // Text and photos: both photos, the text as typed.
-      expect(mixed!.classes()).not.toContain('msg-no-text')
+      expect(mixed!.find('.msg-user').classes()).not.toContain('msg-no-text')
       expect(mixed!.findAll('img')).toHaveLength(2)
       expect(mixed!.find('.msg-fold').element.textContent).toBe('Before and after.')
       // Literal markers the user typed stay.

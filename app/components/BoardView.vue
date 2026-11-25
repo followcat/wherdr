@@ -18,6 +18,7 @@ const error = ref('')
 // The filters, also from an in-app link (/board?project=CO&tag=ui,
 // shared/appLinks.ts), read again when the board is already open.
 const route = useRoute()
+const router = useRouter()
 const queried = (v: unknown) => (typeof v === 'string' ? v : '')
 // The project picker: Follow machine tab (the projects the home tab picked
 // shows, projectOnBar), All projects, or one project. The user's pick follows
@@ -131,7 +132,9 @@ const waiting = (c: Card) => (c.phase === 'todo' ? waitsFor(c, data.value?.cards
 
 // Add a task: the board's project preselected; the board is read again at
 // once; a refused Start now is said on the board, the task stays added.
+// ?add=1 (the ⌘K palette's New task): the Add a task sheet opens.
 const adding = ref(false)
+watch(() => route.query.add, (a) => { if (a === '1') { adding.value = true; router.replace({ query: { ...route.query, add: undefined } }) } }, { immediate: true })
 function added(task: Task, refused?: string) {
   load().then(() => { if (refused) error.value = `${shownTaskId(data.value?.projects ?? [], task.id)}: ${refused}` })
 }
@@ -175,9 +178,9 @@ const toReview = computed(() => { const pick = reviewPick(reviewKnown); return (
     <p v-if="error" class="error board-note">{{ error }}</p>
     <p v-else-if="data && !data.cards.length" class="muted board-note">{{ tl('No task yet.', 'Aucune tâche pour l’instant.') }}</p>
     <div v-if="!data && skeleton" class="board-lanes" role="status" :aria-label="tl('Loading')" aria-busy="true" data-testid="board-skeleton">
-      <section v-for="n in 3" :key="n" class="board-lane">
-        <h2 class="mono-label"><i class="skel board-skel-title" :style="{ width: `${90 - n * 12}px` }" /></h2>
-        <div v-for="m in 4 - n" :key="m" class="board-card"><i class="skel board-skel-line" :style="{ width: `${78 - m * 12}%` }" /><i class="skel board-skel-line small" style="width: 30%" /></div>
+      <section v-for="n in 3" :key="n" class="board-lane" aria-hidden="true">
+        <h2 class="mono-label"><USkeleton as="i" class="board-skel-title" :style="{ width: `${90 - n * 12}px` }" /></h2>
+        <div v-for="m in 4 - n" :key="m" class="board-card"><USkeleton as="i" class="board-skel-line" :style="{ width: `${78 - m * 12}%` }" /><USkeleton as="i" class="board-skel-line small" style="width: 30%" /></div>
       </section>
     </div>
     <div v-else-if="data" class="board-lanes">
