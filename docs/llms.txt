@@ -43,7 +43,7 @@
 - [Other private networks](docs/networks.md#other-private-networks): Headscale, NetBird, ZeroTier or WireGuard instead.
 - [Security](docs/security.md#security): who may reach wherdr, the passkey lock, protected files (wherdr's data and settings, keys, agents' credentials, herdr-core's state but its uploads) and remote-shell risks.
 - [Network access](docs/security.md#network-access): which networks wherdr answers, and `WHERDR_TRUSTED_NETWORKS`.
-- [Configuration](docs/configuration.md#configuration): environment variables (`WHERDR_ROOT`: the install folder, where Alfred finds the running build's docs) and the data folder. [Appearance](docs/configuration.md#appearance): nine themes (wherdr Titanium default, Neon, Graphite; Claude Code, Codex, omp; Vesper, Gruvbox, Kanagawa), each dark and light, and a synced mode Dark (default) / Light / System (follows the device live); removed themes fall back to Titanium, Catppuccin Latte and omp Light open in Light mode. [Custom themes](docs/configuration.md#custom-themes): create from any theme with a live preview and contrast check, or edit it as JSON (a JSON tab validated live like an import: error with its line, Save disabled), synced, exported and imported as JSON; Alfred proposes one you describe as a card (preview, contrast check, Apply / Edit in editor / Cancel; `wherdr alfred theme propose`).
+- [Configuration](docs/configuration.md#configuration): environment variables (`HC_SOCKET`, `HC_SOCKETS`, `WHERDR_ROOT`: the install folder, where Alfred finds the running build's docs) and the data folder. [Appearance](docs/configuration.md#appearance): nine themes (wherdr Titanium default, Neon, Graphite; Claude Code, Codex, omp; Vesper, Gruvbox, Kanagawa), each dark and light, and a synced mode Dark (default) / Light / System (follows the device live); removed themes fall back to Titanium, Catppuccin Latte and omp Light open in Light mode. [Custom themes](docs/configuration.md#custom-themes): create from any theme with a live preview and contrast check, or edit it as JSON (a JSON tab validated live like an import: error with its line, Save disabled), synced, exported and imported as JSON; Alfred proposes one you describe as a card (preview, contrast check, Apply / Edit in editor / Cancel; `wherdr alfred theme propose`).
 - [Settings beside the conversation](docs/configuration.md#settings-beside-the-conversation): on a computer window at least 1280 px wide, Settings opened from a conversation show as a side panel on the linked section, resizable from its left edge (drag, arrows, double-click for the default; width kept on the device); its section menu shows names from 560 px, icons with names on hover below (a button shows the names, kept on the device); Escape closes it, Open full page keeps the full page; `&target=<id>` scrolls to one setting and outlines it for a few seconds.
 
 ## Agent list
@@ -132,7 +132,7 @@
 - [The plugin module](docs/plugins.md#the-module): what a plugin file exports.
 - [Markers](docs/plugins.md#markers-data-wherdr): `data-wherdr` markers a plugin can find.
 - [Troubleshooting](docs/troubleshooting.md#troubleshooting): hc connection, conversations, machines and network problems.
-- [Setup on hc](docs/core.md#setup): `HC_SOCKET`, the hc endpoint wherdr talks to.
+- [Setup on hc](docs/core.md#setup): `HC_SOCKET` (primary) and `HC_SOCKETS` / `--hc-sockets` / `settings.json` `hcSockets` (explicit extra hc sessions, isolated per socket, never auto-scanned; primary stays intact).
 
 ## Contributors
 
