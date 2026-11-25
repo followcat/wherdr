@@ -38,7 +38,7 @@ Questions and feedback: [Discord](https://discord.gg/ky36WYmtVE); bugs: [GitHub 
 - [Settings and configuration](configuration.md) — Environment variables and in-app settings.
 - [Phone access and private networks](networks.md) — Set up Tailscale or another private network with HTTPS.
 - [Install as an app](phone.md) — Add wherdr to your home screen on a phone or install it in a desktop browser.
-- [Plugins](plugins.md) — [wherdr plugins](plugins.md#wherdr-plugins): optional page plugins, host-owned lifecycle, `draft` API, and `data-wherdr` markers. Examples: [hello-header](examples/plugins/hello-header/README.md), a header prompt button, and [hello-mic](examples/plugins/hello-mic/README.md), a microphone button.
+- [Plugins](plugins.md) — [wherdr plugins](plugins.md#wherdr-plugins): optional page plugins, host-owned lifecycle, `draft`, `agents`/`machines`, and `data-wherdr` markers. Examples: [agents-count](examples/plugins/agents-count/README.md), a live agent count and label badge, [hello-header](examples/plugins/hello-header/README.md), a header prompt button, and [hello-mic](examples/plugins/hello-mic/README.md), a microphone button.
 - [Security](security.md) — Remote-shell access, passkeys and network restrictions. Read this before enabling remote access.
 - [Read aloud: the voice of wherdr](read-aloud.md) — The on-device neural voices (French, English and Cantonese, plus an experimental GPU Cantonese voice), their licences and attributions, the espeak-ng note, and their measured (for now estimated) phone figures; the Cantonese voices' desktop figures and limits.
 - [Dictation design](dictation.md) — For contributors: the engine interface, capture pipeline, OpenRouter relay, on-device models and how to add one.

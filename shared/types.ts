@@ -131,6 +131,8 @@ export interface Pane {
   agent: string | null
   name: string | null
   label: string | null
+  // herdr-core: the terminal's own labels (`herdr.*`, `wherdr.*`…).
+  labels?: Record<string, string>
   // herdr-core: the task this agent works on (its stored id, WHR-52), from its wherdr.task label.
   task?: string
   // Its role on that task ('worker', 'reviewer'), from its wherdr.role label.

@@ -1,7 +1,7 @@
 // wherdr plugins: the page-side host (utils/pluginHost.ts) wired to the app.
 import { effectScope, onBeforeUnmount, watch } from 'vue'
-import { readPrefs } from '#shared/clientPlugins'
-import type { ClientPluginInfo, PluginPrefs, PluginSource } from '#shared/clientPlugins'
+import { projectAgents, projectMachines, readPrefs } from '#shared/clientPlugins'
+import type { ClientPluginInfo, PluginPrefs, PluginSource, PublicAgent } from '#shared/clientPlugins'
 import { createHeaderActionsMount } from '~/utils/headerActions'
 import { createPluginHost, type HostDeps, type PluginRow } from '~/utils/pluginHost'
 import { settingsSync, syncedRef } from './useSyncedSettings'
@@ -28,10 +28,43 @@ export function useDraftFocus(pane: () => string, live: () => boolean, focus: ()
 const loadPrefs = () => { try { return readPrefs(localStorage.getItem(PREFS_KEY)) } catch { return readPrefs(null) } }
 const savePrefs = (p: PluginPrefs) => { try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)) } catch { /* storage unavailable */ } }
 
+function createHerdrAgentsSubscription() {
+  const subs = new Set<(agents: PublicAgent[]) => void>()
+  let stopWatch: (() => void) | null = null
+  let lastJson = ''
+
+  const startWatch = () => {
+    lastJson = JSON.stringify(projectAgents(herdrState.value.panes))
+    const scope = effectScope(true)
+    scope.run(() => {
+      watch(herdrState, (state) => {
+        const next = projectAgents(state.panes)
+        const nextJson = JSON.stringify(next)
+        if (nextJson === lastJson) return
+        lastJson = nextJson
+        for (const sub of [...subs]) if (subs.has(sub)) sub(next)
+      }, { flush: 'sync' })
+    })
+    stopWatch = () => scope.stop()
+  }
+
+  return (cb: (agents: PublicAgent[]) => void) => {
+    subs.add(cb)
+    if (subs.size === 1) startWatch()
+    return () => {
+      if (!subs.delete(cb) || subs.size > 0) return
+      stopWatch?.()
+      stopWatch = null
+      lastJson = ''
+    }
+  }
+}
+
 /** Build host dependencies wired to the running Nuxt app (exposed for tests). */
 export function createAppPluginDeps(changed: () => void, overrides: Partial<HostDeps> = {}): HostDeps {
   const router = useRouter()
   const mountHeaderAction = createHeaderActionsMount()
+  const subscribeAgents = createHerdrAgentsSubscription()
   return {
     list: () => api<{ plugins: ClientPluginInfo[], enabled: boolean }>('/api/client-plugins'),
     // The commit sits in the folder part (`<id>@<commit>/`), so the bundle's
@@ -58,7 +91,10 @@ export function createAppPluginDeps(changed: () => void, overrides: Partial<Host
       const p = herdrState.value.panes.find(x => x.id === curPane.value)
       return p ? { id: p.id, agent: p.agent, name: p.name || p.label || null, machine: p.machine || null } : null
     },
+    agents: () => projectAgents(herdrState.value.panes),
+    machines: () => projectMachines(herdrState.value.machines ?? []),
     subscribeNavigate: cb => router.afterEach(to => cb(to.fullPath)),
+    subscribeAgents,
     mountHeaderAction,
     prefs: loadPrefs,
     savePrefs,

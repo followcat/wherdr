@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createPluginHost, type HostDeps } from '../app/utils/pluginHost'
+import { createPluginHost, type HostDeps, type PublicAgent, type PublicMachine } from '../app/utils/pluginHost'
 import { readPrefs, type ClientPluginInfo, type PluginPrefs } from '../shared/clientPlugins'
 
 const info = (id: string): ClientPluginInfo => ({ id, name: id, version: '1', description: '', main: 'index.js' })
@@ -8,7 +8,14 @@ function setup(plugins: Record<string, unknown>, prefs: PluginPrefs = { off: [],
   let saved = prefs
   let draftText: string | null = 'initial'
   const navs = new Set<(p: string) => void>()
+  const agentSubs = new Set<(list: PublicAgent[]) => void>()
   const headerMounts = new Set<(el: unknown) => unknown>()
+  const agentsData: PublicAgent[] = [
+    { id: 'w1:p1', machine: null, name: 'demo', title: 'Working', agent: 'claude', status: 'idle', labels: { 'wherdr.task': 'WHR-1' } },
+  ]
+  const machinesData: PublicMachine[] = [
+    { id: '', groupKey: '', label: 'local', local: true, status: 'online' },
+  ]
   const insert = vi.fn((t: string) => {
     if (draftText !== null) draftText = draftText && !/\s$/.test(draftText) ? `${draftText} ${t}` : draftText + t
   })
@@ -21,7 +28,10 @@ function setup(plugins: Record<string, unknown>, prefs: PluginPrefs = { off: [],
     insertDraft: insert,
     focusDraft: focus,
     currentAgent: () => ({ id: 'w1:p1', agent: 'claude', name: 'demo', machine: null }),
+    agents: () => agentsData,
+    machines: () => machinesData,
     subscribeNavigate: (cb) => { navs.add(cb); return () => navs.delete(cb) },
+    subscribeAgents: (cb) => { agentSubs.add(cb); return () => agentSubs.delete(cb) },
     mountHeaderAction: (render) => { headerMounts.add(render); return () => headerMounts.delete(render) },
     prefs: () => saved,
     savePrefs: (p) => { saved = p },
@@ -30,7 +40,7 @@ function setup(plugins: Record<string, unknown>, prefs: PluginPrefs = { off: [],
   }
   const host = createPluginHost(deps)
   return {
-    host, deps, insert, focus, navs, headerMounts,
+    host, deps, insert, focus, navs, agentSubs, headerMounts, agentsData, machinesData,
     getDraft: () => draftText,
     setDraftRaw: (v: string | null) => { draftText = v },
     saved: () => saved,
@@ -187,10 +197,12 @@ describe('plugin host', () => {
     const rawOff = vi.fn()
     let navOff!: () => void
     let actionOff!: () => void
+    let agentsOff!: () => void
     const customHost = (plugin: unknown) => {
       let saved: PluginPrefs = { off: [], failed: {} }
       const navs = new Set<() => void>()
       const mounts = new Set<() => void>()
+      const agentSubs = new Set<() => void>()
       const host = createPluginHost({
         list: async () => ({ plugins: [info('p')], enabled: true }),
         load: async () => ({ default: plugin }),
@@ -199,10 +211,17 @@ describe('plugin host', () => {
         insertDraft() {},
         focusDraft() {},
         currentAgent: () => null,
+        agents: () => [],
+        machines: () => [],
         subscribeNavigate: (cb) => {
           const fn = () => { cb('/') }
           navs.add(fn)
           return () => { rawOff(); navs.delete(fn) }
+        },
+        subscribeAgents: (cb) => {
+          const fn = () => { cb([]) }
+          agentSubs.add(fn)
+          return () => { rawOff(); agentSubs.delete(fn) }
         },
         mountHeaderAction: () => {
           const fn = () => {}
@@ -214,23 +233,28 @@ describe('plugin host', () => {
         changed: () => {},
         timeoutMs: 50,
       })
-      return { host, navs, mounts }
+      return { host, navs, mounts, agentSubs }
     }
 
     // Function plugin (deactivate missing)
-    const missing = customHost((w: { onNavigate: (c: () => void) => () => void, mountHeaderAction: (r: () => void) => () => void }) => {
+    const missing = customHost((w: { onNavigate: (c: () => void) => () => void, mountHeaderAction: (r: () => void) => () => void, onAgents: (c: () => void) => () => void }) => {
       navOff = w.onNavigate(() => {})
       actionOff = w.mountHeaderAction(() => {})
+      agentsOff = w.onAgents(() => {})
     })
     await missing.host.init()
     expect(missing.navs.size).toBe(1)
     expect(missing.mounts.size).toBe(1)
+    expect(missing.agentSubs.size).toBe(1)
     navOff()
     navOff()
-    expect(rawOff).toHaveBeenCalledTimes(1)
+    agentsOff()
+    agentsOff()
+    expect(rawOff).toHaveBeenCalledTimes(2)
     await missing.host.setEnabled('p', false)
     expect(missing.navs.size).toBe(0)
     expect(missing.mounts.size).toBe(0)
+    expect(missing.agentSubs.size).toBe(0)
     actionOff()
     expect(missing.mounts.size).toBe(0)
 
@@ -300,6 +324,64 @@ describe('plugin host', () => {
     expect(s.headerMounts.size).toBe(2)
     await s.host.setCommunity(false)
     expect(s.navs.size).toBe(0)
+    expect(s.headerMounts.size).toBe(0)
+  })
+
+  it('gives plugins copied PublicAgent and PublicMachine snapshots and isolates onAgents failures', async () => {
+    const seenByB: PublicAgent[][] = []
+    const s = setup({
+      a: (w: { agents: () => PublicAgent[], machines: () => PublicMachine[], onAgents: (cb: (l: PublicAgent[]) => void) => void }) => {
+        const list = w.agents()
+        list[0]!.name = 'hacked'
+        list[0]!.labels['wherdr.task'] = 'HACKED'
+        const ms = w.machines()
+        ms[0]!.label = 'hacked-machine'
+        w.onAgents((next) => {
+          next[0]!.labels['wherdr.task'] = 'MUTATED_IN_CB'
+          throw new Error('agents cb failed')
+        })
+      },
+      b: (w: { agents: () => PublicAgent[], machines: () => PublicMachine[], onAgents: (cb: (l: PublicAgent[]) => void) => void }) => {
+        expect(w.agents()[0]!.name).toBe('demo')
+        expect(w.agents()[0]!.labels['wherdr.task']).toBe('WHR-1')
+        expect(w.machines()[0]!.label).toBe('local')
+        w.onAgents(next => seenByB.push(next))
+      },
+    })
+    await s.host.init()
+    expect(s.agentSubs.size).toBe(2)
+
+    const pushed: PublicAgent[] = [
+      { id: 'w1:p1', machine: null, name: 'demo', title: 'Done', agent: 'claude', status: 'idle', labels: { 'wherdr.task': 'WHR-2' } },
+    ]
+    for (const cb of [...s.agentSubs]) cb(pushed)
+    expect(s.status('a')).toBe('failed')
+    expect(s.status('b')).toBe('running')
+    expect(s.agentSubs.size).toBe(1)
+    expect(seenByB).toHaveLength(1)
+    expect(seenByB[0]![0]!.labels['wherdr.task']).toBe('WHR-2')
+
+    await s.host.setCommunity(false)
+    expect(s.agentSubs.size).toBe(0)
+  })
+
+  it('disables a plugin whose onAgents callback rejects asynchronously', async () => {
+    const s = setup({
+      bad: (w: { onAgents: (c: () => Promise<void>) => void, mountHeaderAction: (r: () => void) => void }) => {
+        w.onAgents(async () => { throw new Error('async agents boom') })
+        w.mountHeaderAction(() => {})
+      },
+      good: (w: { onAgents: (c: (l: PublicAgent[]) => void) => void }) => {
+        w.onAgents(() => {})
+      },
+    })
+    await s.host.init()
+    expect(s.agentSubs.size).toBe(2)
+    expect(s.headerMounts.size).toBe(1)
+    for (const cb of [...s.agentSubs]) cb([])
+    await vi.waitFor(() => expect(s.status('bad')).toBe('failed'))
+    expect(s.status('good')).toBe('running')
+    expect(s.agentSubs.size).toBe(1)
     expect(s.headerMounts.size).toBe(0)
   })
 })

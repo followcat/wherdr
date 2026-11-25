@@ -1,0 +1,1 @@
+{ "name": "Agents count", "version": "1.0.0", "description": "Example plugin: shows live agent count and one label in header-actions reactively.", "main": "index.js" }
