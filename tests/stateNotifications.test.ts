@@ -12,7 +12,7 @@ function coreDelivery(opts: {
   const notify = bindFunction(source, 'notifyCorePane', {
     notificationAllowed: async () => opts.allowed ?? true, isViewed: () => opts.viewed ?? false, notificationTitle: (s: string) => s,
     state: {
-      workspaces: [{ id: 'w1', label: 'demo' }, { id: 'a1b2c3d4e5f60718~s7370', label: 'backlot-studio' }],
+      workspaces: [{ id: 'w1', label: 'demo' }, { id: 'beefbeefbeefbeef~s7370', label: 'backlot-studio' }],
       panes: opts.panes ?? [pane],
       machines: opts.machines ?? [{ key: 'k', label: 'laptop' }, { key: '', label: 'Local' }],
     },
@@ -46,7 +46,7 @@ it('leaves a project task\'s agent waiting for you to the grouped push of what w
   expect(d.pushSend).toHaveBeenCalledTimes(1)
 })
 it('disambiguates t1 across two sessions by (machineKey, address) with deterministic deep links', async () => {
-  const secKey = 'a1b2c3d4e5f60718'
+  const secKey = 'beefbeefbeefbeef'
   const d = coreDelivery({
     panes: [
       { id: 'w1:p7431', coreAddress: 't1', machine: '', workspace: 'w1', agent: 'claude', status: 'blocked', title: 'Primary' },

@@ -218,7 +218,7 @@ describe('readBacklotDocs', () => {
       call: vi.fn(async (method: string) => method === 'machine.list' ? { machines: [] } : method === 'terminal.list' ? { terminals: [] } : { value: null }),
     }
     const secondary = {
-      localKey: '0123456789abcdef',
+      localKey: 'cafecafecafecafe',
       endpoint: '/run/backlot.sock',
       call: vi.fn(async (method: string) => method === 'machine.list' ? { machines: [] }
         : method === 'terminal.list' ? { terminals: [{ address: 't9', name: 'backlot-server', state: 'live', cwd: '/home/user' }] }
