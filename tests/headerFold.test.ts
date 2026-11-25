@@ -21,4 +21,10 @@ describe('headerFold', () => {
   it('stops at the number of foldable buttons', () => {
     expect(headerFold(100, 5, 3)).toBe(3)
   })
+  it('accounts for populated header-actions width before folding', () => {
+    // At 358 px (390 px phone minus 32 px header padding), 3 buttons fit with 0 folded.
+    expect(headerFold(358, 3, 2, 0)).toBe(0)
+    // A 130 px widget in header-actions leaves too little room for 3 buttons, so Search and Board fold.
+    expect(headerFold(358, 3, 2, 130)).toBe(2)
+  })
 })
