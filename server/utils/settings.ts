@@ -4,7 +4,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { writeFileAtomic } from './atomicWrite'
-import { applySettingsPatch, cleanSettings, type SettingsMap, type SettingsPatch } from '../../shared/settings'
+import { applySettingsPatch, cleanSettings, readHcSockets, type SettingsMap, type SettingsPatch } from '../../shared/settings'
 import { DATA_DIR } from './env'
 import { readNamedAgents, type NamedAgent } from '../../shared/pm/namedAgents'
 import { HerdrError } from './herdr'
@@ -44,6 +44,9 @@ export async function readSettings(file = SETTINGS_FILE): Promise<SettingsMap> {
 
 // The named agents (Settings › Agents) the engine starts tasks with.
 export const namedAgents = async (file = SETTINGS_FILE): Promise<NamedAgent[]> => readNamedAgents((await readSettings(file)).namedAgents)
+
+// Extra hc session socket paths explicitly configured in settings.json.
+export const hcSockets = async (file = SETTINGS_FILE): Promise<string[]> => readHcSockets((await readSettings(file)).hcSockets)
 
 const writeSettings = (settings: SettingsMap, file: string) => writeFileAtomic(file, JSON.stringify({ v: 1, settings }) + '\n')
 

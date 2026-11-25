@@ -6,8 +6,8 @@ export const LOCAL = ''
 // Short key of a machine.
 export const MACHINE_KEY_RE = /^[0-9a-f]{4,32}$/
 export const SEP = '~'
-// Pane : w1:p1 (local) ou 0a1b2c3d~w1:p1 (distant).
-export const PANE_RE = /^(?:[0-9a-f]{4,32}~)?w[0-9a-z]+:p[0-9a-z]+$/i
+// Pane : w1:p1 / s1:p1 (local) or 0a1b2c3d~w1:p1 / 0a1b2c3d~s1:p1 (remote).
+export const PANE_RE = /^(?:[0-9a-f]{4,32}~)?[ws][0-9a-z]+:p[0-9a-z]+$/i
 
 export function splitId(id: string): { machine: string, local: string } {
   const s = String(id || '')

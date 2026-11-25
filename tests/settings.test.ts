@@ -2,8 +2,8 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { applySettingsPatch, cleanSettingsPatch, SETTING_MAX } from '../shared/settings'
-import { loadSettings, onSettingsChange, patchSettings, readSettings } from '../server/utils/settings'
+import { applySettingsPatch, cleanSettingsPatch, readHcSockets, SETTING_MAX } from '../shared/settings'
+import { hcSockets, loadSettings, onSettingsChange, patchSettings, readSettings } from '../server/utils/settings'
 import { chatFilesPolicy } from '../server/utils/chatFiles'
 
 describe('settings patch', () => {
@@ -83,5 +83,14 @@ describe('settings file', () => {
     expect(await readSettings(file)).toEqual({ theme: 'nord' })
     await patchSettings({ showCounters: '1' }, { file })
     expect(JSON.parse(await fs.readFile(file, 'utf8')).settings).toEqual({ theme: 'nord', showCounters: '1' })
+  })
+  it('stores and parses hcSockets from settings.json (JSON string or string[])', async () => {
+    expect(readHcSockets(JSON.stringify([' /run/a.sock ', '', '/run/a.sock', '/run/b.sock']))).toEqual(['/run/a.sock', '/run/b.sock'])
+    expect(readHcSockets(['/run/x.sock', 42, '/run/y.sock'])).toEqual(['/run/x.sock', '/run/y.sock'])
+    expect(cleanSettingsPatch({ hcSockets: ['/run/backlot.sock'] })).toEqual({ hcSockets: JSON.stringify(['/run/backlot.sock']) })
+    await patchSettings({ hcSockets: JSON.stringify(['/run/backlot.sock', '/run/other.sock']) }, { file })
+    expect(await hcSockets(file)).toEqual(['/run/backlot.sock', '/run/other.sock'])
+    await patchSettings({ hcSockets: null }, { file })
+    expect(await hcSockets(file)).toEqual([])
   })
 })
