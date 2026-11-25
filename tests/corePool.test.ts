@@ -155,6 +155,15 @@ describe('config precedence for HC_SOCKET, HC_SOCKETS and settings.json hcSocket
       primary: '/home/user/default.sock',
       extra: ['/tmp/a.sock', '/home/user/backlot.sock', '/home/user/c.sock'],
     })
+    // Operator-supplied HC_SOCKETS / --hc-sockets may point outside the primary socket directory.
+    expect(resolveConfiguredSockets({
+      primary: '/run/user/1000/herdr-core/default.sock',
+      envSockets: '/tmp/outside-operator.sock',
+      settingsSockets: [],
+    })).toEqual({
+      primary: '/run/user/1000/herdr-core/default.sock',
+      extra: ['/tmp/outside-operator.sock'],
+    })
   })
 })
 

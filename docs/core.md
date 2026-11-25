@@ -16,7 +16,10 @@ RPC calls.
 
 Extra herdr-core sessions on the same server are added explicitly with `HC_SOCKETS` (comma-separated
 socket paths, or `wherdr --hc-sockets <paths>`) and/or `hcSockets` (`string[]`) in
-`DATA_DIR/settings.json`. Each extra session keeps its own connection, state and event stream; a
+`DATA_DIR/settings.json`. Browser-written `hcSockets` entries only accept user-owned Unix sockets
+resolving (`realpath`) directly inside this user's herdr-core runtime directory (the primary
+`HC_SOCKET` directory, or `$XDG_RUNTIME_DIR/herdr-core/`); any other path is dropped and logged
+by reason. Operator-supplied `HC_SOCKETS` / `--hc-sockets` may point anywhere. Each extra session keeps its own connection, state and event stream; a
 broken, missing or slow secondary socket never blocks or breaks the primary session. Primary pane IDs
 stay byte-identical, while panes from secondary sessions receive a deterministic 16-character
 hash prefix derived from the socket path and remote machine name (`<key>~…`) and link back to the

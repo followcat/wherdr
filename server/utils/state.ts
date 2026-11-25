@@ -8,8 +8,7 @@ import { coordinatorTarget, type NotificationEvent } from '../../shared/notifica
 import { hasTranscript } from '../../shared/agentKind'
 import { type CoreAlertKind } from './coreAlerts'
 import { createCorePool, registerPoolRuntime, resolveConfiguredSockets, type CoreEntry } from './corePool'
-import { readHcSockets } from '../../shared/settings'
-import { hcSockets, onSettingsChange } from './settings'
+import { filterAllowedHcSockets, hcSockets, onSettingsChange } from './settings'
 import { notificationAllowed } from './notificationRules'
 import { DATA_DIR, HOME, NOTIFY_SETTLE_MS, POLL_MS, log } from './env'
 import { HerdrError, sleep } from './herdr'
@@ -431,17 +430,22 @@ export function startPolling() {
   // A send to Claude starts or ends: its "Sending…" changes on every open page now.
   onSubmittingChange(() => wakeCorePoll())
   stopSettingsWatch?.()
+  let hcSocketsGen = 0
   stopSettingsWatch = onSettingsChange((changed) => {
     if ('hcSockets' in changed) {
-      configuredSettingsSockets = readHcSockets(changed.hcSockets)
-      syncPoolConfig()
-      void poll()
+      const gen = ++hcSocketsGen
+      void filterAllowedHcSockets(changed.hcSockets).then((list) => {
+        if (stopped || gen !== hcSocketsGen) return
+        configuredSettingsSockets = list
+        syncPoolConfig()
+        void poll()
+      }, () => {})
     }
   })
   corePool.start()
   for (const e of corePool.entries()) startEntryLoop(e)
   void hcSockets().then((list) => {
-    if (stopped) return
+    if (stopped || hcSocketsGen > 0) return
     configuredSettingsSockets = list
     syncPoolConfig()
   }, () => {})
