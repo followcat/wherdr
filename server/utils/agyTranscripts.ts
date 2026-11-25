@@ -7,7 +7,7 @@
 // read-only, only while agy holds both sidecars (node:sqlite would create
 // them otherwise); every other local read uses the same kept copy.
 import { createHash } from 'node:crypto'
-import { closeSync, existsSync, mkdtempSync, openSync, readdirSync, readSync, rmSync, truncateSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, rmSync, truncateSync, writeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { ChatItem, ChatResponse, ModelInfo } from '../../shared/types'
@@ -28,8 +28,8 @@ const PAGE_ITEMS = 120
 const MAX_SNAPSHOT_BYTES = 256 * 1024 * 1024
 const READ_CHUNK_BYTES = 4 * 1024 * 1024
 const FAIL_QUIET_MS = 1500
-// A host may be a Raspberry Pi; do not retain dozens of parsed transcripts.
-const DOCUMENT_CACHE_ENTRIES = 4
+// A host may be a Raspberry Pi; retain enough viewed panes without dozens of parsed transcripts.
+const DOCUMENT_CACHE_ENTRIES = 8
 // The 32-byte WAL header: magic, page size, checkpoint sequence and salts —
 // unchanged while a generation only appends, rewritten by every restart.
 const WAL_HEADER_BYTES = 32
@@ -55,9 +55,22 @@ const KEPT_PREFIX = 'wherdr-agy-'
 const KEPT_NAME = /^wherdr-agy-(\d+)-/
 
 // Whether a process with this pid exists: another user's (EPERM) counts as
-// alive, only a missing one (ESRCH) does not.
+// alive; ESRCH or an exited Linux zombie (`Z`) does not.
 function alive(pid: number): boolean {
-  try { process.kill(pid, 0); return true } catch (e) { return (e as { code?: string } | null)?.code !== 'ESRCH' }
+  try { process.kill(pid, 0) } catch (e) { return (e as { code?: string } | null)?.code !== 'ESRCH' }
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+    const rparen = stat.lastIndexOf(')')
+    if (rparen >= 0 && stat.slice(rparen + 1).trimStart().startsWith('Z')) return false
+  } catch { /* non-Linux or exited meanwhile */ }
+  return true
+}
+
+const agyDisposers = new Set<() => void>()
+
+// Called on server shutdown (`close` hook) to remove kept copies owned by this process.
+export function disposeAgyCopies(): void {
+  for (const fn of agyDisposers) fn()
 }
 
 // A kept copy of a previous run (a restart while one was open) stays in the
@@ -346,12 +359,13 @@ export function hasStep(steps: AgyStep[], idx: number): boolean {
 }
 
 export function createAgyTranscripts({
-  home, fs = localFs, now = Date.now, failQuietMs = FAIL_QUIET_MS, sqlite,
+  home, fs = localFs, now = Date.now, failQuietMs = FAIL_QUIET_MS, sqlite, cacheEntries = DOCUMENT_CACHE_ENTRIES,
 }: {
   home: string
   fs?: MachineFs
   now?: () => number
   failQuietMs?: number
+  cacheEntries?: number
   // `sqlite` injects the DatabaseSync class: `null` simulates a Node built
   // without node:sqlite (every read degrades to `unsupported`); left
   // undefined, the class is imported lazily on the first conversation read.
@@ -402,10 +416,29 @@ export function createAgyTranscripts({
   }
 
   const bases = new Map<string, SnapBase>()
+  const dispose = () => {
+    for (const [file, base] of [...bases]) {
+      base.gone = true
+      if (!base.refs) dropBase(file, base)
+    }
+  }
+  agyDisposers.add(dispose)
+
+  function trimBases(keep?: SnapBase): void {
+    for (const [key, older] of bases) {
+      if (bases.size <= cacheEntries) break
+      // Pinned entries (`refs > 0`) and a base just acquired cannot be evicted yet;
+      // unlock() calls trimBases() again once refs drop to zero so the live
+      // cache returns to <= cacheEntries after concurrent reads finish.
+      if (older.refs || older === keep) continue
+      bases.delete(key)
+      rmSync(older.dir, { recursive: true, force: true })
+    }
+  }
 
   // One base copy per file, evicted with its directory once the cache
-  // overflows (DOCUMENT_CACHE_ENTRIES, like the parsed documents). The temp
-  // dir is private (mkdtemp mode 0700).
+  // overflows (`cacheEntries`, like the parsed documents). The temp dir is
+  // private (mkdtemp mode 0700).
   function acquireBase(file: string): SnapBase {
     let base = bases.get(file)
     if (!base) {
@@ -415,13 +448,7 @@ export function createAgyTranscripts({
     }
     bases.delete(file)
     bases.set(file, base)
-    for (const [key, older] of bases) {
-      if (bases.size <= DOCUMENT_CACHE_ENTRIES) break
-      // The base being acquired has no ref yet: the caller takes it right after.
-      if (older.refs || older === base) continue
-      bases.delete(key)
-      rmSync(older.dir, { recursive: true, force: true })
-    }
+    trimBases(base)
     return base
   }
 
@@ -452,7 +479,8 @@ export function createAgyTranscripts({
       unlock: () => {
         base.refs--
         release()
-        if (base.gone && !base.refs) dropBase(file, base)
+        if (!base.refs && (base.gone || !base.dbId)) dropBase(file, base)
+        trimBases()
       },
     }
   }
@@ -593,11 +621,12 @@ export function createAgyTranscripts({
           try {
             const doc = readSteps(db, session, file)
             db.close()
-            remember(loaded, file, { gen, size, doc }, DOCUMENT_CACHE_ENTRIES)
+            remember(loaded, file, { gen, size, doc }, cacheEntries)
             return { doc, size, gen }
           } catch { db.close() }
         } catch { /* WAL/shm not readable in place: copy below */ }
       }
+      if (size > MAX_SNAPSHOT_BYTES) throw new Error('Antigravity conversation exceeds the supported size limit')
       const { base, unlock } = await lockBase(file)
       try {
         let cur = { db: dbSt, wal: walSt, size, gen }
@@ -609,7 +638,7 @@ export function createAgyTranscripts({
             const db = new Db(base.db, { readOnly: true })
             try {
               const doc = readSteps(db, session, file)
-              remember(loaded, file, { gen: cur.gen, size: cur.size, doc }, DOCUMENT_CACHE_ENTRIES)
+              remember(loaded, file, { gen: cur.gen, size: cur.size, doc }, cacheEntries)
               return { doc, size: cur.size, gen: cur.gen }
             } finally { db.close() }
           } catch (e) {
@@ -774,5 +803,5 @@ export function createAgyTranscripts({
     }
   }
 
-  return { chat, image, search, model, pathOf, forgetFile }
+  return { chat, image, search, model, pathOf, forgetFile, dispose: () => { dispose(); agyDisposers.delete(dispose) } }
 }
