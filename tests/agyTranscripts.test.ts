@@ -689,6 +689,101 @@ it('keeps 6 viewed panes in cache without full recopy thrash', async () => {
   expect(revisitBytes).toBe(0)
 })
 
+it('delta-syncs a checkpointed DB by 1 MiB blocks and falls back on missing tools or corruption', async () => {
+  const { home } = fixture()
+  const live = openAgyFixture(home, {
+    wal: true,
+    rows: [
+      { role: 'user', text: 'First big prompt' },
+      // > 3 MiB database so earlier 1 MiB blocks stay unchanged across a small append + checkpoint.
+      { role: 'agent', text: `Block-stable payload ${'a'.repeat(3_500_000)}` },
+    ],
+  })
+  keepers.push(live)
+  live.db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+
+  const remote = remoteExecMachine()
+  remote.sync(live.file)
+  remote.sync(`${live.file}-wal`)
+  const agy = createAgyTranscripts({ home, fs: remote.fs })
+
+  // 1. First read copies once in full.
+  let nextIdx = 2
+  const first = await agy.chat(pane)
+  expect(first.items?.length).toBe(2)
+  const fullSize = remote.sizeOf(live.file)
+  expect(fullSize).toBeGreaterThan(3 * 1024 * 1024)
+  expect(remote.bytes.get(live.file) ?? 0).toBe(fullSize)
+
+  // 2. WAL growth ships only the grown WAL tail (0 main DB bytes).
+  live.append([{ idx: nextIdx++, role: 'agent', text: 'WAL tail reply' }])
+  remote.sync(`${live.file}-wal`)
+  remote.resetCounts()
+  const walRead = await agy.chat(pane, { since: first.token })
+  expect(walRead.items?.at(-1)?.text).toBe('WAL tail reply')
+  expect(remote.bytes.get(live.file) ?? 0).toBe(0)
+  expect(remote.bytes.get(`${live.file}-wal`) ?? 0).toBeGreaterThan(0)
+  expect(remote.execs()).toBe(0)
+
+  // 3. Checkpoint rewrites header + trailing blocks: only changed 1 MiB blocks are fetched.
+  live.append([
+    { idx: nextIdx++, role: 'user', text: 'Second turn' },
+    { idx: nextIdx++, role: 'agent', text: 'Post-checkpoint reply' },
+  ])
+  live.db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+  remote.sync(live.file)
+  remote.sync(`${live.file}-wal`)
+  remote.resetCounts()
+  const ckRead = await agy.chat(pane, { since: walRead.token })
+  expect(ckRead.items?.at(-1)?.text).toBe('Post-checkpoint reply')
+  expect(remote.execs()).toBe(1)
+  expect(remote.bytes.get(live.file) ?? 0).toBeGreaterThan(0)
+  // At least one 1 MiB middle block stayed identical, so delta read is strictly smaller than full copy.
+  expect(remote.bytes.get(live.file) ?? 0).toBeLessThan(fullSize)
+
+  // 4. Corrupted block checksum answer and missing POSIX tools fall back to full copy.
+  let mode: 'real' | 'corrupt' | 'missing' = 'real'
+  const remoteMixed = remoteExecMachine({
+    run: (script, args, fileBuf) => {
+      if (mode === 'real') {
+        const tmp = mkdtempSync(path.join(tmpdir(), 'wherdr-run-real-'))
+        homes.push(tmp)
+        const f = path.join(tmp, 'conv.db')
+        writeFileSync(f, fileBuf!)
+        return new Promise<Buffer>((resolve, reject) => {
+          execFile('sh', ['-c', script, 'sh', f, ...args.slice(1)], { encoding: 'buffer' }, (e, out, err) => e ? reject(new Error(err.toString())) : resolve(out))
+        })
+      }
+      if (mode === 'missing') throw new Error('dd: not found')
+      return Buffer.from('12345 999\n')
+    },
+  })
+  remoteMixed.sync(live.file)
+  remoteMixed.sync(`${live.file}-wal`)
+  const agyMixed = createAgyTranscripts({ home, fs: remoteMixed.fs })
+  await agyMixed.chat(pane)
+
+  mode = 'corrupt'
+  live.append([{ idx: nextIdx++, role: 'agent', text: 'Recovered after corrupt block answer' }])
+  live.db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+  remoteMixed.sync(live.file)
+  remoteMixed.sync(`${live.file}-wal`)
+  remoteMixed.resetCounts()
+  const recoveredCorrupt = await agyMixed.chat(pane)
+  expect(recoveredCorrupt.items?.at(-1)?.text).toBe('Recovered after corrupt block answer')
+  expect(remoteMixed.bytes.get(live.file) ?? 0).toBe(remoteMixed.sizeOf(live.file))
+
+  mode = 'missing'
+  live.append([{ idx: nextIdx++, role: 'agent', text: 'Recovered when tools missing' }])
+  live.db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+  remoteMixed.sync(live.file)
+  remoteMixed.sync(`${live.file}-wal`)
+  remoteMixed.resetCounts()
+  const recoveredMissing = await agyMixed.chat(pane)
+  expect(recoveredMissing.items?.at(-1)?.text).toBe('Recovered when tools missing')
+  expect(remoteMixed.bytes.get(live.file) ?? 0).toBe(remoteMixed.sizeOf(live.file))
+})
+
 it('does not leak extra kept directories across 12 concurrent reads beyond cache limit', async () => {
   const scratch = mkdtempSync(path.join(tmpdir(), 'wherdr-leak-'))
   const home = mkdtempSync(path.join(scratch, 'home-'))
