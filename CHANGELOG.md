@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Studio groups on Home.** Backlot studio roles and Hollywood fold into collapsible groups with live states, per-role rows and counters, stage/server daemons stay hidden, and Settings › Machines can find and add local hc sessions.
+
 - **Multiple herdr-core sessions in one wherdr.** Pass extra core sockets explicitly via `HC_SOCKETS` (`wherdr --hc-sockets <paths>`) or `hcSockets` in `settings.json` (never auto-scanned) to show terminals from additional sessions alongside your primary `HC_SOCKET` session under the same machine tab. Each session keeps its own connection, state and push alerts so a missing or slow secondary session never affects the primary one, backlot stage/server daemons stay silent while `actor-*` finished chimes default off, and the Studio view reads from whichever session publishes `backlot` ([herdr-core › Setup](docs/core.md#setup), [Configuration](docs/configuration.md#configuration)).
 
 - **The terminal stays open when you leave it.** Switching to the conversation and back, or swiping to another agent and returning, used to download and repaint the whole terminal history every time. The view now parks its terminal and its connection instead: the next visit shows the same screen at once, with nothing fetched and nothing replayed. Two recently viewed terminals are kept for two minutes, then closed; a hidden page closes them at once. A terminal whose connection ended while parked (another viewer took control, a wake-up) opens fresh, as before.

@@ -60,6 +60,12 @@ unit: see [Installation](installation.md#keep-it-running)), read at each start.
 | `TZ` | `UTC` | Time zone. |
 | `WHERDR_ROOT` | *(set by `wherdr`)* | Folder of the wherdr install (the one holding `.output`). The `wherdr` command sets it; set it yourself only when you start `.output/server/index.mjs` another way. Alfred reads the docs of the running build: `.output/docs` when the build ships them (auto-deploy packages do), else `WHERDR_ROOT/docs`, else the `docs/` next to `.output`, else the working folder's `docs/`. |
 
+Settings › Machines shows the extra hc sessions in use. **Find local sessions** reads the sockets
+of the primary socket's folder only (holder sockets excluded) and never attaches one by itself:
+a tap adds it to `hcSockets`, the change is saved in `settings.json` and the running pool picks it
+up at once. Sockets coming from `HC_SOCKETS` are shown but can only be removed from the command
+line or service environment.
+
 **v2 only.** These variables configure wherdr v2 on Herdr and are ignored in core mode:
 
 | Variable | Meaning (v2) |
