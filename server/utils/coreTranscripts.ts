@@ -121,13 +121,33 @@ async function machineHome(shell: ShellExec): Promise<string> {
   return s
 }
 
+const PS_TTL_MS = 10_000
+
 export function createCoreTranscripts(deps: CoreTranscriptDeps) {
+  const clock = () => (deps.now ? deps.now() : Date.now())
   const details = new Map<string, { at: number, d: CoreDetail }>()
+  const psCache = new Map<string, { at: number, busy: boolean, p: Promise<string> }>()
+  const cachedPs = (machine: string): Promise<string> => {
+    const hit = psCache.get(machine)
+    if (hit && (hit.busy || (clock() - hit.at >= 0 && clock() - hit.at < PS_TTL_MS))) return hit.p
+    const rec = {
+      at: 0,
+      busy: true,
+      p: deps.call<{ stdout?: string }>('machine.exec', {
+        argv: ['ps', '-e', '-o', 'pid=,ppid=,args='], ...(machine ? { on: machine } : {}), timeout: 5,
+      }, 8000)
+        .catch(() => null)
+        .then(ps => Buffer.from(ps?.stdout || '', 'base64').toString('utf8'))
+        .finally(() => { rec.busy = false; rec.at = clock() }),
+    }
+    psCache.set(machine, rec)
+    return rec.p
+  }
   async function detail(address: string): Promise<CoreDetail> {
     const hit = details.get(address)
-    if (hit && Date.now() - hit.at < 1500) return hit.d
+    if (hit && clock() - hit.at < 1500) return hit.d
     const d = await deps.call<CoreDetail>('terminal.get', { terminal: address }, 4000)
-    details.set(address, { at: Date.now(), d })
+    details.set(address, { at: clock(), d })
     if (details.size > 200) details.delete(details.keys().next().value!)
     return d
   }
@@ -138,11 +158,7 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
     const d = await detail(address)
     const info = processInfo(d)
     const procs = info.process_info.foreground_processes
-    // One process table per lookup, read only when something needs it.
-    let table: Promise<string> | null = null
-    const psTable = () => table ??= deps.call<{ stdout?: string }>('machine.exec', {
-      argv: ['ps', '-e', '-o', 'pid=,ppid=,args='], ...(machineOfAddress(address) ? { on: machineOfAddress(address) } : {}), timeout: 5,
-    }, 8000).catch(() => null).then(ps => Buffer.from(ps?.stdout || '', 'base64').toString('utf8'))
+    const psTable = () => cachedPs(machineOfAddress(address))
     if (!procs.some(p => AGENT_PROGRAMS.has(baseName(p.argv?.[0] || p.name))) && typeof d.pid === 'number') {
       procs.unshift(...agentDescendants(await psTable(), d.pid))
     }
@@ -219,7 +235,7 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
           })
           return 'session' in r ? { file: ocFile(r.server, r.session), session: r.session, guessed: true } : null
         }
-        return createTranscripts({ home, herdr, fs, locateCommandCode, locateOpencode, ocExec: shell, codexHistory: name ? undefined : deps.codexHistory })
+        return createTranscripts({ home, herdr, fs, locateCommandCode, locateOpencode, ocExec: shell, ...(deps.now ? { now: deps.now } : {}), codexHistory: name ? undefined : deps.codexHistory })
       })()
       machines.set(name, t)
       // One derived promise, both branches handled — a failed build is

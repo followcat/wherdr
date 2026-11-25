@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -346,4 +346,62 @@ it.each([13, 24])('reads a %s MiB remote ATIF document without exceeding a 16 Mi
   const reader = createCoreTranscripts({ call, pane: () => p, localHome: '/unrelated' })
   expect((await reader.chat(p)).items?.at(-1)?.text).toBe('Large remote reply')
   expect(peak).toBeLessThan(16 * 1024 * 1024)
+})
+
+describe('remote ps cache', () => {
+  it('runs at most one remote ps per machine per 10 s', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'hw-ps-cache-'))
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(1000)
+      const convDir = path.join(home, '.gemini/antigravity-cli/conversations')
+      mkdirSync(convDir, { recursive: true })
+      const psExecs = new Map<string, number>()
+      const panes = Array.from({ length: 5 }, (_, i) => pane(`a${i + 1}`, `host-a/t${i + 1}`, 'agy', '/work/proj', { agentSession: SESSION }))
+      panes.push(pane('b1', 'host-b/t1', 'agy', '/work/proj', { agentSession: SESSION }))
+
+      const call = vi.fn(async (method: string, params: any): Promise<any> => {
+        const on = params.on || ''
+        if (method === 'terminal.get') {
+          const idx = Number(String(params.terminal).split('t')[1] || 1)
+          // Shell foreground so coreTranscripts uses psTable to find child agent process.
+          return { pid: 100 + idx, argv: ['bash'], foreground: { pid: 100 + idx, name: 'bash', argv: ['bash'], cwd: '/work/proj' } }
+        }
+        if (method === 'machine.exec') {
+          if (params.argv?.[0] === 'ps') {
+            psExecs.set(on, (psExecs.get(on) ?? 0) + 1)
+            const rows = Array.from({ length: 5 }, (_, i) => `${101 + i} 1 sh\n${201 + i} ${101 + i} agy --conversation ${SESSION}\n`).join('')
+            return { code: 0, stdout: Buffer.from(rows).toString('base64') }
+          }
+          if (params.argv?.[2] === DEVIN_PROCESS_SCRIPT) {
+            const lines = params.argv.slice(4).map((pid: string) => `${pid} 100 100 1767225600 100.00 1767225700.001 ${Buffer.from(`agy\0--conversation\0${SESSION}\0`).toString('base64')}`)
+            return { code: 0, stdout: Buffer.from(lines.join('\n') + '\n').toString('base64') }
+          }
+          if (params.argv?.[2] === 'printf %s "$HOME"') return { code: 0, stdout: Buffer.from(home).toString('base64') }
+          return { code: 1, stdout: '', stderr: '' }
+        }
+        throw new CoreError('rpc', method)
+      })
+
+      const t = createCoreTranscripts({ call, pane: id => panes.find(x => x.id === id), localHome: '/unrelated' })
+      // Concurrent locate across 5 panes on host-a at t=1000.
+      await Promise.all(panes.slice(0, 5).map(p => t.locate(p)))
+      expect(psExecs.get('host-a') ?? 0).toBe(1)
+
+      // At t=9500, locCache (8s) and detail (1.5s) expired, triggering herdr again,
+      // while psCache (10s) still serves cached ps output.
+      vi.setSystemTime(9500)
+      await t.locate(panes[0]!)
+      expect(psExecs.get('host-a') ?? 0).toBe(1)
+
+      // Separate machine maintains its own ps cache.
+      await t.locate(panes[5]!)
+      expect(psExecs.get('host-b') ?? 0).toBe(1)
+
+      // After 10 s (and locCache > 8s past 9500), a fresh lookup issues one new ps for host-a.
+      vi.setSystemTime(18_000)
+      await t.locate(panes[0]!)
+      expect(psExecs.get('host-a') ?? 0).toBe(2)
+    } finally { vi.useRealTimers(); rmSync(home, { recursive: true, force: true }) }
+  })
 })
