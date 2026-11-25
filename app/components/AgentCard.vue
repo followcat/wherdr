@@ -28,7 +28,7 @@ import { SEVERITIES, verdictGlance } from '#shared/pm/verdict'
 
 // `machineBadge`: the machine's name on a card of the State grouping.
 // `agents`: every agent of the card's task when it has several (`pane` is the most urgent).
-const props = defineProps<{ pane: Pane, row?: Row | null, machineBadge?: string, agents?: { pane: Pane, machine?: string }[] }>()
+const props = defineProps<{ pane: Pane, row?: Row | null, machineBadge?: string, agents?: { pane: Pane, machine?: string }[], titleOverride?: string, agentSubtitle?: boolean }>()
 const space = computed(() => (props.row && props.row.kind === 'space' ? props.row : null))
 // Pane whose state the card shows.
 const statePane = computed(() => props.pane)
@@ -51,7 +51,7 @@ const branch = computed(() => ws.value?.branch || null)
 const task = computed(() => (isIndividualAgentRow(props.row) ? taskAgentOf(props.pane) : undefined))
 // Its task id in the project's colored key badge; the title then leaves the key out.
 const badge = computed(() => (task.value ? { text: task.value.shown, color: paneBadge({ ...props.pane, task: task.value.task })?.color } : null))
-const title = computed(() => isIndividualAgentRow(props.row) ? paneTaskTitle(props.pane, !badge.value) || individualAgentTitle(props.pane) : homeTitle(props.pane, ws.value))
+const title = computed(() => props.titleOverride || (isIndividualAgentRow(props.row) ? paneTaskTitle(props.pane, !badge.value) || individualAgentTitle(props.pane) : homeTitle(props.pane, ws.value)))
 const roleTitleOf = (role: AgentRole) => ({ 'dev': tl('Working on the task'), 'review': tl('Reviewing'), 'fix': tl('Fixing what was sent back'), 'catch-up': tl('Merging the base branch') })[role]
 const age = computed(() => (task.value ? stateDuration(props.pane.since, taskAgentsNow.value) : ''))
 // A task's row: one line per agent under the title, 'ROLE · machine · last message'.
@@ -72,7 +72,8 @@ function verdictLine(text: string): string {
   return `${tl(`${v.total} findings`)}: ${[...SEVERITIES].reverse().filter(s => v.count[s]).map(s => `${v.count[s]} ${tl(s)}`).join(', ')}`
 }
 // Normal mode: the current activity on a second line, unless the answers show below.
-const activityLine = computed(() => !task.value && !more.value ? preview.value || '' : '')
+const activityLine = computed(() => !props.agentSubtitle && !task.value && !more.value ? preview.value || '' : '')
+const agentSubtitleLine = computed(() => props.agentSubtitle ? [kindLabel(props.pane.agent), preview.value].filter(Boolean).join(' · ') : '')
 const subtitle = computed(() => (isAlfredPane(props.pane) ? '' : conversationSubtitle(props.pane, ws.value)))
 // Selection (computer): the pane being viewed, or for a space one of its panes / tabs.
 const route = useRoute()
@@ -235,7 +236,7 @@ onUnmounted(list.unmount)
 <template>
   <UContextMenu :disabled="sheetMenus" :items="contextItems" :press-open-delay="700" :ui="{ content: 'hw-dropdown' }" @update:open="onContextOpen">
     <div
-      ref="card" class="card" :class="[cardStatus, { sel: selected, stale: paneStale(pane), 'space-card': space, 'task-reserve': task?.reserve && !grouped, compact: true, open: more, 'home-task-two': activityLine || task, 'task-row': task }]" :data-pane="pane.id" :data-space="space?.workspace.id" :data-ws="pane.workspace"
+      ref="card" class="card" :class="[cardStatus, { sel: selected, stale: paneStale(pane), 'space-card': space, 'task-reserve': task?.reserve && !grouped, compact: true, open: more, 'home-task-two': activityLine || agentSubtitleLine || task, 'task-row': task }]" :data-pane="pane.id" :data-space="space?.workspace.id" :data-ws="pane.workspace"
       role="button" tabindex="0" @pointerenter="hover" @pointerleave="intent.cancel" @pointerdown="down" @pointermove="lp.move" @pointerup="lp.cancel" @pointercancel="lp.cancel(); intent.cancel()"
       @contextmenu="onContext" @selectstart.prevent @click="open" @keydown.enter.self="open"
     >
@@ -260,6 +261,7 @@ onUnmounted(list.unmount)
         <span v-if="grouped" class="card-state" :class="statusKey(l.pane)" :title="statusLabel(l.pane)" role="img" :aria-label="statusLabel(l.pane)"><i /></span>
       </div>
       <span v-if="activityLine" class="home-task-line" :title="activityLine">{{ activityLine }}</span>
+      <span v-if="agentSubtitleLine" class="home-task-line card-subtitle" :title="agentSubtitleLine" data-testid="studio-role-subtitle">{{ agentSubtitleLine }}</span>
       <OmpContext v-if="statePane.agent === 'omp'" :pane="statePane" variant="bar" />
       <Transition name="card-more" :appear="appear">
         <div v-if="more" class="card-more">

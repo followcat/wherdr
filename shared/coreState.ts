@@ -119,6 +119,7 @@ export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], do
       status, interaction: 'unknown', ...(terminal.labels && Object.keys(terminal.labels).length ? { labels: { ...terminal.labels } } : {}), ...(terminal.labels?.[LABEL.task] ? { task: terminal.labels[LABEL.task], ...(terminal.labels[LABEL.role] ? { role: terminal.labels[LABEL.role] } : {}) } : {}),
       ...(terminal.labels?.['wherdr.coordinator'] !== undefined ? { coordinator: true } : {}),
       ...(terminal.labels?.['backlot.role'] ? { backlotRole: terminal.labels['backlot.role'] } : {}),
+      ...(terminal.labels?.['backlot.studio'] ? { backlotStudio: terminal.labels['backlot.studio'] } : {}),
       ...(updated ? { stopped: { reason: 'update' as const } } : agent === 'codex' && codexInstalling(terminal.title, terminal.status?.msg) ? { installing: true } : {}),
       ...(typeof terminal.status_ms === 'number' ? { stateSeq: terminal.status_ms, since: terminal.status_ms } : terminal.turn ? { stateSeq: terminal.turn } : {}) }
     result.panes.push(pane)

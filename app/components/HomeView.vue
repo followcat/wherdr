@@ -13,7 +13,7 @@ import type { MachineInfo, Pane } from '#shared/types'
 import { type ReadySort, type Row, type RowGroup, createRowReuse, paneGroup, readyLists, rowGroup, sortReady, spaceRows, urgency } from '#shared/spaces'
 import { claudeApiShown, machineQuotaRows, quotaBlocks, quotaRows, tabQuotaRows } from '~/utils/quotas'
 import { longPress } from '~/utils/longPress'
-import { LIST_DEFAULT, LIST_MAX, LIST_MIN, LIST_RAIL, clampListWidth, listWidthCss, readListCollapsed, readListWidth, saveListCollapsed, saveListWidth } from '~/utils/sideWidth'
+import { LIST_DEFAULT, LIST_MAX, LIST_MIN, LIST_RAIL, clampListWidth, listWidthCss, readListCollapsed, readListWidth, readStudioCollapsed, saveListCollapsed, saveListWidth, saveStudioCollapsed } from '~/utils/sideWidth'
 import { headerFold } from '~/utils/headerFold'
 import { hasHeaderActions, registerHeaderActionsSlot } from '~/utils/headerActions'
 import { quietPeriodEnd } from '~/utils/quietPeriodEnd'
@@ -23,6 +23,7 @@ import { stateMachines } from '~/utils/homeGrouping'
 import { BAR_ALL, barMachineSelection } from '~/utils/machineBar'
 import { type CountGroup, countsTotal, tabCounts } from '~/utils/projectTabs'
 import { individualAgentRows, individualAgentTitle, isIndividualAgentRow } from '~/utils/homeAgentRows'
+import { createStudioRowReuse, isStudioGroup, studioGroupRows, studioRowGroup, withoutBacklotDaemons, type StudioHomeRow } from '~/utils/studioGroups'
 import { boardEntry } from '~/utils/boardEntry'
 import { groupTaskAgents } from '~/utils/taskAgentRow'
 import type { PmOverview } from '#shared/pm/project'
@@ -44,7 +45,8 @@ watch(eventsOpen, (v) => { if (v) everOpen.value = true })
 // wherdr's own splits go with it (the cards' mini-maps).
 let shownState = { ...herdrState.value, splits: tabSplits.value }
 const st = computed(() => (homeShown.value ? (shownState = { ...herdrState.value, splits: tabSplits.value }) : shownState))
-const agents = computed(() => st.value.panes)
+const agents = computed(() => withoutBacklotDaemons(st.value.panes))
+const homeState = computed(() => ({ ...st.value, panes: agents.value }))
 // Mounted only while the list is shown: mounting again reads at once.
 const HomePollers = defineComponent({
   name: 'HomePollers',
@@ -103,21 +105,38 @@ const stats = computed(() => ([
 
 // Herdr's order stays that of each repository list. The Ready group may
 // show unread before read, and be sorted differently (readySort).
-function groupsOf(list: Row[], rawGroup = rowGroup) {
-  const group = (r: Row) => { const g = rawGroup(r); return g === 'unknown' ? 'ready' : g }
+const homeRowGroup = (r: StudioHomeRow): RowGroup => isStudioGroup(r) ? studioRowGroup(r) : rowGroup(r)
+function groupsOf(list: StudioHomeRow[], rawGroup = homeRowGroup) {
+  const group = (r: StudioHomeRow) => { const g = rawGroup(r); return g === 'unknown' ? 'ready' : g }
   return ([
     { key: 'blocked', title: t('Your turn'), list: list.filter(r => group(r) === 'blocked') },
     { key: 'working', title: t('Working'), list: list.filter(r => group(r) === 'working') },
     { key: 'ready', title: tl('Ready', 'Prêts'), list: list.filter(r => group(r) === 'ready') },
   ] as const).filter(g => g.list.length).map(g => ({ ...g, lists: g.key === 'ready' ? readyLists(g.list, autoReorderReady.value).map(l => sortReady(l, readySort.value, rowTitle)) : [g.list] }))
 }
-const rowTitle = (r: Row) => isIndividualAgentRow(r) ? paneTaskTitle(r.lead) || individualAgentTitle(r.lead) : homeTitle(r.lead, st.value.workspaces.find(w => w.id === r.lead.workspace))
+const rowTitle = (r: StudioHomeRow) => isStudioGroup(r) ? r.title : isIndividualAgentRow(r) ? paneTaskTitle(r.lead) || individualAgentTitle(r.lead) : homeTitle(r.lead, st.value.workspaces.find(w => w.id === r.lead.workspace))
 // Same row object for a card whose row did not change: it does not re-render.
 const reuseRows = createRowReuse()
 // Coordinators (Alfred and each project's) have their own rows above the list.
 const coordinatorAddresses = computed(() => new Set([alfred.value?.terminal, ...coordinators.value.map(c => c.terminal)].filter((a): a is string => !!a)))
 const isCoordinatorPane = (p: Pane) => !!p.coreAddress && coordinatorAddresses.value.has(p.coreAddress)
 const standaloneRows = (rows: Row[]) => reuseRows(individualAgentRows(rows, coordinatorAddresses.value))
+const reuseStudioRows = createStudioRowReuse()
+const studioRows = (rows: Row[]) => reuseStudioRows(studioGroupRows(standaloneRows(rows), machines.value))
+// Collapse of studio groups is per device; a waiting group is forced open and
+// the saved choice is left untouched until it is answered.
+const collapsedStudios = ref<Set<string>>(new Set(readStudioCollapsed()))
+const studioOpen = (group: Extract<StudioHomeRow, { kind: 'studio' }>) => group.waitingCount > 0 || !collapsedStudios.value.has(group.key)
+function toggleStudio(group: Extract<StudioHomeRow, { kind: 'studio' }>) {
+  if (group.waitingCount > 0) return
+  const next = new Set(collapsedStudios.value)
+  if (next.has(group.key)) next.delete(group.key)
+  else next.add(group.key)
+  collapsedStudios.value = next
+  saveStudioCollapsed([...next])
+}
+const studioMachineLabel = (group: Extract<StudioHomeRow, { kind: 'studio' }>) => machineName(group.machineKey) || (group.machineKey === '' ? hostLabel.value : '') || group.machineLabel
+const rowCountInSection = (row: StudioHomeRow) => isStudioGroup(row) ? row.panes.length : 1
 // Sort menu of the Ready group; sorted other than in the default order, the
 // list can no longer be reordered manually.
 const READY_SORT_LABELS: Record<ReadySort, [string, string]> = {
@@ -157,7 +176,7 @@ const stateAway = computed(() => stateShown.value.away.map(m => ({
 // A machine label on each card only when the list mixes several machines.
 const mixed = computed(() => stateShown.value.online.length > 1)
 const stateCards = computed(() => stateShown.value.online.flatMap(m =>
-  standaloneRows(spaceRows(st.value, m.key)).map(row => ({ row, machine: mixed.value ? machineName(m.key) || m.label : undefined }))))
+  studioRows(spaceRows(homeState.value, m.key)).map(row => ({ row, machine: mixed.value ? machineName(m.key) || m.label : undefined }))))
 // Agents of the same task share one row, in the group of the most urgent one.
 const stateEntries = computed(() => groupTaskAgents(stateCards.value, c => (isIndividualAgentRow(c.row) ? taskAgentOf(c.row.lead)?.task : undefined), c => urgency(c.row.lead)))
 const stateCardByKey = computed(() => new Map(stateEntries.value.map(e => [e.lead.row.key, {
@@ -170,7 +189,7 @@ const stateGroups = computed(() => groupsOf(stateEntries.value.map(e => e.lead.r
 // A tab counts what it lists (the same helper as the counters): the rows of
 // the list, not the terminals, and its running coordinators.
 const countGroup = (g: RowGroup): CountGroup => (g === 'unknown' ? 'ready' : g)
-const countedRows = computed(() => standaloneRows(spaceRows(st.value)).filter(r => !paneStale(r.lead))
+const countedRows = computed(() => standaloneRows(spaceRows(homeState.value)).filter(r => !paneStale(r.lead))
   .map(r => ({ base: baseOfPane(r.lead), group: countGroup(rowGroup(r)) })))
 const countedCoordinators = computed(() => [
   ...(alfredPane.value && !paneStale(alfredPane.value) ? [{ tabMachines: null, group: countGroup(paneGroup(alfredPane.value)) }] : []),
@@ -566,7 +585,7 @@ function resetListWidth() {
 
       <p v-if="machineBarSelection?.length === 0" class="machine-empty">{{ tl('No machines in this group.', 'Aucune machine dans ce groupe.') }}</p>
       <section v-for="g in stateGroups" :key="g.key" class="agent-group state-group" :class="g.key">
-        <h2 class="group-title"><span>{{ g.title }}</span><span class="count">{{ g.list.length }}</span>
+        <h2 class="group-title"><span>{{ g.title }}</span><span class="count">{{ g.list.reduce((n, r) => n + rowCountInSection(r), 0) }}</span>
           <UDropdownMenu v-if="g.key === 'ready'" :items="readySortItems" :content="{ align: 'end' }" :ui="{ content: 'hw-dropdown' }">
             <UButton :icon="READY_SORT_LABELS[readySort][1]" color="neutral" variant="ghost" size="xs" class="group-sort" :aria-label="`${t('Sort ready')} : ${t(READY_SORT_LABELS[readySort][0])}`" />
           </UDropdownMenu>
@@ -574,7 +593,10 @@ function resetListWidth() {
         <template v-for="(cards, i) in g.lists" :key="i">
           <p v-if="g.key === 'ready' && g.lists.length > 1" class="ready-subgroup-label">{{ t(i === 0 ? 'Unread' : 'Read') }}</p>
           <div class="card-list">
-            <AgentCard v-for="r in cards" :key="r.key" :pane="r.lead" :row="r" :machine-badge="stateCardByKey.get(r.key)?.machine" :agents="stateCardByKey.get(r.key)?.agents" />
+            <template v-for="r in cards" :key="r.key">
+              <StudioGroupCard v-if="isStudioGroup(r)" :group="r" :open="studioOpen(r)" :machine-label="studioMachineLabel(r)" @toggle="toggleStudio(r)" />
+              <AgentCard v-else :pane="r.lead" :row="r" :machine-badge="stateCardByKey.get(r.key)?.machine" :agents="stateCardByKey.get(r.key)?.agents" />
+            </template>
           </div>
         </template>
       </section>
