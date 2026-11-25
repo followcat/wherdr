@@ -43,7 +43,7 @@ const BASE = [
   'GET backlot', 'backlot/action',
   'chat', 'chat/image', 'prompt', 'input', 'interrupt', 'close', 'agents', 'codex-restart',
   'dirs', 'isgit', 'quotas', 'claude-statusline', 'claude-setup', 'proxies',
-  'machine/add', 'machine/connect', 'machine/core', 'machine/core-rename', 'machine/core-forget',
+  'machine/add', 'machine/connect', 'machine/core', 'machine/core-rename', 'machine/core-forget', 'GET machine/local-sessions',
   'upload', 'attach', 'file', 'keep', 'open-editor',
   'dictation/status', 'dictation/key', 'dictation/transcribe', 'dictation/prepare', 'GET dictation/models',
   'dictation/rewrite', 'GET dictation/text-models',
