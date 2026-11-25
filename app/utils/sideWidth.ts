@@ -48,6 +48,26 @@ export function saveListCollapsed(collapsed: boolean) {
   } catch { /* stockage indisponible */ }
 }
 
+
+// Home's collapsed backlot studio groups, kept on this device as their keys
+// (<machineKey>:<studioId>) in a JSON list.
+const STUDIO_COLLAPSED_KEY = 'studioCollapsed'
+
+export function readStudioCollapsed(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(STUDIO_COLLAPSED_KEY) || '[]')
+    return Array.isArray(v) ? v.filter((x, i): x is string => typeof x === 'string' && x.length > 0 && v.indexOf(x) === i) : []
+  } catch { return [] }
+}
+
+export function saveStudioCollapsed(keys: readonly string[]) {
+  try {
+    const unique = [...new Set(keys)].filter(Boolean)
+    if (unique.length) localStorage.setItem(STUDIO_COLLAPSED_KEY, JSON.stringify(unique))
+    else localStorage.removeItem(STUDIO_COLLAPSED_KEY)
+  } catch { /* storage unavailable */ }
+}
+
 // Width of the side panel beside the conversation (Settings, or a place an
 // agent opens), set with the handle on its left edge and kept on the device.
 // null: the CSS default, clamp(440px, 36vw, 560px).

@@ -27,6 +27,12 @@
 - **Rows**: one line per card; an agent outside a task adds its current activity on a second
   line, and terminal spaces are filed under Ready. Every agent terminal is its own row, with its
   pane or tab label.
+- **Backlot studio groups**: terminals carrying `backlot.studio` fold into one collapsible row per
+  studio and machine, and Hollywood's terminals into one `Hollywood` row. The header shows the
+  group's state, machine and session, and how many roles wait for you; inside, each role keeps its
+  own agent row, state, activity and answers. A waiting role puts the group in **Your turn** and
+  opens it even if you folded it before. The `backlot-stage` and `backlot-server` daemons never
+  appear in the list or its counters.
 - **Task agents**: an agent the [project engine](project-management.md) started for a task keeps
   its own status, but its row is named after its task: the state square, the task id badge, the
   task title (cut when long; a pane you renamed keeps your name, in the conversation header and

@@ -1,5 +1,6 @@
 import type { CoreEvent } from '../../shared/coreEvents'
 import type { CoreTerminal } from '../../shared/coreInventory'
+import { isBacklotDaemonTerminal } from '../../shared/backlotDaemon'
 
 // Push alerts from herdr-core events, with herdr-app's rules: nothing for a sub-agent
 // (a terminal with a parent), nothing before the first snapshot (the session only
@@ -13,8 +14,7 @@ export interface CoreAlertDeps {
   send: (address: string, kind: CoreAlertKind) => void
 }
 const stateOf = (t?: CoreTerminal) => t?.status?.state
-const isBacklotDaemon = (t: CoreTerminal) =>
-  t.name === 'backlot-stage' || t.name === 'backlot-server' || t.labels?.['backlot.role'] === 'stage' || t.labels?.['backlot.role'] === 'server'
+const isBacklotDaemon = (t: CoreTerminal) => isBacklotDaemonTerminal(t)
 
 export function createCoreAlerts(deps: CoreAlertDeps) {
   const timers = new Map<string, ReturnType<typeof setTimeout>>()

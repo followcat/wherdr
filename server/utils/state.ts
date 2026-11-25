@@ -6,6 +6,7 @@ import path from 'node:path'
 import type { ChatItem, ChatResponse, HerdrState, ModelInfo, Pane } from '../../shared/types'
 import { coordinatorTarget, type NotificationEvent } from '../../shared/notificationRules'
 import { hasTranscript } from '../../shared/agentKind'
+import { isBacklotDaemonTerminal } from '../../shared/backlotDaemon'
 import { type CoreAlertKind } from './coreAlerts'
 import { createCorePool, registerPoolRuntime, resolveConfiguredSockets, type CoreEntry } from './corePool'
 import { filterAllowedHcSockets, hcSockets, onSettingsChange } from './settings'
@@ -489,7 +490,7 @@ const coordinatorAt = async (address: string) => {
 async function notifyCorePane(machineKey: string, address: string, kind: CoreAlertKind) {
   const p = state.panes.find(x => (x.machine ?? '') === machineKey && x.coreAddress === address)
   if (!p || isViewed(p.id)) return
-  if (p.name === 'backlot-stage' || p.name === 'backlot-server' || p.backlotRole === 'stage' || p.backlotRole === 'server') return
+  if (isBacklotDaemonTerminal(p)) return
   const m = state.machines?.find(x => x.key === machineKey)
   const primary = !m || m.baseKey === undefined
   // A project task's agent waiting for the user goes into the grouped push of what waits for the user (pmDecisions.ts).

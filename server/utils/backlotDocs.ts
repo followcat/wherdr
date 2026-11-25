@@ -5,6 +5,7 @@ import type { BacklotMachineView, BacklotSummary } from '../../shared/backlot'
 import { parseBacklotDoc } from '../../shared/backlot'
 import type { CoreMachine } from '../../shared/coreState'
 import type { CoreTerminal } from '../../shared/coreInventory'
+import { isBacklotDaemonTerminal } from '../../shared/backlotDaemon'
 import { localMachineLabel } from './machines'
 
 const TTL = 4000
@@ -12,8 +13,7 @@ type Call = <T>(method: string, params: object, timeout?: number) => Promise<T>
 
 const ended = (state: string) => state === 'finished' || state === 'lost'
 const machineOf = (address: string) => (address.includes('/') ? address.split('/')[0]! : '')
-const isStage = (t: CoreTerminal) =>
-  t.name === 'backlot-stage' || t.name === 'backlot-server' || t.labels?.['backlot.role'] === 'stage' || t.labels?.['backlot.role'] === 'server'
+const isStage = (t: CoreTerminal) => isBacklotDaemonTerminal(t)
 
 const prefixRemoteTerminals = (doc: BacklotSummary, machine: string): BacklotSummary => !machine ? doc : {
   ...doc,

@@ -17,7 +17,7 @@ export function individualAgentRows(rows: Row[], hidden?: ReadonlySet<string>): 
   })
 }
 
-export function isIndividualAgentRow(row: Row | null | undefined): row is IndividualAgentRow {
+export function isIndividualAgentRow(row: { kind: string } | null | undefined): row is IndividualAgentRow {
   return row?.kind === 'pane' && 'individual' in row && row.individual === true
 }
 

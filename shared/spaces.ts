@@ -93,11 +93,21 @@ export function paneGroup(p: Pick<Pane, 'agent' | 'status' | 'coreAddress'>): Ro
 }
 export const rowGroup = (r: Row): RowGroup => paneGroup(r.lead)
 
+// A list row with one or several panes: the ordinary pane/space rows above,
+// or an app's grouped row (a backlot studio) with the same shape.
+export interface ListedRow {
+  kind: string
+  lead: Pane
+  pane?: Pane
+  panes?: Pane[]
+}
+const listedPanes = (r: ListedRow): Pane[] => r.panes ?? (r.pane ? [r.pane] : [r.lead])
+
 // The Ready group can be split into independent repository lists. Herdr's
 // order is kept in each list; a space is unread if a pane has finished.
-export function readyLists(rows: Row[], automatic: boolean): Row[][] {
+export function readyLists<R extends ListedRow>(rows: R[], automatic: boolean): R[][] {
   if (!automatic) return [rows]
-  const unread = rows.filter(r => (r.kind === 'space' ? r.panes : [r.pane]).some(p => p.agent && p.status === 'done'))
+  const unread = rows.filter(r => listedPanes(r).some(p => p.agent && p.status === 'done'))
   const read = rows.filter(r => !unread.includes(r))
   return [unread, read].filter(list => list.length)
 }
@@ -107,9 +117,9 @@ export function readyLists(rows: Row[], automatic: boolean): Row[][] {
 // its panes), or name. `title`: the row's displayed title.
 export const READY_SORTS = ['herdr', 'recent', 'name'] as const
 export type ReadySort = typeof READY_SORTS[number]
-export function sortReady(rows: Row[], sort: ReadySort, title: (r: Row) => string): Row[] {
+export function sortReady<R extends ListedRow>(rows: R[], sort: ReadySort, title: (r: R) => string): R[] {
   if (sort === 'herdr') return rows
-  const seq = (r: Row) => Math.max(-1, ...(r.kind === 'space' ? r.panes : [r.pane]).map(p => p.stateSeq ?? -1))
+  const seq = (r: R) => Math.max(-1, ...listedPanes(r).map(p => p.stateSeq ?? -1))
   const key = new Map(rows.map(r => [r, sort === 'recent' ? seq(r) : title(r)]))
   // Stable sort: on a tie (shells without an agent…), Herdr's order stays.
   return [...rows].sort((a, b) => sort === 'recent'
