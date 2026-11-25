@@ -1,0 +1,1 @@
+{ "name": "Hello header", "version": "1.0.0", "description": "Test plugin: a header button that inserts a template into the draft and focuses the composer.", "main": "index.js" }

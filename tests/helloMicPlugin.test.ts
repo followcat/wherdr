@@ -15,9 +15,13 @@ function setup(load: HostDeps['load']) {
   const host = createPluginHost({
     list: async () => ({ plugins: [{ id: 'hello-mic', name: 'Hello mic', version: '1.0.0', description: '', main: 'index.js' }], enabled: true }),
     load,
+    getDraft: () => null,
+    setDraft: () => {},
     insertDraft: insert,
+    focusDraft: () => {},
     currentAgent: () => null,
     subscribeNavigate: (cb) => { navs.add(cb); return () => navs.delete(cb) },
+    mountHeaderAction: () => () => {},
     prefs: () => prefs,
     savePrefs: (p) => { prefs = p },
     changed: () => {},

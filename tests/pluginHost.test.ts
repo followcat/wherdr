@@ -6,21 +6,36 @@ const info = (id: string): ClientPluginInfo => ({ id, name: id, version: '1', de
 
 function setup(plugins: Record<string, unknown>, prefs: PluginPrefs = { off: [], failed: {} }, enabled = true) {
   let saved = prefs
+  let draftText: string | null = 'initial'
   const navs = new Set<(p: string) => void>()
-  const insert = vi.fn()
+  const headerMounts = new Set<(el: unknown) => unknown>()
+  const insert = vi.fn((t: string) => {
+    if (draftText !== null) draftText = draftText && !/\s$/.test(draftText) ? `${draftText} ${t}` : draftText + t
+  })
+  const focus = vi.fn()
   const deps: HostDeps = {
     list: async () => ({ plugins: Object.keys(plugins).map(info), enabled }),
     load: async i => ({ default: plugins[i.id] }),
+    getDraft: () => draftText,
+    setDraft: (t) => { if (draftText !== null) draftText = t },
     insertDraft: insert,
+    focusDraft: focus,
     currentAgent: () => ({ id: 'w1:p1', agent: 'claude', name: 'demo', machine: null }),
     subscribeNavigate: (cb) => { navs.add(cb); return () => navs.delete(cb) },
+    mountHeaderAction: (render) => { headerMounts.add(render); return () => headerMounts.delete(render) },
     prefs: () => saved,
     savePrefs: (p) => { saved = p },
     changed: () => {},
     timeoutMs: 50,
   }
   const host = createPluginHost(deps)
-  return { host, deps, insert, navs, saved: () => saved, status: (id: string) => host.rows().find(r => r.id === id)?.status }
+  return {
+    host, deps, insert, focus, navs, headerMounts,
+    getDraft: () => draftText,
+    setDraftRaw: (v: string | null) => { draftText = v },
+    saved: () => saved,
+    status: (id: string) => host.rows().find(r => r.id === id)?.status,
+  }
 }
 
 describe('plugin host', () => {
@@ -143,10 +158,149 @@ describe('plugin host', () => {
 
   it('survives a failing manifest list', async () => {
     const s = setup({})
-    const h = createPluginHost({ ...({ list: async () => { throw new Error('offline') } } as Partial<HostDeps>), insertDraft() {}, currentAgent: () => null, subscribeNavigate: () => () => {}, prefs: s.saved, savePrefs() {}, changed() {}, load: async () => ({}) } as HostDeps)
+    const h = createPluginHost({ ...s.deps, list: async () => { throw new Error('offline') } })
     await h.init()
     expect(h.rows()).toEqual([])
     expect(h.listError()).toBe('offline')
+  })
+
+  it('exposes draft.get, draft.set and draft.focus with and without a conversation', async () => {
+    let api!: Parameters<Exclude<Parameters<typeof setup>[0][string], undefined>>[0] & {
+      draft: { get: () => string | null, set: (t: string) => void, insert: (t: string) => void, focus: () => void }
+    }
+    const s = setup({ p: (w: typeof api) => { api = w } })
+    await s.host.init()
+    expect(api.draft.get()).toBe('initial')
+    api.draft.set('replaced')
+    expect(api.draft.get()).toBe('replaced')
+    api.draft.set('')
+    expect(api.draft.get()).toBe('')
+    api.draft.focus()
+    expect(s.focus).toHaveBeenCalledTimes(1)
+    s.setDraftRaw(null)
+    expect(api.draft.get()).toBeNull()
+    api.draft.set('ignored')
+    expect(s.getDraft()).toBeNull()
+  })
+
+  it('disposes every registration when deactivate is missing, throws, or rejects, and disposers are idempotent', async () => {
+    const rawOff = vi.fn()
+    let navOff!: () => void
+    let actionOff!: () => void
+    const customHost = (plugin: unknown) => {
+      let saved: PluginPrefs = { off: [], failed: {} }
+      const navs = new Set<() => void>()
+      const mounts = new Set<() => void>()
+      const host = createPluginHost({
+        list: async () => ({ plugins: [info('p')], enabled: true }),
+        load: async () => ({ default: plugin }),
+        getDraft: () => null,
+        setDraft() {},
+        insertDraft() {},
+        focusDraft() {},
+        currentAgent: () => null,
+        subscribeNavigate: (cb) => {
+          const fn = () => { cb('/') }
+          navs.add(fn)
+          return () => { rawOff(); navs.delete(fn) }
+        },
+        mountHeaderAction: () => {
+          const fn = () => {}
+          mounts.add(fn)
+          return () => mounts.delete(fn)
+        },
+        prefs: () => saved,
+        savePrefs: (p) => { saved = p },
+        changed: () => {},
+        timeoutMs: 50,
+      })
+      return { host, navs, mounts }
+    }
+
+    // Function plugin (deactivate missing)
+    const missing = customHost((w: { onNavigate: (c: () => void) => () => void, mountHeaderAction: (r: () => void) => () => void }) => {
+      navOff = w.onNavigate(() => {})
+      actionOff = w.mountHeaderAction(() => {})
+    })
+    await missing.host.init()
+    expect(missing.navs.size).toBe(1)
+    expect(missing.mounts.size).toBe(1)
+    navOff()
+    navOff()
+    expect(rawOff).toHaveBeenCalledTimes(1)
+    await missing.host.setEnabled('p', false)
+    expect(missing.navs.size).toBe(0)
+    expect(missing.mounts.size).toBe(0)
+    actionOff()
+    expect(missing.mounts.size).toBe(0)
+
+    // Throwing deactivate
+    const throwing = customHost({
+      activate: (w: { onNavigate: (c: () => void) => () => void, mountHeaderAction: (r: () => void) => () => void }) => {
+        w.onNavigate(() => {})
+        w.mountHeaderAction(() => {})
+      },
+      deactivate: () => { throw new Error('teardown failed') },
+    })
+    await throwing.host.init()
+    await throwing.host.setEnabled('p', false)
+    expect(throwing.navs.size).toBe(0)
+    expect(throwing.mounts.size).toBe(0)
+
+    // Rejecting deactivate
+    const rejecting = customHost({
+      activate: (w: { onNavigate: (c: () => void) => () => void, mountHeaderAction: (r: () => void) => () => void }) => {
+        w.onNavigate(() => {})
+        w.mountHeaderAction(() => {})
+      },
+      deactivate: () => Promise.reject(new Error('async teardown failed')),
+    })
+    await rejecting.host.init()
+    await rejecting.host.setEnabled('p', false)
+    expect(rejecting.navs.size).toBe(0)
+    expect(rejecting.mounts.size).toBe(0)
+  })
+
+  it('disables only a plugin whose callback rejects and disposes all its registrations while others keep running', async () => {
+    const s = setup({
+      bad: (w: { onNavigate: (c: () => Promise<void>) => void, mountHeaderAction: (r: () => void) => void }) => {
+        w.onNavigate(async () => { throw new Error('async boom') })
+        w.mountHeaderAction(() => {})
+      },
+      good: (w: { onNavigate: (c: (p: string) => void) => void, mountHeaderAction: (r: () => void) => void }) => {
+        w.onNavigate(p => s.insert(`good:${p}`))
+        w.mountHeaderAction(() => {})
+      },
+    })
+    await s.host.init()
+    expect(s.navs.size).toBe(2)
+    expect(s.headerMounts.size).toBe(2)
+    s.navs.forEach(cb => cb('/a'))
+    await vi.waitFor(() => expect(s.status('bad')).toBe('failed'))
+    expect(s.status('good')).toBe('running')
+    expect(s.navs.size).toBe(1)
+    expect(s.headerMounts.size).toBe(1)
+    s.navs.forEach(cb => cb('/b'))
+    expect(s.insert).toHaveBeenCalledWith('good:/b')
+  })
+
+  it('disposes all registrations across plugins when Community plugins is turned off', async () => {
+    const s = setup({
+      a: (w: { onNavigate: (c: () => void) => void, mountHeaderAction: (r: () => void) => void }) => {
+        w.onNavigate(() => {})
+        w.mountHeaderAction(() => {})
+      },
+      b: (w: { onNavigate: (c: () => void) => void, mountHeaderAction: (r: () => void) => void }) => {
+        w.onNavigate(() => {})
+        w.mountHeaderAction(() => {})
+      },
+    })
+    await s.host.init()
+    expect(s.navs.size).toBe(2)
+    expect(s.headerMounts.size).toBe(2)
+    await s.host.setCommunity(false)
+    expect(s.navs.size).toBe(0)
+    expect(s.headerMounts.size).toBe(0)
   })
 })
 
