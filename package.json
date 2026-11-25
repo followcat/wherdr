@@ -41,7 +41,7 @@
     "check:leaks": "node scripts/check-leaks.mjs",
     "hooks:install": "git config core.hooksPath .githooks",
     "test:affected": "node scripts/test-affected.mjs",
-    "build:example-plugin": "esbuild docs/examples/plugins/hello-mic/src/index.ts --bundle --format=esm --target=es2020 --outfile=docs/examples/plugins/hello-mic/index.js"
+    "build:example-plugin": "esbuild docs/examples/plugins/hello-mic/src/index.ts --bundle --format=esm --target=es2020 --outfile=docs/examples/plugins/hello-mic/index.js && esbuild docs/examples/plugins/hello-header/src/index.ts --bundle --format=esm --target=es2020 --outfile=docs/examples/plugins/hello-header/index.js && esbuild docs/examples/plugins/agents-count/src/index.ts --bundle --format=esm --target=es2020 --outfile=docs/examples/plugins/agents-count/index.js"
   },
   "dependencies": {
     "qrcode-terminal": "^0.12.0",

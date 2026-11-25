@@ -1,6 +1,86 @@
 // wherdr plugins (client side): prebuilt ESM bundles in DATA_DIR/plugins/<id>/,
 // described by a manifest.json. Shared by the server (list, serve) and the page.
 
+import type { AgentStatus, MachineInfo, Pane } from './types'
+
+/** Public read-only agent summary exposed to client plugins (never carries coreAddress, cwd, session, or socket paths). */
+export interface PublicAgent {
+  id: string
+  machine: string | null
+  name: string | null
+  title: string | null
+  agent: string | null
+  status: AgentStatus | null
+  labels: Record<string, string>
+}
+
+/** Public machine summary exposed to client plugins (never carries session or connection errors). */
+export interface PublicMachine {
+  id: string
+  groupKey: string
+  label: string
+  local: boolean
+  status: MachineInfo['status']
+}
+
+function cloneLabels(labels?: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!labels) return out
+  for (const key of Object.keys(labels).sort()) {
+    const value = labels[key]
+    if (typeof value === 'string') out[key] = value
+  }
+  return out
+}
+
+/** Copy a list of PublicAgent objects and their label maps so plugin mutations stay isolated. */
+export function clonePublicAgents(list: readonly PublicAgent[]): PublicAgent[] {
+  return list.map(a => ({
+    id: a.id,
+    machine: a.machine,
+    name: a.name,
+    title: a.title,
+    agent: a.agent,
+    status: a.status,
+    labels: cloneLabels(a.labels),
+  }))
+}
+
+/** Copy a list of PublicMachine objects so plugin mutations stay isolated. */
+export function clonePublicMachines(list: readonly PublicMachine[]): PublicMachine[] {
+  return list.map(m => ({
+    id: m.id,
+    groupKey: m.groupKey,
+    label: m.label,
+    local: m.local,
+    status: m.status,
+  }))
+}
+
+/** Project core Pane state held by the client into plugin-safe PublicAgent objects. */
+export function projectAgents(panes: readonly Pane[]): PublicAgent[] {
+  return panes.map(p => ({
+    id: p.id,
+    machine: p.machine || null,
+    name: p.name || p.label || null,
+    title: p.title ?? null,
+    agent: p.agent ?? null,
+    status: p.status ?? null,
+    labels: cloneLabels(p.labels),
+  }))
+}
+
+/** Project MachineInfo entries held by the client into plugin-safe PublicMachine objects. */
+export function projectMachines(machines: readonly MachineInfo[]): PublicMachine[] {
+  return machines.map(m => ({
+    id: m.key,
+    groupKey: m.baseKey ?? m.key,
+    label: m.label,
+    local: m.local,
+    status: m.status,
+  }))
+}
+
 export interface ClientPluginInfo {
   id: string
   name: string

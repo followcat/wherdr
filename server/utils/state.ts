@@ -30,7 +30,7 @@ import { projectCoordinatorName } from '../../shared/pm/project'
 import { createHeld, heldFile } from './coreHeld'
 import { coreInputDeps, coreSend } from './coreInput'
 import { devinCards } from './devinCards'
-import { createModelCtl, createModelRefresh } from './modelctl'
+import { createModelCtl, createModelRefresh, type ModelRefreshOpts } from './modelctl'
 import { createCoreModelCtl } from './coreModelctl'
 import { coreFilesMachine } from './coreFilesMachine'
 import { createShellFs } from './fsx'
@@ -76,6 +76,7 @@ const corePreviewsFor = (entry: CoreEntry) => {
     previews = createCorePreviews({
       reply: p => transcriptsForEntry(entry).latestReply(p),
       read: async address => (await entry.call<{ text?: string }>('terminal.read', { terminal: address }, 4000)).text || '',
+      viewed: isViewed,
       wake: () => gateForEntry(entry).schedule(),
     })
     corePreviewsMap.set(entry.endpoint, previews)
@@ -123,7 +124,7 @@ export const transcripts = {
   chat: (p: TranscriptPane, o: Parameters<CoreTranscripts['chat']>[1] = {}) => coreTranscriptsOf(p).chat(p, o),
   preview: (p: TranscriptPane) => coreTranscriptsOf(p).preview(p),
   image: (p: TranscriptPane, file: string | null, ref: string | null, i: number) => coreTranscriptsOf(p).image(p, file, ref, i),
-  model: (p: TranscriptPane) => coreTranscriptsOf(p).model(p),
+  model: (p: TranscriptPane, o?: Parameters<CoreTranscripts['model']>[1]) => coreTranscriptsOf(p).model(p, o),
   opencodeModels: (p: TranscriptPane) => coreTranscriptsOf(p).opencodeModels(p),
   opencodePatchModel: (p: TranscriptPane, model: { id: string, providerID: string, variant?: string }) => coreTranscriptsOf(p).opencodePatchModel(p, model),
   locate: (p: TranscriptPane) => coreTranscriptsOf(p).locate(p),
@@ -143,7 +144,7 @@ export const transcripts = {
 let modelCtlInstance: ReturnType<typeof createModelCtl> | null = null
 export function modelCtl() {
   return modelCtlInstance ||= createModelCtl({
-    transcript: p => transcripts.model(p),
+    transcript: (p, o) => transcripts.model(p, o),
     // ~/.codex/config.toml on the agent's machine (remote: machine.exec fs).
     codexConfig: async (p) => {
       try {
@@ -155,7 +156,7 @@ export function modelCtl() {
     machineKey: p => state.machines?.find(m => m.key === (p.machine || ''))?.baseKey ?? p.machine ?? '',
   })
 }
-export const currentModel = (p: Pane, historyModel?: ModelInfo | null) => modelCtl().currentModel(p, historyModel)
+export const currentModel = (p: Pane, historyModel?: ModelInfo | null, opts?: ModelRefreshOpts) => modelCtl().currentModel(p, historyModel, opts)
 
 // The drive side of the picker (coreModelctl): terminal.* through the pane's session call,
 // lists cached through modelCtl().noteList (`${machine}|${agent}`).
@@ -198,7 +199,8 @@ export const noteModelScreen = (p: Pane, text: string) => {
 // assignment): createModelRefresh in modelctl.ts.
 let modelRefreshInstance: ReturnType<typeof createModelRefresh> | null = null
 const modelRefresh = () => modelRefreshInstance ||= createModelRefresh({
-  currentModel: p => currentModel(p),
+  currentModel: (p, o) => currentModel(p, undefined, o),
+  viewed: isViewed,
   // Change seen outside a poll (choice from the phone): broadcast again.
   changed: () => wakeCorePoll(),
 })

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
+  agyScreenModel,
   claudeEffortCommand, claudeEffortLevels, claudeScreenEffort, claudeScreenModel,
   codexCachedEfforts, codexFooterModel, effortMatches, effortValue,
   learnOmpCycle, ompEffortLevels, ompScreenEffort, ompScreenModel,
@@ -146,6 +147,15 @@ describe('omp selector recognition', () => {
     expect(ompSelectorOnScreen(fx('omp-models-panel.txt'))).toBe(false)
     expect(ompSelectorOnScreen('')).toBe(false)
     expect(ompSelectorOnScreen(null)).toBe(false)
+  })
+})
+
+describe('agy model on screen', () => {
+  it('reads the model from Antigravity CLI footers across idle, working, and panel screens', () => {
+    expect(agyScreenModel(fx('core-screens/agy-idle.txt'))).toEqual({ id: null, label: 'Gemini 3 Pro', at: null })
+    expect(agyScreenModel(fx('core-screens/agy-working.txt'))).toEqual({ id: null, label: 'Gemini 3 Pro', at: null })
+    expect(agyScreenModel(fx('core-screens/agy-model.txt'))).toEqual({ id: null, label: 'Orchestrator (Carbon)', at: null })
+    expect(agyScreenModel('regular shell output\n$ ls')).toBeNull()
   })
 })
 

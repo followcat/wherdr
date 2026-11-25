@@ -45,6 +45,8 @@ describe('lastLine', () => {
     expect(lastLine('Done\n  ⏵⏵ auto mode on (shift+tab to cycle)')).toBe('Done')
     expect(lastLine('Done\n  auto mode on (shift+tab to cycle)')).toBe('Done')
     expect(lastLine('Done\n  ? for shortcuts')).toBe('Done')
+    expect(lastLine('Done\n  auto · Gemini 3 Pro')).toBe('Done')
+    expect(lastLine('Diff output\n  auto · Orchestrator (Carbon)')).toBe('Diff output')
     expect(lastLine('Quick check\n Enter to confirm · Esc to cancel')).toBe('Quick check')
     expect(lastLine('← for agents · ? for shortcuts')).toBeNull()
     expect(lastLine('The shortcuts are listed below')).toBe('The shortcuts are listed below')

@@ -6,7 +6,7 @@
 // messages to Claude a restart interrupted while submitting (submitting.ts);
 // the Antigravity conversation copies a restart left in the temp dir.
 import { coreAdminDeps } from '../utils/coreAdminDeps'
-import { sweepAgyCopies } from '../utils/agyTranscripts'
+import { disposeAgyCopies, sweepAgyCopies } from '../utils/agyTranscripts'
 import { sweepWorktrees } from '../utils/pmCleanup'
 import { pmStore } from '../utils/pmStore'
 import { archiveDone } from '../utils/pmBoard'
@@ -15,10 +15,10 @@ import { findPane } from '../utils/state'
 import { takeSubmitting } from '../utils/submitting'
 
 export default defineNitroPlugin((nitroApp) => {
+  sweepAgyCopies()
   initVapid()
   startPolling()
   startTailnetWatch()
-  sweepAgyCopies()
   cleanUploads()
   cleanAttachments()
   purgePastes()
@@ -31,12 +31,17 @@ export default defineNitroPlugin((nitroApp) => {
       s => coreInputDeps(s.pane ?? findPane(s.pane)?.id ?? (s.machine ? `${s.machine}~s0:p0` : undefined)),
     )
   }
+  // Re-sweep once shortly after startup in case an overlapping restart's old
+  // process was still finishing shutdown when startup swept.
+  const resweep = setTimeout(sweepAgyCopies, 30_000)
+  resweep.unref?.()
   const purge = setInterval(() => {
+    sweepAgyCopies()
     cleanUploads(); cleanAttachments(); purgePastes()
     void sweepWorktrees({ ...coreAdminDeps(), store: pmStore() }).catch(() => {})
     void archiveDone(pmStore()).catch(() => {})
   }, 6 * 3600 * 1000)
-  nitroApp.hooks.hook('close', () => { stopPolling(); stopTailnetWatch(); clearInterval(purge) })
+  nitroApp.hooks.hook('close', () => { clearTimeout(resweep); stopPolling(); stopTailnetWatch(); clearInterval(purge); disposeAgyCopies() })
   // Before Nitro's graceful shutdown closes the sockets (a service restart sends SIGTERM).
   process.once('SIGTERM', announceRestart)
 })

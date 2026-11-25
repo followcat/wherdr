@@ -5,6 +5,8 @@ import type { Pane } from '../../shared/types'
 import { ompPreviewText } from '../../shared/ompStatus'
 import { clinePreviewText } from '../../shared/clineScreen'
 
+const NO_UNVIEWED_DB_PREVIEW = new Set(['agy', 'devin', 'opencode', 'hermes', 'cline'])
+
 const MAX = 200
 const MAX_BUSY = 4
 const WORKING_MS = 10_000
@@ -17,8 +19,8 @@ const SETTLE_EVERY_MS = 2_000
 const PROMPT = /(?:^|\s)[\w.-]+@[\w.-]+:[^\s]*\s*[$#%]\s*$|^[$#%>❯»]\s*$/u
 const RULE = /^[\s─━│┃┌┐└┘├┤┬┴┼╭╮╰╯═║\-_=*·.]*$/u
 
-// TUI footers (Claude, Codex): key hints and mode lines, never content.
-const FOOTER = /^(?:[⏵▶►]{1,2}\s|←\s+for agents|\?\s+for shortcuts|auto mode (?:on|off)\b|accept edits on\b|plan mode on\b|bypass permissions on\b|esc to interrupt|enter to (?:confirm|select)\b|esc to cancel|ctrl\+[a-z] to |shift\+tab to |tab to (?:queue|cycle)|\d+% context left|gpt-[\w.-]+ .*·|\S+ · \d+% left)/iu
+// TUI footers (Claude, Codex, agy): key hints and mode lines, never content.
+const FOOTER = /^(?:[⏵▶►]{1,2}\s|←\s+for agents|\?\s+for shortcuts|auto mode (?:on|off)\b|accept edits on\b|plan mode on\b|bypass permissions on\b|esc to interrupt|enter to (?:confirm|select)\b|esc to cancel|ctrl\+[a-z] to |shift\+tab to |tab to (?:queue|cycle)|\d+% context left|gpt-[\w.-]+ .*·|\S+ · \d+% left|(?:auto|plan|ask|fast|manual)\s+·\s+.+$)/iu
 
 // Empty-input placeholders ("› Ask Codex to do anything", '❯ Try "fix lint errors"') and the
 // status lines under them ("◐ medium · /effort", "GPT-6 medium · ~/dir · title").
@@ -46,6 +48,7 @@ export function lastLine(text: string): string | null {
 export interface CorePreviewDeps {
   reply: (pane: Pane) => Promise<{ text: string } | null>
   read: (address: string) => Promise<string>
+  viewed?: (id: string) => boolean
   now?: () => number
   // Asks for another apply(): a preview text changed, or a settling re-read is due.
   wake?: () => void
@@ -69,7 +72,8 @@ export function createCorePreviews(deps: CorePreviewDeps) {
   }
   async function load(p: Pane): Promise<string | null> {
     if (p.error) return p.error.length > MAX ? `${p.error.slice(0, MAX - 1)}…` : p.error
-    if (p.agent) {
+    const allowReply = !p.agent || !NO_UNVIEWED_DB_PREVIEW.has(p.agent) || !deps.viewed || deps.viewed(p.id)
+    if (p.agent && allowReply) {
       const reply = await deps.reply(p).catch(() => null)
       if (reply?.text) return reply.text.length > MAX ? `${reply.text.slice(0, MAX - 1)}…` : reply.text
     }
