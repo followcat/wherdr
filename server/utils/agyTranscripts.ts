@@ -935,9 +935,76 @@ export function createAgyTranscripts({
     return { hits, limited: false, kind: 'agy' }
   }
 
-  async function model(pane: TranscriptPane): Promise<ModelInfo | null> {
+  function hasKept(file: string): boolean {
+    const base = bases.get(file)
+    return Boolean(base?.dbId && !base.gone)
+  }
+
+  // Updates an already-kept copy ONLY when its main DB identity is unchanged
+  // and its WAL can advance by appending a grown tail (never copies main DB).
+  async function loadWalTailOnly(session: string): Promise<ModelInfo | null> {
+    const file = pathOf(session)
+    if (!file || !hasKept(file)) return null
+    const Db = await ctor()
+    const { base, unlock } = await lockBase(file)
+    try {
+      if (!base.dbId || base.gone) return lastModel.get(session) ?? null
+      const { db: dbSt, wal: walSt, gen, size } = await statDb(file)
+      if (idOf(dbSt) !== base.dbId) return lastModel.get(session) ?? null
+      const live = walSt && walSt.size > 0 ? walSt : null
+      if (!live || live.size <= base.walSize || base.walSize < WAL_HEADER_BYTES || !base.walHead) {
+        return lastModel.get(session) ?? null
+      }
+      const walPath = `${file}-wal`
+      const head = await fs.read(walPath, 0, WAL_HEADER_BYTES)
+      const probe = head.equals(base.walHead) ? walLastFrame(head, base.walSize) : null
+      const current = !!probe && (await fs.read(walPath, probe.start, probe.len))
+        .equals(localSlice(base.wal, probe.start, probe.len))
+      if (!current) return lastModel.get(session) ?? null
+      if (dbSt.size + live.size > MAX_SNAPSHOT_BYTES) return lastModel.get(session) ?? null
+      try { await copyInto(walPath, live.size, base.wal, base.walSize, true) } catch (e) {
+        truncateSync(base.wal, base.walSize)
+        throw e
+      }
+      base.walSize = live.size
+      const cut = walWholeEnd(base.walHead, base.walSize) ?? Math.min(base.walSize, WAL_HEADER_BYTES)
+      if (cut < base.walSize) {
+        truncateSync(base.wal, cut)
+        base.walSize = cut
+      }
+      const dbNow = await fs.stat(file, { fresh: true }).catch(e => { if (isMissing(e)) return null; throw e })
+      if (!dbNow?.isFile || idOf(dbNow) !== base.dbId) throw moved('Antigravity conversation changed during the read')
+      const walNow = await fs.stat(walPath, { fresh: true }).catch(e => { if (isMissing(e)) return null; throw e })
+      if (!walNow?.isFile || walNow.size < base.walSize) throw moved('Antigravity conversation changed during the read')
+      const headNow = await fs.read(walPath, 0, Math.min(WAL_HEADER_BYTES, walNow.size))
+      const expected = base.walHead.subarray(0, Math.min(WAL_HEADER_BYTES, base.walSize))
+      if (headNow.length < expected.length || !headNow.subarray(0, expected.length).equals(expected)) {
+        throw moved('Antigravity conversation changed during the read')
+      }
+      rmSync(base.shm, { force: true })
+      const db = new Db(base.db, { readOnly: true })
+      try {
+        const doc = readSteps(db, session, file)
+        remember(loaded, file, { gen, size, doc }, cacheEntries)
+        return doc.model
+      } finally { db.close() }
+    } finally { unlock() }
+  }
+
+  async function model(pane: TranscriptPane, opts: { walTailOnly?: boolean } = {}): Promise<ModelInfo | null> {
     const session = pane.agentSession
     if (!session || !(await ready())) return null
+    if (opts.walTailOnly) {
+      const file = pathOf(session)
+      if (!file || !hasKept(file)) return null
+      try {
+        const got = await loadWalTailOnly(session)
+        if (got !== null) remember(lastModel, session, got)
+        return got
+      } catch {
+        return lastModel.get(session) ?? null
+      }
+    }
     if (quiet(session)) return lastModel.get(session) ?? null
     try {
       const got = await load(session)
@@ -958,5 +1025,5 @@ export function createAgyTranscripts({
     }
   }
 
-  return { chat, image, search, model, pathOf, forgetFile, dispose: () => { dispose(); agyDisposers.delete(dispose) } }
+  return { chat, image, search, model, pathOf, forgetFile, hasKept, dispose: () => { dispose(); agyDisposers.delete(dispose) } }
 }

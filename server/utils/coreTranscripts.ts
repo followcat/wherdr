@@ -277,6 +277,11 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
   type Fn<K extends keyof Transcripts> = Transcripts[K] extends (p: TranscriptPane, ...a: infer A) => infer R ? (p: TranscriptPane, ...a: A) => R : never
   const viaPane = <K extends 'chat' | 'preview' | 'latestReply' | 'locate' | 'model' | 'pendingTool' | 'pendingAsk' | 'pendingClaudeQuestions' | 'search' | 'opencodeModels' | 'opencodePatchModel'>(k: K) =>
     (async (p: TranscriptPane, ...a: unknown[]) => {
+      if (k === 'model' && (a[0] as { walTailOnly?: boolean } | undefined)?.walTailOnly) {
+        if (p.agent !== 'agy') return null
+        const m = resolved.get(machineOfAddress(deps.pane(p.id)?.coreAddress))
+        return m ? m.model(p, a[0] as { walTailOnly?: boolean }) : null
+      }
       const t = await machineOf(p)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return t ? (t[k] as any)(await withBirth(p), ...a) : unavailable[k] ?? null
