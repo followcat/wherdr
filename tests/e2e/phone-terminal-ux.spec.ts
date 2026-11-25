@@ -26,13 +26,19 @@ async function openConversation(page: Page, core: Core) {
 // touch path synthesized on WebKit (labeled synthetic there).
 async function swipeSheetDown(page: Page, browserName: string) {
   const sheet = page.locator('.hw-sheet')
+  // Wait for the opening rise animation to finish so touch coordinates land
+  // on the handle rather than below a still-rising sheet.
+  await sheet.evaluate(el => Promise.all(el.getAnimations().map(a => a.finished)))
   const box = (await sheet.boundingBox())!
   const x0 = box.x + box.width / 2
   const y0 = box.y + 8
   if (browserName === 'chromium') {
     const cdp = await page.context().newCDPSession(page)
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y: y0 }] })
-    for (let i = 1; i <= 4; i++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x0, y: y0 + i * 45 }] })
+    for (let i = 1; i <= 4; i++) {
+      await page.waitForTimeout(20)
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x0, y: y0 + i * 45 }] })
+    }
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
     return
   }
@@ -340,7 +346,7 @@ test('computer chrome: device-local interface scale, widths and terminal font', 
         .getByRole('radio', { name: /large/i }).click()
       await expect(page.locator('html')).toHaveAttribute('data-ui-scale', 'lg')
       await page.locator('.settings-group').filter({ hasText: 'Content width' })
-        .getByRole('radio', { name: /full width/i }).click()
+        .locator('[data-value="full"]').click()
       await expect(page.locator('html')).toHaveAttribute('data-content-width', 'full')
       expect(await cssVar('--read')).toContain('calc(100% - 48px)')
       await openAgent()
