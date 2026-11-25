@@ -15,6 +15,7 @@ import { claudeApiShown, machineQuotaRows, quotaBlocks, quotaRows, tabQuotaRows 
 import { longPress } from '~/utils/longPress'
 import { LIST_DEFAULT, LIST_MAX, LIST_MIN, LIST_RAIL, clampListWidth, listWidthCss, readListCollapsed, readListWidth, saveListCollapsed, saveListWidth } from '~/utils/sideWidth'
 import { headerFold } from '~/utils/headerFold'
+import { hasHeaderActions, registerHeaderActionsSlot } from '~/utils/headerActions'
 import { quietPeriodEnd } from '~/utils/quietPeriodEnd'
 import { onceEvery } from '~/utils/onceEvery'
 import { listMode } from '~/utils/layoutMode'
@@ -320,18 +321,33 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', onQuietVi
 // move into a "…" menu; Settings always stays a button.
 const titleRow = ref<HTMLElement | null>(null)
 const titleRowWidth = ref(0)
+const headerActionsEl = ref<HTMLElement | null>(null)
+const headerActionsWidth = ref(0)
 let titleRowObserver: ResizeObserver | null = null
+let headerActionsObserver: ResizeObserver | null = null
+let unregisterHeaderActions: (() => void) | null = null
 onMounted(() => {
   titleRowObserver = new ResizeObserver(([e]) => { titleRowWidth.value = e?.contentRect.width ?? 0 })
   if (titleRow.value) titleRowObserver.observe(titleRow.value)
+  headerActionsObserver = new ResizeObserver(([e]) => {
+    headerActionsWidth.value = hasHeaderActions(headerActionsEl.value) ? (e?.contentRect.width ?? 0) : 0
+  })
+  if (headerActionsEl.value) {
+    headerActionsObserver.observe(headerActionsEl.value)
+    unregisterHeaderActions = registerHeaderActionsSlot(headerActionsEl.value)
+  }
 })
-onBeforeUnmount(() => titleRowObserver?.disconnect())
+onBeforeUnmount(() => {
+  titleRowObserver?.disconnect()
+  headerActionsObserver?.disconnect()
+  unregisterHeaderActions?.()
+})
 // First to fold first.
 const headerFoldable = ['search', 'board']
 const headerFolded = computed(() => {
   if (!titleRowWidth.value) return new Set<string>()
   const total = headerFoldable.length + 1 + (desk.value ? 1 : 0)
-  return new Set(headerFoldable.slice(0, headerFold(titleRowWidth.value, total, headerFoldable.length)))
+  return new Set(headerFoldable.slice(0, headerFold(titleRowWidth.value, total, headerFoldable.length, headerActionsWidth.value)))
 })
 function headerMenuItems(): MenuItem[] {
   const f = headerFolded.value
@@ -474,6 +490,7 @@ function resetListWidth() {
         </p>
         <h1 class="sr-only">{{ t('Agents') }}</h1>
         <div class="home-actions">
+          <span ref="headerActionsEl" data-wherdr="header-actions" class="header-actions" />
           <UTooltip v-if="!headerFolded.has('search')" :text="tl('Search conversations, tasks, settings and actions')" :kbds="shortcutKbds('search-all')" :disabled="!desk">
             <UButton icon="i-lucide-search" color="neutral" variant="ghost" size="lg" class="icon-btn" :aria-label="tl('Search conversations, tasks, settings and actions')" @click="openSearch" />
           </UTooltip>

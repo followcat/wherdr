@@ -1,8 +1,9 @@
 // wherdr plugins: the page-side host (utils/pluginHost.ts) wired to the app.
-import { effectScope, watch } from 'vue'
+import { effectScope, onBeforeUnmount, watch } from 'vue'
 import { readPrefs } from '#shared/clientPlugins'
 import type { ClientPluginInfo, PluginPrefs, PluginSource } from '#shared/clientPlugins'
-import { createPluginHost, type PluginRow } from '~/utils/pluginHost'
+import { createHeaderActionsMount } from '~/utils/headerActions'
+import { createPluginHost, type HostDeps, type PluginRow } from '~/utils/pluginHost'
 import { settingsSync, syncedRef } from './useSyncedSettings'
 
 const PREFS_KEY = 'wherdr:plugins'
@@ -12,34 +13,65 @@ export const clientPlugins = ref<PluginRow[]>([])
 // reaches the host through this ref.
 export const communityPlugins = syncedRef('communityPlugins', raw => raw === '1', v => (v ? '1' : '0'))
 let host: ReturnType<typeof createPluginHost> | null = null
+const draftFocusers: { pane: () => string, live: () => boolean, focus: () => void }[] = []
+
+/** Register the active conversation's composer focus handler for plugin draft.focus(). */
+export function useDraftFocus(pane: () => string, live: () => boolean, focus: () => void) {
+  const entry = { pane, live, focus }
+  draftFocusers.push(entry)
+  onBeforeUnmount(() => {
+    const i = draftFocusers.indexOf(entry)
+    if (i >= 0) draftFocusers.splice(i, 1)
+  })
+}
 
 const loadPrefs = () => { try { return readPrefs(localStorage.getItem(PREFS_KEY)) } catch { return readPrefs(null) } }
 const savePrefs = (p: PluginPrefs) => { try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)) } catch { /* storage unavailable */ } }
 
-export function startClientPlugins() {
-  if (host) return host
+/** Build host dependencies wired to the running Nuxt app (exposed for tests). */
+export function createAppPluginDeps(changed: () => void, overrides: Partial<HostDeps> = {}): HostDeps {
   const router = useRouter()
-  host = createPluginHost({
+  const mountHeaderAction = createHeaderActionsMount()
+  return {
     list: () => api<{ plugins: ClientPluginInfo[], enabled: boolean }>('/api/client-plugins'),
     // The commit sits in the folder part (`<id>@<commit>/`), so the bundle's
     // relative imports also get new URLs after an update, not only the main file.
     load: info => import(/* @vite-ignore */ `${location.origin}/api/client-plugins/${encodeURIComponent(info.id)}${info.source?.commit ? `@${info.source.commit}` : ''}/${encodeURIComponent(info.main)}`),
+    getDraft: () => (curPane.value ? useDraft(curPane.value).text : null),
+    setDraft: (text) => {
+      if (!curPane.value) return
+      useDraft(curPane.value).text = text
+    },
     insertDraft: (text) => {
       if (!curPane.value) return
       const d = useDraft(curPane.value)
       d.text = d.text && !/\s$/.test(d.text) ? `${d.text} ${text}` : d.text + text
+    },
+    focusDraft: () => {
+      if (!curPane.value) return
+      for (let i = draftFocusers.length - 1; i >= 0; i--) {
+        const entry = draftFocusers[i]!
+        if (entry.live() && entry.pane() === curPane.value) { entry.focus(); return }
+      }
     },
     currentAgent: () => {
       const p = herdrState.value.panes.find(x => x.id === curPane.value)
       return p ? { id: p.id, agent: p.agent, name: p.name || p.label || null, machine: p.machine || null } : null
     },
     subscribeNavigate: cb => router.afterEach(to => cb(to.fullPath)),
+    mountHeaderAction,
     prefs: loadPrefs,
     savePrefs,
-    changed: () => { clientPlugins.value = host!.rows() },
+    changed,
     // The server's answer updates the copy as a server value: never sent back.
     onCommunity: (on) => { settingsSync.receive({ communityPlugins: on ? '1' : '0' }) },
-  })
+    ...overrides,
+  }
+}
+
+export function startClientPlugins() {
+  if (host) return host
+  host = createPluginHost(createAppPluginDeps(() => { clientPlugins.value = host!.rows() }))
   const h = host
   // Detached: the first caller can be a component, and this outlives it.
   effectScope(true).run(() => watch(communityPlugins, on => h.setCommunity(on)))

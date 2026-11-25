@@ -3581,6 +3581,11 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
 .phone-chrome .mode-btn { border: 1px solid transparent; border-radius: 0; }
 .phone-chrome .mode-btn.on { border-color: var(--accent); }
 .composer-actions { display: contents; }
+.header-actions { display: inline-flex; align-items: center; gap: inherit; flex: none; }
+.agent-actions .header-actions { margin-right: 4px; }
+.header-actions:empty, .header-actions:not(:has(> :not(.header-action:empty))) { display: none; }
+.header-action { display: contents; }
+.header-action:empty { display: none; }
 
 /* Projects and board (ProjectsSettings, BoardView, TaskSheet). */
 .mono-label { font-family: var(--font-mono, 'JetBrains Mono', monospace); text-transform: uppercase; letter-spacing: .08em; font-size: 12px; color: var(--text-2); }
