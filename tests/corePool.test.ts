@@ -1,13 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import { createServer, type Socket } from 'node:net'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PANE_RE } from '../shared/ids'
 import { coreState } from '../shared/coreState'
 import type { CoreTerminal } from '../shared/coreInventory'
 import { createCoreAlerts } from '../server/utils/coreAlerts'
+import { createCorePreviews } from '../server/utils/corePreview'
+import { createCoreTranscripts } from '../server/utils/coreTranscripts'
+import { DEVIN_PROCESS_SCRIPT } from '../server/utils/devinProcesses'
+import { createModelCtl, createModelRefresh } from '../server/utils/modelctl'
 import {
   createCorePool,
   hostBaseKey,
@@ -318,6 +322,214 @@ describe('CorePool connections, isolation, routing and alerts', () => {
     expect(elapsed).toBeLessThan(1000)
     expect(pool.state().ok).toBe(true)
     expect(pool.state().panes).toHaveLength(1)
+  })
+
+  it('keys coreTranscripts ps cache per machine and per core entry', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'corepool-pscache-'))
+    const home = join(dir, 'home')
+    await mkdir(join(home, '.gemini/antigravity-cli/conversations'), { recursive: true })
+    cleanups.push(() => rm(dir, { recursive: true, force: true }))
+    const sockA = join(dir, 'default.sock')
+    const sockB = join(dir, 'secondary.sock')
+
+    const psCounts = () => ({ local: 0, remote: 0 })
+    const psA = psCounts()
+    const psB = psCounts()
+    const session = '11111111-2222-4333-8444-555555555555'
+    const makeOnCall = (counts: { local: number, remote: number }) => (method: string, params: Record<string, unknown>) => {
+      if (method === 'terminal.get') {
+        const idx = String(params.terminal || '').endsWith('t3') ? 102 : String(params.terminal || '').endsWith('t2') ? 101 : 100
+        return { pid: idx, argv: ['bash'], foreground: { pid: idx, name: 'bash', argv: ['bash'], cwd: '/work/proj' } }
+      }
+      if (method === 'machine.exec') {
+        const argv = (params.argv as string[] | undefined) ?? []
+        const on = String(params.on || '')
+        if (argv[0] === 'ps') {
+          if (on === 'host-b') counts.remote++
+          else counts.local++
+          const rows = [
+            '100 1 sh', `200 100 agy --conversation ${session}`,
+            '101 1 sh', `201 101 agy --conversation ${session}`,
+            '102 1 sh', `202 102 agy --conversation ${session}`,
+          ].join('\n') + '\n'
+          return { code: 0, stdout: Buffer.from(rows).toString('base64') }
+        }
+        if (argv[2] === DEVIN_PROCESS_SCRIPT) {
+          const lines = argv.slice(4).map(pid => `${pid} 100 100 1767225600 100.00 1767225700.001 ${Buffer.from(`agy\0--conversation\0${session}\0`).toString('base64')}`)
+          return { code: 0, stdout: Buffer.from(lines.join('\n') + '\n').toString('base64') }
+        }
+        if (argv[2] === 'printf %s "$HOME"') return { code: 0, stdout: Buffer.from(home).toString('base64') }
+        return { code: 1, stdout: '', stderr: '' }
+      }
+      return undefined
+    }
+
+    await fakeSocketCore(sockA, {
+      terminals: [
+        term('t1', { template: 'agy', agentSession: session }),
+        term('host-b/t2', { template: 'agy', agentSession: session }),
+        term('host-b/t3', { template: 'agy', agentSession: session }),
+      ],
+      machines: [{ name: 'host-b', state: 'connected', host: 'host-b.local' }],
+      onCall: makeOnCall(psA),
+    })
+    await fakeSocketCore(sockB, {
+      terminals: [
+        term('t1', { template: 'agy', agentSession: session }),
+        term('host-b/t2', { template: 'agy', agentSession: session }),
+      ],
+      machines: [{ name: 'host-b', state: 'connected', host: 'host-b.local' }],
+      onCall: makeOnCall(psB),
+    })
+
+    const pool = createCorePool({ primary: sockA, extra: [sockB], hostLabel: () => 'host-a' })
+    cleanups.push(async () => { pool.stop() })
+    await pool.poll()
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(1_000)
+      const byEp = new Map(pool.entries().map(entry => [
+        entry.endpoint,
+        createCoreTranscripts({
+          call: (method, params, timeout) => entry.call(method, params, timeout),
+          pane: id => pool.findPane(id),
+          localHome: home,
+        }),
+      ]))
+      const trA = byEp.get(sockA)!
+      const trB = byEp.get(sockB)!
+      const panes = pool.state().panes
+      const pALocal = panes.find(p => p.coreAddress === 't1' && pool.forPane(p.id)?.endpoint === sockA)!
+      const pAR2 = panes.find(p => p.coreAddress === 'host-b/t2' && pool.forPane(p.id)?.endpoint === sockA)!
+      const pAR3 = panes.find(p => p.coreAddress === 'host-b/t3' && pool.forPane(p.id)?.endpoint === sockA)!
+      const pBLocal = panes.find(p => p.coreAddress === 't1' && pool.forPane(p.id)?.endpoint === sockB)!
+      const pBR2 = panes.find(p => p.coreAddress === 'host-b/t2' && pool.forPane(p.id)?.endpoint === sockB)!
+
+      // Concurrent locates on the same (entry, machine) share 1 ps call.
+      await Promise.all([trA.locate(pAR2), trA.locate(pAR3)])
+      expect(psA.remote).toBe(1)
+      expect(psB.remote).toBe(0)
+
+      // Identical remote machine name on a second core entry maintains its own ps cache.
+      await trB.locate(pBR2)
+      expect(psA.remote).toBe(1)
+      expect(psB.remote).toBe(1)
+
+      // Local machine ps caches are also isolated per core entry.
+      await trA.locate(pALocal)
+      await trB.locate(pBLocal)
+      expect(psA.local).toBe(1)
+      expect(psB.local).toBe(1)
+
+      // Within the 10s TTL (past locCache 8s), entry A reuses its cached ps table.
+      vi.setSystemTime(9_500)
+      await trA.locate(pAR2)
+      expect(psA.remote).toBe(1)
+      expect(psB.remote).toBe(1)
+
+      // After 10s TTL expires, only entry A refreshes host-b; entry B keeps its cache.
+      vi.setSystemTime(18_500)
+      await trA.locate(pAR2)
+      expect(psA.remote).toBe(2)
+      expect(psB.remote).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('applies PR #29 viewed-only DB gating to secondary pool entry panes', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'corepool-viewed-'))
+    cleanups.push(() => rm(dir, { recursive: true, force: true }))
+    const sockA = join(dir, 'default.sock')
+    const sockB = join(dir, 'secondary.sock')
+
+    await fakeSocketCore(sockA, {
+      terminals: [term('t1', { template: 'claude', status: { state: 'idle' } })],
+    })
+    await fakeSocketCore(sockB, {
+      terminals: [
+        term('t1', { template: 'agy', status: { state: 'working' }, statusSeq: 1 }),
+        term('t2', { template: 'devin', status: { state: 'idle' }, statusSeq: 1 }),
+      ],
+      onCall: (method) => {
+        if (method === 'terminal.read') return { text: ' ● Secondary screen reply.\n>\nauto · Gemini 3 Pro\n' }
+        return undefined
+      },
+    })
+
+    const pool = createCorePool({ primary: sockA, extra: [sockB], hostLabel: () => 'host-a' })
+    cleanups.push(async () => { pool.stop() })
+    await pool.poll()
+
+    const secEntry = pool.entries().find(e => e.endpoint === sockB)!
+    const secPanes = pool.state().panes.filter(p => p.machine === secondaryLocalKey(sockB))
+    const pSecAgy = secPanes.find(p => p.coreAddress === 't1')!
+    const pSecDevin = secPanes.find(p => p.coreAddress === 't2')!
+
+    let clock = 1_000
+    const viewedIds = new Set<string>()
+    const replyDbCalls: string[] = []
+    const modelDbCalls: Array<{ id: string, walTailOnly?: boolean }> = []
+
+    const previews = createCorePreviews({
+      reply: async (p) => {
+        replyDbCalls.push(p.id)
+        return { text: 'DB reply' }
+      },
+      read: async address => (await secEntry.call<{ text?: string }>('terminal.read', { terminal: address }, 2000)).text || '',
+      viewed: id => viewedIds.has(id),
+      wake: () => { previews.apply(secPanes) },
+      now: () => clock,
+    })
+    const ctl = createModelCtl({
+      transcript: async (p, opts) => {
+        modelDbCalls.push({ id: p.id, walTailOnly: opts?.walTailOnly })
+        return opts?.walTailOnly ? null : { id: 'db-model', label: 'DB Model', at: new Date(clock).toISOString() }
+      },
+      codexConfig: async () => null,
+      machineKey: p => p.machine || '',
+      now: () => clock,
+    })
+    const refresh = createModelRefresh({
+      currentModel: (p, opts) => ctl.currentModel(p, undefined, opts),
+      viewed: id => viewedIds.has(id),
+      now: () => clock,
+    })
+
+    // Unviewed poll: secondary agy + devin skip DB preview & DB model reads; screen fallback works.
+    ctl.noteScreen(pSecAgy.id, 'agy', ' ● Secondary screen reply.\n>\nauto · Gemini 3 Pro\n')
+    previews.apply(secPanes)
+    refresh.apply(pSecAgy)
+    refresh.apply(pSecDevin)
+    await vi.waitFor(() => expect(pSecAgy.preview).toBe('Secondary screen reply.'))
+    await vi.waitFor(() => expect(pSecDevin.preview).toBe('Secondary screen reply.'))
+    expect(replyDbCalls).toEqual([])
+    expect(modelDbCalls).toEqual([])
+
+    // Unviewed status flip: only walTailOnly=true is requested (no full DB load).
+    pSecAgy.status = 'idle'
+    pSecAgy.stateSeq = 2
+    refresh.apply(pSecAgy)
+    await vi.waitFor(() => expect(modelDbCalls).toEqual([{ id: pSecAgy.id, walTailOnly: true }]))
+    await vi.waitFor(() => {
+      refresh.apply(pSecAgy)
+      expect(pSecAgy.model?.label).toBe('Gemini 3 Pro')
+    })
+
+    // Viewed secondary agy pane unlocks full DB reads; unviewed devin still stays gated out.
+    viewedIds.add(pSecAgy.id)
+    clock += 6_000
+    pSecAgy.stateSeq = 3
+    previews.apply(secPanes)
+    await vi.waitFor(() => expect(pSecAgy.preview).toBe('DB reply'))
+    await vi.waitFor(() => {
+      refresh.apply(pSecAgy)
+      refresh.apply(pSecDevin)
+      expect(modelDbCalls.some(c => c.id === pSecAgy.id && !c.walTailOnly)).toBe(true)
+    })
+    expect(replyDbCalls).toEqual([pSecAgy.id])
+    expect(modelDbCalls.some(c => c.id === pSecDevin.id)).toBe(false)
   })
 })
 
