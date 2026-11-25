@@ -13,6 +13,8 @@ export interface CoreAlertDeps {
   send: (address: string, kind: CoreAlertKind) => void
 }
 const stateOf = (t?: CoreTerminal) => t?.status?.state
+const isBacklotDaemon = (t: CoreTerminal) =>
+  t.name === 'backlot-stage' || t.name === 'backlot-server' || t.labels?.['backlot.role'] === 'stage' || t.labels?.['backlot.role'] === 'server'
 
 export function createCoreAlerts(deps: CoreAlertDeps) {
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -22,7 +24,7 @@ export function createCoreAlerts(deps: CoreAlertDeps) {
     : stateOf(t) === 'idle' || stateOf(t) === 'done'
   return {
     onEvent(event: CoreEvent, before: CoreTerminal | undefined, after: CoreTerminal | undefined) {
-      if (event.type !== 'status' || !after || after.parent) return
+      if (event.type !== 'status' || !after || after.parent || isBacklotDaemon(after)) return
       const address = after.address
       const was = stateOf(before)
       const now = stateOf(after)
@@ -34,7 +36,7 @@ export function createCoreAlerts(deps: CoreAlertDeps) {
       const timer = setTimeout(() => {
         timers.delete(address)
         const latest = deps.current(address)
-        if (!latest || latest.parent || !holds(kind, latest)) return
+        if (!latest || latest.parent || isBacklotDaemon(latest) || !holds(kind, latest)) return
         const key = `${address}:${latest.turn ?? 0}:${kind}`
         if (sent.has(key)) return
         if (sent.size > 2000) sent.clear()

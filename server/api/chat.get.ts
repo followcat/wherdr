@@ -1,11 +1,12 @@
 import { chatDelta } from '../utils/chatDelta'
 import { chatPolled } from '../utils/pmTalk'
+import { coreForPane } from '../utils/state'
 
 export default defineApi(async (event) => {
   const q = getQuery(event)
   const p = findPane(String(q.pane || ''))
   if (!p) throw new HerdrError('bad_pane', 'Pane not found')
-  chatPolled(p.coreAddress) // its conversation is open: its agent is not released (pmTalk.ts)
+  if (coreForPane(p.id)?.primary) chatPolled(p.coreAddress) // its conversation is open: its agent is not released (pmTalk.ts)
   const num = (k: string) => (q[k] !== undefined ? Math.max(0, Number(q[k]) || 0) : null)
   // Messages taken back after a Stop (see interruptRestore.ts): hidden, and
   // part of the token so that the view reloads when one is added.

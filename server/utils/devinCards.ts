@@ -6,6 +6,7 @@
 import type { ChatItem, DevinCardCommand, DevinCommandCard, Pane } from '../../shared/types'
 import { devinCardBaseline, devinCardBlock, devinCardCommand, devinCardNew, devinCardText, parseDevinCard, type DevinCardBaseline } from '../../shared/devinCommandCards'
 import { coreCall } from './core'
+import { getPoolRuntime } from './corePool'
 import { HerdrError } from './herdr'
 
 export const CARDS_KEEP = 3
@@ -106,5 +107,15 @@ export function createDevinCards({ read, now = Date.now, sleep = ms => new Promi
 }
 
 export const devinCards = createDevinCards({
-  read: async p => String((await coreCall<{ text?: string }>(process.env.HC_SOCKET || '', 'terminal.read', { terminal: p.coreAddress, lines: 0 }, 4000)).text || ''),
+  read: async (p) => {
+    const rt = getPoolRuntime()
+    if (rt) {
+      const entry = rt.forPane(p.id)
+      if (!entry) return ''
+      return String((await entry.call<{ text?: string }>('terminal.read', { terminal: p.coreAddress, lines: 0 }, 4000)).text || '')
+    }
+    const endpoint = process.env.HC_SOCKET
+    if (!endpoint) return ''
+    return String((await coreCall<{ text?: string }>(endpoint, 'terminal.read', { terminal: p.coreAddress, lines: 0 }, 4000)).text || '')
+  },
 })

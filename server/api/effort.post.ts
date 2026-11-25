@@ -6,7 +6,7 @@ export default defineApi(async (_event, b) => {
   if (!PANE_RE.test(paneId)) throw new HerdrError('bad_pane', 'Invalid pane')
   const level = String(b.level || '')
   if (level.length > 40) throw new HerdrError('bad_effort', 'Invalid effort level')
-  const model = await coreModelCtl().setEffort(paneId, level)
+  const model = await coreModelCtl(paneId).setEffort(paneId, level)
   const p = findPane(paneId)
   if (p) refreshModel(p)
   return { ok: true, model }

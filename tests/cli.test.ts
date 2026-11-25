@@ -36,7 +36,33 @@ describe('wherdr command line', () => {
     expect(parseArgs(['--session', 'test', '--port', '7690'])).toEqual({ command: 'run', port: '7690', warnings: [SESSION_IGNORED] })
   })
 
-  it('rejects unknown commands and options, missing values and bad ports', () => {
+  it('reads --hc-sockets and --hc-sockets= with precedence over env, wherdr.env and wherdr.json', () => {
+    expect(parseArgs(['start', '--hc-socket', '/run/a.sock', '--hc-sockets', '/run/b.sock,/run/c.sock'])).toMatchObject({
+      command: 'start', hcSocket: '/run/a.sock', hcSockets: '/run/b.sock,/run/c.sock',
+    })
+    expect(parseArgs(['--hc-sockets=~/b.sock,~/c.sock']).hcSockets).toBe('~/b.sock,~/c.sock')
+    expect(() => parseArgs(['--hc-sockets'])).toThrow('--hc-sockets needs a value')
+
+    const home = '/home/test'
+    const env = serverEnv({ hcSockets: '~/b.sock , /run/c.sock' }, { HC_SOCKETS: '/run/ignored.sock' }, home)
+    expect(env.HC_SOCKETS).toBe('/home/test/b.sock,/run/c.sock')
+    expect(serverEnv({}, { HC_SOCKETS: ' ~/x.sock , ~/y.sock ' }, home).HC_SOCKETS).toBe('/home/test/x.sock,/home/test/y.sock')
+
+    const d = mkdtempSync(path.join(os.tmpdir(), 'wherdr-hcs-'))
+    try {
+      writeFileSync(path.join(d, 'wherdr.json'), JSON.stringify({ port: '7695', hcSocket: '/run/a.sock', hcSockets: '/run/saved.sock' }))
+      expect(context({}, { WHERDR_DIR: d }, home).env.HC_SOCKETS).toBe('/run/saved.sock')
+      writeFileSync(path.join(d, 'wherdr.env'), 'HC_SOCKETS=/run/envfile.sock\n')
+      expect(context({}, { WHERDR_DIR: d }, home).env.HC_SOCKETS).toBe('/run/envfile.sock')
+      expect(context({}, { WHERDR_DIR: d, HC_SOCKETS: '/run/env.sock' }, home).env.HC_SOCKETS).toBe('/run/env.sock')
+      expect(context({ hcSockets: '/run/opt.sock' }, { WHERDR_DIR: d, HC_SOCKETS: '/run/env.sock' }, home).env.HC_SOCKETS).toBe('/run/opt.sock')
+
+      remember(context({ hcSocket: '/run/a.sock', hcSockets: '/run/b.sock,/run/c.sock' }, { WHERDR_DIR: d }, home))
+      expect(JSON.parse(readFileSync(path.join(d, 'wherdr.json'), 'utf8')).hcSockets).toBe('/run/b.sock,/run/c.sock')
+    } finally { rmSync(d, { recursive: true, force: true }) }
+  })
+
+  it('refuses unknown commands and options, missing values and bad ports', () => {
     expect(() => parseArgs(['strat'])).toThrow('unknown command: strat')
     expect(() => parseArgs(['service'])).toThrow('wherdr service install|uninstall')
     expect(() => parseArgs(['status', 'now'])).toThrow('unexpected argument: now')
@@ -163,6 +189,9 @@ describe('login service files', () => {
     expect(systemdUnit(svc)).toContain('Environment="HC_SOCKET=/run/hc.sock"')
     expect(launchdPlist(svc)).toContain('<key>HC_SOCKET</key><string>/run/hc.sock</string>')
     expect(systemdUnit(svc)).not.toContain('session')
+
+    const multi = serviceSpec({ ...ctx, env: { ...ctx.env, HC_SOCKETS: '/run/backlot.sock' } }, '/opt/w/bin/wherdr.mjs', '/usr/bin/node', '/usr/bin')
+    expect(multi.env.HC_SOCKETS).toBe('/run/backlot.sock')
   })
 
   it('systemd: quoted ExecStart and Environment, % escaped', () => {

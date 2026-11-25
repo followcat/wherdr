@@ -3,7 +3,7 @@ import type { BacklotRole, BacklotStudio } from '../shared/backlot'
 import {
   buildBacklotCommand, parseBacklotDoc, roleVisualState, studioVisualState, studioWaitingAttentions, validateBacklotAction,
 } from '../shared/backlot'
-import { readBacklotDocs, clearBacklotDocs } from '../server/utils/backlotDocs'
+import { readBacklotDocs, readPoolBacklotDocs, clearBacklotDocs } from '../server/utils/backlotDocs'
 import { BACKLOT_NOT_FOUND, BACKLOT_TIMEOUT, runBacklotAction } from '../server/utils/backlotActions'
 
 const role = (more: Partial<BacklotRole> = {}): BacklotRole => ({ role: 'dev', name: 'alice', state: 'live', ...more })
@@ -188,6 +188,47 @@ describe('readBacklotDocs', () => {
     await expect(readBacklotDocs(call, machines, terminals, 1000)).resolves.toEqual([])
     const empty = vi.fn(async () => ({ value: { schema: 'backlot/2' } }))
     await expect(readBacklotDocs(empty, machines, terminals, 1000)).resolves.toEqual([])
+  })
+
+  it('prefixes remote role terminals with <machine>/ and detects backlot-server', async () => {
+    const remoteDoc = {
+      ...fullDoc,
+      studios: [{
+        ...fullDoc.studios[0]!,
+        roles: [
+          { role: 'dev', name: 'alice', terminal: 't1', state: 'live' },
+          { role: 'qa', name: 'bob', terminal: 'host-b/t2', state: 'live' },
+          { role: 'ops', name: 'carol', terminal: null, state: 'live' },
+        ],
+      }],
+    }
+    const call = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+      return params.on === 'host-b' ? { value: remoteDoc } : { value: null }
+    })
+    const views = await readBacklotDocs(call, machines, [{ address: 'host-b/t9', name: 'backlot-server', state: 'live', cwd: '/home/user' }], 1000)
+    expect(views).toHaveLength(1)
+    expect(views[0]!.stageRunning).toBe(true)
+    expect(views[0]!.summary.studios[0]!.roles.map(r => r.terminal)).toEqual(['host-b/t1', 'host-b/t2', null])
+  })
+
+  it('reads backlot from the publishing secondary session and keeps session caches separate', async () => {
+    const primary = {
+      localKey: '',
+      endpoint: '/run/default.sock',
+      call: vi.fn(async (method: string) => method === 'machine.list' ? { machines: [] } : method === 'terminal.list' ? { terminals: [] } : { value: null }),
+    }
+    const secondary = {
+      localKey: 'cafecafecafecafe',
+      endpoint: '/run/backlot.sock',
+      call: vi.fn(async (method: string) => method === 'machine.list' ? { machines: [] }
+        : method === 'terminal.list' ? { terminals: [{ address: 't9', name: 'backlot-server', state: 'live', cwd: '/home/user' }] }
+          : { value: fullDoc }),
+    }
+    const res = await readPoolBacklotDocs([primary, secondary])
+    expect(res.ok).toBe(true)
+    expect(res.views).toHaveLength(1)
+    expect(res.views[0]!.stageRunning).toBe(true)
+    expect(res.views[0]!.summary.studios[0]!.id).toBe('shop')
   })
 })
 

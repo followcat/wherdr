@@ -83,8 +83,17 @@ export async function dismissClaudeQuotas(keys: string[], dismissed = true): Pro
 // Machines with Claude and their status line state (base machines only: a
 // named session shares its machine's ~/.claude).
 export const claudeSetupList = computed(() => {
-  const ms = appConfig.value.machines?.filter(m => !machineInfo(m.key)?.baseKey)
-    .map(m => ({ key: m.key, name: machineName(m.key) || m.label, online: m.local || machineInfo(m.key)?.status === 'online', kinds: m.kinds }))
+  const seen = new Set<string>()
+  const ms = appConfig.value.machines
+    ?.filter((m) => {
+      const info = machineInfo(m.key)
+      const base = info?.baseKey ?? m.key
+      if (info?.baseKey !== undefined && machines.value.some(s => s.key === base)) return false
+      if (seen.has(base)) return false
+      seen.add(base)
+      return true
+    })
+    .map(m => ({ key: machineInfo(m.key)?.baseKey ?? m.key, name: machineName(m.key) || m.label, online: m.local || machineInfo(m.key)?.status === 'online', kinds: m.kinds }))
     || [{ key: '', name: hostLabel.value || t('This machine'), online: true, kinds: appConfig.value.kinds }]
   return claudeSetupRows(homeQuotas.value, ms)
 })

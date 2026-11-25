@@ -40,6 +40,8 @@ export const SYNCED_SETTINGS = [
   'communityPlugins',
   // wherdr's own split layout of each tab (shared/splitTree.ts)
   'tabSplits',
+  // Extra herdr-core (hc) session sockets configured in settings.json (read by server/utils/corePool.ts)
+  'hcSockets',
 ] as const
 
 export type SyncedSetting = typeof SYNCED_SETTINGS[number]
@@ -65,6 +67,12 @@ export function cleanSettingsPatch(raw: unknown): SettingsPatch | null {
     if (value === null || (typeof value === 'string' && value.length <= SETTING_MAX)) {
       out[key] = value
       any = true
+    } else if (key === 'hcSockets' && Array.isArray(value) && value.every(v => typeof v === 'string')) {
+      const encoded = JSON.stringify(value)
+      if (encoded.length <= SETTING_MAX) {
+        out[key] = encoded
+        any = true
+      }
     }
   }
   return any ? out : null
@@ -113,6 +121,25 @@ export function readProjectTabs(raw: string | null | undefined): ProjectTabs {
   const out: ProjectTabs = {}
   for (const [key, tab] of Object.entries(v)) {
     if (typeof tab === 'string' && (tab === '*' || tab.startsWith('*group:'))) out[key] = tab
+  }
+  return out
+}
+
+// Extra hc session socket paths stored in settings.json (`hcSockets`).
+export function readHcSockets(raw: unknown): string[] {
+  let v: unknown = raw
+  if (typeof raw === 'string') {
+    try { v = raw ? JSON.parse(raw) : [] } catch { return [] }
+  }
+  if (!Array.isArray(v)) return []
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const item of v) {
+    if (typeof item !== 'string') continue
+    const s = item.trim()
+    if (!s || seen.has(s)) continue
+    seen.add(s)
+    out.push(s)
   }
   return out
 }

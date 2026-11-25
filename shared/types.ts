@@ -147,6 +147,8 @@ export interface Pane {
   agentSession: string | null
   // herdr-core: a project coordinator's terminal (its wherdr.coordinator label).
   coordinator?: true
+  // backlot: the terminal's backlot.role label (e.g. 'stage', 'server', 'director', 'actor-a').
+  backlotRole?: string
   bornAt?: number
   // Number of the agent's last state change (Herdr's `state_change_seq`,
   // increasing on a machine): "recent" sort of Ready.

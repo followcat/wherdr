@@ -7,7 +7,16 @@ import { cleanTitle, maskCreds } from './paneTitle'
 import { LABEL } from './pm/run'
 import { CODEX_UPDATED_LABEL, codexInstalling } from './codexLaunch'
 
-export interface CoreMachine { name: string; state: string; why?: string }
+export interface CoreMachine { name: string; state: string; host?: string; why?: string }
+export interface CoreStateOptions {
+  localKey?: string
+  localBaseKey?: string
+  localStatus?: MachineInfo['status']
+  localError?: string | null
+  session?: string
+  machineKey?: (name: string) => string
+  machineBaseKey?: (m: CoreMachine) => string | undefined
+}
 // Lossless encoding keeps IDs stable across inventory order and core restarts.
 const key = (value: string) => Array.from(new TextEncoder().encode(value), b => b.toString(16).padStart(2, '0')).join('')
 const KNOWN_AGENTS = ['claude', 'codex', 'omp', 'devin', 'opencode', 'gemini', 'aider', 'agy', 'cline', 'hermes']
@@ -41,11 +50,25 @@ const cmdProgram = (argv: string[] | null | undefined) => {
 // (one workspace per folder, one tab per terminal, or one tab per wherdr.tab
 // label: a split of a folder tab) when nothing says otherwise.
 // `host`: the name of the machine wherdr runs on (its host name, or the one the user gave it).
-export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], docs: CoreDocs = {}, host = ''): HerdrState {
+export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], docs: CoreDocs = {}, host = '', options: CoreStateOptions = {}): HerdrState {
+  const localKey = options.localKey ?? ''
+  const machineKey = options.machineKey ?? key
+  const sessionFields = options.session !== undefined ? { session: options.session } : {}
   const result: HerdrState = { ok: true, ready: true, workspaces: [], tabs: [], panes: [], machines: [
-    { key: '', label: host, local: true, status: 'online', error: null },
-    ...machines.map((m): MachineInfo => ({ key: key(m.name), label: m.name, local: false,
-      status: m.state === 'connected' ? 'online' : m.state === 'connecting' ? 'connecting' : 'offline', error: m.why ?? null })),
+    { key: localKey, ...(options.localBaseKey !== undefined ? { baseKey: options.localBaseKey } : {}), ...sessionFields, label: host, local: true,
+      status: options.localStatus ?? 'online', error: options.localError ?? null },
+    ...machines.map((m): MachineInfo => {
+      const baseKey = options.machineBaseKey?.(m)
+      return {
+        key: machineKey(m.name),
+        ...(baseKey !== undefined ? { baseKey } : {}),
+        ...sessionFields,
+        label: m.name,
+        local: false,
+        status: m.state === 'connected' ? 'online' : m.state === 'connecting' ? 'connecting' : 'offline',
+        error: m.why ?? null,
+      }
+    }),
   ] }
   const held = new Map<string, { space: string; tab: string }>()
   for (const [machineName, doc] of Object.entries(docs)) {
@@ -56,8 +79,8 @@ export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], do
   const order = new Map<string, number>() // tab id -> position in its document
   for (const terminal of terminals) {
     const machineName = terminal.address.includes('/') ? terminal.address.split('/')[0]! : ''
-    const machine = machineName ? key(machineName) : ''
-    if (machine && !result.machines!.some(m => m.key === machine)) result.machines!.push({ key: machine, label: machineName, local: false, status: 'offline', error: null })
+    const machine = machineName ? machineKey(machineName) : localKey
+    if (machineName && !result.machines!.some(m => m.key === machine)) result.machines!.push({ key: machine, ...sessionFields, label: machineName, local: false, status: 'offline', error: null })
     const prefix = machine ? `${machine}~` : ''
     const cwd = terminal.cwd || ''
     const local = terminal.address.split('/').pop()!
@@ -95,6 +118,7 @@ export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], do
       agent, name: addressOnly(terminal.name, terminal.address) ? null : maskCreds(terminal.name) || null, label: maskCreds(ownTitle(terminal)) || null, title: terminal.title == null ? null : cleanTitle(terminal.title), cwd, agentSession: null,
       status, interaction: 'unknown', ...(terminal.labels && Object.keys(terminal.labels).length ? { labels: { ...terminal.labels } } : {}), ...(terminal.labels?.[LABEL.task] ? { task: terminal.labels[LABEL.task], ...(terminal.labels[LABEL.role] ? { role: terminal.labels[LABEL.role] } : {}) } : {}),
       ...(terminal.labels?.['wherdr.coordinator'] !== undefined ? { coordinator: true } : {}),
+      ...(terminal.labels?.['backlot.role'] ? { backlotRole: terminal.labels['backlot.role'] } : {}),
       ...(updated ? { stopped: { reason: 'update' as const } } : agent === 'codex' && codexInstalling(terminal.title, terminal.status?.msg) ? { installing: true } : {}),
       ...(typeof terminal.status_ms === 'number' ? { stateSeq: terminal.status_ms, since: terminal.status_ms } : terminal.turn ? { stateSeq: terminal.turn } : {}) }
     result.panes.push(pane)

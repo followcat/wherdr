@@ -22,6 +22,7 @@ export function shouldReapExited(t: ReapCandidate, nowMs = Date.now()): boolean 
   if (t.state !== 'finished' || t.reason !== 'exited') return false
   const labels = t.labels ?? {}
   if (PM_LABELS.some(l => labels[l] !== undefined)) return false
+  if (Object.keys(labels).some(k => k.startsWith('backlot.'))) return false
   if (labels['wherdr-request'] !== undefined && (t.exit_code ?? 0) !== 0 && typeof t.created_ms === 'number' && nowMs - t.created_ms < LAUNCH_READ_MS) return false
   return true
 }

@@ -255,7 +255,7 @@ export function createCoreScreens(deps: CoreScreenDeps) {
         if (parsed.sendNow) p.queueSendNow = true
         // wherdr is still submitting a message here (a photo becoming an image):
         // what its field holds is that message on its way, not "Not sent".
-        if (p.agent === 'claude' && sendingTo(p.coreAddress)) p.sending = true
+        if (p.agent === 'claude' && sendingTo(p.coreAddress, p.machine)) p.sending = true
         // A working Claude's screen: the "!" command running (its output so far)
         // and its queue, which the transcript only has at the end (ChatView).
         if (p.agent === 'claude' && p.status === 'working' && !failed.has(p.id)) {
@@ -276,7 +276,7 @@ export function createCoreScreens(deps: CoreScreenDeps) {
             seen.real ??= await deps.colors(p).then(ansi => sameText(readDraft(ansi, p.agent)?.text ?? '', draft.text), () => false)
             if (seen.real) p.draft = draft
             // Claude's field may show only "[Pasted text #N]": the message wherdr sent it, as the user wrote it (WHR-472).
-            const own = seen.real ? lastSentText(p.coreAddress) : undefined
+            const own = seen.real ? lastSentText(p.coreAddress, p.machine) : undefined
             if (own && fieldHolds(draft.text, own, true, true)) p.inputText = own
           }
         }

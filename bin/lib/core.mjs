@@ -32,7 +32,7 @@ export function installKind(bin) {
 }
 
 export const COMMANDS = ['run', 'start', 'stop', 'restart', 'status', 'logs', 'open', 'phone', 'panel', 'service', 'dictation', 'doctor', 'help', 'version']
-const VALUE_OPTIONS = { '--port': 'port', '--host': 'host', '--data-dir': 'dataDir', '--hc-socket': 'hcSocket', '--session': 'session', '--lines': 'lines', '-n': 'lines' }
+const VALUE_OPTIONS = { '--port': 'port', '--host': 'host', '--data-dir': 'dataDir', '--hc-socket': 'hcSocket', '--hc-sockets': 'hcSockets', '--session': 'session', '--lines': 'lines', '-n': 'lines' }
 // Herdr sessions are gone in wherdr 3: --session is read, then ignored with a warning.
 export const SESSION_IGNORED = '--session is ignored: wherdr 3 drives a herdr-core (hc) session, chosen with --hc-socket <path>.'
 const FLAGS = { '-h': 'help', '--help': 'help', '-v': 'version', '--version': 'version', '-f': 'follow', '--follow': 'follow' }
@@ -79,6 +79,10 @@ export function expandHome(p, home = os.homedir()) {
   return p === '~' ? home : p.startsWith('~/') ? path.join(home, p.slice(2)) : p
 }
 
+export function parseSocketList(raw, home = os.homedir()) {
+  return String(raw).split(',').map(s => s.trim()).filter(Boolean).map(s => path.resolve(expandHome(s, home)))
+}
+
 // Folder of wherdr's own files (pid, log, settings, data): $WHERDR_DIR or ~/wherdr.
 export function wherdrDir(env = process.env, home = os.homedir()) {
   return path.resolve(expandHome(env.WHERDR_DIR || path.join(home, 'wherdr'), home))
@@ -116,6 +120,12 @@ export function serverEnv(opts, env, home = os.homedir(), bin = BIN) {
   out.DATA_DIR = path.resolve(expandHome(opts.dataDir ?? env.DATA_DIR ?? path.join(dir, 'data'), home))
   const hc = opts.hcSocket ?? env.HC_SOCKET
   if (hc) out.HC_SOCKET = path.resolve(expandHome(hc, home))
+  const extraHc = opts.hcSockets ?? env.HC_SOCKETS
+  if (extraHc !== undefined) {
+    const resolved = parseSocketList(extraHc, home)
+    if (resolved.length) out.HC_SOCKETS = resolved.join(',')
+    else delete out.HC_SOCKETS
+  }
   out.NODE_ENV = 'production'
   // Update command, or one-tap update, offered in the app (shared/updates.ts):
   // the package to replace and the folder of its state and log (bin/lib/updater.mjs).

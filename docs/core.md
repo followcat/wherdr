@@ -7,11 +7,26 @@ wherdr v3 runs entirely on herdr-core (`hc`). This page is the reference for wha
 ## Setup
 
 Build with `npm run build`, and start the server with `HC_SOCKET` pointing to the socket of the
-desired hc session
+desired primary hc session
 ([First launch](quick-start.md#quick-start)). Obtain the endpoint from your hc configuration;
-wherdr requires an explicit endpoint and never starts or installs core. This avoids accidentally
-selecting an inherited agent session. The browser cannot choose the endpoint or issue arbitrary
+wherdr requires an explicit endpoint and never starts, installs, or scans directories for core
+sessions. This avoids accidentally
+selecting an inherited or unrelated agent session. The browser cannot choose the endpoint or issue arbitrary
 RPC calls.
+
+Extra herdr-core sessions on the same server are added explicitly with `HC_SOCKETS` (comma-separated
+socket paths, or `wherdr --hc-sockets <paths>`) and/or `hcSockets` (`string[]`) in
+`DATA_DIR/settings.json`. Browser-written `hcSockets` entries only accept user-owned Unix sockets
+resolving (`realpath`) directly inside this user's herdr-core runtime directory (the primary
+`HC_SOCKET` directory, or `$XDG_RUNTIME_DIR/herdr-core/`); any other path is dropped and logged
+by reason. Operator-supplied `HC_SOCKETS` / `--hc-sockets` may point anywhere. Each extra session keeps its own connection, state and event stream; a
+broken, missing or slow secondary socket never blocks or breaks the primary session. Primary pane IDs
+stay byte-identical, while panes from secondary sessions receive a deterministic 16-character
+hash prefix derived from the socket path and remote machine name (`<key>~…`) and link back to the
+same physical machine (`baseKey`) for grouping and quotas. Project coordinators and the Board stay
+on the primary `HC_SOCKET` session; any session publishing a `backlot` document supplies the Studio
+view cleanly, and `backlot-stage` / `backlot-server` terminals suppress push alerts while `actor-*`
+finished chimes default off.
 
 `GET /api/core` checks the configured hc: protocol generation 1 and these methods,
 in both advertised lists (`hello` and `rpc.discover`): `terminal.list`, `terminal.get`,

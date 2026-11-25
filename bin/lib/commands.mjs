@@ -35,14 +35,15 @@ Commands:
   pm <command>       A project coordinator's board commands (token in its environment; see its AGENTS.md)
 
 Options:
-  --hc-socket <path>  Socket of the herdr-core (hc) session to drive (required, or $HC_SOCKET)
-  --port <n>          Listening port (default: 7683, or $PORT)
-  --host <addr>       Listening address (default: 127.0.0.1, or $HOST): loopback or this machine's tailnet address.
-  --data-dir <dir>    Passkeys, push keys, settings and dictation files (default: ~/wherdr/data, or $DATA_DIR)
-  -v, --version       Print the version
-  -h, --help          Print this help
+  --hc-socket <path>   Socket of the primary herdr-core (hc) session (required, or $HC_SOCKET)
+  --hc-sockets <paths> Comma-separated extra herdr-core sockets (or $HC_SOCKETS)
+  --port <n>           Listening port (default: 7683, or $PORT)
+  --host <addr>        Listening address (default: 127.0.0.1, or $HOST): loopback or this machine's tailnet address.
+  --data-dir <dir>     Passkeys, push keys, settings and dictation files (default: ~/wherdr/data, or $DATA_DIR)
+  -v, --version        Print the version
+  -h, --help           Print this help
 
-Settings: environment variables (HC_SOCKET, APP_URL, HOST_LABEL…), or KEY=VALUE lines in
+Settings: environment variables (HC_SOCKET, HC_SOCKETS, APP_URL, HOST_LABEL…), or KEY=VALUE lines in
 ~/wherdr/wherdr.env. Guide: https://wherdr.dev`
 
 const files = dir => ({ pid: path.join(dir, 'wherdr.pid'), log: path.join(dir, 'wherdr.log'), last: path.join(dir, 'wherdr.json') })
@@ -62,6 +63,7 @@ export function context(opts, env = process.env, home = os.homedir()) {
     host: opts.host ?? full.HOST ?? saved.host,
     dataDir: opts.dataDir ?? full.DATA_DIR ?? saved.dataDir,
     hcSocket: opts.hcSocket ?? full.HC_SOCKET ?? saved.hcSocket,
+    hcSockets: opts.hcSockets ?? full.HC_SOCKETS ?? saved.hcSockets,
   }
   const senv = serverEnv(merged, full, home)
   return { dir, files: files(dir), env: senv, port: senv.PORT, host: senv.HOST, url: localUrl(senv.PORT) }
@@ -69,8 +71,8 @@ export function context(opts, env = process.env, home = os.homedir()) {
 
 export function remember(ctx) {
   mkdirSync(ctx.dir, { recursive: true })
-  const { PORT: port, HOST: host, DATA_DIR: dataDir, HC_SOCKET: hcSocket } = ctx.env
-  writeFileSync(ctx.files.last, `${JSON.stringify({ port, host, dataDir, hcSocket }, null, 2)}\n`)
+  const { PORT: port, HOST: host, DATA_DIR: dataDir, HC_SOCKET: hcSocket, HC_SOCKETS: hcSockets } = ctx.env
+  writeFileSync(ctx.files.last, `${JSON.stringify({ port, host, dataDir, hcSocket, ...(hcSockets ? { hcSockets } : {}) }, null, 2)}\n`)
 }
 
 // wherdr 3 never starts without herdr-core: refuse before anything is started.
@@ -131,7 +133,7 @@ export async function run(opts) {
   needCore(ctx)
   if (!process.versions.bun && Number(process.versions.node.split('.')[0]) < 22) throw new CliError(`Node.js 22 or newer is required (found ${process.version}).`)
   await checkPort(ctx)
-  say(`${c.bold('wherdr')} ${VERSION} · ${c.cyan(ctx.url)} · data ${ctx.env.DATA_DIR} · hc ${ctx.env.HC_SOCKET}`)
+  say(`${c.bold('wherdr')} ${VERSION} · ${c.cyan(ctx.url)} · data ${ctx.env.DATA_DIR} · hc ${ctx.env.HC_SOCKET}${ctx.env.HC_SOCKETS ? ` (+ ${ctx.env.HC_SOCKETS.split(',').length} extra)` : ''}`)
   // Bun runs the server (WebSockets, web-push, passkeys, herdr-core's Unix socket),
   // but Node stays the reference runtime: use it when it is there.
   if (process.versions.bun && ctx.env.WHERDR_RUNTIME !== 'bun') {
@@ -270,6 +272,7 @@ export async function status(opts) {
   row('Data', ctx.env.DATA_DIR)
   row('Log', hb ? hb.log : ctx.files.log)
   row('hc', ctx.env.HC_SOCKET || c.yellow('HC_SOCKET not set: wherdr cannot start (--hc-socket <path>)'))
+  if (ctx.env.HC_SOCKETS) row('Extra hc', ctx.env.HC_SOCKETS)
   if (!answer) say(c.dim(hb ? hb.hint : '\n  Start it: wherdr start (background) or wherdr (foreground).'))
 }
 
@@ -456,7 +459,7 @@ export async function service(opts) {
 export function serviceSpec(ctx, bin, runtime, PATH) {
   const args = [bin, 'run', '--port', ctx.port, '--host', ctx.host, '--data-dir', ctx.env.DATA_DIR]
   const env = { PATH, WHERDR_DIR: ctx.dir, WHERDR_RUNTIME: runtime }
-  for (const k of ['HC_SOCKET', 'APP_URL', 'HOST_LABEL', 'CLAUDE_CONFIG_DIR', 'WHERDR_SKILL', 'HERDR_PROJECTS_DATA_DIR']) if (ctx.env[k]) env[k] = ctx.env[k]
+  for (const k of ['HC_SOCKET', 'HC_SOCKETS', 'APP_URL', 'HOST_LABEL', 'CLAUDE_CONFIG_DIR', 'WHERDR_SKILL', 'HERDR_PROJECTS_DATA_DIR']) if (ctx.env[k]) env[k] = ctx.env[k]
   return { args, env }
 }
 

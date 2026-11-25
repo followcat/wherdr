@@ -9,7 +9,7 @@ import { failure } from '../utils/coreInput'
 // picker rather than another pane's latest conversation.
 const SESSION = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/
 export default defineApi(async (_event, b) => {
-  const deps = coreInputDeps()
+  const deps = coreInputDeps(b.pane_id)
   const p = deps.pane(String(b.pane_id))
   if (!p?.coreAddress || !p.stopped) throw new HerdrError('bad_pane', 'Codex is not waiting for a restart here')
   let args: string[] = []

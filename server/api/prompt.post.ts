@@ -2,6 +2,7 @@ import { userMessageTo } from '../utils/pmCoordinator'
 import { pmStore } from '../utils/pmStore'
 import { keepPastes } from '../utils/pastes'
 import { userWrote } from '../utils/pmTalk'
+import { coreForPane } from '../utils/state'
 
 // The user's message. To a project coordinator, it also starts a user turn
 // (what --user-said and template edit need), noted before it is sent; to
@@ -10,7 +11,7 @@ import { userWrote } from '../utils/pmTalk'
 // typed once Codex is ready (coreHeld.ts). Codex stopped by its update: refused
 // ("Not sent"), the conversation offers to restart it first.
 export default defineApi(async (_event, b) => {
-  const deps = coreInputDeps()
+  const deps = coreInputDeps(b.pane_id)
   const p = deps.pane(String(b.pane_id))
   const text = typeof b.text === 'string' ? b.text : ''
   if (p?.stopped && text.trim()) throw new HerdrError('agent_stopped', 'Codex exited after updating itself: restart it, then send again.')
@@ -20,7 +21,8 @@ export default defineApi(async (_event, b) => {
     deps.refresh()
     return { ok: true, queued }
   }
-  if (text.trim()) userWrote(p?.coreAddress)
-  if (text.trim()) await userMessageTo(pmStore(), p?.coreAddress, text, b.tab).catch(() => {})
+  const onPrimary = p ? coreForPane(p.id)?.primary : false
+  if (onPrimary && text.trim()) userWrote(p?.coreAddress)
+  if (onPrimary && text.trim()) await userMessageTo(pmStore(), p?.coreAddress, text, b.tab).catch(() => {})
   return coreSend(deps, b)
 })

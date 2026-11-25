@@ -15,7 +15,7 @@ export default defineApi(async (_event, b) => {
     const v = raw[k]
     if (typeof v === 'string' && v.length <= 80) parts[k] = v
   }
-  const model = await coreModelCtl().setModel(paneId, wanted, Object.keys(parts).length ? parts : undefined)
+  const model = await coreModelCtl(paneId).setModel(paneId, wanted, Object.keys(parts).length ? parts : undefined)
   const p = findPane(paneId)
   if (p) refreshModel(p)
   return { ok: true, model }
