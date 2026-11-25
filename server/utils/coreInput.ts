@@ -1,7 +1,7 @@
 // Composer, keys, interrupt and stop on herdr-core: terminal.send / keys /
 // interrupt / kill on the pane's full core address. Never retried: a timeout
 // does not prove the text or key did not reach the program.
-import { coreCall, CoreError } from './core'
+import { CoreError } from './core'
 import { HerdrError } from './herdr'
 import { keepPastes } from './pastes'
 import { fieldGap, fieldHolds, fieldHoldsRawPhoto, isBareBang, isSlashCommand, PASTE_TAG, pasteCollapses, uploadNames, withoutUploads } from '../../shared/queuedMatch'
@@ -10,6 +10,7 @@ import { noteSubmitting, type Submitting } from './submitting'
 import { clearKeys } from './unqueue'
 import { inTurn, typingInto } from './terminalTurns'
 import { devinCards } from './devinCards'
+import { getPoolRuntime } from './corePool'
 import type { Pane } from '../../shared/types'
 
 type Call = <T>(method: string, params: object, timeout: number) => Promise<T>
@@ -23,7 +24,7 @@ export interface CoreInputDeps {
   /** Claude: text in its input field now (its gray suggestion left out), null when empty. */
   field?: (p: Pane) => Promise<string | null>
   /** Notes a message to Claude being submitted, for a restart to resume it (submitting.ts); returns what forgets it. */
-  submitting?: (terminal: string, text: string) => () => void
+  submitting?: (terminal: string, text: string, machine?: string, pane?: string) => () => void
   settleMs?: number
   /** Longest wait for a message's photos to show, from its paste (PHOTO_WAIT_MS). */
   photoWaitMs?: number
@@ -38,22 +39,24 @@ export interface CoreInputDeps {
 const KEY_RE = /^[a-z0-9+\-]{1,24}$/i
 const MAX_TEXT = 256 * 1024
 
-export function coreInputDeps(): CoreInputDeps {
+export function coreInputDeps(paneId?: unknown): CoreInputDeps {
+  const id = typeof paneId === 'string' && paneId ? paneId : undefined
+  const rt = getPoolRuntime()
+  const entryFor = (p?: Pane) => (p?.id ? rt?.forPane(p.id) : undefined) ?? (id ? rt?.forPane(id) : rt?.primary())
+  const entry = entryFor()
+  const unavailable = () => Promise.reject(new CoreError('unavailable', 'Missing core endpoint'))
   return {
-    call: (method, params, timeout) => {
-      const endpoint = process.env.HC_SOCKET
-      if (!endpoint) return Promise.reject(new CoreError('unavailable', 'Missing core endpoint'))
-      return coreCall(endpoint, method, params, timeout)
-    },
-    pane: id => findPane(id),
-    panes: () => getState().panes,
-    refresh: () => { setTimeout(() => { void poll() }, 100) },
+    call: (method, params, timeout) => (entry ? entry.call(method, params, timeout) : unavailable()),
+    pane: pid => rt?.findPane(pid),
+    panes: () => rt?.getState().panes ?? [],
+    refresh: () => { setTimeout(() => { if (entry) rt?.wakeCorePoll(entry.localKey || undefined); else void rt?.poll() }, 100) },
     field: async (p) => {
-      const endpoint = process.env.HC_SOCKET || ''
-      const plain = String(((await coreCall(endpoint, 'terminal.read', { terminal: p.coreAddress, lines: 0 }, 4000)) as { text?: string }).text || '')
+      const targetEntry = entryFor(p)
+      if (!targetEntry) throw new CoreError('unavailable', 'Missing core endpoint')
+      const plain = String(((await targetEntry.call('terminal.read', { terminal: p.coreAddress, lines: 0 }, 4000)) as { text?: string }).text || '')
       const seen = readDraft(plain, p.agent)
       // The plain screen draws Claude's gray suggestion like typed text: the colored one tells them apart.
-      const typed = seen && readDraft(await corePaint(endpoint, p.coreAddress || ''), p.agent)
+      const typed = seen && readDraft(await corePaint(targetEntry.endpoint, p.coreAddress || ''), p.agent)
       if (typed && sameText(typed.text, seen.text)) return typed.text
       // Empty while Claude takes in a paste: not read yet, the text is coming.
       if (pasting(plain)) throw new HerdrError('pasting', 'Claude is still pasting')
@@ -61,13 +64,16 @@ export function coreInputDeps(): CoreInputDeps {
     },
     submitting: noteSubmitting,
     card: devinCards.sending,
-    takeBack: (p) => {
-      const call = (method: string, params: object, t: number) => coreCall(process.env.HC_SOCKET || '', method, params, t)
-      return takeBackFromClaude(p, {
+    takeBack: async (p) => {
+      const targetEntry = entryFor(p)
+      if (!rt) return null
+      const call: Call = (method, params, t) => (targetEntry ? targetEntry.call(method, params, t) : unavailable())
+      const item = await rt.takeBackFromClaude(p, {
         // Core's plain screen: Claude's field starts with "❯" + a space (a non-breaking one in ANSI).
         screen: async () => String(((await call('terminal.read', { terminal: p.coreAddress, lines: 0 }, 4000)) as { text?: string }).text || '').replace(/^❯ /gm, '❯\u00a0'),
         keys: async (keys) => { await call('terminal.keys', { terminal: p.coreAddress, keys }, 10000) },
-      }).then(item => (item ? takeBack(p.id, item) : null))
+      })
+      return item ? rt.takeBack(p.id, item) : null
     },
   }
 }
@@ -204,7 +210,7 @@ async function typeIn(deps: CoreInputDeps, p: Pane, text: string, pastes: unknow
   }
   if (!isSlashCommand(text)) keepPastes(text, pastes)
   // Noted before the send: a restart during it or during the Enters resumes it.
-  const forget = field && deps.submitting ? deps.submitting(p.coreAddress!, text) : () => {}
+  const forget = field && deps.submitting ? deps.submitting(p.coreAddress!, text, p.machine, p.id) : () => {}
   try {
     const send = (hold = true) => deps.call<{ started?: boolean | null, status?: string | null }>('terminal.send', { terminal: p.coreAddress, text: field && hold ? holdEnter(text) : text }, 30000)
     // The photo wait counts from here: before core's send returns (WHR-472).
@@ -241,19 +247,21 @@ async function typeIn(deps: CoreInputDeps, p: Pane, text: string, pastes: unknow
 // After a restart: the sends it interrupted are submitted the same way, only
 // if Claude's field holds that message alone (never twice). One at a time per
 // terminal, in the order they were sent.
-export async function resumeSubmitting(deps: CoreInputDeps, list: Submitting[]) {
-  const field = deps.field
-  if (!field) return
-  const terminals = [...new Set(list.map(s => s.terminal))]
-  await Promise.all(terminals.map(async (terminal) => {
-    for (const s of list.filter(x => x.terminal === terminal)) {
-      const p = { id: terminal, coreAddress: terminal, agent: 'claude' } as Pane
-      const forget = deps.submitting ? deps.submitting(terminal, s.text) : () => {}
+export async function resumeSubmitting(deps: CoreInputDeps, list: Submitting[], resolveDeps?: (s: Submitting) => CoreInputDeps) {
+  const terminals = [...new Set(list.map(s => `${s.machine ?? ''}\0${s.terminal}`))]
+  await Promise.all(terminals.map(async (scope) => {
+    for (const s of list.filter(x => `${x.machine ?? ''}\0${x.terminal}` === scope)) {
+      const d = resolveDeps?.(s) ?? deps
+      const field = d.field
+      if (!field) continue
+      const terminal = s.terminal
+      const p = { id: s.pane || terminal, coreAddress: terminal, machine: s.machine, agent: 'claude' } as Pane
+      const forget = d.submitting ? d.submitting(terminal, s.text, s.machine, s.pane) : () => {}
       try {
         console.warn(`[wherdr] message to ${terminal}: resumed after a restart`)
         // Pasted again only without its "\": one hidden in a stand-in is never sent (WHR-549).
-        await submitLeftInput(deps, p, field, s.text, async () => { await deps.call('terminal.send', { terminal, text: s.text }, 30000) })
-      } catch { /* the field's own "Not sent" remains */ } finally { forget(); deps.refresh() }
+        await submitLeftInput(d, p, field, s.text, async () => { await d.call('terminal.send', { terminal, text: s.text }, 30000) })
+      } catch { /* the field's own "Not sent" remains */ } finally { forget(); d.refresh() }
     }
   }))
 }

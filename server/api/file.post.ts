@@ -2,5 +2,6 @@
 // extension kept if safe. The returned path is sent to the pane.
 export default defineApi((event, b) => {
   const q = getQuery(event)
-  return corePutFile(coreInputDeps(), String(q.pane || ''), String(q.ext || ''), b.data)
+  const pane = String(q.pane || '')
+  return corePutFile(coreInputDeps(pane), pane, String(q.ext || ''), b.data)
 }, { raw: /^application\/octet-stream$/ })

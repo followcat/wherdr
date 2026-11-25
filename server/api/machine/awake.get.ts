@@ -3,4 +3,7 @@ import { getQuery } from 'h3'
 import { coreAdminDeps } from '../../utils/coreAdminDeps'
 import { coreAwakeStatus } from '../../utils/coreAwake'
 
-export default defineApi(event => coreAwakeStatus(coreAdminDeps(), getQuery(event).key))
+export default defineApi((event) => {
+  const key = getQuery(event).key
+  return coreAwakeStatus(coreAdminDeps(key), key)
+})

@@ -20,6 +20,7 @@ import type { ChatItem, DirEntry, DirListing, MachineConfig, MachineInfo, Pane, 
 
 export interface CoreAdminDeps {
   call: <T>(method: string, params: object, timeout: number) => Promise<T>
+  callFor?: (machineKey: string) => <T>(method: string, params: object, timeout: number) => Promise<T>
   machines: () => MachineInfo[]
   panes: () => Pane[]
   workspaces: () => Workspace[]
@@ -58,29 +59,29 @@ export function machineOn(deps: Pick<CoreAdminDeps, 'machines'>, key: unknown): 
   return { m, on: m.local ? undefined : m.label }
 }
 
-async function exec(deps: Pick<CoreAdminDeps, 'call'>, on: string | undefined, script: string, args: string[] = []) {
+async function exec(deps: Pick<CoreAdminDeps, 'call'>, on: string | undefined, script: string, args: string[] = [], callFn = deps.call) {
   try {
-    const r = await deps.call<{ code: number | null, stdout: string, timed_out?: boolean }>('machine.exec',
+    const r = await callFn<{ code: number | null, stdout: string, timed_out?: boolean }>('machine.exec',
       { argv: ['sh', '-c', script, 'sh', ...args], ...(on ? { on } : {}), timeout: 10 }, 15000)
     if (r.timed_out) throw new CoreError('timeout', 'timeout')
     return { code: r.code, stdout: Buffer.from(r.stdout || '', 'base64').toString('utf8') }
   } catch (e) { return failure(e) }
 }
 
-export async function homeOf(deps: Pick<CoreAdminDeps, 'call'>, on?: string) {
-  const r = await exec(deps, on, 'printf %s "$HOME"')
+export async function homeOf(deps: Pick<CoreAdminDeps, 'call'>, on?: string, callFn = deps.call) {
+  const r = await exec(deps, on, 'printf %s "$HOME"', [], callFn)
   return r.code === 0 ? r.stdout.trim() : ''
 }
 
 const kindsCache = new Map<string, { at: number, kinds: string[] }>()
-export async function kindsOf(deps: CoreAdminDeps, on?: string) {
-  const old = kindsCache.get(on || '')
+export async function kindsOf(deps: CoreAdminDeps, on?: string, callFn = deps.call, cacheKey = on || '') {
+  const old = kindsCache.get(cacheKey)
   if (old && Date.now() - old.at < 30_000) return old.kinds
   const candidates = HERDR_AGENT_KINDS.filter(k => AGENT_KINDS.includes(k))
-  const r = await exec(deps, on, KIND_PROBE_SCRIPT, candidates.map(agentBinary))
+  const r = await exec(deps, on, KIND_PROBE_SCRIPT, candidates.map(agentBinary), callFn)
   const found = r.code === 0 ? r.stdout.split('\n').filter(Boolean).map(binaryKind) : []
   const kinds = availableAgentKinds(found, AGENT_KINDS)
-  kindsCache.set(on || '', { at: Date.now(), kinds })
+  kindsCache.set(cacheKey, { at: Date.now(), kinds })
   return kinds
 }
 
@@ -113,14 +114,27 @@ export async function coreIsGit(deps: CoreAdminDeps, path: string | null, machin
   return { git: (await exec(deps, on, 'test -e "$1/.git"', [dir])).code === 0 }
 }
 
-// Machines of the "New" sheet (only with several).
+export function uniqueBaseMachines(list: MachineInfo[]): MachineInfo[] {
+  const byBase = new Map<string, MachineInfo>()
+  for (const m of list) {
+    const base = m.baseKey ?? m.key
+    const prev = byBase.get(base)
+    const mScore = (m.baseKey === undefined ? 2 : 0) + (m.local || m.status === 'online' ? 1 : 0)
+    const pScore = prev ? (prev.baseKey === undefined ? 2 : 0) + (prev.local || prev.status === 'online' ? 1 : 0) : -1
+    if (!prev || mScore > pScore) byBase.set(base, m)
+  }
+  return [...byBase.values()]
+}
+
+// Machines of the "New" sheet (only with several physical machines).
 export async function coreMachineConfigs(deps: CoreAdminDeps): Promise<MachineConfig[] | undefined> {
-  const ms = deps.machines()
+  const ms = uniqueBaseMachines(deps.machines())
   if (ms.length < 2) return undefined
   return Promise.all(ms.map(async (m) => {
     const online = m.local || m.status === 'online'
     const on = m.local ? undefined : m.label
-    const [home, kinds] = online ? await Promise.all([homeOf(deps, on).catch(() => ''), kindsOf(deps, on).catch(() => [])]) : ['', []]
+    const callFn = deps.callFor?.(m.key) ?? deps.call
+    const [home, kinds] = online ? await Promise.all([homeOf(deps, on, callFn).catch(() => ''), kindsOf(deps, on, callFn, m.local ? '' : m.key).catch(() => [])]) : ['', []]
     return { key: m.key, label: m.label, local: m.local, home, kinds, dirs: await deps.recent(m), online: online && Boolean(home) }
   }))
 }

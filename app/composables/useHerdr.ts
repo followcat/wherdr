@@ -301,13 +301,17 @@ export const currentPane = computed<Pane | undefined>(() => herdrState.value.pan
 // Several machines (Herdr SSH profiles): `machines` is only sent if
 // there are at least two; with a single one, the app stays exactly as before.
 export const machines = computed<MachineInfo[]>(old => keepIfSame(old, herdrState.value.machines || []))
-export const multiMachine = computed(() => machines.value.length > 1 || Boolean(machines.value[0]?.baseKey))
+export const multiMachine = computed(() => new Set(machines.value.map(m => m.baseKey ?? m.key)).size > 1)
 export const machineInfo = (key: string | null | undefined) => machines.value.find(m => m.key === (key || ''))
 // `uname -s` of a pane's machine ('Darwin' = macOS); the local one from the config.
 // Machines offered by the "New agent" sheet (null
 // with a single machine); online according to the live state (the config may
 // have been read before the connection).
-export const machineChoices = computed(() => (multiMachine.value ? (appConfig.value.machines || []).filter(m => machines.value.some(s => s.key === m.key)) : null))
+export const machineChoices = computed(() => {
+  if (!multiMachine.value || !appConfig.value.machines?.length) return null
+  const list = appConfig.value.machines.filter(m => machines.value.some(s => (s.baseKey ?? s.key) === (machineInfo(m.key)?.baseKey ?? m.key) || s.key === m.key))
+  return list.length > 1 ? list : null
+})
 export const machineOnline = (m: MachineConfig) => m.local || (machineInfo(m.key)?.status === 'online' && Boolean(m.home))
 export const machineStateOf = (m: MachineConfig) => (m.local ? 'online' : machineInfo(m.key)?.status || 'offline')
 export const machineName = (key: string | null | undefined) => {

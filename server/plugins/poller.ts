@@ -10,6 +10,8 @@ import { sweepAgyCopies } from '../utils/agyTranscripts'
 import { sweepWorktrees } from '../utils/pmCleanup'
 import { pmStore } from '../utils/pmStore'
 import { archiveDone } from '../utils/pmBoard'
+import { coreInputDeps, resumeSubmitting } from '../utils/coreInput'
+import { findPane } from '../utils/state'
 import { takeSubmitting } from '../utils/submitting'
 
 export default defineNitroPlugin((nitroApp) => {
@@ -22,7 +24,13 @@ export default defineNitroPlugin((nitroApp) => {
   purgePastes()
   void archiveDone(pmStore()).catch(() => {})
   const pending = takeSubmitting()
-  if (pending.length) void resumeSubmitting(coreInputDeps(), pending)
+  if (pending.length) {
+    void resumeSubmitting(
+      coreInputDeps(),
+      pending,
+      s => coreInputDeps(s.pane ?? findPane(s.pane)?.id ?? (s.machine ? `${s.machine}~s0:p0` : undefined)),
+    )
+  }
   const purge = setInterval(() => {
     cleanUploads(); cleanAttachments(); purgePastes()
     void sweepWorktrees({ ...coreAdminDeps(), store: pmStore() }).catch(() => {})

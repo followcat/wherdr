@@ -2,6 +2,7 @@
 // (see coreTerm.ts). An open stream keeps a task's agent from its release,
 // what is typed in it counts as the user's message to it (pmTalk.ts).
 import { streamOpen, userWrote } from '../../utils/pmTalk'
+import { coreForPane } from '../../utils/state'
 
 const sessions = new Map<string, TermSession>()
 const addresses = new Map<string, string>()
@@ -16,9 +17,12 @@ export default defineWebSocketHandler({
       close: (code?: number, reason?: string) => peer.close(code, reason),
       isOpen: () => isOpen(peer),
     }
-    const sess = openCoreTerm(ws, url, { endpoint: process.env.HC_SOCKET, address: pane => findPane(pane)?.coreAddress, log })
+    const paneId = url.searchParams.get('pane') || ''
+    const entry = paneId ? coreForPane(paneId) : undefined
+    const sess = entry ? openCoreTerm(ws, url, { endpoint: entry.endpoint, address: pane => findPane(pane)?.coreAddress, log }) : null
+    if (!entry && paneId) ws.close(4404, 'Unknown session')
     if (sess) sessions.set(peer.id, sess)
-    const address = sess ? findPane(url.searchParams.get('pane') || '')?.coreAddress : undefined
+    const address = sess && entry?.primary ? findPane(paneId)?.coreAddress : undefined
     if (address) { addresses.set(peer.id, address); streamOpen(address, 1) }
   },
   message(peer, message) {

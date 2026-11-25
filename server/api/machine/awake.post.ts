@@ -2,4 +2,4 @@
 import { coreAdminDeps } from '../../utils/coreAdminDeps'
 import { coreSetAwake } from '../../utils/coreAwake'
 
-export default defineApi((_event, body) => coreSetAwake(coreAdminDeps(), body))
+export default defineApi((_event, body) => coreSetAwake(coreAdminDeps(body.key), body))

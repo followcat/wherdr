@@ -3,4 +3,7 @@
 // opencode, `cmd --list-models` for Command Code.
 import { coreModelCtl } from '../utils/state'
 
-export default defineApi((event) => coreModelCtl().listModels(getQuery(event).pane))
+export default defineApi((event) => {
+  const pane = getQuery(event).pane
+  return coreModelCtl(pane).listModels(pane)
+})
