@@ -2441,7 +2441,15 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   const MODEL_WINDOW = 512 * 1024
   const MODEL_MAX_BYTES = 16 * 1024 * 1024
   const modelCache = new Map<string, { file: string, size: number, raw: ModelInfo | null, info: ModelInfo | null, stamp?: number }>()
-  async function model(pane: TranscriptPane): Promise<ModelInfo | null> {
+  async function model(pane: TranscriptPane, opts: { walTailOnly?: boolean } = {}): Promise<ModelInfo | null> {
+    if (opts.walTailOnly) {
+      if (pane.agent !== 'agy') return null
+      const last = lastLoc.get(pane.id)
+      const session = last && (!pane.agentSession || last.session === pane.agentSession) ? last.session : pane.agentSession
+      const file = last?.file ?? (session ? agy.pathOf(session) : null)
+      if (!session || !file || !agy.hasKept(file)) return null
+      return agy.model({ ...pane, agentSession: session }, { walTailOnly: true })
+    }
     if (pane.agent === 'devin') {
       const loc = await locate(pane)
       return loc ? devin.model({ ...pane, agentSession: loc.session }) : null

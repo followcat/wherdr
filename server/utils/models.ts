@@ -436,3 +436,17 @@ export function ompScreenModel(text: string | null | undefined): ModelInfo | nul
   }
   return null
 }
+
+// Antigravity CLI's bottom footer prints "<mode> · <Model>" at the right
+// edge (e.g. "auto · Gemini 3 Pro", "auto · Orchestrator (Carbon)").
+const AGY_FOOTER_MODEL = /(?:^|\s{2,})(?:auto|plan|ask|fast|manual)\s+·\s+([A-Z0-9][\w .()+/-]{1,60})\s*$/
+export function agyScreenModel(text: string | null | undefined): ModelInfo | null {
+  const lines = String(text || '').replace(/\s+$/, '').split('\n').slice(-4)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = AGY_FOOTER_MODEL.exec(lines[i]!)
+    if (!m) continue
+    const label = cleanModelName(m[1]!)
+    if (label) return { id: null, label, at: null }
+  }
+  return null
+}

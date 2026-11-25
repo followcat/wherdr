@@ -247,14 +247,16 @@ back to the last whole frame (a frame's 24-byte header and its page are
 separate writes), so a partial frame is never trusted across reads — and both
 files are stat'ed fresh after the copy so a move under it retries rather than
 opening a torn pair.
-A WAL-mode checkpoint rewrites the database file, so the next read ships it
-in full again; a page-level delta would need a page-hash helper on the remote
-machine (no such primitive exists on `MachineFs` today), which is why the
-copy stays whole — bounded by the snapshot limit — until one lands. Kept
+A WAL-mode checkpoint rewrites changed database pages: remote machines ask for
+1 MiB block checksums in one POSIX `dd`/`cksum` exec, fetch only the changed blocks,
+and verify size, SQLite header and block checksums — falling back to a full copy
+when the tools are unavailable or verification fails. Kept
 copies live in the system temp dir under `wherdr-agy-<pid>-*` (often tmpfs, up
-to 256 MiB each): a restart removes the folders whose process no longer runs
-(so a second server on the same host keeps its own), and a pane that goes
-takes its copy with it. Step
+to 256 MiB each), sized so active viewed panes do not thrash while concurrent reads
+trim back to the cache limit on completion: startup, periodic sweeps and server
+shutdown remove directories whose process no longer runs or belongs to the exiting
+server (another live server's copies and pid-less folders stay untouched), and a pane
+that goes takes its copy with it. Step
 payloads are protobuf blobs decoded by a small bounds-checked reader
 (`server/utils/agyProtobuf.ts`).
 The session is resolved fail-closed from what the `agy` process holds open —

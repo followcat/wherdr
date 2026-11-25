@@ -8,11 +8,17 @@
 // injected reads, no state import — unit tests run it in plain Node.
 import { hasTranscript } from '../../shared/agentKind'
 import type { ModelInfo, ModelList, Pane } from '../../shared/types'
-import { cleanModelName, claudeScreenEffort, claudeScreenModel, codexConfigModel, codexFooterModel, ompModelLabel, ompScreenEffort, ompScreenModel, sameModel } from './models'
+import { agyScreenModel, cleanModelName, claudeScreenEffort, claudeScreenModel, codexConfigModel, codexFooterModel, ompModelLabel, ompScreenEffort, ompScreenModel, sameModel } from './models'
 import { devinStatusModel } from './devinMenu'
 
+// DB/whole-document backed agents: periodic unviewed polls use screen footers
+// or last known models rather than copying or querying conversation stores.
+export const UNVIEWED_NO_DB_AGENTS = new Set(['agy', 'devin', 'opencode', 'hermes', 'cline'])
+
+export type ModelRefreshOpts = { viewed?: boolean, statusFlip?: boolean }
+
 export interface ModelCtlDeps {
-  transcript: (p: Pane) => Promise<ModelInfo | null>
+  transcript: (p: Pane, opts?: { walTailOnly?: boolean }) => Promise<ModelInfo | null>
   // ~/.codex/config.toml on the agent's machine; null when unreadable.
   codexConfig: (p: Pane) => Promise<string | null>
   machineKey: (p: Pane) => string
@@ -25,8 +31,10 @@ export function createModelCtl(deps: ModelCtlDeps) {
   // says something newer (Codex only writes the model on the next turn).
   const overrides = new Map<string, ModelInfo & { ms: number }>()
   const observedEfforts = new Map<string, { label: string, effort: string }>()
-  // Codex / Devin: the model read from the status line.
+  // Codex / Devin / Antigravity: the model read from the status line.
   const footers = new Map<string, { info: ModelInfo, ms: number }>()
+  // Last model read from transcript/DB per pane (used while unviewed).
+  const lastTranscripts = new Map<string, ModelInfo>()
   // Claude: effort announced on screen (banner, /effort output), more reliable
   // than the transcript, which keeps the default effort.
   const screenEfforts = new Map<string, { effort: string, ms: number }>()
@@ -74,6 +82,11 @@ export function createModelCtl(deps: ModelCtlDeps) {
       if (label) footers.set(paneId, { info: { id: null, label }, ms: now() })
       return
     }
+    if (agent === 'agy') {
+      const info = agyScreenModel(text)
+      if (info) footers.set(paneId, { info, ms: now() })
+      return
+    }
     if (agent !== 'codex') return
     const info = codexFooterModel(text)
     if (info) footers.set(paneId, { info, ms: now() })
@@ -81,6 +94,7 @@ export function createModelCtl(deps: ModelCtlDeps) {
 
   function forgetModel(paneId: string) {
     footers.delete(paneId)
+    lastTranscripts.delete(paneId)
     overrides.delete(paneId)
     observedEfforts.delete(paneId)
     screenEfforts.delete(paneId)
@@ -89,11 +103,30 @@ export function createModelCtl(deps: ModelCtlDeps) {
   }
 
   // historyModel: the model a daemon-backed history already read (codexDaemon.ts).
-  async function currentModel(p: Pane, historyModel?: ModelInfo | null): Promise<ModelInfo | null> {
-    if (p.agent === 'opencode' || p.agent === 'cmd') return deps.transcript(p)
+  async function currentModel(p: Pane, historyModel?: ModelInfo | null, opts: ModelRefreshOpts = {}): Promise<ModelInfo | null> {
+    const unviewedDb = opts.viewed === false && Boolean(p.agent && UNVIEWED_NO_DB_AGENTS.has(p.agent))
+    if (p.agent === 'opencode' || p.agent === 'cmd') {
+      if (unviewedDb) {
+        const o = overrides.get(p.id)
+        if (o) { const { ms: _ms, ...info } = o; return info }
+        return lastTranscripts.get(p.id) ?? null
+      }
+      const got = await deps.transcript(p)
+      if (got) lastTranscripts.set(p.id, got)
+      return got
+    }
     if (!hasTranscript(p.agent)) return null
     // A failed read throws: the state keeps the model it showed (refreshModel).
-    let fromFile = historyModel || await deps.transcript(p)
+    let fromFile: ModelInfo | null = historyModel || null
+    if (!fromFile) {
+      if (!unviewedDb) {
+        fromFile = await deps.transcript(p)
+      } else if (p.agent === 'agy' && opts.statusFlip) {
+        fromFile = await deps.transcript(p, { walTailOnly: true })
+      }
+    }
+    if (fromFile) lastTranscripts.set(p.id, fromFile)
+    else if (unviewedDb) fromFile = lastTranscripts.get(p.id) ?? null
     if (p.agent === 'devin') {
       // The status line is authoritative for the session's pick: the
       // transcript only names the model that generated the last turn (under
@@ -174,8 +207,9 @@ export function createModelCtl(deps: ModelCtlDeps) {
 // from the phone must show right away). Dead panes are pruned with forget —
 // together with modelCtl().forgetModel in state.ts.
 export function createModelRefresh(deps: {
-  currentModel: (p: Pane) => Promise<ModelInfo | null>
+  currentModel: (p: Pane, opts?: ModelRefreshOpts) => Promise<ModelInfo | null>
   changed?: () => void
+  viewed?: (id: string) => boolean
   now?: () => number
   staleMs?: number
 }) {
@@ -183,26 +217,29 @@ export function createModelRefresh(deps: {
   const staleMs = deps.staleMs ?? 5000
   const models = new Map<string, { info: ModelInfo | null, status: string | null, at: number }>()
   const busy = new Set<string>()
-  function refresh(p: Pane) {
+  function refresh(p: Pane, opts: ModelRefreshOpts = { viewed: true, statusFlip: false }) {
     if (busy.has(p.id)) return
     busy.add(p.id)
-    deps.currentModel(p)
+    deps.currentModel(p, opts)
       .then((info) => {
         const old = models.get(p.id)
-        models.set(p.id, { info, status: p.status || null, at: now() })
-        if (JSON.stringify(old && old.info) !== JSON.stringify(info)) deps.changed?.()
+        const kept = info ?? (opts.viewed === false && p.agent && UNVIEWED_NO_DB_AGENTS.has(p.agent) ? (old?.info ?? null) : null)
+        models.set(p.id, { info: kept, status: p.status || null, at: now() })
+        if (JSON.stringify(old && old.info) !== JSON.stringify(kept)) deps.changed?.()
       })
       .catch(() => {})
       .finally(() => busy.delete(p.id))
   }
   return {
-    refresh,
+    refresh: (p: Pane) => refresh(p, { viewed: true, statusFlip: false }),
     forget: (id: string) => { models.delete(id) },
     ids: () => models.keys(),
     // Poll-side: kick a refresh when due, then put the last known model on the pane.
     apply(p: Pane) {
       const md = models.get(p.id)
-      if (!md || md.status !== p.status || now() - md.at > staleMs) refresh(p)
+      const statusFlip = Boolean(md && md.status !== p.status)
+      const viewed = deps.viewed ? deps.viewed(p.id) : true
+      if (!md || statusFlip || now() - md.at > staleMs) refresh(p, { viewed, statusFlip })
       if (md && md.info) p.model = md.info
     },
   }

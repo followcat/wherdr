@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { fieldOf } from '../server/utils/agyProtobuf'
 import { createTranscripts } from '../server/utils/transcripts'
 import {
-  agyAnchorOf, agyHeadOf, agyToolSummary, agyUserText, conversationPath, createAgyTranscripts, hasStep,
+  agyAnchorOf, agyHeadOf, agyToolSummary, agyUserText, conversationPath, createAgyTranscripts, disposeAgyCopies, hasStep,
   parseAgyStep, prefixOf, sweepAgyCopies, takeVisible, type AgyDoc, type AgyStep,
 } from '../server/utils/agyTranscripts'
 import { AGY_SESSION, openAgyFixture, stepBlobs, writeAgyFixture, writeAgySummaries } from './helpers/agy-fixture.mjs'
@@ -596,4 +596,216 @@ it('recopies a restarted WAL in full', async () => {
   expect((remote.bytes.get(walFile) ?? 0) - walBytes).toBeGreaterThanOrEqual(walNow)
   // The checkpoint rewrote the main file too: it shipped in full again.
   expect(remote.bytes.get(live.file) ?? 0).toBeGreaterThan(dbBytes)
+})
+
+function remoteExecMachine(opts: { run?: (script: string, args: string[], fileBytes: Buffer | null) => Promise<Buffer> | Buffer } = {}) {
+  const base = remoteMachine()
+  const mirror = mkdtempSync(path.join(tmpdir(), 'wherdr-remote-mirror-'))
+  homes.push(mirror)
+  let execs = 0
+  const execLog: string[] = []
+  const mirrorPath = (p: string) => {
+    const rel = p.replace(/^\/+/, '').replace(/[^\w.-]/g, '_')
+    return path.join(mirror, rel)
+  }
+  const syncMirror = (p: string) => {
+    const f = base.store.get(p)
+    const dst = mirrorPath(p)
+    if (!f) { rmSync(dst, { force: true }); return null }
+    writeFileSync(dst, f.buf)
+    return dst
+  }
+  const fs: MachineFs = {
+    ...base.fs,
+    async run(script, args, runOpts) {
+      execs++
+      execLog.push(script.slice(0, 40))
+      const target = args[0] || ''
+      const dst = syncMirror(target)
+      if (opts.run) {
+        return Buffer.from(await opts.run(script, args, base.store.get(target)?.buf ?? null))
+      }
+      if (!dst) throw new Error('missing file')
+      const mapped = args.map((a, i) => (i === 0 ? dst : a))
+      return await new Promise<Buffer>((resolve, reject) => {
+        execFile('sh', ['-c', script, 'sh', ...mapped], {
+          encoding: 'buffer',
+          maxBuffer: runOpts?.maxBytes ?? 64 * 1024,
+          timeout: runOpts?.timeoutMs ?? 15000,
+        }, (err, stdout, stderr) => {
+          if (err) reject(new Error(stderr.toString() || err.message))
+          else resolve(stdout)
+        })
+      })
+    },
+  }
+  return {
+    ...base,
+    fs,
+    execs: () => execs,
+    execLog,
+    resetCounts: () => {
+      execs = 0
+      base.bytes.clear()
+    },
+  }
+}
+
+it('keeps 6 viewed panes in cache without full recopy thrash', async () => {
+  const scratch = mkdtempSync(path.join(tmpdir(), 'wherdr-6viewed-'))
+  const home = mkdtempSync(path.join(scratch, 'home-'))
+  homes.push(scratch)
+  vi.stubEnv('TMPDIR', scratch)
+  const remote = remoteExecMachine()
+  const sessions = Array.from({ length: 6 }, (_, i) => `11111111-2222-4333-8444-00000000000${i + 1}`)
+  const files: string[] = []
+  for (const [idx, sid] of sessions.entries()) {
+    writeAgyFixture(home, {
+      session: sid,
+      rows: [
+        { role: 'user', text: `Pane ${idx + 1} question` },
+        { role: 'agent', text: `Pane ${idx + 1} reply ${'x'.repeat(200_000)}` },
+      ],
+    })
+    const f = conversationPath(home, sid)!
+    remote.sync(f)
+    files.push(f)
+  }
+  const agy = createAgyTranscripts({ home, fs: remote.fs })
+  for (const sid of sessions) {
+    expect((await agy.chat({ ...pane, id: sid, agentSession: sid })).available).toBe(true)
+  }
+  const initialDbBytes = files.reduce((s, f) => s + (remote.bytes.get(f) ?? 0), 0)
+  expect(initialDbBytes).toBeGreaterThan(600_000)
+
+  remote.resetCounts()
+  // Revisit all 6 viewed panes in turn: none of the kept copies was evicted.
+  for (const sid of sessions) {
+    const r = await agy.chat({ ...pane, id: sid, agentSession: sid })
+    expect(r.available).toBe(true)
+    expect(r.items?.[0]?.text).toContain('question')
+  }
+  const revisitBytes = files.reduce((s, f) => s + (remote.bytes.get(f) ?? 0), 0)
+  expect(revisitBytes).toBe(0)
+})
+
+it('delta-syncs a checkpointed DB by 1 MiB blocks and falls back on missing tools or corruption', async () => {
+  const { home } = fixture()
+  const live = openAgyFixture(home, {
+    wal: true,
+    rows: [
+      { role: 'user', text: 'First big prompt' },
+      // > 3 MiB database so earlier 1 MiB blocks stay unchanged across a small append + checkpoint.
+      { role: 'agent', text: `Block-stable payload ${'a'.repeat(3_500_000)}` },
+    ],
+  })
+  keepers.push(live)
+  live.db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+
+  const remote = remoteExecMachine()
+  remote.sync(live.file)
+  remote.sync(`${live.file}-wal`)
+  const agy = createAgyTranscripts({ home, fs: remote.fs })
+
+  // 1. First read copies once in full.
+  let nextIdx = 2
+  const first = await agy.chat(pane)
+  expect(first.items?.length).toBe(2)
+  const fullSize = remote.sizeOf(live.file)
+  expect(fullSize).toBeGreaterThan(3 * 1024 * 1024)
+  expect(remote.bytes.get(live.file) ?? 0).toBe(fullSize)
+
+  // 2. WAL growth ships only the grown WAL tail (0 main DB bytes).
+  live.append([{ idx: nextIdx++, role: 'agent', text: 'WAL tail reply' }])
+  remote.sync(`${live.file}-wal`)
+  remote.resetCounts()
+  const walRead = await agy.chat(pane, { since: first.token })
+  expect(walRead.items?.at(-1)?.text).toBe('WAL tail reply')
+  expect(remote.bytes.get(live.file) ?? 0).toBe(0)
+  expect(remote.bytes.get(`${live.file}-wal`) ?? 0).toBeGreaterThan(0)
+  expect(remote.execs()).toBe(0)
+
+  // 3. Checkpoint rewrites header + trailing blocks: only changed 1 MiB blocks are fetched.
+  live.append([
+    { idx: nextIdx++, role: 'user', text: 'Second turn' },
+    { idx: nextIdx++, role: 'agent', text: 'Post-checkpoint reply' },
+  ])
+  live.db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+  remote.sync(live.file)
+  remote.sync(`${live.file}-wal`)
+  remote.resetCounts()
+  const ckRead = await agy.chat(pane, { since: walRead.token })
+  expect(ckRead.items?.at(-1)?.text).toBe('Post-checkpoint reply')
+  expect(remote.execs()).toBe(1)
+  expect(remote.bytes.get(live.file) ?? 0).toBeGreaterThan(0)
+  // At least one 1 MiB middle block stayed identical, so delta read is strictly smaller than full copy.
+  expect(remote.bytes.get(live.file) ?? 0).toBeLessThan(fullSize)
+
+  // 4. Corrupted block checksum answer and missing POSIX tools fall back to full copy.
+  let mode: 'real' | 'corrupt' | 'missing' = 'real'
+  const remoteMixed = remoteExecMachine({
+    run: (script, args, fileBuf) => {
+      if (mode === 'real') {
+        const tmp = mkdtempSync(path.join(tmpdir(), 'wherdr-run-real-'))
+        homes.push(tmp)
+        const f = path.join(tmp, 'conv.db')
+        writeFileSync(f, fileBuf!)
+        return new Promise<Buffer>((resolve, reject) => {
+          execFile('sh', ['-c', script, 'sh', f, ...args.slice(1)], { encoding: 'buffer' }, (e, out, err) => e ? reject(new Error(err.toString())) : resolve(out))
+        })
+      }
+      if (mode === 'missing') throw new Error('dd: not found')
+      return Buffer.from('12345 999\n')
+    },
+  })
+  remoteMixed.sync(live.file)
+  remoteMixed.sync(`${live.file}-wal`)
+  const agyMixed = createAgyTranscripts({ home, fs: remoteMixed.fs })
+  await agyMixed.chat(pane)
+
+  mode = 'corrupt'
+  live.append([{ idx: nextIdx++, role: 'agent', text: 'Recovered after corrupt block answer' }])
+  live.db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+  remoteMixed.sync(live.file)
+  remoteMixed.sync(`${live.file}-wal`)
+  remoteMixed.resetCounts()
+  const recoveredCorrupt = await agyMixed.chat(pane)
+  expect(recoveredCorrupt.items?.at(-1)?.text).toBe('Recovered after corrupt block answer')
+  expect(remoteMixed.bytes.get(live.file) ?? 0).toBe(remoteMixed.sizeOf(live.file))
+
+  mode = 'missing'
+  live.append([{ idx: nextIdx++, role: 'agent', text: 'Recovered when tools missing' }])
+  live.db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+  remoteMixed.sync(live.file)
+  remoteMixed.sync(`${live.file}-wal`)
+  remoteMixed.resetCounts()
+  const recoveredMissing = await agyMixed.chat(pane)
+  expect(recoveredMissing.items?.at(-1)?.text).toBe('Recovered when tools missing')
+  expect(remoteMixed.bytes.get(live.file) ?? 0).toBe(remoteMixed.sizeOf(live.file))
+})
+
+it('does not leak extra kept directories across 12 concurrent reads beyond cache limit', async () => {
+  const scratch = mkdtempSync(path.join(tmpdir(), 'wherdr-leak-'))
+  const home = mkdtempSync(path.join(scratch, 'home-'))
+  homes.push(scratch)
+  vi.stubEnv('TMPDIR', scratch)
+  const remote = remoteExecMachine()
+  const sessions = Array.from({ length: 12 }, (_, i) => `aaaaaaaa-2222-4333-8444-0000000000${String(i + 1).padStart(2, '0')}`)
+  for (const sid of sessions) {
+    writeAgyFixture(home, { session: sid, rows: [{ role: 'user', text: `Concurrent ${sid}` }] })
+    remote.sync(conversationPath(home, sid)!)
+  }
+  const agy = createAgyTranscripts({ home, fs: remote.fs })
+  await Promise.all(sessions.map(sid => agy.chat({ ...pane, id: sid, agentSession: sid })))
+  const dirs = readdirSync(scratch).filter(n => n.startsWith(`wherdr-agy-${process.pid}-`))
+  expect(dirs.length).toBeLessThanOrEqual(8)
+
+  // Clean shutdown disposes owned directories while leaving unrelated pid/pidless dirs untouched.
+  const otherLive = path.join(scratch, `wherdr-agy-${process.pid}-other`)
+  const nameless = path.join(scratch, 'wherdr-agy-nopid')
+  mkdirSync(otherLive)
+  mkdirSync(nameless)
+  disposeAgyCopies()
+  expect(readdirSync(scratch).filter(n => n.startsWith(`wherdr-agy-${process.pid}-`))).toEqual([path.basename(otherLive)])
+  expect(existsSync(nameless)).toBe(true)
 })
