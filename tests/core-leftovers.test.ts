@@ -7,9 +7,42 @@ describe('core mode: state is not rebuilt from the empty legacy machines', () =>
 
   it('schedules no legacy rebuild at load and keeps the core state', async () => {
     const good = { ok: true, workspaces: [{ id: 'w1', label: 'w' }], tabs: [], panes: [] }
-    vi.doMock('../server/utils/readCoreState', () => ({ readCoreState: async () => good }))
-    // These come from Nitro auto-imports in production.
-    Object.assign(globalThis, { coreScreens: () => ({ enrich: async () => {} }) })
+    const entry = {
+      primary: true,
+      endpoint: '/run/hc.sock',
+      localKey: '',
+      sessionName: undefined,
+      session: { connected: false, start: () => {}, stop: () => {}, get: () => undefined, snapshot: () => null },
+      call: async () => ({}),
+      machines: () => [],
+      snapshot: () => null,
+      state: () => good,
+      poll: async () => good,
+      staleDocs: () => {},
+      ownsMachine: (k: string) => k === '',
+      start: () => {},
+      stop: () => {},
+    }
+    vi.doMock('../server/utils/corePool', () => ({
+      resolveConfiguredSockets: () => ({ primary: '/run/hc.sock', extra: [] }),
+      createCorePool: () => ({
+        entries: () => [entry],
+        primary: () => entry,
+        forPane: () => entry,
+        forMachine: () => entry,
+        findPane: () => undefined,
+        state: () => good,
+        poll: async () => good,
+        settle: async () => good,
+        staleDocs: () => {},
+        reconfigure: () => {},
+        start: () => {},
+        stop: () => {},
+      }),
+      registerPoolRuntime: () => {},
+      getPoolRuntime: () => null,
+    }))
+    vi.doMock('../server/utils/coreScreenDeps', () => ({ coreScreens: () => ({ enrich: async () => {} }) }))
     const timer = vi.spyOn(globalThis, 'setTimeout')
     const s = await import('../server/utils/state')
     expect(timer).not.toHaveBeenCalled()

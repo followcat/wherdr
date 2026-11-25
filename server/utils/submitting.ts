@@ -7,9 +7,11 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { DATA_DIR } from './env'
 
-export interface Submitting { id: string, terminal: string, text: string, at: number }
+export interface Submitting { id: string, terminal: string, machine?: string, pane?: string, text: string, at: number }
 export const SUBMITTING_TTL_MS = 120_000
 const FILE = path.join(DATA_DIR, 'submitting.json')
+
+const scopeKey = (terminal: string, machine?: string) => (machine ? `${machine}\0${terminal}` : terminal)
 
 function load(): Submitting[] {
   try {
@@ -38,28 +40,30 @@ const fresh = (s: Submitting, now: number) => now - s.at < SUBMITTING_TTL_MS
 // field holds it).
 const running = new Map<string, string[]>()
 const lastSent = new Map<string, string>()
-export const sendingTo = (terminal: string | undefined) => Boolean(terminal && running.get(terminal)?.length)
-export const sendingText = (terminal: string | undefined) => (terminal && running.get(terminal)?.at(-1)) || undefined
-export const lastSentText = (terminal: string | undefined) => (terminal && (sendingText(terminal) ?? lastSent.get(terminal))) || undefined
+export const sendingTo = (terminal: string | undefined, machine?: string) => Boolean(terminal && running.get(scopeKey(terminal, machine))?.length)
+export const sendingText = (terminal: string | undefined, machine?: string) => (terminal && running.get(scopeKey(terminal, machine))?.at(-1)) || undefined
+export const lastSentText = (terminal: string | undefined, machine?: string) =>
+  (terminal && (sendingText(terminal, machine) ?? lastSent.get(scopeKey(terminal, machine)))) || undefined
 // Called on each start and end of a send: the open conversations get the new
 // state at once (state.ts polls), not at the next core event.
 let changed = () => {}
 export const onSubmittingChange = (f: () => void) => { changed = f }
 
 /** Notes a message being submitted; returns what forgets it. */
-export function noteSubmitting(terminal: string, text: string): () => void {
-  const s = { id: randomUUID(), terminal, text, at: Date.now() }
-  running.set(terminal, [...running.get(terminal) || [], text])
-  lastSent.set(terminal, text)
+export function noteSubmitting(terminal: string, text: string, machine?: string, pane?: string): () => void {
+  const k = scopeKey(terminal, machine)
+  const s: Submitting = { id: randomUUID(), terminal, ...(machine ? { machine } : {}), ...(pane ? { pane } : {}), text, at: Date.now() }
+  running.set(k, [...running.get(k) || [], text])
+  lastSent.set(k, text)
   save([...load().filter(x => fresh(x, s.at)), s])
   changed()
   let done = false
   return () => {
     if (done) return
     done = true
-    const list = running.get(terminal) || []
+    const list = running.get(k) || []
     list.splice(list.indexOf(text), 1)
-    if (!list.length) running.delete(terminal)
+    if (!list.length) running.delete(k)
     save(load().filter(x => x.id !== s.id && fresh(x, Date.now())))
     changed()
   }
