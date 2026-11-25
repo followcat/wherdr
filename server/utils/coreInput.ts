@@ -78,6 +78,35 @@ function target(deps: CoreInputDeps, id: unknown) {
   return p
 }
 
+// Kinds of a refusal with no message of their own in failure(), in plain words.
+const REFUSED: Record<string, string> = {
+  config: 'its configuration has a problem',
+  conflict: 'this conflicts with the current state',
+  internal: 'it hit an internal error',
+  invalid_params: 'it did not accept this request',
+  invalid_template: 'it did not accept the launch template',
+  io: 'it could not read or write a file',
+  needs_update: 'herdr-core on that machine needs an update',
+  not_found: 'the folder or program was not found',
+  spawn_failed: 'the program could not start: check the folder and that it is installed',
+}
+
+// What herdr-core said: its kind, its message (often only the kind again) and
+// its hint, never an empty reason.
+export function refusedText(e: CoreError) {
+  const said = (e.message || '').trim()
+  const detail = said && said !== e.kind ? said : ''
+  const reason = [REFUSED[e.kind], detail].filter(Boolean).join(': ') || 'it gave no reason'
+  const hint = typeof e.hint === 'string' && e.hint.trim() ? ` (${e.hint.trim()})` : ''
+  return `herdr-core refused${e.kind === 'rpc' ? '' : ` (${e.kind})`}: ${reason}${hint}`
+}
+
+// A start refused: not_found is about what it launches, there is no terminal yet.
+export function startFailure(e: unknown): never {
+  if (e instanceof CoreError && ['not_found', 'finished', 'spawn_failed'].includes(e.kind)) throw new HerdrError(e.kind, refusedText(e))
+  failure(e)
+}
+
 // Core's stable error kinds, as the interface's messages.
 export function failure(e: unknown): never {
   if (e instanceof HerdrError) throw e
@@ -91,7 +120,9 @@ export function failure(e: unknown): never {
   if (kind === 'unavailable') throw new HerdrError('unreachable', 'herdr-core is unreachable')
   // Lost during a call: the request may have reached herdr-core (see coreHeld.ts).
   if (kind === 'disconnected') throw Object.assign(new HerdrError('unreachable', 'herdr-core is unreachable'), { unconfirmed: true })
-  throw new HerdrError(kind, e instanceof Error ? e.message : 'herdr-core rejected the request')
+  // wherdr's own words about the connection, not a refusal.
+  if (e instanceof CoreError && kind !== 'protocol' && kind !== 'incompatible') throw new HerdrError(kind, refusedText(e))
+  throw new HerdrError(kind, (e instanceof Error && e.message) || 'The request to herdr-core failed, with no reason given')
 }
 
 // Message from the composer: pasted, then submitted with Enter once nobody types.

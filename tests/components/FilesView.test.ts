@@ -10,7 +10,10 @@ vi.mock('~/components/PdfPreview.vue', () => ({ default: { props: ['src', 'title
 
 const asked: string[] = []
 registerEndpoint('/api/files', (event) => {
-  const path = String(getQuery(event).path ?? '')
+  const q = getQuery(event)
+  // An agent started in src/, below the repository root.
+  if (q.pane === 'w1:sub' && q.path === undefined) return { root: '/home/user/demo', path: 'src', truncated: false, entries: [{ name: 'app.ts', kind: 'file', size: 19, link: false }] }
+  const path = String(q.path ?? '')
   asked.push(path)
   if (path === 'docs') return { root: '/home/user/demo', path: 'docs', truncated: false, entries: [{ name: 'guide.md', kind: 'file', size: 400, link: false }] }
   return path === 'src'
@@ -78,42 +81,60 @@ registerEndpoint('/api/files/download', (event) => {
   return 'a,b\r\n1,2\r\n'
 })
 
+// The tree reads each folder through fetch: wait until no row is loading.
+async function settle(w: { find: (s: string) => { exists: () => boolean } }) {
+  await flushPromises()
+  await vi.waitFor(() => expect(w.find('.tree-row').exists() && !w.find('.tree-note.tree-loading').exists()).toBe(true))
+}
+async function mountTree() {
+  const w = await mountSuspended(FilesView, { props: { paneId: 'w1:p1' } })
+  await settle(w)
+  return w
+}
+
 describe('FilesView', () => {
   beforeEach(() => { localStorage.clear(); hold = null })
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
 
-  it('walks into a folder, opens a file with line numbers, and goes back through the breadcrumb', async () => {
-    const w = await mountSuspended(FilesView, { props: { paneId: 'w1:p1' } })
-    await flushPromises()
-    expect(w.findAll('.files-entry').map(b => b.text())).toEqual(['src', '.env4 B', 'README.md8 B'])
-    await w.findAll('.files-entry')[0]!.trigger('click')
-    await flushPromises()
+  it('expands a folder in the tree, shows a file clicked with line numbers, and goes back through the breadcrumb', async () => {
+    const w = await mountTree()
+    expect(w.findAll('.tree-row').map(b => b.text())).toEqual(['src', '.env4 B', 'README.md8 B'])
+    await w.findAll('.tree-row')[0]!.trigger('click')
+    await settle(w)
     expect(asked.at(-1)).toBe('src')
-    await w.find('.files-entry').trigger('click')
+    expect(w.findAll('.tree-row').map(b => b.text())).toEqual(['src', 'app.ts19 B', '.env4 B', 'README.md8 B'])
+    await w.findAll('.tree-row')[1]!.trigger('click')
     await flushPromises()
     expect(w.find('.files-num').text()).toBe('1\n2')
     expect(w.find('.files-text').text()).toBe('export const x = 1\nlet y')
     expect(w.find('.changes-location').text()).toContain('src/app.ts')
+    expect(w.findAll('.files-crumb').map(c => c.text())).toEqual(['demo', 'src', 'app.ts'])
     await w.find('.files-crumb').trigger('click')
     await flushPromises()
     expect(w.find('.files-text').exists()).toBe(false)
-    expect(w.findAll('.files-entry')).toHaveLength(3)
+    expect(w.findAll('.tree-row')).toHaveLength(4)
+  })
+
+  it('opens on an agent folder below the repository root, its files read by their full path', async () => {
+    const w = await mountSuspended(FilesView, { props: { paneId: 'w1:sub' } })
+    await settle(w)
+    await vi.waitFor(() => expect(w.findAll('.tree-row').map(b => b.text())).toEqual(['src', 'app.ts19 B', '.env4 B', 'README.md8 B']))
+    await w.findAll('.tree-row')[1]!.trigger('click')
+    await flushPromises()
+    expect(reads.at(-1)).toEqual({ pane: 'w1:sub', path: 'src/app.ts' })
   })
 
   it('hides dotfiles when asked, and remembers it', async () => {
-    const w = await mountSuspended(FilesView, { props: { paneId: 'w1:p1' } })
-    await flushPromises()
+    const w = await mountTree()
     await w.find('.changes-toggle input').setValue(false)
-    expect(w.findAll('.files-entry').map(b => b.text())).toEqual(['src', 'README.md8 B'])
-    const again = await mountSuspended(FilesView, { props: { paneId: 'w1:p1' } })
-    await flushPromises()
-    expect(again.findAll('.files-entry')).toHaveLength(2)
+    expect(w.findAll('.tree-row').map(b => b.text())).toEqual(['src', 'README.md8 B'])
+    const again = await mountTree()
+    expect(again.findAll('.tree-row')).toHaveLength(2)
   })
 
   it('stays on the folder when going back while a refresh is loading', async () => {
-    const w = await mountSuspended(FilesView, { props: { paneId: 'w1:p1' } })
-    await flushPromises()
-    await w.findAll('.files-entry')[2]!.trigger('click')
+    const w = await mountTree()
+    await w.findAll('.tree-row')[2]!.trigger('click')
     await flushPromises()
     let release = () => {}
     hold = new Promise((r) => { release = r })
@@ -133,9 +154,8 @@ describe('FilesView', () => {
     const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
     const saved: { href: string, name: string }[] = []
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { saved.push({ href: this.href, name: this.download }) })
-    const w = await mountSuspended(FilesView, { props: { paneId: 'w1:p1' } })
-    await flushPromises()
-    await w.findAll('.files-entry')[2]!.trigger('click')
+    const w = await mountTree()
+    await w.findAll('.tree-row')[2]!.trigger('click')
     await flushPromises()
     await w.find('button[aria-label="Download"]').trigger('click')
     await vi.waitFor(() => expect(saved).toHaveLength(1))
@@ -162,10 +182,11 @@ describe('FilesView', () => {
     await flushPromises()
     expect(asked).toHaveLength(listed)
     expect(reads.at(-1)).toEqual({ pane: 'w1:p1', path: '~/exports/report.csv', from: 'chat' })
-    expect(w.find('.files-crumb.current').text()).toBe('report.csv')
-    expect(w.find('.files-sep').exists()).toBe(false)
+    // Its folder and size only: the window's title names it (head).
+    expect(w.find('[data-testid="files-located"]').text()).toBe('/home/user/exports · 19 B')
+    expect(w.find('.files-crumb').exists()).toBe(false)
     expect(w.find('button[aria-label="Back to folder"]').exists()).toBe(false)
-    expect(w.find('.changes-location').text()).toContain('/home/user/exports/report.csv')
+    expect(w.emitted('name')).toEqual([['report.csv']])
     await w.find('button[aria-label="Download"]').trigger('click')
     await vi.waitFor(() => expect(saved).toHaveLength(1))
     expect(createObjectURL).toHaveBeenCalledTimes(1)
@@ -274,9 +295,8 @@ describe('FilesView', () => {
     })
 
     it('opens a relative link to another file of the folder here, with its folder, and refuses one that leaves it', async () => {
-      const w = await mountSuspended(FilesView, { props: { paneId: 'w1:p1' } })
-      await flushPromises()
-      await w.findAll('.files-entry')[2]!.trigger('click') // README.md
+      const w = await mountTree()
+      await w.findAll('.tree-row')[2]!.trigger('click') // README.md
       await flushPromises()
       await w.find('.files-md a[href="docs/guide.md"]').trigger('click')
       await flushPromises()
@@ -313,7 +333,7 @@ describe('FilesView', () => {
       await w.find('button[aria-label="Back to folder"]').trigger('click')
       await flushPromises()
       expect(w.find('.files-md').exists()).toBe(false)
-      expect(w.findAll('.files-entry')).toHaveLength(3)
+      expect(w.findAll('.tree-row')).toHaveLength(3)
     })
 
     it('opens a linked file at its anchor', async () => {

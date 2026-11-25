@@ -313,13 +313,14 @@ it('To do shows the TL;DR, the screenshots under it, then a link to Comments (th
   expect(w.get('[role="tab"][aria-selected="true"]').attributes('data-tab')).toBe('comments')
   const comments = w.get('[data-testid="task-comments"]')
   // Every report as it arrived, the first one too.
-  expect(comments.findAll(':scope > li').map(li => li.attributes('data-label'))).toEqual(['Done', 'Sent back', 'Fixed', 'Passed'])
-  expect(comments.findAll(':scope > li')[0]!.find('em').text()).toBe('try')
-  expect(comments.findAll(':scope > li')[2]!.find('strong').text()).toBe('it')
+  const said = comments.findAll('[data-kind]')
+  expect(said.map(li => li.attributes('data-label'))).toEqual(['Done', 'Sent back', 'Fixed', 'Passed'])
+  expect(said[0]!.find('em').text()).toBe('try')
+  expect(said[2]!.find('strong').text()).toBe('it')
   await w.get('[data-tab="history"]').trigger('click')
   const history = w.get('[data-testid="task-history"]')
-  expect(history.findAll(':scope > li').map(li => li.attributes('data-label') ?? 'line')).toEqual(['Done', 'line', 'Sent back', 'Fixed', 'Passed'])
-  expect(history.get('li.routine').text()).toContain('review: sent to the reviewer')
+  expect(history.findAll('[data-kind]').map(li => li.attributes('data-label') ?? 'line')).toEqual(['Done', 'line', 'Sent back', 'Fixed', 'Passed'])
+  expect(history.get('.routine').text()).toContain('review: sent to the reviewer')
   expect(w.find('[data-testid="task-summary"]').exists()).toBe(false)
   w.unmount()
   // A new TL;DR waiting for the pace: the notes, with a word.
@@ -369,5 +370,14 @@ it('the header: the step\'s button first, Stop only while the step\'s agent runs
   expect(w.find('[data-testid="task-stop"]').exists()).toBe(false)
   await w.setProps({ card: { ...merge, terminal: 'core-1' } })
   expect(w.find('[data-testid="task-stop"]').exists()).toBe(true)
+  w.unmount()
+})
+
+// The sheet's close cross is shown (not hidden) and closes it.
+it('shows the close button, and a click closes the sheet', async () => {
+  const w = await mountSuspended(TaskSheet, { props: { card }, attachTo: document.body })
+  const close = await vi.waitFor(() => { const b = document.querySelector<HTMLButtonElement>('.hw-sheet-close'); expect(b).not.toBeNull(); return b! })
+  close.click()
+  await vi.waitFor(() => expect(w.emitted('closed')).toBeTruthy())
   w.unmount()
 })

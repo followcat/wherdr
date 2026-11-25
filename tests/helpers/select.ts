@@ -11,3 +11,11 @@ export async function pick(w: Wrapper, id: string, value: string, i = 0) {
   select(w, id, i).vm.$emit('update:modelValue', value)
   await nextTick()
 }
+
+// A segmented choice (SettingsChoice.vue): the chosen option's value, and a tap on another.
+interface Finder { find: (s: string) => { attributes: (k: string) => string | undefined, exists: () => boolean, trigger: (e: string) => Promise<void> } }
+export function segValue(w: Finder, id: string) {
+  const on = w.find(`[data-testid="${id}"] [data-state="on"]`)
+  return on.exists() ? on.attributes('data-value') ?? null : null
+}
+export const segPick = (w: Finder, id: string, value: string) => w.find(`[data-testid="${id}"] [data-value="${value}"]`).trigger('click')

@@ -11,7 +11,8 @@ import { namedAgents } from './settings'
 import type { Quotas } from '../../shared/types'
 import type { PmStore } from './pmStore'
 import { readQuotas } from './quotas'
-import { accountUsedToday } from './pacingLog'
+import { accountUsedToday, readPacingLog } from './pacingLog'
+import { weekSeries } from '../../shared/pacingChart'
 import { policyIn, readPolicies } from './pacingPolicies'
 
 // `task`: the one to start (its type and prefs pick the program); none: the
@@ -45,5 +46,10 @@ export async function pacingView(now = Date.now()): Promise<{ rows: PaceRow[] }>
   const q: Quotas | null = await readQuotas().catch(() => null)
   const policies = await readPolicies()
   const today = Object.fromEntries(await Promise.all((q?.accounts ?? []).map(async a => [a.key, await accountUsedToday(a.key, now).catch(() => null)] as const)))
-  return { rows: paceRows(q, key => policyIn(policies, key), today, now) }
+  const log = await readPacingLog().catch(() => [])
+  // Each account's week on a chart: the log's readings, and the latest one up to when it was read.
+  const rows = paceRows(q, key => policyIn(policies, key), today, now).map(r => !r.account ? r : {
+    ...r, series: r.week ? weekSeries(log, r.account.key, r.policy, r.week.resetsAt, now, r.at ? { at: r.at, used: r.week.used } : undefined) : null,
+  })
+  return { rows }
 }

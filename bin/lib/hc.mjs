@@ -56,7 +56,7 @@ export async function coreCall(endpoint, method, params = {}, timeout = 3000) {
         if ('error' in reply) {
           const e = reply.error
           if (!e || typeof e.code !== 'number' || typeof e.message !== 'string') throw new Error()
-          return finish(new CoreError(e.data?.kind || 'rpc', e.data?.kind === 'unsupported_generation' ? 'Incompatible herdr-core. Protocol generation 1 is required.' : 'herdr-core rejected the request', e.data?.hint))
+          return finish(new CoreError(e.data?.kind || 'rpc', e.data?.kind === 'unsupported_generation' ? 'Incompatible herdr-core. Protocol generation 1 is required.' : e.message, e.data?.hint))
         }
         finish(undefined, reply.result)
       } catch { finish(new CoreError('protocol', 'Invalid JSON-RPC response from herdr-core')) }

@@ -10,9 +10,9 @@ import { language } from '~/utils/i18n'
 import { languageName, langCode, userLanguages, voiceLanguages, voiceSections, type VoiceQuality } from '~/utils/speech/voicePicker'
 
 const engineItems = computed(() => [
-  { label: t('Off'), description: t('No Play button under replies. Default.'), value: 'off' },
-  { label: tl('Voices of this device', 'Voix de cet appareil'), description: t('Free, spoken by the device.'), value: 'device', disabled: !readAloudSupported },
-  { label: t('Voice of wherdr (on this device)'), description: t('Free, natural French, English and Cantonese voices, downloaded once and run on this device.'), value: 'wherdr', disabled: !neuralVoice },
+  { label: t('Off'), description: t('No Play button under replies. Default.'), value: 'off', icon: 'i-lucide-volume-x' },
+  { label: tl('Voices of this device', 'Voix de cet appareil'), description: t('Free, spoken by the device.'), value: 'device', disabled: !readAloudSupported, icon: 'i-lucide-smartphone' },
+  { label: t('Voice of wherdr (on this device)'), description: t('Free, natural French, English and Cantonese voices, downloaded once and run on this device.'), value: 'wherdr', disabled: !neuralVoice, icon: 'i-lucide-audio-lines' },
 ])
 // The select drops an item whose value is '': the system voice gets a name here.
 const SYSTEM = 'system-default'
@@ -61,7 +61,7 @@ function test() {
 
 <template>
   <div data-testid="read-aloud-settings">
-    <URadioGroup v-model="readAloudEngine" :items="engineItems" variant="table" indicator="end" color="primary" size="lg" class="settings-radio" />
+    <SettingsChoice v-model="readAloudEngine" :items="engineItems" :label="tl('Read aloud', 'Lecture à voix haute')" />
     <template v-if="readAloudEngine === 'device'">
       <div class="settings-toggle read-aloud-voice-row">
         <span><b>{{ tl('Voice', 'Voix') }}</b><small>{{ tl('Siri voices cannot be used by browsers. Better voices are downloaded in System Settings › Accessibility › Spoken Content › System voice › Manage voices (Mac) or Settings › Accessibility › Spoken Content › Voices (iPhone); then quit the browser (Cmd+Q on Mac) and reopen it.', 'Les voix Siri ne sont pas accessibles aux navigateurs. De meilleures voix se téléchargent dans Réglages Système › Accessibilité › Contenu énoncé › Voix du système › Gérer les voix (Mac) ou Réglages › Accessibilité › Contenu énoncé › Voix (iPhone) ; quitte ensuite le navigateur (Cmd+Q sur Mac) et rouvre-le.') }}</small></span>

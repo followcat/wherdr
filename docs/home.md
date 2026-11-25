@@ -105,7 +105,10 @@ in the project's General tab (*[WHR] wherdr*; the tooltip reads *Coordinator of 
 ([Project management](project-management.md)). A tap opens its conversation, shown as selected
 while it is open. A coordinator whose terminal ended (its machine restarted, say) stays, marked
 *Stopped*: a tap offers *Resume the conversation* (its last one, with the agent that ran it and
-the same options) or *New conversation*. One whose first message never reached its session
+the same options) or *New conversation*. One that never started (a workspace just added whose
+start failed, say) shows *Not started* with **Start**, which launches it with its saved agent; right
+after a failed start its row says *Did not start* and herdr-core's reason in full, with
+**Start again**. One whose first message never reached its session
 (running or stopped) says *First message not delivered*, and its menu starts with *Send again*
 (a new conversation when its session ended). Its menu (right click on a computer, long press on a
 phone, where it opens as a sheet) offers, in order: *Open the board* (filtered on its project),
@@ -245,6 +248,13 @@ not filtered by tab; the board is, when its picker follows the machine tab.
   by core in that folder; it joins the space whose folder holds it, else a new space.
   With saved proxies (below), a **Proxy** picker offers **None** plus the entries of the chosen
   machine; the last choice on that machine is preselected, and remembered on the server at launch.
+- The **folder browser** (New sheet, project and workspace forms) shows the machine's folders as a
+  tree under its home, opened on the current folder with its parents expanded; a folder's
+  subfolders are read the first time it opens, Git repositories carry a **git** mark, and a big
+  tree draws only its visible rows. The path field at the top takes a pasted or typed path (Enter
+  opens it in the tree); past 8 subfolders, a field filters the selected folder's subfolders.
+  **Choose this folder** takes the selected one; a folder the system refuses to list says why
+  (macOS privacy protection, permissions).
 - **+** in a space's tab row starts at once a terminal like the space's current one (same kind,
   same folder) in a new tab of that space. The new terminal carries the space's labels, so it
   also appears in herdr-app.
@@ -263,8 +273,20 @@ not filtered by tab; the board is, when its picker follows the machine tab.
 
 ### Search
 
-The magnifier (⌘K / Ctrl+K; in the header's ⋯ menu when the list is narrow) searches every agent and the conversations of the Claude Code and
-Codex agents of online machines. Choosing a result opens it.
+The magnifier (⌘K / Ctrl+K; in the header's ⋯ menu when the list is narrow) opens one palette
+for everything, full screen on a phone and a square window on a computer:
+
+- **Conversations**: the agents whose name, task or folder match; below the settings, the messages of the Claude
+  Code and Codex agents of online machines, grouped by agent, the match highlighted. Choosing a
+  message opens its conversation at that message.
+- **Tasks**: by id or title; opens the task's sheet.
+- **Projects**: opens the project's board.
+- **Settings**: each section and each setting an agent can point at (`ui targets`), a project's settings once per project; a setting opens
+  its section with the setting highlighted.
+- **Actions**: New agent, New task, Tasks to review, Notes and Keyboard shortcuts.
+
+With nothing typed it shows the recent conversations and the actions. ↑/↓ move, Enter opens, Esc
+closes.
 
 ### Notes
 

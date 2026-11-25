@@ -11,7 +11,12 @@ const route = useRoute()
 const router = useRouter()
 const e = uiShown
 const panel = computed(() => sidePanelRoom.value)
-const title = computed(() => (e.value ? showLabel(e.value) : ''))
+// A file shown reads as a document: its name is the title (the one shown, once
+// a link of it is followed), its folder · size and controls under it (FilesView `head`).
+const name = ref('')
+watch(e, () => { name.value = '' })
+const title = computed(() => (e.value ? (e.value.what === 'file' && name.value) || showLabel(e.value) : ''))
+const head = `ui-show-file-${useId()}`
 // A task folder's file comes by its absolute path, read as a written path.
 const inFolder = computed(() => !e.value?.arg.startsWith('/'))
 const close = () => { uiShown.value = null }
@@ -30,21 +35,23 @@ watch(() => route.path, close)
     <SidePanelHandle controls="ui-show" />
     <header class="ui-show-top">
       <div class="ui-show-head">
-        <span class="ui-open-by">{{ tl(`Shown by ${e.by || 'the agent'}`) }}</span>
+        <span v-if="e.what !== 'file'" class="ui-open-by">{{ tl(`Shown by ${e.by || 'the agent'}`) }}</span>
         <h2>{{ title }}</h2>
+        <div v-if="e.what === 'file'" :id="head" class="ui-show-sub" />
       </div>
       <button type="button" class="ui-open-x" :aria-label="t('Close')" :title="t('Close')" @click="close">
         <UIcon name="i-lucide-x" />
       </button>
     </header>
     <div class="ui-show-body">
-      <FilesView v-if="e.what === 'file'" :key="`${e.pane}:${e.arg}`" :pane-id="e.pane" :file="e.arg" :in-folder="inFolder" />
+      <FilesView v-if="e.what === 'file'" :key="`${e.pane}:${e.arg}`" :pane-id="e.pane" :file="e.arg" :in-folder="inFolder" :head="head" @name="name = $event" />
       <UiShowShots v-else :key="e.arg" :task="e.arg" />
     </div>
   </aside>
   <AppSheet v-else-if="!panel" v-model:open="sheetOpen" :title="title" wide full screen>
+    <template v-if="e?.what === 'file'" #sub><div :id="head" /></template>
     <template v-if="e">
-      <FilesView v-if="e.what === 'file'" :key="`${e.pane}:${e.arg}`" :pane-id="e.pane" :file="e.arg" :in-folder="inFolder" />
+      <FilesView v-if="e.what === 'file'" :key="`${e.pane}:${e.arg}`" :pane-id="e.pane" :file="e.arg" :in-folder="inFolder" :head="head" @name="name = $event" />
       <UiShowShots v-else :key="e.arg" :task="e.arg" />
     </template>
   </AppSheet>

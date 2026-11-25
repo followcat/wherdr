@@ -19,6 +19,7 @@ import { cloneOn, taskMachine } from '../../shared/pm/project'
 import { ensureVisibility, readLeakCheck } from './pmVisibility'
 import { prepareWorktree } from './pmDeps'
 import { ensureReady } from './pmReady'
+import { refreshGit } from './pmFolder'
 import { fileConflict, filesSection, pastAgents } from '../../shared/pm/files'
 import { branchFor } from '../../shared/pm/branchName'
 import { showIds, shownKey, shownTaskId } from '../../shared/pm/projectKey'
@@ -415,6 +416,7 @@ async function startOnce(deps: PmLaunchDeps, id: unknown, { handover, revive, on
   const { store } = deps
   const asRead = await store.task(id)
   if (!asRead) throw new HerdrError('not_found', 'Unknown task')
+  if (asRead.kind === 'feature') throw new HerdrError('refused', `${asRead.id} is a feature: it runs no agent, start its sub-tasks`)
   let task = asRead
   if (task.state === 'working' && !revive) throw new HerdrError('busy', 'This task is already working')
   const found = (await store.projects()).find(x => x.key === asRead.project)
@@ -426,8 +428,13 @@ async function startOnce(deps: PmLaunchDeps, id: unknown, { handover, revive, on
     if (task.state === 'todo' && task.sameFiles === same.task) return task
     return store.logTask({ ...task, state: 'todo', waiting: undefined, waitKind: undefined, sameFiles: same.task }, 'engine', `waits for ${same.task}: same files (${same.files.join(', ')})`)
   }
-  if (found.git === false) return wait(store, task, 'The project folder is not a git repository: a task needs git for its own worktree')
-  const p = await ensureVisibility(deps, found)
+  const { project: current, error: unchecked } = found.git === false ? await refreshGit(deps, found) : { project: found, error: undefined }
+  if (current.git === false) {
+    if (!unchecked) return wait(store, task, 'The project folder is not a git repository: a task needs git for its own worktree')
+    if (by === 'engine' && !revive && !asRead.step?.started && outOfReach(unchecked)) throw unchecked // startTask holds it
+    return wait(store, task, `Could not check whether the project folder is a git repository: ${unchecked instanceof Error ? unchecked.message : String(unchecked)}. Start the task again once its machine answers`)
+  }
+  const p = await ensureVisibility(deps, current)
   const t = p ? await store.workflow(p.key) : null
   if (!t) return wait(store, task, `The project has no workflow: ask its coordinator to propose one in ${projectPlace(task.project, 'workflow')}`)
   const named = await namedAgents()

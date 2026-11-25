@@ -12,16 +12,16 @@ defineEmits<{ retry: [] }>()
     <p class="form-error" role="alert">{{ t(error) }}</p>
     <UButton color="neutral" variant="outline" size="lg" icon="i-lucide-rotate-cw" data-testid="load-retry" @click="$emit('retry')">{{ tl('Try again') }}</UButton>
   </div>
-  <span v-else-if="kind === 'switch'" class="skel skel-switch" role="status" :aria-label="tl('Loading')" data-testid="skeleton-switch" />
+  <USkeleton v-else-if="kind === 'switch'" as="span" class="skel-switch" role="status" aria-live="off" :aria-label="tl('Loading')" data-testid="skeleton-switch" />
   <div v-else class="settings-card skel-card" role="status" :aria-label="tl('Loading')" aria-busy="true">
-    <div v-for="n in rows" :key="n" class="skel-row" data-testid="skeleton-row">
-      <i class="skel" style="width: 38%" /><i class="skel skel-small" style="width: 26%" /><i class="skel skel-small" :style="{ width: `${64 - n * 9}%` }" />
+    <div v-for="n in rows" :key="n" class="skel-row" aria-hidden="true" data-testid="skeleton-row">
+      <USkeleton as="i" style="width: 38%" /><USkeleton as="i" class="skel-small" style="width: 26%" /><USkeleton as="i" class="skel-small" :style="{ width: `${64 - n * 9}%` }" />
     </div>
   </div>
 </template>
 
 <style scoped>
-/* .skel (main.css): muted, square, a gentle pulse (none with reduced motion). */
+/* USkeleton (main.css `.skel`): muted, square, a gentle pulse (none with reduced motion). */
 .skel-switch { flex: none; width: 48px; height: 28px; }
 .skel-card { display: grid; padding: 0; }
 /* A project row's height: its padding and three lines (name, key, path). */

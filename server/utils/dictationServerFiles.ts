@@ -11,7 +11,7 @@ import { CATALOG, SETS, VOICES, fetchEntry } from '../../scripts/dictation-files
 import type { FetchEntry, FetchOptions } from '../../scripts/dictation-files.mjs'
 import { HerdrError } from './herdr'
 
-interface CatalogModel { id: string, set: string, dir: string, files: { path: string, bytes: number }[], kind?: string }
+interface CatalogModel { id: string, runtime?: string, set: string, dir: string, files: { path: string, bytes: number }[], kind?: string }
 
 export type ServerFilesState =
   | { state: 'ready' }
@@ -43,11 +43,14 @@ export function createServerFiles(deps: ServerFilesDeps) {
 
   const isFile = (f: string, bytes?: number) => stat(f).then(s => s.isFile() && (bytes == null || s.size === bytes), () => false)
 
-  // Is this entry in place? A model archive is when the files the phone
-  // downloads are, at their catalog sizes (cheap: no sha256 of 600 MB on every
-  // Install); another archive when its stamp is.
+  const knownBytes = (m: CatalogModel, e: FetchEntry) =>
+    e.to?.startsWith(`${m.dir}/`) ? m.files.find(f => `${m.dir}/${f.path}` === e.to)?.bytes : undefined
+
+  // Is this entry in place? A model archive or loose model file is when the
+  // files the phone downloads are, at their catalog sizes (cheap: no sha256 of
+  // 600 MB on every Install); another archive when its stamp is.
   async function has(m: CatalogModel, e: FetchEntry): Promise<boolean> {
-    if (e.to) return isFile(path.join(deps.modelsDir, e.to))
+    if (e.to) return isFile(path.join(deps.modelsDir, e.to), knownBytes(m, e))
     if (e.dir === m.dir) {
       const all = await Promise.all(m.files.map(f => isFile(path.join(deps.modelsDir, m.dir, f.path), f.bytes)))
       return all.every(Boolean)
@@ -57,7 +60,7 @@ export function createServerFiles(deps: ServerFilesDeps) {
   }
 
   // The Canto voice runs on its own ORT set, not the sherpa-onnx runtime.
-  const entriesOf = (m: CatalogModel) => [...(m.kind === 'cantoNano' ? [] : (sets.runtime ?? [])), ...(sets[m.set] ?? [])]
+  const entriesOf = (m: CatalogModel) => [...(m.kind === 'cantoNano' ? [] : (sets[m.runtime ?? 'runtime'] ?? [])), ...(sets[m.set] ?? [])]
 
   async function missingOf(m: CatalogModel) {
     const out: FetchEntry[] = []
@@ -65,11 +68,14 @@ export function createServerFiles(deps: ServerFilesDeps) {
     return out
   }
 
+  const sizeOf = (m: CatalogModel, e: FetchEntry) =>
+    e.to ? (knownBytes(m, e) ?? 0) : m.files.reduce((n, f) => n + f.bytes, 0)
+
   async function work(m: CatalogModel, job: Job) {
     // Checked again here: a fetch queued before this one may have brought the runtime.
     const todo = await missingOf(m)
-    // An archive's size is close to its model's files; a single file's is known once it starts.
-    job.sizes = todo.map(e => ({ got: 0, total: e.to ? 0 : m.files.reduce((n, f) => n + f.bytes, 0) }))
+    // A model file's or archive's size is known from the catalog; a runtime file's once it starts.
+    job.sizes = todo.map(e => ({ got: 0, total: sizeOf(m, e) }))
     for (const [i, e] of todo.entries()) {
       job.phase = 'fetch'
       const size = job.sizes[i]!
@@ -94,8 +100,8 @@ export function createServerFiles(deps: ServerFilesDeps) {
     return { state: 'preparing', phase: job.phase, got, total }
   }
 
-  function start(m: CatalogModel): Job {
-    const job: Job = { id: m.id, done: false, error: '', phase: 'fetch', sizes: [] }
+  function start(m: CatalogModel, todo: FetchEntry[]): Job {
+    const job: Job = { id: m.id, done: false, error: '', phase: 'fetch', sizes: todo.map(e => ({ got: 0, total: sizeOf(m, e) })) }
     jobs.set(m.id, job)
     const run = queue.then(() => work(m, job))
     queue = run.catch(() => {})
@@ -118,11 +124,12 @@ export function createServerFiles(deps: ServerFilesDeps) {
         if (job.error) jobs.delete(id)
         return view(job)
       }
-      if (!(await missingOf(m)).length) return { state: 'ready' }
+      const missing = await missingOf(m)
+      if (!missing.length) return { state: 'ready' }
       if (!fetch) return { state: 'missing' }
       // Another request may have started it while the files were checked.
       const again = jobs.get(id)
-      return view(again && !again.error ? again : start(m))
+      return view(again && !again.error ? again : start(m, missing))
     },
   }
 }

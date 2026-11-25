@@ -42,6 +42,7 @@ describe('conversation follows the end only from the bottom', () => {
     herdrState.value = { ok: true, workspaces: [], panes: [pane] }
     const w = await mountSuspended(ChatView, {
       props: { pane, localQueued: [] },
+      attachTo: document.body,
       // A finished turn shows its Copy reply button (UTooltip).
       global: { stubs: { UTooltip: { template: '<slot />' } } },
     })
@@ -143,5 +144,123 @@ describe('conversation follows the end only from the bottom', () => {
         expect(g.top).toBe(reading)
       } finally { w.unmount() }
     } finally { items.pop() }
+  })
+
+  it.each([
+    { key: 'PageUp' },
+    { key: 'ArrowUp' },
+    { key: 'Home' },
+    { key: ' ', shiftKey: true },
+  ])('stops following when $key is pressed while focus is on document.body', async (keyInit) => {
+    const { w, g, grow, scrollTo } = await mount()
+    try {
+      await grow()
+      expect(g.top).toBe(bottom(g))
+      document.body.focus()
+      expect(document.activeElement).toBe(document.body)
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { ...keyInit, bubbles: true, cancelable: true }))
+      await scrollTo(bottom(g) - 40)
+      const reading = g.top
+      expect(reading).toBe(bottom(g) - 40)
+      await grow()
+      expect(g.top).toBe(reading)
+    } finally { w.unmount() }
+  })
+
+  it('ignores scroll keys from editable targets and the composer', async () => {
+    const { w, g, grow } = await mount()
+    const host = document.createElement('div')
+    const input = document.createElement('input')
+    const textarea = document.createElement('textarea')
+    const editable = document.createElement('div')
+    editable.setAttribute('contenteditable', 'true')
+    const composer = document.createElement('div')
+    composer.className = 'composer'
+    const composerBtn = document.createElement('button')
+    composer.appendChild(composerBtn)
+    host.append(input, textarea, editable, composer)
+    document.body.appendChild(host)
+    try {
+      await grow()
+      expect(g.top).toBe(bottom(g))
+      for (const [target, key] of [
+        [input, 'ArrowUp'],
+        [textarea, 'PageUp'],
+        [editable, 'Home'],
+        [composerBtn, ' '],
+      ] as const) {
+        target.focus()
+        target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+        g.top = bottom(g) - 69
+        await w.find('.chat').trigger('scroll')
+        expect(g.top).toBe(bottom(g))
+      }
+    } finally {
+      host.remove()
+      w.unmount()
+    }
+  })
+
+  it('keeps a scrollbar drag as a live gesture while pointerdown stays held past GESTURE_MS', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const { w, g, grow, scrollTo } = await mount()
+      try {
+        await grow()
+        expect(g.top).toBe(bottom(g))
+        await w.find('.chat').trigger('pointerdown')
+        vi.setSystemTime(Date.now() + 1000)
+        await scrollTo(bottom(g) - 80)
+        const reading = g.top
+        expect(reading).toBe(bottom(g) - 80)
+        await grow()
+        expect(g.top).toBe(reading)
+
+        // Releasing outside .chat clears the held pointer state on pointerup, pointercancel, and blur.
+        for (const [target, eventName] of [
+          [window, 'pointerup'],
+          [window, 'pointercancel'],
+          [window, 'blur'],
+        ] as const) {
+          await scrollTo(bottom(g))
+          await w.find('.chat').trigger('pointerdown')
+          target.dispatchEvent(new Event(eventName))
+          vi.setSystemTime(Date.now() + 1000)
+          g.top = bottom(g) - 69
+          await w.find('.chat').trigger('scroll')
+          expect(g.top).toBe(bottom(g))
+        }
+      } finally { w.unmount() }
+    } finally { vi.useRealTimers() }
+  })
+
+  it('re-pins on animation frame in scrollToEnd unless the user scrolled away first', async () => {
+    const origRaf = globalThis.requestAnimationFrame
+    let rafQueue: FrameRequestCallback[] = []
+    globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+      rafQueue.push(cb)
+      return rafQueue.length
+    }) as typeof requestAnimationFrame
+    try {
+      const { w, g, scrollTo } = await mount()
+      try {
+        const vm = w.vm as unknown as { scrollToEnd: (force: boolean) => void }
+        rafQueue = []
+        vm.scrollToEnd(true)
+        expect(rafQueue.length).toBeGreaterThan(0)
+        // Late layout settles before the frame fires.
+        g.height += 40
+        rafQueue.splice(0).forEach(cb => cb(0))
+        expect(g.top).toBe(bottom(g))
+
+        // If the user scrolls away before the frame fires, it must not yank them back.
+        vm.scrollToEnd(true)
+        await scrollTo(bottom(g) - 100, true)
+        rafQueue.splice(0).forEach(cb => cb(0))
+        expect(g.top).toBe(bottom(g) - 100)
+      } finally { w.unmount() }
+    } finally {
+      globalThis.requestAnimationFrame = origRaf
+    }
   })
 })

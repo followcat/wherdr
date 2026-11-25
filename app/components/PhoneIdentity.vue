@@ -71,7 +71,7 @@ function tabStatus(e: typeof tabs.value[number]) {
          With several panes, the position (1/2) shares the chevron's box. -->
     <span class="phone-identity-toggle icon-btn" :class="{ on: open, 'has-position': panes.length > 1 }" aria-hidden="true"><span v-if="panes.length > 1" class="phone-identity-position">{{ position }}</span><UIcon name="i-lucide-chevron-down" mode="svg" class="phone-identity-chevron" /></span>
   </button>
-  <AppSheet v-model:open="open" :title="tl('Panes and tabs', 'Panneaux et onglets')" hide-close>
+  <AppSheet v-model:open="open" :title="tl('Panes and tabs', 'Panneaux et onglets')">
     <div class="phone-identity-details">
       <p class="phone-identity-summary">{{ hostLabel }} · {{ workspace?.label || pane.workspace }}</p>
       <!-- A lone pane has no list to show it in: its full name and state stay readable here. -->

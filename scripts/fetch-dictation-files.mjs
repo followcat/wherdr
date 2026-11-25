@@ -9,8 +9,9 @@
 //   wherdr dictation fetch [set...]   (installed package: DATA_DIR of wherdr)
 //
 // Sets: runtime (sherpa-onnx WASM, 13 MB), parakeet (Parakeet v3, French,
-// English and 23 more, 670 MB), sensevoice (237 MB, no French), ort
-// (onnxruntime-web, 59 MB, for WebGPU models only), the read-aloud voices
+// English and 23 more, 670 MB), canary (Canary 180M, 207 MB), sensevoice
+// (237 MB, no French), ort (onnxruntime-web, 59 MB, for WebGPU models), qwen3
+// (Qwen3-ASR 0.6B q4f16, 889 MB, needs ort), the read-aloud voices
 // tts-siwis-medium (French, 64 MB), tts-cori-medium (English, 64 MB) and
 // tts-mls-medium (French, 78 MB), all. Default: runtime parakeet.
 import path from 'node:path'

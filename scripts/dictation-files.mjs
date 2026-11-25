@@ -49,8 +49,12 @@ export const SETS = {
   ].map(([name, sha256]) => ({ url: ORT + name, sha256, to: `runtime/onnxruntime-web-1.23.2/${name}` })),
 }
 export { CATALOG, VOICES }
+// A model or a voice comes from an archive (its members extracted), or as loose
+// files under `source.base`, each with its own sha256 (no archive is published).
 for (const m of CATALOG.models) {
-  SETS[m.set] = [{ url: m.source.url, sha256: m.source.sha256, dir: m.dir, members: m.files.map(f => f.path) }]
+  SETS[m.set] = m.source.url
+    ? [{ url: m.source.url, sha256: m.source.sha256, dir: m.dir, members: m.files.map(f => f.path) }]
+    : m.files.map(f => ({ url: m.source.base + f.path, sha256: f.sha256, to: `${m.dir}/${f.path}` }))
 }
 // A voice comes from an archive (its members extracted), or as loose files
 // under `source.base`, each with its own sha256 (no archive is published).

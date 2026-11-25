@@ -1,13 +1,13 @@
 <script setup lang="ts">
-// Text of a user message: the user's own words (folded when long), then each
-// long pasted text as a card (see shared/pastedText.ts).
-import { splitPasted } from '#shared/pastedText'
-import { sentPastes } from '~/utils/sentPastes'
+// Text of a user message, the only thing in its bubble: the user's own words
+// (folded when long), without the long pasted texts, which show as tiles
+// above the bubble (MsgAttachments, see shared/pastedText.ts).
+import { sentSplit } from '~/utils/attachTiles'
 
 const props = defineProps<{ text: string, pasted?: string[] }>()
-const split = computed(() => splitPasted(props.text, props.pasted, sentPastes.value))
+const words = computed(() => sentSplit(props.text, props.pasted).text)
 </script>
 
 <template>
-  <FoldText v-if="split.text"><QuotedText :text="split.text" /></FoldText><span v-if="split.pastes.length" class="msg-pastes"><PastedCard v-for="(p, i) in split.pastes" :key="i" :text="p" /></span>
+  <FoldText v-if="words"><QuotedText :text="words" /></FoldText>
 </template>

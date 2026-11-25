@@ -119,7 +119,7 @@ describe('a message Claude took in the same turn as a wake', () => {
     const w = await mountSuspended(ChatView, { props: { pane, localQueued: [] }, global: { stubs: { UTooltip: { template: '<slot />' } } } })
     try {
       await expect.poll(() => w.findAll('[data-testid="wake"]').length).toBe(1)
-      const bubble = w.find('.msg-user')
+      const bubble = w.find('.msg-user-wrap')
       expect(bubble.find('img').attributes('src')).toBe('/uploads/shot.png')
       expect(bubble.text()).not.toContain('Autopilot')
       // The answer is the user's too: never folded under the wake.
@@ -137,8 +137,8 @@ describe('a message Claude took in the same turn as a wake', () => {
     const w = await mountSuspended(ChatView, { props: { pane, localQueued: [] }, global: { stubs: { UTooltip: { template: '<slot />' } } } })
     try {
       await expect.poll(() => w.findAll('[data-testid="wake"]').length).toBe(2)
-      expect(w.find('.msg-user img').attributes('src')).toContain('ref=shot')
-      expect(w.find('.msg-user').text()).not.toContain('Autopilot')
+      expect(w.find('.msg-user-wrap img').attributes('src')).toContain('ref=shot')
+      expect(w.find('.msg-user-wrap').text()).not.toContain('Autopilot')
     } finally { w.unmount() }
   })
 })

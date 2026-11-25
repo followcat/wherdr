@@ -138,10 +138,10 @@ const remove = (k: string) => run(`rm:${k}`, async () => {
       <UButton type="submit" size="lg" color="neutral" variant="soft" :loading="busy === 'add'" :disabled="!form.machine || !form.clone.trim() || busy !== ''" data-testid="pm-machine-add">{{ tl('Add') }}</UButton>
     </form>
     <small class="muted">{{ tl('Tasks may start on these machines, each in its own clone of the repository.') }}</small>
-    <label class="pm-placement">
+    <div class="pm-placement">
       <span>{{ tl('Placement') }}</span>
-      <USelect v-model="strategy" :items="strategies" size="lg" :disabled="busy !== ''" :aria-label="tl('Placement strategy')" data-testid="pm-placement" />
-    </label>
+      <SettingsChoice v-model="strategy" :items="strategies" :disabled="busy !== ''" :label="tl('Placement strategy')" data-testid="pm-placement" />
+    </div>
     <ProjectFollow :project="p" field="placement" :workspace="workspace ?? ''" @followed="emit('changed')" />
     <span class="pm-strategy">
       <svg class="pm-picture" viewBox="0 0 54 22" aria-hidden="true">
@@ -174,7 +174,8 @@ const remove = (k: string) => run(`rm:${k}`, async () => {
 .pm-slot { width: 28px; } /* home has no check or remove: its switch lines up with the others' */
 .pm-ready { grid-column: 1 / -1; color: var(--muted); overflow-wrap: anywhere; }
 .pm-ready.bad { color: var(--blocked); }
-.pm-placement { display: flex; align-items: center; gap: 10px; }
+.pm-placement { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.pm-placement > .hw-seg-wrap { flex: 1 1 280px; min-width: 0; }
 .pm-machine-add { display: grid; grid-template-columns: minmax(0, 160px) minmax(0, 1fr) auto; gap: 8px; }
 @media (max-width: 520px) { .pm-machine-add { grid-template-columns: minmax(0, 1fr) auto; } .pm-machine-add > :nth-child(2) { grid-column: 1 / -1; grid-row: 2; } }
 </style>

@@ -707,6 +707,17 @@ export function createPmStore(dir = path.join(DATA_DIR, 'projects')) {
       return list[i]!
     }),
 
+    // Its folder became a git repository. A check made while it had no remote
+    // ("unknown") goes too, so the repository's visibility is checked; the user's stays.
+    markGit: (key: unknown) => write(async () => {
+      const { list, i } = await findProject(key)
+      const { git, visibility, ...rest } = list[i]!
+      if (git !== false || isWorkspace(rest) || rest.workspace) return list[i]!
+      list[i] = { ...rest, ...(visibility && (visibility.by === 'user' || visibility.value !== 'unknown') ? { visibility } : {}) }
+      await saveProjects(list)
+      return list[i]!
+    }),
+
     // A public repository's guardrails: its visibility, checked by wherdr or set by the user.
     setVisibility: (key: unknown, v: RepoVisibility) => write(async () => {
       if (!['public', 'private', 'unknown'].includes(v?.value)) throw badInput([{ path: 'value', message: 'public or private' }])

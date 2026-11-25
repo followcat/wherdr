@@ -6,10 +6,15 @@ import { CHAT_READ_MS, tailQuery } from '~/utils/chatTail'
 // The speculative read shares the tail read's deadline (CHAT_READ_MS): the
 // caller's abort still wins, and a read that simply never settles cannot hold
 // ChatView's one-at-a-time loader behind it.
-const cache = createChatIntentCache((pane, signal) => api<ChatResponse>(
-  `/api/chat?${tailQuery(pane, { token: '', tailStart: null, tail: [] })}`, undefined,
-  withDeadline(signal, CHAT_READ_MS),
-))
+const cache = createChatIntentCache((pane, signal) => {
+  const startedAt = performance.now()
+  const read = api<ChatResponse>(
+    `/api/chat?${tailQuery(pane, { token: '', tailStart: null, tail: [] })}`, undefined,
+    withDeadline(signal, CHAT_READ_MS),
+  )
+  if (import.meta.dev) read.then(() => console.debug(`[chat] preload request: ${Math.round(performance.now() - startedAt)} ms`), () => {})
+  return read
+})
 let watching = false
 // Command Code is never guessed: a speculative tail cannot prove it came
 // from the live process the pane now shows (its selection is only bound by

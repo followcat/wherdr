@@ -3,7 +3,7 @@
 import type { DictationEngine, DictationEngineId } from './engine'
 
 export const ENGINES: Partial<Record<DictationEngineId, () => Promise<DictationEngine>>> = {
-  device: () => import('./device').then(m => m.createDeviceEngine()),
+  device: () => import('./device').then(m => m.openDeviceEngine()),
   cloud: () => import('./cloud').then(m => m.createCloudEngine()),
 }
 

@@ -27,6 +27,7 @@ const tried = ref(false) // the field errors show once the user tried to add
 
 const projectPick = noneModel(project)
 const projectItems = computed(() => [{ label: tl('Pick a project', 'Choisis un projet'), value: NONE, disabled: true }, ...props.projects.map(p => projectOption(p))])
+const feature = computed(() => props.projects.find(p => p.key === project.value)?.kind === 'workspace') // a workspace's task: a feature, no agent
 const types = computed(() => props.projects.find(p => p.key === project.value)?.types ?? [])
 const typeItems = computed(() => types.value.map(x => ({ label: x.id, value: x.id, description: x.plan })))
 const plan = computed(() => types.value.find(x => x.id === type.value)?.plan)
@@ -55,11 +56,11 @@ async function add() {
   try {
     const { task } = await api<{ task: Task }>('/api/pm/task', {
       project: project.value, title: title.value.trim(), type: type.value, description: description.value,
-      ...(weight.value !== AUTO ? { weight: weight.value } : {}),
-      ...(after.value.length ? { after: after.value.join(',') } : {}),
+      ...(weight.value !== AUTO && !feature.value ? { weight: weight.value } : {}),
+      ...(after.value.length && !feature.value ? { after: after.value.join(',') } : {}),
     })
     let refused: string | undefined
-    if (startNow.value && !after.value.length) await startTaskApi(task.id).catch((e: Error) => { refused = e.message })
+    if (startNow.value && !after.value.length && !feature.value) await startTaskApi(task.id).catch((e: Error) => { refused = e.message })
     emit('added', task, refused)
     open.value = false
   }
@@ -85,19 +86,21 @@ async function add() {
         <p v-if="plan" class="muted add-task-plan mono" data-testid="add-task-plan">{{ plan }}</p>
         <p v-if="problems.type" class="form-error" data-testid="add-task-error">{{ problems.type }}</p>
 
-        <label class="field-label">{{ tl('Weight') }}</label>
-        <USelect v-model="weight" :items="weightItems" size="xl" class="w-full" :aria-label="tl('Weight')" data-testid="add-task-weight" />
+        <template v-if="!feature">
+          <label class="field-label">{{ tl('Weight') }}</label>
+          <USelect v-model="weight" :items="weightItems" size="xl" class="w-full" :aria-label="tl('Weight')" data-testid="add-task-weight" />
+        </template>
       </template>
 
       <label class="field-label" for="add-task-description">{{ tl('Description', 'Description') }} <span class="muted">{{ tl('(optional, markdown)', '(facultatif, markdown)') }}</span></label>
       <UTextarea id="add-task-description" v-model="description" :rows="4" autoresize :maxrows="12" size="xl" class="w-full" maxlength="20000" data-testid="add-task-description" />
 
-      <template v-if="afterItems.length">
+      <template v-if="afterItems.length && !feature">
         <label class="field-label">{{ tl('After', 'Après') }} <span class="muted">{{ tl('(optional)', '(facultatif)') }}</span></label>
         <USelect v-model="after" :items="afterItems" multiple size="xl" class="w-full" :placeholder="tl('Starts once these are done', 'Démarre une fois celles-ci terminées')" :aria-label="tl('After', 'Après')" data-testid="add-task-after" />
       </template>
 
-      <label class="toggle-row">
+      <label v-if="!feature" class="toggle-row">
         <span><b>{{ tl('Start now', 'Lancer tout de suite') }}</b><small>{{ after.length ? tl('it starts once the tasks above are done', 'elle démarre une fois les tâches ci-dessus terminées') : tl('its agent starts on the first step', 'son agent démarre sur la première étape') }}</small></span>
         <USwitch v-model="startNow" :disabled="!!after.length" size="xl" data-testid="add-task-start" />
       </label>
@@ -106,7 +109,7 @@ async function add() {
       <div class="sheet-form">
         <p v-if="error" class="form-error" role="alert" data-testid="add-task-refused">{{ error }}</p>
         <UButton type="submit" form="add-task" block size="xl" color="primary" class="hw-cta" icon="i-lucide-plus" :loading="busy" data-testid="add-task-submit">
-          {{ startNow && !after.length ? tl('Add and start', 'Ajouter et lancer') : tl('Add the task', 'Ajouter la tâche') }}
+          {{ startNow && !after.length && !feature ? tl('Add and start', 'Ajouter et lancer') : tl('Add the task', 'Ajouter la tâche') }}
         </UButton>
       </div>
     </template>

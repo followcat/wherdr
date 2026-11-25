@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 // The send notes itself in DATA_DIR/submitting.json: a folder of this test's own.
 vi.hoisted(async () => { const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); process.env.DATA_DIR = mkdtempSync(`${tmpdir()}/wherdr-core-input-`) })
 import { CoreError } from '../server/utils/core'
-import { coreInput, coreInterrupt, coreKeepGet, coreKeepSet, coreKill, coreSend, holdEnter, resumeSubmitting, type CoreInputDeps } from '../server/utils/coreInput'
+import { coreInput, coreInterrupt, failure, coreKeepGet, coreKeepSet, coreKill, coreSend, holdEnter, resumeSubmitting, type CoreInputDeps } from '../server/utils/coreInput'
 import { fieldHolds, isBareBang } from '../shared/queuedMatch'
 import { takingTurns } from '../server/utils/terminalTurns'
 import { noteSubmitting, onSubmittingChange, sendingText, sendingTo } from '../server/utils/submitting'
@@ -748,5 +748,18 @@ describe('core interrupt: prompt put back by Claude', () => {
     ;(u.d.pane('t2') as Pane).agent = 'codex'
     await coreInterrupt(u.d, { pane_id: 't2', restore: true })
     expect(n).toBe(0)
+  })
+})
+
+describe('failure (WHR-570)', () => {
+  const said = (e: unknown) => { try { failure(e) } catch (x) { return x as HerdrError } throw new Error('no throw') }
+  it('keeps the kind, message and hint of a refusal it has no sentence for', () => {
+    const e = said(new CoreError('brand_new', 'the disk is full', 'free some space'))
+    expect([e.code, e.message]).toEqual(['brand_new', 'herdr-core refused (brand_new): the disk is full (free some space)'])
+  })
+  it('never gives an empty reason, nor the kind twice', () => {
+    expect(said(new CoreError('brand_new', '')).message).toBe('herdr-core refused (brand_new): it gave no reason')
+    expect(said(new CoreError('config', 'config')).message).toBe('herdr-core refused (config): its configuration has a problem')
+    expect(said(new Error('')).message).not.toBe('')
   })
 })

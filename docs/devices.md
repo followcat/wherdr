@@ -24,7 +24,7 @@
   also in Settings › Shortcuts, where **Change** gives a shortcut new keys, **Reset** goes back
   to its default; keys used by another shortcut or by the browser are refused, Escape and `?`
   stay reserved; your keys follow you on every device and show in the help and tooltips):
-  - `Ctrl/⌘+K` global search across agents and conversations, `Alt+↑/↓` previous / next agent
+  - `Ctrl/⌘+K` the palette: conversations, tasks, projects, settings and actions, `Alt+↑/↓` previous / next agent
     in the list, `Alt+←/→` previous / next tab of the viewed space, `Mod+,` settings.
     The Alt steps are app navigation even with the terminal or a filled field
     focused; the virtual key bar's Alt+arrow stays a literal chord for the agent.
@@ -98,7 +98,8 @@
   and shows every key. Saved on the device.
   Terminal links back to this app stay in the current window on a phone; external
   links still open separately.
-- **Offline reading** of the last known state and of recently opened conversations.
+- **Offline reading** of the last known state and of recently opened conversations. Back in a
+  conversation, its latest messages show at once, including one the agent has not taken yet.
 
 ### On an iPad
 

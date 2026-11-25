@@ -554,7 +554,10 @@ function openSpaceMap() {
   if (!m || !pane.value) return
   const ws = pane.value.workspace
   openMenu([
-    ...m.tabs.map(e => ({ label: e.tab.label || String(e.tab.number), icon: e.panes[0]!.id === props.paneId ? 'i-lucide-check' : 'i-lucide-square-terminal', desc: paneTitle(e.panes[0]!), run: () => switchSpaceTab(e.tab.id) })),
+    ...m.tabs.map(e => {
+      const label = e.tab.label || String(e.tab.number), desc = paneTitle(e.panes[0]!)
+      return { label, icon: e.panes[0]!.id === props.paneId ? 'i-lucide-check' : 'i-lucide-square-terminal', ...(desc === label ? {} : { desc }), run: () => switchSpaceTab(e.tab.id) }
+    }),
     { kind: 'separator' as const },
     newTabItem(ws),
   ], t('Tabs of this space'))

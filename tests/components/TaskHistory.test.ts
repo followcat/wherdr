@@ -17,6 +17,7 @@ const log = [
   { by: 'engine', text: 'catch-up: updated the PR with main' },
   { by: reviewer, text: 'review: verdict, 1 finding(s)' },
   { by: 'user', text: 'allowed the agent\'s permission request' },
+  { by: 'engine', text: 'merge: merged by itself, as the user approved' },
 ].map((e, i) => ({ ...e, at: Date.UTC(2026, 0, 1, 10, i) }))
 
 const card: Card = {
@@ -33,15 +34,18 @@ const card: Card = {
   },
 }
 
-it('shows the hand-offs of two review rounds in order, with who and what', async () => {
+it('shows the hand-offs of two review rounds as timeline items in order, with who, what and kind', async () => {
   const w = await mountSuspended(TaskHistory, { props: { card } })
-  const items = w.findAll('[data-testid="task-history"] > li')
+  const items = w.findAll('[data-testid="task-history"] > [data-slot="item"]')
   const heads = items.map(li => li.get('.mono-label b').text() + (li.get('.mono-label').text().match(/· (Done|Fixed|Sent back|Passed)/)?.[1] ?? ''))
   // The whole log: the engine's bookkeeping as a light routine line, its catch-up a hand-off.
-  expect(heads).toEqual(['wherdr', 'WorkerDone', 'ReviewerSent back', 'WorkerFixed', 'ReviewerSent back', 'WorkerFixed', 'wherdr', 'ReviewerPassed', 'You'])
-  expect(items[0]!.classes()).toContain('routine')
+  expect(heads).toEqual(['wherdr', 'WorkerDone', 'ReviewerSent back', 'WorkerFixed', 'ReviewerSent back', 'WorkerFixed', 'wherdr', 'ReviewerPassed', 'You', 'wherdr'])
+  // Each item's mark follows its kind.
+  expect(items.map(li => li.get('[data-kind]').attributes('data-kind'))).toEqual(['routine', 'done', 'back', 'done', 'back', 'done', 'note', 'done', 'user', 'merged'])
+  expect(items[2]!.classes()).toContain('kind-back')
+  expect(items[0]!.get('[data-kind]').classes()).toContain('routine')
   expect(items[0]!.text()).toContain('work: sent to the worker')
-  const text = items.slice(1).map(li => li.get('.md-body').text())
+  const text = items.slice(1, -1).map(li => li.get('.md-body').text())
   expect(text[0]).toBe('Reported done.') // only the last report is kept
   expect(text[1]).toContain('[critical] Crash on empty list')
   expect(text[3]).toContain('Missing test')

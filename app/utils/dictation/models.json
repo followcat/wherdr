@@ -1,11 +1,12 @@
 {
   "schema": 1,
-  "updated": "2026-11-09",
+  "updated": "2026-11-23",
   "models": [
     {
       "id": "parakeet-v3",
       "name": "Parakeet v3",
       "kind": "nemoTransducer",
+      "runtime": "runtime",
       "requires": [],
       "set": "parakeet",
       "dir": "parakeet-tdt-0.6b-v3-int8",
@@ -66,6 +67,7 @@
       "id": "canary-180m",
       "name": "Canary 180M",
       "kind": "canary",
+      "runtime": "runtime",
       "requires": [],
       "set": "canary",
       "dir": "canary-180m-flash-en-es-de-fr-int8",
@@ -107,6 +109,7 @@
       "id": "sensevoice",
       "name": "SenseVoice",
       "kind": "senseVoice",
+      "runtime": "runtime",
       "requires": [],
       "set": "sensevoice",
       "dir": "sensevoice-zh-en-ja-ko-yue-2025-09",
@@ -140,6 +143,60 @@
         "basis": "WASM heap after load and peak process memory (VmHWM) of the page, measured 2026-11-05 with the worker in headless Chromium and WebKit (Linux, Playwright)"
       },
       "textCase": "upper"
+    },
+    {
+      "id": "qwen3-asr-0.6b-q4f16",
+      "name": "Qwen3-ASR 0.6B",
+      "kind": "qwen3Q4F16",
+      "runtime": "ort",
+      "requires": ["webgpu", "shader-f16"],
+      "set": "qwen3",
+      "dir": "qwen3-asr-0.6b-q4f16-4a01b95",
+      "files": [
+        { "path": "prompt_config.json", "bytes": 2578, "sha256": "282e0cba43d48f0799c665e2687bea950cbb090bc1def85578d6cdf369c08970" },
+        { "path": "mel_filters.json", "bytes": 132427, "sha256": "dcdaf139353616855b4f85e304c075f5f3442573d40637ae0f031db705626181" },
+        { "path": "tokenizer.json", "bytes": 11429377, "sha256": "bd2a97b55c8f7f9c328c73ee9b9178771037e9f566dfca8e238a063d41cbac92" },
+        { "path": "embed_tokens.int8.bin", "bytes": 155582464, "sha256": "9ec07c97a15cb9defb675656edeed0370bc3e7b2c478d1eefe6f948fc6516513" },
+        { "path": "embed_scales.f32.bin", "bytes": 607744, "sha256": "acce138a5f06f1233faa4a8a359903b3c303efc0ce37818ad8cf0f9be11fc9b3" },
+        { "path": "encoder.fp16.onnx", "bytes": 376261247, "sha256": "af2a517a3d873a401ec9f64a81711e3d780fc8b085fd36f9366f9ac17a54411b" },
+        { "path": "decoder_init.q4f16.onnx", "bytes": 348427, "sha256": "328a14a46d7284bb6dc5242bc9f6029b013a6f2c42579f9e72dadbaa96ba511d" },
+        { "path": "decoder_step.q4f16.onnx", "bytes": 350380, "sha256": "27f4588874d1e50a539aed8de424107a8b934a1a5b13368c3a36b467ffcf2024" },
+        { "path": "decoder_weights.q4f16.data", "bytes": 344670208, "sha256": "898d0c82aad4cae494a4241639c73f9c8e79486fea3b4bac918883397b8f0bcc" }
+      ],
+      "source": {
+        "base": "https://huggingface.co/jiangzhuo9357/Qwen3-ASR-0.6B-ONNX/resolve/4a01b95fafe2c9e3af77e33c18bbb7de349c62f6/"
+      },
+      "languages": ["zh", "en", "ja", "ko", "yue", "ar", "de", "es", "fr", "it", "pt", "ru", "th", "vi", "hi", "id"],
+      "ranked": ["zh", "en", "ko", "es", "it", "yue", "pt", "de", "fr", "id", "ja", "th", "vi", "ru", "hi", "ar"],
+      "punctuation": true,
+      "quality": [
+        { "lang": "zh", "dataset": "FLEURS", "wer": 2.88, "metric": "CER", "source": "https://arxiv.org/html/2601.21337v2" },
+        { "lang": "ko", "dataset": "FLEURS", "wer": 3.72, "metric": "CER", "source": "https://arxiv.org/html/2601.21337v2" },
+        { "lang": "en", "dataset": "FLEURS", "wer": 4.39, "source": "https://arxiv.org/html/2601.21337v2" },
+        { "lang": "es", "dataset": "FLEURS", "wer": 4.94, "source": "https://arxiv.org/html/2601.21337v2" },
+        { "lang": "it", "dataset": "FLEURS", "wer": 4.99, "source": "https://arxiv.org/html/2601.21337v2" },
+        { "lang": "yue", "dataset": "FLEURS", "wer": 5.79, "metric": "CER", "source": "https://arxiv.org/html/2601.21337v2" },
+        { "lang": "pt", "dataset": "FLEURS", "wer": 6.21, "source": "https://arxiv.org/html/2601.21337v2" },
+        { "lang": "de", "dataset": "FLEURS", "wer": 6.48, "source": "https://arxiv.org/html/2601.21337v2" },
+        { "lang": "fr", "dataset": "FLEURS", "wer": 7.72, "source": "https://arxiv.org/html/2601.21337v2" },
+        { "lang": "id", "dataset": "FLEURS", "wer": 7.92, "source": "https://arxiv.org/html/2601.21337v2" },
+        { "lang": "ja", "dataset": "FLEURS", "wer": 8.33, "metric": "CER", "source": "https://arxiv.org/html/2601.21337v2" },
+        { "lang": "th", "dataset": "FLEURS", "wer": 8.34, "source": "https://arxiv.org/html/2601.21337v2" },
+        { "lang": "vi", "dataset": "FLEURS", "wer": 8.52, "source": "https://arxiv.org/html/2601.21337v2" },
+        { "lang": "ru", "dataset": "FLEURS", "wer": 9.91, "source": "https://arxiv.org/html/2601.21337v2" },
+        { "lang": "hi", "dataset": "FLEURS", "wer": 19.12, "source": "https://arxiv.org/html/2601.21337v2" },
+        { "lang": "ar", "dataset": "FLEURS", "wer": 25.51, "source": "https://arxiv.org/html/2601.21337v2" }
+      ],
+      "speed": {
+        "estimate": 3,
+        "basis": "RTF 0.27 over four takes on an OPPO Find X8 Ultra (Adreno 8xx, Chrome 157, WebGPU): Mandarin 0.16, Cantonese 0.20, English 0.26, French 0.43; a flagship GPU, not comparable with the CPU figures",
+        "source": "https://github.com/afloury/wherdr/blob/v3/docs/dictation.md#f4-webgpu-models"
+      },
+      "license": { "id": "Apache-2.0", "url": "https://www.apache.org/licenses/LICENSE-2.0" },
+      "memory": {
+        "heap": 1000000000,
+        "basis": "Estimated from the 889 MB of weights plus runtime buffers, not measured: the weights live in GPU memory, which a page cannot read, and on a phone that memory is shared with the tab"
+      }
     }
   ]
 }

@@ -13,7 +13,7 @@ type Group = { title: string, rows: Row[] }
 // herdr-core (v3): the rows marked v2 (tabs, swap) are not offered yet.
 const allGroups = computed<Group[]>(() => [
   { title: tl('Anywhere'), rows: [
-    { id: 'search-all', label: tl('Search agents and conversations'), keys: [shortcutKbds('search-all')] },
+    { id: 'search-all', label: tl('Search conversations, tasks, settings and actions'), keys: [shortcutKbds('search-all')] },
     { id: 'prev-agent', label: tl('Previous agent in the list'), keys: [shortcutKbds('prev-agent')] },
     { id: 'next-agent', label: tl('Next agent in the list'), keys: [shortcutKbds('next-agent')] },
     { id: 'prev-tab', label: tl('Previous tab of this space'), keys: [shortcutKbds('prev-tab')] },

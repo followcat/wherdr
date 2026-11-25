@@ -8,7 +8,10 @@ import { coreAdminDeps } from './coreAdminDeps'
 import { homeOf, machineOn, type CoreAdminDeps } from './coreCreate'
 import { exec } from './pmLaunch'
 import { HerdrError } from './herdr'
+import { isPlainFolder } from '../../shared/pm/coordinator'
 import type { FolderOptions, FolderProbe } from '../../shared/pm/newProject'
+import type { Project } from '../../shared/pm/project'
+import type { PmStore } from './pmStore'
 
 // Prints "missing", or "dir" then "git", "remote" (it has an origin) and "empty" when they hold.
 export const PROBE_SCRIPT = `[ -e "$1" ] || { echo missing; exit 0; }
@@ -34,6 +37,17 @@ export async function probeFolder(machine: string, folder: string, deps = coreAd
   if (r.code !== 0) throw new HerdrError('bad_path', 'This path is a file, not a folder')
   const lines = r.out.split('\n')
   return { path: dir, exists: !lines.includes('missing'), git: lines.includes('git'), remote: lines.includes('remote'), empty: lines.includes('empty') }
+}
+
+// A project added without git whose folder has become a repository: the flag
+// goes. A failed probe changes nothing and is returned, so a refusal never
+// claims the folder has no git. Workspaces and their members are left alone.
+export async function refreshGit(deps: CoreAdminDeps & { store: PmStore }, p: Project): Promise<{ project: Project, error?: unknown }> {
+  if (!isPlainFolder(p) || p.workspace) return { project: p }
+  try {
+    if (!(await probeFolder(p.machine, p.path, deps)).git) return { project: p }
+  } catch (error) { return { project: p, error } }
+  return { project: await deps.store.markGit(p.key) }
 }
 
 export async function pmFolderCheck(machine: string, folder: string, opts: FolderOptions = {}, deps = coreAdminDeps()) {

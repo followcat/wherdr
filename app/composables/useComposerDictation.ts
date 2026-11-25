@@ -52,9 +52,9 @@ export function useComposerDictation(o: { text: Ref<string>, ta: ComputedRef<HTM
   watch(d.error, (e) => {
     if (!e) return
     const { msg, settings } = errorText(e)
-    // The model is now marked too large: the next press loads a fresh engine,
-    // on the model Settings shows (one that fits).
-    if (e.reason === 'too-large') disposeEngines()
+    // The model is now marked too large, or unsupported for this page: the next
+    // press loads a fresh engine, on the model Settings shows (one that fits).
+    if (e.reason === 'too-large' || e.reason === 'unsupported') disposeEngines()
     toast(msg, true, settings ? undefined : e.detail, settings
       ? { label: t('Settings'), run: () => navigateTo({ path: '/settings', query: { section: 'conversation', tab: 'dictation' } }) }
       : undefined)

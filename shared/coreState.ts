@@ -3,7 +3,7 @@ import type { CoreTerminal } from './coreInventory'
 import { type CoreDocs, SPACE_LABEL, TAB_LABEL, WHERDR_TAB_LABEL, rootTerminals, SEEN_LABEL } from './coreLayout'
 import { addressOnly, coreActivity, coreTitle, coreUnread, ownTitle } from './coreInventory'
 import type { HerdrState, MachineInfo, Pane } from './types'
-import { cleanTitle } from './paneTitle'
+import { cleanTitle, maskCreds } from './paneTitle'
 import { LABEL } from './pm/run'
 import { CODEX_UPDATED_LABEL, codexInstalling } from './codexLaunch'
 
@@ -72,7 +72,7 @@ export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], do
     const tab = placed?.tab ? `${workspace}:b${key(placed.tab)}` : own ? `${workspace}:g${key(own)}` : `${workspace}:t${id}`
     if (!result.workspaces.some(w => w.id === workspace)) {
       const folder = space?.folder || cwd
-      result.workspaces.push({ id: workspace, machine, label: space?.name || folder.split('/').filter(Boolean).pop() || 'Terminals',
+      result.workspaces.push({ id: workspace, machine, label: maskCreds(space?.name || folder.split('/').filter(Boolean).pop() || 'Terminals'),
         path: folder, number: result.workspaces.length + 1, status: null, worktree: false, ...(placed ? { coreSpace: placed.space } : {}) })
     }
     const activity = coreActivity(terminal)
@@ -85,14 +85,14 @@ export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], do
         ?? cmdProgram(terminal.foreground?.argv) ?? cmdProgram(terminal.argv)
         ?? (commands.map(commandAgent).find(c => c && KNOWN_AGENTS.includes(c)) ?? null)
     if (!result.tabs!.some(t => t.id === tab)) {
-      result.tabs!.push({ id: tab, workspace, machine, label: docTab?.name || coreTitle(terminal), ...(docTab?.name ? { docName: true as const } : {}), number: result.tabs!.length + 1, layout: null })
+      result.tabs!.push({ id: tab, workspace, machine, label: maskCreds(docTab?.name || coreTitle(terminal)), ...(docTab?.name ? { docName: true as const } : {}), number: result.tabs!.length + 1, layout: null })
       if (docTab) order.set(tab, space!.tabs!.indexOf(docTab))
     }
     const state = activity === 'error' ? 'blocked' : activity
     // idle after a turn nobody looked at yet = finished, unread ('done').
     const status = updated ? 'blocked' : (state === 'idle' || state === 'done') && terminal.labels?.[SEEN_LABEL] !== undefined ? (coreUnread(terminal) ? 'done' : 'idle') : state
     const pane: Pane = { id: `${workspace}:p${id}`, coreAddress: terminal.address, machine, workspace, tab, tabLabel: result.tabs!.find(t => t.id === tab)!.label,
-      agent, name: addressOnly(terminal.name, terminal.address) ? null : terminal.name ?? null, label: ownTitle(terminal), title: terminal.title == null ? null : cleanTitle(terminal.title), cwd, agentSession: null,
+      agent, name: addressOnly(terminal.name, terminal.address) ? null : maskCreds(terminal.name) || null, label: maskCreds(ownTitle(terminal)) || null, title: terminal.title == null ? null : cleanTitle(terminal.title), cwd, agentSession: null,
       status, interaction: 'unknown', ...(terminal.labels?.[LABEL.task] ? { task: terminal.labels[LABEL.task], ...(terminal.labels[LABEL.role] ? { role: terminal.labels[LABEL.role] } : {}) } : {}),
       ...(terminal.labels?.['wherdr.coordinator'] !== undefined ? { coordinator: true } : {}),
       ...(updated ? { stopped: { reason: 'update' as const } } : agent === 'codex' && codexInstalling(terminal.title, terminal.status?.msg) ? { installing: true } : {}),

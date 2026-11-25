@@ -54,7 +54,8 @@
 - **Split with agent…** (same menu): the New agent sheet on the pane's machine and folder; the
   agent (or a terminal) it launches takes the right half of the pane's cell.
 - **Resize** (computer): drag the line between two cells; each terminal fits its cell as it
-  moves, and the new proportion is saved on release (arrows on a focused line move it by 5 %).
+  moves, and the new proportion is saved on release (arrows on a focused line move it by 5 %,
+  Home and End to either bound).
   Double-click a line to go back to 50/50. Each side keeps at least 15 %. Not on a phone.
 
 Pane swaps are v2 only for now; move of tabs stays in herdr-app.

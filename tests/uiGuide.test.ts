@@ -6,6 +6,7 @@ import { parseCommand } from '../shared/pm/coordinator'
 import { parseAlfredCommand } from '../shared/pm/alfredCli'
 import { parseStatusBlock } from '../shared/statusBlock'
 import { parseWherdrBlock } from '../app/utils/markdown'
+import { CHOICE_MAX_CHARS, QUESTION_MAX_CHARS } from '../shared/wherdrBlockLimits'
 
 const cases: [UiRole, { pm?: boolean, key?: string }][] = [['task', {}], ['coordinator', { key: 'WEB' }], ['alfred', {}], ['alfred', { pm: true }]]
 
@@ -39,5 +40,14 @@ describe('uiGuide', () => {
     expect(t).toMatch(/In a wake: `wherdr` blocks only/)
     expect(t).toMatch(/give the in-app link in text\. Never retry/)
     expect(t).toMatch(/never say a button's action is done/)
+  })
+
+  it.each(cases)('tells %s the card limits the parser enforces', (role, o) => {
+    const t = uiGuide(role, o).join('\n')
+    expect(t).toContain(`an option up to ${CHOICE_MAX_CHARS} characters, a question up to ${QUESTION_MAX_CHARS}`)
+    const block = (q: number, c: number) => `questions\n1 "${'q'.repeat(q)}" | "${'c'.repeat(c)}" | "No"`
+    expect(parseWherdrBlock(block(QUESTION_MAX_CHARS, CHOICE_MAX_CHARS))).toBeTruthy()
+    expect(parseWherdrBlock(block(QUESTION_MAX_CHARS + 1, CHOICE_MAX_CHARS))).toBeNull()
+    expect(parseWherdrBlock(block(QUESTION_MAX_CHARS, CHOICE_MAX_CHARS + 1))).toBeNull()
   })
 })

@@ -110,3 +110,24 @@ it('keeps a Codex stopped by its update as a Codex waiting for a restart, and te
     ['codex', 'blocked', 'update', false], ['codex', 'idle', null, true], ['codex', 'idle', null, false],
   ])
 })
+
+it('masks credentials a terminal or document name carries', () => {
+  const state = coreState([
+    terminal('t1', { name: 'HTTPS_PROXY=http://user1:secre7@10.0.0.1:3128' }),
+    terminal('t2', { title: 'postgres://alice:p%40ss@db.acme/app' }),
+    terminal('t3', { name: 'git@github.com:acme/shop.git' }),
+    terminal('t4', {}),
+  ], [], {
+    '': { spaces: [{ id: 's1', name: 'http://user1:secre7@proxy.local', folder: '/srv/app',
+      tabs: [{ id: 'b1', name: 'socks5://u2:p2@10.0.0.2:1080', root: { terminal: 't4' } }] }] },
+  })
+  const [env, db, git, doc] = state.panes
+  expect(env?.name).toBe('HTTPS_PROXY=http://…@10.0.0.1:3128')
+  expect(env?.tabLabel).toBe('HTTPS_PROXY=http://…@10.0.0.1:3128')
+  expect(db?.title).toBe('postgres://…@db.acme/app')
+  expect(git?.name).toBe('git@github.com:acme/shop.git')
+  // A terminal the herdr-app document places keeps the doc's space and
+  // tab names — masked the same way.
+  expect(doc?.tabLabel).toBe('socks5://…@10.0.0.2:1080')
+  expect(state.workspaces.find(w => w.id === doc?.workspace)?.label).toBe('http://…@proxy.local')
+})

@@ -73,10 +73,12 @@ export function handoverText(task: Task, plan: PlannedStep[], branch: string): s
   ].join('\n')
 }
 
-// Not started: no step, no agent ever ran, so no worktree and no branch. Only
-// such a task can be removed; a started one is stopped, then archived.
+// Not started: no step, no agent ever ran, and no worktree yet (its machine is
+// recorded once its worktree is made), so no branch either. Only such a task can
+// be removed; a started one is stopped, then archived. A start that failed before
+// that (waiting, its error shown) leaves it so: it may be removed or started again.
 export const notStarted = (task: Task, runs: { task: string }[]) =>
-  task.state === 'todo' && !task.run && !task.step?.started && !task.stopped && !runs.some(r => r.task === task.id)
+  task.state !== 'working' && task.machine === undefined && !task.run && !task.step?.started && !task.stopped && !runs.some(r => r.task === task.id)
 
 // Why the task may not be removed, or undefined. In a wake, the coordinator
 // removes only a task its autopilot added. A task others wait for (after) is

@@ -91,7 +91,7 @@ async function remove() {
 </script>
 
 <template>
-  <AppSheet v-model:open="open" :title="editing ? tl('Edit theme') : tl('Create theme')" tall wide hide-close>
+  <AppSheet v-model:open="open" :title="editing ? tl('Edit theme') : tl('Create theme')" tall wide>
     <div v-if="draft" class="te" data-testid="theme-editor">
       <template v-if="!editing">
         <label class="field-label" for="teStart">{{ tl('Start from') }}</label>

@@ -15,20 +15,25 @@ export interface DraftAtt {
   url: string // preview: local blob while the page lives, otherwise /uploads/<name> ('' for a file)
   path: string | null // null while the photo is being sent
   name?: string
-  // Attached file (PDF, text…): shown as a chip; `ref` is what the message
-  // carries (`@<path>` for Claude, the path otherwise).
-  file?: { label: string, size: number, kind: AttachKind }
+  // Attached file (PDF, text…): a tile in the field (`head`: a text's first
+  // lines), a chip once sent; `ref` is what the message carries (`@<path>` for
+  // Claude, the path otherwise).
+  file?: { label: string, size: number, kind: AttachKind, head?: string }
   ref?: string
   // Long pasted text (shared/pastedText.ts): a card; sent as it is, after the text.
   paste?: string
+  // Upload refused: the reason, shown on the attachment until it is removed (never stored).
+  error?: string
+  // A photo's original file name (its tile shows it and its extension).
+  label?: string
 }
-type StoredAtt = { path: string, name?: string, file?: DraftAtt['file'], ref?: string }
+type StoredAtt = { path: string, name?: string, file?: DraftAtt['file'], ref?: string, label?: string }
 
 // A stored attachment back into the draft.
 export function restoreAtt(a: StoredAtt): DraftAtt {
   return a.file
     ? { url: '', path: a.path, name: a.name, file: a.file, ref: a.ref || a.path }
-    : { url: `/uploads/${encodeURIComponent(a.name!)}`, path: a.path, name: a.name }
+    : { url: `/uploads/${encodeURIComponent(a.name!)}`, path: a.path, name: a.name, label: a.label }
 }
 interface Draft { text: string, atts: DraftAtt[] }
 
@@ -74,7 +79,7 @@ function load(paneId: string): Draft {
 }
 
 function persist(paneId: string, d: Draft) {
-  const atts = d.atts.filter(a => a.path && a.name).map(a => (a.file ? { path: a.path, name: a.name, file: a.file, ref: a.ref } : { path: a.path, name: a.name }))
+  const atts = d.atts.filter(a => a.path && a.name).map(a => (a.file ? { path: a.path, name: a.name, file: a.file, ref: a.ref } : { path: a.path, name: a.name, label: a.label }))
   const pastes = d.atts.flatMap(a => (a.paste ? [a.paste] : []))
   try {
     if (!d.text && !atts.length && !pastes.length) localStorage.removeItem(KEY + paneId)

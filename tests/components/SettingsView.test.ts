@@ -62,7 +62,7 @@ for (const device of ['desktop', 'phone', 'tablet']) {
       }
       const group = w.findAll('.settings-group').find(g => g.text().includes('Default pane view'))!
       expect(group.isVisible()).toBe(true)
-      await group.findAll('[role="radio"]')[1]!.trigger('click')
+      await group.find('[data-value="term"]').trigger('click')
       expect(defaultViewMode.value).toBe('term')
       const nav = w.get('.settings-nav')
       expect(nav.text()).not.toContain('Desktop')

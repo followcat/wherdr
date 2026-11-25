@@ -8,7 +8,7 @@ import { resumeTask, stopTask } from '../server/utils/pmStop'
 import { archivedStep, doneTurnRepair, handoverText, removeRefusal, resumeRefusal, stopRefusal, stoppedTask } from '../shared/pm/stop'
 import { chainState, dueText } from '../shared/pm/advance'
 import { decisionsOf } from '../shared/pm/decisions'
-import { canStop, cardOf } from '../shared/pm/board'
+import { canStart, canStop, cardOf } from '../shared/pm/board'
 import { parseCommand } from '../shared/pm/coordinator'
 import { initialState, onEvent, planSteps } from '../shared/pm/steps'
 import { wherdr } from '../shared/pm/examples'
@@ -68,6 +68,16 @@ describe('who may remove', () => {
     expect(removeRefusal(todo(), [], waiters, user)).toBe('WH-2, WH-3, XX-1 wait for WH-1 (after): remove them first') // XX-1: another project of its workspace
     expect(cardOf(todo(), plan, []).removable).toBe(true)
     expect(cardOf(working(), plan, []).removable).toBeUndefined()
+  })
+
+  it('a start that failed before its worktree (waiting, no run) may be removed or started again', () => {
+    const failed = todo({ state: 'waiting', waiting: 'git worktree failed: branch already used by worktree' })
+    expect(removeRefusal(failed, [], [], user)).toBeUndefined()
+    const card = cardOf(failed, plan, [])
+    expect(card).toMatchObject({ removable: true, phase: 'todo', yourTurn: failed.waiting })
+    expect(canStart(card)).toBe(true)
+    // Its worktree made (its machine recorded): no longer removed by hand.
+    expect(removeRefusal({ ...failed, machine: '' }, [], [], user)).toMatch(/has started/)
   })
 })
 

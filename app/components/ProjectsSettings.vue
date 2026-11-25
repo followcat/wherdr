@@ -131,7 +131,7 @@ const noneText = (what: 'project' | 'workspace') => (searching.value ? tl(`No ${
     </template>
     <template v-else-if="data.enabled">
       <div v-if="data.projects.length && (barTabs.length || searchable)" class="pm-filter">
-        <USelect v-if="barTabs.length" v-model="tabPick" :items="tabItems" size="lg" class="pm-tab" :aria-label="tl('Tab')" data-testid="pm-tab" />
+        <SettingsChoice v-if="barTabs.length" v-model="tabPick" :items="tabItems" class="pm-tab" :label="tl('Tab')" data-testid="pm-tab" />
         <NameFilter v-if="searchable" v-model="query" class="pm-search" :label="tl('Search projects')" data-testid="pm-search" />
       </div>
 
@@ -196,7 +196,7 @@ const noneText = (what: 'project' | 'workspace') => (searching.value ? tl(`No ${
 .pm-ws-members > .pm-member { padding-left: 60px; }
 :deep(.pm-ws-fold) { animation: none !important; }
 .pm-filter { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
-.pm-filter > .pm-tab { flex: 0 1 auto; min-width: 0; }
+.pm-filter > .pm-tab { flex: 1 1 320px; min-width: 0; }
 .pm-filter > .pm-search { flex: 1 1 240px; height: auto; min-height: 40px; }
 .pm-show-all { padding: 0; }
 .pm-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }

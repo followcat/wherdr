@@ -104,7 +104,7 @@ describe('ReadAloudSettings voice of wherdr', () => {
   it('is a third choice kept on this device, one row per language with its attribution', async () => {
     const w = await mountSuspended(ReadAloudSettings)
     expect(w.text()).toContain('Voice of wherdr (on this device)')
-    await w.find('[role="radio"][value="wherdr"]').trigger('click')
+    await w.find('[data-value="wherdr"]').trigger('click')
     await flushPromises()
     expect(localStorage.getItem('readAloud')).toBe('wherdr')
     expect(w.findAll('[data-voice] b').map(b => b.text())).toEqual(['Siwis · French', 'Cori · English', 'Canto · Cantonese', 'Canto GPU · Cantonese'])

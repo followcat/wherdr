@@ -105,6 +105,7 @@ function release(take: Take) {
 function errorOf(e: unknown): DictationError {
   if (e instanceof NotReadyError) return { reason: e.readiness.reason, detail: e.readiness.detail }
   if ((e as Error | null)?.name === 'ModelTooLarge') return { reason: 'too-large', detail: (e as Error).message }
+  if ((e as Error | null)?.name === 'DeviceUnsupported') return { reason: 'unsupported', detail: (e as Error).message }
   return { reason: 'failed', detail: e instanceof Error ? e.message : String(e) }
 }
 
