@@ -1,9 +1,10 @@
 // wherdr plugin host: loads prebuilt ESM plugins, hands each one a `wherdr`
 // object and isolates their failures (a plugin that throws is disabled, the
 // app keeps working). Framework-free: the page supplies what it touches.
-import type { ClientPluginInfo, PluginPrefs } from '../../shared/clientPlugins'
+import { clonePublicAgents, clonePublicMachines, type ClientPluginInfo, type PluginPrefs, type PublicAgent, type PublicMachine } from '../../shared/clientPlugins'
 import type { HeaderActionCleanup, HeaderActionRender } from './headerActions'
 
+export type { PublicAgent, PublicMachine }
 export interface CurrentAgent { id: string, agent: string | null, name: string | null, machine: string | null }
 export interface WherdrApi {
   apiVersion: 1
@@ -14,8 +15,12 @@ export interface WherdrApi {
     focus: () => void
   }
   currentAgent: () => CurrentAgent | null
+  agents: () => PublicAgent[]
+  machines: () => PublicMachine[]
   // Returns the unsubscribe function.
   onNavigate: (cb: (path: string) => void) => () => void
+  // Called when the projected agent list changes; returns the unsubscribe function.
+  onAgents: (cb: (agents: PublicAgent[]) => unknown) => () => void
   // Mounts a plugin widget into every [data-wherdr="header-actions"] slot.
   mountHeaderAction: (render: HeaderActionRender) => () => void
 }
@@ -30,8 +35,12 @@ export interface HostDeps {
   insertDraft: (text: string) => void
   focusDraft: () => void
   currentAgent: () => CurrentAgent | null
+  agents: () => PublicAgent[]
+  machines: () => PublicMachine[]
   // Subscribes to route changes; returns the unsubscribe function.
   subscribeNavigate: (cb: (path: string) => void) => () => void
+  // Subscribes to projected agent list changes; returns the unsubscribe function.
+  subscribeAgents: (cb: (agents: PublicAgent[]) => void) => () => void
   // Mounts a renderer into [data-wherdr="header-actions"] slots; returns the unsubscribe function.
   mountHeaderAction: (render: HeaderActionRender) => () => void
   prefs: () => PluginPrefs
@@ -113,6 +122,20 @@ export function createPluginHost(deps: HostDeps) {
         return undefined
       }
     }
+    const subscribeGuarded = <T>(
+      name: string,
+      subscribe: (dispatch: (value: T) => void) => () => void,
+      cb: (value: T) => unknown,
+      clone?: (value: T) => T,
+    ): () => void => {
+      if (typeof cb !== 'function') throw new TypeError(`${name} expects a function`)
+      if (!isCurrent()) return () => {}
+      const off = subscribe((value) => {
+        if (!isCurrent() || status.get(id) !== 'running') return
+        guard(() => cb(clone ? clone(value) : value))
+      })
+      return track(off)
+    }
     return {
       apiVersion: 1,
       draft: {
@@ -122,15 +145,10 @@ export function createPluginHost(deps: HostDeps) {
         focus: () => { deps.focusDraft() },
       },
       currentAgent: () => deps.currentAgent(),
-      onNavigate: (cb) => {
-        if (typeof cb !== 'function') throw new TypeError('onNavigate expects a function')
-        if (!isCurrent()) return () => {}
-        const off = deps.subscribeNavigate((path) => {
-          if (!isCurrent() || status.get(id) !== 'running') return
-          guard(() => cb(path))
-        })
-        return track(off)
-      },
+      agents: () => clonePublicAgents(deps.agents()),
+      machines: () => clonePublicMachines(deps.machines()),
+      onNavigate: cb => subscribeGuarded('onNavigate', deps.subscribeNavigate, cb),
+      onAgents: cb => subscribeGuarded('onAgents', deps.subscribeAgents, cb, clonePublicAgents),
       mountHeaderAction: (render) => {
         if (typeof render !== 'function') throw new TypeError('mountHeaderAction expects a function')
         if (!isCurrent()) return () => {}
