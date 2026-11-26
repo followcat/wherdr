@@ -21,9 +21,10 @@ export function createInteractionWindow() {
       if (next !== kind) { kind = next; since = now }
       // A server-owned operation or recovery card must never share input with
       // the TUI. It does not end an episode or undo a manual dismissal.
-      if (next === 'managed' || next === 'native' || next === 'working' || next === 'unknown') open = false
+      if (next === 'managed' || next === 'native' || next === 'working') open = false
       if (next === 'working') dismissed = false
       if (next === 'input' && now - since >= 900) { open = false; dismissed = false }
+      if (next === 'unknown' && now - since >= 900) open = false
       if (next === 'terminal' && now - since >= 500 && !dismissed) open = true
       return open
     },
@@ -32,6 +33,7 @@ export function createInteractionWindow() {
     deadline(): number | null {
       if (kind === 'terminal' && !open && !dismissed) return since + 500
       if (kind === 'input' && (open || dismissed)) return since + 900
+      if (kind === 'unknown' && open) return since + 900
       return null
     },
     dismiss() { dismissed = true; open = false; changed() },

@@ -50,13 +50,14 @@ const corePreviewsMap = new Map<string, ReturnType<typeof createCorePreviews>>()
 const coreModelCtlMap = new Map<string, ReturnType<typeof createCoreModelCtl>>()
 const entryPollTimers = new Map<string, { last: number; timer: ReturnType<typeof setTimeout> | null }>()
 const entryPollGates = new Map<string, ReturnType<typeof corePollGate>>()
+const enrichingStates = new Map<string, HerdrState>()
 
 function transcriptsForEntry(entry: CoreEntry): CoreTranscripts {
   let tr = coreTranscriptsMap.get(entry.endpoint)
   if (!tr) {
     tr = createCoreTranscripts({
       call: (method, params, timeout) => entry.call(method, params, timeout),
-      pane: findPane,
+      pane: id => enrichingStates.get(entry.endpoint)?.panes.find(p => p.id === id) ?? findPane(id),
       localHome: HOME,
       codexHistory: createCodexDaemonHistory({ rpc: createCodexDaemonRpc(process.env.CODEX_HOME || path.join(HOME, '.codex')) }),
     })
@@ -89,6 +90,7 @@ export const corePool = createCorePool({
   ...configuredSockets(),
   hostLabel: localMachineLabel,
   settleMs: NOTIFY_SETTLE_MS,
+  enrich: enrichEntryState,
   onAlert: (entry, machineKey, address, kind) => { notifyCorePane(entry, machineKey, address, kind).catch(e => log('notification:', e.message)) },
   onChange: (entry) => { gateForEntry(entry).schedule() },
   onStatus: (entry) => { gateForEntry(entry).schedule() },
@@ -323,21 +325,29 @@ export function takeBackFromClaude(p: Pane, io: { screen: () => Promise<string>,
 export const heldMessages = createHeld((p, q) => coreSend(coreInputDeps(p.id), { pane_id: p.id, text: q.text }), Date.now, heldFile(path.join(DATA_DIR, 'held.json')))
 
 // ---------------------------------------------------------------- poll
+async function enrichEntryState(entry: CoreEntry, es: HerdrState) {
+  enrichingStates.set(entry.endpoint, es)
+  try {
+    await coreScreens(entry).enrich(es.panes).catch(() => {})
+    void transcriptsForEntry(entry).observe(es.panes)
+    corePreviewsFor(entry).apply(es.panes)
+    const ctl = coreModelCtlMap.get(entry.endpoint)
+    for (const p of es.panes) {
+      // The model picker's own menu may still be the screen: that mark is not
+      // a foreign prompt (ModelPicker's why reads it).
+      p.menuLeftOpen = ctl?.menuLeftOpen(p.id) || undefined
+      if (!hasTranscript(p.agent)) continue
+      modelRefresh().apply(p)
+    }
+  } finally {
+    enrichingStates.delete(entry.endpoint)
+  }
+}
+
 async function pollEntry(entry: CoreEntry, publish = true) {
   const tracker = entryPollTimers.get(entry.endpoint)
   if (tracker) tracker.last = Date.now()
-  const es = await entry.poll()
-  await coreScreens(entry).enrich(es.panes).catch(() => {})
-  void transcriptsForEntry(entry).observe(es.panes)
-  corePreviewsFor(entry).apply(es.panes)
-  const ctl = coreModelCtlMap.get(entry.endpoint)
-  for (const p of es.panes) {
-    // The model picker's own menu may still be the screen: that mark is not
-    // a foreign prompt (ModelPicker's why reads it).
-    p.menuLeftOpen = ctl?.menuLeftOpen(p.id) || undefined
-    if (!hasTranscript(p.agent)) continue
-    modelRefresh().apply(p)
-  }
+  await entry.poll()
   if (publish) publishMergedState()
 }
 
