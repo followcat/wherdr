@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import { createServer, type Socket } from 'node:net'
+import { readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PANE_RE } from '../shared/ids'
 import { coreState } from '../shared/coreState'
 import type { CoreTerminal } from '../shared/coreInventory'
+import type { HerdrState } from '../shared/types'
 import { createCoreAlerts } from '../server/utils/coreAlerts'
 import { createCorePreviews } from '../server/utils/corePreview'
 import { createCoreTranscripts } from '../server/utils/coreTranscripts'
@@ -21,6 +23,60 @@ import {
 
 const sha16 = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 16)
 const term = (address: string, extra: Partial<CoreTerminal> = {}): CoreTerminal => ({ address, cwd: '/home/user/demo', state: 'live', ...extra })
+
+async function startFakeSocketCore(cleanups: Array<() => Promise<void>>, sockPath: string, opts: {
+  terminals: CoreTerminal[]
+  machines?: Array<{ name: string, state: string, host?: string, why?: string }>
+  onCall?: (method: string, params: Record<string, unknown>) => unknown | Promise<unknown>
+  hang?: boolean
+}) {
+  const sockets = new Set<Socket>()
+  const calls: Array<{ method: string, params: Record<string, unknown> }> = []
+  const subscribers = new Set<Socket>()
+  const server = createServer((socket) => {
+    sockets.add(socket)
+    socket.on('error', () => {})
+    socket.once('close', () => { sockets.delete(socket); subscribers.delete(socket) })
+    let buf = ''
+    socket.on('data', (chunk) => {
+      buf += chunk.toString('utf8')
+      let nl: number
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim()
+        buf = buf.slice(nl + 1)
+        if (!line) continue
+        const req = JSON.parse(line) as { id: number, method: string, params?: Record<string, unknown> }
+        calls.push({ method: req.method, params: req.params ?? {} })
+        if (opts.hang) return
+        if (req.method === 'events.subscribe') {
+          subscribers.add(socket)
+          socket.write(JSON.stringify({ jsonrpc: '2.0', id: req.id, result: { seq: 1, terminals: opts.terminals } }) + '\n')
+          continue
+        }
+        Promise.resolve(opts.onCall?.(req.method, req.params ?? {})).then((custom) => {
+          const result = custom !== undefined ? custom
+            : req.method === 'terminal.list' ? { terminals: opts.terminals, machines: opts.machines ?? [], hidden_finished: 0 }
+              : req.method === 'machine.list' ? { machines: opts.machines ?? [] }
+                : req.method === 'doc.get' ? { value: null }
+                  : {}
+          if (!socket.destroyed) socket.end(JSON.stringify({ jsonrpc: '2.0', id: req.id, result }) + '\n')
+        })
+      }
+    })
+  })
+  await new Promise<void>(resolve => server.listen(sockPath, resolve))
+  cleanups.push(async () => {
+    for (const s of sockets) s.destroy()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  })
+  return {
+    calls,
+    emitEvent(event: object) {
+      const line = JSON.stringify({ jsonrpc: '2.0', method: 'event', params: event }) + '\n'
+      for (const s of subscribers) s.write(line)
+    },
+  }
+}
 
 describe('PANE_RE and /ws/events viewing for space panes', () => {
   it('accepts local and remote space-placed panes (s…:p…)', () => {
@@ -177,57 +233,8 @@ describe('CorePool connections, isolation, routing and alerts', () => {
     for (const fn of cleanups.splice(0).reverse()) await fn()
   })
 
-  async function fakeSocketCore(sockPath: string, opts: {
-    terminals: CoreTerminal[]
-    machines?: Array<{ name: string, state: string, host?: string, why?: string }>
-    onCall?: (method: string, params: Record<string, unknown>) => unknown
-    hang?: boolean
-  }) {
-    const sockets = new Set<Socket>()
-    const calls: Array<{ method: string, params: Record<string, unknown> }> = []
-    const subscribers = new Set<Socket>()
-    const server = createServer((socket) => {
-      sockets.add(socket)
-      socket.on('error', () => {})
-      socket.once('close', () => { sockets.delete(socket); subscribers.delete(socket) })
-      let buf = ''
-      socket.on('data', (chunk) => {
-        buf += chunk.toString('utf8')
-        let nl: number
-        while ((nl = buf.indexOf('\n')) >= 0) {
-          const line = buf.slice(0, nl).trim()
-          buf = buf.slice(nl + 1)
-          if (!line) continue
-          const req = JSON.parse(line) as { id: number, method: string, params?: Record<string, unknown> }
-          calls.push({ method: req.method, params: req.params ?? {} })
-          if (opts.hang) return
-          if (req.method === 'events.subscribe') {
-            subscribers.add(socket)
-            socket.write(JSON.stringify({ jsonrpc: '2.0', id: req.id, result: { seq: 1, terminals: opts.terminals } }) + '\n')
-            continue
-          }
-          const custom = opts.onCall?.(req.method, req.params ?? {})
-          const result = custom !== undefined ? custom
-            : req.method === 'terminal.list' ? { terminals: opts.terminals, machines: opts.machines ?? [], hidden_finished: 0 }
-              : req.method === 'machine.list' ? { machines: opts.machines ?? [] }
-                : req.method === 'doc.get' ? { value: null }
-                  : {}
-          socket.end(JSON.stringify({ jsonrpc: '2.0', id: req.id, result }) + '\n')
-        }
-      })
-    })
-    await new Promise<void>(resolve => server.listen(sockPath, resolve))
-    cleanups.push(async () => {
-      for (const s of sockets) s.destroy()
-      await new Promise<void>(resolve => server.close(() => resolve()))
-    })
-    return {
-      calls,
-      emitEvent(event: object) {
-        const line = JSON.stringify({ jsonrpc: '2.0', method: 'event', params: event }) + '\n'
-        for (const s of subscribers) s.write(line)
-      },
-    }
+  async function fakeSocketCore(sockPath: string, opts: Parameters<typeof startFakeSocketCore>[2]) {
+    return startFakeSocketCore(cleanups, sockPath, opts)
   }
 
   it('routes forPane and forMachine to the owning session and isolates t1 collisions', async () => {
@@ -556,5 +563,204 @@ describe('coreAlerts backlot daemon suppression', () => {
     pushStatus('t4', 'idle')
     await vi.advanceTimersByTimeAsync(200)
     expect(sent).toEqual([])
+  })
+})
+
+describe('concurrent pool enrichment isolation', () => {
+  const cleanups: Array<() => Promise<void>> = []
+  afterEach(async () => {
+    for (const fn of cleanups.splice(0).reverse()) await fn()
+    vi.useRealTimers()
+    vi.unstubAllEnvs()
+    vi.resetModules()
+  })
+
+  it('never exposes un-enriched panes in merged broadcasts while another entry awaits slow enrichment', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'corepool-enrich-race-'))
+    const home = join(dir, 'home')
+    const dataDir = join(dir, 'data')
+    await mkdir(home, { recursive: true })
+    await mkdir(dataDir, { recursive: true })
+    cleanups.push(() => rm(dir, { recursive: true, force: true }))
+
+    const sockA = join(dir, 'default.sock')
+    const sockB = join(dir, 'backlot.sock')
+    const devinQuestion = 'Select features to include\n[ ] Auth\n[ ] Billing\nSpace to toggle · Enter to submit\n'
+    const devinIdle = readFileSync(new URL('./fixtures/core-screens/devin-idle.txt', import.meta.url), 'utf8')
+
+    let slowNextRead = false
+    let notifyReadStarted!: () => void
+    const readStarted = new Promise<void>((resolve) => { notifyReadStarted = resolve })
+    let releaseRead!: (result: { text: string }) => void
+    const deferredRead = new Promise<{ text: string }>((resolve) => { releaseRead = resolve })
+
+    const termA: CoreTerminal = { address: 't1', cwd: '/home/alice/acme-shop', state: 'live', template: 'devin', status: { state: 'blocked' }, status_ms: 1 }
+    const termB: CoreTerminal = { address: 't2', cwd: '/home/alice/acme-shop', state: 'live', template: 'claude', status: { state: 'idle' }, status_ms: 1 }
+
+    await startFakeSocketCore(cleanups, sockA, {
+      terminals: [termA],
+      onCall: (method, params) => {
+        if (method === 'terminal.read' && params.lines === 0) {
+          if (!slowNextRead) return { text: devinQuestion }
+          notifyReadStarted()
+          return deferredRead
+        }
+        if (method === 'terminal.read') return { text: devinQuestion }
+        return undefined
+      },
+    })
+
+    let blockBOnRead = false
+    await startFakeSocketCore(cleanups, sockB, {
+      terminals: [termB],
+      onCall: async (method) => {
+        if (method === 'terminal.list' && blockBOnRead) {
+          await readStarted
+          return { terminals: [{ ...termB, status: { state: 'working' }, status_ms: 2 }], machines: [], hidden_finished: 0 }
+        }
+        if (method === 'terminal.read') return { text: '' }
+        return undefined
+      },
+    })
+
+    vi.resetModules()
+    vi.stubEnv('HC_SOCKET', sockA)
+    vi.stubEnv('HC_SOCKETS', sockB)
+    vi.stubEnv('DATA_DIR', dataDir)
+    vi.stubEnv('HOME', home)
+    vi.stubEnv('CODEX_HOME', join(home, '.codex'))
+    vi.stubEnv('HOST_LABEL', 'host-a')
+    vi.stubEnv('NOTIFY_SETTLE_MS', '10')
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(1_000)
+
+    const s = await import('../server/utils/state')
+    cleanups.push(async () => { s.stopPolling() })
+
+    await s.poll()
+    const paneAId = s.getState().panes.find(p => p.session === 'default' && p.coreAddress === 't1')!.id
+    const broadcasts: HerdrState[] = []
+    s.eventClients.set('client-1', {
+      send: (raw) => { broadcasts.push(JSON.parse(raw) as HerdrState) },
+      pane: paneAId,
+      visible: true,
+    })
+
+    // Second read confirms Devin's interactive terminal screen.
+    vi.setSystemTime(1_300)
+    await s.poll()
+    expect(s.getState().panes.find(p => p.id === paneAId)?.interaction).toBe('terminal')
+
+    // Concurrent poll: entry A's screen enrichment blocks on deferredRead while entry B publishes a change.
+    vi.setSystemTime(2_400)
+    broadcasts.length = 0
+    slowNextRead = true
+    blockBOnRead = true
+
+    const pendingPoll = s.poll()
+    await readStarted
+    await vi.waitFor(() => expect(broadcasts.length).toBeGreaterThanOrEqual(1))
+
+    for (const pushed of broadcasts) {
+      const pA = pushed.panes.find(p => p.id === paneAId)
+      expect(pA?.interaction).toBe('terminal')
+    }
+    expect(s.getState().panes.find(p => p.id === paneAId)?.interaction).toBe('terminal')
+
+    releaseRead({ text: devinIdle })
+    await pendingPoll
+
+    expect(broadcasts.length).toBeGreaterThanOrEqual(2)
+    for (const pushed of broadcasts) {
+      const pA = pushed.panes.find(p => p.id === paneAId)
+      expect(['terminal', 'input']).toContain(pA?.interaction)
+    }
+    expect(s.getState().panes.find(p => p.id === paneAId)?.interaction).toBe('input')
+  })
+
+  it('commits currentState only after enrich completes, keeps inFlight dedup, and preserves offline primary panes', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'corepool-enrich-contract-'))
+    cleanups.push(() => rm(dir, { recursive: true, force: true }))
+    const sockA = join(dir, 'default.sock')
+    const sockB = join(dir, 'backlot.sock')
+
+    let failPrimary = false
+    await startFakeSocketCore(cleanups, sockA, {
+      terminals: [term('t1', { cwd: '/home/alice/acme-shop', template: 'devin', status: { state: 'blocked' } })],
+      onCall: (method) => {
+        if (failPrimary && method === 'terminal.list') return undefined
+        return undefined
+      },
+    })
+    await startFakeSocketCore(cleanups, sockB, {
+      terminals: [term('t2', { cwd: '/home/alice/acme-shop', template: 'claude', status: { state: 'idle' } })],
+    })
+
+    let enrichRound = 0
+    let slowEnrich = false
+    let markEnrichStarted!: () => void
+    const enrichStarted = new Promise<void>((resolve) => { markEnrichStarted = resolve })
+    let releaseEnrich!: () => void
+    const deferredEnrich = new Promise<void>((resolve) => { releaseEnrich = resolve })
+    const onPollSnapshots: Array<string | undefined> = []
+
+    const pool = createCorePool({
+      primary: sockA,
+      extra: [sockB],
+      hostLabel: () => 'host-a',
+      enrich: async (entry, st) => {
+        if (!entry.primary) {
+          for (const p of st.panes) p.interaction = 'input'
+          return
+        }
+        enrichRound++
+        if (!slowEnrich) {
+          for (const p of st.panes) p.interaction = 'terminal'
+          return
+        }
+        markEnrichStarted()
+        await deferredEnrich
+        for (const p of st.panes) p.interaction = 'input'
+      },
+      onPoll: (entry) => {
+        if (entry.primary) onPollSnapshots.push(entry.state().panes[0]?.interaction)
+      },
+    })
+    cleanups.push(async () => { pool.stop() })
+
+    await pool.poll()
+    expect(pool.state().panes.find(p => p.session === 'default')?.interaction).toBe('terminal')
+    expect(pool.state().panes.find(p => p.session === 'backlot')?.interaction).toBe('input')
+    expect(onPollSnapshots).toEqual(['terminal'])
+
+    // Second poll: slow enrich on primary, plus a concurrent corePool.poll() and entry.poll() caller.
+    slowEnrich = true
+    const p1 = pool.primary()!.poll()
+    const p2 = pool.primary()!.poll()
+    const p3 = pool.poll()
+    await enrichStarted
+
+    // While enrich is still awaiting, every reader sees the previous enriched state, never 'unknown',
+    // and inFlight deduplicates concurrent entry.poll() calls.
+    expect(pool.state().panes.find(p => p.session === 'default')?.interaction).toBe('terminal')
+    expect(pool.primary()!.state().panes[0]?.interaction).toBe('terminal')
+    expect(enrichRound).toBe(2)
+
+    releaseEnrich()
+    const [r1, r2, r3] = await Promise.all([p1, p2, p3])
+    expect(r1.panes[0]?.interaction).toBe('input')
+    expect(r2.panes[0]?.interaction).toBe('input')
+    expect(r3.panes.find(p => p.session === 'default')?.interaction).toBe('input')
+    expect(enrichRound).toBe(2)
+    expect(onPollSnapshots).toEqual(['terminal', 'input'])
+
+    // Offline primary (ok: false) preserves previous enriched panes without calling enrich again.
+    failPrimary = true
+    await rm(sockA, { force: true })
+    await pool.primary()!.poll()
+    expect(pool.primary()!.state().ok).toBe(false)
+    expect(pool.primary()!.state().panes[0]?.interaction).toBe('input')
+    expect(enrichRound).toBe(2)
   })
 })

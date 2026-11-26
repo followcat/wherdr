@@ -77,6 +77,7 @@ export interface CorePoolOptions {
   hostLabel?: () => string
   settleMs?: number
   callTimeoutMs?: number
+  enrich?: (entry: CoreEntry, state: HerdrState) => Promise<void> | void
   onAlert?: (entry: CoreEntry, machineKey: string, address: string, kind: CoreAlertKind) => void
   onEvent?: (entry: CoreEntry, event: CoreEvent, before: CoreTerminal | undefined, after: CoreTerminal | undefined) => void
   onChange?: (entry: CoreEntry, what: 'terminal' | 'doc' | 'snapshot') => void
@@ -264,13 +265,16 @@ export function createCorePool(opts: CorePoolOptions): CorePool {
     }
 
     let inFlight: Promise<HerdrState> | null = null
+    let pendingState: HerdrState | null = null
     const runPoll = async (): Promise<HerdrState> => {
+      const gen = generation
+      let candidate: HerdrState
+      let ok = false
       try {
         const held = session.snapshot()
         if (held && !reapedSnapshot) { reapedSnapshot = true; reapExited(held) }
         const terminals = held ?? [...liveTerminals((await call<CoreInventory>('terminal.list')).terminals).values()]
         if (!held) reapExited(terminals)
-        const gen = generation
         if (!cache || Date.now() - cache.at > MACHINES_MS || !held) {
           const machines = (await call<{ machines: CoreMachine[] }>('machine.list')).machines
           const docs = await docsReader.read((m, p) => call(m, p), machines)
@@ -280,15 +284,23 @@ export function createCorePool(opts: CorePoolOptions): CorePool {
         lastTerminals = terminals
         lastError = null
         if (primary) primaryMachinesRaw = cache.machines
-        currentState = computeState(terminals, cache.machines, cache.docs, null)
-        opts.onPoll?.(entry)
-        return refreshedState()
+        candidate = computeState(terminals, cache.machines, cache.docs, null)
+        ok = true
       } catch (e) {
         lastError = errorText(e)
-        currentState = computeState(lastTerminals, cache?.machines ?? [], cache?.docs ?? {}, lastError)
-        opts.onPoll?.(entry)
-        return refreshedState()
+        candidate = computeState(lastTerminals, cache?.machines ?? [], cache?.docs ?? {}, lastError)
       }
+      // Enrich candidate before assigning currentState so concurrent polls or
+      // broadcasts never see un-enriched panes. Skip when primary is offline
+      // because its candidate reuses the previously enriched panes array.
+      if (opts.enrich && (ok || candidate.ok !== false)) {
+        pendingState = candidate
+        try { await opts.enrich(entry, candidate) } catch { /* enrichment failure keeps candidate state */ } finally { pendingState = null }
+      }
+      currentState = candidate
+      opts.onPoll?.(entry)
+      if (ok && gen !== generation) return await runPoll()
+      return refreshedState()
     }
 
     const poll = () => {
@@ -304,7 +316,8 @@ export function createCorePool(opts: CorePoolOptions): CorePool {
       if (mk === localKey) return true
       if (cache?.machines.some(m => (primary ? hexKey(m.name) : canonicalRemoteKey(m)) === mk)) return true
       if (currentState.machines?.some(m => m.key === mk)) return true
-      return currentState.panes.some(p => p.machine === mk)
+      if (pendingState?.machines?.some(m => m.key === mk)) return true
+      return currentState.panes.some(p => p.machine === mk) || Boolean(pendingState?.panes.some(p => p.machine === mk))
     }
 
     const entry: CoreEntry = {
