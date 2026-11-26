@@ -1,6 +1,7 @@
 import type { Pane, Workspace } from './types'
 import { cleanTitle, coordinatorTitle, maskCreds, paneTitle } from './paneTitle'
 import { addressOnly } from './coreInventory'
+import { CMD_GENERIC_TITLES } from './cmdAliases'
 
 // herdr-projects marks its spaces with invisible characters (braille blank
 // U+2800, zero-width spaces); some fonts draw them as dot grids.
@@ -27,8 +28,7 @@ export function desktopHeaderTitle(p: Pane, workspace: Workspace | null | undefi
 export function conversationSubtitle(p: Pane, workspace?: Workspace | null): string {
   const title = cleanTitle(p.title).replace(/\s*\|\s*\S+$/, '').trim()
   if (!title || /^\S+@\S+:/.test(title)) return ''
-  const generic = [p.agent, p.name, 'Claude Code', 'Claude', 'Codex', 'Gemini CLI', 'OpenCode', 'Kimi',
-    'Command Code', 'command-code', 'command_code', 'commandcode', 'cmdc']
+  const generic = [p.agent, p.name, 'Claude Code', 'Claude', 'Codex', 'Gemini CLI', 'OpenCode', 'Kimi', ...CMD_GENERIC_TITLES]
   if (generic.some(x => x && x.trim().toLocaleLowerCase() === title.toLocaleLowerCase())) return ''
   if (title.toLocaleLowerCase() === spaceTitle(p, workspace).toLocaleLowerCase()) return ''
   return title

@@ -237,6 +237,9 @@ export function planSteps(t: Template, input: TaskInput, base?: string): Planned
 }
 
 export const initialState = (): StepState => ({ at: 0, started: false, proofs: {}, rounds: {} })
+// The agent's step a task waiting at `at` goes back to, or -1 when none comes before it.
+export const sendBackTo = (plan: Pick<Step, 'holder'>[], at: number) => plan.slice(0, at).findLastIndex(p => p.holder === 'worker')
+
 export const currentStep = (plan: PlannedStep[], s: StepState): PlannedStep | undefined => plan[s.at]
 const hasAgent = (s: Step) => !!s.holder && s.holder !== 'none'
 
@@ -468,7 +471,7 @@ export function onEvent(plan: PlannedStep[], state: StepState, ev: StepEvent, no
       return { state: { ...state, acting: undefined, watch: undefined, yourTurn: { reason: 'action', badge, ...(error ? { error } : {}) } }, effects }
     }
     case 'back': {
-      const back = plan.slice(0, state.at).findLastIndex(p => p.holder === 'worker')
+      const back = sendBackTo(plan, state.at)
       if (step.ends !== 'user' || state.acting) return refuse(`Step "${step.id}" does not wait for you`)
       if (back < 0) return refuse('No earlier step of the agent to send it back to')
       if (!ev.note.trim()) return refuse('Say what to change')

@@ -37,6 +37,13 @@ describe('titres du space', () => {
     expect(conversationSubtitle({ ...p, title: 'Claude Code' }, w)).toBe('')
     expect(conversationSubtitle({ ...p, title: 'claude' }, w)).toBe('')
   })
+  it('hides the generic titles of a Command Code pane, and keeps a real subject', () => {
+    const cmd = { ...p, agent: 'cmd', name: 'cmd' }
+    for (const title of ['cmd', 'cmdc', 'Command Code', 'command-code', 'command_code', 'commandcode']) {
+      expect(conversationSubtitle({ ...cmd, title }, w), title).toBe('')
+    }
+    expect(conversationSubtitle({ ...cmd, title: 'Migrate the parser' }, w)).toBe('Migrate the parser')
+  })
 })
 
 describe('cleanLabel', () => {

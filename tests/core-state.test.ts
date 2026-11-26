@@ -67,32 +67,52 @@ it('recognizes a Cline command when core supplies no agent field', () => {
     expect(coreState([terminal('t1', { argv })], []).panes[0]?.agent, argv.join(' ')).toBeNull()
 })
 
-describe('Command Code agent kind', () => {
-  const agentOf = (extra = {}) => coreState([terminal('t1', extra)], []).panes[0]?.agent
-  it('canonicalizes trusted Command Code aliases to cmd', () => {
+describe('Command Code in core terminals', () => {
+  const agentOf = (extra: object) => coreState([terminal('t1', extra)], []).panes[0]?.agent
+
+  it('reads a declared Command Code name, whatever its spelling', () => {
     for (const extra of [
       { agent: 'command-code' }, { agent: 'command_code' }, { agent: 'commandcode' }, { agent: 'cmd' }, { agent: 'cmdc' },
       { template: 'command-code' }, { template: 'command_code' }, { template: 'commandcode' }, { template: 'cmdc' },
       { status: { state: 'idle', app: 'command-code' } }, { status: { state: 'idle', app: 'commandcode' } },
+      { status: { state: 'working', app: 'Command Code' } },
     ]) expect(agentOf(extra), JSON.stringify(extra)).toBe('cmd')
   })
-  it('names Command Code by its launched program, never by an operand', () => {
-    for (const argv of [['cmdc', '--resume', 's-1'], ['/usr/local/bin/commandcode'], ['/opt/bin/command-code'], ['npx', 'cmdc'], ['bunx', 'command_code']])
+
+  it('recognizes its launch argv and the package entrypoint', () => {
+    for (const argv of [['cmdc', '--resume', 'session-a'], ['/usr/local/bin/commandcode'], ['/opt/bin/command-code'], ['npx', 'command-code'], ['bunx', 'command_code']])
       expect(agentOf({ argv }), argv.join(' ')).toBe('cmd')
     expect(agentOf({ foreground: { argv: ['cmdc'] }, argv: ['bash'] })).toBe('cmd')
-    for (const argv of [['bash', '-c', 'cmdc --resume s-1'], ['git', 'commit', '-m', 'mention commandcode'], ['vim', 'cmdc.txt'], ['ssh', 'host-a', 'commandcode']])
-      expect(agentOf({ argv }), argv.join(' ')).toBeNull()
+    expect(agentOf({ argv: ['node', '/usr/lib/node_modules/command-code/dist/cli.mjs'] })).toBe('cmd')
+    expect(agentOf({ argv: ['/opt/command-code/bin/cmd'] })).toBe('cmd')
   })
-  it('never takes Windows cmd or a bare cmd name for Command Code', () => {
-    for (const argv of [['cmd'], ['cmd.exe', '/c', 'dir'], ['C:\\Windows\\system32\\cmd.exe', '/k']])
-      expect(agentOf({ argv }), argv.join(' ')).toBeNull()
-    expect(agentOf({ argv: ['/bin/sh', '-c', 'cmd /c dir'] })).toBeNull()
+
+  it('never takes a bare cmd, nor a word that only mentions it, for the agent', () => {
+    for (const extra of [
+      { argv: ['cmd'] },
+      { argv: ['cmd.exe'] },
+      { argv: ['cmd.exe', '/c', 'dir'] },
+      { argv: ['C:\\Windows\\system32\\cmd.exe', '/k'] },
+      { argv: ['cmd', '/c', 'dir'] },
+      { argv: ['/usr/bin/cmd'] },
+      { argv: ['/bin/sh', '-c', 'cmd /c dir'] },
+      { argv: ['vim', 'cmd'] },
+      { argv: ['ls', 'cmd'] },
+      { argv: ['node', 'build.js', 'cmd'] },
+      { argv: ['sh', '-c', 'cmd'] },
+      { argv: ['bash', '-c', 'cmdc --resume s-1'] },
+      { argv: ['git', 'commit', '-m', 'mention commandcode'] },
+      { argv: ['vim', 'cmdc.txt'] },
+      { argv: ['ssh', 'host-a', 'commandcode'] },
+    ]) expect(agentOf(extra), JSON.stringify(extra)).toBeNull()
   })
+
   it('keeps an opaque declared agent kind exactly as core reported it', () => {
     for (const agent of ['acme/tool', 'vendor/command-code', 'delta-worker'])
       expect(agentOf({ agent }), agent).toBe(agent)
     expect(agentOf({ agent: 'command-code' })).toBe('cmd')
   })
+
   it('lets a declared kind win over an argv operand, and stays a transcript agent', async () => {
     expect(agentOf({ template: 'command-code', argv: ['tool', 'claude'] })).toBe('cmd')
     const { TRANSCRIPT_AGENTS } = await import('../shared/agentKind')

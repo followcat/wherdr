@@ -7,7 +7,7 @@
 // program: the same Alfred (home folder, identity, memory), the old session
 // stopped. As a banner (the board's All projects): the same one tap, no menu.
 // In the list it is a card of its own: its emblem, what it is, its live state.
-import { MAIN } from '#shared/pm/coordinator'
+import { MAIN, canResume } from '#shared/pm/coordinator'
 import type { AlfredProgram } from '#shared/pm/alfred'
 
 const props = defineProps<{ banner?: boolean }>()
@@ -45,7 +45,8 @@ async function start(program: AlfredProgram) {
   error.value = ''
   sheet.value = false
   try {
-    const p = await launchCoordinator(MAIN, { program })
+    // The agent that ran its conversation again: that conversation carries on.
+    const p = await launchCoordinator(MAIN, alfred.value?.ran === program && canResume(program) ? 'resume' : { program })
     await loadAlfred()
     if (p) await navigateTo(panePath(p.id))
   }

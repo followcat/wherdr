@@ -76,13 +76,15 @@ export const coreFailure = (e: unknown) => `herdr-core: ${e instanceof CoreError
 // The core's error kind of a failed remote read, from its reason, else null.
 export const coreFailureKind = (e: unknown) => /^herdr-core: ([a-z_]+)$/.exec(String((e as { message?: unknown } | null)?.message ?? ''))?.[1] ?? null
 
-export function coreShell(call: Call, on: string): ShellExec {
+// `local` is only the deliberate machineless local core: its `on` is omitted.
+// Otherwise even an empty name is sent, so a missing remote machine fails there
+// instead of silently running on this core.
+export function coreShell(call: Call, on: string, local = false): ShellExec {
   return async (script, args = [], opts = {}): Promise<ExecResult> => {
     const seconds = Math.max(1, Math.ceil((opts.timeoutMs ?? 15000) / 1000))
     try {
       const r = await call<{ code: number | null, stdout?: string, stderr?: string, timed_out?: boolean, truncated?: boolean }>('machine.exec', {
-        // An empty machine name is never sent: omitting `on` runs on this core.
-        argv: ['sh', '-c', script, 'sh', ...args], ...(on ? { on } : {}), timeout: seconds,
+        argv: ['sh', '-c', script, 'sh', ...args], ...(local && !on ? {} : { on }), timeout: seconds,
         ...(opts.input ? { input: opts.input.toString('base64') } : {}),
       }, seconds * 1000 + 5000)
       // A timed-out reply is a failure: its partial stdout is discarded,
@@ -110,7 +112,7 @@ export function coreShell(call: Call, on: string): ShellExec {
 // answer cannot give a partial trusted path, and the bytes are never
 // trimmed: a path's own trailing whitespace is part of it, not a route
 // into another directory.
-async function machineHome(shell: ShellExec): Promise<string> {
+export async function machineHome(shell: ShellExec): Promise<string> {
   const r = await shell('printf %s "$HOME"', [], { maxBytes: 4096 })
   const s = r.code === 0 && r.stdout.length <= 4096 ? r.stdout.toString('utf8') : ''
   // Roundtrip: bytes that are not valid UTF-8 would silently decode into
@@ -202,7 +204,7 @@ export function createCoreTranscripts(deps: CoreTranscriptDeps) {
         // Census/discovery/header work goes through machine.exec on the core
         // itself — locally too (an omitted `on` runs on this machine); only
         // transcript file reads use localFs directly.
-        const shell = coreShell(deps.call, name)
+        const shell = coreShell(deps.call, name, !name)
         const home = name ? await machineHome(shell) : deps.localHome
         if (!home.startsWith('/') || home.includes('\0')) throw new CoreError('unreachable', 'machine home unknown')
         // Transcript reads ride core's reply ceiling in 4 MiB decoded chunks.

@@ -65,11 +65,17 @@ from the pane's: they count only when the wherdr service has them too.
   Settings › Projects › KEY › Guards*, *Open Task KEY-12*, *Open Board › KEY › ui*). A tap opens
   the place in the app, on a computer and a phone,
   without reloading; Back returns to the conversation. Other links open in a new tab, other
-  inline code stays plain. The addresses: `#/`, `#/review` (Tasks to review; the former `#/decisions` opens it too), `#/board` (with `?project=KEY`,
-  `?tag=TAG` or `?task=ID`), `#/settings?section=<section>`, a tab of Settings › Conversation
-  `#/settings?section=conversation&tab=<tab>` (`display`, `dictation`, `read-aloud`) and a
-  project's sheet `#/settings?section=projects&project=KEY&tab=<tab>`; Alfred and coordinators get the list in
-  their instructions.
+  inline code stays plain. The addresses an agent gives, and no others (a coordinator has this list
+  in its instructions, Alfred reads it here):
+  - `#/` is Home; `#/review` is Tasks to review (the former `#/decisions` opens it too).
+  - `#/board`, with `?project=KEY`, `?tag=TAG` or `?task=ID` (a task's sheet over the page).
+  - `#/settings?section=<section>`, one of `appearance`, `conversation`, `terminal`, `agents`,
+    `machines`, `projects`, `plugins`, `phone`, `notifications`, `security`, `shortcuts` or
+    `about`; `section=pacing` opens Agents at its Pace group.
+  - A tab of Settings › Conversation: `#/settings?section=conversation&tab=<tab>`, with `display`,
+    `dictation` or `read-aloud`.
+  - A project's sheet: `#/settings?section=projects&project=KEY&tab=<tab>`, with `general`,
+    `workflow`, `guards`, `automations` or `autopilot` (the coordinator's autopilot panel).
 - **Task cards**: an agent shows a task where it stands with a code fence labelled `wherdr`, one
   line `task KEY-12` per task. Each line shows the task's row as in the sidebar's Tasks to
   handle: its key, title, step and what to do, read live from the board (every 15 s, and after
@@ -221,7 +227,7 @@ from the pane's: they count only when the wherdr service has them too.
   hidden; a reading taken while omp rests, or before its panel hid the gauge, is marked as
   the last one.
 - **Composer and terminal together** on a computer: under an agent's terminal, the composer stays
-  available; typing in it takes control of the terminal's size ([Terminal](terminal.md)).
+  available without taking control of the terminal's size ([Terminal](terminal.md)).
 - The model and effort pickers, the slash-command list and Codex update cards are v2 only.
 
 An agent's reply can be quoted in the field question by question and point by point (a list

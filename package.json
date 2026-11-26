@@ -76,7 +76,7 @@
     "typescript": "~5.9.3",
     "vitest": "^4.1.11",
     "vue": "^3.5.0",
-    "vue-router": "^4.5.0",
+    "vue-router": "^5.2.0",
     "vue-tsc": "^3.0.0",
     "web-push": "^3.6.7"
   }

@@ -11,11 +11,11 @@ vi.mock('node:crypto', async (importOriginal) => {
     createHash: (...args: Parameters<typeof real.createHash>) => { cryptoCount.n++; return real.createHash(...args) },
   }
 })
-import { type CommandCodeResult, createTranscripts, extractImage, lineImageHashes, parseLines } from '../server/utils/transcripts'
+import { commandCodeParser, type CommandCodeResult, createTranscripts, extractImage, type Lines, lineImageHashes, parseLines, stripBlobs } from '../server/utils/transcripts'
 import type { MachineFs } from '../server/utils/fsx'
 import { lastModel, modelFromLine } from '../server/utils/models'
 import type { ChatItem } from '../shared/types'
-import { AT, at, assistant, J, modelChange, results, sess, user } from './cmdParserFixture'
+import { AT, at, assistant, J, modelChange, REAL_SAMPLE, results, sess, user } from './cmdParserFixture'
 
 const parse = (text: string, map?: Map<string, CommandCodeResult>) => parseLines(text, 'cmd', 0, '', undefined, '', map)
 const roles = (items: ChatItem[]) => items.map(i => i.role)
@@ -319,6 +319,53 @@ describe('parseLines for Command Code', () => {
     // A line with no result record carries none.
     expect(parse(J(user('u1', 'hi', 10))).resultRefs).toBeUndefined()
   })
+
+  it('reads an anonymised real Command Code 1.93.0 transcript', () => {
+    const text = REAL_SAMPLE.join('\n')
+    // The pinned sample is the real 1.93.0 record structure: a session header,
+    // a human prompt, a thinking + text + read_file call, its tool result, then
+    // the reply. parseLines reads it as the conversation.
+    const items = parse(text)
+    expect(items.map(i => [i.role, i.text, i.name])).toEqual([
+      ['user', 'Check package.json scripts', undefined],
+      ['thinking', 'Let me inspect package.json first.', undefined],
+      ['assistant', 'Reading package.json.', undefined],
+      ['tool', '/home/alice/acme-shop/package.json', 'read_file'],
+      ['assistant', 'The test script runs vitest.', undefined],
+    ])
+    expect(items[3]).toMatchObject({ role: 'tool', toolId: 'call_read_1', out: '{"scripts":{"test":"vitest"}}' })
+    expect(JSON.stringify(items)).not.toContain('sig-opaque')
+    // The incremental parser and the model reader agree on the same sample.
+    // The reader feeds it with the lines' absolute "start:length" refs
+    // (storeLines), so the result is identical to the whole-window parse.
+    const fed = REAL_SAMPLE.slice() as Lines
+    fed.refs = []
+    let at = 0
+    for (const l of fed) {
+      const n = Buffer.byteLength(l)
+      fed.refs.push(`${at}:${n}`)
+      at += n + 1
+    }
+    const p = commandCodeParser()
+    p.feed(fed)
+    expect(p.result()).toEqual(items)
+    expect(lastModel(REAL_SAMPLE, 'cmd')).toEqual({ id: 'deepseek/deepseek-v4.1-flash', label: 'deepseek/deepseek-v4.1-flash', at: '2026-11-20T10:00:06.000Z' })
+  })
+})
+
+describe('Command Code blob stripping', () => {
+  it('maps stripBlobs safely over several lines, never taking the index as a kind', () => {
+    const big = 'QUFB'.repeat(14000)
+    const cmdLine = JSON.stringify(user('u1', [{ type: 'image', data: `data:image/png;base64,${big}` }], 10))
+    expect(cmdLine.length).toBeGreaterThan(50000)
+    // stripBlobs takes one parameter: `.map(stripBlobs)` is the same as calling
+    // it per element, so an array index can never reach a `kind` argument.
+    expect(stripBlobs.length).toBe(1)
+    const mapped = ['short', cmdLine, 'also short'].map(stripBlobs)
+    expect(mapped).toEqual(['short', stripBlobs(cmdLine), 'also short'])
+    expect(mapped[1]!.length).toBeLessThan(200)
+    expect(JSON.parse(mapped[1]!).message.content[0].data).toBe('')
+  })
 })
 
 describe('Command Code images', () => {
@@ -568,6 +615,42 @@ describe('Command Code images', () => {
     expect(got).toEqual({ type: 'image/png', body: Buffer.from(PNG, 'base64') })
     // Exactly one read: the transcript line itself, nothing referenced by it.
     expect(reads).toEqual([[file, 0, Buffer.byteLength(raw)]])
+  })
+
+  it('memoises the whole-line digest per (generation, line position)', () => {
+    const big = 'QUFB'.repeat(14000)
+    const line = J(user('u1', [{ type: 'image', data: `data:image/png;base64,${big}` }], 10))
+    expect(line.length).toBeGreaterThan(50000)
+    // Warm the image-hash cache once so a later lookup only pays the line digest.
+    const expected = lineImageHashes(line, 'cmd')
+    expect(expected).toEqual([sha(big)])
+    // Same generation and position: the digest is remembered, no re-hash.
+    cryptoCount.n = 0
+    expect(lineImageHashes(line, 'cmd', 'gen-a:12:0')).toEqual(expected)
+    expect(cryptoCount.n).toBe(1) // a miss here: the line digest only, no per-image re-hash
+    cryptoCount.n = 0
+    expect(lineImageHashes(line, 'cmd', 'gen-a:12:0')).toEqual(expected)
+    expect(cryptoCount.n).toBe(0) // memo hit: nothing computed at all
+  })
+
+  it('never serves a stale digest when the generation changes at the same position', () => {
+    const a = 'QUFB'.repeat(14000)
+    const b = 'WFla'.repeat(14000)
+    const la = J(user('u1', [{ type: 'image', data: `data:image/png;base64,${a}` }], 10))
+    const lb = J(user('u1', [{ type: 'image', data: `data:image/png;base64,${b}` }], 10))
+    // Same byte offset, same length, different image payload: a rewrite.
+    expect(Buffer.byteLength(la)).toBe(Buffer.byteLength(lb))
+    // memoPrefix + ref → the same memoKey for both generations' first line.
+    const genA = parseLines(la + '\n', 'cmd', 0, '', undefined, '', undefined, 'gen-a')
+    expect(genA[0]!.hashes).toEqual([sha(a)])
+    // Same generation, same bytes: identical hashes from the memo.
+    const again = parseLines(la + '\n', 'cmd', 0, '', undefined, '', undefined, 'gen-a')
+    expect(again[0]!.hashes).toEqual([sha(a)])
+    // A new generation at the same offset must recompute, not reuse gen-a's
+    // digest: the new payload's hash would otherwise be lost (stale hashes).
+    const genB = parseLines(lb + '\n', 'cmd', 0, '', undefined, '', undefined, 'gen-b')
+    expect(genB[0]!.hashes).toEqual([sha(b)])
+    expect(genB[0]!.hashes).not.toEqual([sha(a)])
   })
 })
 

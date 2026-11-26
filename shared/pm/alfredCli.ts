@@ -1,7 +1,7 @@
 // `wherdr alfred …`: Alfred's own commands, to read and change wherdr's
 // projects, coordinators and settings. Pure: the parser, the command table
-// (also written in Alfred's AGENTS.md) and the "show, then do" text; the
-// server (server/utils/alfredCli.ts) reads and writes.
+// (what `help` lists) and the "show, then do" text; the server
+// (server/utils/alfredCli.ts) reads and writes.
 import { uiOpenArgs } from '../uiOpen'
 import type { SyncedSetting } from '../settings'
 import type { UiTargetId } from '../uiTargets'
@@ -70,7 +70,7 @@ export type AlfredCommand =
   // Another machine its tasks may run on (by key or label), with its clone; or no longer.
   | { name: 'project machine', apply: boolean, propose?: true, key: string, machine: string } & ({ action: 'add', clone: string } | { action: 'remove' })
 
-// One table for the parser's usage errors, `help` and AGENTS.md.
+// One table for the parser's usage errors and `help`.
 export const ALFRED_COMMANDS: { usage: string, does: string }[] = [
   { usage: 'projects', does: 'whether projects are on, and each project (key, name, machine, folder, template)' },
   { usage: 'project <KEY>', does: 'one project, its coordinator and its tasks by state' },
@@ -91,10 +91,10 @@ export const ALFRED_COMMANDS: { usage: string, does: string }[] = [
   { usage: 'project add <KEY> --machine <key> --path <folder> [--name <name>] [--template example:<id>]', does: 'add a project: a git folder on a machine' },
   { usage: 'workspace add <KEY> --root <folder,folder> [--machine <key,key>] [--name <name>] [--group <tab group>]', does: 'add a workspace (docs/workspaces.md): a project with no git whose coordinator runs the repositories cloned under its root folder (~/work); --machine and --root pair up, the first machine its home (none: this machine); --group: the tab group (id or name) it shows in. Once applied, its coordinator starts and offers to build the map' },
   { usage: 'project template <KEY> <example:id|none>', does: 'replace the project\'s workflow with a copy of a built-in example (its guards come with it), or none (a workspace\'s project with its own workflow then follows its workspace\'s again). To reuse another project\'s workflow: read it (wherdr pm template show --project <KEY>), then project workflow edit' },
-  { usage: 'project workflow edit <KEY> < workflow.json', does: 'propose a new workflow for the project (the whole JSON on stdin, guards unchanged): the user accepts or refuses it in wherdr, like a coordinator\'s proposal. Only in a turn that comes from the user' },
+  { usage: 'project workflow edit <KEY> < workflow.json', does: 'propose a new workflow for the project (the whole JSON on stdin, guards unchanged): the user accepts or refuses it in wherdr, like a coordinator\'s proposal. Only in a turn that comes from the user, on their request in this chat. Write it from the current one (wherdr pm template show --project <KEY>) or from another project\'s, adapted (a project with only the minimal default takes that copy\'s guards too); guards change through project guards, after the user\'s yes, never here' },
   { usage: 'project memory <KEY> < note.md', does: 'add the lines on stdin (at most 30, blank ones left out) to the end of the project coordinator\'s memory.md, on its machine; it is created when missing. For what the user wants it to know (a v2 handover note, a goal)' },
   { usage: 'project guards <KEY> [--protect <branch,branch|none>] [--merge-protected user|engine] [--merge-others user|engine] [--contributor-prs off|others|all]', does: 'the project\'s guards: protected branches, who merges into them and into the others (user: the user, engine: wherdr), and whether its coordinator may merge an outside contributor\'s PR after the user\'s yes (others: not into a branch reserved for the user; all: into any); without an option, shown only; a change only with --propose, as a card the user applies (never --apply). A project coordinator never changes them' },
-  { usage: 'project machine add <KEY> <machine> --clone <folder>', does: 'let the project\'s tasks run on another machine (its key or label), in its clone of the repo there; once applied, the machine\'s readiness check runs and its result is in the answer' },
+  { usage: 'project machine add <KEY> <machine> --clone <folder>', does: 'let the project\'s tasks run on another machine (its key or label), in its clone of the repo there: ask the user for the path of the repository\'s clone there first; once applied, the machine\'s readiness check runs and its result is in the answer (`ready`): tell the user what it says is missing' },
   { usage: 'project machine remove <KEY> <machine>', does: 'the project\'s tasks no longer start on that machine (tasks already there stay)' },
   { usage: 'coordinator start <KEY> [--program claude|codex|omp] [--resume]', does: 'start the project\'s coordinator, with its harness\'s default model (a new conversation replaces a running one); --resume takes up its last conversation again, with the agent that ran it' },
   { usage: '<change> --propose', does: 'instead of --apply, any change above (project add, workspace add, template, guards, machine, coordinator start, v2 import): a card in your reply (the change, Show me, Cancel, Apply) the user applies with one click. Only in a turn that comes from the user' },

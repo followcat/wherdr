@@ -255,7 +255,6 @@ describe('Command Code conversation identity', () => {
     ['agent', { agent: 'claude' }],
     ['agent session', { agentSession: 's2' }],
     ['process start', { bornAt: 2000 }],
-    ['working directory', { cwd: '/home/user/other' }],
     ['core address', { coreAddress: '/tmp/other/hc.sock' }],
   ])('resets and reloads at once when the same-id %s changes', async (_field, patch) => {
     answer = q => (q.since ? { available: true, unchanged: true } : live())
@@ -274,7 +273,7 @@ describe('Command Code conversation identity', () => {
     await expect.poll(a.text).toContain('live reply')
     // A false reset would read fresh again and paint the new conversation.
     answer = q => (q.since ? { available: true, unchanged: true } : live({ items: NEW }))
-    await a.push({ ...cmd, title: 'retitled', status: 'working', preview: 'still here' })
+    await a.push({ ...cmd, title: 'retitled', status: 'working', preview: 'still here', cwd: '/home/user/other' })
     await settle()
     expect(a.text()).toContain('live reply')
     expect(a.text()).not.toContain('new conversation reply')

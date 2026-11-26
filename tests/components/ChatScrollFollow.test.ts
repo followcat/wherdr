@@ -146,6 +146,34 @@ describe('conversation follows the end only from the bottom', () => {
     } finally { items.pop() }
   })
 
+  it('a new conversation follows its end at once, even right after a jump in the old one', async () => {
+    items.push({ role: 'user', text: '↳ Replying to your message from 00:00 ("It runs in three steps.")\nGo on.', ts: '2026-01-01T00:00:02Z' })
+    try {
+      const { w, g, grow } = await mount()
+      try {
+        await grow()
+        await w.find('.msg-quote').trigger('click')
+        g.top = bottom(g) - 120
+        await w.find('.chat').trigger('scroll')
+        // Another session in the same pane, well within the jump's grace
+        // period: the jump was the old conversation's.
+        const next = { ...pane, agentSession: 'sess-2' }
+        herdrState.value = { ok: true, workspaces: [], panes: [next] }
+        await w.setProps({ pane: next })
+        await expect.poll(() => w.find('.chat').text()).toContain('three steps')
+        g.top = bottom(g)
+        await w.find('.chat').trigger('scroll')
+        await grow()
+        expect(g.top).toBe(bottom(g))
+        // A truncation with no gesture behind it is undone, as in any
+        // conversation that follows its end.
+        g.top = bottom(g) - 69
+        await w.find('.chat').trigger('scroll')
+        expect(g.top).toBe(bottom(g))
+      } finally { w.unmount() }
+    } finally { items.pop() }
+  })
+
   it.each([
     { key: 'PageUp' },
     { key: 'ArrowUp' },

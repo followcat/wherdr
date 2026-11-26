@@ -84,7 +84,8 @@ model: change the model inside Alfred. Its menu (right click, or long press on a
 screen), *Restart with…*, moves it
 to another agent at once (when an account runs out of tokens, for instance): the old session
 stops and the new one carries on from the same home folder, `alfred/` in
-wherdr's data folder. There, `AGENTS.md` (and `CLAUDE.md`, `GEMINI.md`,
+wherdr's data folder. Picking the agent it already runs (Claude, Codex or OMP) resumes
+its conversation instead of starting a new one. There, `AGENTS.md` (and `CLAUDE.md`, `GEMINI.md`,
 `QWEN.md`, which point to it) is wherdr's and rewritten at each start; `identity.md` (its name and tone) and `memory.md` (what it learns about
 you, cleaned up at each start) are its own. Give it another name and the row
 shows it as soon as its turn ends. Its replies are headed with its name, and the message field
@@ -122,7 +123,7 @@ phone, where it opens as a sheet) offers, in order: *Open the board* (filtered o
 *Rename…* (an inline field; empty gives it its project's name back), *Mute notifications* /
 *Unmute notifications* (the conversation header's levels, kept across its restarts), *Restart
 with…*, which picks another agent that becomes its default (its folder and memory stay, the
-current session stops), and *Stop the coordinator*, after a short confirm: its agent ends and it
+current session stops; picking the agent it already runs resumes its conversation instead of starting a new one), and *Stop the coordinator*, after a short confirm: its agent ends and it
 starts again on the next message or wake. Mute and Stop show while it runs. Alfred's row keeps
 its own menu. A coordinator shows only in its own row, never again among the agents. Its
 conversation header's ⋯ menu (on a phone and a computer) starts with the same three entries,

@@ -4,12 +4,12 @@
 // helpers, no store or fetch.
 import { describe, expect, it } from 'vitest'
 import { CHAT_COLD_READ_MS, CHAT_READ_MS, applyToolUpdates, chatReadTimeoutMs, mergeToolUpdates, retainToolUpdates } from '../app/utils/chatTail'
-import type { ChatItem, CommandCodeToolUpdate } from '../shared/types'
+import type { ChatItem, ToolUpdate } from '../shared/types'
 
 const item = (text: string, role: ChatItem['role'] = 'assistant'): ChatItem => ({ role, text, ts: '2026-01-01T00:00:00Z' })
 const call = (id: string, extra: Partial<ChatItem> = {}): ChatItem =>
   ({ role: 'tool', text: 'read file', ts: '2026-01-01T00:00:00Z', toolId: id, ...extra })
-const up = (id: string, at: number | undefined, fields: Partial<CommandCodeToolUpdate> = {}): CommandCodeToolUpdate =>
+const up = (id: string, at: number | undefined, fields: Partial<ToolUpdate> = {}): ToolUpdate =>
   ({ id, at, out: 'res', error: false, images: 0, ref: '', imageAt: 0, ...fields })
 
 describe('chatTail read deadline', () => {
@@ -125,7 +125,7 @@ describe('chatTail tool updates', () => {
   })
 
   it('merges pending with incoming once — a late call gets the remembered outcome, not the older response', () => {
-    const pending = new Map<string, CommandCodeToolUpdate>([['t1', up('t1', 200, { out: 'newest' })]])
+    const pending = new Map<string, ToolUpdate>([['t1', up('t1', 200, { out: 'newest' })]])
     // An older incoming response carries t1 @50 and unrelated t9.
     const merged = mergeToolUpdates(pending, [up('t1', 50, { out: 'stale' }), up('t9', 30, { out: 'other' })])
     expect(merged.find(u => u.id === 't1')).toMatchObject({ at: 200, out: 'newest' })
@@ -141,7 +141,7 @@ describe('chatTail tool updates', () => {
   })
 
   it('a visible tool at a newer toolAt satisfies an older pending; a stale response cannot downgrade it', () => {
-    const pending = new Map<string, CommandCodeToolUpdate>([['t1', up('t1', 200, { out: 'newest' })]])
+    const pending = new Map<string, ToolUpdate>([['t1', up('t1', 200, { out: 'newest' })]])
     const merged = mergeToolUpdates(pending, [up('t1', 50, { out: 'stale' })])
     expect(merged[0]).toMatchObject({ at: 200, out: 'newest' })
     // The call arrived already carrying a newer outcome: pending is done.
@@ -149,13 +149,13 @@ describe('chatTail tool updates', () => {
     expect(pending.has('t1')).toBe(false)
     // Its call nowhere visible yet (an older page still in flight): the
     // pending survives untouched — no list alone can retire it.
-    const flying = new Map<string, CommandCodeToolUpdate>([['t1', up('t1', 200, { out: 'newest' })]])
+    const flying = new Map<string, ToolUpdate>([['t1', up('t1', 200, { out: 'newest' })]])
     retainToolUpdates(flying, [[item('scrolling')], []], merged)
     expect(flying.get('t1')).toMatchObject({ at: 200, out: 'newest' })
   })
 
   it('keeps the newest known revision per pending id — unknown and older arrivals never downgrade it', () => {
-    const pending = new Map<string, CommandCodeToolUpdate>([['t1', up('t1', 200, { out: 'newest' })]])
+    const pending = new Map<string, ToolUpdate>([['t1', up('t1', 200, { out: 'newest' })]])
     retainToolUpdates(pending, [[]], [up('t1', 50, { out: 'stale' })])
     expect(pending.get('t1')).toMatchObject({ at: 200, out: 'newest' })
     retainToolUpdates(pending, [[]], [up('t1', undefined, { out: 'unknown' })])
@@ -165,7 +165,7 @@ describe('chatTail tool updates', () => {
   })
 
   it('bounds pending outcomes at 256 ids, evicting the oldest first', () => {
-    const pending = new Map<string, CommandCodeToolUpdate>()
+    const pending = new Map<string, ToolUpdate>()
     retainToolUpdates(pending, [[]], Array.from({ length: 300 }, (_, i) => up(`t${i}`, i)))
     expect(pending.size).toBe(256)
     expect(pending.has('t0')).toBe(false)

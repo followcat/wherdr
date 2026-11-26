@@ -5,7 +5,7 @@
 // "unchanged" as long as the file has not grown).
 // Shown = older pages loaded on demand (`older`, up to
 // byte `olderCursor`) + bottom re-read continuously from byte `tailStart`.
-import type { ChatItem, ChatResponse, ClaudeQueueEntry, ClaudeScreen, CommandCodeToolUpdate, DevinCommandCard, OmpToolView, Pane, QueuedMessage } from '#shared/types'
+import type { ChatItem, ChatResponse, ClaudeQueueEntry, ClaudeScreen, ToolUpdate, DevinCommandCard, OmpToolView, Pane, QueuedMessage } from '#shared/types'
 import { readChat, saveChat, touchChat } from '~/utils/offlineCache'
 import { mayReadOffline, readOfflineAccess } from '~/utils/offlineAccess'
 import { restoreDraft } from '~/utils/queuedCancel'
@@ -88,11 +88,12 @@ const cachedTag = useDelayedFlag(computed(() => savedAt.value !== null && !readO
 const skeleton = useDelayedFlag(computed(() => !rendered.value && !unavailable.value && !loadError.value))
 // The conversation belongs to one process identity: the same id showing
 // another agent — or another core address, Herdr session, machine, agent
-// session, process start or working directory — is another conversation.
-// A new pane object, title, status or preview alone changes none of it, so
-// the identity is compared by value (like the status/preview watcher below).
+// session or process start — is another conversation. A new pane object,
+// title, status, preview or working directory alone changes none of it
+// (a `cd` in the pane keeps its transcript), so the identity is compared
+// by value (like the status/preview watcher below).
 const identityOf = (p: Pane) => JSON.stringify([
-  herdrState.value.session, p.id, p.agent, p.coreAddress, p.agentSession, p.machine, p.bornAt, p.cwd,
+  herdrState.value.session, p.id, p.agent, p.coreAddress, p.agentSession, p.machine, p.bornAt,
 ])
 // Everything shown and every request in flight belongs to this generation.
 // A reset turns the old work's success, error and cleanup into no-ops, even
@@ -102,9 +103,19 @@ const staleGen = (gen: number) => gen !== resetGen
 // Command Code tool results can land after their call was already shown:
 // the newest revision per tool id waits here for the page that displays the
 // call — and dies with the conversation that produced it (resetChat).
-const pendingUpdates = new Map<string, CommandCodeToolUpdate>()
-function resetChat(reason: ChatResponse['reason'] | null = null) {
+const pendingUpdates = new Map<string, ToolUpdate>()
+// The old generation's requests are dropped, and the flags only they were
+// holding are released. A reload (a /clear, a compaction, a read from another
+// byte) is not a reset: the reader keeps its scroll position, its search and
+// what it already knew of the replies.
+function invalidate() {
   resetGen++
+  olderBusy.value = false
+  search.loading = false
+  jumping = false
+}
+function resetChat(reason: ChatResponse['reason'] | null = null) {
+  invalidate()
   chat.value = fresh()
   pendingUpdates.clear()
   unavailable.value = reason
@@ -113,15 +124,12 @@ function resetChat(reason: ChatResponse['reason'] | null = null) {
   misses.value = noMisses()
   savedAt.value = null
   rendered.value = false
-  olderBusy.value = false
   typing.value = null
   activeThought.value = null
   knownReplies.clear()
   knownThoughts.clear()
-  // An interrupted jump, search or page load was the old conversation's:
-  // its flags and marks stop with it. The typed query itself is kept.
-  jumping = false
-  search.loading = false
+  // An interrupted jump or search was the old conversation's: its marks stop
+  // with it. The typed query itself is kept.
   search.hits = []
   search.cur = -1
   clearMarks()
@@ -131,6 +139,8 @@ function resetChat(reason: ChatResponse['reason'] | null = null) {
   // never held mid-scroll by the previous one.
   stick = true
   held = false
+  // A jump (search, quote) leaves the bottom for its own conversation only.
+  jumpedAt = 0
   lastTop = 0
   anchor = null
   shown.value = Infinity
@@ -154,10 +164,9 @@ async function restoreChat() {
   const saved = await readChat(id)
   // The lease that allowed the read may be revoked or expired by now.
   if (!mayReadOffline(readOfflineAccess())) return
-  if (staleGen(gen) || id !== props.pane.id) return
+  if (!saved || unavailable.value || staleGen(gen) || id !== props.pane.id) return
   // Offline when the read began is not enough: it must still be read-only.
   if ((props.pane.agent === 'cmd' || props.pane.agent === 'opencode') && !readOnly.value) return
-  if (!saved || unavailable.value) return
   // The server answered first: the kept end still tells what this device missed.
   if (synced || rendered.value) { markMissed(saved.items); return }
   // Its replies are known: one that arrives with the server's answer is new,
@@ -580,16 +589,14 @@ async function loadStep(current: () => boolean): Promise<boolean> {
     savedAt.value = null
     // New session (/clear, new agent), or a bottom read from another byte:
     // we start again from the bottom (utils/chatTail.ts), keeping what is
-    // shown until that read replaces it. A full reset: the older request
-    // still in flight belongs to the old generation — its finally will not
-    // free our busy flag, so resetChat releases it.
+    // shown until that read replaces it. Only the old generation's requests
+    // are dropped: the reader's scroll, search and known replies stay. The
+    // older request still in flight belongs to the old generation — its
+    // finally will not free our busy flag, so invalidate() releases it.
     if (r.reload || restartsTail(chat.value, r)) {
-      const kept = items.value
-      const queue = chat.value.queue
-      const wasRendered = rendered.value
-      resetChat()
-      chat.value = { ...fresh(), tail: kept, queue, held: true }
-      rendered.value = wasRendered
+      invalidate()
+      chat.value = { ...fresh(), tail: items.value, queue: chat.value.queue, held: true }
+      synced = false
       return true
     }
     // Incremental reply that does not fit our list: ask for it in full.
@@ -663,10 +670,10 @@ watch(readOnly, (ro, was) => {
 async function loadOlder() {
   if (olderBusy.value || !(chat.value.olderCursor > 0)) return
   olderBusy.value = true
+  const gen = resetGen
   const pane = props.pane.id
   const file = chat.value.file
   const before = chat.value.olderCursor
-  const gen = resetGen
   // Command Code: the current tail token rides along as the raw anchor — the
   // proof this page request belongs to the generation the server selected.
   const since = props.pane.agent === 'cmd' ? `&since=${encodeURIComponent(chat.value.token)}` : ''
@@ -693,10 +700,12 @@ async function loadOlder() {
       loadChat()
       return
     }
-    if (pane !== props.pane.id || r.file !== file || chat.value.olderCursor !== before) return
+    if (pane !== props.pane.id || r.file !== file || chat.value.olderCursor !== before || staleGen(gen)) return
     if (r.stale) return
     if (r.reload) {
       // An expired daemon cursor: read a fresh tail, keeping what is shown until then.
+      // Not a reset: the reader keeps its scroll position, search and known replies.
+      invalidate()
       chat.value = { ...fresh(), tail: items.value, queue: chat.value.queue, held: true }
       synced = false
       await loadChat()
@@ -719,6 +728,8 @@ async function loadOlder() {
         olderCursor: (r.cursorKind === 'opaque' ? (r.start ?? 0) !== before : (r.start ?? 0) < before) ? (r.start ?? 0) : 0,
       }
     }, true)
+    // A reset crossed the tick inside apply: the new conversation owns scroll,
+    // busy flag and the copy kept on this device.
     if (staleGen(gen)) return
     retainToolUpdates(pendingUpdates, [chat.value.tail, chat.value.older], updates)
     saveChat(pane, items.value, chat.value.file, chat.value.queue)

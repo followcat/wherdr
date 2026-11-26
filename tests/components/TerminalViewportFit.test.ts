@@ -25,7 +25,7 @@ async function mounted() {
     fitNow: vi.fn(), hasBanner: () => true, connect: vi.fn(), dispose: vi.fn(), isConnected: () => false,
     focus: vi.fn(), blur: vi.fn(), tapLink: vi.fn(() => false), tapMouse: vi.fn(),
     cancelTouchScroll: vi.fn(), scrollInputVersion: ref(0), scrollGeometryVersion: ref(0), scrollAck: ref(0), frameTick: ref(0),
-    loading: ref(false), loadingEarlier: ref(false), selectionHint: { visible: ref(false), dismiss: vi.fn() },
+    loading: ref(false), loadingEarlier: ref(false), kbdOn: ref(false), selectionHint: { visible: ref(false), dismiss: vi.fn() },
     hasFocus: () => false, imeBusy: () => false, park: vi.fn(), captureScreen: vi.fn(() => null),
     clearVirtualModifiers: vi.fn(), tapOnCursor: vi.fn(() => false),
   }
@@ -65,6 +65,17 @@ describe('terminal fit while the viewport moves', () => {
     vi.useFakeTimers()
     vi.advanceTimersByTime(1000) // any earlier layout() is long past
     roCallback?.() // a divider drag: the host resizes, the viewport does not
+    vi.advanceTimersByTime(60)
+    expect(ctl.fitNow).toHaveBeenCalledTimes(1)
+    expect(ctl.fitNow).toHaveBeenCalledWith(true)
+  })
+
+  it('fits when kbdOn turns on while the keyboard is already covering the viewport', async () => {
+    const ctl = await mounted()
+    vi.useFakeTimers()
+    vi.advanceTimersByTime(1000)
+    ctl.kbdOn.value = true
+    await nextTick()
     vi.advanceTimersByTime(60)
     expect(ctl.fitNow).toHaveBeenCalledTimes(1)
     expect(ctl.fitNow).toHaveBeenCalledWith(true)

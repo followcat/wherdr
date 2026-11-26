@@ -56,7 +56,7 @@ const cases: [string, Card, string, string[]][] = [
     state: at(3, { yourTurn: { reason: 'rounds', badge: 'Decide: review failed 4 times', advice: { outcome: 'round', why: 'New finding: x', options: ['round', 'split'], findings: [] } } }),
   }), 'decide', []],
   ['a stopped task', waiting({ yourTurn: 'Stopped by the user: wrong way', stopped: { by: 'the user', why: 'wrong way', at: 1 }, state: at(1) }), 'stopped', []],
-  ['a step the user ends', waiting({ yourTurn: 'Deploy it', userLabel: 'Deployed', state: at(4, { yourTurn: { reason: 'user', badge: 'Deploy it' } }) }), 'step', ['step-user']],
+  ['a step the user ends', waiting({ yourTurn: 'Deploy it', userLabel: 'Deployed', state: at(4, { yourTurn: { reason: 'user', badge: 'Deploy it' } }) }), 'step', ['step-user', 'todo-back']],
   ['an agent question', waiting({ yourTurn: 'Which port?', asks: { kind: 'question', text: 'Which port?' }, state: at(1) }), 'ask', []],
   ['a refused merge', waiting({ yourTurn: 'Merge: merge: 2 check(s) failed', state: at(4, { yourTurn: { reason: 'action', badge: 'Merge: merge: 2 check(s) failed' } }) }), 'refused', ['task-retry', 'task-more']],
   ['a blocked task', waiting({ yourTurn: 'WHR-2, which this task starts after, failed', phase: 'todo', state: undefined }), 'blocked', ['task-start']],
@@ -103,6 +103,32 @@ it('a link proof that is a PR shows Open the PR at the merge step and on the car
 let sentBack: unknown
 let backGo: () => void = () => {}
 registerEndpoint('/api/pm/step-back', { method: 'POST', handler: async (e) => { sentBack = await readBody(e); await new Promise<void>((r) => { backGo = r }); return { task: {} } } })
+it('a step the user ends is sent back with a note too', async () => {
+  sentBack = undefined
+  const w = await mountSuspended(TaskSheet, { props: { card: cases.find(c => c[2] === 'step')![1] }, global: { stubs } })
+  await w.get('textarea[data-testid="todo-back-note"]').setValue('Deploy to staging first')
+  await w.get('[data-testid="todo-back"]').trigger('submit')
+  await vi.waitFor(() => expect(sentBack).toEqual({ id: 'WHR-1', note: 'Deploy to staging first' }))
+  backGo()
+  await vi.waitFor(() => expect(w.get('[data-testid="todo-back-send"]').text()).toBe('Sent back'))
+  w.unmount()
+})
+
+it('a decision or a stopped task has no Send back', async () => {
+  for (const k of ['decide', 'stopped']) {
+    const w = await mountSuspended(TaskSheet, { props: { card: cases.find(c => c[2] === k)![1] }, global: { stubs } })
+    expect(w.find('[data-testid="todo-back"]').exists(), k).toBe(false)
+    w.unmount()
+  }
+})
+
+it('a step with no agent step before it has no Send back', async () => {
+  const first = [{ ...plan[0]!, holder: 'none' as const, ends: 'user' as const }, ...plan.slice(1)]
+  const w = await mountSuspended(TaskSheet, { props: { card: waiting({ plan: first, userLabel: 'Approve', state: at(0, { yourTurn: { reason: 'user', badge: 'Approve' } }) }) }, global: { stubs } })
+  expect(w.find('[data-testid="todo-back"]').exists()).toBe(false)
+  w.unmount()
+})
+
 it('a visual merge is sent back with a note: Send back alone loads until the server answered, then says Sent back', async () => {
   const w = await mountSuspended(TaskSheet, { props: { card: cases[0]![1] }, global: { stubs } })
   await w.get('textarea[data-testid="todo-back-note"]').setValue('The button is cut on the phone')

@@ -1,4 +1,4 @@
-import type { ChatItem, ChatResponse, CommandCodeToolUpdate } from '#shared/types'
+import type { ChatItem, ChatResponse, ToolUpdate } from '#shared/types'
 
 // Bottom of the conversation after a re-read. With `keep` (incremental reply,
 // see server/utils/chatDelta.ts) the first `keep` items stay as they are (same
@@ -51,7 +51,7 @@ const toolRev = (x: number | undefined): number | null =>
 // `inc` (later arrival) wins over `cur`, unless `cur`'s revision is known to
 // be strictly newer. An equal revision takes the later arrival — the record
 // at that byte may have been rewritten since.
-const pickUpdate = (inc: CommandCodeToolUpdate, cur: CommandCodeToolUpdate): CommandCodeToolUpdate => {
+const pickUpdate = (inc: ToolUpdate, cur: ToolUpdate): ToolUpdate => {
   const ri = toolRev(inc.at); const rc = toolRev(cur.at)
   return rc !== null && (ri === null || ri < rc) ? cur : inc
 }
@@ -62,9 +62,9 @@ const pickUpdate = (inc: CommandCodeToolUpdate, cur: CommandCodeToolUpdate): Com
 // out, error, images, ref, imageAt and hashes are cleared first, then the
 // update's own fields land (empty output, a false error, zero images/index
 // are clears) — and toolAt takes the revision the outcome came from.
-export function applyToolUpdates(items: ChatItem[], updates: CommandCodeToolUpdate[] | undefined): ChatItem[] {
+export function applyToolUpdates(items: ChatItem[], updates: ToolUpdate[] | undefined): ChatItem[] {
   if (!updates?.length || !items.length) return items
-  const byId = new Map<string, CommandCodeToolUpdate>()
+  const byId = new Map<string, ToolUpdate>()
   for (const u of updates) byId.set(u.id, byId.has(u.id) ? pickUpdate(u, byId.get(u.id)!) : u)
   let changed = false
   const next = items.map((it) => {
@@ -102,8 +102,8 @@ export function applyToolUpdates(items: ChatItem[], updates: CommandCodeToolUpda
 // still pending, once, the newest revision per id — so a call only now
 // becoming visible (an older page arriving after the result) receives the
 // remembered outcome, not just what this one response carried.
-export function mergeToolUpdates(pending: ReadonlyMap<string, CommandCodeToolUpdate>, updates: CommandCodeToolUpdate[] | undefined): CommandCodeToolUpdate[] {
-  const byId = new Map<string, CommandCodeToolUpdate>()
+export function mergeToolUpdates(pending: ReadonlyMap<string, ToolUpdate>, updates: ToolUpdate[] | undefined): ToolUpdate[] {
+  const byId = new Map<string, ToolUpdate>()
   for (const u of pending.values()) byId.set(u.id, u)
   for (const u of updates ?? []) byId.set(u.id, byId.has(u.id) ? pickUpdate(u, byId.get(u.id)!) : u)
   return [...byId.values()]
@@ -115,7 +115,7 @@ export function mergeToolUpdates(pending: ReadonlyMap<string, CommandCodeToolUpd
 // removed; the rest stay pending for the page still in flight — an older
 // response cannot delete a newer pending result just because its call has
 // appeared. Bounded at 256 ids, oldest insertion first, like the server's.
-export function retainToolUpdates(pending: Map<string, CommandCodeToolUpdate>, itemLists: readonly ChatItem[][], updates: CommandCodeToolUpdate[] | undefined): void {
+export function retainToolUpdates(pending: Map<string, ToolUpdate>, itemLists: readonly ChatItem[][], updates: ToolUpdate[] | undefined): void {
   if (!updates?.length) return
   for (const u of updates) {
     const cur = pending.get(u.id)

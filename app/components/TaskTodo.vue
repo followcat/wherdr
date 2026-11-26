@@ -14,7 +14,7 @@
 // disabled meanwhile; once through, a check on it for a moment (DONE_MS), Send back's says Sent back.
 import { adviceChoices } from '#shared/pm/decisions'
 import { canStart, coordinatorWait, mayAccept, mergeGoesNow, mergeStuck, mergeWaits, prLink, prUpdating, type Card } from '#shared/pm/board'
-import { stepLabels } from '#shared/pm/steps'
+import { sendBackTo, stepLabels } from '#shared/pm/steps'
 import { RESUMES, stoppedText, type Resume } from '#shared/pm/stop'
 import { earlierCommit, shotUrl } from '#shared/pm/shots'
 import { reviewNote, workerNote } from '#shared/pm/report'
@@ -59,6 +59,9 @@ const notes = computed(() => (props.kind === 'merge' || props.kind === 'step') &
 const pr = computed(() => (props.kind === 'merge' || props.kind === 'step' || props.kind === 'refused' ? prLink(props.card) : undefined))
 const note = ref('')
 // stepAbove: the step's own button (StepButton) is in the sheet's header, not here.
+// Send back with a note on every step that waits for the user (the engine refuses it on any other step, or one running).
+const sendsBack = computed(() => sendBackTo(props.card.plan, props.card.state?.at ?? 0) >= 0
+  && (props.kind === 'merge' || (!!props.card.userLabel && !props.card.state?.acting && props.kind !== 'stopped' && props.kind !== 'decide')))
 // A stalled review in one plain sentence: its reviewer gone, or still there past the step's time limit.
 const reviewSay = computed(() => (props.card.terminal
   ? tl(`The review has run over ${props.card.plan[props.card.state?.at ?? 0]?.timeout ?? 'its time limit'} without a verdict. Restart it to review the PR's latest commit from the start.`)
@@ -174,7 +177,7 @@ const ASK_LABEL: Record<WaitKind, [string, string]> = { question: ['Its agent as
     <p v-else-if="coord?.asked" class="muted" role="status" data-testid="todo-asked">{{ tl('Sent as your message. The coordinator checks it now; the task comes back here at its next time limit.') }}</p>
     <p v-else-if="refused" class="error" role="alert" :title="refused" data-testid="step-user-refused">{{ stepRefusalText(refused, told) }}</p>
 
-    <form v-if="kind === 'merge'" class="todo-back" data-testid="todo-back" @submit.prevent="note.trim() && act('back', () => emit('back', note.trim()))">
+    <form v-if="sendsBack" class="todo-back" data-testid="todo-back" @submit.prevent="note.trim() && act('back', () => emit('back', note.trim()))">
       <UTextarea v-model="note" :rows="2" autoresize maxlength="2000" size="xl" :placeholder="tl('What to change')" data-testid="todo-back-note" />
       <UButton type="submit" color="neutral" variant="outline" size="xl" :icon="confirmed === 'back' ? 'i-lucide-check' : 'i-lucide-undo-2'" :class="{ confirmed: confirmed === 'back' }" :loading="sending('back')" :disabled="busy || (!note.trim() && confirmed !== 'back')" data-testid="todo-back-send">{{ confirmed === 'back' ? tl('Sent back') : tl('Send back') }}</UButton>
     </form>

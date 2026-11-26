@@ -61,20 +61,30 @@ export function canvasDeviceSize(reported: CanvasSize, expected: CanvasSize, dpr
 
 // What the guard needs from xterm's WebGL renderer (private in @xterm/addon-webgl 0.18).
 interface WebglRendererInternals {
+  _canvas?: CanvasSize
   dimensions: { device: { canvas: CanvasSize } }
   _setCanvasDevicePixelDimensions: (width: number, height: number) => void
 }
 
-// Routes the renderer's device-pixel resizes through canvasDeviceSize. Returns
-// false when the addon's internals are not the expected ones (left untouched).
-export function guardWebglCanvasSize(addon: object, dpr: () => number = () => globalThis.devicePixelRatio || 1): boolean {
+// Routes the renderer's device-pixel resizes through canvasDeviceSize and
+// reports the ones that really change the backing store. Returns false when the
+// addon's internals are not the expected ones (left untouched).
+export function guardWebglCanvasSize(
+  addon: object,
+  dpr: () => number = () => globalThis.devicePixelRatio || 1,
+  onResize?: () => void,
+): boolean {
   const renderer = (addon as { _renderer?: Partial<WebglRendererInternals> })._renderer
   const resize = renderer?._setCanvasDevicePixelDimensions
   if (!renderer || typeof resize !== 'function' || !renderer.dimensions?.device?.canvas) return false
   const r = renderer as WebglRendererInternals
+  let last: CanvasSize | null = r._canvas ? { width: r._canvas.width, height: r._canvas.height } : null
   r._setCanvasDevicePixelDimensions = (width, height) => {
+    const prev = r._canvas ? { width: r._canvas.width, height: r._canvas.height } : last
     const size = canvasDeviceSize({ width, height }, r.dimensions.device.canvas, dpr())
     resize.call(r, size.width, size.height)
+    last = size
+    if (!prev || prev.width !== size.width || prev.height !== size.height) onResize?.()
   }
   return true
 }
