@@ -1,8 +1,11 @@
 // WHR-403: Alfred's home files, the name read from its identity.md, and its start message.
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ALFRED, FIRST_MESSAGE, GREETING, OWN_FILES, alfredFiles, alfredName, isStartPrompt, startPrompt, type AlfredContext } from '../shared/pm/alfred'
+import { mainRoleFiles } from '../shared/pm/coordinator'
 
-const ctx: AlfredContext = { home: '/data/alfred', version: '3.0.0', docs: '/opt/wherdr/docs', docFiles: ['overview.md', 'quick-start.md'], pm: false, projects: [], address: { local: 'http://127.0.0.1:7684' } }
+const ctx: AlfredContext = { home: '/data/alfred', version: '3.0.0', docs: '/opt/wherdr/docs', pm: false, projects: [], address: { local: 'http://127.0.0.1:7684' } }
 
 describe('alfredName', () => {
   it('reads the Name: line of identity.md, Alfred by default', () => {
@@ -27,7 +30,6 @@ describe('alfredFiles', () => {
     expect(a).toContain('identity.md')
     expect(a).toContain('Clean memory.md')
     expect(a).toContain('`/opt/wherdr/docs`')
-    expect(a).toContain('overview.md, quick-start.md')
     // The server's own address, and its commands given to copy, not run in Alfred's home.
     expect(a).toContain('This wherdr answers at http://127.0.0.1:7684 on its machine.')
     expect(alfredFiles({ ...ctx, address: { local: 'http://127.0.0.1:7684', remote: 'https://wherdr.example.ts.net' } }, [])['AGENTS.md']).toContain('and at https://wherdr.example.ts.net from the user\'s other devices')
@@ -35,7 +37,9 @@ describe('alfredFiles', () => {
     // WHR-514: the update page's update.sh is run during an update, never forbidden by the next line.
     expect(a).toMatch(/follow that page step by step[^\n]*\n'?Outside an update, commands for the wherdr server itself/)
     expect(a).toContain('only after the user\'s yes')
-    expect(a).toContain('`wherdr alfred project add <KEY> --machine <key> --path <folder> [--name <name>] [--template example:<id>] [--apply|--propose]`')
+    // The command reference is `wherdr alfred help` and `wherdr pm help`: pointed to, never copied.
+    expect(a).toContain('`wherdr alfred help`')
+    expect(a).toContain('`wherdr pm help`')
     expect(a).toContain('with `--apply` only after their yes in this chat')
     expect(a).toContain('No `wherdr alfred` command deletes anything')
     expect(a).toContain('The one removal you have is `wherdr pm task remove`')
@@ -62,6 +66,44 @@ describe('alfredFiles', () => {
   it('never ships its own files: those are created once', () => {
     expect(Object.keys(alfredFiles(ctx, []))).not.toContain('identity.md')
     expect(Object.keys(OWN_FILES)).toEqual(['identity.md', 'memory.md'])
+  })
+})
+
+// AGENTS.md is always-loaded context: what Alfred must know at once, then pointers to
+// `wherdr alfred help`, `wherdr pm help` and the docs for the rest.
+describe('AGENTS.md is lean', () => {
+  const pages = path.resolve(__dirname, '../docs')
+  // A lived-in setup: project management on, seven projects, a published address.
+  const projects = ['BLM', 'BW', 'OS', 'OMR', 'SRC', 'OHP', 'OMW'].map(key => ({ key, name: `Project ${key}`, path: `/home/user/code/${key.toLowerCase()}` }))
+  const agents = (o: Partial<AlfredContext> = {}) => {
+    const c: AlfredContext = { ...ctx, docs: '/home/user/wherdr/docs', pm: true, projects, address: { local: 'http://127.0.0.1:7684', remote: 'https://wherdr.example.ts.net:8104' }, ...o }
+    return alfredFiles(c, mainRoleFiles(c.projects)['AGENTS.md']!.split('\n'))['AGENTS.md']!
+  }
+
+  it('stays under 12 KB with project management on (it was 48 KB)', () => {
+    expect(Buffer.byteLength(agents())).toBeLessThan(12_000)
+  })
+
+  it('copies no command list, table or target list: the helps and the docs carry them', () => {
+    for (const a of [agents(), agents({ pm: false })]) {
+      expect(a).not.toMatch(/^- `wherdr (alfred|pm) /m)
+      expect(a).not.toMatch(/^\| /m)
+      expect(a).not.toContain('appearance.theme')
+      expect(a).not.toContain('Notes are the user\'s whiteboard, read-only')
+    }
+  })
+
+  it('points to the docs sections that carry what it leaves out, and they exist', () => {
+    const pointers = [...agents().matchAll(/"([^"]+)" in `([\w.-]+\.md)`/g)].map(m => [m[2]!, m[1]!])
+    expect(pointers).toEqual([['conversation.md', 'Links into wherdr'], ['alfred.md', 'Showing instead of telling']])
+    for (const [page, title] of pointers)
+      expect(fs.readFileSync(path.join(pages, page!), 'utf8'), `${page}: ${title}`).toMatch(new RegExp(`^#{1,6} ${title}$|\\*\\*${title}\\*\\*`, 'm'))
+  })
+
+  it('keeps the rules that must be at hand: show then do, --propose, the wake, the user\'s click, no credentials', () => {
+    const a = agents()
+    for (const rule of ['Show, then do', '`--propose`', 'In a wake: `wherdr` blocks only', 'Only the user\'s click acts', 'Never read credentials', 'never relay the user\'s yes', '`choices "Squash" | "Merge commit" | "Rebase"`', '`questions`', '`task <id>`', '`status machine:<name>`'])
+      expect(a, rule).toContain(rule)
   })
 })
 

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { imageTagCount, uploadNames, withoutUploads } from '../../shared/queuedMatch'
-import type { ChatItem, ChatResponse, ClaudeQueueEntry, CommandCodeToolUpdate, ModelInfo, PromptDetail } from '../../shared/types'
+import type { ChatItem, ChatResponse, ClaudeQueueEntry, ModelInfo, PromptDetail, ToolUpdate } from '../../shared/types'
 import { ompToolCall, ompToolResult, ompUserRun } from './ompTools'
 import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDetail'
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
@@ -46,9 +46,9 @@ interface CodexRollout { file: string, id: string, ts: number, mtimeMs: number }
 const CODEX_BIRTH_BEFORE = 5000
 const CODEX_BIRTH_AFTER = 120000
 export type Lines = string[] & { refs?: string[] }
-type Parsed = ChatItem[] & { queue?: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], updates?: CommandCodeToolUpdate[], resultRefs?: CommandCodeResultRef[] }
+type Parsed = ChatItem[] & { queue?: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], updates?: ToolUpdate[], resultRefs?: CommandCodeResultRef[] }
 // `anchor`: fingerprint of the bytes just above `start` (see anchorAt).
-interface TailResult { start: number, items: ChatItem[], queue: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], anchor?: string, updates?: CommandCodeToolUpdate[] }
+interface TailResult { start: number, items: ChatItem[], queue: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], anchor?: string, updates?: ToolUpdate[] }
 
 // The anchor in a client's token (`/<start>.<hash>`): the fingerprint the
 // bounded reads hash just above a page's start (see boundedRead.ts), checked
@@ -154,14 +154,19 @@ export function sameMsg(queued: string, said: string): boolean {
 
 // Base64 images (Claude: source.data, Codex: data:image/…): we
 // empty them before JSON.parse, only their count matters to us.
-// For cmd the strip must not turn a rejected payload into an accepted
-// empty image: only shapes its filter would accept are emptied — an
-// invalid data URL stays verbatim and stays rejected.
-export const stripBlobs = (line: string, kind?: string | null) => (line.length > 50000
-  ? kind === 'cmd'
-    ? line.replace(/"data":"[A-Za-z0-9+/=]{500,}"/g, '"data":""')
-      .replace(/"data":"data:image\/[\w.+-]+;base64,[A-Za-z0-9+/=]{500,}"/g, '"data":""')
-    : line.replace(/"data":"[A-Za-z0-9+/=]{500,}"/g, '"data":""').replace(/"data:image\/[^"]{500,}"/g, '""')
+// One parameter only: `.map(stripBlobs)` must never pass the array index as a
+// second argument. Command Code uses stripCmdBlobs, whose narrower replacement
+// never turns a rejected payload into an accepted empty image.
+export const stripBlobs = (line: string) => (line.length > 50000
+  ? line.replace(/"data":"[A-Za-z0-9+/=]{500,}"/g, '"data":""').replace(/"data:image\/[^"]{500,}"/g, '""')
+  : line)
+
+// Command Code variant: for cmd the strip must not turn a rejected payload
+// into an accepted empty image — only shapes its filter would accept are
+// emptied, so an invalid data URL stays verbatim and stays rejected.
+export const stripCmdBlobs = (line: string) => (line.length > 50000
+  ? line.replace(/"data":"[A-Za-z0-9+/=]{500,}"/g, '"data":""')
+    .replace(/"data":"data:image\/[\w.+-]+;base64,[A-Za-z0-9+/=]{500,}"/g, '"data":""')
   : line)
 
 export function toolSummary(name: string, input: Json, home = ''): string {
@@ -923,6 +928,8 @@ function ompCommandText(text: string, templates: readonly CommandTemplate[]): st
 // Claude's (message / model_change / session lines, tool_use + tool_result,
 // thinking, images). `meta.source` separates a human turn from tool results
 // and injected context; `model` on assistant lines is the session's model.
+// Format `version: 3`, as written by Command Code `1.93.0` (see
+// tests/cmdParserFixture.ts for an anonymised real sample).
 function commandCodeText(value: unknown): string {
   if (typeof value === 'string') return value
   if (!Array.isArray(value)) return ''
@@ -975,9 +982,9 @@ interface CmdParseState {
   // Outcomes already on the wire per id: a repeat of the same revision must
   // not amplify into repeated serialized updates, a changed outcome at the
   // same offset (a rewritten record) still emits.
-  emitted: Map<string, CommandCodeToolUpdate>
-  pending: Map<string, CommandCodeToolUpdate>
-  updates: CommandCodeToolUpdate[]
+  emitted: Map<string, ToolUpdate>
+  pending: Map<string, ToolUpdate>
+  updates: ToolUpdate[]
   // The cross-page orphan map is opt-in: without it a result before its
   // call is dropped for this parse, exactly as a lone window always was.
   results?: Map<string, CommandCodeResult>
@@ -1018,7 +1025,7 @@ function cmdApply(p: CmdParseState, t: ChatItem, rec: CommandCodeResult) {
 
 // One update per id per feed, carrying the newest absolute revision.
 function cmdEmit(p: CmdParseState, id: string, rec: CommandCodeResult) {
-  const u: CommandCodeToolUpdate = { id, out: rec.out ?? '', error: rec.error === true, images: rec.images ?? 0, ref: rec.ref ?? '', imageAt: rec.imageAt ?? 0 }
+  const u: ToolUpdate = { id, out: rec.out ?? '', error: rec.error === true, images: rec.images ?? 0, ref: rec.ref ?? '', imageAt: rec.imageAt ?? 0 }
   if (rec.at !== undefined) u.at = rec.at
   const was = p.pending.get(id)
   if (was && !cmdNewer(u.at, was.at)) return
@@ -1028,7 +1035,7 @@ function cmdEmit(p: CmdParseState, id: string, rec: CommandCodeResult) {
 
 // The normalized outcome an update carries, without its revision: two
 // updates of one revision differ only by this (a record rewritten in place).
-const cmdSame = (a: CommandCodeToolUpdate, b: CommandCodeToolUpdate) =>
+const cmdSame = (a: ToolUpdate, b: ToolUpdate) =>
   a.out === b.out && a.error === b.error && a.images === b.images && a.ref === b.ref && a.imageAt === b.imageAt
 
 // Command Code's parser, fed complete lines appended to a transcript: each
@@ -1232,7 +1239,10 @@ export function commandCodeParser(shared?: Map<string, CommandCodeResult>) {
 
 // Stateless whole-lines parse: one feed of the window given. `updates`:
 // late outcomes for calls outside the parse (ChatResponse.toolUpdates).
-export function parseCommandCode(lines: Lines, results?: Map<string, CommandCodeResult>, updates?: CommandCodeToolUpdate[]): Parsed {
+// The JSONL format read here (`session` / `message` / `model_change` records,
+// `version: 3`) is the one Command Code `1.93.0` writes; a record's shape is
+// read as documented in tests/cmdParserFixture.ts (REAL_SAMPLE).
+export function parseCommandCode(lines: Lines, results?: Map<string, CommandCodeResult>, updates?: ToolUpdate[]): Parsed {
   const p = commandCodeParser(results)
   p.feed(lines)
   const out = p.result()
@@ -1243,14 +1253,14 @@ export function parseCommandCode(lines: Lines, results?: Map<string, CommandCode
 // `base`: position (in bytes) of `text` in the file. Each line keeps
 // its "start:length" position (lines.refs): messages with images
 // carry it, to re-read the image on demand (see image()).
-const parseKind = (lines: Lines, kind: string | null, home: string, templates?: readonly CommandTemplate[], cwd = '', cmd?: { results?: Map<string, CommandCodeResult>, updates?: CommandCodeToolUpdate[] }) =>
+const parseKind = (lines: Lines, kind: string | null, home: string, templates?: readonly CommandTemplate[], cwd = '', cmd?: { results?: Map<string, CommandCodeResult>, updates?: ToolUpdate[] }) =>
   kind === 'omp' ? parseOmp(lines, home, templates, cwd) : kind === 'codex' ? parseCodex(lines) : kind === 'cmd' ? parseCommandCode(lines, cmd?.results, cmd?.updates) : parseClaude(lines, home)
 
 // Complete lines kept from one read to the next (see readTail): their
 // positions, the lines without their base64, and the content hashes of their
 // images (as parseLines gives them).
 interface LineStore { lines: Lines & { refs: string[] }, hashes: Map<string, string[]>, keep: boolean }
-export function storeLines(store: LineStore, text: string, base: number, kind?: string | null): Lines {
+export function storeLines(store: LineStore, text: string, base: number, kind?: string | null, memoPrefix?: string): Lines {
   const added: Lines = []
   added.refs = []
   let off = base
@@ -1258,9 +1268,9 @@ export function storeLines(store: LineStore, text: string, base: number, kind?: 
     const n = Buffer.byteLength(l)
     const ref = `${off}:${n}`
     off += n + 1
-    const h = lineImageHashes(l, kind)
+    const h = lineImageHashes(l, kind, memoPrefix ? `${memoPrefix}:${ref}` : undefined)
     if (h.length) store.hashes.set(ref, h)
-    added.push(stripBlobs(l, kind))
+    added.push(kind === 'cmd' ? stripCmdBlobs(l) : stripBlobs(l))
     added.refs.push(ref)
   }
   if (store.keep) {
@@ -1280,7 +1290,7 @@ export function withHashes(items: ChatItem[], hashes: Map<string, string[]>) {
   }
 }
 
-export function parseLines(text: string, kind: string | null, base = 0, home = '', templates?: readonly CommandTemplate[], cwd = '', cmdResults?: Map<string, CommandCodeResult>): Parsed {
+export function parseLines(text: string, kind: string | null, base = 0, home = '', templates?: readonly CommandTemplate[], cwd = '', cmdResults?: Map<string, CommandCodeResult>, memoPrefix?: string): Parsed {
   const raw = text.split('\n')
   const refs: string[] = []
   let off = base
@@ -1289,9 +1299,9 @@ export function parseLines(text: string, kind: string | null, base = 0, home = '
     refs.push(`${off}:${n}`)
     off += n + 1
   }
-  const lines: Lines = raw.map(l => stripBlobs(l, kind))
+  const lines: Lines = raw.map(l => (kind === 'cmd' ? stripCmdBlobs(l) : stripBlobs(l)))
   lines.refs = refs
-  const cmdUpdates: CommandCodeToolUpdate[] = []
+  const cmdUpdates: ToolUpdate[] = []
   const items = parseKind(lines, kind, home, templates, cwd, { results: cmdResults, updates: cmdUpdates })
   if (cmdUpdates.length) items.updates = cmdUpdates
   // Content hash of each image, to spot one shown twice (see shared/imageDupes.ts).
@@ -1306,7 +1316,7 @@ export function parseLines(text: string, kind: string | null, base = 0, home = '
     if (!all) {
       const i = byRef.get(it.ref)
       if (i === undefined) continue
-      all = lineImageHashes(raw[i]!, kind)
+      all = lineImageHashes(raw[i]!, kind, memoPrefix ? `${memoPrefix}:${refs[i]}` : undefined)
       hashed.set(it.ref, all)
     }
     const at = it.imageAt || 0
@@ -1329,16 +1339,21 @@ export function turnStart(line: string, kind: string | null): boolean {
 // and its multi-MB base64 is decoded and hashed once, not at every poll.
 const HASH_CACHE_MAX = 2000
 const hashCache = new Map<string, string[]>()
-export function lineImageHashes(line: string, kind?: string | null): string[] {
+// For cmd the cache key of a line is a digest of the whole line: computing it
+// re-hashes every multi-MB base64 row on each overlapping or backward read.
+// A `memoKey` (`<file generation>:<line position>`) remembers that digest, so
+// a re-read of the same position in the same generation never re-hashes the
+// line; a new generation (the file was rewritten) misses and recomputes.
+const LINE_DIGEST_CACHE_MAX = 2000
+const lineDigestCache = new Map<string, string>()
+export function lineImageHashes(line: string, kind?: string | null, memoKey?: string): string[] {
   // The compact precheck matches how Claude/Codex/omp writers serialize; cmd
   // transcripts may pretty-print `"type" : "image"`, so it uses a looser gate.
   if (kind === 'cmd' ? !line.includes('"image"') : !line.includes('"type":"image"') && !line.includes('"input_image"')) return []
   // The legacy key is approximate (length + first/last 200 chars): two large
   // images differing only in the middle would collide. cmd needs exact
   // identity — a digest of the whole line, never a retained payload.
-  const key = kind === 'cmd'
-    ? `c:${createHash('sha256').update(line).digest('hex')}`
-    : `${line.length}:${line.slice(0, 200)}:${line.slice(-200)}`
+  const key = kind === 'cmd' ? cmdLineKey(line, memoKey) : `${line.length}:${line.slice(0, 200)}:${line.slice(-200)}`
   const hit = hashCache.get(key)
   if (hit) return hit
   let hashes: string[] = []
@@ -1348,6 +1363,21 @@ export function lineImageHashes(line: string, kind?: string | null): string[] {
   if (hashCache.size >= HASH_CACHE_MAX) hashCache.delete(hashCache.keys().next().value!)
   hashCache.set(key, hashes)
   return hashes
+}
+
+// Cache key of a cmd line: its whole-line digest, remembered per
+// (generation, line position) when the caller knows them.
+function cmdLineKey(line: string, memoKey?: string): string {
+  if (memoKey) {
+    const known = lineDigestCache.get(memoKey)
+    if (known) return known
+  }
+  const key = `c:${createHash('sha256').update(line).digest('hex')}`
+  if (memoKey) {
+    if (lineDigestCache.size >= LINE_DIGEST_CACHE_MAX) lineDigestCache.delete(lineDigestCache.keys().next().value!)
+    lineDigestCache.set(memoKey, key)
+  }
+  return key
 }
 
 // Types served as is: an SVG image (or any type written in the
@@ -1901,14 +1931,14 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   // How a kind's lines parse, for the windows and slices of one file: omp's
   // session folder (its paths shown relative to it) is read once per file,
   // its file commands re-read every 5 min (see refreshOmpTemplates).
-  async function windowReader(file: string, kind: string | null, h?: CommandCodeFileHandle): Promise<WindowReader<Parsed>> {
+  async function windowReader(file: string, kind: string | null, h?: CommandCodeFileHandle, gen?: string): Promise<WindowReader<Parsed>> {
     const cwd = kind === 'omp' ? await ompCwd(file) : ''
     return {
       label: String(kind),
-      parse: (text: string, base: number) => parseLines(text, kind, base, home, ompTemplates.list, cwd, h?.results),
+      parse: (text: string, base: number) => parseLines(text, kind, base, home, ompTemplates.list, cwd, h?.results, gen),
       join: (windows: Parsed[]) => {
         const last = windows.at(-1)
-        const updates = new Map<string, CommandCodeToolUpdate>()
+        const updates = new Map<string, ToolUpdate>()
         for (const win of windows) {
           for (const u of win.updates || []) {
             const was = updates.get(u.id)
@@ -1922,8 +1952,8 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
         }) as Parsed
       },
       whole: kind === 'omp',
-      reduce: (line: string) => stripBlobs(line, kind),
-      bottom: () => bottomOf(kind, cwd, h),
+      reduce: kind === 'cmd' ? stripCmdBlobs : stripBlobs,
+      bottom: () => bottomOf(kind, cwd, h, gen),
       ...(h ? {
         onBytes: (parsed: Parsed, buf: Buffer, bufStart: number) => {
           if (parsed.resultRefs) for (const x of fingerprintRefs(buf, bufStart, parsed.resultRefs)) h.watch(x.id, x)
@@ -1935,7 +1965,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   // The state kept between polls for one bottom (see reads.readBelow): an
   // incremental parser for Claude's or Command Code's appended lines; Codex's
   // and omp's lines are kept and their last turn parsed again (see lastTurn).
-  function bottomOf(kind: string | null, cwd: string, h?: CommandCodeFileHandle) {
+  function bottomOf(kind: string | null, cwd: string, h?: CommandCodeFileHandle, gen?: string) {
     const cmdP = kind === 'cmd' && h ? commandCodeParser(h.results) : undefined
     const claude = kind === 'codex' || kind === 'omp' || kind === 'cmd' ? null : claudeParser(home)
     const store: LineStore = { lines: Object.assign([] as string[], { refs: [] as string[] }), hashes: new Map(), keep: !claude && !cmdP }
@@ -1946,7 +1976,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       feed(text: string, base: number) {
         first ??= base
         end = base + Buffer.byteLength(text) + 1
-        const added = storeLines(store, text, base, kind)
+        const added = storeLines(store, text, base, kind, gen)
         claude?.feed(added)
         cmdP?.feed(added)
       },
@@ -1973,8 +2003,9 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   })
 
   // Goes back from `end` by windows up to PAGE_ITEMS messages (or the start).
-  async function readBackwards(file: string, end: number, kind: string | null, ctx?: CmdCtx): Promise<TailResult> {
-    return toTail(await reads.readBackwards(file, end, await windowReader(file, kind, ctx?.h), guardOf(ctx)))
+  // `gen`: the file generation, so image digests memoise per (generation, line).
+  async function readBackwards(file: string, end: number, kind: string | null, gen: string | undefined, ctx?: CmdCtx): Promise<TailResult> {
+    return toTail(await reads.readBackwards(file, end, await windowReader(file, kind, ctx?.h, gen), guardOf(ctx)))
   }
 
   // Bottom of the conversation: from `from` (already shown on the phone) or,
@@ -1983,7 +2014,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
   // Reads in progress are shared: several devices on one pane cost one read
   // and one parse per change.
   async function tail(file: string, kind: string | null, size: number, gen: string, from: number | null, settled = true, ino?: number, ctx?: CmdCtx): Promise<TailResult> {
-    return toTail(await reads.tail(file, await windowReader(file, kind, ctx?.h), size, gen, from, settled, ino, guardOf(ctx)))
+    return toTail(await reads.tail(file, await windowReader(file, kind, ctx?.h, gen), size, gen, from, settled, ino, guardOf(ctx)))
   }
 
   // omp session folder, from the file's first line ("session" entry): the
@@ -2215,6 +2246,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       }
       return r
     }
+    const gen = genOf(st)
     // The token the client claims to have read from (its anchor doubles as
     // the join check when `since` was forgotten). For Command Code it must
     // name this exact generation and reader: a missing or stale stamp can
@@ -2224,7 +2256,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     const noProof = kind === 'cmd' && (tok === null || tok.stamp !== h!.stamp || tok.reader !== cmd.reader)
     const stale = noProof && (sent != null || opts.before != null)
     if (opts.before !== null && opts.before !== undefined && !noProof) {
-      const r = await readBackwards(loc.file, Math.min(opts.before, st.size), kind, ctx)
+      const r = await readBackwards(loc.file, Math.min(opts.before, st.size), kind, gen, ctx)
       // An older page exists only in its generation: a rewrite observed
       // while its windows were awaited makes this page another
       // transcript's — reject, never return it.
@@ -2232,7 +2264,6 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
       return withGen({ ...base, older: true, items: r.items, start: r.start, ...(r.updates?.length ? { toolUpdates: r.updates } : {}) })
     }
     const from = opts.from === undefined ? null : opts.from
-    const gen = genOf(st)
     const settled = await settledGen(loc.file, st, gen, h?.stamp)
     // digests may have awaited: an "unchanged" answer must still be of this
     // generation — a replacement mid-await means the client must reset.
@@ -2339,7 +2370,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
     const settled = await settledGen(loc.file, st, gen)
     if (kind === 'omp') await refreshOmpTemplates()
     const r = await reads.readRange(loc.file, st.size - PREVIEW_BYTES, st.size)
-    const reply = lastReplyOf(parseLines(r.text, kind, r.start, home, ompTemplates.list, kind === 'omp' ? await ompCwd(loc.file) : ''))
+    const reply = lastReplyOf(parseLines(r.text, kind, r.start, home, ompTemplates.list, kind === 'omp' ? await ompCwd(loc.file) : '', undefined, gen))
     previewCache.delete(key)
     if (settled && reply) previewCache.set(key, { size: st.size, gen, reply })
     if (previewCache.size > 64) previewCache.delete(previewCache.keys().next().value!)
@@ -2559,7 +2590,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now, l
           continue
         }
         if (end === size && !r.text.endsWith('\n')) done = size - Buffer.byteLength(r.text.slice(r.text.lastIndexOf('\n') + 1))
-        const lines = r.text.split('\n').map(l => stripBlobs(l, pane.agent))
+        const lines = r.text.split('\n').map(l => (kind === 'cmd' ? stripCmdBlobs(l) : stripBlobs(l)))
         raw = omp ? mergeOmpModel(raw, ompLastModel(lines)) : lastModel(lines, kind)
         if (omp ? ompModelComplete(raw) : raw) break
         end = r.start

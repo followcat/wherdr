@@ -91,6 +91,60 @@ used, or limited). Tasks show as `task` cards and machines and quotas as live
 [status cards](conversation.md#live-status-cards), never numbers copied into the text. The reply
 ends with buttons for the other scopes (*All*, another group), and a tap gives that one's brief.
 
+## Showing instead of telling
+
+Alfred shows you what it means instead of describing it, with a `wherdr` block: a code fence in
+the language `wherdr`, one kind per block, one line per element. The chat draws it with live data,
+never with what Alfred wrote about it ([choice buttons, questions and task cards](conversation.md),
+[status cards](conversation.md#live-status-cards)). Each situation has its tool; a project's
+coordinator has the same with `wherdr pm`, except the setting and project rows. The places and
+buttons are described in [Places an agent opens for you](conversation.md#places-an-agent-opens-for-you)
+and [Buttons an agent puts in its reply](conversation.md#buttons-an-agent-puts-in-its-reply).
+
+| When | Alfred uses | Not |
+| --- | --- | --- |
+| You ask where a setting is, or one would solve your problem | `wherdr alfred ui open --target terminal.key-order` | "go to Settings › Terminal" alone |
+| A setting change would help | `wherdr alfred setting set typewriterSpeed slow --propose` | asking "shall I?" and changing it itself |
+| A project change you want (add, template, guards, coordinator) | `wherdr alfred project guards ABC --merge-protected user --propose` | a yes in text, then `--apply` |
+| One choice among 2 to 4 | a `choices` line in a `wherdr` block (example below) | a numbered list ("reply 1, 2 or 3") |
+| Several answers at once (2 to 8 questions, 2 to 4 options each) | a `questions` line in a `wherdr` block (example below) | a numbered list of questions, or one message per question |
+| A yes to one proposal | a `choices` line with one option in a `wherdr` block (example below) | "reply OK to go on" |
+| A task whose state matters | a `task` line in a `wherdr` block (example below) | its state copied in a sentence (a bare id in passing is fine) |
+| How a machine, a quota, a PR or an operation is doing | a `status` line in a `wherdr` block (example below) | numbers copied from a command (they go stale) |
+| A step waits for you (merge, approve screenshots) | `wherdr pm ui action step ABC-12` | "you can merge it now" |
+| You want a stopped task to go on | `wherdr pm ui action resume ABC-12` | resuming it itself |
+| You should look at a task's sheet | `wherdr pm ui action open ABC-12` | a sentence describing where to click |
+| A task's screenshots to look at | `wherdr pm ui show shots ABC-12` | pasting a path or describing the images |
+
+The blocks, one example each:
+
+```wherdr
+choices "Squash" | "Merge commit" | "Rebase"
+```
+
+```wherdr
+questions
+1 "Which database?" | "Postgres" | "SQLite"
+2 "Keep the old API?" | "Yes" | "No, remove it"
+```
+
+```wherdr
+choices "OK, fix the test"
+```
+
+```wherdr
+task ABC-12
+```
+
+```wherdr
+status machine:laptop
+```
+
+- At most one card or button group per message, after the sentence that explains it; never a card with no sentence. Limits: an option up to 80 characters, a question up to 200, 2 to 4 options per question, at most 8 questions; one line over a limit and the whole block shows as plain code. Several questions go in one `questions` card, answered in one message, one line per question: `1A Postgres`, `2B No, remove it`, `3 <your own words>` or `3 skip`.
+- In a wake (wherdr's own message to Alfred, not yours): `wherdr` blocks only. A `ui` command or `--propose` is refused there, so Alfred says what it would show instead of trying.
+- When a `ui` command is refused in your turn (no open wherdr: `not_found`), Alfred gives the in-app link in text and never retries in a loop.
+- Only your click acts: Alfred never says a button's action is done ("I merged it") before its card shows the outcome.
+
 ## Notes
 
 Notes are your whiteboard: short reminders and plans that Alfred and the

@@ -5,7 +5,8 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { dryRun, parseAlfredCommand } from '../shared/pm/alfredCli'
+import { ALFRED_COMMANDS, alfredCommandList, dryRun, parseAlfredCommand } from '../shared/pm/alfredCli'
+import { NOTES_COMMANDS, NOTES_RULE } from '../shared/notes'
 import { applyProposedChange, runAlfredCommand } from '../server/utils/alfredCli'
 import { ALFRED_TOKEN_FILE, answerProposal, issueAlfredToken, setCoordinatorAgent, userMessageTo } from '../server/utils/pmCoordinator'
 import { MAIN } from '../shared/pm/coordinator'
@@ -131,6 +132,19 @@ describe('runAlfredCommand', () => {
     await expect(runAlfredCommand(deps(), 'f'.repeat(64), { argv: ['projects'] })).rejects.toThrow('Unknown Alfred token')
     await issueAlfredToken(store, dir) // a new start: the old token stops working
     await expect(run('projects')).rejects.toThrow('Unknown Alfred token')
+  })
+
+  // Alfred's AGENTS.md points to `wherdr alfred help` instead of listing the commands.
+  it('answers help with every command, the notes commands and the notes rule', async () => {
+    const { commands } = await run('help') as { commands: string[] }
+    expect(commands).toEqual(alfredCommandList())
+    for (const c of ALFRED_COMMANDS) expect(commands.some(l => l.startsWith(`- \`wherdr alfred ${c.usage}`)), c.usage).toBe(true)
+    for (const c of NOTES_COMMANDS) expect(commands, c.usage).toContain(`- \`wherdr alfred ${c.usage}\`: ${c.does}`)
+    expect(commands.at(-1)).toBe(`- ${NOTES_RULE}`)
+    // The recipes its AGENTS.md used to spell out are in the commands' own text.
+    const [machine, workflow] = ['project machine add', 'project workflow edit'].map(u => ALFRED_COMMANDS.find(c => c.usage.startsWith(u))!.does)
+    expect(machine).toMatch(/ask the user for the path of the repository's clone[^.]*`ready`/)
+    expect(workflow).toMatch(/wherdr pm template show --project[^.]*minimal default/)
   })
 
   // WHR-512: a wake (or a prompt injection read meanwhile) never applies a change; nor does a card's click.

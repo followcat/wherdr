@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { agentChildren, agentDescendants, coreFailureKind, coreShell, createCoreTranscripts, machineOfAddress, processInfo } from '../server/utils/coreTranscripts'
-import { createShellFs } from '../server/utils/fsx'
+import { agentChildren, agentDescendants, coreFailureKind, coreShell, createCoreTranscripts, machineHome, machineOfAddress, processInfo } from '../server/utils/coreTranscripts'
+import { createShellFs, READ_CHUNK, type ExecResult, type ShellExec } from '../server/utils/fsx'
 import { DEVIN_PROCESS_SCRIPT } from '../server/utils/devinProcesses'
 import { CoreError } from '../server/utils/core'
 import type { Pane } from '../shared/types'
@@ -150,6 +150,108 @@ describe('remote shell', () => {
     const refused = createShellFs(coreShell(async () => { throw new CoreError('unavailable', 'herdr-core rejected the request') }, 'box'))
     const e = await refused.readFile('/x').catch((x: unknown) => x)
     expect([(e as { code?: string }).code, coreFailureKind(e)]).toEqual(['unreachable', 'unavailable'])
+  })
+
+  it('discards the partial stdout of a timed-out reply', async () => {
+    // Core answers a late command with whatever it printed so far: a reader
+    // that decoded it would take a truncated path or line for a complete one.
+    const slow = coreShell(async () => ({ code: null, stdout: Buffer.from('/home/al').toString('base64'), timed_out: true }), 'box')
+    const r = await slow('printf %s "$HOME"', [], { maxBytes: 4096 })
+    expect([r.code, r.stdout.length, r.stderr]).toEqual([124, 0, 'timed out'])
+  })
+
+  it('refuses an over-long base64 reply before decoding it', async () => {
+    // 4096 bytes bound: 5464 base64 characters is exactly the bound, one more
+    // already means the machine sent more than was asked for.
+    const at = Buffer.alloc(4096, 0x61)
+    const fits = coreShell(async () => ({ code: 0, stdout: at.toString('base64') }), 'box')
+    const ok = await fits('true', [], { maxBytes: 4096 })
+    expect([ok.code, ok.stdout.length]).toEqual([0, 4096])
+    const over = coreShell(async () => ({ code: 0, stdout: 'A'.repeat(5465) }), 'box')
+    const r = await over('true', [], { maxBytes: 4096 })
+    expect([r.code, r.stdout.length, r.stderr]).toEqual([125, 0, 'output too large'])
+  })
+
+  it('always names the machine, so an empty name fails instead of running on this core', async () => {
+    const sent: Record<string, unknown>[] = []
+    const call = vi.fn(async (_method: string, params: Record<string, unknown>): Promise<any> => {
+      sent.push(params)
+      return { code: 0, stdout: '' }
+    })
+    await coreShell(call, '')('true')
+    expect(sent[0]).toHaveProperty('on', '')
+    await coreShell(call, 'box')('true')
+    expect(sent[1]).toHaveProperty('on', 'box')
+  })
+})
+
+describe('the home folder of a machine', () => {
+  const answering = (stdout: Buffer, code = 0): ShellExec => async () => ({ code, stdout, stderr: '' })
+
+  it('asks for it with a bounded read, and keeps it exactly as printed', async () => {
+    const seen: unknown[] = []
+    const shell: ShellExec = async (script, args, opts) => {
+      seen.push([script, args, opts])
+      return { code: 0, stdout: Buffer.from('/home/alice'), stderr: '' }
+    }
+    expect(await machineHome(shell)).toBe('/home/alice')
+    expect(seen).toEqual([['printf %s "$HOME"', [], { maxBytes: 4096 }]])
+    // Never trimmed: a trailing space is part of what the machine printed,
+    // and trimming it would point the reader at another directory.
+    expect(await machineHome(answering(Buffer.from('/home/al ')))).toBe('/home/al ')
+  })
+
+  it('refuses a partial, failed, tainted or undecodable answer', async () => {
+    const bad: [string, Buffer, number][] = [
+      ['timed out mid-print', Buffer.from('/home/al'), 124],
+      ['the shell failed', Buffer.from('/home/alice'), 1],
+      ['a carriage return', Buffer.from('/home/alice\r'), 0],
+      ['a newline', Buffer.from('/home/alice\n'), 0],
+      ['a NUL', Buffer.from('/home/alice\0'), 0],
+      ['a relative path', Buffer.from('home/alice'), 0],
+      ['nothing', Buffer.alloc(0), 0],
+      ['over the bound', Buffer.alloc(4097, 0x2f), 0],
+      ['not UTF-8', Buffer.from([0x2f, 0x68, 0x6f, 0x6d, 0x65, 0xff, 0xfe]), 0],
+    ]
+    for (const [why, stdout, code] of bad) {
+      const e = await machineHome(answering(stdout, code)).catch((x: unknown) => x)
+      expect(e, why).toBeInstanceOf(CoreError)
+      expect([(e as CoreError).kind, (e as Error).message], why).toEqual(['unreachable', 'machine home unknown'])
+    }
+  })
+})
+
+describe('a remote machine whose home lookup fails', () => {
+  const cwd = '/work/proj'
+
+  it.each([
+    ['Claude', 'claude', 4242, ['claude']],
+    ['Codex', 'codex', 99, ['codex']],
+  ])('refuses, then recovers, for a remote %s transcript', async (_name, agent, pid, argv) => {
+    const home = homeWithTranscripts(cwd, 4242)
+    const core = fakeCore({ 'host-a/t1': { pid, argv, created_ms: Date.now() - 2000, foreground: { pid, name: agent, argv, cwd } } })
+    const p = pane(`r-${agent}`, 'host-a/t1', agent, cwd, { machine: '686f73742d61' })
+    let down = true
+    const call = async (method: string, params: any): Promise<any> => {
+      if (params.argv?.[2] === 'printf %s "$HOME"') {
+        // A late answer printed only the start of the path.
+        return down
+          ? { code: 124, stdout: Buffer.from('/home/al').toString('base64'), timed_out: true }
+          : { code: 0, stdout: Buffer.from(home).toString('base64') }
+      }
+      return core.call(method, params)
+    }
+    const t = createCoreTranscripts({ call, pane: id => (id === p.id ? p : undefined), localHome: '/nowhere' })
+    const e = await t.chat(p).catch((x: unknown) => x)
+    expect(e).toBeInstanceOf(CoreError)
+    expect([(e as CoreError).kind, (e as Error).message]).toEqual(['unreachable', 'machine home unknown'])
+    // The machine answers on the next poll: its transcript is read from the
+    // home it printed, never from the partial one.
+    down = false
+    const r = await t.chat(p)
+    expect(r.available).toBe(true)
+    expect(r.file).toBeTruthy()
+    expect(r.items!.length).toBeGreaterThan(0)
   })
 })
 
@@ -404,4 +506,39 @@ describe('remote ps cache', () => {
       expect(psExecs.get('host-a') ?? 0).toBe(2)
     } finally { vi.useRealTimers(); rmSync(home, { recursive: true, force: true }) }
   })
+})
+
+it('reads a remote Claude line longer than one reply in chunks that share a deadline', async () => {
+  const cwd = '/work/proj'
+  const home = mkdtempSync(path.join(tmpdir(), 'hw-remote-claude-big-'))
+  mkdirSync(path.join(home, '.claude/sessions'), { recursive: true })
+  writeFileSync(path.join(home, '.claude/sessions/4242.json'), JSON.stringify({ pid: 4242, sessionId: SESSION, cwd }))
+  const dir = path.join(home, '.claude/projects', cwd.replace(/[^A-Za-z0-9]/g, '-'))
+  mkdirSync(dir, { recursive: true })
+  const big = 'x'.repeat(5 * 1024 * 1024) + 'END-OF-BIG-LINE'
+  const lines = fx('claude-session.jsonl').trimEnd().split('\n')
+  lines.push(JSON.stringify({ isSidechain: false, type: 'assistant', timestamp: '2026-09-25T11:30:00.000Z',
+    message: { model: 'claude-opus-5-5', type: 'message', role: 'assistant', content: [{ type: 'text', text: big }] } }))
+  writeFileSync(path.join(dir, `${SESSION}.jsonl`), lines.join('\n') + '\n')
+  const core = fakeCore({ 'host-a/t1': { pid: 4242, argv: ['claude'], foreground: { pid: 4242, name: 'claude', argv: ['claude'], cwd } } })
+  const asks: number[] = []
+  const call = async (method: string, params: any): Promise<any> => {
+    if (params.argv?.[2] === 'printf %s "$HOME"') return { code: 0, stdout: Buffer.from(home).toString('base64') }
+    // A byte-range read asks for its count last: never more than one chunk.
+    if (method === 'machine.exec' && String(params.argv?.[2]).includes('tail -c')) asks.push(Number(params.argv[6]))
+    return core.call(method, params)
+  }
+  const p = pane('big', 'host-a/t1', 'claude', cwd, { machine: '686f73742d61' })
+  const t = createCoreTranscripts({ call, pane: () => p, localHome: '/nowhere' })
+  const r = await t.chat(p)
+  // The whole line was reached (its start is long before the window a
+  // single reply could carry) and parsed as one message.
+  const last = r.items?.at(-1)
+  expect(last?.role).toBe('assistant')
+  expect(last?.text?.startsWith('xxxxxxxx')).toBe(true)
+  expect(last?.text?.length).toBeGreaterThan(10_000)
+  // It came back in several replies, none of them over one chunk.
+  expect(asks.length).toBeGreaterThan(1)
+  expect(Math.max(...asks)).toBe(READ_CHUNK)
+  expect(Math.min(...asks)).toBeGreaterThan(0)
 })

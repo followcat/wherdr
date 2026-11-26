@@ -173,3 +173,19 @@ it('no ••• button: right click (computer) and long press (touch) open its 
     await vi.waitFor(() => expect(posts).toEqual([{ project: MAIN, program: 'codex' }]))
   } finally { desk.value = false; coarse.value = false; menuState.open = false }
 })
+
+it('Restart with… the agent that ran it resumes its conversation', async () => {
+  herdrState.value = { ok: true, workspaces: [], panes: [pane('w:p1', 'host/t1')] }
+  appConfig.value = { ...appConfig.value, kinds: ['claude', 'codex'] }
+  view = { name: 'Alfred', program: 'claude', ran: 'claude', terminal: 'host/t1' }
+  try {
+  desk.value = true
+  coarse.value = false
+  await mount()
+  await vi.waitFor(() => expect(alfred.value?.ran).toBe('claude'))
+  ;(w!.findComponent({ name: 'UContextMenu' }).props('items').flat() as { onSelect: () => void }[])[0]!.onSelect()
+  await vi.waitFor(() => expect(document.querySelector('[data-testid="alfred-sheet"]')).not.toBeNull())
+  ;(document.querySelector('[data-testid="alfred-start"]') as HTMLElement).click()
+  await vi.waitFor(() => expect(posts).toEqual([{ project: MAIN, resume: true }]))
+  } finally { desk.value = false; coarse.value = false }
+})

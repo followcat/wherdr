@@ -452,6 +452,7 @@ function scheduleFit() {
   }, 50)
 }
 watch(layoutTick, scheduleFit)
+watch(() => props.ctl.kbdOn?.value, (on) => { if (on) scheduleFit() })
 let ro: ResizeObserver | null = null
 onMounted(() => {
   document.addEventListener('pointerdown', cancelTouch, true)

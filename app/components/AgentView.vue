@@ -452,8 +452,12 @@ const dropHint = computed(() => pane.value?.agent === 'claude'
 
 // Agent menu: sheet on the phone, dropdown menu on a computer.
 useNotificationClock()
-// herdr-core: using the composer (tap or key, not its automatic focus) makes this screen's size the terminal's.
-function takeTerminalControl() { if (core) ctl.takeControl() }
+// herdr-core: using the composer (tap or key, not its automatic focus) makes
+// this screen's size the terminal's in the conversation, where the field is
+// what the user types in. Under the terminal it never does: that pane belongs
+// to whoever reads it at its own size until the user types in the terminal
+// itself ("Fit to this screen", typed text, a key-bar key).
+function takeTerminalControl() { if (core && mode.value === 'chat') ctl.takeControl() }
 // herdr-core: Esc in the empty composer stops the agent here as well, so that it also works
 // without the app shortcuts (phone layout); stopPropagation keeps the v2 shortcut from stopping twice.
 function onComposerKey(e: KeyboardEvent) {

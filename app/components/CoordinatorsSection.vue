@@ -15,7 +15,7 @@
 // Their order is the user's (drag a row by its handle, or long press it on a
 // phone), and Move to hidden (or a drop on the group) puts one in the Hidden
 // group at the end, collapsed; one there that needs the user shows above.
-import type { CoordinatorView } from '#shared/pm/coordinator'
+import { canResume, type CoordinatorView } from '#shared/pm/coordinator'
 import type { Pane } from '#shared/types'
 import { HIDDEN_MARK, dropSlots, orderKeys } from '#shared/pm/coordinatorOrder'
 import { paneGroup } from '#shared/spaces'
@@ -174,7 +174,8 @@ async function restart() {
   const agent = c.agent?.program === program ? c.agent : { program }
   try {
     await api('/api/pm/coordinator-agent', { project: c.project, ...agent })
-    const p = await launchCoordinator(c.project, agent)
+    // The agent that ran its conversation again: that conversation carries on.
+    const p = await launchCoordinator(c.project, c.ran?.program === program && canResume(program) ? 'resume' : agent)
     if (p) await navigateTo(panePath(p.id))
   }
   catch (e) { showError(c, e) }

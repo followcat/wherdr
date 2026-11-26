@@ -79,7 +79,8 @@ one per viewer, so several viewers (phone, computer, herdr desktop) work at once
 A viewer attaches at its own screen size, which fits the terminal to it, so core paints
 the screen at that width. When another viewer then sets its size, it follows that size
 and shows a banner, and does not resize the terminal again until the user takes control:
-typing in the terminal or the composer, a key of the keybar, or "Fit to this screen".
+typing in the terminal (or in the composer from the conversation view, never under the
+terminal), a key of the keybar, or "Fit to this screen".
 A watch-only viewer attaches at the terminal's current size.
 The browser returns credit after xterm has written each chunk (core's 256 KiB window
 bounds the relay) and scrolls the history it received locally.

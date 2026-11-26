@@ -1280,6 +1280,7 @@ it follows you across devices like the Board's picker.
   the screenshots follow the same rules as *Send back*, and the task leaves
   Tasks to review at once, back when its next review is done; the log keeps
   your words.
+  Every other step that waits for you (*It works*, *Approve design*…) has the same note field and *Send back* under its button, in the sheet's To do and in Tasks to review, with the same effect.
   With no TL;DR yet, the **Worker's note** (its closing report: what
   was done, why it is done, what was tested) and the **Reviewer's note** (the
   verdict, what it sent back and was fixed during the rounds, what it left as

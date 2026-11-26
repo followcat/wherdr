@@ -153,6 +153,23 @@ it('no ••• button: right click (computer) and long press (touch) open its 
   } finally { desk.value = false; coarse.value = false; menuState.open = false }
 })
 
+it('Restart with… the agent that ran its conversation resumes it, keeping its model', async () => {
+  herdrState.value = { ok: true, workspaces: [], panes: [pane('w:p1', 'host/t1')] }
+  appConfig.value = { ...appConfig.value, kinds: ['claude', 'codex'] }
+  views = [view('CO', { terminal: 'host/t1', agent: { program: 'claude', model: 'm' }, ran: { program: 'claude', model: 'm' } })]
+  desk.value = true
+  coarse.value = false
+  try {
+    w = await mountSuspended(CoordinatorsSection, { attachTo: document.body })
+    await vi.waitFor(() => expect(w!.findAll('[data-testid="coordinator-row"]')).toHaveLength(1))
+    await vi.waitFor(() => expect(coordinators.value[0]?.ran?.program).toBe('claude'))
+    ;(w.findComponent({ name: 'UContextMenu' }).props('items').flat() as { label: string, onSelect: () => void }[]).find(i => i.label === 'Restart with…')!.onSelect()
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="coordinator-restart"]')).not.toBeNull())
+    ;(document.querySelector('[data-testid="coordinator-restart"]') as HTMLElement).click()
+    await vi.waitFor(() => expect(posts).toEqual([{ agent: { project: 'CO', program: 'claude', model: 'm' } }, { project: 'CO', resume: true }]))
+  } finally { desk.value = false; coarse.value = false }
+})
+
 it('its menu opens the board, settings and autopilot, renames it inline, mutes it and stops it after a confirm (WHR-325)', async () => {
   herdrState.value = { ok: true, workspaces: [], panes: [pane('w:p1', 'host/t1')] }
   views = [view('CO', { terminal: 'host/t1', autopilot: { on: true, goal: '', events: [], perDay: 10, atOnce: 2 } })]

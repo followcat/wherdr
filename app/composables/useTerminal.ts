@@ -36,6 +36,8 @@ import { COLD_HISTORY, MAX_HISTORY } from '#shared/terminalHistory'
 import { restoreFromBottom, shouldFetchDeep, viewForRestore } from '~/utils/terminalDeepHistory'
 
 const CORE_SCROLLBACK = 5000
+// Coalesce resize bursts into one WebGL atlas + viewport rebuild after they settle.
+export const REPAINT_SETTLE_MS = 150
 // The view waits at most this long for the terminal font before its first fit;
 // a slower load re-measures when it arrives (see mount).
 const FONT_WAIT_MS = 150
@@ -126,6 +128,7 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
   // coreStream would skip the next fit and attach at xterm's default 80×24.
   function forgetStream() {
     wheel.cancel()
+    cancelFollowSettle()
     mouseSupported = false
     syncOutput.reset()
     writingFrames = 0
@@ -140,6 +143,29 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     resetDeep()
     if (sizeBanner) { sizeBanner = null; opts.setBanner(null) }
   }
+  // Watching a terminal taller than this screen (another viewer owns the size,
+  // or the keyboard covers the bottom while typing elsewhere): shift it so the
+  // cursor row, where the newest output is, stays in view. The host's box lands
+  // on the layout pass, not in the tick that flips kbOpen, so a shift measured
+  // while the height is still settling is re-measured on the next two frames.
+  let followRaf1 = 0
+  let followRaf2 = 0
+  function cancelFollowSettle() {
+    if (followRaf1) { cancelAnimationFrame(followRaf1); followRaf1 = 0 }
+    if (followRaf2) { cancelAnimationFrame(followRaf2); followRaf2 = 0 }
+  }
+  function scheduleFollowSettle() {
+    cancelFollowSettle()
+    followRaf1 = requestAnimationFrame(() => {
+      followRaf1 = 0
+      followCursor()
+      followRaf2 = requestAnimationFrame(() => {
+        followRaf2 = 0
+        followCursor()
+      })
+    })
+  }
+  const isWatching = () => (coreStream && !coreControl) || (kbOpen.value && !kbdOn.value)
   // Watching a terminal taller than this screen: the visible window's top is
   // a scalar buffer-row position. Positions inside scrollback ride xterm's
   // own viewport (view === viewportY); the clipped bottom of the grid is
@@ -197,10 +223,19 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
       lastY = -1
       lastBaseY = -1
     }
-    const watching = coreStream && !coreControl
+    const watching = isWatching()
     const screen = term.element?.querySelector('.xterm-screen') as HTMLElement | null
     const rowPx = screen && term.rows ? screen.offsetHeight / term.rows : 0
-    const hostRows = el && rowPx ? (el.clientHeight - (screen!.offsetTop || 0)) / rowPx : term.rows
+    // Never project a lift from a zero, negative or disconnected host: layout
+    // has not given the terminal a real height yet (the keyboard is still
+    // sliding, the view is being re-parented), and the lift it implies would
+    // move the whole grid off screen.
+    const shown = el?.isConnected && screen ? el.clientHeight - (screen.offsetTop || 0) : 0
+    if (rowPx > 0 && shown <= 0) {
+      if (screen?.style.transform) screen.style.transform = ''
+      return
+    }
+    const hostRows = rowPx ? shown / rowPx : term.rows
     // The live tail puts the cursor's bottom edge at the host bottom — never
     // less than the plain baseY tail a fitting terminal scrolls to anyway.
     const tail = buf.baseY + (watching ? Math.max(0, buf.cursorY + 1 - hostRows) : 0)
@@ -287,7 +322,7 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
       resized: () => {
         if (term !== current) return
         scrollGeometryVersion.value++
-        repaint()
+        scheduleRepaint()
         if (coreStream) offerFit()
         syncWebgl()
       },
@@ -304,7 +339,7 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
         if (writingFrames === 0) {
           const pinned = holdTail
           holdTail = false
-          if (pinned || (coreStream && !coreControl)) followCursor()
+          if (pinned || isWatching()) followCursor()
         }
         if (!covering.value) selectionHint.refresh(current, mouseSupported)
         done()
@@ -808,12 +843,31 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     await sendKeys([chord])
   }
 
-  // A resize reallocates the WebGL canvas; on some GPUs the glyph atlas then
-  // holds noise until it is rebuilt — repaint clears it rather than trusting it.
-  function repaint() {
-    if (!term) return
+  let repaintTimer: ReturnType<typeof setTimeout> | undefined
+  let kbRepaintRaf = 0
+  function cancelRepaint() {
+    clearTimeout(repaintTimer)
+    repaintTimer = undefined
+    if (kbRepaintRaf) {
+      cancelAnimationFrame(kbRepaintRaf)
+      kbRepaintRaf = 0
+    }
+  }
+  // A resize reallocates the WebGL canvas, and opening/closing the phone
+  // keyboard clips or uncovers it; on some mobile GPUs (Adreno 830, Chrome
+  // Android) the glyph atlas or drawing buffer holds noise/blank tiles until
+  // rebuilt once after the change settles.
+  function repaintNow() {
+    clearTimeout(repaintTimer)
+    repaintTimer = undefined
+    if (!term || !webgl || disposed) return
     term.clearTextureAtlas()
-    term.refresh(0, term.rows - 1)
+    if (term.rows > 0) term.refresh(0, term.rows - 1)
+  }
+  function scheduleRepaint() {
+    if (!term || !webgl || disposed) return
+    clearTimeout(repaintTimer)
+    repaintTimer = setTimeout(repaintNow, REPAINT_SETTLE_MS)
   }
 
   function fitNow(send: boolean) {
@@ -826,7 +880,7 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     const desktop = matchMedia(DESK_QUERY).matches && !opts.fill?.()
     el.style.width = desktop ? `${terminalPixelWidth(el.parentElement.clientWidth, contentWidth.value)}px` : ''
     const p = proposeTerminalSize(term)
-    if (!p || !p.cols || !p.rows) return
+    if (!p || !p.cols || !p.rows) { followCursor(); return }
     const d = { cols: p.cols, rows: p.rows }
     // The keyboard covering the window is a rows-only change: while it is
     // open and the terminal is not what is being typed in, resizing is pure
@@ -834,16 +888,30 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     // pane keeps its size, and the close fits back to it as a no-op. Typing
     // into the terminal itself still resizes: the prompt must stay visible.
     const covered = kbOpen.value && !kbdOn.value && d.cols === lastSize.cols
-    if (!coreStream && !covered && (d.cols !== term.cols || d.rows !== term.rows)) { term.resize(d.cols, d.rows); repaint() }
+    if (!coreStream && !covered && (d.cols !== term.cols || d.rows !== term.rows)) {
+      term.resize(d.cols, d.rows)
+      scheduleRepaint()
+    }
     if (send && !covered && (d.cols !== lastSize.cols || d.rows !== lastSize.rows)) {
       if (sendTerm({ type: 'terminal.resize', cols: d.cols, rows: d.rows })) lastSize = { cols: d.cols, rows: d.rows }
     }
     if (coreStream && !covered) offerFit()
+    else followCursor()
     syncWebgl()
   }
 
   // Theme change while the terminal is shown.
   watch(terminalTheme, (th) => { if (term) term.options.theme = th })
+  // Keyboard open/close clips or uncovers the WebGL canvas: rebuild once the
+  // layout has settled, whatever the grid did.
+  watch(kbOpen, (open, wasOpen) => {
+    if (open === wasOpen || !term || disposed) return
+    if (kbRepaintRaf) cancelAnimationFrame(kbRepaintRaf)
+    kbRepaintRaf = requestAnimationFrame(() => {
+      kbRepaintRaf = 0
+      repaintNow()
+    })
+  }, { flush: 'post' })
   // The preference changes the width in pixels, then FitAddon re-measures.
   watch(contentWidth, () => nextTick(() => fitNow(true)))
 
@@ -935,7 +1003,7 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
         })
         term.loadAddon(addon)
         // Backing store at CSS size × devicePixelRatio, whatever the browser reports.
-        guardWebglCanvasSize(addon)
+        guardWebglCanvasSize(addon, undefined, scheduleRepaint)
         webgl = addon
         webglDropped = false
         webglDroppedAt = null
@@ -1251,6 +1319,23 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
   watch(smoothTouchScrolling, () => {
     scrollInputVersion.value++
   }, { flush: 'sync' })
+  // Lives for the owning component's effect scope, not dispose(): AgentView
+  // re-mounts TerminalView on the same controller across Conversation/Terminal toggles.
+  watch([kbOpen, kbdOn], ([open], [wasOpen]) => {
+    if (!isWatching()) {
+      cancelFollowSettle()
+      followCursor()
+      return
+    }
+    // The keyboard's open/close changes the host's box on the layout pass, not
+    // in this tick; kbdOn flipping under an already-open keyboard can
+    // re-project right away and settle on the frame.
+    if (open !== wasOpen) scheduleFollowSettle()
+    else {
+      followCursor()
+      scheduleFollowSettle()
+    }
+  }, { flush: 'post' })
   // Android Back can hide the IME while the textarea keeps its focus; the
   // next touch would reopen the keyboard instantly. On a coarse pointer the
   // IME closing releases the terminal focus it was held for — never while a
@@ -1265,8 +1350,9 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     if (parked) { visibilityWanted = visible; return }
     if (!visible) scrollInputVersion.value++
     sendTerm({ type: 'visibility', visible })
-    // Another client may have resized the pane while we were away.
-    if (visible) nextTick(() => fitNow(true))
+    // Another client may have resized the pane while we were away, or the
+    // host regained its height while covered.
+    if (visible) nextTick(() => { fitNow(true); followCursor(); scheduleFollowSettle() })
   }
 
   // A view going away keeps its xterm and its stream: output keeps being
@@ -1318,6 +1404,10 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
   function dispose() {
     el?.removeEventListener('paste', clearVirtualModifiers, true)
     disposed = true
+    cancelRepaint()
+    cancelFollowSettle()
+    const screen = term?.element?.querySelector('.xterm-screen') as HTMLElement | null
+    if (screen) screen.style.transform = ''
     parked = false
     clearTimeout(parkTimer)
     parkTimer = undefined

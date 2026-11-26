@@ -43,16 +43,27 @@ describe('WebGL canvas backing store', () => {
     expect(canvasDeviceSize({ width: 756, height: 416 }, expected, 2)).toEqual(expected)
   })
 
-  it('routes the renderer resizes through the guard', () => {
+  it('routes the renderer resizes through the guard and notifies only when the backing size changes', () => {
     const calls: number[][] = []
+    let resized = 0
+    const canvas = { width: 756, height: 832 }
     const renderer = {
+      _canvas: canvas,
       dimensions: { device: { canvas: expected } },
-      _setCanvasDevicePixelDimensions(w: number, h: number) { calls.push([w, h, this === renderer ? 1 : 0]) },
+      _setCanvasDevicePixelDimensions(w: number, h: number) {
+        canvas.width = w
+        canvas.height = h
+        calls.push([w, h, this === renderer ? 1 : 0])
+      },
     }
-    expect(guardWebglCanvasSize({ _renderer: renderer }, () => 2)).toBe(true)
+    expect(guardWebglCanvasSize({ _renderer: renderer }, () => 2, () => { resized++ })).toBe(true)
     renderer._setCanvasDevicePixelDimensions(378, 416)
+    expect(resized).toBe(0)
     renderer._setCanvasDevicePixelDimensions(757, 832)
-    expect(calls).toEqual([[756, 832, 1], [757, 832, 1]])
+    expect(resized).toBe(1)
+    renderer._setCanvasDevicePixelDimensions(757, 832)
+    expect(resized).toBe(1)
+    expect(calls).toEqual([[756, 832, 1], [757, 832, 1], [757, 832, 1]])
   })
 
   it('leaves an addon with other internals untouched', () => {

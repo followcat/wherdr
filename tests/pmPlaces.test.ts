@@ -22,7 +22,7 @@ const texts = [
   guardAction(combineGuards([]), { kind: 'github.pr' }, { branch: 'task/CO-1', by: 'engine', project: 'CO' }),
   guardAction(combineGuards([]), { kind: 'github.pr' }, { branch: 'task/CO-1', by: 'engine' }),
   ...Object.values(roleFiles(p, t, [])),
-  ...Object.values(alfredFiles({ home: '~/alfred', version: '3.0.0', docs: '~/wherdr/docs', docFiles: [], pm: false, projects: [], address: { local: 'http://127.0.0.1:7683' } }, [])),
+  ...Object.values(alfredFiles({ home: '~/alfred', version: '3.0.0', docs: '~/wherdr/docs', pm: false, projects: [], address: { local: 'http://127.0.0.1:7683' } }, [])),
   ...literal,
 ].join('\n')
 

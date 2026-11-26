@@ -900,10 +900,9 @@ export async function writeAlfredHome(deps: Deps, program?: CoordinatorProgram) 
   const folder = homeOfAlfred(deps)
   const projects = await deps.store.projects()
   const docs = docsDir()
-  const docFiles = (await fs.readdir(docs).catch(() => [] as string[])).filter(n => n.endsWith('.md')).sort()
   const main = mainRoleFiles(projects)
   const v2 = (await v2Projects(deps.store)).length > 0
-  const files = { ...main, ...alfredFiles({ home: folder, version: wherdrVersion(), docs, docFiles, address: coordinatorUrls(new URL('http://127.0.0.1')), pm: await deps.store.enabled(), projects, v2 }, main['AGENTS.md']!.split('\n')), ...(program ? ALFRED_PROGRAM_FILES[program] : undefined) }
+  const files = { ...main, ...alfredFiles({ home: folder, version: wherdrVersion(), docs, address: coordinatorUrls(new URL('http://127.0.0.1')), pm: await deps.store.enabled(), projects, v2 }, main['AGENTS.md']!.split('\n')), ...(program ? ALFRED_PROGRAM_FILES[program] : undefined) }
   for (const [file, text] of Object.entries(files)) {
     await fs.mkdir(path.dirname(path.join(folder, file)), { recursive: true, mode: 0o700 })
     await fs.writeFile(path.join(folder, file), text, { mode: 0o600 })
@@ -944,16 +943,24 @@ export function coordinatorUrls(here: URL): CoordinatorUrls {
   return { local: `http://127.0.0.1:${port}`, ...(remote ? { remote: remote.replace(/\/$/, '') } : {}) }
 }
 
+// omp's newest session file of a folder, on the machine that runs it (omp keeps them in a folder named
+// after the working folder, as transcripts.ts does); none: the folder has no conversation.
+const OMP_LAST_SESSION = 'f="$1"; case "$f" in "$HOME"/*) n="-${f#"$HOME"/}";; *) n="--${f#/}--";; esac; n=$(printf %s "$n" | tr "/\\\\:" "---"); ls -t "$HOME/.omp/agent/sessions/$n"/*.jsonl 2>/dev/null | head -n 1'
+
 // When a project coordinator starts: its files, a new token, how to start it.
-export async function prepareCoordinator(deps: Deps, key: string, program: CoordinatorProgram, urls: CoordinatorUrls, resume = false, model?: string) {
+export async function prepareCoordinator(deps: Deps, key: string, program: CoordinatorProgram, urls: CoordinatorUrls, resumeAsked = false, model?: string) {
   const { p, local, on, folder, first, v2, none } = await writeRoleFiles(deps, key, program)
   const url = local ? urls.local : urls.remote
   if (!url) throw new HerdrError('unreachable', 'The project\'s machine cannot reach this wherdr: publish it on your tailnet first (Settings › Phone)')
   const token = await issueToken(deps.store, key)
   if (key === MAIN) await issueAlfredToken(deps.store, folder!)
+  let session: string | undefined
+  if (resumeAsked && program === 'omp') session = (await exec(deps, on, OMP_LAST_SESSION, [folder])).out || undefined
+  // omp with no session file yet (stuck before its first reply): a new conversation, so a restart still unblocks it.
+  const resume = resumeAsked && (program !== 'omp' || !!session)
   // Alfred starts with its greeting (startPrompt); a resumed conversation had it already.
   const prompt = key === MAIN && !resume ? [startPrompt(first, await readAlfredName(deps), v2, none)] : []
-  return { on, folder, argv: coordinatorArgs(program, folder, p?.path, isPlainFolder(p), resume, model), prompt, machine: p?.machine || '', env: { WHERDR_PM_TOKEN: token, WHERDR_URL: url, DISABLE_AUTOUPDATER: '1' } }
+  return { on, folder, resume, argv: coordinatorArgs(program, folder, p?.path, isPlainFolder(p), session ?? resume, model), prompt, machine: p?.machine || '', env: { WHERDR_PM_TOKEN: token, WHERDR_URL: url, DISABLE_AUTOUPDATER: '1' } }
 }
 
 // Starts the coordinator in its folder, with its model (else its harness's default), token in its environment,
@@ -967,16 +974,17 @@ export async function startCoordinator(deps: Deps, key: unknown, agent: { progra
   const ws = coordinatorKey(key, projects)
   if (ws !== key) throw new HerdrError('refused', `${key} is a member of workspace ${ws}, whose coordinator handles its tasks: it has none of its own`)
   const before = await deps.store.coordinator(key)
-  const resume = agent.resume === true
-  if (resume && !before?.ran) throw new HerdrError('bad_input', 'No conversation to resume: start a new one')
+  const resumeAsked = agent.resume === true
+  if (resumeAsked && !before?.ran) throw new HerdrError('bad_input', 'No conversation to resume: start a new one')
   // No agent given: the project's default. Alfred: a program only, with its own default model.
-  const a = resume ? agentOf(before!.ran!) : key === MAIN ? alfredAgent(agent.program ?? before?.agent?.program)
+  const a = resumeAsked ? agentOf(before!.ran!) : key === MAIN ? alfredAgent(agent.program ?? before?.agent?.program)
     : agentOf(agent.program === undefined ? before?.agent ?? FALLBACK : agent)
   if (!a) throw new HerdrError('bad_input', BAD_AGENT)
   if (!canRunCoordinator(a.program, key)) throw new HerdrError('bad_input', BAD_PROJECT_AGENT)
   const { program } = a
-  if (resume && !canResume(program, key)) throw new HerdrError('bad_input', `Only a Claude, Codex, Devin, Cursor or Antigravity conversation${key === MAIN ? '' : ", or omp's for a project coordinator,"} can be resumed: start a new one`)
-  const c = await prepareCoordinator(deps, key, program, urls, resume, a.model)
+  if (resumeAsked && !canResume(program)) throw new HerdrError('bad_input', 'Only a Claude, Codex, Devin, Cursor, Antigravity or omp conversation can be resumed: start a new one')
+  const c = await prepareCoordinator(deps, key, program, urls, resumeAsked, a.model)
+  const { resume } = c
   // What the user applied on its cards while it did not run, said once (a resume too).
   const notes = cardNotesMessage(before)
   // Its very first start on a git project with no accepted workflow: its first reply proposes one.

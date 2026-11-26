@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Pane } from '../shared/types'
-import { cleanTitle, maskCreds, paneOwnTitle, paneTitle } from '../shared/paneTitle'
+import { cleanTitle, maskCreds, meaningfulTitle, paneOwnTitle, paneTitle } from '../shared/paneTitle'
 
 const pane = (overrides: Partial<Pane> = {}): Pane => ({
   id: 'w1:p1', workspace: 'w1', tab: 't1', tabLabel: null,
@@ -47,22 +47,33 @@ describe('name of a pane in a space with several panes', () => {
   })
 })
 
-describe('Command Code pane titles', () => {
+describe('a Command Code pane', () => {
   const cmd = (o: Partial<Pane> = {}) => pane({ agent: 'cmd', name: 'cmd', title: '', ...o })
-  it('labels it Command Code and drops its raw names', () => {
+
+  it('is labelled by its kind when its name or title only repeats the agent', () => {
     expect(paneTitle(cmd())).toBe('Command Code')
+    expect(paneTitle(cmd({ displayAgent: 'Command Code' }))).toBe('Command Code')
     for (const title of ['cmd', 'cmdc', 'command-code', 'command_code', 'commandcode', 'Command Code'])
       expect(paneTitle(cmd({ title })), title).toBe('Command Code')
-    expect(paneTitle(cmd({ displayAgent: 'Command Code' }))).toBe('Command Code')
-    for (const name of ['cmd', 'cmdc', 'command code', 'command-code', 'command_code', 'commandcode'])
+    for (const name of ['cmd', 'cmdc', 'command code', 'command-code', 'command_code', 'commandcode', 'Command Code'])
       expect(paneTitle(cmd({ name })), name).toBe('Command Code')
-  })
-  it('keeps a name or title the user set', () => {
-    expect(paneTitle(cmd({ label: 'Import fixer' }))).toBe('Import fixer')
-    expect(paneTitle(cmd({ name: 'Import fixer' }))).toBe('Import fixer')
-    expect(paneTitle(cmd({ title: 'Import regression sweep' }))).toBe('Import regression sweep')
+    expect(paneOwnTitle(cmd({ name: 'cmdc' }))).toBe('cmd')
     expect(paneOwnTitle(cmd({ name: 'command-code' }))).toBe('cmd')
     expect(paneOwnTitle(cmd())).toBe('cmd')
+  })
+
+  it('keeps a name or title that says something', () => {
+    expect(paneTitle(cmd({ label: 'Import fixer' }))).toBe('Import fixer')
+    expect(paneTitle(cmd({ name: 'Import fixer' }))).toBe('Import fixer')
+    expect(paneTitle(cmd({ name: 'review the migration' }))).toBe('review the migration')
+    expect(paneTitle(cmd({ title: 'Import regression sweep' }))).toBe('Import regression sweep')
+    expect(paneTitle(cmd({ name: null, title: 'Fixing the parser | cmd' }))).toBe('Fixing the parser')
+  })
+
+  it('never offers its own titles as the subject of the conversation', () => {
+    expect(meaningfulTitle({ agent: 'cmd', title: 'cmdc', cwd: '/home/user' })).toBe('')
+    expect(meaningfulTitle({ agent: 'cmd', title: 'Command Code', cwd: '/home/user' })).toBe('')
+    expect(meaningfulTitle({ agent: 'cmd', title: 'Migrate the parser', cwd: '/home/user' })).toBe('Migrate the parser')
   })
 })
 

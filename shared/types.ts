@@ -281,11 +281,11 @@ export interface ChatItem {
   text: string
   ts: string | null
   name?: string
-  // Command Code tool call id: lets a result appended after the page was
-  // loaded update the item already shown (see toolUpdates).
+  // Tool call id: lets a result appended after the page was loaded update
+  // the item already shown (see toolUpdates).
   toolId?: string
-  // Command Code tool call: revision (absolute result byte offset) of the
-  // outcome applied to this item — compared when late outcomes arrive.
+  // Revision (absolute result byte offset) of the outcome applied to this
+  // tool call — compared when late outcomes arrive.
   toolAt?: number
   // Output of a 'bash' or 'cmd' command (stdout / stderr).
   out?: string
@@ -351,8 +351,10 @@ export interface OmpToolView {
 // the entry is one of wherdr's messages with photos.
 export interface ClaudeQueueEntry { text: string, ts: string | null, images?: number, sent?: string }
 
-// Outcome appended to a Command Code tool call (see ChatResponse.toolUpdates).
-export interface CommandCodeToolUpdate {
+// Outcome of a tool call appended after its call was served (see
+// ChatResponse.toolUpdates). Not specific to one reader: any transcript that
+// can report a late result by call id can reuse it.
+export interface ToolUpdate {
   id: string
   // Absolute byte offset of the result this outcome comes from: its
   // revision — an older offset arriving later must not replace a newer one.
@@ -383,9 +385,6 @@ export interface ChatResponse {
   // Temporary daemon failure: retain the current conversation and paging state.
   stale?: boolean
   items?: ChatItem[]
-  // Command Code: results appended after a tool page was loaded, matched by
-  // `toolId`, so the client can update items already on screen.
-  toolUpdates?: CommandCodeToolUpdate[]
   // Incremental re-read (server/utils/chatDelta.ts): the client keeps its
   // first `keep` items and `items` replace the rest. Absent: `items` is the
   // whole bottom of the conversation.
@@ -403,6 +402,9 @@ export interface ChatResponse {
   // Claude: entries of the most recent window pulled back out of its queue
   // into the input field and not queued again.
   popped?: ClaudeQueueEntry[]
+  // Results appended after a tool page was loaded, matched by `toolId`, so
+  // the client can update items already on screen.
+  toolUpdates?: ToolUpdate[]
   model?: ModelInfo | null
 }
 
