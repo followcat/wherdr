@@ -3,6 +3,7 @@
 // agent and a dev server (the projects' tasks: projects.ts). Everything here is fiction, in
 // English, with no real path, machine, person or conversation.
 import type { ChatItem, ModelInfo, OmpToolView, Pane, Quotas, SessionInfo, Tab, Workspace } from '#shared/types'
+import type { BacklotMachineView } from '#shared/backlot'
 import type { TaskAgent } from '#shared/pm/taskAgents'
 
 export const HOME = '/Users/demo'
@@ -299,3 +300,129 @@ export const DEV_SERVER_OUTPUT = [
   '\x1b[2m10:42:07\x1b[0m \x1b[36m[vite]\x1b[0m \x1b[32mhmr update\x1b[0m \x1b[2m/src/pages/settings.vue\x1b[0m',
   '\x1b[2m10:42:09\x1b[0m \x1b[36m[vite]\x1b[0m \x1b[32mhmr update\x1b[0m \x1b[2m/src/assets/main.css\x1b[0m',
 ]
+
+// Backlot studios for the demo's `studio` hc session, including one invented
+// studio waiting on an opening design decision.
+export function backlotMachines(now: number): BacklotMachineView[] {
+  return [{
+    session: STUDIO_SESSION,
+    machine: '',
+    label: 'demo',
+    stageRunning: true,
+    backlotVersion: '0.4.20',
+    summary: {
+      schema: 'backlot/1',
+      updated_ms: now - 5000,
+      backlot_version: '0.4.20',
+      studios: [
+        {
+          id: 'acme-pay',
+          title: 'Acme Pay',
+          state: 'live',
+          requirement_version: 1,
+          open_reviews: 0,
+          waiting: 0,
+          next: 'design sign-off — user',
+          repo: `${HOME}/code/acme-pay`,
+          tasks_done: 0,
+          tasks_total: 0,
+          tasks: [],
+          roles: [
+            { role: 'producer', name: 'producer', state: 'live', work: 'waiting', doing: 'Waiting on opening design sign-off' },
+            { role: 'director', name: 'director', state: 'live', work: 'waiting' },
+            { role: 'writer', name: 'writer', state: 'live', work: 'waiting' },
+          ],
+          needs_upgrade: false,
+          unknown_kinds: [],
+          design: {
+            version: 1,
+            round: 1,
+            phase: 'waiting_user',
+            waiting_user: true,
+            suggest_skip: false,
+            skip_reason: null,
+            doc_file: 'design/v1.md',
+            summary: 'Split-tender checkout with idempotent payment intents and webhook retries.',
+            questions: [
+              { id: 'Q1', prompt: 'Persist partial authorizations in SQLite or Postgres?', recommendation: 'Postgres row locks with an idempotency key', section_ref: '§R1.W' },
+              { id: 'Q2', prompt: 'Auto-refund remaining capture on webhook timeout?', recommendation: 'Enqueue a compensating refund after 30s', section_ref: '§R1.D' },
+            ],
+            waiting_since_ms: now - 300_000,
+          },
+        },
+        {
+          id: 'acme-shop',
+          title: 'Acme shop',
+          state: 'live',
+          requirement_version: 2,
+          open_reviews: 1,
+          waiting: 1,
+          next: 'Review t2 delivery — director',
+          repo: `${HOME}/code/acme-shop`,
+          tasks_done: 1,
+          tasks_total: 2,
+          tasks: [
+            { id: 't1', title: 'Catalog filters', status: 'accepted', priority: 'normal', requirement_version: 2, rework_rounds: 0, rework_cap: 3 },
+            { id: 't2', title: 'Checkout banner', status: 'running', priority: 'high', requirement_version: 2, rework_rounds: 0, rework_cap: 3, actor_role: 'actor-t2-c1', actor_name: 'alice' },
+          ],
+          roles: [
+            { role: 'producer', name: 'producer', terminal: 'demo/studio-producer', state: 'live', work: 'working', doing: 'Drafting the launch plan' },
+            { role: 'actor-t2-c1', name: 'alice', terminal: 'demo/studio-actor', state: 'live', work: 'blocked', task: 't2', attention: 'permission prompt', attention_user: true, attention_seq: 9, attention_detail: 'git status' },
+          ],
+          needs_upgrade: false,
+          unknown_kinds: [],
+          design: {
+            version: 2,
+            round: 1,
+            phase: 'signed',
+            waiting_user: false,
+            suggest_skip: false,
+            doc_file: 'design/v2-final.md',
+            questions: [],
+          },
+        },
+      ],
+      hollywood: null,
+    },
+  }]
+}
+
+export function backlotDesignDocs(): Record<string, string> {
+  return {
+    'acme-pay:design/v1.md': `# Design discussion · req v1: Split-tender checkout
+
+## R1
+
+### §R1.W Proposal · writer (#2)
+
+Introduce an explicit \`payment_intent_splits\` table keyed by \`idempotency_key\` so card and store-credit legs settle atomically.
+
+### §R1.D Buildability · director (#3)
+
+Build fits into two tasks: ledger migration first, then checkout webhook compensator with 30s timeout handling.
+
+### §R1.P Summary · producer (#4)
+
+Split-tender checkout with idempotent payment intents and webhook retries.
+
+#### Questions
+
+- **Q1**: Persist partial authorizations in SQLite or Postgres? *(recommendation: Postgres row locks with an idempotency key, ref: §R1.W)*
+- **Q2**: Auto-refund remaining capture on webhook timeout? *(recommendation: Enqueue a compensating refund after 30s, ref: §R1.D)*
+`,
+    'acme-shop:design/v2-final.md': `# Design discussion · req v2: Seasonal launch banner
+
+## R1
+
+### §R1.W Proposal · writer (#1)
+
+Render the seasonal promo banner above checkout totals.
+
+## Sign-off (#4)
+
+- Signer: user
+- Mode: approved
+- Round: r1
+`,
+  }
+}

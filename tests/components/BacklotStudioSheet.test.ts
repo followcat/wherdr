@@ -4,12 +4,13 @@ import { mountSuspended, mockNuxtImport, registerEndpoint } from '@nuxt/test-uti
 import { readBody, setResponseStatus } from 'h3'
 import BacklotStudioSheet from '~/components/BacklotStudioSheet.vue'
 import { allSessionsState, herdrState, pickSessionTab } from '~/composables/useHerdr'
-import type { BacklotMachineView, BacklotRole, BacklotStudio } from '#shared/backlot'
+import type { BacklotDesign, BacklotMachineView, BacklotRole, BacklotStudio } from '#shared/backlot'
 
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }))
 mockNuxtImport('navigateTo', () => navigate)
 
 registerEndpoint('/api/backlot', () => ({ ok: true, machines: [] }))
+registerEndpoint('/api/backlot/doc', () => ({ ok: true, file: 'design/v1.md', text: '# Design\n\n## R1\n\n### §R1.W Proposal\n\nBody\n', truncated: false }))
 const posts: unknown[] = []
 let failAction = false
 registerEndpoint('/api/backlot/action', { method: 'POST', handler: async (event) => {
@@ -19,6 +20,17 @@ registerEndpoint('/api/backlot/action', { method: 'POST', handler: async (event)
 } })
 
 const role = (more: Partial<BacklotRole> = {}): BacklotRole => ({ role: 'dev', name: 'alice', terminal: 'host-a/t1', state: 'live', work: 'working', doing: 'writing the form', ...more })
+const design = (more: Partial<BacklotDesign> = {}): BacklotDesign => ({
+  version: 1,
+  round: 1,
+  phase: 'waiting_user',
+  waiting_user: true,
+  suggest_skip: false,
+  doc_file: 'design/v1.md',
+  summary: 'Two-step checkout design.',
+  questions: [{ id: 'Q1', prompt: 'Enable Stripe Link?', recommendation: 'Yes', section_ref: '§R1.P' }],
+  ...more,
+})
 const studio = (more: Partial<BacklotStudio> = {}): BacklotStudio => ({ id: 'shop', title: 'Acme shop', state: 'live', requirement_version: 4, open_reviews: 0, waiting: 1, roles: [], ...more })
 const machine = (more: Partial<BacklotMachineView> = {}): BacklotMachineView => ({
   machine: '', label: 'host-a', stageRunning: true, backlotVersion: '1.0.0',
@@ -166,4 +178,54 @@ it('sends the machine session on studio actions and opens the terminal of that s
 
   $('[data-testid="backlot-role-dev"] .bls-role-main')!.click()
   await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith(`/a/${encodeURIComponent(`s${secKey}~w1:p1`)}`))
+})
+
+it('shows design decision in the studio sheet, Reply opens the existing producer tell form, and Sign off confirms first', async () => {
+  const s = studio({
+    id: 'acme-shop',
+    roles: [role({ role: 'producer', name: 'producer', terminal: 'host-a/t2' })],
+    design: design(),
+  })
+  await mountSheet(s)
+  const sheet = $('[data-testid="backlot-studio-sheet"]')!
+  expect(sheet.textContent).toContain('Two-step checkout design.')
+  expect(sheet.textContent).toContain('Enable Stripe Link?')
+
+  // Reply opens the existing producer Tell form in the Cast section.
+  await press('[data-testid="backlot-design-reply"]')
+  await wait('[data-testid="backlot-role-producer"] [data-testid="backlot-tell-send"]')
+  await type('[data-testid="backlot-role-producer"] input', 'Proceed with Stripe Link')
+  await press('[data-testid="backlot-role-producer"] [data-testid="backlot-tell-send"]')
+  await vi.waitFor(() => expect(posts.at(-1)).toEqual({
+    kind: 'tell', machine: '', studio: 'acme-shop', role: 'producer', text: 'Proceed with Stripe Link',
+  }))
+
+  // Sign off confirmation: cancel sends nothing; confirm sends design-sign.
+  await press('[data-testid="backlot-design-sign"]')
+  expect($('[data-testid="backlot-design-confirm"]')?.textContent).toContain('design/v1-final.md')
+  const before = posts.length
+  await press('[data-testid="backlot-design-confirm-cancel"]')
+  expect($('[data-testid="backlot-design-confirm"]')).toBeNull()
+  expect(posts).toHaveLength(before)
+
+  await press('[data-testid="backlot-design-sign"]')
+  await press('[data-testid="backlot-design-confirm-submit"]')
+  await vi.waitFor(() => expect(posts.at(-1)).toEqual({ kind: 'design-sign', machine: '', studio: 'acme-shop', skip: false }))
+})
+
+it('shows upgrade banner and disables studio actions when needs_upgrade is true', async () => {
+  const s = studio({
+    id: 'acme-shop',
+    needs_upgrade: true,
+    unknown_kinds: ['design.v2'],
+    roles: [role({ attention: 'permission prompt', attention_seq: 9 })],
+    design: design(),
+  })
+  await mountSheet(s)
+  expect($('[data-testid="backlot-upgrade-banner"]')?.textContent?.toLowerCase()).toContain('upgrade backlot')
+  expect($<HTMLButtonElement>('[data-testid="backlot-allow"]')?.disabled).toBe(true)
+  expect($<HTMLButtonElement>('[data-testid="backlot-deny"]')?.disabled).toBe(true)
+  expect($<HTMLButtonElement>('[data-testid="backlot-clear"]')?.disabled).toBe(true)
+  expect($<HTMLButtonElement>('[data-testid="backlot-role-tell"]')?.disabled).toBe(true)
+  expect($<HTMLButtonElement>('[data-testid="backlot-design-sign"]')?.disabled).toBe(true)
 })

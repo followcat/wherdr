@@ -196,4 +196,16 @@ describe('demo server', () => {
     expect(scriptFor('claude', 'Can you run the tests?', 0).approval).toBe('npm test')
     expect(scriptFor('codex', 'Merge it', 0).approval).toBe('git push origin HEAD')
   })
+
+  it('serves the demo backlot studio waiting on an opening design decision', () => {
+    const s = new DemoServer(clock())
+    const bl = s.handle('GET', '/api/backlot')
+    expect(bl.status).toBe(200)
+    const doc = s.handle('GET', '/api/backlot/doc?studio=acme-pay&file=design%2Fv1.md')
+    expect(doc.status).toBe(200)
+    expect((doc.body as { text: string }).text).toContain('### §R1.W')
+    expect(s.handle('GET', '/api/backlot/doc?studio=acme-pay&file=../secret.md').status).toBe(400)
+    const sign = s.handle('POST', '/api/backlot/action', { kind: 'design-sign', session: 's0123456789abcdef', machine: '', studio: 'acme-pay', skip: false })
+    expect(sign.status).toBe(200)
+  })
 })

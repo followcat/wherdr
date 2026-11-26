@@ -1,7 +1,7 @@
 // The Studio view's data: the backlot summary of each machine, polled lazily
 // while the home list is visible (never part of the home first load), and the
 // validated actions run on a studio's machine.
-import type { BacklotAction, BacklotMachineView, BacklotStudio } from '#shared/backlot'
+import type { BacklotAction, BacklotDocQuery, BacklotMachineView, BacklotStudio } from '#shared/backlot'
 import { api, netDown, offlineView, sessionTabPick } from './useHerdr'
 
 export interface BacklotStudioView {
@@ -89,8 +89,19 @@ export async function runBacklotAction(action: BacklotAction) {
   return r
 }
 
+// Read-only fetch of a studio's opening design document (`design/v<N>.md` or `-final.md`).
+export async function fetchBacklotDesignDoc(query: BacklotDocQuery) {
+  const q = new URLSearchParams({
+    machine: query.machine,
+    studio: query.studio,
+    file: query.file,
+    ...(query.session !== undefined ? { session: query.session } : {}),
+  })
+  return api<{ ok: boolean, file?: string, text?: string, truncated?: boolean, error?: string }>(`/api/backlot/doc?${q.toString()}`)
+}
+
 export function useBacklot() {
   onMounted(startBacklotPolling)
   onUnmounted(stopBacklotPolling)
-  return { backlotMachines, allBacklotMachines, backlotStudios, backlotError, refreshBacklot, runBacklotAction }
+  return { backlotMachines, allBacklotMachines, backlotStudios, backlotError, refreshBacklot, runBacklotAction, fetchBacklotDesignDoc }
 }

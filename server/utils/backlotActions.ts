@@ -2,7 +2,9 @@
 // machine through herdr-core: a validated argv, shell-quoted one by one, in a
 // one-off terminal that leaves no pane behind.
 import { CoreError } from './core'
-import { buildBacklotCommand, validateBacklotAction } from '../../shared/backlot'
+import {
+  buildBacklotCommand, buildBacklotReportCommand, validateBacklotAction, validateBacklotDocQuery,
+} from '../../shared/backlot'
 
 type Call = <T>(method: string, params: object, timeout: number) => Promise<T>
 
@@ -13,12 +15,28 @@ export interface BacklotActionDeps {
   waitMs?: number
 }
 
+export interface BacklotDocDeps {
+  call: Call
+  waitMs?: number
+}
+
 export interface BacklotActionResult {
   ok: boolean
   output?: string
   error?: string
   status?: number
 }
+
+export interface BacklotDocResult {
+  ok: boolean
+  file?: string
+  text?: string
+  truncated?: boolean
+  error?: string
+  status?: number
+}
+
+export const MAX_DESIGN_DOC_CHARS = 256 * 1024
 
 // herdr-core's terminal.run answer (RunResult in tests/fixtures/core-0.1.17.json).
 // With `wait`, `wait` tells how the wait ended and `output` holds the screen.
@@ -52,18 +70,21 @@ export function backlotLine(args: string[]): string {
 }
 
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g
-const concise = (text: string) => text.replace(ANSI, '').split('\n').map(l => l.trimEnd()).filter(Boolean).slice(-20).join('\n').slice(-4000)
+const stripAnsi = (text: string) => text.replace(ANSI, '').replace(/\r\n/g, '\n')
+const concise = (text: string) => stripAnsi(text).split('\n').map(l => l.trimEnd()).filter(Boolean).slice(-20).join('\n').slice(-4000)
 
 const unreachable = (e: unknown) => e instanceof CoreError && ['unavailable', 'disconnected', 'unreachable', 'timeout', 'protocol'].includes(e.kind)
 const missing = (code: number | null) => code === 126 || code === 127
 
-export async function runBacklotAction(deps: BacklotActionDeps, input: unknown): Promise<BacklotActionResult> {
-  const action = validateBacklotAction(input)
-  if (!action) return { ok: false, status: 400, error: 'Invalid action' }
-  const args = buildBacklotCommand(action)
+async function execBacklot(
+  deps: { call: Call, waitMs?: number },
+  args: string[],
+  machine: string,
+  raw = false,
+): Promise<BacklotActionResult> {
   const params = {
     line: backlotLine(args),
-    ...(action.machine ? { on: action.machine } : {}),
+    ...(machine ? { on: machine } : {}),
     // `rm` reaps the terminal only once a waiting parent has its exit code:
     // without `wait`, a fast command vanishes before we can read its result.
     wait: true,
@@ -101,6 +122,30 @@ export async function runBacklotAction(deps: BacklotActionDeps, input: unknown):
   }
   // A core too old to report `wait` did not necessarily reap the terminal after `rm`.
   if (!r.wait) await deps.call('terminal.rm', { terminal: r.address }, 3000).catch(() => {})
-  deps.clearDocs()
-  return { ok: true, output }
+  return { ok: true, output: raw ? stripAnsi(r.output ?? '').trimEnd() : output }
+}
+
+export async function runBacklotAction(deps: BacklotActionDeps, input: unknown): Promise<BacklotActionResult> {
+  const action = validateBacklotAction(input)
+  if (!action) return { ok: false, status: 400, error: 'Invalid action' }
+  const result = await execBacklot(deps, buildBacklotCommand(action), action.machine)
+  if (result.ok) deps.clearDocs()
+  return result
+}
+
+export async function readBacklotDesignDoc(deps: BacklotDocDeps, input: unknown): Promise<BacklotDocResult> {
+  const query = validateBacklotDocQuery(input)
+  if (!query) return { ok: false, status: 400, error: 'Invalid design document request' }
+  const result = await execBacklot(deps, buildBacklotReportCommand(query.studio, query.file), query.machine, true)
+  if (!result.ok) {
+    return { ok: false, status: result.status, error: result.error }
+  }
+  const raw = result.output ?? ''
+  const truncated = raw.length > MAX_DESIGN_DOC_CHARS
+  return {
+    ok: true,
+    file: query.file,
+    text: truncated ? raw.slice(0, MAX_DESIGN_DOC_CHARS) : raw,
+    truncated,
+  }
 }

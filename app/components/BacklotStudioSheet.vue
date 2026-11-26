@@ -29,6 +29,26 @@ const busy = ref('')
 const feedback = ref<{ ok: boolean, text: string } | null>(null)
 const tellRole = ref('')
 const tellText = ref('')
+const docFile = ref<string | null>(null)
+const docOpen = ref(false)
+const hasProducer = computed(() => roles.value.some(r => r.role === 'producer'))
+const studioLocked = computed(() => Boolean(props.studio?.needs_upgrade))
+
+function openDoc(file: string) {
+  docFile.value = file
+  docOpen.value = true
+}
+
+function openProducerReply() {
+  if (studioLocked.value || !hasProducer.value) return
+  tellRole.value = 'producer'
+  tellText.value = ''
+  void nextTick(() => {
+    const input = document.querySelector<HTMLInputElement>('[data-testid="backlot-role-producer"] input')
+    input?.scrollIntoView?.({ block: 'nearest' })
+    input?.focus?.()
+  })
+}
 
 const sessionPanes = computed(() => {
   const sk = props.machine?.session
@@ -62,16 +82,16 @@ async function act(key: string, action: BacklotAction) {
   }
 }
 function approve(role: BacklotRole, decision: 'allow' | 'deny') {
-  if (!props.machine || !props.studio) return
+  if (!props.machine || !props.studio || studioLocked.value) return
   void act(`approve-${role.role}`, { kind: 'approve', ...backlotActionTarget(props.machine), studio: props.studio.id, person: role.name, decision })
 }
 function clearAttention(role: BacklotRole) {
-  if (!props.machine || !props.studio || role.attention_seq == null) return
+  if (!props.machine || !props.studio || studioLocked.value || role.attention_seq == null) return
   void act(`clear-${role.role}`, { kind: 'attention-clear', ...backlotActionTarget(props.machine), studio: props.studio.id, seq: role.attention_seq })
 }
 function tell(role: BacklotRole) {
   const text = tellText.value.trim()
-  if (!props.machine || !props.studio || !text) return
+  if (!props.machine || !props.studio || studioLocked.value || !text) return
   const finish = () => { tellRole.value = ''; tellText.value = '' }
   void act(`tell-${role.role}`, { kind: 'tell', ...backlotActionTarget(props.machine), studio: props.studio.id, role: role.role, text })
     .then(() => { if (feedback.value?.ok) finish() })
@@ -89,6 +109,8 @@ watch(() => [props.machine?.session, props.machine?.machine, props.studio?.id], 
   feedback.value = null
   tellRole.value = ''
   tellText.value = ''
+  docOpen.value = false
+  docFile.value = null
 })
 </script>
 
@@ -115,6 +137,11 @@ watch(() => [props.machine?.session, props.machine?.machine, props.studio?.id], 
 
       <p v-if="feedback" :class="feedback.ok ? 'bl-note' : 'bl-error'" :role="feedback.ok ? 'status' : 'alert'" data-testid="backlot-feedback">{{ feedback.text }}</p>
 
+      <BacklotDesignDecision
+        :machine="machine" :studio="studio" :external-reply="hasProducer" :disabled="!!busy"
+        @read="openDoc" @reply="openProducerReply" @acted="feedback = $event"
+      />
+
       <section v-if="attentions.length" class="bls-block" data-testid="backlot-attentions">
         <h3 class="bls-title">{{ t('Waiting for you') }}</h3>
         <div v-for="role in attentions" :key="`att-${role.role}`" class="bls-att" :data-testid="`backlot-attention-${role.role}`">
@@ -125,13 +152,13 @@ watch(() => [props.machine?.session, props.machine?.machine, props.studio?.id], 
             <p v-if="role.attention_detail" class="bl-line">{{ role.attention_detail }}</p>
           </div>
           <div class="bls-actions">
-            <button v-if="role.attention === 'permission prompt'" type="button" class="mono-btn bl-btn" :disabled="!!busy" data-testid="backlot-allow" @click="approve(role, 'allow')">
+            <button v-if="role.attention === 'permission prompt'" type="button" class="mono-btn bl-btn" :disabled="studioLocked || !!busy" data-testid="backlot-allow" @click="approve(role, 'allow')">
               <UIcon name="i-lucide-check" />{{ t('Allow') }}
             </button>
-            <button v-if="role.attention === 'permission prompt'" type="button" class="mono-btn bl-btn" :disabled="!!busy" data-testid="backlot-deny" @click="approve(role, 'deny')">
+            <button v-if="role.attention === 'permission prompt'" type="button" class="mono-btn bl-btn" :disabled="studioLocked || !!busy" data-testid="backlot-deny" @click="approve(role, 'deny')">
               <UIcon name="i-lucide-ban" />{{ t('Deny') }}
             </button>
-            <button v-if="role.attention_seq != null" type="button" class="mono-btn bl-btn" :disabled="!!busy" data-testid="backlot-clear" @click="clearAttention(role)">
+            <button v-if="role.attention_seq != null" type="button" class="mono-btn bl-btn" :disabled="studioLocked || !!busy" data-testid="backlot-clear" @click="clearAttention(role)">
               <UIcon name="i-lucide-eraser" />{{ t('Clear') }}
             </button>
           </div>
@@ -152,12 +179,12 @@ watch(() => [props.machine?.session, props.machine?.machine, props.studio?.id], 
                 <span v-else-if="role.doing" class="bl-line">{{ role.doing }}</span>
               </span>
             </button>
-            <button type="button" class="mono-btn bl-btn" :aria-expanded="tellRole === role.role" data-testid="backlot-role-tell" @click="tellRole = tellRole === role.role ? '' : role.role">
+            <button type="button" class="mono-btn bl-btn" :disabled="studioLocked" :aria-expanded="tellRole === role.role" data-testid="backlot-role-tell" @click="tellRole = tellRole === role.role ? '' : role.role">
               <UIcon name="i-lucide-send" />{{ t('Tell') }}
             </button>
             <form v-if="tellRole === role.role" class="bls-tell" @submit.prevent="tell(role)">
-              <input v-model="tellText" class="bl-input" :placeholder="tl(`Tell ${role.name}…`)" :aria-label="tl(`Tell ${role.name}…`)" maxlength="4000">
-              <button type="submit" class="mono-btn bl-btn" :disabled="!!busy || !tellText.trim()" data-testid="backlot-tell-send">{{ t('Send') }}</button>
+              <input v-model="tellText" class="bl-input" :placeholder="tl(`Tell ${role.name}…`)" :aria-label="tl(`Tell ${role.name}…`)" maxlength="4000" :disabled="studioLocked">
+              <button type="submit" class="mono-btn bl-btn" :disabled="studioLocked || !!busy || !tellText.trim()" data-testid="backlot-tell-send">{{ t('Send') }}</button>
             </form>
           </li>
         </ul>
@@ -197,6 +224,7 @@ watch(() => [props.machine?.session, props.machine?.machine, props.studio?.id], 
         </ul>
       </section>
     </div>
+    <BacklotDesignDocSheet v-model:open="docOpen" :machine="machine" :studio="studio" :file="docFile" />
   </AppSheet>
 </template>
 
