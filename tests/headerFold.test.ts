@@ -27,4 +27,8 @@ describe('headerFold', () => {
     // A 130 px widget in header-actions leaves too little room for 3 buttons, so Search and Board fold.
     expect(headerFold(358, 3, 2, 130)).toBe(2)
   })
+  it('accounts for the eyebrow width a session switcher needs', () => {
+    expect(headerFold(328, 3, 2, 0, 170)).toBe(0)
+    expect(headerFold(328, 3, 2, 0, 250)).toBe(2)
+  })
 })

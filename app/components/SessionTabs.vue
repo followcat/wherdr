@@ -29,7 +29,7 @@ const cls = computed(() => props.rail ? 'session-tabs rail' : 'session-tabs')
   flex: 0 1 auto;
   min-width: 0;
   max-width: 100%;
-  gap: 6px;
+  gap: 4px;
   overflow-x: auto;
   scrollbar-width: none;
   padding: 0 2px;
@@ -39,46 +39,50 @@ const cls = computed(() => props.rail ? 'session-tabs rail' : 'session-tabs')
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  gap: 6px;
+  gap: 5px;
   max-width: 150px;
-  min-height: 28px;
-  padding: 4px 10px;
+  min-height: 30px;
+  padding: 4px 8px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 0;
   color: var(--muted);
   background: transparent;
-  font: inherit;
-  font-size: 13px;
+  font: 500 10.5px/1 var(--mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
   cursor: pointer;
   white-space: nowrap;
 }
+.session-tab:hover { color: var(--text); background: var(--surface-2); }
+.session-tab:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 .session-tab.active {
-  color: var(--fg);
+  color: var(--accent);
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
-.session-name { overflow: hidden; text-overflow: ellipsis; }
-.session-waiting { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.session-tab.offline { color: var(--dim); }
+.session-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.session-waiting { display: inline-flex; align-items: center; gap: 4px; font-size: 9.5px; }
 .state-square {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   display: inline-block;
-  border-radius: 1px;
-  background: var(--warn);
+  background: var(--blocked);
 }
 .rail {
   flex-direction: column;
+  align-items: center;
   overflow-x: visible;
   overflow-y: auto;
   width: 100%;
-  padding: 0;
+  padding: 8px 0 0;
 }
 .rail .session-tab {
-  width: 100%;
-  max-width: none;
+  width: 48px;
+  max-width: 48px;
   min-height: 32px;
   justify-content: center;
-  padding: 4px 6px;
-  font-size: 12px;
+  padding: 4px;
+  font-size: 9px;
 }
 </style>
