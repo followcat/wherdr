@@ -1,7 +1,3 @@
-## Unreleased
-
-- Automatically discovers local hc sessions and presents them as independent session tabs with real machine identity and session-scoped pane IDs.
-
 # Changelog
 
 All notable changes to this project are documented here. The format follows
@@ -14,7 +10,7 @@ All notable changes to this project are documented here. The format follows
 
 - **Studio groups on Home.** Backlot studio roles and Hollywood fold into collapsible groups with live states, per-role rows and counters, stage/server daemons stay hidden, and Settings › Machines can find and add local hc sessions.
 
-- **Multiple herdr-core sessions in one wherdr.** Pass extra core sockets explicitly via `HC_SOCKETS` (`wherdr --hc-sockets <paths>`) or `hcSockets` in `settings.json` (never auto-scanned) to show terminals from additional sessions alongside your primary `HC_SOCKET` session under the same machine tab. Each session keeps its own connection, state and push alerts so a missing or slow secondary session never affects the primary one, backlot stage/server daemons stay silent while `actor-*` finished chimes default off, and the Studio view reads from whichever session publishes `backlot` ([herdr-core › Setup](docs/core.md#setup), [Configuration](docs/configuration.md#configuration)).
+- **Every hc session on this computer is its own tab.** wherdr finds the herdr-core sessions in the runtime directory by itself (holder sockets and anything that does not answer as a core are skipped) and checks again every 10 seconds, so a session that starts or stops appears or goes without a restart. Home and the rail show one tab per session that has terminals, with its waiting count; backlot studios show in their own session's tab, and opening a pane from a notification or a link switches to its tab. The primary `HC_SOCKET` session keeps its pane IDs, so links already sent still work. Each session keeps its own connection, state and push alerts, so a missing or slow session never affects the others, and Machines lists only real machines. `HC_SOCKETS` still adds sockets outside the runtime directory; the `hcSockets` setting is gone ([herdr-core › Setup](docs/core.md#setup), [Configuration](docs/configuration.md#configuration)).
 
 - **The terminal stays open when you leave it.** Switching to the conversation and back, or swiping to another agent and returning, used to download and repaint the whole terminal history every time. The view now parks its terminal and its connection instead: the next visit shows the same screen at once, with nothing fetched and nothing replayed. Two recently viewed terminals are kept for two minutes, then closed; a hidden page closes them at once. A terminal whose connection ended while parked (another viewer took control, a wake-up) opens fresh, as before.
 - **A terminal opens on a few screens, not a thousand lines.** The history downloaded on every open is now a fifth of what it was (about 15 KB instead of 76 KB on a phone), so the terminal appears sooner. Scrolling back to the top of what it holds fetches the rest — up to 5000 lines — once, on the same connection, with a short "Loading earlier output" strip while it comes, and the view stays on the line you were reading. An app on its alternate screen keeps its own history, as before.
