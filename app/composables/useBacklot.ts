@@ -2,7 +2,7 @@
 // while the home list is visible (never part of the home first load), and the
 // validated actions run on a studio's machine.
 import type { BacklotAction, BacklotMachineView, BacklotStudio } from '#shared/backlot'
-import { api, netDown, offlineView } from './useHerdr'
+import { api, netDown, offlineView, sessionTabPick } from './useHerdr'
 
 export interface BacklotStudioView {
   machine: string
@@ -12,7 +12,12 @@ export interface BacklotStudioView {
   studio: BacklotStudio
 }
 
-export const backlotMachines = shallowRef<BacklotMachineView[]>([])
+export function filterBacklotBySession(machines: readonly BacklotMachineView[], sessionKey: string): BacklotMachineView[] {
+  return machines.filter(m => (m.session ?? '') === sessionKey)
+}
+
+export const allBacklotMachines = shallowRef<BacklotMachineView[]>([])
+export const backlotMachines = computed<BacklotMachineView[]>(() => filterBacklotBySession(allBacklotMachines.value, sessionTabPick.value))
 export const backlotError = ref('')
 export const backlotLoaded = ref(false)
 export const backlotStudios = computed<BacklotStudioView[]>(() => backlotMachines.value.flatMap(doc =>
@@ -29,11 +34,11 @@ export function refreshBacklot(): Promise<void> {
     try {
       const r = await api<{ ok: boolean, machines: BacklotMachineView[], error?: string }>('/api/backlot')
       if (r.ok) {
-        backlotMachines.value = Array.isArray(r.machines) ? r.machines : []
+        allBacklotMachines.value = Array.isArray(r.machines) ? r.machines : []
         backlotError.value = ''
       } else {
         backlotError.value = r.error || 'Backlot unavailable'
-        backlotMachines.value = []
+        allBacklotMachines.value = []
       }
     } catch (e) {
       // A read that fails keeps the last known studios: the home list does not change around it.
@@ -87,5 +92,5 @@ export async function runBacklotAction(action: BacklotAction) {
 export function useBacklot() {
   onMounted(startBacklotPolling)
   onUnmounted(stopBacklotPolling)
-  return { backlotMachines, backlotStudios, backlotError, refreshBacklot, runBacklotAction }
+  return { backlotMachines, allBacklotMachines, backlotStudios, backlotError, refreshBacklot, runBacklotAction }
 }

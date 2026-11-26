@@ -3,10 +3,11 @@
 // Hollywood cards it owns. A live role opens its terminal; every action runs
 // on the studio's machine through /api/backlot/action.
 import type { BacklotAction, BacklotCard, BacklotMachineView, BacklotRole, BacklotStudio, BacklotVisualState } from '#shared/backlot'
-import { roleVisualState, studioVisualState, studioWaitingAttentions } from '#shared/backlot'
+import { backlotActionTarget, roleVisualState, studioVisualState, studioWaitingAttentions } from '#shared/backlot'
 import { runBacklotAction } from '~/composables/useBacklot'
-import { herdrState } from '~/composables/useHerdr'
+import { allSessionsState, herdrState } from '~/composables/useHerdr'
 import { panePath } from '~/composables/useWorkspaces'
+import { paneSessionName } from '~/utils/sessionTabs'
 
 const props = defineProps<{ machine: BacklotMachineView | null, studio: BacklotStudio | null }>()
 const open = defineModel<boolean>('open', { default: false })
@@ -29,10 +30,17 @@ const feedback = ref<{ ok: boolean, text: string } | null>(null)
 const tellRole = ref('')
 const tellText = ref('')
 
+const sessionPanes = computed(() => {
+  const sk = props.machine?.session
+  if (sk === undefined || !allSessionsState.value.sessions?.length) return herdrState.value.panes
+  const tab = allSessionsState.value.sessions.find(s => s.key === sk)
+  if (!tab) return []
+  return allSessionsState.value.panes.filter(p => paneSessionName(p, allSessionsState.value) === tab.name)
+})
 const paneOf = (role: BacklotRole) => {
   const address = role.terminal
   if (!address) return null
-  return herdrState.value.panes.find(p => p.coreAddress === address || p.id === address) ?? null
+  return sessionPanes.value.find(p => p.coreAddress === address || p.id === address) ?? null
 }
 function openRole(role: BacklotRole) {
   const pane = paneOf(role)
@@ -55,27 +63,33 @@ async function act(key: string, action: BacklotAction) {
 }
 function approve(role: BacklotRole, decision: 'allow' | 'deny') {
   if (!props.machine || !props.studio) return
-  void act(`approve-${role.role}`, { kind: 'approve', machine: props.machine.machine, studio: props.studio.id, person: role.name, decision })
+  void act(`approve-${role.role}`, { kind: 'approve', ...backlotActionTarget(props.machine), studio: props.studio.id, person: role.name, decision })
 }
 function clearAttention(role: BacklotRole) {
   if (!props.machine || !props.studio || role.attention_seq == null) return
-  void act(`clear-${role.role}`, { kind: 'attention-clear', machine: props.machine.machine, studio: props.studio.id, seq: role.attention_seq })
+  void act(`clear-${role.role}`, { kind: 'attention-clear', ...backlotActionTarget(props.machine), studio: props.studio.id, seq: role.attention_seq })
 }
 function tell(role: BacklotRole) {
   const text = tellText.value.trim()
   if (!props.machine || !props.studio || !text) return
   const finish = () => { tellRole.value = ''; tellText.value = '' }
-  void act(`tell-${role.role}`, { kind: 'tell', machine: props.machine.machine, studio: props.studio.id, role: role.role, text })
+  void act(`tell-${role.role}`, { kind: 'tell', ...backlotActionTarget(props.machine), studio: props.studio.id, role: role.role, text })
     .then(() => { if (feedback.value?.ok) finish() })
 }
 function cardAction(card: BacklotCard, kind: 'card-apply' | 'card-cancel') {
   if (!props.machine) return
-  void act(`${kind}-${card.id}`, { kind, machine: props.machine.machine, cardId: card.id })
+  void act(`${kind}-${card.id}`, { kind, ...backlotActionTarget(props.machine), cardId: card.id })
 }
 function startStage() {
   if (!props.machine) return
-  void act('stage-start', { kind: 'stage-start', machine: props.machine.machine })
+  void act('stage-start', { kind: 'stage-start', ...backlotActionTarget(props.machine) })
 }
+watch(() => [props.machine?.session, props.machine?.machine, props.studio?.id], () => {
+  busy.value = ''
+  feedback.value = null
+  tellRole.value = ''
+  tellText.value = ''
+})
 </script>
 
 <template>

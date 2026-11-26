@@ -3,15 +3,16 @@
 // machine's `backlot/1` document, its Hollywood cards and the stage's state.
 // Renders nothing at all when no machine publishes a document.
 import type { BacklotAction, BacklotCard, BacklotMachineView, BacklotStudio, BacklotVisualState } from '#shared/backlot'
-import { studioVisualState } from '#shared/backlot'
-import { useBacklot } from '~/composables/useBacklot'
+import { backlotActionTarget, studioVisualState } from '#shared/backlot'
+import { filterBacklotBySession, useBacklot } from '~/composables/useBacklot'
 import { machineBarSelection } from '~/composables/useMachineBar'
-import { machines } from '~/composables/useHerdr'
+import { machines, sessionTabPick } from '~/composables/useHerdr'
 
 const props = defineProps<{ machines?: BacklotMachineView[] }>()
 const { backlotMachines, runBacklotAction } = useBacklot()
 
-const source = computed(() => props.machines ?? backlotMachines.value)
+const sessionMachines = computed(() => (props.machines ? filterBacklotBySession(props.machines, sessionTabPick.value) : backlotMachines.value))
+const docKey = (m: Pick<BacklotMachineView, 'session' | 'machine'>) => `${m.session ?? ''}\0${m.machine}`
 // A machine name as the bar names it ('' is this machine); an unknown name is kept as is.
 function baseKey(machine: string) {
   if (machine === '') return ''
@@ -20,8 +21,8 @@ function baseKey(machine: string) {
 }
 const visibleMachines = computed(() => {
   const selection = machineBarSelection.value
-  if (!selection?.length) return source.value
-  return source.value.filter(m => selection.includes(baseKey(m.machine)))
+  if (!selection?.length) return sessionMachines.value
+  return sessionMachines.value.filter(m => selection.includes(baseKey(m.machine)))
 })
 const multi = computed(() => visibleMachines.value.length > 1)
 const stopped = computed(() => visibleMachines.value.filter(m => m.summary.studios.length && !m.stageRunning))
@@ -44,9 +45,10 @@ function openStudio(doc: BacklotMachineView, studio: BacklotStudio) {
 const stageBusy = ref<string | null>(null)
 const stageError = ref('')
 async function startStage(m: BacklotMachineView) {
-  stageBusy.value = m.machine
+  const key = docKey(m)
+  stageBusy.value = key
   stageError.value = ''
-  try { await runBacklotAction({ kind: 'stage-start', machine: m.machine }) }
+  try { await runBacklotAction({ kind: 'stage-start', ...backlotActionTarget(m) }) }
   catch (e) { stageError.value = (e as Error).message }
   finally { stageBusy.value = null }
 }
@@ -64,11 +66,12 @@ const hollyNote = ref('')
 async function tellHollywood(m: BacklotMachineView) {
   const text = hollyText.value.trim()
   if (!text) return
-  hollyBusy.value = m.machine
+  const key = docKey(m)
+  hollyBusy.value = key
   hollyError.value = ''
   hollyNote.value = ''
   try {
-    await runBacklotAction({ kind: 'tell-hollywood', machine: m.machine, text })
+    await runBacklotAction({ kind: 'tell-hollywood', ...backlotActionTarget(m), text })
     hollyText.value = ''
     hollyTell.value = null
     hollyNote.value = t('Sent')
@@ -81,21 +84,42 @@ async function cardAction(m: BacklotMachineView, card: BacklotCard, kind: 'card-
   hollyError.value = ''
   hollyNote.value = ''
   try {
-    const action: BacklotAction = { kind, machine: m.machine, cardId: card.id }
+    const action: BacklotAction = { kind, ...backlotActionTarget(m), cardId: card.id }
     await runBacklotAction(action)
   } catch (e) { hollyError.value = (e as Error).message }
   finally { cardBusy.value = null }
 }
+
+watch(sessionTabPick, () => {
+  sheetOpen.value = false
+  sheetDoc.value = null
+  sheetStudio.value = null
+  hollyTell.value = null
+  hollyText.value = ''
+  hollyError.value = ''
+  hollyNote.value = ''
+  stageError.value = ''
+})
+
+watch(visibleMachines, (list) => {
+  if (!sheetOpen.value || !sheetDoc.value || !sheetStudio.value) return
+  const nextDoc = list.find(m => docKey(m) === docKey(sheetDoc.value!))
+  const nextStudio = nextDoc?.summary.studios.find(s => s.id === sheetStudio.value!.id)
+  if (nextDoc && nextStudio) {
+    sheetDoc.value = nextDoc
+    sheetStudio.value = nextStudio
+  }
+})
 </script>
 
 <template>
   <section v-if="visibleMachines.length" class="bl-section" data-testid="backlot-section">
     <h2 class="group-title"><span>{{ t('Studios') }}</span><span v-if="waitingTotal" class="count" data-testid="backlot-waiting">{{ waitingTotal }}</span></h2>
 
-    <div v-for="m in stopped" :key="`stage-${m.machine}`" class="bl-notice" data-testid="backlot-stage-notice">
+    <div v-for="m in stopped" :key="`stage-${docKey(m)}`" class="bl-notice" data-testid="backlot-stage-notice">
       <span class="card-state blocked" aria-hidden="true"><i /></span>
       <span class="bl-notice-text">{{ multi ? `${m.label} · ` : '' }}{{ t('Stage not running') }}</span>
-      <button type="button" class="mono-btn bl-btn" :disabled="stageBusy === m.machine" data-testid="backlot-stage-start" @click="startStage(m)">
+      <button type="button" class="mono-btn bl-btn" :disabled="stageBusy === docKey(m)" data-testid="backlot-stage-start" @click="startStage(m)">
         <UIcon name="i-lucide-play" />{{ t('Start stage') }}
       </button>
     </div>
@@ -103,7 +127,7 @@ async function cardAction(m: BacklotMachineView, card: BacklotCard, kind: 'card-
 
     <div class="bl-studios">
       <button
-        v-for="{ doc, studio } in studios" :key="`${doc.machine}-${studio.id}`" type="button" class="bl-studio"
+        v-for="{ doc, studio } in studios" :key="`${docKey(doc)}-${studio.id}`" type="button" class="bl-studio"
         :data-testid="`backlot-studio-${doc.machine || 'local'}-${studio.id}`" @click="openStudio(doc, studio)"
       >
         <span class="card-state" :class="studioVisualState(studio)" :title="t(STATE_LABEL[studioVisualState(studio)])" aria-hidden="true"><i /></span>
@@ -124,7 +148,7 @@ async function cardAction(m: BacklotMachineView, card: BacklotCard, kind: 'card-
       </button>
     </div>
 
-    <div v-for="m in visibleMachines.filter(hollywood)" :key="`holly-${m.machine}`" class="bl-holly" :data-testid="`backlot-hollywood-${m.machine || 'local'}`">
+    <div v-for="m in visibleMachines.filter(hollywood)" :key="`holly-${docKey(m)}`" class="bl-holly" :data-testid="`backlot-hollywood-${m.machine || 'local'}`">
       <div class="bl-holly-head">
         <span class="card-state" :class="m.summary.hollywood!.state === 'live' ? 'working' : 'inactive'" aria-hidden="true"><i /></span>
         <span class="bl-label">{{ t('Hollywood') }}</span>
@@ -147,12 +171,12 @@ async function cardAction(m: BacklotMachineView, card: BacklotCard, kind: 'card-
           </span>
         </li>
       </ul>
-      <button v-if="hollyTell !== m.machine" type="button" class="mono-btn bl-btn bl-holly-tell" data-testid="backlot-tell-hollywood" @click="hollyTell = m.machine; hollyText = ''">
+      <button v-if="hollyTell !== docKey(m)" type="button" class="mono-btn bl-btn bl-holly-tell" data-testid="backlot-tell-hollywood" @click="hollyTell = docKey(m); hollyText = ''">
         <UIcon name="i-lucide-send" />{{ t('Tell Hollywood') }}
       </button>
       <form v-else class="bl-tell" @submit.prevent="tellHollywood(m)">
         <input v-model="hollyText" class="bl-input" :placeholder="t('Message to Hollywood…')" :aria-label="t('Message to Hollywood…')" maxlength="4000">
-        <button type="submit" class="mono-btn bl-btn" :disabled="hollyBusy === m.machine || !hollyText.trim()" data-testid="backlot-tell-hollywood-send">
+        <button type="submit" class="mono-btn bl-btn" :disabled="hollyBusy === docKey(m) || !hollyText.trim()" data-testid="backlot-tell-hollywood-send">
           {{ t('Send') }}
         </button>
       </form>

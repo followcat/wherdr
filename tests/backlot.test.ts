@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { BacklotRole, BacklotStudio } from '../shared/backlot'
+import type { BacklotMachineView, BacklotRole, BacklotStudio } from '../shared/backlot'
 import {
   buildBacklotCommand, parseBacklotDoc, roleVisualState, studioVisualState, studioWaitingAttentions, validateBacklotAction,
 } from '../shared/backlot'
-import { readBacklotDocs, readPoolBacklotDocs, clearBacklotDocs } from '../server/utils/backlotDocs'
+import { readBacklotDocs, readPoolBacklotDocs, findBacklotActionEntry, clearBacklotDocs } from '../server/utils/backlotDocs'
+import { sessionIdScope } from '../server/utils/corePool'
 import { BACKLOT_NOT_FOUND, BACKLOT_TIMEOUT, runBacklotAction } from '../server/utils/backlotActions'
 
 const role = (more: Partial<BacklotRole> = {}): BacklotRole => ({ role: 'dev', name: 'alice', state: 'live', ...more })
@@ -136,6 +137,18 @@ describe('validateBacklotAction', () => {
     ]
     for (const input of bad) expect(validateBacklotAction(input)).toBe(null)
   })
+
+  it('preserves a safe session key when present and rejects malformed session keys', () => {
+    expect(validateBacklotAction({ kind: 'tell-hollywood', session: '', machine: '', text: 'hello' })).toEqual({
+      kind: 'tell-hollywood', session: '', machine: '', text: 'hello',
+    })
+    expect(validateBacklotAction({ kind: 'card-apply', session: 'cafecafecafecafe', machine: '', cardId: 'c1' })).toEqual({
+      kind: 'card-apply', session: 'cafecafecafecafe', machine: '', cardId: 'c1',
+    })
+    for (const session of [123, null, '../bad', 'a; rm -rf /', 'x'.repeat(65)]) {
+      expect(validateBacklotAction({ kind: 'stage-start', session, machine: '' })).toBe(null)
+    }
+  })
 })
 
 describe('readBacklotDocs', () => {
@@ -229,6 +242,120 @@ describe('readBacklotDocs', () => {
     expect(res.views).toHaveLength(1)
     expect(res.views[0]!.stageRunning).toBe(true)
     expect(res.views[0]!.summary.studios[0]!.id).toBe('shop')
+  })
+
+  it('keeps local machine documents from every session, tagged with their session tab key', async () => {
+    const emptyLotDoc = {
+      schema: 'backlot/1',
+      updated_ms: 100,
+      studios: [],
+      hollywood: { state: 'live', headline: 'empty lot — no studios, no cards; watching', cards: [] },
+    }
+    const primary = {
+      primary: true,
+      localKey: '',
+      endpoint: '/run/default.sock',
+      call: vi.fn(async (method: string) => method === 'hello' ? { core: { id: 'core-default', name: 'host-a' } }
+        : method === 'machine.list' ? { machines: [] }
+          : method === 'terminal.list' ? { terminals: [{ address: 't1', name: 'backlot-stage', state: 'live', cwd: '/home/user' }] }
+            : { value: emptyLotDoc }),
+    }
+    const secondary = {
+      primary: false,
+      localKey: '',
+      endpoint: '/run/acme-shop.sock',
+      call: vi.fn(async (method: string) => method === 'hello' ? { core: { id: 'core-acme', name: 'host-a' } }
+        : method === 'machine.list' ? { machines: [] }
+          : method === 'terminal.list' ? { terminals: [{ address: 't1', name: 'backlot-stage', state: 'live', cwd: '/home/user/acme-shop' }] }
+            : { value: fullDoc }),
+    }
+    const res = await readPoolBacklotDocs([primary, secondary], 1000, () => 'host-a')
+    expect(res.ok).toBe(true)
+    expect(res.views).toHaveLength(2)
+    expect(res.views.map(v => ({ session: (v as BacklotMachineView & { session?: string }).session, machine: v.machine, studios: v.summary.studios.length, headline: v.summary.hollywood?.headline }))).toEqual([
+      { session: '', machine: '', studios: 0, headline: 'empty lot — no studios, no cards; watching' },
+      { session: sessionIdScope('/run/acme-shop.sock'), machine: '', studios: 1, headline: 'Ship it' },
+    ])
+  })
+
+  it('collapses the same core reached locally and remotely within a session, without dropping another session', async () => {
+    const primary = {
+      primary: true,
+      localKey: '',
+      endpoint: '/run/default.sock',
+      call: vi.fn(async (method: string, params: Record<string, unknown>) => {
+        if (method === 'hello') return { core: { id: 'core-a', name: 'host-a' } }
+        if (method === 'machine.list') return { machines: [{ id: 'core-a', name: 'host-a-loopback', state: 'connected' }, { id: 'core-b', name: 'host-b', state: 'connected' }] }
+        if (method === 'terminal.list') return { terminals: [] }
+        return { value: params.on === 'host-b' ? { ...fullDoc, studios: [studio({ id: 'beta', title: 'Beta' })] } : fullDoc }
+      }),
+    }
+    const secondary = {
+      primary: false,
+      localKey: '',
+      endpoint: '/run/acme-shop.sock',
+      call: vi.fn(async (method: string, params: Record<string, unknown>) => {
+        if (method === 'hello') return { core: { id: 'core-c', name: 'host-a' } }
+        if (method === 'machine.list') return { machines: [{ id: 'core-b', name: 'host-b', state: 'connected' }] }
+        if (method === 'terminal.list') return { terminals: [] }
+        return { value: params.on === 'host-b' ? { ...fullDoc, studios: [studio({ id: 'beta-sec', title: 'Beta sec' })] } : fullDoc }
+      }),
+    }
+    const res = await readPoolBacklotDocs([primary, secondary], 1000, () => 'host-a')
+    expect(res.ok).toBe(true)
+    expect(res.views.map(v => [(v as BacklotMachineView & { session?: string }).session, v.machine])).toEqual([
+      ['', ''],
+      ['', 'host-b'],
+      [sessionIdScope('/run/acme-shop.sock'), ''],
+      [sessionIdScope('/run/acme-shop.sock'), 'host-b'],
+    ])
+  })
+
+  it('routes actions to the entry matching (session, machine) even when both have local machine ""', async () => {
+    const primary = {
+      primary: true,
+      localKey: '',
+      endpoint: '/run/default.sock',
+      call: vi.fn(async (method: string) => method === 'machine.list' ? { machines: [] }
+        : method === 'terminal.list' ? { terminals: [] }
+          : { value: { schema: 'backlot/1', studios: [], hollywood: { state: 'live', headline: 'empty lot', cards: [] } } }),
+    }
+    const secondary = {
+      primary: false,
+      localKey: '',
+      endpoint: '/run/acme-shop.sock',
+      call: vi.fn(async (method: string) => method === 'machine.list' ? { machines: [] }
+        : method === 'terminal.list' ? { terminals: [] }
+          : { value: fullDoc }),
+    }
+    const entries = [primary, secondary]
+    const secKey = sessionIdScope('/run/acme-shop.sock')
+    await readPoolBacklotDocs(entries, 1000, () => 'host-a')
+    expect(await findBacklotActionEntry(entries, '', secKey, 1000)).toBe(secondary)
+    expect(await findBacklotActionEntry(entries, '', '', 1000)).toBe(primary)
+
+    // Executing the routed action sends terminal.run only to the target session entry.
+    const routed = (await findBacklotActionEntry(entries, '', secKey, 1000))!
+    secondary.call.mockResolvedValueOnce({
+      address: 't9', state: 'finished', exit_code: 0, output: 'ok\n',
+      wait: { terminal: 't9', ended: true, exit_code: 0, reason: 'exit', turn: 1, children: [] },
+    })
+    primary.call.mockClear()
+    secondary.call.mockClear()
+    const actionRes = await runBacklotAction(
+      { call: (m, p, t) => routed.call(m, p, t), clearDocs: clearBacklotDocs },
+      { kind: 'tell-hollywood', session: secKey, machine: '', text: 'Ship it' },
+    )
+    expect(actionRes).toEqual({ ok: true, output: 'ok' })
+    expect(secondary.call).toHaveBeenCalledWith('terminal.run', expect.objectContaining({ line: expect.stringContaining("'tell' 'hollywood' '--text' 'Ship it'") }), 30000)
+    expect(primary.call).not.toHaveBeenCalled()
+
+    // Cold cache after clearBacklotDocs still routes to the right session.
+    clearBacklotDocs()
+    expect(await findBacklotActionEntry(entries, '', secKey, 2000)).toBe(secondary)
+
+    // An unknown/stopped session never falls back to primary.
+    expect(await findBacklotActionEntry(entries, '', 'facefacefaceface', 2000)).toBeUndefined()
   })
 })
 

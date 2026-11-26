@@ -88,6 +88,7 @@ export interface CoreEntry {
   readonly primary: boolean
   readonly endpoint: string
   readonly localKey: string
+  readonly sessionKey: string
   readonly sessionName: string
   readonly session: CoreSession
   call: <T>(method: string, params?: object, timeout?: number) => Promise<T>
@@ -162,6 +163,7 @@ export function createCorePool(opts: CorePoolOptions): CorePool {
 
   const makeEntry = (endpoint: string, primary: boolean): CoreEntry => {
     const localKey = ''
+    const sessionKey = primary ? '' : sessionIdScope(endpoint)
     const sName = sessionLabel(endpoint)
     const idScope = primary ? undefined : sessionIdScope(endpoint)
     const docsReader = createCoreDocsReader()
@@ -309,6 +311,7 @@ export function createCorePool(opts: CorePoolOptions): CorePool {
       primary,
       endpoint,
       localKey,
+      sessionKey,
       sessionName: sName,
       session,
       call,
@@ -371,7 +374,7 @@ export function createCorePool(opts: CorePoolOptions): CorePool {
     const panes = states.flatMap(s => s.panes)
     const machines = mergeSessionMachines(entries.map((entry, i) => ({ entry, machines: states[i]!.machines ?? [] })))
     const sessions: SessionInfo[] = entries.map((entry, i) => ({
-      key: entry.primary ? '' : sessionIdScope(entry.endpoint),
+      key: entry.sessionKey,
       name: entry.sessionName,
       primary: entry.primary,
       status: states[i]?.machines?.find(m => m.local)?.status ?? 'offline',

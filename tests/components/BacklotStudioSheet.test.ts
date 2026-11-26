@@ -3,7 +3,7 @@ import { nextTick } from 'vue'
 import { mountSuspended, mockNuxtImport, registerEndpoint } from '@nuxt/test-utils/runtime'
 import { readBody, setResponseStatus } from 'h3'
 import BacklotStudioSheet from '~/components/BacklotStudioSheet.vue'
-import { herdrState } from '~/composables/useHerdr'
+import { allSessionsState, herdrState, pickSessionTab } from '~/composables/useHerdr'
 import type { BacklotMachineView, BacklotRole, BacklotStudio } from '#shared/backlot'
 
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }))
@@ -35,6 +35,8 @@ afterEach(() => {
   posts.length = 0
   failAction = false
   navigate.mockReset()
+  localStorage.removeItem('sessionTab')
+  allSessionsState.value = { ok: false, workspaces: [], panes: [] }
   herdrState.value = { ok: false, workspaces: [], panes: [] }
   document.body.innerHTML = ''
 })
@@ -134,4 +136,34 @@ it('shows the error of a refused action', async () => {
   await mountSheet(studio({ roles: [role()] }), machine({ stageRunning: false }))
   await press('[data-testid="backlot-sheet-stage-start"]')
   await vi.waitFor(() => expect($('[data-testid="backlot-feedback"]')?.textContent).toBe('The backlot command failed.'))
+})
+
+it('sends the machine session on studio actions and opens the terminal of that session', async () => {
+  const secKey = 'cafecafecafecafe'
+  allSessionsState.value = {
+    ok: true,
+    ready: true,
+    workspaces: [],
+    panes: [
+      { id: 'w1:p1', coreAddress: 't1', session: 'default', status: 'idle', agent: 'claude', workspace: 'w1', tab: 'w1:t1', tabLabel: null, name: null, label: null, title: null, cwd: null, agentSession: null },
+      { id: `s${secKey}~w1:p1`, coreAddress: 't1', session: 'acme-shop', status: 'working', agent: 'claude', workspace: `s${secKey}~w1`, tab: `s${secKey}~w1:t1`, tabLabel: null, name: null, label: null, title: null, cwd: null, agentSession: null },
+    ],
+    sessions: [
+      { key: '', name: 'default', primary: true, status: 'online' },
+      { key: secKey, name: 'acme-shop', primary: false, status: 'online' },
+    ],
+  }
+  pickSessionTab(secKey)
+  const s = studio({ roles: [role({ terminal: 't1', attention: 'permission prompt', attention_seq: 3 })] })
+  const m = machine({ session: secKey, summary: { schema: 'backlot/1', updated_ms: 1, studios: [s], hollywood: { state: 'live', cards: [{ id: 'c5', studio: 'shop', action: 'merge', why: 'green' }] } } } as Partial<BacklotMachineView>)
+  await mountSheet(s, m)
+
+  await press('[data-testid="backlot-allow"]')
+  await vi.waitFor(() => expect(posts.at(-1)).toEqual({ kind: 'approve', session: secKey, machine: '', studio: 'shop', person: 'alice', decision: 'allow' }))
+
+  await press('[data-testid="backlot-sheet-card-apply"]')
+  await vi.waitFor(() => expect(posts.at(-1)).toEqual({ kind: 'card-apply', session: secKey, machine: '', cardId: 'c5' }))
+
+  $('[data-testid="backlot-role-dev"] .bls-role-main')!.click()
+  await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith(`/a/${encodeURIComponent(`s${secKey}~w1:p1`)}`))
 })
