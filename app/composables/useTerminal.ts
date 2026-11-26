@@ -15,7 +15,7 @@ import { proposeTerminalSize, terminalPixelWidth } from '~/utils/terminalSize'
 import { writeTerminalFrame } from '~/utils/terminalFrame'
 import { createSyncOutput } from '~/utils/terminalSyncOutput'
 import { kbOpen } from './useViewport'
-import { guardWebglCanvasSize } from '~/utils/terminalRenderer'
+import { guardWebglCanvasSize, MAX_WEBGL_PIXELS, webglBufferOf, webglBufferUnusable } from '~/utils/terminalRenderer'
 import { bindTerminalSelection } from '~/utils/terminalSelection'
 import { bindTerminalLinks, type TerminalLinks } from '~/utils/terminalLinks'
 import { bindTerminalKeys } from '~/utils/terminalKeys'
@@ -289,6 +289,7 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
         scrollGeometryVersion.value++
         repaint()
         if (coreStream) offerFit()
+        syncWebgl()
       },
       reset: () => mouseSgr?.reset(),
       written: () => {
@@ -557,6 +558,8 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     // Clear before xterm handles paste, including a one-character paste.
     host.addEventListener('paste', clearVirtualModifiers, true)
     disposed = false
+    webglDropped = false
+    webglDroppedAt = null
     twsRetry = 0
     const seq = ++mountSeq
     mounting = true
@@ -836,6 +839,7 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
       if (sendTerm({ type: 'terminal.resize', cols: d.cols, rows: d.rows })) lastSize = { cols: d.cols, rows: d.rows }
     }
     if (coreStream && !covered) offerFit()
+    syncWebgl()
   }
 
   // Theme change while the terminal is shown.
@@ -846,6 +850,56 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
   // The WebGL add-on is downloaded the first time it is chosen; until then (or
   // if that fails) xterm keeps the HTML renderer it starts with.
   let rendererSeq = 0
+  // WebGL is dropped for a grid the browser cannot draw: its drawing buffer is
+  // clamped (nothing reaches the screen) or its canvas is over the safe size.
+  // `webglCap` starts at the safe size and tightens to what the browser really
+  // gave the first time it clamped one, so a retry after a shrink is honest.
+  let webglDropped = false
+  let webglDroppedAt: { cols: number, rows: number } | null = null
+  let webglCap = MAX_WEBGL_PIXELS
+  function dropWebgl() {
+    const old = webgl
+    webgl = null
+    webglDropped = true
+    webglDroppedAt = term ? { cols: term.cols, rows: term.rows } : null
+    try { old?.dispose() } catch { /* torn down with its terminal */ }
+    reportTerminalRenderer('html-fallback')
+    if (term && term.rows > 0) term.refresh(0, Math.max(0, term.rows - 1))
+  }
+  // The canvas the add-on would get for the current grid (device pixels).
+  function intendedCanvas(): { width: number, height: number } | null {
+    const cell = (term as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number, height: number } } } } } })?._core?._renderService?.dimensions?.css?.cell
+    if (!term || !cell?.width || !cell.height) return null
+    const dpr = globalThis.devicePixelRatio || 1
+    return { width: Math.round(term.cols * cell.width * dpr), height: Math.round(term.rows * cell.height * dpr) }
+  }
+  function inheritedWebglFits() {
+    if (!term || webglCap <= 0) return false
+    const intended = intendedCanvas()
+    // Without xterm's measured cell (a bare terminal), the shrink itself is the
+    // only evidence; the check after the add-on loads drops it again if not.
+    return !intended || intended.width * intended.height <= webglCap
+  }
+  function syncWebgl() {
+    if (!term || disposed) return
+    if (webgl) {
+      const buffer = webglBufferOf(webgl)
+      if (!buffer) return
+      const clamped = buffer.drawingBufferWidth < buffer.width - 2 || buffer.drawingBufferHeight < buffer.height - 2
+      // What the browser really allowed becomes the ceiling for a retry.
+      if (clamped) webglCap = Math.min(webglCap, buffer.drawingBufferWidth * buffer.drawingBufferHeight)
+      if (webglBufferUnusable(buffer, webglCap)) dropWebgl()
+      return
+    }
+    // A grid that shrank (Fit to this screen, a width change) may fit again:
+    // reuse the normal WebGL load path. Until it shrinks there is nothing to
+    // gain from re-creating an add-on the browser will clamp anyway.
+    if (!webglDropped || terminalRenderer.value !== 'webgl') return
+    if (!webglDroppedAt || (term.cols >= webglDroppedAt.cols && term.rows >= webglDroppedAt.rows)) return
+    if (!inheritedWebglFits()) return
+    webglDropped = false
+    void setRenderer('webgl')
+  }
   async function setRenderer(renderer: 'webgl' | 'html') {
     if (!term) return
     const seq = ++rendererSeq
@@ -883,6 +937,8 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
         // Backing store at CSS size × devicePixelRatio, whatever the browser reports.
         guardWebglCanvasSize(addon)
         webgl = addon
+        webglDropped = false
+        webglDroppedAt = null
         reportTerminalRenderer('webgl')
       } catch {
         try { addon?.dispose() } catch { /* addon partially activated */ }
@@ -890,11 +946,14 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
         reportTerminalRenderer('html-fallback')
       }
     } else {
+      webglDropped = false
+      webglDroppedAt = null
       reportTerminalRenderer('html')
     }
     // The cell size may change with the renderer. The wheel and
     // the pane size stay handled by fitNow / TerminalView.
     fitNow(true)
+    syncWebgl()
   }
   watch(terminalRenderer, r => void setRenderer(r))
 
@@ -1287,6 +1346,8 @@ export function createTerminal(paneId: string, options: TerminalOptions) {
     anchor?.dispose()
     anchor = null
     webgl = null // term.dispose() destroys its addons
+    webglDropped = false
+    webglDroppedAt = null
     term?.dispose()
     term = null
   }
