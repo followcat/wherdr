@@ -83,6 +83,7 @@ export interface BacklotCard {
 }
 
 export interface BacklotMachineView {
+  session?: string
   machine: string
   label: string
   stageRunning: boolean
@@ -93,13 +94,20 @@ export interface BacklotMachineView {
 export type BacklotVisualState = 'working' | 'blocked' | 'idle' | 'done' | 'inactive' | 'unknown'
 
 export type BacklotAction =
-  | { kind: 'approve', machine: string, studio: string, person: string, decision: 'allow' | 'deny' }
-  | { kind: 'tell', machine: string, studio: string, role: string, text: string }
-  | { kind: 'tell-hollywood', machine: string, text: string }
-  | { kind: 'attention-clear', machine: string, studio: string, seq: number }
-  | { kind: 'card-apply', machine: string, cardId: string }
-  | { kind: 'card-cancel', machine: string, cardId: string }
-  | { kind: 'stage-start', machine: string }
+  | { kind: 'approve', session?: string, machine: string, studio: string, person: string, decision: 'allow' | 'deny' }
+  | { kind: 'tell', session?: string, machine: string, studio: string, role: string, text: string }
+  | { kind: 'tell-hollywood', session?: string, machine: string, text: string }
+  | { kind: 'attention-clear', session?: string, machine: string, studio: string, seq: number }
+  | { kind: 'card-apply', session?: string, machine: string, cardId: string }
+  | { kind: 'card-cancel', session?: string, machine: string, cardId: string }
+  | { kind: 'stage-start', session?: string, machine: string }
+
+export function backlotActionTarget(view: Pick<BacklotMachineView, 'machine' | 'session'>): { machine: string, session?: string } {
+  return {
+    machine: view.machine,
+    ...(view.session !== undefined ? { session: view.session } : {}),
+  }
+}
 
 const isObject = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
 const str = (v: unknown): string => (typeof v === 'string' ? v : '')
@@ -253,8 +261,10 @@ export function studioWaitingAttentions(studio: BacklotStudio): BacklotRole[] {
 }
 
 // Machine of the action: '' is this one, otherwise a herdr-core machine name.
+// Session of the action: '' is primary, otherwise the session tab key.
 const SAFE_ID = /^[a-zA-Z0-9._-]{1,64}$/
 const SAFE_MACHINE = /^$|^[a-zA-Z0-9._-]{1,64}$/
+const SAFE_SESSION = /^$|^[a-zA-Z0-9._-]{1,64}$/
 const CARD_ID = /^c\d{1,18}$/
 const MAX_TEXT = 4000
 
@@ -264,35 +274,40 @@ export function validateBacklotAction(input: unknown): BacklotAction | null {
   if (!isObject(input)) return null
   const machine = typeof input.machine === 'string' && SAFE_MACHINE.test(input.machine) ? input.machine : null
   if (machine === null) return null
+  const session = input.session === undefined
+    ? undefined
+    : typeof input.session === 'string' && SAFE_SESSION.test(input.session) ? input.session : null
+  if (session === null) return null
+  const target = session !== undefined ? { session, machine } : { machine }
   switch (input.kind) {
     case 'approve': {
       const studio = typeof input.studio === 'string' && SAFE_ID.test(input.studio) ? input.studio : null
       const person = typeof input.person === 'string' && SAFE_ID.test(input.person) ? input.person : null
       const decision = input.decision === 'allow' || input.decision === 'deny' ? input.decision : null
-      return studio && person && decision ? { kind: 'approve', machine, studio, person, decision } : null
+      return studio && person && decision ? { kind: 'approve', ...target, studio, person, decision } : null
     }
     case 'tell': {
       const studio = typeof input.studio === 'string' && SAFE_ID.test(input.studio) ? input.studio : null
       const role = typeof input.role === 'string' && SAFE_ID.test(input.role) ? input.role : null
       const text = typeof input.text === 'string' ? input.text.trim() : ''
-      return studio && role && text && text.length <= MAX_TEXT ? { kind: 'tell', machine, studio, role, text } : null
+      return studio && role && text && text.length <= MAX_TEXT ? { kind: 'tell', ...target, studio, role, text } : null
     }
     case 'tell-hollywood': {
       const text = typeof input.text === 'string' ? input.text.trim() : ''
-      return text && text.length <= MAX_TEXT ? { kind: 'tell-hollywood', machine, text } : null
+      return text && text.length <= MAX_TEXT ? { kind: 'tell-hollywood', ...target, text } : null
     }
     case 'attention-clear': {
       const studio = typeof input.studio === 'string' && SAFE_ID.test(input.studio) ? input.studio : null
       const seq = typeof input.seq === 'number' && Number.isInteger(input.seq) && input.seq > 0 ? input.seq : null
-      return studio && seq !== null ? { kind: 'attention-clear', machine, studio, seq } : null
+      return studio && seq !== null ? { kind: 'attention-clear', ...target, studio, seq } : null
     }
     case 'card-apply':
     case 'card-cancel': {
       const cardId = typeof input.cardId === 'string' && CARD_ID.test(input.cardId) ? input.cardId : null
-      return cardId ? { kind: input.kind, machine, cardId } : null
+      return cardId ? { kind: input.kind, ...target, cardId } : null
     }
     case 'stage-start':
-      return { kind: 'stage-start', machine }
+      return { kind: 'stage-start', ...target }
     default:
       return null
   }

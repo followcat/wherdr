@@ -2,11 +2,14 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import { readBody } from 'h3'
 import BacklotSection from '~/components/BacklotSection.vue'
-import { herdrState } from '~/composables/useHerdr'
+import { allSessionsState, herdrState, pickSessionTab } from '~/composables/useHerdr'
+import { refreshBacklot } from '~/composables/useBacklot'
 import { machineBarSaved } from '~/composables/useMachineBar'
 import type { BacklotMachineView, BacklotRole, BacklotStudio } from '#shared/backlot'
+import type { HerdrState, Pane } from '#shared/types'
 
-registerEndpoint('/api/backlot', () => ({ ok: true, machines: [] }))
+let apiMachines: BacklotMachineView[] = []
+registerEndpoint('/api/backlot', () => ({ ok: true, machines: apiMachines }))
 const posts: unknown[] = []
 registerEndpoint('/api/backlot/action', { method: 'POST', handler: async (event) => { posts.push(await readBody(event)); return { ok: true, output: 'done' } } })
 
@@ -18,9 +21,33 @@ const view = (more: Partial<BacklotMachineView> = {}): BacklotMachineView => ({
   machine: '', label: 'host-a', stageRunning: true, backlotVersion: '1.0.0',
   summary: { schema: 'backlot/1', updated_ms: 1, studios: [studio()], hollywood: null }, ...more,
 })
+const pane = (id: string, session: string): Pane => ({
+  id, session, workspace: 'w1', tab: 'w1:t1', tabLabel: null, agent: 'claude', name: null,
+  label: null, status: 'idle', title: null, cwd: '/home/user/acme-shop', agentSession: null,
+})
+const twoSessionsState = (secKey: string): HerdrState => ({
+  ok: true,
+  ready: true,
+  workspaces: [],
+  panes: [pane('w1:p1', 'default'), pane(`s${secKey}~w1:p1`, 'acme-shop')],
+  sessions: [
+    { key: '', name: 'default', primary: true, status: 'online' },
+    { key: secKey, name: 'acme-shop', primary: false, status: 'online' },
+  ],
+})
 
 let w: Awaited<ReturnType<typeof mountSuspended>> | null = null
-afterEach(() => { w?.unmount(); w = null; posts.length = 0; machineBarSaved.value = null; herdrState.value = { ok: false, workspaces: [], panes: [] }; document.body.innerHTML = '' })
+afterEach(() => {
+  w?.unmount()
+  w = null
+  posts.length = 0
+  apiMachines = []
+  machineBarSaved.value = null
+  localStorage.removeItem('sessionTab')
+  allSessionsState.value = { ok: false, workspaces: [], panes: [] }
+  herdrState.value = { ok: false, workspaces: [], panes: [] }
+  document.body.innerHTML = ''
+})
 
 it('renders nothing when no machine publishes a backlot document', async () => {
   w = await mountSuspended(BacklotSection, { props: { machines: [] } })
@@ -90,4 +117,67 @@ it('shows Hollywood cards and tells Hollywood from the section', async () => {
     { kind: 'card-apply', machine: '', cardId: 'c1' },
     { kind: 'tell-hollywood', machine: '', text: 'Focus on checkout' },
   ]))
+})
+
+it('shows only the selected session tab documents and sends the session with every action', async () => {
+  const secKey = 'cafecafecafecafe'
+  allSessionsState.value = twoSessionsState(secKey)
+  pickSessionTab('')
+
+  const machines: BacklotMachineView[] = [
+    view({
+      session: '',
+      summary: {
+        schema: 'backlot/1', updated_ms: 1, studios: [],
+        hollywood: { state: 'live', headline: 'empty lot — no studios, no cards; watching', cards: [] },
+      },
+    } as Partial<BacklotMachineView>),
+    view({
+      session: secKey,
+      summary: {
+        schema: 'backlot/1', updated_ms: 2,
+        studios: [studio({ id: 'shop', title: 'Acme shop' })],
+        hollywood: { state: 'live', headline: '5 active studios', cards: [{ id: 'c2', studio: 'shop', action: 'merge', why: 'all checks green' }] },
+      },
+    } as Partial<BacklotMachineView>),
+  ]
+
+  apiMachines = machines
+  await refreshBacklot()
+  w = await mountSuspended(BacklotSection, { attachTo: document.body })
+
+  // Default session tab shows its own Hollywood card and no Acme shop studio.
+  await vi.waitFor(() => expect(w!.text()).toContain('empty lot'))
+  expect(w.text()).not.toContain('Acme shop')
+  expect(w.text()).not.toContain('5 active studios')
+
+  // Switching to the acme-shop session tab switches studios, Hollywood and Tell Hollywood.
+  pickSessionTab(secKey)
+  await vi.waitFor(() => expect(w!.text()).toContain('Acme shop'))
+  expect(w.text()).toContain('5 active studios')
+  expect(w.text()).not.toContain('empty lot')
+
+  await w.find('[data-testid="backlot-card-apply"]').trigger('click')
+  await vi.waitFor(() => expect(posts.at(-1)).toEqual({ kind: 'card-apply', session: secKey, machine: '', cardId: 'c2' }))
+
+  await w.find('[data-testid="backlot-tell-hollywood"]').trigger('click')
+  await w.find('[data-testid="backlot-hollywood-local"] input').setValue('Focus on checkout')
+  await w.find('[data-testid="backlot-tell-hollywood-send"]').trigger('click')
+  await vi.waitFor(() => expect(posts.at(-1)).toEqual({ kind: 'tell-hollywood', session: secKey, machine: '', text: 'Focus on checkout' }))
+
+  // Opening the studio sheet acts on the selected session, and switching tabs closes it.
+  await w.find('[data-testid="backlot-studio-local-shop"]').trigger('click')
+  await vi.waitFor(() => expect(document.body.querySelector('[data-testid="backlot-studio-sheet"]')).not.toBeNull())
+  await document.body.querySelector<HTMLButtonElement>('[data-testid="backlot-role-dev"] [data-testid="backlot-role-tell"]')!.click()
+  await vi.waitFor(() => expect(document.body.querySelector('[data-testid="backlot-tell-send"]')).not.toBeNull())
+  const tellInput = document.body.querySelector<HTMLInputElement>('[data-testid="backlot-role-dev"] input')!
+  tellInput.value = 'Check status'
+  tellInput.dispatchEvent(new Event('input'))
+  await vi.waitFor(() => expect(document.body.querySelector<HTMLButtonElement>('[data-testid="backlot-tell-send"]')?.disabled).toBe(false))
+  document.body.querySelector<HTMLButtonElement>('[data-testid="backlot-tell-send"]')!.click()
+  await vi.waitFor(() => expect(posts.at(-1)).toEqual({ kind: 'tell', session: secKey, machine: '', studio: 'shop', role: 'dev', text: 'Check status' }))
+
+  pickSessionTab('')
+  await vi.waitFor(() => expect(w!.text()).toContain('empty lot'))
+  expect(document.body.querySelector('[data-testid="backlot-studio-sheet"]')).toBeNull()
 })

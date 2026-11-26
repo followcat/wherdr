@@ -8,7 +8,7 @@ import { LABEL } from './pm/run'
 import { CODEX_UPDATED_LABEL, codexInstalling } from './codexLaunch'
 import { canonicalCmdAgent, cmdProgramFromArgv } from './cmdAliases'
 
-export interface CoreMachine { name: string; state: string; host?: string; why?: string }
+export interface CoreMachine { id?: string; name: string; state: string; host?: string; why?: string }
 export interface CoreStateOptions {
   localKey?: string
   localBaseKey?: string

@@ -14,7 +14,7 @@ export default defineApi(async (event, body) => {
     return { ok: false, error: 'herdr-core unavailable' }
   }
   const action = validateBacklotAction(body)
-  const entry = action ? await findBacklotActionEntry(entries, action.machine) : entries[0]
+  const entry = action ? await findBacklotActionEntry(entries, action.machine, action.session) : entries[0]
   if (!entry) {
     setResponseStatus(event, 503)
     return { ok: false, error: 'herdr-core unavailable' }
