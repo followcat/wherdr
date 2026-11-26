@@ -97,7 +97,11 @@ describe('SessionSwitcher', () => {
     allSessionsState.value = state()
     const wrapper = await mountSwitcher()
     expect(wrapper.find('.session-switch-name').text()).toBe('default')
-    expect(wrapper.find('.session-switch-waiting').text()).toBe('3')
+    const badge = wrapper.find('.session-switch-waiting')
+    expect(badge.text()).toBe('+3')
+    expect(badge.attributes('aria-label')).toBe('3 waiting in other sessions')
+    expect(badge.attributes('title')).toBe('3 waiting in other sessions')
+    expect(wrapper.find('.session-switch-chevron + .session-switch-waiting').exists()).toBe(true)
   })
 
   it('lists primary first then alphabetical, marks the current session and hides empty ones', async () => {

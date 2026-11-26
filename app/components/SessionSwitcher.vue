@@ -20,6 +20,7 @@ type SessionMenuItem = {
 const appVersion = useRuntimeConfig().public.version
 const current = computed(() => sessionTabs.value.find(tab => tab.key === sessionTabPick.value) ?? sessionTabs.value[0])
 const waiting = computed(() => waitingOutsideSession(sessionTabs.value, current.value?.key ?? ''))
+const waitingLabel = computed(() => tl(`${waiting.value} waiting in other sessions`))
 const aboutLabel = computed(() => tl(`wherdr ${appVersion} · About`))
 const switchLabel = computed(() => {
   const name = current.value?.name || ''
@@ -40,7 +41,6 @@ const items = computed<SessionMenuItem[][]>(() => [
     onSelect: () => pickSessionTab(tab.key),
   })),
   [
-    { type: 'separator' as const },
     {
       label: aboutLabel.value,
       icon: 'i-lucide-info',
@@ -59,11 +59,11 @@ const items = computed<SessionMenuItem[][]>(() => [
     :content="{ align: 'start', sideOffset: 6, collisionPadding: 8 }"
     :ui="{ content: 'hw-dropdown session-switcher-menu' }"
   >
-    <button type="button" class="session-switch" :aria-label="switchLabel" :title="current.name">
+    <button type="button" class="session-switch" :aria-label="switchLabel" :title="waiting ? waitingLabel : current.name">
       <i class="session-switch-mark" aria-hidden="true" />
       <span class="session-switch-name">{{ current.name }}</span>
-      <span v-if="waiting" class="session-switch-waiting" aria-hidden="true">{{ waiting }}</span>
       <UIcon name="i-lucide-chevron-down" class="session-switch-chevron" aria-hidden="true" />
+      <span v-if="waiting" class="session-switch-waiting" :aria-label="waitingLabel" :title="waitingLabel">+{{ waiting }}</span>
     </button>
 
     <template #item-leading="{ item }">
