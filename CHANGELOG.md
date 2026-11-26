@@ -1,3 +1,7 @@
+## Unreleased
+
+- Automatically discovers local hc sessions and presents them as independent session tabs with real machine identity and session-scoped pane IDs.
+
 # Changelog
 
 All notable changes to this project are documented here. The format follows

@@ -43,7 +43,7 @@ unit: see [Installation](installation.md#keep-it-running)), read at each start.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `HC_SOCKET` | *(none)* | Socket of the primary hc session to drive. Required: wherdr never guesses or scans for it, and the server stops at startup with a log line naming `HC_SOCKET` without it. `wherdr --hc-socket <path>` sets it. |
-| `HC_SOCKETS` | *(empty)* | Comma-separated extra hc session socket paths (merged with `hcSockets` in `DATA_DIR/settings.json`, deduplicated against `HC_SOCKET`, never auto-scanned). `wherdr --hc-sockets <paths>` sets it and may point anywhere; browser-saved `hcSockets` only accepts user-owned Unix sockets resolving (`realpath`) directly inside the user's herdr-core runtime directory (`HC_SOCKET`'s folder or `$XDG_RUNTIME_DIR/herdr-core/`). Each extra session isolates its own socket, state, push alerts, and pane IDs while merging under the same machine tab by physical host. |
+| `HC_SOCKETS` | *(empty)* | Comma-separated extra hc session socket paths, an operator-only supplement deduplicated against `HC_SOCKET`. `wherdr --hc-sockets <paths>` sets it and may point anywhere. wherdr also scans the primary socket's runtime directory itself about every 10 seconds, joins every live user-owned non-holder hc socket it finds there, and drops it independently when it disappears. Every session keeps its own socket, state, alerts and session-scoped pane IDs; machines remain real machines. |
 | `PORT` | `7683` | Listening port (`wherdr` and `npm start` set it; `.output/server/index.mjs` started directly listens on `3000` without it). |
 | `HOST` | `127.0.0.1` (`npm start`) | Listening address: loopback, or this machine's tailnet address (`tailscale ip`, with Tailscale running). Any other address (`0.0.0.0`, a LAN address) stops wherdr at startup unless `WHERDR_TRUSTED_NETWORKS` covers it. |
 | `WHERDR_TRUSTED_NETWORKS` | *(empty)* | Other private networks wherdr accepts besides this computer and the tailnet, as comma-separated CIDR ranges or addresses (e.g. `10.147.17.0/24` for ZeroTier). `any` accepts every network, with a warning at startup and in the app: not recommended. See [Network access](security.md#network-access). |
@@ -60,11 +60,9 @@ unit: see [Installation](installation.md#keep-it-running)), read at each start.
 | `TZ` | `UTC` | Time zone. |
 | `WHERDR_ROOT` | *(set by `wherdr`)* | Folder of the wherdr install (the one holding `.output`). The `wherdr` command sets it; set it yourself only when you start `.output/server/index.mjs` another way. Alfred reads the docs of the running build: `.output/docs` when the build ships them (auto-deploy packages do), else `WHERDR_ROOT/docs`, else the `docs/` next to `.output`, else the working folder's `docs/`. |
 
-Settings › Machines shows the extra hc sessions in use. **Find local sessions** reads the sockets
-of the primary socket's folder only (holder sockets excluded) and never attaches one by itself:
-a tap adds it to `hcSockets`, the change is saved in `settings.json` and the running pool picks it
-up at once. Sockets coming from `HC_SOCKETS` are shown but can only be removed from the command
-line or service environment.
+Local hc sessions are joined automatically: no browser setting or tap is involved. Values once saved
+in `settings.json` under `hcSockets` are still read by older configuration code but are ignored by the
+session pool. `HC_SOCKETS` remains useful only for sockets outside the primary runtime directory.
 
 **v2 only.** These variables configure wherdr v2 on Herdr and are ignored in core mode:
 

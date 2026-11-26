@@ -53,8 +53,22 @@ const ls = {
 
 export const herdrState = shallowRef<HerdrState>({ ok: false, workspaces: [], panes: [] })
 let fullState: HerdrState = herdrState.value
-// Every open session's state, as the server follows them.
+// Every open session's state, as the server follows them. `herdrState` is the
+// selected session's interactive view; the untouched state remains available here.
 export const allSessionsState = shallowRef<HerdrState>(fullState)
+const sessionTabSaved = ref(import.meta.client ? ls.get('sessionTab') || '' : '')
+export const sessionTabs = computed(() => sessionTabsOf(allSessionsState.value))
+export const sessionTabPick = computed(() => {
+  const tabs = sessionTabs.value
+  return tabs.some(t => t.key === sessionTabSaved.value) ? sessionTabSaved.value : (tabs.find(t => t.primary)?.key ?? '')
+})
+export function pickSessionTab(key: string) {
+  if (!sessionTabs.value.some(t => t.key === key)) return
+  sessionTabSaved.value = key
+  ls.set('sessionTab', key)
+}
+const applySessionState = () => { herdrState.value = stateForSession(fullState, sessionTabPick.value) }
+watch(sessionTabPick, applySessionState)
 export const eventsOpen = ref(false)
 export const netDown = ref(false)
 export const cachedAt = ref<number | null>(null)
@@ -623,10 +637,10 @@ export function connectEvents() {
       setNetDown(false)
       fullState = state
       allSessionsState.value = fullState
-      herdrState.value = state
+      applySessionState()
       lastStateAt = Date.now()
       cachedAt.value = null
-      if (state.ok && mayReadOffline(readOfflineAccess())) saveHome(herdrState.value)
+      if (state.ok && mayReadOffline(readOfflineAccess())) saveHome(fullState)
     }
     catch { /* message illisible */ }
   }
@@ -667,6 +681,13 @@ export function sendViewing() {
   if (evWs && evWs.readyState === 1) evWs.send(JSON.stringify({ type: 'viewing', pane: curPane.value, visible, device: desk.value ? 'computer' : 'phone', idle: Date.now() - notificationActivityAt }))
 }
 watch(curPane, sendViewing)
+// A link, notification or search result opens a pane wherever it lives: its
+// session becomes the selected tab, then the pane stays visible in the filtered state.
+watch(curPane, (id) => {
+  if (!id) return
+  const pane = allSessionsState.value.panes.find(p => p.id === id)
+  if (pane) pickSessionTab(sessionKeyOfPane(allSessionsState.value, pane))
+})
 
 // Icon badge: agents waiting or finished.
 watch(herdrState, (s) => {
@@ -783,6 +804,6 @@ export async function start({ resume = false } = {}) {
 function showSaved(saved: SavedHome) {
   fullState = saved.state
   allSessionsState.value = fullState
-  herdrState.value = fullState
+  applySessionState()
   cachedAt.value = saved.at
 }

@@ -14,7 +14,10 @@ export interface CoreStateOptions {
   localBaseKey?: string
   localStatus?: MachineInfo['status']
   localError?: string | null
+  // Name of the hc session these terminals belong to, carried by panes/workspaces/tabs.
   session?: string
+  // Stable secondary-session ID scope (16 lower-hex chars, without the leading "s").
+  idScope?: string
   machineKey?: (name: string) => string
   machineBaseKey?: (m: CoreMachine) => string | undefined
 }
@@ -47,15 +50,15 @@ export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], do
   const localKey = options.localKey ?? ''
   const machineKey = options.machineKey ?? key
   const sessionFields = options.session !== undefined ? { session: options.session } : {}
+  const scopePrefix = options.idScope ? `s${options.idScope}~` : ''
   const result: HerdrState = { ok: true, ready: true, workspaces: [], tabs: [], panes: [], machines: [
-    { key: localKey, ...(options.localBaseKey !== undefined ? { baseKey: options.localBaseKey } : {}), ...sessionFields, label: host, local: true,
+    { key: localKey, ...(options.localBaseKey !== undefined ? { baseKey: options.localBaseKey } : {}), label: host, local: true,
       status: options.localStatus ?? 'online', error: options.localError ?? null },
     ...machines.map((m): MachineInfo => {
       const baseKey = options.machineBaseKey?.(m)
       return {
         key: machineKey(m.name),
         ...(baseKey !== undefined ? { baseKey } : {}),
-        ...sessionFields,
         label: m.name,
         local: false,
         status: m.state === 'connected' ? 'online' : m.state === 'connecting' ? 'connecting' : 'offline',
@@ -73,8 +76,8 @@ export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], do
   for (const terminal of terminals) {
     const machineName = terminal.address.includes('/') ? terminal.address.split('/')[0]! : ''
     const machine = machineName ? machineKey(machineName) : localKey
-    if (machineName && !result.machines!.some(m => m.key === machine)) result.machines!.push({ key: machine, ...sessionFields, label: machineName, local: false, status: 'offline', error: null })
-    const prefix = machine ? `${machine}~` : ''
+    if (machineName && !result.machines!.some(m => m.key === machine)) result.machines!.push({ key: machine, label: machineName, local: false, status: 'offline', error: null })
+    const prefix = `${scopePrefix}${machine ? `${machine}~` : ''}`
     const cwd = terminal.cwd || ''
     const local = terminal.address.split('/').pop()!
     const placed = terminal.labels?.[SPACE_LABEL]
@@ -88,7 +91,7 @@ export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], do
     const tab = placed?.tab ? `${workspace}:b${key(placed.tab)}` : own ? `${workspace}:g${key(own)}` : `${workspace}:t${id}`
     if (!result.workspaces.some(w => w.id === workspace)) {
       const folder = space?.folder || cwd
-      result.workspaces.push({ id: workspace, machine, label: maskCreds(space?.name || folder.split('/').filter(Boolean).pop() || 'Terminals'),
+      result.workspaces.push({ id: workspace, machine, ...sessionFields, label: maskCreds(space?.name || folder.split('/').filter(Boolean).pop() || 'Terminals'),
         path: folder, number: result.workspaces.length + 1, status: null, worktree: false, ...(placed ? { coreSpace: placed.space } : {}) })
     }
     const activity = coreActivity(terminal)
@@ -101,13 +104,13 @@ export function coreState(terminals: CoreTerminal[], machines: CoreMachine[], do
         ?? cmdProgramFromArgv(terminal.foreground?.argv) ?? cmdProgramFromArgv(terminal.argv)
         ?? (commands.map(commandAgent).find(c => c && KNOWN_AGENTS.includes(c)) ?? null)
     if (!result.tabs!.some(t => t.id === tab)) {
-      result.tabs!.push({ id: tab, workspace, machine, label: maskCreds(docTab?.name || coreTitle(terminal)), ...(docTab?.name ? { docName: true as const } : {}), number: result.tabs!.length + 1, layout: null })
+      result.tabs!.push({ id: tab, workspace, machine, ...sessionFields, label: maskCreds(docTab?.name || coreTitle(terminal)), ...(docTab?.name ? { docName: true as const } : {}), number: result.tabs!.length + 1, layout: null })
       if (docTab) order.set(tab, space!.tabs!.indexOf(docTab))
     }
     const state = activity === 'error' ? 'blocked' : activity
     // idle after a turn nobody looked at yet = finished, unread ('done').
     const status = updated ? 'blocked' : (state === 'idle' || state === 'done') && terminal.labels?.[SEEN_LABEL] !== undefined ? (coreUnread(terminal) ? 'done' : 'idle') : state
-    const pane: Pane = { id: `${workspace}:p${id}`, coreAddress: terminal.address, machine, workspace, tab, tabLabel: result.tabs!.find(t => t.id === tab)!.label,
+    const pane: Pane = { id: `${workspace}:p${id}`, coreAddress: terminal.address, machine, ...sessionFields, workspace, tab, tabLabel: result.tabs!.find(t => t.id === tab)!.label,
       agent, name: addressOnly(terminal.name, terminal.address) ? null : maskCreds(terminal.name) || null, label: maskCreds(ownTitle(terminal)) || null, title: terminal.title == null ? null : cleanTitle(terminal.title), cwd, agentSession: null,
       status, interaction: 'unknown', ...(terminal.labels && Object.keys(terminal.labels).length ? { labels: { ...terminal.labels } } : {}), ...(terminal.labels?.[LABEL.task] ? { task: terminal.labels[LABEL.task], ...(terminal.labels[LABEL.role] ? { role: terminal.labels[LABEL.role] } : {}) } : {}),
       ...(terminal.labels?.['wherdr.coordinator'] !== undefined ? { coordinator: true } : {}),

@@ -15,6 +15,7 @@ const machine: MachineInfo = { key: 'm1', label: 'host-a', local: true, status: 
 const rolePane = (id: string, tab: string, role: string, tabLabel: string, status: Pane['status'], over: Partial<Pane> = {}): Pane => ({
   id,
   machine: 'm1',
+  session: 'backlot',
   workspace: 'w1',
   tab,
   tabLabel,
@@ -106,7 +107,7 @@ describe('studio groups on Home', () => {
     expect(w.findAll('[data-testid="studio-role"]')).toHaveLength(2)
     await w.get('[data-testid="studio-group-toggle"]').trigger('click')
     expect(w.findAll('[data-testid="studio-role"]')).toHaveLength(0)
-    expect(collapsed()).toEqual(['m1:acme-shop'])
+    expect(collapsed()).toEqual(['backlot:m1:acme-shop'])
 
     w.unmount()
     stateWith([producer(), actor(), plain()])
@@ -118,7 +119,7 @@ describe('studio groups on Home', () => {
   })
 
   it('stays forced open while a role waits without overwriting the saved collapsed choice', async () => {
-    localStorage.setItem('studioCollapsed', JSON.stringify(['m1:acme-shop']))
+    localStorage.setItem('studioCollapsed', JSON.stringify(['backlot:m1:acme-shop']))
     stateWith([producer(), actor('blocked'), plain()])
     w = await mountHome()
     expect(w.findAll('[data-testid="studio-role"]')).toHaveLength(2)
@@ -126,7 +127,7 @@ describe('studio groups on Home', () => {
     await w.get('[data-testid="studio-group-toggle"]').trigger('click')
     await w.get('[data-testid="studio-group-body"]').trigger('click')
     expect(w.findAll('[data-testid="studio-role"]')).toHaveLength(2)
-    expect(collapsed()).toEqual(['m1:acme-shop'])
+    expect(collapsed()).toEqual(['backlot:m1:acme-shop'])
   })
 
   it('counts individual live role panes in section and top counters, excluding daemons', async () => {

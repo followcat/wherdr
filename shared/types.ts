@@ -86,6 +86,8 @@ export interface Workspace {
   id: string
   // Remote machine (short key); missing for the local machine.
   machine?: string
+  // hc session this workspace belongs to (the primary session's name included).
+  session?: string
   label: string
   number: number
   status: string | null
@@ -105,6 +107,8 @@ export interface Tab {
   // w1:t1 (local) ou <machine>~w1:t1 (distant).
   id: string
   machine?: string
+  // hc session this tab belongs to (the primary session's name included).
+  session?: string
   workspace: string
   label: string
   // herdr-core: the name comes from herdr-app's layout document (wherdr does not write it).
@@ -123,8 +127,10 @@ export interface Pane {
   coreAddress?: string // Authoritative hc address; interface IDs are presentation only.
   // w1:p1 (local) ou <machine>~w1:p1 (distant, see shared/ids.ts).
   id: string
-  // Remote machine (short key); missing for the local machine.
+  // Real machine (short key); missing for the local machine.
   machine?: string
+  // hc session this pane belongs to (the primary session's name included).
+  session?: string
   workspace: string
   tab: string
   tabLabel: string | null
@@ -239,10 +245,17 @@ export interface ModelList { agent: string, options: ModelOption[], at: number }
 export interface EffortList { levels: string[], current: string | null }
 
 // A machine (local, or Herdr SSH profile) and the state of its connection.
+export interface MachineSessionInfo {
+  label: string
+  status: 'online' | 'connecting' | 'offline'
+  error: string | null
+}
 export interface MachineInfo {
   key: string // '' = local
-  baseKey?: string // original machine for a named session
-  session?: string
+  baseKey?: string // original machine for a named session (transitional, no longer emitted)
+  session?: string // transitional, no longer emitted: the session is on panes/workspaces/tabs
+  // Per-hc-session attachment of this real machine, keyed by session name.
+  sessions?: Record<string, MachineSessionInfo>
   label: string
   local: boolean
   status: 'online' | 'connecting' | 'offline'
@@ -253,6 +266,14 @@ export interface MachineInfo {
   // Only while the server is not ready (see shared/stateReady.ts): whether
   // this machine's state has been read since the server started.
   polled?: boolean
+}
+
+export interface SessionInfo {
+  // '' for the primary session; a stable socket-derived key for the others.
+  key: string
+  name: string
+  primary: boolean
+  status: 'online' | 'connecting' | 'offline'
 }
 
 export interface HerdrState {
@@ -268,6 +289,8 @@ export interface HerdrState {
   tabs?: Tab[]
   // Only present when there are remote machines.
   machines?: MachineInfo[]
+  // hc sessions followed by the server, primary first.
+  sessions?: SessionInfo[]
 }
 
 // 'bash': Claude Code "!" command (bash mode), 'cmd': local "/" command.

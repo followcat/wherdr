@@ -9,7 +9,7 @@ import { hasTranscript } from '../../shared/agentKind'
 import { isBacklotDaemonTerminal } from '../../shared/backlotDaemon'
 import { type CoreAlertKind } from './coreAlerts'
 import { createCorePool, registerPoolRuntime, resolveConfiguredSockets, type CoreEntry } from './corePool'
-import { filterAllowedHcSockets, hcSockets, onSettingsChange } from './settings'
+import { scanHcSessionSockets } from './hcSessions'
 import { notificationAllowed } from './notificationRules'
 import { DATA_DIR, HOME, NOTIFY_SETTLE_MS, POLL_MS, log } from './env'
 import { HerdrError, sleep } from './herdr'
@@ -38,11 +38,11 @@ import { createShellFs } from './fsx'
 import { onSubmittingChange } from './submitting'
 
 const fsp = fs.promises
-let configuredSettingsSockets: string[] = []
+let discoveredSockets: string[] = []
 const configuredSockets = () => resolveConfiguredSockets({
   primary: process.env.HC_SOCKET,
   envSockets: process.env.HC_SOCKETS,
-  settingsSockets: configuredSettingsSockets,
+  settingsSockets: discoveredSockets,
 })
 
 const coreTranscriptsMap = new Map<string, CoreTranscripts>()
@@ -89,7 +89,7 @@ export const corePool = createCorePool({
   ...configuredSockets(),
   hostLabel: localMachineLabel,
   settleMs: NOTIFY_SETTLE_MS,
-  onAlert: (machineKey, address, kind) => { notifyCorePane(machineKey, address, kind).catch(e => log('notification:', e.message)) },
+  onAlert: (entry, machineKey, address, kind) => { notifyCorePane(entry, machineKey, address, kind).catch(e => log('notification:', e.message)) },
   onChange: (entry) => { gateForEntry(entry).schedule() },
   onStatus: (entry) => { gateForEntry(entry).schedule() },
 })
@@ -427,31 +427,39 @@ export const wakeCorePoll = (paneOrMachine?: string) => {
   for (const e of corePool.entries()) gateForEntry(e).schedule()
 }
 
+let scanTimer: ReturnType<typeof setInterval> | null = null
+let scanRunning = false
+async function scanLocalSessions() {
+  if (scanRunning || stopped) return
+  scanRunning = true
+  try {
+    const found = await scanHcSessionSockets()
+    if (stopped) return
+    if (!sameList(found, discoveredSockets)) {
+      discoveredSockets = found
+      syncPoolConfig()
+      void poll()
+    }
+  } catch {
+    // A scan failure keeps the sessions already joined; the next timer retries.
+  } finally {
+    scanRunning = false
+  }
+}
+
 export function startPolling() {
   stopped = false
   ensurePoolSynced()
   // A send to Claude starts or ends: its "Sending…" changes on every open page now.
   onSubmittingChange(() => wakeCorePoll())
   stopSettingsWatch?.()
-  let hcSocketsGen = 0
-  stopSettingsWatch = onSettingsChange((changed) => {
-    if ('hcSockets' in changed) {
-      const gen = ++hcSocketsGen
-      void filterAllowedHcSockets(changed.hcSockets).then((list) => {
-        if (stopped || gen !== hcSocketsGen) return
-        configuredSettingsSockets = list
-        syncPoolConfig()
-        void poll()
-      }, () => {})
-    }
-  })
+  stopSettingsWatch = null
   corePool.start()
   for (const e of corePool.entries()) startEntryLoop(e)
-  void hcSockets().then((list) => {
-    if (stopped || hcSocketsGen > 0) return
-    configuredSettingsSockets = list
-    syncPoolConfig()
-  }, () => {})
+  void scanLocalSessions()
+  scanTimer?.unref?.()
+  scanTimer = setInterval(() => { void scanLocalSessions() }, 10_000)
+  scanTimer.unref?.()
 }
 
 export function stopPolling() {
@@ -459,6 +467,8 @@ export function stopPolling() {
   stopSettingsWatch?.()
   stopSettingsWatch = null
   corePool.stop()
+  if (scanTimer) clearInterval(scanTimer)
+  scanTimer = null
   for (const gate of entryPollGates.values()) gate.cancel()
   entryPollGates.clear()
   for (const t of entryPollTimers.values()) if (t.timer) clearTimeout(t.timer)
@@ -487,8 +497,14 @@ const coordinatorAt = async (address: string) => {
   } catch { return undefined }
 }
 
-async function notifyCorePane(machineKey: string, address: string, kind: CoreAlertKind) {
-  const p = state.panes.find(x => (x.machine ?? '') === machineKey && x.coreAddress === address)
+async function notifyCorePane(entryOrMachine: CoreEntry | string, machineKeyOrAddress: string, addressOrKind: string, kindArg?: CoreAlertKind) {
+  const legacy = typeof entryOrMachine === 'string'
+  const entry = legacy ? undefined : entryOrMachine
+  const machineKey = legacy ? entryOrMachine : machineKeyOrAddress
+  const address = legacy ? machineKeyOrAddress : addressOrKind
+  const kind = (legacy ? addressOrKind : kindArg) as CoreAlertKind
+  const p = state.panes.find(x => entry && x.session === entry.sessionName && x.coreAddress === address)
+    ?? state.panes.find(x => (x.machine ?? '') === machineKey && x.coreAddress === address)
   if (!p || isViewed(p.id)) return
   if (isBacklotDaemonTerminal(p)) return
   const m = state.machines?.find(x => x.key === machineKey)
@@ -500,7 +516,7 @@ async function notifyCorePane(machineKey: string, address: string, kind: CoreAle
   if (!await notificationAllowed(event, state, p, { machine: p.machine ?? '', ...(coordinator ? { coordinator: coordinator.target } : {}) })) return
   const ws = state.workspaces.find(w => w.id === p.workspace)
   const where = [ws && ws.label, notificationTitle(p.title)].filter(Boolean).join(' · ')
-  const label = m?.session && m.local ? `${m.label} (${m.session})` : (m?.label ?? p.machine)
+  const label = m?.label ?? p.machine
   const on = state.machines && state.machines.length > 1 && p.machine ? `${label} · ` : ''
   const { title, titleFr } = agentNotificationTitle(kind === 'needs-you' ? 'blocked' : 'done', `${on}${coordinator?.name || agentLabel(p.agent)}`)
   const badge = state.panes.filter(x => x.status === 'blocked' || x.status === 'done').length

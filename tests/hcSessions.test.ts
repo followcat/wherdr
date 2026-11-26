@@ -12,7 +12,14 @@ describe('local hc session listing', () => {
   let servers: net.Server[] = []
 
   const listen = async (sock: string) => {
-    const srv = net.createServer()
+    const srv = net.createServer((conn) => {
+      conn.once('data', (chunk) => {
+        try {
+          const req = JSON.parse(chunk.toString('utf8').split('\n')[0]!)
+          if (req.method === 'hello') conn.end(JSON.stringify({ jsonrpc: '2.0', id: req.id, result: { generation: 1, framed: false, version: '1.0.0-test', methods: ['hello'], features: [] } }) + '\n')
+        } catch { /* not an hc hello */ }
+      })
+    })
     servers.push(srv)
     await new Promise<void>(resolve => srv.listen(sock, resolve))
     return fs.realpath(sock)
@@ -38,8 +45,7 @@ describe('local hc session listing', () => {
     const primary = await listen(path.join(rtDir, 'default.sock'))
     const settingsSock = await listen(path.join(rtDir, 'backlot.sock'))
     const freeSock = await listen(path.join(rtDir, 'scratch.sock'))
-    await listen(path.join(rtDir, 'default.holder.sock'))
-    await listen(path.join(rtDir, 'holder-backlot.sock'))
+    await listen(path.join(rtDir, 'default.holder.123.sock'))
     await fs.mkdir(path.join(rtDir, 'nested'))
     await listen(path.join(rtDir, 'nested', 'nested.sock'))
     const outside = path.join(dir, 'outside.sock')
