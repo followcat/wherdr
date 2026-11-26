@@ -40,7 +40,7 @@ const BASE = [
   'core', 'core/terminals', 'client-plugins', 'client-plugins/:id/:file',
   'client-plugins/preview', 'client-plugins/install', 'client-plugins/check', 'client-plugins/remove',
   'state', 'config', 'settings', 'health', 'search',
-  'GET backlot', 'backlot/action',
+  'GET backlot', 'GET backlot/doc', 'backlot/action',
   'chat', 'chat/image', 'prompt', 'input', 'interrupt', 'close', 'agents', 'codex-restart',
   'dirs', 'isgit', 'quotas', 'claude-statusline', 'claude-setup', 'proxies',
   'machine/add', 'machine/connect', 'machine/core', 'machine/core-rename', 'machine/core-forget',

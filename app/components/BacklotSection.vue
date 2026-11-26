@@ -3,7 +3,7 @@
 // machine's `backlot/1` document, its Hollywood cards and the stage's state.
 // Renders nothing at all when no machine publishes a document.
 import type { BacklotAction, BacklotCard, BacklotMachineView, BacklotStudio, BacklotVisualState } from '#shared/backlot'
-import { backlotActionTarget, studioVisualState } from '#shared/backlot'
+import { backlotActionTarget, studioAsksCount, studioVisualState } from '#shared/backlot'
 import { filterBacklotBySession, useBacklot } from '~/composables/useBacklot'
 import { machineBarSelection } from '~/composables/useMachineBar'
 import { machines, sessionTabPick } from '~/composables/useHerdr'
@@ -28,6 +28,7 @@ const multi = computed(() => visibleMachines.value.length > 1)
 const stopped = computed(() => visibleMachines.value.filter(m => m.summary.studios.length && !m.stageRunning))
 const studios = computed(() => visibleMachines.value.flatMap(doc => doc.summary.studios.map(studio => ({ doc, studio }))))
 const waitingTotal = computed(() => visibleMachines.value.reduce((n, m) => n + m.summary.studios.reduce((s, x) => s + x.waiting, 0), 0))
+const asksTotal = computed(() => visibleMachines.value.reduce((n, m) => n + m.summary.studios.reduce((s, x) => s + studioAsksCount(x), 0), 0))
 const STATE_LABEL: Record<BacklotVisualState, string> = {
   working: 'Working', blocked: 'Blocked', idle: 'Ready', done: 'Done', inactive: 'Closed', unknown: 'Unknown',
 }
@@ -40,6 +41,18 @@ function openStudio(doc: BacklotMachineView, studio: BacklotStudio) {
   sheetDoc.value = doc
   sheetStudio.value = studio
   sheetOpen.value = true
+}
+
+// The opening design document viewer sheet.
+const docSheetOpen = ref(false)
+const docSheetMachine = ref<BacklotMachineView | null>(null)
+const docSheetStudio = ref<BacklotStudio | null>(null)
+const docSheetFile = ref<string | null>(null)
+function openDesignDoc(doc: BacklotMachineView, studio: BacklotStudio, file: string) {
+  docSheetMachine.value = doc
+  docSheetStudio.value = studio
+  docSheetFile.value = file
+  docSheetOpen.value = true
 }
 
 const stageBusy = ref<string | null>(null)
@@ -94,6 +107,10 @@ watch(sessionTabPick, () => {
   sheetOpen.value = false
   sheetDoc.value = null
   sheetStudio.value = null
+  docSheetOpen.value = false
+  docSheetMachine.value = null
+  docSheetStudio.value = null
+  docSheetFile.value = null
   hollyTell.value = null
   hollyText.value = ''
   hollyError.value = ''
@@ -114,7 +131,11 @@ watch(visibleMachines, (list) => {
 
 <template>
   <section v-if="visibleMachines.length" class="bl-section" data-testid="backlot-section">
-    <h2 class="group-title"><span>{{ t('Studios') }}</span><span v-if="waitingTotal" class="count" data-testid="backlot-waiting">{{ waitingTotal }}</span></h2>
+    <h2 class="group-title">
+      <span>{{ t('Studios') }}</span>
+      <span v-if="waitingTotal" class="count" data-testid="backlot-waiting">{{ waitingTotal }}</span>
+      <span v-if="asksTotal" class="count bl-asks-count" :title="t('Questions and decisions')" data-testid="backlot-asks">{{ tl(`?${asksTotal}`) }}</span>
+    </h2>
 
     <div v-for="m in stopped" :key="`stage-${docKey(m)}`" class="bl-notice" data-testid="backlot-stage-notice">
       <span class="card-state blocked" aria-hidden="true"><i /></span>
@@ -126,26 +147,30 @@ watch(visibleMachines, (list) => {
     <p v-if="stageError" class="bl-error" role="alert">{{ stageError }}</p>
 
     <div class="bl-studios">
-      <button
-        v-for="{ doc, studio } in studios" :key="`${docKey(doc)}-${studio.id}`" type="button" class="bl-studio"
+      <div
+        v-for="{ doc, studio } in studios" :key="`${docKey(doc)}-${studio.id}`" class="bl-studio"
         :data-testid="`backlot-studio-${doc.machine || 'local'}-${studio.id}`" @click="openStudio(doc, studio)"
       >
-        <span class="card-state" :class="studioVisualState(studio)" :title="t(STATE_LABEL[studioVisualState(studio)])" aria-hidden="true"><i /></span>
-        <span class="bl-studio-body">
-          <span class="bl-studio-top">
-            <b>{{ studio.title }}</b>
-            <span v-if="multi" class="bl-machine">{{ doc.label }}</span>
+        <button type="button" class="bl-studio-main" @click.stop="openStudio(doc, studio)">
+          <span class="card-state" :class="studioVisualState(studio)" :title="t(STATE_LABEL[studioVisualState(studio)])" aria-hidden="true"><i /></span>
+          <span class="bl-studio-body">
+            <span class="bl-studio-top">
+              <b>{{ studio.title }}</b>
+              <span v-if="multi" class="bl-machine">{{ doc.label }}</span>
+            </span>
+            <span class="bl-meta">
+              <span>{{ t(STATE_LABEL[studioVisualState(studio)]) }}</span>
+              <span>{{ tl(`r${studio.requirement_version} · ${studio.tasks_done ?? 0}/${studio.tasks_total ?? 0}`) }}</span>
+              <span v-if="studio.state">{{ t(studio.state === 'finished' ? 'Finished' : 'Live') }}</span>
+              <span v-if="studio.waiting">{{ tl(`${studio.waiting} waiting`) }}</span>
+              <span v-if="studioAsksCount(studio)" class="bl-meta-asks" data-testid="backlot-studio-asks">{{ tl(`${studioAsksCount(studio)} asking`) }}</span>
+            </span>
+            <span v-if="studio.error" class="bl-line error">{{ studio.error }}</span>
+            <span v-else-if="studio.next" class="bl-line">{{ studio.next }}</span>
           </span>
-          <span class="bl-meta">
-            <span>{{ t(STATE_LABEL[studioVisualState(studio)]) }}</span>
-            <span>{{ tl(`r${studio.requirement_version} · ${studio.tasks_done ?? 0}/${studio.tasks_total ?? 0}`) }}</span>
-            <span v-if="studio.state">{{ t(studio.state === 'finished' ? 'Finished' : 'Live') }}</span>
-            <span v-if="studio.waiting">{{ tl(`${studio.waiting} waiting`) }}</span>
-          </span>
-          <span v-if="studio.error" class="bl-line error">{{ studio.error }}</span>
-          <span v-else-if="studio.next" class="bl-line">{{ studio.next }}</span>
-        </span>
-      </button>
+        </button>
+        <BacklotDesignDecision :machine="doc" :studio="studio" @read="openDesignDoc(doc, studio, $event)" />
+      </div>
     </div>
 
     <div v-for="m in visibleMachines.filter(hollywood)" :key="`holly-${docKey(m)}`" class="bl-holly" :data-testid="`backlot-hollywood-${m.machine || 'local'}`">
@@ -185,20 +210,24 @@ watch(visibleMachines, (list) => {
     </div>
 
     <BacklotStudioSheet v-model:open="sheetOpen" :machine="sheetDoc" :studio="sheetStudio" />
+    <BacklotDesignDocSheet v-model:open="docSheetOpen" :machine="docSheetMachine" :studio="docSheetStudio" :file="docSheetFile" />
   </section>
 </template>
 
 <style scoped>
 .bl-section { display: grid; gap: 8px; margin: 0 0 18px; }
+.bl-asks-count { color: var(--blocked); }
 .bl-studios { display: grid; gap: 8px; }
-.bl-studio { display: flex; gap: 10px; align-items: flex-start; width: 100%; min-height: 56px; padding: 10px 12px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.bl-studio { display: grid; gap: 8px; width: 100%; padding: 10px 12px; border: 1px solid var(--line); background: var(--surface); color: var(--text); cursor: pointer; min-width: 0; }
 .bl-studio:hover { background: var(--surface-2); }
-.bl-studio .card-state { margin-top: 2px; }
+.bl-studio-main { display: flex; gap: 10px; align-items: flex-start; width: 100%; min-height: 36px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; min-width: 0; }
+.bl-studio-main .card-state { margin-top: 2px; }
 .bl-studio-body { display: grid; gap: 3px; flex: 1; min-width: 0; }
 .bl-studio-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .bl-studio-top b { overflow: hidden; font: 600 14px/1.3 var(--display); text-overflow: ellipsis; white-space: nowrap; }
 .bl-machine { flex: none; margin-left: auto; padding: 2px 5px; border: 1px solid var(--line); color: var(--muted); font: 500 9.5px/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
 .bl-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font: 400 11px/1.35 var(--mono); }
+.bl-meta-asks { color: var(--blocked); }
 .bl-line { color: var(--text-2); font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
 .bl-line.error, .bl-error { color: var(--blocked); }
 .bl-error { margin: 0; font: 400 12px/1.35 var(--mono); overflow-wrap: anywhere; }

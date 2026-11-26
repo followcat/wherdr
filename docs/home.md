@@ -33,6 +33,17 @@
   own agent row, state, activity and answers. A waiting role puts the group in **Your turn** and
   opens it even if you folded it before. The `backlot-stage` and `backlot-server` daemons never
   appear in the list or its counters.
+- **Studios and opening design decisions**: machines publishing a `backlot/1` document appear in the
+  **Studios** section with their blocking alarms and asks/questions count (waiting decisions count
+  with asks, never with blocking alarms). When a studio's opening design waits on you
+  (`waiting_user` or `suggest_skip`), its card and detail sheet show the round (or skip suggestion
+  reason), producer summary and up to three questions with recommendations and section references,
+  with **Read** (opens the Markdown document via `backlot report show` with jumpable `R<r>` and
+  `§R<r>.<W|D|P|U>` headings), **Reply** (messages the producer), **Sign off**, **Skip** and
+  **Discuss**. Sign-off and Skip ask for confirmation first, naming the mode and the document
+  that will be frozen; other active phases show a quiet status line (`design · R2 · proposal`).
+  Studios with newer unknown ledger kinds show a read-only **Upgrade backlot** banner with
+  actions disabled.
 - **Task agents**: an agent the [project engine](project-management.md) started for a task keeps
   its own status, but its row is named after its task: the state square, the task id badge, the
   task title (cut when long; a pane you renamed keeps your name, in the conversation header and

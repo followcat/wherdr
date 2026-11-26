@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Backlot opening design decisions in Studios.** Studio cards and the studio detail sheet now display active opening design decisions (`waiting_user` and `suggest_skip`) with the round or skip reason, producer summary, recommendations and section references, **Read** (rendering `design/v<N>.md` / `-final.md` with jumpable `R<r>` and `§R<r>.<W|D|P|U>` headings), **Reply** to producer, confirmed **Sign off** and **Skip** naming the mode and frozen document, **Discuss**, quiet status lines for background phases, separate asks counting, and a read-only **Upgrade backlot** banner when `needs_upgrade` is set.
+
 - **Sessions switch from the header.** With several hc sessions, the current session replaces the version in Home's eyebrow and opens a square dropdown (state, terminal and waiting counts, and the About link); the separate pill row is gone, while the collapsed rail keeps square session buttons.
 
 - **Studio groups on Home.** Backlot studio roles and Hollywood fold into collapsible groups with live states, per-role rows and counters, stage/server daemons stay hidden, and Settings › Machines can find and add local hc sessions.

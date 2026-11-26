@@ -9,6 +9,35 @@ export interface BacklotSummary {
   hollywood?: BacklotHollywood | null
 }
 
+export type BacklotDesignPhase =
+  | 'idle'
+  | 'suggest_skip'
+  | 'waiting_proposal'
+  | 'waiting_buildability'
+  | 'waiting_summary'
+  | 'waiting_user'
+  | 'signed'
+
+export interface BacklotDesignQuestion {
+  id: string
+  prompt: string
+  recommendation: string
+  section_ref?: string | null
+}
+
+export interface BacklotDesign {
+  version: number
+  round: number
+  phase: BacklotDesignPhase
+  waiting_user: boolean
+  suggest_skip: boolean
+  skip_reason?: string | null
+  doc_file: string
+  summary?: string | null
+  questions: BacklotDesignQuestion[]
+  waiting_since_ms?: number | null
+}
+
 export interface BacklotStudio {
   id: string
   title: string
@@ -25,6 +54,9 @@ export interface BacklotStudio {
   tasks_total?: number
   tasks?: BacklotTask[]
   roles: BacklotRole[]
+  needs_upgrade?: boolean
+  unknown_kinds?: string[]
+  design?: BacklotDesign | null
 }
 
 export interface BacklotTask {
@@ -61,6 +93,7 @@ export interface BacklotRole {
   resumable?: boolean
   since_ms?: number
   attention?: string | null
+  asks?: string | null
   attention_user?: boolean
   attention_seq?: number | null
   attention_detail?: string | null
@@ -101,6 +134,22 @@ export type BacklotAction =
   | { kind: 'card-apply', session?: string, machine: string, cardId: string }
   | { kind: 'card-cancel', session?: string, machine: string, cardId: string }
   | { kind: 'stage-start', session?: string, machine: string }
+  | { kind: 'design-sign', session?: string, machine: string, studio: string, skip: boolean, reason?: string, note?: string }
+  | { kind: 'design-open', session?: string, machine: string, studio: string, req?: number }
+
+export interface BacklotDocQuery {
+  session?: string
+  machine: string
+  studio: string
+  file: string
+}
+
+export interface BacklotDesignSection {
+  id: string
+  level: 2 | 3
+  label: string
+  text: string
+}
 
 export function backlotActionTarget(view: Pick<BacklotMachineView, 'machine' | 'session'>): { machine: string, session?: string } {
   return {
@@ -139,9 +188,56 @@ function parseRole(raw: unknown): BacklotRole | null {
     resumable: bool(o.resumable),
     ...(optNum(o.since_ms) != null ? { since_ms: o.since_ms as number } : {}),
     attention: optStr(o.attention),
+    asks: optStr(o.asks),
     attention_user: bool(o.attention_user),
     attention_seq: optNum(o.attention_seq),
     attention_detail: optStr(o.attention_detail),
+  }
+}
+
+const DESIGN_PHASES = new Set<BacklotDesignPhase>([
+  'idle',
+  'suggest_skip',
+  'waiting_proposal',
+  'waiting_buildability',
+  'waiting_summary',
+  'waiting_user',
+  'signed',
+])
+const MAX_DESIGN_QUESTIONS = 3
+
+function parseDesignQuestion(raw: unknown): BacklotDesignQuestion | null {
+  const o = isObject(raw) ? raw : null
+  const id = o ? str(o.id) : ''
+  const prompt = o ? str(o.prompt) : ''
+  if (!o || !id || !prompt) return null
+  return {
+    id,
+    prompt,
+    recommendation: str(o.recommendation),
+    section_ref: optStr(o.section_ref),
+  }
+}
+
+function parseDesign(raw: unknown): BacklotDesign | null {
+  const o = isObject(raw) ? raw : null
+  const phaseRaw = o ? str(o.phase) : ''
+  if (!o || !DESIGN_PHASES.has(phaseRaw as BacklotDesignPhase)) return null
+  const phase = phaseRaw as BacklotDesignPhase
+  const questions = Array.isArray(o.questions)
+    ? o.questions.map(parseDesignQuestion).filter((q): q is BacklotDesignQuestion => q !== null).slice(0, MAX_DESIGN_QUESTIONS)
+    : []
+  return {
+    version: num(o.version),
+    round: num(o.round),
+    phase,
+    waiting_user: typeof o.waiting_user === 'boolean' ? o.waiting_user : (phase === 'waiting_user' || phase === 'suggest_skip'),
+    suggest_skip: typeof o.suggest_skip === 'boolean' ? o.suggest_skip : phase === 'suggest_skip',
+    skip_reason: optStr(o.skip_reason),
+    doc_file: str(o.doc_file),
+    summary: optStr(o.summary),
+    questions,
+    waiting_since_ms: optNum(o.waiting_since_ms),
   }
 }
 
@@ -172,6 +268,7 @@ function parseStudio(raw: unknown): BacklotStudio | null {
   if (!o || !id) return null
   const roles = Array.isArray(o.roles) ? o.roles.map(parseRole).filter((r): r is BacklotRole => r !== null) : []
   const tasks = Array.isArray(o.tasks) ? o.tasks.map(parseTask).filter((t): t is BacklotTask => t !== null) : []
+  const unknown_kinds = Array.isArray(o.unknown_kinds) ? o.unknown_kinds.map(str).filter(Boolean) : []
   return {
     id,
     title: str(o.title) || id,
@@ -188,6 +285,9 @@ function parseStudio(raw: unknown): BacklotStudio | null {
     tasks_total: num(o.tasks_total),
     tasks,
     roles,
+    needs_upgrade: bool(o.needs_upgrade),
+    unknown_kinds,
+    design: parseDesign(o.design),
   }
 }
 
@@ -260,6 +360,61 @@ export function studioWaitingAttentions(studio: BacklotStudio): BacklotRole[] {
     .sort((a, b) => Number(Boolean(b.attention_user)) - Number(Boolean(a.attention_user)) || seq(a) - seq(b))
 }
 
+export function waitingDesign(studio: BacklotStudio): BacklotDesign | null {
+  if (studio.needs_upgrade || studio.state === 'finished' || !studio.design) return null
+  return studio.design.phase === 'waiting_user' || studio.design.phase === 'suggest_skip' ? studio.design : null
+}
+
+// Warm asks bucket: open role `tell user` questions plus a waiting design decision.
+export function studioAsksCount(studio: BacklotStudio): number {
+  const roleAsks = studio.roles.filter(r => Boolean(r.asks?.trim())).length
+  return roleAsks + (waitingDesign(studio) ? 1 : 0)
+}
+
+export function designFrozenDoc(design: Pick<BacklotDesign, 'version' | 'doc_file'>): string {
+  const raw = design.doc_file.trim()
+  if (!raw) return `design/v${design.version}-final.md`
+  return raw.endsWith('-final.md') ? raw : raw.replace(/\.md$/, '-final.md')
+}
+
+const QUIET_PHASE: Partial<Record<BacklotDesignPhase, string>> = {
+  waiting_proposal: 'proposal',
+  waiting_buildability: 'buildability',
+  waiting_summary: 'summary',
+  signed: 'signed',
+}
+
+export function designQuietStatus(design: BacklotDesign | null | undefined): string | null {
+  if (!design) return null
+  if (design.phase === 'signed' && design.suggest_skip) return 'design · skipped'
+  const label = QUIET_PHASE[design.phase]
+  return label ? `design · R${design.round} · ${label}` : null
+}
+
+// Extract jumpable `## R<r>` and `### §R<r>.<W|D|P|U>` headings outside code fences.
+export function extractDesignSections(markdown: string): BacklotDesignSection[] {
+  const sections: BacklotDesignSection[] = []
+  let fence = false
+  for (const rawLine of markdown.split('\n')) {
+    const line = rawLine.trim()
+    if (/^(`{3,}|~{3,})/.test(line)) { fence = !fence; continue }
+    if (fence) continue
+    const r = /^##\s+(R\d+(?:\b.*)?)$/.exec(line)
+    if (r) {
+      const text = r[1]!.trim()
+      sections.push({ id: `design-sec-${sections.length}`, level: 2, label: text.replace(/\s*\(#\d+\)$/, ''), text })
+      continue
+    }
+    const s = /^###\s+(§R\d+\.[WDPU]\+?.*)$/.exec(line)
+    if (s) {
+      const text = s[1]!.trim()
+      const label = text.replace(/\s*\(#\d+\)$/, '').replace(/\s*·\s*[^·]+$/, '')
+      sections.push({ id: `design-sec-${sections.length}`, level: 3, label, text })
+    }
+  }
+  return sections
+}
+
 // Machine of the action: '' is this one, otherwise a herdr-core machine name.
 // Session of the action: '' is primary, otherwise the session tab key.
 const SAFE_ID = /^[a-zA-Z0-9._-]{1,64}$/
@@ -267,18 +422,24 @@ const SAFE_MACHINE = /^$|^[a-zA-Z0-9._-]{1,64}$/
 const SAFE_SESSION = /^$|^[a-zA-Z0-9._-]{1,64}$/
 const CARD_ID = /^c\d{1,18}$/
 const MAX_TEXT = 4000
+export const BACKLOT_DESIGN_DOC_RE = /^design\/v[0-9]+(-final)?\.md$/
 
-// Every action the Studio view may run, from an untrusted body. Null refuses
-// anything else: no unknown kind, no shell metacharacter, no oversized text.
-export function validateBacklotAction(input: unknown): BacklotAction | null {
-  if (!isObject(input)) return null
+function parseTarget(input: Record<string, unknown>): { session?: string, machine: string } | null {
   const machine = typeof input.machine === 'string' && SAFE_MACHINE.test(input.machine) ? input.machine : null
   if (machine === null) return null
   const session = input.session === undefined
     ? undefined
     : typeof input.session === 'string' && SAFE_SESSION.test(input.session) ? input.session : null
   if (session === null) return null
-  const target = session !== undefined ? { session, machine } : { machine }
+  return session !== undefined ? { session, machine } : { machine }
+}
+
+// Every action the Studio view may run, from an untrusted body. Null refuses
+// anything else: no unknown kind, no shell metacharacter, no oversized text.
+export function validateBacklotAction(input: unknown): BacklotAction | null {
+  if (!isObject(input)) return null
+  const target = parseTarget(input)
+  if (!target) return null
   switch (input.kind) {
     case 'approve': {
       const studio = typeof input.studio === 'string' && SAFE_ID.test(input.studio) ? input.studio : null
@@ -308,20 +469,86 @@ export function validateBacklotAction(input: unknown): BacklotAction | null {
     }
     case 'stage-start':
       return { kind: 'stage-start', ...target }
+    case 'design-sign': {
+      const studio = typeof input.studio === 'string' && SAFE_ID.test(input.studio) ? input.studio : null
+      const skip = typeof input.skip === 'boolean' ? input.skip : null
+      if (!studio || skip === null) return null
+      let reason: string | undefined
+      if (input.reason !== undefined) {
+        if (typeof input.reason !== 'string' || !skip) return null
+        reason = input.reason.trim()
+        if (!reason || reason.length > MAX_TEXT) return null
+      }
+      let note: string | undefined
+      if (input.note !== undefined) {
+        if (typeof input.note !== 'string') return null
+        const trimmed = input.note.trim()
+        if (trimmed.length > MAX_TEXT) return null
+        if (trimmed) note = trimmed
+      }
+      return {
+        kind: 'design-sign',
+        ...target,
+        studio,
+        skip,
+        ...(reason !== undefined ? { reason } : {}),
+        ...(note !== undefined ? { note } : {}),
+      }
+    }
+    case 'design-open': {
+      const studio = typeof input.studio === 'string' && SAFE_ID.test(input.studio) ? input.studio : null
+      if (!studio) return null
+      let req: number | undefined
+      if (input.req !== undefined) {
+        if (typeof input.req !== 'number' || !Number.isInteger(input.req) || input.req <= 0) return null
+        req = input.req
+      }
+      return {
+        kind: 'design-open',
+        ...target,
+        studio,
+        ...(req !== undefined ? { req } : {}),
+      }
+    }
     default:
       return null
   }
+}
+
+export function validateBacklotDocQuery(input: unknown): BacklotDocQuery | null {
+  if (!isObject(input)) return null
+  const machine = input.machine === undefined ? '' : input.machine
+  const target = parseTarget({ machine, ...(input.session !== undefined ? { session: input.session } : {}) })
+  if (!target) return null
+  const studio = typeof input.studio === 'string' && SAFE_ID.test(input.studio) ? input.studio : null
+  const file = typeof input.file === 'string' && BACKLOT_DESIGN_DOC_RE.test(input.file) ? input.file : null
+  return studio && file ? { ...target, studio, file } : null
 }
 
 // The argv of the `backlot` command, in the order its CLI reads it.
 export function buildBacklotCommand(action: BacklotAction): string[] {
   switch (action.kind) {
     case 'approve': return ['approve', '--studio', action.studio, '--person', action.person, '--decision', action.decision]
-    case 'tell': return ['tell', '--studio', action.studio, action.role, '--text', action.text]
+    case 'tell': return ['tell', '--studio', action.studio, action.role, '--text', action.text, '--as', 'user']
     case 'tell-hollywood': return ['tell', 'hollywood', '--text', action.text]
     case 'attention-clear': return ['attention', 'clear', '--studio', action.studio, String(action.seq)]
     case 'card-apply': return ['card', 'apply', action.cardId]
     case 'card-cancel': return ['card', 'cancel', action.cardId]
     case 'stage-start': return ['stage', 'start']
+    case 'design-sign': return [
+      'design', 'sign', '--studio', action.studio,
+      ...(action.skip ? ['--skip', ...(action.reason ? ['--reason', action.reason] : [])] : []),
+      ...(action.note ? ['--note', action.note] : []),
+      '--as', 'user',
+    ]
+    case 'design-open': return [
+      'design', 'open', '--studio', action.studio,
+      ...(action.req !== undefined ? ['--req', String(action.req)] : []),
+      '--as', 'user',
+    ]
   }
+}
+
+export function buildBacklotReportCommand(studio: string, file: string): string[] {
+  return ['report', 'show', '--studio', studio, '--file', file]
 }

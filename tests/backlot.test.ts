@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { BacklotMachineView, BacklotRole, BacklotStudio } from '../shared/backlot'
+import type { BacklotDesign, BacklotMachineView, BacklotRole, BacklotStudio } from '../shared/backlot'
 import {
-  buildBacklotCommand, parseBacklotDoc, roleVisualState, studioVisualState, studioWaitingAttentions, validateBacklotAction,
+  buildBacklotCommand, buildBacklotReportCommand, designQuietStatus, parseBacklotDoc, roleVisualState,
+  studioAsksCount, studioVisualState, studioWaitingAttentions, validateBacklotAction, validateBacklotDocQuery,
+  waitingDesign,
 } from '../shared/backlot'
 import { readBacklotDocs, readPoolBacklotDocs, findBacklotActionEntry, clearBacklotDocs } from '../server/utils/backlotDocs'
 import { sessionIdScope } from '../server/utils/corePool'
-import { BACKLOT_NOT_FOUND, BACKLOT_TIMEOUT, runBacklotAction } from '../server/utils/backlotActions'
+import { BACKLOT_NOT_FOUND, BACKLOT_TIMEOUT, MAX_DESIGN_DOC_CHARS, readBacklotDesignDoc, runBacklotAction } from '../server/utils/backlotActions'
 
 const role = (more: Partial<BacklotRole> = {}): BacklotRole => ({ role: 'dev', name: 'alice', state: 'live', ...more })
 const studio = (more: Partial<BacklotStudio> = {}): BacklotStudio => ({
@@ -65,6 +67,88 @@ describe('parseBacklotDoc', () => {
     expect(parseBacklotDoc({ schema: 'backlot/1', studios: 'nope' })!.studios).toEqual([])
     expect(parseBacklotDoc({ schema: 'backlot/1', studios: [{ title: 'no id' }, 3] })!.studios).toEqual([])
   })
+
+  it('parses design, asks, needs_upgrade and unknown_kinds while staying tolerant of missing/invalid values', () => {
+    const doc = parseBacklotDoc({
+      schema: 'backlot/1',
+      updated_ms: 500,
+      studios: [
+        {
+          id: 'acme-shop',
+          title: 'Acme Shop',
+          state: 'live',
+          requirement_version: 2,
+          open_reviews: 0,
+          waiting: 0,
+          needs_upgrade: true,
+          unknown_kinds: ['design.future', 42, ''],
+          roles: [{ role: 'producer', name: 'producer', state: 'live', asks: 'Ship v2 today?' }],
+          design: {
+            version: 2,
+            round: 1,
+            phase: 'waiting_user',
+            waiting_user: true,
+            suggest_skip: false,
+            skip_reason: null,
+            doc_file: 'design/v2.md',
+            summary: 'Split checkout into two steps.',
+            questions: [
+              { id: 'Q1', prompt: 'Keep guest checkout?', recommendation: 'Yes, for speed', section_ref: '§R1.W' },
+              { id: '', prompt: 'ignored invalid' },
+            ],
+            waiting_since_ms: 450,
+          },
+        },
+        {
+          id: 'legacy',
+          title: 'Legacy',
+          state: 'live',
+          roles: [],
+          design: { phase: 'future_unknown_phase' },
+        },
+      ],
+    })!
+    const acme = doc.studios[0]!
+    expect(acme.needs_upgrade).toBe(true)
+    expect(acme.unknown_kinds).toEqual(['design.future'])
+    expect(acme.roles[0]!.asks).toBe('Ship v2 today?')
+    expect(acme.design).toEqual({
+      version: 2,
+      round: 1,
+      phase: 'waiting_user',
+      waiting_user: true,
+      suggest_skip: false,
+      skip_reason: null,
+      doc_file: 'design/v2.md',
+      summary: 'Split checkout into two steps.',
+      questions: [{ id: 'Q1', prompt: 'Keep guest checkout?', recommendation: 'Yes, for speed', section_ref: '§R1.W' }],
+      waiting_since_ms: 450,
+    })
+    const legacy = doc.studios[1]!
+    expect(legacy.needs_upgrade).toBe(false)
+    expect(legacy.unknown_kinds).toEqual([])
+    expect(legacy.design).toBe(null)
+  })
+})
+
+describe('design helpers and asks counting', () => {
+  const design = (more: Partial<BacklotDesign> = {}): BacklotDesign => ({
+    version: 1, round: 1, phase: 'waiting_user', waiting_user: true, suggest_skip: false, doc_file: 'design/v1.md', questions: [], ...more,
+  })
+
+  it('counts waiting design decisions in asks, never when needs_upgrade or quiet/finished', () => {
+    expect(studioAsksCount(studio({ roles: [role({ asks: 'Which db?' })], design: design() }))).toBe(2)
+    expect(studioAsksCount(studio({ design: design({ phase: 'suggest_skip', suggest_skip: true }) }))).toBe(1)
+    expect(studioAsksCount(studio({ design: design({ phase: 'waiting_proposal', waiting_user: false }) }))).toBe(0)
+    expect(studioAsksCount(studio({ needs_upgrade: true, design: design() }))).toBe(0)
+    expect(studioAsksCount(studio({ state: 'finished', design: design() }))).toBe(0)
+    expect(waitingDesign(studio({ design: design() }))?.phase).toBe('waiting_user')
+    expect(designQuietStatus(design({ round: 2, phase: 'waiting_proposal', waiting_user: false }))).toBe('design · R2 · proposal')
+    expect(designQuietStatus(design({ round: 1, phase: 'waiting_buildability', waiting_user: false }))).toBe('design · R1 · buildability')
+    expect(designQuietStatus(design({ round: 1, phase: 'waiting_summary', waiting_user: false }))).toBe('design · R1 · summary')
+    expect(designQuietStatus(design({ round: 1, phase: 'signed', waiting_user: false }))).toBe('design · R1 · signed')
+    expect(designQuietStatus(design({ phase: 'idle', waiting_user: false }))).toBe(null)
+  })
 })
 
 describe('roleVisualState and studioWaitingAttentions', () => {
@@ -105,12 +189,16 @@ describe('validateBacklotAction', () => {
     const cases = [
       [{ kind: 'approve', machine: '', studio: 'shop', person: 'alice', decision: 'allow' }, ['approve', '--studio', 'shop', '--person', 'alice', '--decision', 'allow']],
       [{ kind: 'approve', machine: 'host-b', studio: 'shop', person: 'alice', decision: 'deny' }, ['approve', '--studio', 'shop', '--person', 'alice', '--decision', 'deny']],
-      [{ kind: 'tell', machine: '', studio: 'shop', role: 'dev', text: '  hello  ' }, ['tell', '--studio', 'shop', 'dev', '--text', 'hello']],
+      [{ kind: 'tell', machine: '', studio: 'shop', role: 'dev', text: '  hello  ' }, ['tell', '--studio', 'shop', 'dev', '--text', 'hello', '--as', 'user']],
       [{ kind: 'tell-hollywood', machine: '', text: 'hello' }, ['tell', 'hollywood', '--text', 'hello']],
       [{ kind: 'attention-clear', machine: 'host-b', studio: 'shop', seq: 3 }, ['attention', 'clear', '--studio', 'shop', '3']],
       [{ kind: 'card-apply', machine: '', cardId: 'c12' }, ['card', 'apply', 'c12']],
       [{ kind: 'card-cancel', machine: 'host-b', cardId: 'c9' }, ['card', 'cancel', 'c9']],
       [{ kind: 'stage-start', machine: '' }, ['stage', 'start']],
+      [{ kind: 'design-sign', machine: '', studio: 'acme-shop', skip: false, note: '  ship it  ' }, ['design', 'sign', '--studio', 'acme-shop', '--note', 'ship it', '--as', 'user']],
+      [{ kind: 'design-sign', machine: 'host-a', studio: 'acme-shop', skip: true, reason: '  tiny fix  ' }, ['design', 'sign', '--studio', 'acme-shop', '--skip', '--reason', 'tiny fix', '--as', 'user']],
+      [{ kind: 'design-open', machine: '', studio: 'acme-shop' }, ['design', 'open', '--studio', 'acme-shop', '--as', 'user']],
+      [{ kind: 'design-open', machine: 'host-a', studio: 'acme-shop', req: 2 }, ['design', 'open', '--studio', 'acme-shop', '--req', '2', '--as', 'user']],
     ] as const
     for (const [input, argv] of cases) {
       const action = validateBacklotAction(input)!
@@ -134,8 +222,45 @@ describe('validateBacklotAction', () => {
       { kind: 'card-apply', machine: '', cardId: 'x1' },
       { kind: 'approve', machine: '', studio: 'shop', person: 'alice', decision: 'maybe' },
       { kind: 'stage-start', machine: '$(id)' },
+      { kind: 'design-sign', machine: '', studio: '../bad', skip: false },
+      { kind: 'design-sign', machine: '', studio: 'acme-shop', skip: 'yes' },
+      { kind: 'design-sign', machine: '', studio: 'acme-shop', skip: false, reason: 'cannot reason without skip' },
+      { kind: 'design-sign', machine: '', studio: 'acme-shop', skip: true, reason: '   ' },
+      { kind: 'design-sign', machine: '', studio: 'acme-shop', skip: true, reason: 'x'.repeat(4001) },
+      { kind: 'design-sign', machine: '', studio: 'acme-shop', skip: false, note: 'x'.repeat(4001) },
+      { kind: 'design-open', machine: '', studio: 'acme-shop; id' },
+      { kind: 'design-open', machine: '', studio: 'acme-shop', req: 0 },
+      { kind: 'design-open', machine: '', studio: 'acme-shop', req: -1 },
     ]
     for (const input of bad) expect(validateBacklotAction(input)).toBe(null)
+  })
+
+  it('validates design doc paths strictly and builds report show commands', () => {
+    expect(validateBacklotDocQuery({ machine: 'host-a', studio: 'acme-shop', file: 'design/v1.md' })).toEqual({
+      machine: 'host-a', studio: 'acme-shop', file: 'design/v1.md',
+    })
+    expect(validateBacklotDocQuery({ session: 'cafecafe', machine: '', studio: 'acme-shop', file: 'design/v12-final.md' })).toEqual({
+      session: 'cafecafe', machine: '', studio: 'acme-shop', file: 'design/v12-final.md',
+    })
+    expect(buildBacklotReportCommand('acme-shop', 'design/v1.md')).toEqual(['report', 'show', '--studio', 'acme-shop', '--file', 'design/v1.md'])
+
+    const badPaths = [
+      '',
+      '../etc/passwd',
+      'design/../req/v1.md',
+      '/design/v1.md',
+      'design/v1.txt',
+      'design/v.md',
+      'design/v1/r1-proposal.md',
+      'reports/r1.md',
+      'design/v1-final.md.bak',
+      'design/v1.md; id',
+    ]
+    for (const file of badPaths) {
+      expect(validateBacklotDocQuery({ machine: '', studio: 'acme-shop', file })).toBe(null)
+    }
+    expect(validateBacklotDocQuery({ machine: '$(id)', studio: 'acme-shop', file: 'design/v1.md' })).toBe(null)
+    expect(validateBacklotDocQuery({ machine: '', studio: '../shop', file: 'design/v1.md' })).toBe(null)
   })
 
   it('preserves a safe session key when present and rejects malformed session keys', () => {
@@ -439,5 +564,46 @@ describe('runBacklotAction', () => {
       .toEqual({ ok: true, output: 'done' })
     expect(deps.calls.filter(c => c.method === 'terminal.rm')).toHaveLength(1)
     expect(deps.clearDocs).toHaveBeenCalledOnce()
+  })
+})
+
+describe('readBacklotDesignDoc', () => {
+  const runner = (result: unknown) => {
+    const calls: { method: string, params: Record<string, unknown> }[] = []
+    const call = vi.fn(async (method: string, params: Record<string, unknown>) => {
+      calls.push({ method, params })
+      return method === 'terminal.run' ? result : {}
+    })
+    return { call, calls }
+  }
+  const done = (exit: number, output: string) => ({
+    address: 'host-a/t9', state: 'finished', exit_code: exit, output,
+    wait: { terminal: 'host-a/t9', ended: true, exit_code: exit, reason: 'exit', turn: 1, children: [] },
+  })
+
+  it('runs backlot report show for valid design paths and preserves full markdown', async () => {
+    const mdBody = '# Design discussion · req v1\n\n## R1\n\n### §R1.W Proposal · writer (#2)\n\nUse WAL.\n'
+    const deps = runner(done(0, `\u001b[32m${mdBody}\u001b[0m`))
+    const res = await readBacklotDesignDoc(deps, { machine: 'host-a', studio: 'acme-shop', file: 'design/v1.md' })
+    expect(res).toEqual({ ok: true, file: 'design/v1.md', text: mdBody.trimEnd(), truncated: false })
+    const run = deps.calls.find(c => c.method === 'terminal.run')!.params
+    expect(run.on).toBe('host-a')
+    expect(String(run.line)).toContain(`'report' 'show' '--studio' 'acme-shop' '--file' 'design/v1.md'`)
+  })
+
+  it('caps oversized documents and marks them truncated', async () => {
+    const big = '# Header\n' + 'a'.repeat(MAX_DESIGN_DOC_CHARS + 500)
+    const deps = runner(done(0, big))
+    const res = await readBacklotDesignDoc(deps, { machine: '', studio: 'acme-shop', file: 'design/v1-final.md' })
+    expect(res.ok).toBe(true)
+    expect(res.truncated).toBe(true)
+    expect(res.text!.length).toBe(MAX_DESIGN_DOC_CHARS)
+  })
+
+  it('refuses an invalid path without touching terminal.run', async () => {
+    const deps = runner(done(0, 'secret'))
+    const res = await readBacklotDesignDoc(deps, { machine: '', studio: 'acme-shop', file: '../secrets.md' })
+    expect(res).toEqual({ ok: false, status: 400, error: 'Invalid design document request' })
+    expect(deps.calls).toEqual([])
   })
 })

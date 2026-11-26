@@ -2,6 +2,7 @@
 // app's /api/* calls and feeds the live state, from scenario.ts. Nothing here
 // talks to a network or runs a command; agents "answer" with scripted turns.
 import type { ChatItem, HerdrState, Pane, QueuedMessage } from '#shared/types'
+import { designFrozenDoc, validateBacklotAction, validateBacklotDocQuery, type BacklotMachineView } from '../../shared/backlot'
 import { applySettingsPatch, cleanSettingsPatch, type SettingsMap } from '../../shared/settings'
 import * as S from './scenario'
 import { DemoPm } from './pm'
@@ -51,6 +52,8 @@ export class DemoServer {
   private settings: SettingsMap = {}
   private interactive = new Map<string, { cursor: number, details: boolean }>()
   private pm: DemoPm
+  private backlot: BacklotMachineView[]
+  private backlotDocs: Record<string, string>
 
   interactiveScreen(id: string): string | null {
     const menu = this.interactive.get(id)
@@ -80,6 +83,8 @@ export class DemoServer {
     const now = clock.now()
     this.panes = S.panes(now)
     this.pm = new DemoPm(clock)
+    this.backlot = S.backlotMachines(now)
+    this.backlotDocs = S.backlotDesignDocs()
     for (const [id, items] of Object.entries(S.conversations(now))) this.chats.set(id, { items, v: 1 })
     this.finishCodex()
   }
@@ -357,6 +362,18 @@ export class DemoServer {
         case '/api/settings': return ok({ settings: this.settings })
         case '/api/push/quiet': return ok({})
         case '/api/push/devices': return ok({ devices: [] })
+        case '/api/backlot': return ok({ ok: true, machines: this.backlot })
+        case '/api/backlot/doc': {
+          const parsed = validateBacklotDocQuery({
+            ...(q.get('session') !== null ? { session: q.get('session')! } : {}),
+            machine: q.get('machine') ?? '',
+            studio: q.get('studio') ?? '',
+            file: q.get('file') ?? '',
+          })
+          if (!parsed) return fail(400, 'Invalid design document request')
+          const text = this.backlotDocs[`${parsed.studio}:${parsed.file}`]
+          return text === undefined ? fail(404, DEMO_REFUSAL) : ok({ ok: true, file: parsed.file, text, truncated: false })
+        }
         case '/api/chat': return this.chatReply(paneId, q.get('since'), q.get('before'))
         case '/api/files': return ok(q.get('path') === 'src'
           ? { root: `${S.HOME}/code/acme-web`, path: 'src', truncated: false, entries: [
@@ -409,8 +426,61 @@ export class DemoServer {
         this.update(paneId, { label: String(body.label || '') || null })
         return ok()
       }
+      case '/api/backlot/action': {
+        const action = validateBacklotAction(body)
+        if (!action) return fail(400, 'Invalid action')
+        return this.handleBacklotAction(action)
+      }
     }
     return fail(403, DEMO_REFUSAL)
+  }
+
+  private handleBacklotAction(action: NonNullable<ReturnType<typeof validateBacklotAction>>): DemoReply {
+    const view = this.backlot.find(m => m.machine === action.machine && (action.session === undefined || (m.session ?? '') === action.session))
+    if (!view) return fail(404, DEMO_REFUSAL)
+    if (action.kind === 'stage-start') { view.stageRunning = true; return ok({ ok: true, output: 'stage started' }) }
+    if (action.kind === 'design-sign') {
+      const s = view.summary.studios.find(x => x.id === action.studio)
+      if (!s?.design) return fail(404, DEMO_REFUSAL)
+      const docFile = action.skip ? '' : designFrozenDoc(s.design)
+      if (!action.skip && docFile && this.backlotDocs[`${s.id}:${s.design.doc_file}`]) {
+        this.backlotDocs[`${s.id}:${docFile}`] = this.backlotDocs[`${s.id}:${s.design.doc_file}`]!
+      }
+      s.design = {
+        ...s.design,
+        phase: 'signed',
+        waiting_user: false,
+        suggest_skip: action.skip,
+        doc_file: docFile || s.design.doc_file,
+        questions: [],
+      }
+      s.next = action.skip ? 'plan request — producer' : 'plan request — producer'
+      return ok({ ok: true, output: `design.signed v${s.design.version} r${s.design.round} ${action.skip ? 'skipped' : 'approved'}` })
+    }
+    if (action.kind === 'design-open') {
+      const s = view.summary.studios.find(x => x.id === action.studio)
+      if (!s) return fail(404, DEMO_REFUSAL)
+      const ver = action.req ?? (s.requirement_version || 1)
+      s.design = {
+        version: ver,
+        round: 1,
+        phase: 'waiting_proposal',
+        waiting_user: false,
+        suggest_skip: false,
+        doc_file: `design/v${ver}.md`,
+        questions: [],
+      }
+      return ok({ ok: true, output: `design.opened v${ver} r1` })
+    }
+    if (action.kind === 'tell') {
+      const s = view.summary.studios.find(x => x.id === action.studio)
+      if (s?.design?.phase === 'waiting_user' && action.role === 'producer') {
+        s.design = { ...s.design, phase: 'waiting_proposal', waiting_user: false, round: s.design.round + 1, questions: [] }
+        s.next = `design proposal — writer`
+      }
+      return ok({ ok: true, output: 'queued' })
+    }
+    return ok({ ok: true, output: 'done' })
   }
 
   private chatReply(id: string, since: string | null, before: string | null): DemoReply {
