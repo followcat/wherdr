@@ -2,7 +2,7 @@
 // Alfred, two projects and their coordinators, three task agents, another
 // agent and a dev server (the projects' tasks: projects.ts). Everything here is fiction, in
 // English, with no real path, machine, person or conversation.
-import type { ChatItem, ModelInfo, OmpToolView, Pane, Quotas, Tab, Workspace } from '#shared/types'
+import type { ChatItem, ModelInfo, OmpToolView, Pane, Quotas, SessionInfo, Tab, Workspace } from '#shared/types'
 import type { TaskAgent } from '#shared/pm/taskAgents'
 
 export const HOME = '/Users/demo'
@@ -19,11 +19,21 @@ export const CLAUDE_WEB = 'w4:p1'
 export const DEV_SERVER = 'w4:p2'
 export const STUDIO_PRODUCER = 'w6:p1'
 export const STUDIO_ACTOR = 'w6:p2'
+export const STUDIO_SESSION = 's0123456789abcdef'
 
 export const MODELS: Record<string, ModelInfo> = {
   claude: { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5', effort: 'high' },
   codex: { id: 'gpt-5-codex', label: 'GPT-5 Codex', effort: 'medium' },
   omp: { id: 'claude-opus-4-1', label: 'Opus 4.1', effort: 'medium' },
+}
+
+// The demo runs two hc sessions: the main one and a studio session holding the
+// Backlot roles, so Home's session switcher shows.
+export function sessions(): SessionInfo[] {
+  return [
+    { key: '', name: 'default', primary: true, status: 'online' },
+    { key: STUDIO_SESSION, name: 'studio', primary: false, status: 'online' },
+  ]
 }
 
 export function workspaces(): Workspace[] {
@@ -34,7 +44,7 @@ export function workspaces(): Workspace[] {
     { id: 'w3', label: 'Fix the flaky CSV export test', number: 3, status: null, worktree: true, repo: REPO, repoName: 'acme-api', branch: 'hp/acme-api/t-0013-flaky-export' },
     { id: 'w4', label: 'acme-web', number: 4, status: null, worktree: false, repo: WEB, repoName: 'acme-web', branch: 'main' },
     { id: 'w5', label: 'acme-web', number: 5, status: null, worktree: false },
-    { id: 'w6', label: 'acme-shop', number: 6, status: null, worktree: false },
+    { id: 'w6', label: 'acme-shop', number: 6, status: null, worktree: false, session: 'studio' },
   ]
 }
 
@@ -47,7 +57,7 @@ const one = (ws: string, pane: string): Tab => oneTab(ws, 't1', pane)
 export function tabs(): Tab[] {
   return [
     one('w0', ALFRED), one('w1', COORD), one('w5', WEB_COORD), one('w2', CODEX), one('w3', OMP),
-    oneTab('w6', 't1', STUDIO_PRODUCER, 'producer'), oneTab('w6', 't2', STUDIO_ACTOR, 'actor-b t2'),
+    { ...oneTab('w6', 't1', STUDIO_PRODUCER, 'producer'), session: 'studio' }, { ...oneTab('w6', 't2', STUDIO_ACTOR, 'actor-b t2'), session: 'studio' },
     {
       id: 'w4:t1', workspace: 'w4', label: '1', number: 1,
       layout: {
@@ -73,12 +83,12 @@ export function panes(now: number): Pane[] {
     pane({ id: CLAUDE_WEB, workspace: 'w4', agent: 'claude', cwd: WEB, status: 'done', model: MODELS.claude, stateSeq: 8, bornAt: now - 2400_000, coreAddress: 'demo/claude-web', task: 'WEB-7', role: 'worker' }),
     pane({ id: DEV_SERVER, workspace: 'w4', agent: null, cwd: WEB, command: 'npm run dev', status: null, agentSession: null }),
     pane({
-      id: STUDIO_PRODUCER, workspace: 'w6', agent: 'claude', cwd: `${HOME}/code/acme-shop`, status: 'working', model: MODELS.claude, stateSeq: 6, bornAt: now - 1200_000,
+      id: STUDIO_PRODUCER, workspace: 'w6', session: 'studio', agent: 'claude', cwd: `${HOME}/code/acme-shop`, status: 'working', model: MODELS.claude, stateSeq: 6, bornAt: now - 1200_000,
       coreAddress: 'demo/studio-producer', name: 'bl-acme-shop-producer', backlotRole: 'producer', backlotStudio: 'acme-shop', preview: 'Drafting the launch plan',
       labels: { 'backlot.studio': 'acme-shop', 'backlot.role': 'producer', 'herdr.tab': 'producer' },
     }),
     pane({
-      id: STUDIO_ACTOR, workspace: 'w6', tab: 'w6:t2', agent: 'claude', cwd: `${HOME}/code/acme-shop`, status: 'blocked', model: MODELS.claude, stateSeq: 9, bornAt: now - 900_000,
+      id: STUDIO_ACTOR, workspace: 'w6', tab: 'w6:t2', session: 'studio', agent: 'claude', cwd: `${HOME}/code/acme-shop`, status: 'blocked', model: MODELS.claude, stateSeq: 9, bornAt: now - 900_000,
       coreAddress: 'demo/studio-actor', name: 'bl-acme-shop-t2', backlotRole: 'actor-t2-c1', backlotStudio: 'acme-shop', prompt: approval('git status'),
       labels: { 'backlot.studio': 'acme-shop', 'backlot.role': 'actor-t2-c1', 'herdr.tab': 'actor-b t2' },
     }),

@@ -339,6 +339,49 @@ body.short-bottom { --safe-bottom: 0px; }
 /* Versions in the eyebrow: a tap opens Settings › About; truncated before the row overflows. */
 .home-version { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: inherit; text-decoration: none; }
 .home-version:hover, .home-version:focus-visible { color: var(--text); }
+
+/* Session switcher: the eyebrow itself is the button. The drawn control is 32 px
+   high; its pseudo-element makes a 44 px touch target without widening the row. */
+.session-switch {
+  position: relative; flex: 0 1 auto; display: inline-flex; align-items: center; gap: 4px;
+  min-width: 44px; max-width: 100%; height: 32px; padding: 0 2px;
+  border: 1px solid transparent; border-radius: 0; background: transparent; color: inherit;
+  font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer;
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+.session-switch::after { content: ''; position: absolute; inset: -6px 0; }
+.session-switch:hover { color: var(--text); }
+.session-switch:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.session-switch-mark { flex: none; width: 6px; height: 6px; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 24%, transparent); }
+.session-switch-name { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.session-switch-waiting {
+  flex: none; display: grid; place-items: center; min-width: 14px; height: 14px; padding: 0 2px;
+  background: var(--accent); color: var(--on-accent); font: 600 9px/1 var(--mono); letter-spacing: 0;
+}
+.session-switch-chevron { flex: none; width: 10px; height: 10px; color: var(--muted); }
+.session-switch:hover .session-switch-chevron { color: var(--text); }
+
+/* Session rows of the switcher menu: square state mark, name, terminal count and
+   a square waiting chip. The version footer stays in the same small mono type. */
+.session-switcher-menu { max-width: calc(100vw - 16px); }
+.session-switcher-menu [data-slot="item"] {
+  min-height: 44px; gap: 8px; padding: 9px 10px; border-radius: 0;
+  font: 500 11px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--text);
+}
+.session-menu-state { flex: none; width: 7px; height: 7px; background: var(--green); }
+.session-menu-state.connecting { background: var(--ochre); animation: pulse 1s ease-in-out infinite; }
+.session-menu-state.offline { background: var(--rose); }
+.session-switcher-menu [data-slot="itemWrapper"] { flex: 1; min-width: 0; }
+.session-switcher-menu [data-slot="itemTrailing"] { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; }
+.session-menu-name { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.session-menu-count { margin-left: auto; color: var(--muted); font: 500 10.5px/1 var(--mono); letter-spacing: 0; }
+.session-menu-waiting {
+  display: grid; place-items: center; min-width: 16px; height: 16px; padding: 0 3px;
+  border: 1px solid var(--accent); color: var(--accent); font: 600 9.5px/1 var(--mono); letter-spacing: 0;
+}
+.session-switcher-menu .session-about-item { color: var(--muted); text-transform: none; letter-spacing: .04em; }
+.session-switcher-menu .session-about-item:hover,
+.session-switcher-menu .session-about-item[data-highlighted] { color: var(--text); }
 .home-actions { display: flex; align-items: center; gap: 4px; flex: none; margin-right: -6px; } /* overflow-safe: .home-top has 16px side padding */
 /* ⌘K palette (CommandMenu.vue, UCommandPalette): square window with thin lines (like the sheets), agent-card-style
    group headers, match highlighted in ochre like the

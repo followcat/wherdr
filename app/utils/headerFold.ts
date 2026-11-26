@@ -15,10 +15,11 @@ function buttonsWidth(n: number): number {
 
 // `rowWidth`: width of the title row; `total`: visible buttons; `foldable`: how
 // many of them may move into the menu; `extraWidth`: measured width of
-// `[data-wherdr="header-actions"]` when populated. Returns how many to fold (0 = no menu).
-export function headerFold(rowWidth: number, total: number, foldable: number, extraWidth = 0): number {
+// `[data-wherdr="header-actions"]` when populated; `titleWidth`: room the eyebrow
+// needs at its natural size. Returns how many to fold (0 = no menu).
+export function headerFold(rowWidth: number, total: number, foldable: number, extraWidth = 0, titleWidth = HEADER_TITLE_MIN): number {
   const extra = extraWidth > 0 ? extraWidth + (total > 0 ? HEADER_GAP : 0) : 0
-  const avail = rowWidth - HEADER_ROW_GAP - HEADER_TITLE_MIN - extra
+  const avail = rowWidth - HEADER_ROW_GAP - Math.max(HEADER_TITLE_MIN, titleWidth) - extra
   if (buttonsWidth(total) <= avail) return 0
   for (let k = 1; k <= foldable; k++) {
     if (buttonsWidth(total - k + 1) <= avail) return k

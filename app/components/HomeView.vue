@@ -15,6 +15,7 @@ import { claudeApiShown, machineQuotaRows, quotaBlocks, quotaRows, tabQuotaRows 
 import { longPress } from '~/utils/longPress'
 import { LIST_DEFAULT, LIST_MAX, LIST_MIN, LIST_RAIL, clampListWidth, listWidthCss, readListCollapsed, readListWidth, readStudioCollapsed, saveListCollapsed, saveListWidth, saveStudioCollapsed } from '~/utils/sideWidth'
 import { headerFold } from '~/utils/headerFold'
+import { sessionSwitcherHeaderWidth, waitingOutsideSession } from '~/utils/sessionTabs'
 import { hasHeaderActions, registerHeaderActionsSlot } from '~/utils/headerActions'
 import { quietPeriodEnd } from '~/utils/quietPeriodEnd'
 import { onceEvery } from '~/utils/onceEvery'
@@ -363,10 +364,16 @@ onBeforeUnmount(() => {
 })
 // First to fold first.
 const headerFoldable = ['search', 'board']
+const sessionSwitcherWidth = computed(() => {
+  if (sessionTabs.value.length <= 1) return 0
+  const current = sessionTabs.value.find(tab => tab.key === sessionTabPick.value) ?? sessionTabs.value[0]
+  if (!current) return 0
+  return sessionSwitcherHeaderWidth(current.name, waitingOutsideSession(sessionTabs.value, current.key))
+})
 const headerFolded = computed(() => {
   if (!titleRowWidth.value) return new Set<string>()
   const total = headerFoldable.length + 1 + (desk.value ? 1 : 0)
-  return new Set(headerFoldable.slice(0, headerFold(titleRowWidth.value, total, headerFoldable.length, headerActionsWidth.value)))
+  return new Set(headerFoldable.slice(0, headerFold(titleRowWidth.value, total, headerFoldable.length, headerActionsWidth.value, sessionSwitcherWidth.value)))
 })
 function headerMenuItems(): MenuItem[] {
   const f = headerFolded.value
@@ -505,7 +512,8 @@ function resetListWidth() {
       <div ref="titleRow" class="home-title-row">
         <p class="eyebrow">
           <AppLogo class="home-logo" :class="conn.idle ? '' : conn.ok ? 'ok' : 'bad'" />
-          <NuxtLink v-if="conn.ok" to="/settings?section=about" class="home-version" :title="t('About')">{{ conn.text }}</NuxtLink>
+          <SessionSwitcher v-if="sessionTabs.length > 1" />
+          <NuxtLink v-else-if="conn.ok" to="/settings?section=about" class="home-version" :title="t('About')">{{ conn.text }}</NuxtLink>
           <span v-else>{{ conn.text }}</span>
         </p>
         <h1 class="sr-only">{{ t('Agents') }}</h1>
@@ -532,7 +540,6 @@ function resetListWidth() {
     </header>
 
     <AwakePending />
-    <SessionTabs />
     <nav v-if="barShown" class="machine-bar" :aria-label="tl('Machines shown', 'Machines affichées')" @wheel="onBarWheel">
       <UContextMenu
         v-for="b in barEntries" :key="b.id" :disabled="sheetMenus || b.id === BAR_ALL"

@@ -223,7 +223,7 @@ OMP_API_KEY="$(secret-tool lookup service omp-api)" exec omp "$@"
 
 ### Machines as tabs
 
-When several hc sessions have terminals, **session tabs** sit above the machine tabs (and in the collapsed rail): the primary session first, then the others alphabetically, with the count of panes waiting for you. Empty non-primary sessions are hidden, the strip scrolls sideways on narrow screens, and the choice is kept on the device. A tab shows that session's Home; opening a pane from a link, notification or search selects its session.
+When several hc sessions have terminals, the **session switcher** replaces the version text in the header: the current session's name with a chevron, plus a small square count of the panes waiting in the other sessions. Its menu lists the primary session first, then the others alphabetically — a square state mark, the name, the terminal count and a square waiting chip for each, with the current session checked — and ends with the version and **About**. Empty non-primary sessions are hidden and the choice is kept on the device. With one session the version link stays in the header. In the collapsed rail the sessions stay as square buttons. A session shows its own Home; opening a pane from a link, notification or search selects its session.
 
 The **machine tabs** at the top of the list are **All**, then one tab per machine (the host, the
 machine wherdr runs on, shown by its host name with a **HOST** badge, and each core machine,

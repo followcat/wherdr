@@ -86,7 +86,7 @@ export class DemoServer {
 
   // ---------------------------------------------------------------- live state
   state(): HerdrState {
-    return { ok: true, ready: true, workspaces: this.workspaces, tabs: this.tabs, panes: this.panes.map(p => ({ ...p })) }
+    return { ok: true, ready: true, session: 'default', sessions: S.sessions(), workspaces: this.workspaces, tabs: this.tabs, panes: this.panes.map(p => ({ ...p })) }
   }
 
   onState(fn: Listener) {
