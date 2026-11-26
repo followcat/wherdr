@@ -489,6 +489,7 @@ function resetListWidth() {
       <UTooltip :text="t('Settings')" :kbds="shortcutKbds('settings')" :content="{ side: 'right' }">
         <UButton icon="i-lucide-settings-2" color="neutral" variant="ghost" size="lg" class="icon-btn" :aria-label="t('Settings')" to="/settings" />
       </UTooltip>
+      <SessionTabs rail />
       <ul v-if="agents.length" class="rail-stats">
         <li v-for="c in stats" :key="c.s" class="rail-stat" :class="[c.s, { zero: !c.n }]" :title="`${c.n} ${c.label}`">
           <i aria-hidden="true" /><b>{{ c.n }}</b><span class="sr-only">{{ c.label }}</span>
@@ -531,6 +532,7 @@ function resetListWidth() {
     </header>
 
     <AwakePending />
+    <SessionTabs />
     <nav v-if="barShown" class="machine-bar" :aria-label="tl('Machines shown', 'Machines affichées')" @wheel="onBarWheel">
       <UContextMenu
         v-for="b in barEntries" :key="b.id" :disabled="sheetMenus || b.id === BAR_ALL"

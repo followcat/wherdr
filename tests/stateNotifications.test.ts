@@ -13,7 +13,7 @@ function coreDelivery(opts: {
   const notify = bindFunction(source, 'notifyCorePane', {
     notificationAllowed: async () => opts.allowed ?? true, isViewed: () => opts.viewed ?? false, notificationTitle: (s: string) => s, isBacklotDaemonTerminal,
     state: {
-      workspaces: [{ id: 'w1', label: 'demo' }, { id: 'beefbeefbeefbeef~s7370', label: 'backlot-studio' }],
+      workspaces: [{ id: 'w1', label: 'demo' }, { id: 'sbeefbeefbeefbeef~s7370', label: 'backlot-studio' }],
       panes: opts.panes ?? [pane],
       machines: opts.machines ?? [{ key: 'k', label: 'laptop' }, { key: '', label: 'Local' }],
     },
@@ -51,21 +51,21 @@ it('disambiguates t1 across two sessions by (machineKey, address) with determini
   const d = coreDelivery({
     panes: [
       { id: 'w1:p7431', coreAddress: 't1', machine: '', workspace: 'w1', agent: 'claude', status: 'blocked', title: 'Primary' },
-      { id: `${secKey}~s7370:p7431`, coreAddress: 't1', machine: secKey, workspace: `${secKey}~s7370`, agent: 'codex', status: 'blocked', title: 'Director' },
-      { id: `${secKey}~s7370:p7432`, coreAddress: 't2', machine: secKey, name: 'backlot-stage', backlotRole: 'stage', workspace: `${secKey}~s7370`, agent: 'claude', status: 'blocked', title: 'Stage' },
+      { id: `s${secKey}~s7370:p7431`, coreAddress: 't1', machine: '', session: 'backlot', workspace: `s${secKey}~s7370`, agent: 'codex', status: 'blocked', title: 'Director' },
+      { id: `s${secKey}~s7370:p7432`, coreAddress: 't2', machine: '', session: 'backlot', name: 'backlot-stage', backlotRole: 'stage', workspace: `s${secKey}~s7370`, agent: 'claude', status: 'blocked', title: 'Stage' },
     ],
     machines: [
       { key: '', label: 'host-a', local: true },
       { key: secKey, baseKey: '', session: 'backlot', label: 'host-a', local: true },
     ],
   })
-  await d.notify(secKey, 't1', 'needs-you')
+  await d.notify({ sessionName: 'backlot' }, '', 't1', 'needs-you')
   expect(d.pushSend).toHaveBeenCalledTimes(1)
   expect(d.pushSend).toHaveBeenCalledWith(expect.objectContaining({
-    tag: `pane-${secKey}~s7370:p7431`,
-    url: `/#/a/${encodeURIComponent(`${secKey}~s7370:p7431`)}`,
+    tag: `pane-s${secKey}~s7370:p7431`,
+    url: `/#/a/${encodeURIComponent(`s${secKey}~s7370:p7431`)}`,
     body: 'backlot-studio · Director',
   }))
-  await d.notify(secKey, 't2', 'needs-you')
+  await d.notify({ sessionName: 'backlot' }, '', 't2', 'needs-you')
   expect(d.pushSend).toHaveBeenCalledTimes(1)
 })

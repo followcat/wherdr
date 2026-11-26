@@ -12,8 +12,8 @@ import type { CoreEvent } from '../../shared/coreEvents'
 import { liveTerminals } from '../../shared/coreEvents'
 import type { CoreInventory, CoreTerminal } from '../../shared/coreInventory'
 import type { CoreDocs } from '../../shared/coreLayout'
-import { machineOf } from '../../shared/ids'
-import type { ChatItem, HerdrState, MachineInfo, Pane } from '../../shared/types'
+import { machineOf, sessionScopeOf } from '../../shared/ids'
+import type { ChatItem, HerdrState, MachineInfo, Pane, SessionInfo } from '../../shared/types'
 import type { ClaudeAsked } from './choices'
 
 const MACHINES_MS = 4000
@@ -28,6 +28,8 @@ const errorText = (e: unknown) => (e instanceof Error && e.message) || 'Cannot r
 export const secondaryLocalKey = (socketPath: string) => sha16(`local:${socketPath}`)
 export const secondaryRemoteKey = (socketPath: string, machineName: string) => sha16(`remote:${socketPath}:${machineName}`)
 export const hostBaseKey = (host: string) => sha16(`host:${host}`)
+// Scope written in the IDs of a secondary session (primary keeps its historical unprefixed IDs).
+export const sessionIdScope = (socketPath: string) => sha16(`session:${socketPath}`)
 
 export function parseHcSocketsEnv(raw: string | undefined, home = os.homedir()): string[] {
   if (!raw) return []
@@ -75,7 +77,7 @@ export interface CorePoolOptions {
   hostLabel?: () => string
   settleMs?: number
   callTimeoutMs?: number
-  onAlert?: (machineKey: string, address: string, kind: CoreAlertKind) => void
+  onAlert?: (entry: CoreEntry, machineKey: string, address: string, kind: CoreAlertKind) => void
   onEvent?: (entry: CoreEntry, event: CoreEvent, before: CoreTerminal | undefined, after: CoreTerminal | undefined) => void
   onChange?: (entry: CoreEntry, what: 'terminal' | 'doc' | 'snapshot') => void
   onStatus?: (entry: CoreEntry, connected: boolean) => void
@@ -86,7 +88,7 @@ export interface CoreEntry {
   readonly primary: boolean
   readonly endpoint: string
   readonly localKey: string
-  readonly sessionName: string | undefined
+  readonly sessionName: string
   readonly session: CoreSession
   call: <T>(method: string, params?: object, timeout?: number) => Promise<T>
   machines: () => CoreMachine[]
@@ -120,9 +122,35 @@ const sessionLabel = (endpoint: string) => {
 }
 
 function machineKeyOfAddress(primary: boolean, endpoint: string, address: string): string {
-  if (!address.includes('/')) return primary ? '' : secondaryLocalKey(endpoint)
-  const name = address.split('/')[0]!
-  return primary ? hexKey(name) : secondaryRemoteKey(endpoint, name)
+  void endpoint
+  if (!address.includes('/')) return ''
+  return hexKey(address.split('/')[0]!)
+}
+
+const STATUS_RANK: Record<MachineInfo['status'], number> = { offline: 0, connecting: 1, online: 2 }
+
+function mergeSessionMachines(input: readonly { entry: CoreEntry, machines: readonly MachineInfo[] }[]): MachineInfo[] {
+  const out = new Map<string, MachineInfo>()
+  for (const { entry, machines } of input) {
+    for (const machine of machines) {
+      const key = machine.key
+      const prev = out.get(key)
+      const sessionInfo = { label: machine.label, status: machine.status, error: machine.error }
+      if (!prev) {
+        out.set(key, { ...machine, sessions: { [entry.sessionName]: sessionInfo } })
+        continue
+      }
+      prev.sessions = { ...(prev.sessions ?? {}), [entry.sessionName]: sessionInfo }
+      if (STATUS_RANK[machine.status] > STATUS_RANK[prev.status]) {
+        prev.status = machine.status
+        prev.error = machine.error
+      } else if (prev.status === machine.status && prev.error === null) {
+        prev.error = machine.error
+      }
+      if (!prev.label || (entry.primary && machine.label)) prev.label = machine.label
+    }
+  }
+  return [...out.values()]
 }
 
 export function createCorePool(opts: CorePoolOptions): CorePool {
@@ -133,8 +161,9 @@ export function createCorePool(opts: CorePoolOptions): CorePool {
   let extraEntries: CoreEntry[] = []
 
   const makeEntry = (endpoint: string, primary: boolean): CoreEntry => {
-    const localKey = primary ? '' : secondaryLocalKey(endpoint)
-    const sName = primary ? undefined : sessionLabel(endpoint)
+    const localKey = ''
+    const sName = sessionLabel(endpoint)
+    const idScope = primary ? undefined : sessionIdScope(endpoint)
     const docsReader = createCoreDocsReader()
     let generation = 0
     let reapedSnapshot = false
@@ -143,7 +172,7 @@ export function createCorePool(opts: CorePoolOptions): CorePool {
     let lastError: string | null = null
     let currentState: HerdrState = primary
       ? { ok: true, ready: false, workspaces: [], panes: [], machines: [{ key: '', label: hostLabel(), local: true, status: 'offline', error: null }] }
-      : { ok: true, ready: true, workspaces: [], tabs: [], panes: [], machines: [{ key: localKey, baseKey: '', session: sName, label: hostLabel(), local: true, status: 'offline', error: null }] }
+      : { ok: true, ready: true, workspaces: [], tabs: [], panes: [], machines: [{ key: localKey, label: hostLabel(), local: true, status: 'offline', error: null }] }
 
     const call = <T>(method: string, params: object = {}, timeout = opts.callTimeoutMs) => coreCall<T>(endpoint, method, params, timeout)
 
@@ -156,7 +185,7 @@ export function createCorePool(opts: CorePoolOptions): CorePool {
     const alerts = createCoreAlerts({
       settleMs: opts.settleMs ?? DEFAULT_ALERT_SETTLE_MS,
       current: address => session.get(address),
-      send: (address, kind) => opts.onAlert?.(machineKeyOfAddress(primary, endpoint, address), address, kind),
+      send: (address, kind) => opts.onAlert?.(entry, machineKeyOfAddress(primary, endpoint, address), address, kind),
     })
 
     const session = new CoreSession({
@@ -178,10 +207,16 @@ export function createCorePool(opts: CorePoolOptions): CorePool {
 
     const staleDocs = () => { generation++; cache = null; docsReader.clear(); clearBacklotDocs() }
 
-    const remoteBaseKey = (m: CoreMachine) => {
-      if (!m.host) return undefined
-      const match = primaryMachinesRaw.find(pm => pm.host && pm.host === m.host)
-      return match ? hexKey(match.name) : hostBaseKey(m.host)
+    // Canonical key of the real machine, shared by every session. A host match on
+    // the primary session wins; otherwise the physical host key, falling back to
+    // the machine name when core does not know the host.
+    const canonicalRemoteKey = (m: CoreMachine) => {
+      if (m.host) {
+        const match = primaryMachinesRaw.find(pm => pm.host && pm.host === m.host)
+        if (match) return hexKey(match.name)
+        return hostBaseKey(m.host)
+      }
+      return hexKey(m.name)
     }
 
     const computeState = (terminals: CoreTerminal[], machines: CoreMachine[], docs: CoreDocs, offlineErr: string | null): HerdrState => {
@@ -194,16 +229,15 @@ export function createCorePool(opts: CorePoolOptions): CorePool {
               error: offlineErr,
               machines: currentState.machines?.map(m => ({ ...m, status: 'offline' as const })),
             }
-          : coreState(terminals, machines, docs, hostLabel())
+          : coreState(terminals, machines, docs, hostLabel(), { session: sName })
       }
       const stateOpts: CoreStateOptions = {
         localKey,
-        localBaseKey: '',
         localStatus: offlineErr ? 'offline' : 'online',
         localError: offlineErr,
         session: sName,
-        machineKey: name => secondaryRemoteKey(endpoint, name),
-        machineBaseKey: remoteBaseKey,
+        idScope,
+        machineKey: name => canonicalRemoteKey(machines.find(x => x.name === name) ?? { name, state: '' }),
       }
       if (offlineErr) {
         return {
@@ -213,19 +247,14 @@ export function createCorePool(opts: CorePoolOptions): CorePool {
           tabs: [],
           panes: [],
           machines: [
-            { key: localKey, baseKey: '', ...(sName ? { session: sName } : {}), label: hostLabel(), local: true, status: 'offline', error: offlineErr },
-            ...(cache?.machines ?? []).map((m): MachineInfo => {
-              const baseKey = remoteBaseKey(m)
-              return {
-                key: secondaryRemoteKey(endpoint, m.name),
-                ...(baseKey !== undefined ? { baseKey } : {}),
-                ...(sName ? { session: sName } : {}),
-                label: m.name,
-                local: false,
-                status: 'offline',
-                error: m.why ?? null,
-              }
-            }),
+            { key: localKey, label: hostLabel(), local: true, status: 'offline', error: offlineErr },
+            ...(cache?.machines ?? []).map((m): MachineInfo => ({
+              key: canonicalRemoteKey(m),
+              label: m.name,
+              local: false,
+              status: 'offline',
+              error: m.why ?? null,
+            })),
           ],
         }
       }
@@ -266,24 +295,12 @@ export function createCorePool(opts: CorePoolOptions): CorePool {
       return inFlight
     }
 
-    const refreshedState = (): HerdrState => {
-      if (!primary && cache && currentState.machines) {
-        for (const rm of cache.machines) {
-          const mk = secondaryRemoteKey(endpoint, rm.name)
-          const mi = currentState.machines.find(x => x.key === mk)
-          if (!mi) continue
-          const baseKey = remoteBaseKey(rm)
-          if (baseKey !== undefined) mi.baseKey = baseKey
-          else delete mi.baseKey
-        }
-      }
-      return currentState
-    }
+    const refreshedState = (): HerdrState => currentState
 
     const ownsMachine = (mk: string) => {
       if (mk === '') return primary
       if (mk === localKey) return true
-      if (cache?.machines.some(m => (primary ? hexKey(m.name) : secondaryRemoteKey(endpoint, m.name)) === mk)) return true
+      if (cache?.machines.some(m => (primary ? hexKey(m.name) : canonicalRemoteKey(m)) === mk)) return true
       if (currentState.machines?.some(m => m.key === mk)) return true
       return currentState.panes.some(p => p.machine === mk)
     }
@@ -349,19 +366,26 @@ export function createCorePool(opts: CorePoolOptions): CorePool {
     }
     const states = entries.map(e => e.state())
     const first = states[0]!
-    if (states.length === 1) return first
     const workspaces = states.flatMap(s => s.workspaces)
     const tabs = states.flatMap(s => s.tabs ?? [])
     const panes = states.flatMap(s => s.panes)
-    const machines = states.flatMap(s => s.machines ?? [])
+    const machines = mergeSessionMachines(entries.map((entry, i) => ({ entry, machines: states[i]!.machines ?? [] })))
+    const sessions: SessionInfo[] = entries.map((entry, i) => ({
+      key: entry.primary ? '' : sessionIdScope(entry.endpoint),
+      name: entry.sessionName,
+      primary: entry.primary,
+      status: states[i]?.machines?.find(m => m.local)?.status ?? 'offline',
+    }))
     return {
       ok: first.ok,
       ready: first.ready,
       ...(first.error ? { error: first.error } : {}),
+      session: entries[0]?.sessionName,
       workspaces: workspaces.slice(0, MAX_STATE_KEYS),
       tabs,
       panes,
       machines,
+      sessions,
     }
   }
 
@@ -383,6 +407,11 @@ export function createCorePool(opts: CorePoolOptions): CorePool {
     if (typeof paneId !== 'string' || !paneId) return undefined
     for (const e of allEntries()) {
       if (e.state().panes.some(p => p.id === paneId)) return e
+    }
+    const scope = sessionScopeOf(paneId)
+    if (scope) {
+      const byScope = allEntries().find(e => !e.primary && `s${sessionIdScope(e.endpoint)}` === scope)
+      if (byScope) return byScope
     }
     const mk = machineOf(paneId)
     return mk === '' ? primaryEntry : forMachine(mk)

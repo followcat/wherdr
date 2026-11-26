@@ -28,7 +28,7 @@ const pane = (id: string, over: Partial<Pane> = {}): Pane => ({
   ...over,
 })
 const rowOf = (p: Pane) => ({ kind: 'pane' as const, key: p.id, pane: p, lead: p, individual: true as const })
-const machine: MachineInfo = { key: 'm1', label: 'Host A', local: false, status: 'online', error: null, session: 'work' }
+const machine: MachineInfo = { key: 'm1', label: 'Host A', local: false, status: 'online', error: null }
 
 describe('backlot daemon filtering', () => {
   it('recognizes stage and server daemons by name or role, and only them', () => {
@@ -63,11 +63,11 @@ describe('studio groups', () => {
     expect(isStudioGroup(group)).toBe(true)
     if (!isStudioGroup(group)) throw new Error('not a studio group')
     expect(rows).toHaveLength(2)
-    expect(group.key).toBe('m1:acme-shop')
+    expect(group.key).toBe('default:m1:acme-shop')
     expect(group.title).toBe('acme-shop')
     expect(group.machineKey).toBe('m1')
     expect(group.machineLabel).toBe('Host A')
-    expect(group.session).toBe('work')
+    expect(group.session).toBe('default')
     expect(group.rows.map(r => r.pane.id)).toEqual(['w1:p1', 'w1:p2'])
     expect(group.panes.map(p => p.id)).toEqual(['w1:p1', 'w1:p2'])
   })
@@ -75,7 +75,7 @@ describe('studio groups', () => {
   it('keeps the same studio on different machines in separate groups', () => {
     const remoteActor = pane('w1:p3', { ...actor, id: 'w1:p3', machine: 'm2' })
     const groups = studioGroupRows([rowOf(producer), rowOf(remoteActor)], [machine]).filter(isStudioGroup)
-    expect(groups.map(g => g.key)).toEqual(['m1:acme-shop', 'm2:acme-shop'])
+    expect(groups.map(g => g.key)).toEqual(['default:m1:acme-shop', 'default:m2:acme-shop'])
   })
 
   it('groups all Hollywood roles in one Hollywood group per machine, even without a studio label', () => {
@@ -86,7 +86,7 @@ describe('studio groups', () => {
     const group = rows[0]
     expect(isStudioGroup(group)).toBe(true)
     if (!isStudioGroup(group)) throw new Error('not a studio group')
-    expect(group.key).toBe('m1:hollywood')
+    expect(group.key).toBe('default:m1:hollywood')
     expect(group.title).toBe('Hollywood')
     expect(group.panes).toHaveLength(2)
   })

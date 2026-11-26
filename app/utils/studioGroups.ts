@@ -67,7 +67,8 @@ export function studioGroupRows(rows: readonly Row[], machines: readonly Machine
       continue
     }
     const machineKey = pane.machine || ''
-    const key = `${machineKey}:${studio.id}`
+    const session = pane.session || 'default'
+    const key = `${session}:${machineKey}:${studio.id}`
     let draft = drafts.get(key)
     if (!draft) {
       const machine = machines.find(m => m.key === machineKey)
@@ -78,7 +79,7 @@ export function studioGroupRows(rows: readonly Row[], machines: readonly Machine
         studioId: studio.id,
         title: studio.title,
         machineLabel: machine?.label || machineKey || 'local',
-        session: machine?.session || 'default',
+        session,
         rows: [],
         panes: [],
       }

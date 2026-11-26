@@ -10,11 +10,7 @@ let hostPort: boolean | null = true
 let added: unknown[] = []
 let failWith = ''
 registerEndpoint('/api/machine/core', () => ({ version: '0.1.16', pid: 1, uptimeMs: 60000, live: 0, finished: 0, name: null, hostPort }))
-let localSessions: { directory: string | null, primary: string, envSockets: string[], settingsSockets: string[], available: { path: string, name: string }[] } = {
-  directory: '/run/herdr-core', primary: '/run/herdr-core/default.sock', envSockets: [], settingsSockets: [], available: [],
-}
 const settingsPosts: unknown[] = []
-registerEndpoint('/api/machine/local-sessions', () => localSessions)
 registerEndpoint('/api/settings', { method: 'POST', handler: async (event) => {
   const body = await readBody(event)
   settingsPosts.push(body)
@@ -27,7 +23,7 @@ registerEndpoint('/api/machine/add', { method: 'POST', handler: async (event) =>
 } })
 
 let mounted: { unmount: () => void } | null = null
-afterEach(() => { mounted?.unmount(); mounted = null; hostPort = true; added = []; failWith = ''; localSessions = { directory: '/run/herdr-core', primary: '/run/herdr-core/default.sock', envSockets: [], settingsSockets: [], available: [] }; settingsPosts.length = 0; localStorage.removeItem('hcSockets'); document.body.innerHTML = '' })
+afterEach(() => { mounted?.unmount(); mounted = null; hostPort = true; added = []; failWith = ''; settingsPosts.length = 0; localStorage.removeItem('hcSockets'); document.body.innerHTML = '' })
 async function mount() {
   const w = await mountSuspended(CoreMachines, { attachTo: document.body })
   mounted = w
@@ -95,41 +91,12 @@ describe('Add machine', () => {
 
 
 describe('extra hc sessions', () => {
-  it('shows sockets in use, with a remove control only for the ones saved in settings', async () => {
+  it('does not show the removed manual local-session settings controls', async () => {
     localStorage.setItem('hcSockets', JSON.stringify(['/run/herdr-core/backlot.sock']))
-    localSessions = { ...localSessions, envSockets: ['/run/herdr-core/env.sock'], settingsSockets: ['/run/herdr-core/backlot.sock'] }
     const w = await mount()
-    const rows = w.findAll('[data-testid="hc-session-row"]')
-    expect(rows.map(r => r.text())).toEqual(expect.arrayContaining([expect.stringContaining('env.sock'), expect.stringContaining('backlot.sock')]))
-    const envRow = rows.find(r => r.text().includes('env.sock'))!
-    const settingsRow = rows.find(r => r.text().includes('backlot.sock'))!
-    expect(envRow.find('[data-testid="hc-session-remove"]').exists()).toBe(false)
-    expect(settingsRow.find('[data-testid="hc-session-remove"]').exists()).toBe(true)
-  })
-
-  it('Find local sessions lists the sockets not in use, and one tap saves the choice', async () => {
-    localSessions = { ...localSessions, available: [{ path: '/run/herdr-core/backlot.sock', name: 'backlot' }] }
-    const w = await mount()
-    await w.get('[data-testid="find-local-sessions"]').trigger('click')
-    await vi.waitFor(() => expect(w.find('[data-testid="local-session-add"]').exists()).toBe(true))
-    expect(w.get('[data-testid="local-session-add"]').text()).toContain('backlot')
-    await w.get('[data-testid="local-session-add"]').trigger('click')
-    expect(w.find('[data-testid="local-session-add"]').exists()).toBe(false)
-    expect(w.text()).toContain('backlot.sock')
-    await vi.waitFor(() => expect(settingsPosts.length).toBeGreaterThan(0), { timeout: 1200 })
-    const patch = (settingsPosts.at(-1) as { settings: Record<string, string> }).settings
-    expect(JSON.parse(patch.hcSockets!)).toEqual(['/run/herdr-core/backlot.sock'])
-  })
-
-  it('removing a settings socket saves the shorter list', async () => {
-    localStorage.setItem('hcSockets', JSON.stringify(['/run/herdr-core/backlot.sock']))
-    localSessions = { ...localSessions, settingsSockets: ['/run/herdr-core/backlot.sock'] }
-    const w = await mount()
-    expect(w.text()).toContain('backlot.sock')
-    await w.get('[data-testid="hc-session-remove"]').trigger('click')
-    expect(w.text()).not.toContain('backlot.sock')
-    await vi.waitFor(() => expect(settingsPosts.length).toBeGreaterThan(0), { timeout: 1200 })
-    const patch = (settingsPosts.at(-1) as { settings: Record<string, string> }).settings
-    expect(JSON.parse(patch.hcSockets!)).toEqual([])
+    expect(w.find('[data-testid="extra-hc-sessions"]').exists()).toBe(false)
+    expect(w.find('[data-testid="find-local-sessions"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('Extra sessions')
+    expect(settingsPosts).toEqual([])
   })
 })

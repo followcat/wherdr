@@ -7,10 +7,19 @@ export const LOCAL = ''
 export const MACHINE_KEY_RE = /^[0-9a-f]{4,32}$/
 export const SEP = '~'
 // Pane : w1:p1 / s1:p1 (local) or 0a1b2c3d~w1:p1 / 0a1b2c3d~s1:p1 (remote).
-export const PANE_RE = /^(?:[0-9a-f]{4,32}~)?[ws][0-9a-z]+:p[0-9a-z]+$/i
+// A secondary hc session adds its own s<key>~ scope before that, so identical
+// terminals of two sessions never share an ID; the primary session's IDs stay unchanged.
+export const PANE_RE = /^(?:s[0-9a-f]{16}~)?(?:[0-9a-f]{4,32}~)?[ws][0-9a-z]+:p[0-9a-z]+$/i
+
+export const sessionScopeOf = (id: string | null | undefined): string => {
+  const m = /^s([0-9a-f]{16})~/i.exec(String(id || ''))
+  return m ? `s${m[1]!.toLowerCase()}` : ''
+}
 
 export function splitId(id: string): { machine: string, local: string } {
-  const s = String(id || '')
+  let s = String(id || '')
+  const scope = sessionScopeOf(s)
+  if (scope) s = s.slice(scope.length + 1)
   const i = s.indexOf(SEP)
   if (i < 0) return { machine: LOCAL, local: s }
   return { machine: s.slice(0, i), local: s.slice(i + 1) }

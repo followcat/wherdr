@@ -14,19 +14,21 @@ sessions. This avoids accidentally
 selecting an inherited or unrelated agent session. The browser cannot choose the endpoint or issue arbitrary
 RPC calls.
 
-Extra herdr-core sessions on the same server are added explicitly with `HC_SOCKETS` (comma-separated
-socket paths, or `wherdr --hc-sockets <paths>`) and/or `hcSockets` (`string[]`) in
-`DATA_DIR/settings.json`. Browser-written `hcSockets` entries only accept user-owned Unix sockets
-resolving (`realpath`) directly inside this user's herdr-core runtime directory (the primary
-`HC_SOCKET` directory, or `$XDG_RUNTIME_DIR/herdr-core/`); any other path is dropped and logged
-by reason. Operator-supplied `HC_SOCKETS` / `--hc-sockets` may point anywhere. Each extra session keeps its own connection, state and event stream; a
-broken, missing or slow secondary socket never blocks or breaks the primary session. Primary pane IDs
-stay byte-identical, while panes from secondary sessions receive a deterministic 16-character
-hash prefix derived from the socket path and remote machine name (`<key>~…`) and link back to the
-same physical machine (`baseKey`) for grouping and quotas. Project coordinators and the Board stay
-on the primary `HC_SOCKET` session; any session publishing a `backlot` document supplies the Studio
-view cleanly, and `backlot-stage` / `backlot-server` terminals suppress push alerts while `actor-*`
-finished chimes default off.
+Extra herdr-core sessions on the same server are discovered automatically from the primary socket's
+runtime directory. The scan keeps only user-owned Unix sockets resolving directly in that directory,
+excludes holder sockets, proves each candidate with a bounded `hello`, and repeats about every ten
+seconds; sessions join and drop independently. `HC_SOCKETS` / `wherdr --hc-sockets` remains an
+operator-only supplement for sockets elsewhere. The old browser `hcSockets` setting is ignored.
+
+Every session is a separate dimension rather than a pseudo-machine. A pane keeps its real machine and
+carries its session name. Primary-session pane IDs are byte-identical to the single-session form;
+secondary-session IDs add a stable session scope, so identical terminals in two sessions never collide.
+Machines lists contain real machines only, merged by physical machine where core reports the host.
+When several sessions have terminals, Home and the collapsed rail show session tabs (primary first,
+then alphabetical) with the count of panes waiting for the person; empty non-primary sessions are hidden,
+the strip scrolls sideways on narrow screens, and opening a pane by link, notification or search selects
+its session. Alerts, Web Push, state broadcast and search use the all-session state.
+
 
 `GET /api/core` checks the configured hc: protocol generation 1 and these methods,
 in both advertised lists (`hello` and `rpc.discover`): `terminal.list`, `terminal.get`,

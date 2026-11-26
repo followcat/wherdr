@@ -132,7 +132,7 @@
 - [The plugin module](docs/plugins.md#the-module): what a plugin file exports (`apiVersion: 1`, [drafts](docs/plugins.md#drafts-wherdrdraft) `get`/`set`/`insert`/`focus` which never send, `currentAgent`, [live agents and machines](docs/plugins.md#agents-and-machines-wherdragents) `agents`/`machines`/`onAgents` returning copied public snapshots from held state with zero requests and never exposing `coreAddress` or socket paths, `onNavigate`, [header actions](docs/plugins.md#header-actions-wherdrmountheaderaction) `mountHeaderAction`) and [lifecycle](docs/plugins.md#lifecycle-and-failure-isolation) (idempotent disposers, automatic cleanup on stop/error/update even without `deactivate()`, guarded callbacks).
 - [Markers](docs/plugins.md#markers-data-wherdr): `data-wherdr` markers (`composer-actions`, `header-actions`, zero-width when empty and measured by header folding…).
 - [Troubleshooting](docs/troubleshooting.md#troubleshooting): hc connection, conversations, machines and network problems.
-- [Setup on hc](docs/core.md#setup): `HC_SOCKET` (primary) and `HC_SOCKETS` / `--hc-sockets` / `settings.json` `hcSockets` (explicit extra hc sessions, isolated per socket, never auto-scanned; primary stays intact).
+- [Setup on hc](docs/core.md#setup): `HC_SOCKET` (primary), automatic discovery of the other live sockets in its runtime directory, and `HC_SOCKETS` / `--hc-sockets` only for operator-supplied sockets elsewhere; sessions are isolated and shown as session tabs, never pseudo-machines, while primary pane IDs stay intact.
 
 ## Contributors
 

@@ -3,7 +3,6 @@
 // add one over SSH (like `hc machine add`). The machine must already accept this
 // host's SSH login: wherdr never asks for a password nor installs anything.
 import { hasPort } from '#shared/coreCapabilities'
-import { readHcSockets } from '#shared/settings'
 const target = ref('')
 const name = ref('')
 const adding = ref(false)
@@ -31,56 +30,6 @@ const cards = computed(() => [
 ])
 onMounted(loadMemory)
 watch(() => machines.value.map(m => m.key).join(), (_now, before) => { if (before !== undefined) loadMemory() })
-
-// Extra hc sessions on this computer. Those from HC_SOCKETS are shown read-only;
-// those saved in settings.hcSockets can be removed here. Adding is never
-// automatic: Find local sessions only lists, one tap adds.
-interface LocalSessions {
-  directory: string | null
-  primary: string
-  envSockets: string[]
-  settingsSockets: string[]
-  available: { path: string, name: string }[]
-}
-const localSessions = ref<LocalSessions | null>(null)
-const localSessionsError = ref('')
-const findingSessions = ref(false)
-const sessionsSearched = ref(false)
-const configuredHcSockets = syncedRef<string[]>('hcSockets', readHcSockets, v => JSON.stringify(v), { deep: true })
-const socketName = (socketPath: string) => (socketPath.split('/').pop() || socketPath).replace(/\.sock$/, '')
-async function readLocalSessions() {
-  localSessionsError.value = ''
-  try { localSessions.value = await api<LocalSessions>('/api/machine/local-sessions') }
-  catch (err) { localSessionsError.value = (err as Error).message }
-}
-onMounted(readLocalSessions)
-const hcSessionRows = computed(() => {
-  const env = new Set(localSessions.value?.envSockets ?? [])
-  const settings = new Set(configuredHcSockets.value)
-  const paths = [...new Set([...(localSessions.value?.envSockets ?? []), ...configuredHcSockets.value])]
-  return paths.map(path => ({ path, name: socketName(path), env: env.has(path), settings: settings.has(path), removable: settings.has(path) && !env.has(path) }))
-})
-const availableHcSessions = computed(() => {
-  if (!sessionsSearched.value || !localSessions.value) return []
-  const used = new Set([...hcSessionRows.value.map(r => r.path), localSessions.value.primary])
-  return localSessions.value.available.filter(s => !used.has(s.path))
-})
-async function findLocalSessions() {
-  if (findingSessions.value) return
-  findingSessions.value = true
-  sessionsSearched.value = true
-  await readLocalSessions()
-  findingSessions.value = false
-}
-function addHcSession(path: string) {
-  if (configuredHcSockets.value.includes(path)) return
-  configuredHcSockets.value = [...configuredHcSockets.value, path]
-  toast(t('Session added'))
-}
-function removeHcSession(path: string) {
-  configuredHcSockets.value = configuredHcSockets.value.filter(x => x !== path)
-  toast(t('Session removed'))
-}
 
 function openAdd() {
   target.value = ''
@@ -177,29 +126,6 @@ async function reconnect(key: string) {
         :busy="!m.local && busyKey === m.key" :editing="!m.local && renaming === m.key"
         @edit="renaming = m.key; error = ''" @cancel="renaming = ''" @save="rename(m.key, $event)" @forget="forget(m)" @reconnect="reconnect(m.key)"
       />
-    </div>
-    <div class="extra-hc-sessions" data-testid="extra-hc-sessions">
-      <h4 class="theme-section-title">{{ t('Extra sessions') }}</h4>
-      <p class="muted settings-hint">{{ t('Other hc sessions on this computer. Changes apply immediately; nothing is attached automatically.') }}</p>
-      <ul v-if="hcSessionRows.length" class="hc-session-list">
-        <li v-for="row in hcSessionRows" :key="row.path" class="hc-session-row" data-testid="hc-session-row">
-          <span class="hc-session-text"><b>{{ row.name }}</b><small class="mono">{{ row.path }}</small></span>
-          <span class="card-tag hc-session-source">{{ row.env ? 'HC_SOCKETS' : t('Settings') }}</span>
-          <button v-if="row.removable" type="button" class="hc-session-remove" :aria-label="`${t('Remove session')} ${row.name}`" data-testid="hc-session-remove" @click="removeHcSession(row.path)"><UIcon name="i-lucide-trash-2" /></button>
-        </li>
-      </ul>
-      <p v-else class="muted settings-hint">{{ t('No extra sessions configured.') }}</p>
-      <UButton color="neutral" variant="outline" icon="i-lucide-search" class="find-sessions" :loading="findingSessions" data-testid="find-local-sessions" @click="findLocalSessions">{{ t('Find local sessions') }}</UButton>
-      <p v-if="localSessionsError" class="form-error" role="alert">{{ t(localSessionsError) }}</p>
-      <ul v-if="availableHcSessions.length" class="hc-session-list available">
-        <li v-for="session in availableHcSessions" :key="session.path">
-          <button type="button" class="hc-session-add" data-testid="local-session-add" @click="addHcSession(session.path)">
-            <span class="hc-session-text"><b>{{ session.name }}</b><small class="mono">{{ session.path }}</small></span>
-            <UIcon name="i-lucide-plus" />
-          </button>
-        </li>
-      </ul>
-      <p v-else-if="sessionsSearched && !findingSessions && !localSessionsError" class="muted settings-hint">{{ t('No other local sessions found.') }}</p>
     </div>
     <p v-if="error" class="form-error" role="alert">{{ t(error) }}</p>
     <p v-if="memoryError" class="form-error" role="alert">{{ memoryError }}</p>

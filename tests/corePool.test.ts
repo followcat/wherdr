@@ -17,8 +17,6 @@ import {
   hostBaseKey,
   parseHcSocketsEnv,
   resolveConfiguredSockets,
-  secondaryLocalKey,
-  secondaryRemoteKey,
 } from '../server/utils/corePool'
 
 const sha16 = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 16)
@@ -75,7 +73,7 @@ describe('PANE_RE and /ws/events viewing for space panes', () => {
   })
 })
 
-describe('multi-session machine keys, baseKey merge and primary ID stability', () => {
+describe('multi-session real machines, session-scoped IDs and primary ID stability', () => {
   it('keeps primary local and remote pane IDs byte-identical to single-session output', () => {
     const terminals = [
       term('t1'),
@@ -101,10 +99,8 @@ describe('multi-session machine keys, baseKey merge and primary ID stability', (
     ])
   })
 
-  it('derives deterministic secondary keys and merges baseKey by physical host', () => {
+  it('keeps real machine keys on secondary panes and scopes their IDs by session', () => {
     const S = '/run/user/1000/herdr-core/backlot.sock'
-    expect(secondaryLocalKey(S)).toBe(sha16(`local:${S}`))
-    expect(secondaryRemoteKey(S, 'host-b-bl')).toBe(sha16(`remote:${S}:host-b-bl`))
     expect(hostBaseKey('host-c.local')).toBe(sha16('host:host-c.local'))
 
     const primaryMachines = [{ name: 'host-b', state: 'connected', host: 'host-b.local' }]
@@ -114,37 +110,41 @@ describe('multi-session machine keys, baseKey merge and primary ID stability', (
       { name: 'never-connected', state: 'connecting', host: '' },
     ]
     const primaryKeyOf = (name: string) => Array.from(new TextEncoder().encode(name), b => b.toString(16).padStart(2, '0')).join('')
+    const scope = sha16(`session:${S}`)
+    const canonical = (m: { name: string, host?: string }) => {
+      if (!m.host) return primaryKeyOf(m.name)
+      const match = primaryMachines.find(pm => pm.host && pm.host === m.host)
+      return match ? primaryKeyOf(match.name) : hostBaseKey(m.host)
+    }
     const s = coreState(
       [term('t1'), term('host-b-alias/t1'), term('host-c/t1'), term('never-connected/t1')],
       secondaryMachines,
       {},
       'host-a',
       {
-        localKey: secondaryLocalKey(S),
-        localBaseKey: '',
         session: 'backlot',
-        machineKey: name => secondaryRemoteKey(S, name),
-        machineBaseKey: (m) => {
-          if (!m.host) return undefined
-          const match = primaryMachines.find(pm => pm.host && pm.host === m.host)
-          return match ? primaryKeyOf(match.name) : hostBaseKey(m.host)
-        },
+        idScope: scope,
+        machineKey: name => canonical(secondaryMachines.find(m => m.name === name)!),
       },
     )
 
     expect(s.machines).toEqual([
-      { key: sha16(`local:${S}`), baseKey: '', session: 'backlot', label: 'host-a', local: true, status: 'online', error: null },
-      { key: sha16(`remote:${S}:host-b-alias`), baseKey: primaryKeyOf('host-b'), session: 'backlot', label: 'host-b-alias', local: false, status: 'online', error: null },
-      { key: sha16(`remote:${S}:host-c`), baseKey: sha16('host:host-c.local'), session: 'backlot', label: 'host-c', local: false, status: 'online', error: null },
-      { key: sha16(`remote:${S}:never-connected`), session: 'backlot', label: 'never-connected', local: false, status: 'connecting', error: null },
+      { key: '', label: 'host-a', local: true, status: 'online', error: null },
+      { key: primaryKeyOf('host-b'), label: 'host-b-alias', local: false, status: 'online', error: null },
+      { key: sha16('host:host-c.local'), label: 'host-c', local: false, status: 'online', error: null },
+      { key: primaryKeyOf('never-connected'), label: 'never-connected', local: false, status: 'connecting', error: null },
     ])
-    expect(s.panes[0]!.id).toBe(`${sha16(`local:${S}`)}~w2f686f6d652f757365722f64656d6f:p7431`)
-    expect(s.panes[0]!.coreAddress).toBe('t1')
-    expect(s.panes[1]!.id).toBe(`${sha16(`remote:${S}:host-b-alias`)}~w2f686f6d652f757365722f64656d6f:p686f73742d622d616c6961732f7431`)
+    expect(s.panes.map(p => p.session)).toEqual(['backlot', 'backlot', 'backlot', 'backlot'])
+    expect(s.panes[0]!.machine).toBe('')
+    expect(s.panes[0]!.id).toBe(`s${scope}~w2f686f6d652f757365722f64656d6f:p7431`)
+    expect(s.panes[1]!.machine).toBe(primaryKeyOf('host-b'))
+    expect(s.panes[1]!.id).toBe(`s${scope}~${primaryKeyOf('host-b')}~w2f686f6d652f757365722f64656d6f:p686f73742d622d616c6961732f7431`)
+    expect(PANE_RE.test(s.panes[0]!.id)).toBe(true)
+    expect(PANE_RE.test(s.panes[1]!.id)).toBe(true)
   })
 })
 
-describe('config precedence for HC_SOCKET, HC_SOCKETS and settings.json hcSockets', () => {
+describe('config precedence for HC_SOCKET, HC_SOCKETS and discovered sockets', () => {
   it('resolves, merges and deduplicates sockets without dropping primary or scanning directories', () => {
     expect(parseHcSocketsEnv(' ~/backlot.sock , /tmp/other.sock, ~/backlot.sock ', '/home/user')).toEqual([
       '/home/user/backlot.sock',
@@ -249,13 +249,13 @@ describe('CorePool connections, isolation, routing and alerts', () => {
       machines: [{ name: 'host-b-bl', state: 'connected', host: 'host-b.local' }],
     })
 
-    const alerts: Array<{ machineKey: string, address: string, kind: string }> = []
+    const alerts: Array<{ session: string, machineKey: string, address: string, kind: string }> = []
     const pool = createCorePool({
       primary: sockA,
       extra: [sockB, missingSock],
       hostLabel: () => 'host-a',
       settleMs: 10,
-      onAlert: (machineKey, address, kind) => { alerts.push({ machineKey, address, kind }) },
+      onAlert: (entry, machineKey, address, kind) => { alerts.push({ session: entry.sessionName, machineKey, address, kind }) },
     })
     cleanups.push(async () => { pool.stop() })
     pool.start()
@@ -265,25 +265,23 @@ describe('CorePool connections, isolation, routing and alerts', () => {
     expect(state.ok).toBe(true)
     expect(state.ready).toBe(true)
     const pPrimary = state.panes.find(p => p.machine === '' && p.coreAddress === 't1')!
-    const pSecLocal = state.panes.find(p => p.machine === secondaryLocalKey(sockB) && p.coreAddress === 't1')!
-    const pSecRemote = state.panes.find(p => p.machine === secondaryRemoteKey(sockB, 'host-b-bl') && p.coreAddress === 'host-b-bl/t2')!
+    const pSecLocal = state.panes.find(p => p.session === 'backlot' && !p.machine && p.coreAddress === 't1')!
+    const pSecRemote = state.panes.find(p => p.session === 'backlot' && p.machine && p.coreAddress === 'host-b-bl/t2')!
     expect(pPrimary).toBeTruthy()
     expect(pSecLocal).toBeTruthy()
     expect(pSecRemote).toBeTruthy()
     expect(pPrimary.id).not.toBe(pSecLocal.id)
 
     // Broken/missing third session stays offline without breaking primary.
-    const missingInfo = state.machines?.find(m => m.key === secondaryLocalKey(missingSock))
-    expect(missingInfo?.status).toBe('offline')
-    expect(missingInfo?.baseKey).toBe('')
+    expect(state.sessions?.find(x => x.name === 'missing')?.status).toBe('offline')
+    expect(state.machines?.filter(m => m.local)).toHaveLength(1)
+    expect(state.machines?.find(m => m.local)?.sessions).toMatchObject({ default: { status: 'online' }, backlot: { status: 'online' }, missing: { status: 'offline' } })
 
     // Routing per pane and per machine.
     expect(pool.forPane(pPrimary.id)?.endpoint).toBe(sockA)
     expect(pool.forPane(pSecLocal.id)?.endpoint).toBe(sockB)
     expect(pool.forPane(pSecRemote.id)?.endpoint).toBe(sockB)
     expect(pool.forMachine('')?.endpoint).toBe(sockA)
-    expect(pool.forMachine(secondaryLocalKey(sockB))?.endpoint).toBe(sockB)
-    expect(pool.forMachine(secondaryRemoteKey(sockB, 'host-b-bl'))?.endpoint).toBe(sockB)
     expect(pool.forMachine('deadbeef00001111')).toBeUndefined()
 
     await pool.forPane(pSecLocal.id)!.call('terminal.send', { terminal: 't1', text: 'hi' }, 2000)
@@ -296,9 +294,9 @@ describe('CorePool connections, isolation, routing and alerts', () => {
     coreB.emitEvent({ seq: 2, type: 'status', terminal: 't1', data: { status: { state: 'blocked' } } })
     coreB.emitEvent({ seq: 3, type: 'status', terminal: 'host-b-bl/t2', data: { status: { state: 'blocked' } } })
     await vi.waitFor(() => expect(alerts).toHaveLength(3))
-    expect(alerts).toContainEqual({ machineKey: '', address: 't1', kind: 'needs-you' })
-    expect(alerts).toContainEqual({ machineKey: secondaryLocalKey(sockB), address: 't1', kind: 'needs-you' })
-    expect(alerts).toContainEqual({ machineKey: secondaryRemoteKey(sockB, 'host-b-bl'), address: 'host-b-bl/t2', kind: 'needs-you' })
+    expect(alerts).toContainEqual({ session: 'default', machineKey: '', address: 't1', kind: 'needs-you' })
+    expect(alerts).toContainEqual({ session: 'backlot', machineKey: '', address: 't1', kind: 'needs-you' })
+    expect(alerts).toContainEqual({ session: 'backlot', machineKey: expect.any(String), address: 'host-b-bl/t2', kind: 'needs-you' })
   })
 
   it('never blocks primary polls when a secondary socket hangs', async () => {
@@ -463,7 +461,7 @@ describe('CorePool connections, isolation, routing and alerts', () => {
     await pool.poll()
 
     const secEntry = pool.entries().find(e => e.endpoint === sockB)!
-    const secPanes = pool.state().panes.filter(p => p.machine === secondaryLocalKey(sockB))
+    const secPanes = pool.state().panes.filter(p => p.session === 'secondary')
     const pSecAgy = secPanes.find(p => p.coreAddress === 't1')!
     const pSecDevin = secPanes.find(p => p.coreAddress === 't2')!
 
