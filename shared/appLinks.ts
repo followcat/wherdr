@@ -23,6 +23,14 @@ const query = (q: Record<string, string | undefined>) => {
   return s ? `?${s}` : ''
 }
 export const settingsLink = (section: SettingsSection | 'pacing') => `#/settings${query({ section })}`
+// A backlot studio's sheet on Home. Machine and session identify which pool
+// document holds the studio; the local primary session leaves both out.
+export const studioQuery = (o: { studio: string, machine?: string, session?: string }) => ({
+  studio: o.studio,
+  ...(o.machine ? { studioMachine: o.machine } : {}),
+  ...(o.session ? { studioSession: o.session } : {}),
+})
+export const studioLink = (o: { studio: string, machine?: string, session?: string }) => `#/${query(studioQuery(o))}`
 // The board, filtered by project and tag, or with a task's sheet open.
 export const boardLink = (o: { project?: string, tag?: string, task?: string } = {}) => `#/board${query({ project: o.project?.toUpperCase(), tag: o.tag, task: o.task })}`
 // A project's sheet (Settings › Projects › KEY) on one of its tabs; its

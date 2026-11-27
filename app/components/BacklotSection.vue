@@ -2,16 +2,21 @@
 // The STUDIOS section of the home list: every live studio published by a
 // machine's `backlot/1` document, its Hollywood cards and the stage's state.
 // Renders nothing at all when no machine publishes a document.
+import type { LocationQuery } from 'vue-router'
 import type { BacklotAction, BacklotCard, BacklotMachineView, BacklotStudio, BacklotVisualState } from '#shared/backlot'
 import { backlotActionTarget, studioAsksCount, studioVisualState } from '#shared/backlot'
+import { studioQuery } from '#shared/appLinks'
 import { filterBacklotBySession, useBacklot } from '~/composables/useBacklot'
 import { machineBarSelection } from '~/composables/useMachineBar'
-import { machines, sessionTabPick } from '~/composables/useHerdr'
+import { desk, machines, sessionTabPick } from '~/composables/useHerdr'
 
 const props = defineProps<{ machines?: BacklotMachineView[] }>()
-const { backlotMachines, runBacklotAction } = useBacklot()
+const { allBacklotMachines, runBacklotAction } = useBacklot()
+const route = useRoute()
+const router = useRouter()
 
-const sessionMachines = computed(() => (props.machines ? filterBacklotBySession(props.machines, sessionTabPick.value) : backlotMachines.value))
+const allMachines = computed(() => props.machines ?? allBacklotMachines.value)
+const sessionMachines = computed(() => filterBacklotBySession(allMachines.value, sessionTabPick.value))
 const docKey = (m: Pick<BacklotMachineView, 'session' | 'machine'>) => `${m.session ?? ''}\0${m.machine}`
 // A machine name as the bar names it ('' is this machine); an unknown name is kept as is.
 function baseKey(machine: string) {
@@ -33,15 +38,54 @@ const STATE_LABEL: Record<BacklotVisualState, string> = {
   working: 'Working', blocked: 'Blocked', idle: 'Ready', done: 'Done', inactive: 'Closed', unknown: 'Unknown',
 }
 
-// The studio detail sheet.
+// The studio detail sheet, linked by ?studio=<id>&studioMachine=<machine>&studioSession=<session>.
+// On desktop the same query stays over the page the user is on; on the phone it is Home's address.
 const sheetOpen = ref(false)
 const sheetDoc = ref<BacklotMachineView | null>(null)
 const sheetStudio = ref<BacklotStudio | null>(null)
-function openStudio(doc: BacklotMachineView, studio: BacklotStudio) {
+const STUDIO_QUERY_KEYS = new Set(['studio', 'studioMachine', 'studioSession'])
+const queryText = (v: unknown) => typeof v === 'string' ? v : ''
+const linkedStudio = computed(() => ({
+  studio: queryText(route.query.studio),
+  machine: queryText(route.query.studioMachine),
+  session: queryText(route.query.studioSession),
+}))
+const withoutStudioQuery = (): LocationQuery => Object.fromEntries(Object.entries(route.query).filter(([k]) => !STUDIO_QUERY_KEYS.has(k)))
+function openStudio(doc: BacklotMachineView, studio: BacklotStudio, link = true) {
   sheetDoc.value = doc
   sheetStudio.value = studio
   sheetOpen.value = true
+  if (!link) return
+  const query: LocationQuery = { ...withoutStudioQuery(), ...studioQuery({ studio: studio.id, machine: doc.machine, session: doc.session }) }
+  const target = { path: desk.value ? route.path : '/', query }
+  if (router.resolve(target).fullPath !== route.fullPath) void router.push(target)
 }
+function clearStudioLink() {
+  if (route.query.studio === undefined) return
+  const target = { path: route.path, query: withoutStudioQuery() }
+  const before = router.resolve(target)
+  if (history.state?.back === before.fullPath) void router.back()
+  else void router.replace(target)
+}
+watch(sheetOpen, (open, was) => {
+  if (!open && was) clearStudioLink()
+})
+watch([allMachines, linkedStudio, () => route.path, desk], () => {
+  const linked = linkedStudio.value
+  if (!linked.studio) {
+    if (sheetOpen.value) sheetOpen.value = false
+    return
+  }
+  if (route.path !== '/' && !desk.value) return
+  for (const doc of allMachines.value) {
+    if (doc.machine !== linked.machine || (doc.session ?? '') !== linked.session) continue
+    const studio = doc.summary.studios.find(s => s.id === linked.studio)
+    if (studio) {
+      openStudio(doc, studio, false)
+      return
+    }
+  }
+}, { immediate: true })
 
 // The opening design document viewer sheet.
 const docSheetOpen = ref(false)
@@ -118,7 +162,7 @@ watch(sessionTabPick, () => {
   stageError.value = ''
 })
 
-watch(visibleMachines, (list) => {
+watch(allMachines, (list) => {
   if (!sheetOpen.value || !sheetDoc.value || !sheetStudio.value) return
   const nextDoc = list.find(m => docKey(m) === docKey(sheetDoc.value!))
   const nextStudio = nextDoc?.summary.studios.find(s => s.id === sheetStudio.value!.id)
@@ -209,9 +253,9 @@ watch(visibleMachines, (list) => {
       <p v-else-if="hollyNote" class="bl-note">{{ hollyNote }}</p>
     </div>
 
-    <BacklotStudioSheet v-model:open="sheetOpen" :machine="sheetDoc" :studio="sheetStudio" />
-    <BacklotDesignDocSheet v-model:open="docSheetOpen" :machine="docSheetMachine" :studio="docSheetStudio" :file="docSheetFile" />
   </section>
+  <BacklotStudioSheet v-model:open="sheetOpen" :machine="sheetDoc" :studio="sheetStudio" />
+  <BacklotDesignDocSheet v-model:open="docSheetOpen" :machine="docSheetMachine" :studio="docSheetStudio" :file="docSheetFile" />
 </template>
 
 <style scoped>
