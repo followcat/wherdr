@@ -80,6 +80,7 @@ export interface BacklotPoolEntry {
   sessionKey?: string
   call: Call
   terminals?: () => CoreTerminal[] | null
+  snapshot?: () => CoreTerminal[] | null
   machines?: () => CoreMachine[]
 }
 
@@ -129,7 +130,7 @@ export async function readPoolBacklotDocs(entries: readonly BacklotPoolEntry[], 
     const session = backlotEntrySession(entry)
     try {
       const cachedMachines = entry.machines?.()
-      const snap = entry.terminals?.() ?? null
+      const snap = entry.terminals?.() ?? entry.snapshot?.() ?? null
       const [machines, terminals, localCoreId] = await Promise.all([
         cachedMachines?.length
           ? Promise.resolve(cachedMachines)

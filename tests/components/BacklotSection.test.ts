@@ -349,3 +349,19 @@ it('renders suggest_skip with Skip (confirmed) and Discuss, quiet phase line, no
     expect((btn.element as HTMLButtonElement).disabled).toBe(true)
   }
 })
+
+it('opens the studio sheet named by the home deep link', async () => {
+  w = await mountSuspended(BacklotSection, { props: { machines: [view()] }, route: '/?studio=shop', attachTo: document.body })
+  await vi.waitFor(() => expect(document.body.querySelector('[data-testid="backlot-studio-sheet"]')).not.toBeNull())
+  await useRouter().replace('/')
+})
+
+it('opening a studio card writes its deep link, and closing the sheet clears it', async () => {
+  w = await mountSuspended(BacklotSection, { props: { machines: [view()] }, route: '/', attachTo: document.body })
+  await w.find('[data-testid="backlot-studio-local-shop"]').trigger('click')
+  await expect.poll(() => useRouter().currentRoute.value.query.studio).toBe('shop')
+  expect(document.body.querySelector('[data-testid="backlot-studio-sheet"]')).not.toBeNull()
+  document.body.querySelector<HTMLButtonElement>('.hw-sheet-close')?.click()
+  await vi.waitFor(() => expect(document.body.querySelector('[data-testid="backlot-studio-sheet"]')).toBeNull())
+  await expect.poll(() => useRouter().currentRoute.value.query.studio).toBeUndefined()
+})

@@ -23,6 +23,7 @@ import { createCodexDaemonRpc } from './codexDaemonRpc'
 import { createCorePreviews } from './corePreview'
 import { coreScreens } from './coreScreenDeps'
 import { agentNotificationTitle, pushSend } from './push'
+import { scanBacklotPush } from './backlotPush'
 import { localMachine, localMachineLabel, machineOfPane } from './machines'
 import { createCodexStatus, dirWritable } from './codexStatus'
 import { runLocal, setCodexKnownWeek } from './quotas'
@@ -348,7 +349,10 @@ async function pollEntry(entry: CoreEntry, publish = true) {
   const tracker = entryPollTimers.get(entry.endpoint)
   if (tracker) tracker.last = Date.now()
   await entry.poll()
-  if (publish) publishMergedState()
+  if (publish) {
+    publishMergedState()
+    void scanBacklotPush(corePool.entries()).catch(e => log('backlot notification:', e instanceof Error ? e.message : e))
+  }
 }
 
 function publishMergedState() {
