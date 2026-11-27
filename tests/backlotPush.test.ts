@@ -36,6 +36,9 @@ const sub = {
 
 beforeEach(async () => {
   fs.rmSync(path.join(dir, 'backlot-push.json'), { force: true })
+  for (const file of fs.readdirSync(dir)) {
+    if (file.startsWith('backlot-push.json.corrupt-')) fs.rmSync(path.join(dir, file), { force: true })
+  }
   await push.writeSubs([sub])
   await push.writeGlobalQuiet(null)
   sendNotification.mockReset()
@@ -146,5 +149,60 @@ describe('backlot ask pushes', () => {
     const watcher = await prime()
     await watcher.scan([askingView({ attention_user: false, attention_seq: 8, attention_detail: null, asks: 'Already answered' })])
     expect(sendNotification).not.toHaveBeenCalled()
+  })
+})
+
+describe('backlot push store maintenance', () => {
+  const DAY = 24 * 60 * 60 * 1000
+  const NOW = Date.parse('2026-02-01T00:00:00.000Z')
+  const storeFile = path.join(dir, 'backlot-push.json')
+  const askKey = JSON.stringify(['ask', 'host-a', '', 'shop', 7])
+  const stored = () => JSON.parse(fs.readFileSync(storeFile, 'utf8')) as { version: number, keys: Record<string, number> }
+
+  async function atNow(run: () => Promise<unknown>) {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    try { await run() } finally { vi.useRealTimers() }
+  }
+
+  it('keeps a 31-day-old key that is still open', async () => {
+    const firstSeen = NOW - 31 * DAY
+    fs.writeFileSync(storeFile, JSON.stringify({ version: 2, keys: { [askKey]: firstSeen } }))
+    const watcher = backlotPush.createBacklotPushWatcher()
+    await atNow(() => watcher.scan([askingView()]))
+    expect(sendNotification).not.toHaveBeenCalled()
+    expect(stored().keys[askKey]).toBe(firstSeen)
+  })
+
+  it('drops a 31-day-old key that is no longer open', async () => {
+    fs.writeFileSync(storeFile, JSON.stringify({ version: 2, keys: { [askKey]: NOW - 31 * DAY } }))
+    const watcher = backlotPush.createBacklotPushWatcher()
+    await atNow(() => watcher.scan([view()]))
+    expect(stored()).toEqual({ version: 2, keys: {} })
+    expect(sendNotification).not.toHaveBeenCalled()
+  })
+
+  it('migrates a version 1 file without treating it as a first run', async () => {
+    fs.writeFileSync(storeFile, JSON.stringify({ version: 1, keys: [askKey] }))
+    const watcher = backlotPush.createBacklotPushWatcher()
+    await atNow(() => watcher.scan([askingView()]))
+    expect(sendNotification).not.toHaveBeenCalled()
+    expect(stored()).toEqual({ version: 2, keys: { [askKey]: NOW } })
+  })
+
+  it('renames a corrupt store once, starts over, and only records what is open', async () => {
+    fs.writeFileSync(storeFile, '{not json')
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const watcher = backlotPush.createBacklotPushWatcher()
+      await atNow(() => watcher.scan([askingView()]))
+      expect(sendNotification).not.toHaveBeenCalled()
+      expect(fs.existsSync(`${storeFile}.corrupt-${NOW}`)).toBe(true)
+      expect(stored().keys[askKey]).toBe(NOW)
+      const messages = logSpy.mock.calls.flat().filter(x => typeof x === 'string')
+      expect(messages.filter(m => m === 'backlot notification: store unreadable, starting over')).toHaveLength(1)
+    } finally {
+      logSpy.mockRestore()
+    }
   })
 })
