@@ -1,7 +1,9 @@
 // What a terminal relay needs from a WebSocket (crossws or other), and what it
 // gives back (see coreTerm.ts).
 export interface WsLike {
-  send: (data: string) => void
+  // `options.compress`: per frame, so a small frame skips zlib
+  // (wsCompression.ts, termSendOptions).
+  send: (data: string, options?: { compress?: boolean }) => void
   close: (code?: number, reason?: string) => void
   isOpen: () => boolean
 }

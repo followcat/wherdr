@@ -36,11 +36,13 @@ function setup(opts: { terminal?: object | null, attachError?: CoreError, watch?
     close: () => { closed = true },
   }
   const out: any[] = []
+  // The options each frame was sent with (compress: false for a small one).
+  const sentOpts: ({ compress?: boolean } | undefined)[] = []
   let wsClosed: number | undefined
-  const ws = { send: (d: string) => out.push(JSON.parse(d)), close: (code?: number) => { wsClosed = code }, isOpen: () => wsClosed === undefined }
+  const ws = { send: (d: string, o?: { compress?: boolean }) => { out.push(JSON.parse(d)); sentOpts.push(o) }, close: (code?: number) => { wsClosed = code }, isOpen: () => wsClosed === undefined }
   const url = new URL(`http://x/ws/term?pane=p1&cols=40&rows=20${opts.watch ? '&takeover=0' : ''}`)
   const sess = openCoreTerm(ws, url, { endpoint: '/sock', address: id => (id === 'p1' ? 'm/t7' : null), connect: async () => core })
-  return { sess: sess!, sent, calls, streams, out, wsClosed: () => wsClosed, closed: () => closed, lose: () => closeFn?.() }
+  return { sess: sess!, sent, calls, streams, out, sentOpts, wsClosed: () => wsClosed, closed: () => closed, lose: () => closeFn?.() }
 }
 const resizes = (sent: { kind: number, payload: Buffer }[]) => sent.filter(f => f.kind === FRAME.RESIZE).map(f => [f.payload.readUInt16LE(0), f.payload.readUInt16LE(2)])
 
@@ -135,6 +137,28 @@ describe('openCoreTerm', () => {
     t.sess.onMessage(JSON.stringify({ type: 'credit', bytes: 5 }))
     const credits = t.sent.filter(f => f.channel === 3 && f.kind === FRAME.CREDIT)
     expect(credits.map(f => f.payload.readUInt32LE(0))).toEqual([5])
+  })
+
+  it('marks a keystroke echo not to be compressed, and a repaint to be', async () => {
+    const t = setup()
+    await tick()
+    // The attach's own control and empty frame are small, like an echo.
+    // A single character's echo, as the core sends after a key.
+    t.streams.get(3)!(FRAME.DATA, Buffer.from('a'))
+    const echoAt = t.out.length - 1
+    // A repaint: a large, repetitive frame, well over the 1 KB threshold.
+    t.streams.get(3)!(FRAME.DATA, Buffer.from('\x1b[H' + 'line of a redrawn footer\r\n'.repeat(200)))
+    const repaintAt = t.out.length - 1
+    const frames = t.out.filter(m => m.type === 'terminal.frame')
+    // The echo: one byte, marked not to be compressed, with its credit.
+    expect(t.out[echoAt]).toMatchObject({ type: 'terminal.frame', credit: 1 })
+    expect(t.sentOpts[echoAt]).toEqual({ compress: false })
+    // The repaint: over 1 KB, marked to be compressed.
+    expect(t.out[repaintAt].credit).toBeGreaterThanOrEqual(1024)
+    expect(t.sentOpts[repaintAt]).toEqual({ compress: true })
+    // It is the only frame of this session zlib is asked for.
+    expect(t.sentOpts.filter(o => o?.compress === true)).toHaveLength(1)
+    expect(frames.length).toBeGreaterThanOrEqual(3)
   })
 
   it('keeps the relay reset separate from an ANSI-only attach paint of an idle screen', async () => {
