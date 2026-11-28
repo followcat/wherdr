@@ -13,7 +13,9 @@ export default defineWebSocketHandler({
     watchPeer(peer)
     const url = new URL(peer.request?.url || '/', 'http://x')
     const ws = {
-      send: (d: string) => peer.send(d),
+      // The relay picks per frame whether to deflate (coreTerm.ts,
+      // termSendOptions): a repaint is worth zlib, a keystroke echo is not.
+      send: (d: string, options?: { compress?: boolean }) => peer.send(d, options),
       close: (code?: number, reason?: string) => peer.close(code, reason),
       isOpen: () => isOpen(peer),
     }

@@ -16,6 +16,7 @@
 import { CoreError } from './core'
 import { FRAME, openFramed, type FramedCore } from './coreFramed'
 import type { TermSession, WsLike } from './terminal'
+import { termSendOptions } from './wsCompression'
 import { COLD_HISTORY, clampHistoryLines } from '../../shared/terminalHistory'
 
 const clamp = (v: unknown, lo: number, hi: number, dflt: number) => {
@@ -50,7 +51,14 @@ export function openCoreTerm(ws: WsLike, url: URL, deps: CoreTermDeps): TermSess
     ws.close(4400, 'Invalid pane')
     return null
   }
-  const send = (obj: unknown) => { if (ws.isOpen()) ws.send(JSON.stringify(obj)) }
+  // Frames of at least 1 KB (a repaint, a streamed answer) are deflated; a
+  // keystroke echo or a cursor move goes out as it is, so typing never waits
+  // on zlib (wsCompression.ts).
+  const send = (obj: unknown) => {
+    if (!ws.isOpen()) return
+    const data = JSON.stringify(obj)
+    ws.send(data, termSendOptions(data))
+  }
   const end = (reason: string, code: number, wsReason: string, extra: object = {}) => {
     if (done) return
     done = true
